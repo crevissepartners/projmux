@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
@@ -18,7 +19,7 @@ func TestKeymapV2SequencesParseRenderAndMerge(t *testing.T) {
 keys = ["M-1"]
 sequences = ["C-k p", "F12 Enter"]
 `
-	parsed, err := parseKeymapFile("keymap.toml", body)
+	parsed, err := keybinding.ParseKeymapFile("keymap.toml", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,15 +27,15 @@ sequences = ["C-k p", "F12 Enter"]
 	if !override.SequencesSet || !slices.Equal(override.Sequences, []string{"C-k p", "F12 Enter"}) {
 		t.Fatalf("sequences = %#v, set=%v", override.Sequences, override.SequencesSet)
 	}
-	rendered := renderKeymapFile(parsed)
+	rendered := keybinding.RenderKeymapFile(parsed)
 	if !strings.Contains(rendered, `sequences = ["C-k p", "F12 Enter"]`) {
 		t.Fatalf("rendered keymap = %q", rendered)
 	}
-	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	merged, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), parsed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	action, ok := keyBindingActionByID(merged, "project-sidebar.toggle")
+	action, ok := keybinding.KeyBindingActionByID(merged, "project-sidebar.toggle")
 	if !ok || !slices.Equal(action.Sequences, override.Sequences) {
 		t.Fatalf("merged action = %#v", action)
 	}
@@ -44,7 +45,7 @@ func TestKeymapSequenceGrammar(t *testing.T) {
 	for _, valid := range []string{
 		"C-k p", "M-x Enter", "F12 Tab", "Left Space", "C-M-k C-p C-s M-1",
 	} {
-		if got, err := normalizeKeymapSequence(valid); err != nil || got != valid {
+		if got, err := keybinding.NormalizeKeymapSequence(valid); err != nil || got != valid {
 			t.Errorf("normalize(%q) = %q, %v", valid, got, err)
 		}
 	}
@@ -52,7 +53,7 @@ func TestKeymapSequenceGrammar(t *testing.T) {
 		"p C-k", "C-k", "C-k p M-x C-a C-b", "C-k  p", " C-k p",
 		"C-k Escape", "Esc C-k", "C-k User1", "C-k sendInput", "C-k UnknownName",
 	} {
-		if _, err := normalizeKeymapSequence(invalid); err == nil {
+		if _, err := keybinding.NormalizeKeymapSequence(invalid); err == nil {
 			t.Errorf("normalize(%q) = nil error", invalid)
 		}
 	}
@@ -64,20 +65,20 @@ func TestKeymapSequenceGrammar(t *testing.T) {
 		"C-m C-k": `write "Enter"`,
 		"C-k C-[": "reserved for cancelling",
 	} {
-		_, err := normalizeKeymapSequence(invalid)
+		_, err := keybinding.NormalizeKeymapSequence(invalid)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("normalize(%q) error = %v, want it to contain %q", invalid, err, want)
 		}
 	}
 	for _, valid := range []string{"C-k Enter", "C-k Tab"} {
-		if got, err := normalizeKeymapSequence(valid); err != nil || got != valid {
+		if got, err := keybinding.NormalizeKeymapSequence(valid); err != nil || got != valid {
 			t.Errorf("normalize(%q) = %q, %v", valid, got, err)
 		}
 	}
 }
 
 func TestKeymapSequenceConflictMatrix(t *testing.T) {
-	actions := defaultKeyBindingCatalog()
+	actions := keybinding.DefaultKeyBindingCatalog()
 	set := func(id string, sequences ...string) {
 		for i := range actions {
 			if actions[i].ID == id {
@@ -89,31 +90,31 @@ func TestKeymapSequenceConflictMatrix(t *testing.T) {
 	}
 	set("ProjectSidebarToggle", "C-k C-p")
 	set("SessionPopupToggle", "C-k C-s")
-	if err := validateKeymapConflicts(actions); err != nil {
+	if err := keybinding.ValidateKeymapConflicts(actions); err != nil {
 		t.Fatalf("shared prefix rejected: %v", err)
 	}
 
 	set("SessionPopupToggle", "C-k C-p")
-	if err := validateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "bound to both") {
+	if err := keybinding.ValidateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "bound to both") {
 		t.Fatalf("duplicate error = %v", err)
 	}
 	set("SessionPopupToggle", "C-k C-p C-s")
-	if err := validateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "strict-prefix") {
+	if err := keybinding.ValidateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "strict-prefix") {
 		t.Fatalf("prefix error = %v", err)
 	}
 	set("SessionPopupToggle", "M-1 C-s")
-	if err := validateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "already bound") {
+	if err := keybinding.ValidateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "already bound") {
 		t.Fatalf("single overlap error = %v", err)
 	}
 	set("ProjectSidebarToggle", "C-k C-p", "C-k C-p")
 	set("SessionPopupToggle")
-	if err := validateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "bound to both") {
+	if err := keybinding.ValidateKeymapConflicts(actions); err == nil || !strings.Contains(err.Error(), "bound to both") {
 		t.Fatalf("same-action duplicate error = %v", err)
 	}
 }
 
 func TestKeySequenceTrieRenderingIsDeterministicAndCancels(t *testing.T) {
-	actions := defaultKeyBindingCatalog()
+	actions := keybinding.DefaultKeyBindingCatalog()
 	for i := range actions {
 		switch actions[i].ID {
 		case "ProjectSidebarToggle":
@@ -123,7 +124,7 @@ func TestKeySequenceTrieRenderingIsDeterministicAndCancels(t *testing.T) {
 		}
 	}
 	first := tmuxSequenceBindLines("/tmp/projmux", actions)
-	reversed := append([]keyBindingAction(nil), actions...)
+	reversed := append([]keybinding.KeyBindingAction(nil), actions...)
 	slices.Reverse(reversed)
 	second := tmuxSequenceBindLines("/tmp/projmux", reversed)
 	if !slices.Equal(first, second) {
@@ -148,7 +149,7 @@ func TestKeySequenceTrieRenderingIsDeterministicAndCancels(t *testing.T) {
 }
 
 func TestKeySequenceAppRenderCombinesStandaloneAndAppSharedPrefix(t *testing.T) {
-	actions := defaultKeyBindingCatalog()
+	actions := keybinding.DefaultKeyBindingCatalog()
 	for i := range actions {
 		switch actions[i].CanonicalID {
 		case "project-sidebar.toggle":
@@ -173,7 +174,7 @@ func TestKeySequenceAppRenderCombinesStandaloneAndAppSharedPrefix(t *testing.T) 
 }
 
 func TestKeySequenceGeneratedStateIsRecordedNotRetiredByTheConfig(t *testing.T) {
-	actions := defaultKeyBindingCatalog()
+	actions := keybinding.DefaultKeyBindingCatalog()
 	actions[0].Sequences = []string{"C-k p"}
 	lines := strings.Join(tmuxSequenceStateLines(actions), "\n")
 	for _, want := range []string{
@@ -274,7 +275,7 @@ func TestTmuxApplyRetiresRecordedSequenceStateBeforeSourcingTheNewConfig(t *test
 }
 
 func TestKeySequenceStateRecordedWhenKeymapIsAbsent(t *testing.T) {
-	config := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSet{}, defaultKeyBindingCatalog(), false)
+	config := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSet{}, keybinding.DefaultKeyBindingCatalog(), false)
 	for _, want := range []string{
 		"set-option -g " + tmuxSequenceRootsOption + " \"\"",
 		"set-option -g " + tmuxSequenceTablesOption + " \"\"",
@@ -323,10 +324,10 @@ sequences = ["C-k p", "F12 Enter", "M-x C-p"]
 			}
 		}
 	}
-	catalog, _, err := loadMergedKeyBindingCatalog(keymapLoader{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-		readFile:  os.ReadFile,
+	catalog, _, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{
+		HomeDir:   func() (string, error) { return home, nil },
+		LookupEnv: func(string) string { return "" },
+		ReadFile:  os.ReadFile,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -335,11 +336,11 @@ sequences = ["C-k p", "F12 Enter", "M-x C-p"]
 	if strings.Contains(sequenceLines, "bind-key -n C-p ") {
 		t.Fatalf("native continuation stroke gained an independent root binding: %s", sequenceLines)
 	}
-	action, ok := keyBindingActionByID(catalog, "ProjectSidebarToggle")
+	action, ok := keybinding.KeyBindingActionByID(catalog, "ProjectSidebarToggle")
 	if !ok {
 		t.Fatal("ProjectSidebarToggle action missing")
 	}
-	if !strings.Contains(sequenceLines, " C-p "+renderTmuxBindingBody("/tmp/projmux", action)) {
+	if !strings.Contains(sequenceLines, " C-p "+keybinding.RenderTmuxBindingBody("/tmp/projmux", action)) {
 		t.Fatalf("native continuation stroke is not scoped to its generated table: %s", sequenceLines)
 	}
 }
@@ -347,7 +348,7 @@ sequences = ["C-k p", "F12 Enter", "M-x C-p"]
 func TestKeymapV1ToV2MigrationPreservesBytesAndRollsBack(t *testing.T) {
 	original := "# keep this comment\nschema_version = 1 # old\n\n[bindings.unknown]\nkeys = [\"C-x\"]\n\n[bindings.\"window.create\"]\nkeys = [\"C-t\"]\n"
 	store, path := newKeymapFixture(t, original)
-	result, err := migrateKeymapForWrite(store)
+	result, err := keybinding.MigrateKeymapForWrite(store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,11 +359,11 @@ func TestKeymapV1ToV2MigrationPreservesBytesAndRollsBack(t *testing.T) {
 	if !strings.Contains(result.BackupPath, ".pre-v2-") {
 		t.Fatalf("backup = %q", result.BackupPath)
 	}
-	second, err := migrateKeymapForWrite(store)
+	second, err := keybinding.MigrateKeymapForWrite(store)
 	if err != nil || second.Migrated || second.Plan.Required {
 		t.Fatalf("repeat migration = %+v, %v", second, err)
 	}
-	if err := rollbackKeymapMigration(store, result.BackupPath); err != nil {
+	if err := keybinding.RollbackKeymapMigration(store, result.BackupPath); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, path); got != original {
@@ -426,7 +427,7 @@ sequences = ["C-k Escape"]`,
 }
 
 func TestKeymapSequencesDoNotExpandPhaseZeroSurface(t *testing.T) {
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		if len(action.Sequences) != 0 {
 			t.Fatalf("built-in action %s gained a default sequence", action.ID)
 		}
@@ -435,7 +436,7 @@ func TestKeymapSequencesDoNotExpandPhaseZeroSurface(t *testing.T) {
 		"schema_version = 2\n[bindings.\"project-sidebar.toggle\"]\ncommand = \"display-message nope\"\n",
 		"schema_version = 2\n[bindings.\"project-sidebar.toggle\"]\noutput = \"text\"\n",
 	} {
-		if _, err := parseKeymapFile("keymap.toml", body); err == nil {
+		if _, err := keybinding.ParseKeymapFile("keymap.toml", body); err == nil {
 			t.Fatalf("excluded command/output field parsed: %q", body)
 		}
 	}
@@ -443,11 +444,11 @@ func TestKeymapSequencesDoNotExpandPhaseZeroSurface(t *testing.T) {
 [bindings."project-sidebar.project.pin-toggle"]
 sequences = ["C-k C-o"]
 `
-	parsed, err := parseKeymapFile("keymap.toml", picker)
+	parsed, err := keybinding.ParseKeymapFile("keymap.toml", picker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed); err == nil || !strings.Contains(err.Error(), "picker-local") {
+	if _, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), parsed); err == nil || !strings.Contains(err.Error(), "picker-local") {
 		t.Fatalf("picker-local sequence merge error = %v", err)
 	}
 }

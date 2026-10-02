@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
@@ -225,7 +226,7 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
 		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
 		"'/tmp/projmux' 'switch' 'sidebar-open'",
-		"'--path' " + tmuxShellQuote(target),
+		"'--path' " + keybinding.TmuxShellQuote(target),
 		"'--session' 'target'",
 		"'--mode' 'continue'",
 		"'--client' '/dev/pts/9'",
@@ -342,7 +343,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 	command := reopen.args[2]
 	for _, want := range []string{
 		switchInitialQueryEnv + "='tar'",
-		switchInitialSelectionEnv + "=" + tmuxShellQuote(target),
+		switchInitialSelectionEnv + "=" + keybinding.TmuxShellQuote(target),
 		switchStatusMessageEnv + "='Trust denied'",
 		"'/tmp/projmux' 'internal' 'tmux' 'popup-toggle' '--client' '/dev/pts/9' 'sessionizer-sidebar'",
 	} {
@@ -431,7 +432,7 @@ func TestSwitchSidebarOpenPropagatesProjectOpenFailureAfterReopen(t *testing.T) 
 	command := reopen.args[2]
 	for _, want := range []string{
 		switchInitialQueryEnv + "='tar'",
-		switchInitialSelectionEnv + "=" + tmuxShellQuote(target),
+		switchInitialSelectionEnv + "=" + keybinding.TmuxShellQuote(target),
 		"Project open error:",
 		openErr.Error(),
 	} {

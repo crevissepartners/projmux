@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -143,7 +144,7 @@ var settingsDynamicEntryCatalog = []struct {
 	{settingsActionPrefixHUDVisibility, "", settingsActionMeta("Status Bar visibility", "settings.text.status_bar", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixHookEvent + hookScopeGlobal + ":", settingsNavAutomationLifecycle + ".event", settingsNavigationMeta("Automation event", "settings.text.automation", settingsAxisGlobal, settingsOwnerAutomation)},
 	{settingsActionPrefixHookEvent + hookScopeProject + ":", settingsNavProjectHooks + ".lifecycle.event", settingsNavigationMeta("Project automation event", "settings.text.project_automation_policy", settingsAxisProject, settingsOwnerProjectAutomation)},
-	{settingsActionPrefixKeymapSurface, settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface", settingsNavigationMeta("Keybindings surface", "settings.text.keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
+	{settingsActionPrefixKeymapSurface, settingsNavKeybindings + "." + keybinding.KeyBindingCategorySurfaces + ".surface", settingsNavigationMeta("Keybindings surface", "settings.text.keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
 	{settingsActionPrefixWorkdirItem, settingsNavProjectsExtraRoots + ".item", settingsNavigationMeta("Additional discovery roots", "settings.text.additional_discovery_roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixPinItem, settingsNavProjectsPins + ".item", settingsNavigationMeta("Pinned Projects", "settings.text.pinned_projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixCandidatePinItem, settingsNavProjectsCandidates + ".item", settingsNavigationMeta("Candidate Pins", "settings.text.candidate_pins", settingsAxisGlobal, settingsOwnerProjectPicker)},

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
@@ -935,9 +936,9 @@ func TestSettingsRootAltArrowChordsAreTransportTierWithDefaultBindings(t *testin
 		"previous-window":   "M-S-Left",
 		"next-window":       "M-S-Right",
 	}
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	for id, wantChord := range wantChords {
-		var got keyBindingAction
+		var got keybinding.KeyBindingAction
 		var found bool
 		for _, action := range catalog {
 			if action.ID == id {
@@ -949,8 +950,8 @@ func TestSettingsRootAltArrowChordsAreTransportTierWithDefaultBindings(t *testin
 		if !found {
 			t.Fatalf("keybinding catalog missing %q", id)
 		}
-		if got.Tier != keyBindingTierTransportDependent {
-			t.Fatalf("keybinding catalog %q tier = %q, want %q", id, got.Tier, keyBindingTierTransportDependent)
+		if got.Tier != keybinding.KeyBindingTierTransportDependent {
+			t.Fatalf("keybinding catalog %q tier = %q, want %q", id, got.Tier, keybinding.KeyBindingTierTransportDependent)
 		}
 		if got.PlainChord != wantChord {
 			t.Fatalf("keybinding catalog %q chord = %q, want %q", id, got.PlainChord, wantChord)
@@ -3607,7 +3608,7 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
 			keybindingOptions = options
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymapCategory + keyBindingCategoryLaunch}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymapCategory + keybinding.KeyBindingCategoryLaunch}, nil
 		case 3:
 			categoryOptions = options
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
@@ -3642,14 +3643,14 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 			t.Fatalf("keybindings root entries = %#v, want categories only, not a flat action row", keybindingOptions.Entries)
 		}
 	}
-	for _, category := range keyBindingCategoryOrder {
+	for _, category := range keybinding.KeyBindingCategoryOrder {
 		if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymapCategory+category.ID) {
 			t.Fatalf("keybindings entries = %#v, want the %q category row", keybindingOptions.Entries, category.ID)
 		}
 	}
 	// Search still crosses the category boundary: the root row carries its
 	// members' action IDs, display labels, chords and state.
-	launchRow := entryWithValue(keybindingOptions.Entries, settingsActionPrefixKeymapCategory+keyBindingCategoryLaunch)
+	launchRow := entryWithValue(keybindingOptions.Entries, settingsActionPrefixKeymapCategory+keybinding.KeyBindingCategoryLaunch)
 	if launchRow == nil || !strings.Contains(launchRow.SearchKey, "ProjectSidebarToggle") {
 		t.Fatalf("launch category row = %#v, want cross-category search text", launchRow)
 	}
@@ -3848,7 +3849,7 @@ func settingsKeybindingActionRows(t *testing.T, cmd *settingsCommand) []intpicke
 	t.Helper()
 
 	var rows []intpickercompat.Entry
-	for _, category := range keyBindingCategoryOrder {
+	for _, category := range keybinding.KeyBindingCategoryOrder {
 		entries, err := cmd.keybindingCategoryEntries(category.ID)
 		if err != nil {
 			t.Fatalf("keybindingCategoryEntries(%q) error = %v", category.ID, err)
@@ -4074,10 +4075,10 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndReservedTransportIsL
 		}
 	})
 
-	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingSurfaceSection(keybinding.KeyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if got, want := popupDetail.UI, "settings-keybinding-detail"; got != want {
@@ -4175,7 +4176,7 @@ func TestSettingsHubKeybindingsReservedTransportRejectsForgedTypedRoute(t *testi
 		}
 	})
 
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
@@ -4210,7 +4211,7 @@ func TestSettingsHubKeybindingsTypedPopupLocalKeyWritesQuotedKeymap(t *testing.T
 		}
 	})
 
-	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingSurfaceSection(keybinding.KeyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
@@ -4249,7 +4250,7 @@ func TestSettingsHubKeybindingsUnifiedRecorderWritesQuotedKeymap(t *testing.T) {
 		}
 	})
 	var stdout bytes.Buffer
-	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingSurfaceSection(keybinding.KeyBindingCategorySurfacesLabel, "Sidebar", &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
@@ -4475,7 +4476,7 @@ func TestSettingsHubKeybindingsProtectedUnbindRouteIsReadOnly(t *testing.T) {
 		}
 	})
 
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
@@ -4541,7 +4542,7 @@ func TestSettingsHubKeybindingsPopupLocalConflictIsRejected(t *testing.T) {
 		}
 	})
 
-	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingSurfaceSection(keybinding.KeyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingSurfaceSection() error = %v, want the conflict handled as feedback", err)
 	}
 	if got, want := afterConflict.UI, "settings-keybinding-detail"; got != want {
@@ -4559,7 +4560,7 @@ func TestSettingsHubKeybindingsPopupLocalConflictIsRejected(t *testing.T) {
 func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 	t.Parallel()
 
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	cases := map[string]string{
 		"ProjectSidebarToggle":      "Open / close Project Sidebar",
 		"NotifySidebarToggle":       "Open / close Notification Sidebar",
@@ -4590,11 +4591,11 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"last-pane":                 "Focus last Pane",
 	}
 	for id, want := range cases {
-		action, ok := keyBindingActionByID(catalog, id)
+		action, ok := keybinding.KeyBindingActionByID(catalog, id)
 		if !ok {
 			t.Fatalf("catalog missing %q", id)
 		}
-		if got := keyBindingDisplayName(action); got != want {
+		if got := keybinding.KeyBindingDisplayName(action); got != want {
 			t.Fatalf("keyBindingDisplayName(%q) = %q, want %q", id, got, want)
 		}
 	}
@@ -4608,10 +4609,10 @@ func TestSettingsKeybindingsExposeOnlyCanonicalPaneRenameAction(t *testing.T) {
 		return intpickercompat.Result{}, nil
 	})
 	entries := settingsKeybindingActionRows(t, cmd)
-	if !hasEntryValue(entries, settingsActionPrefixKeymap+paneRenameActionID) {
+	if !hasEntryValue(entries, settingsActionPrefixKeymap+keybinding.PaneRenameActionID) {
 		t.Fatalf("entries = %#v, want canonical pane rename action", entries)
 	}
-	if hasEntryValue(entries, settingsActionPrefixKeymap+retiredPaneRenameActionID) {
+	if hasEntryValue(entries, settingsActionPrefixKeymap+keybinding.RetiredPaneRenameActionID) {
 		t.Fatalf("entries = %#v, did not want retired pane rename action", entries)
 	}
 }
@@ -4640,18 +4641,18 @@ func TestSettingsKeybindingsRejectRetiredPaneRenameActionWithoutRewriting(t *tes
 func TestKeyBindingDisplayNameKeepsLaunchToggleLabelsHumanReadable(t *testing.T) {
 	t.Parallel()
 
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	cases := map[string]string{
 		"ProjectSidebarToggle": "Open / close Project Sidebar",
 		"NotifySidebarToggle":  "Open / close Notification Sidebar",
 		"SessionPopupToggle":   "Open / close Session Picker",
 	}
 	for id, want := range cases {
-		action, ok := keyBindingActionByID(catalog, id)
+		action, ok := keybinding.KeyBindingActionByID(catalog, id)
 		if !ok {
 			t.Fatalf("catalog missing %q", id)
 		}
-		got := keyBindingDisplayName(action)
+		got := keybinding.KeyBindingDisplayName(action)
 		if got != want {
 			t.Fatalf("keyBindingDisplayName(%q) = %q, want %q", id, got, want)
 		}
@@ -4699,7 +4700,7 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryLaunch, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
@@ -5192,7 +5193,7 @@ func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &stderr); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryLaunch, &stdout, &stderr); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
@@ -5246,7 +5247,7 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &stderr); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryLaunch, &stdout, &stderr); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
@@ -5302,7 +5303,7 @@ func TestSettingsKeybindingsTogglesNativeMacOSKeybindings(t *testing.T) {
 		nativePicker: native,
 	}
 
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryInput, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryInput, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if !hasEntryLabelContainingAll(first.Entries, "Native macOS keybindings", "on", "processed locally") {
@@ -5352,7 +5353,7 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 	})
 
 	var stdout bytes.Buffer
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryLaunch, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
@@ -5441,10 +5442,10 @@ func TestSettingsKeybindingsLegacyModeOptionsReturnRootList(t *testing.T) {
 	}
 	// The legacy tab spelling still resolves to the same root, which is now
 	// the category list rather than the flat action wall.
-	if !hasEntryValue(listOptions.Entries, settingsActionPrefixKeymapCategory+keyBindingCategoryLaunch) {
+	if !hasEntryValue(listOptions.Entries, settingsActionPrefixKeymapCategory+keybinding.KeyBindingCategoryLaunch) {
 		t.Fatalf("keybindings entries = %#v, want the category root list", listOptions.Entries)
 	}
-	launchEntries, err := cmd.keybindingCategoryEntries(keyBindingCategoryLaunch)
+	launchEntries, err := cmd.keybindingCategoryEntries(keybinding.KeyBindingCategoryLaunch)
 	if err != nil {
 		t.Fatalf("keybindingCategoryEntries() error = %v", err)
 	}
@@ -5514,7 +5515,7 @@ func TestSettingsKeybindingsDoesNotExposeTerminalMappingRows(t *testing.T) {
 			t.Fatalf("keybindings entries = %#v, did not want %q", options.Entries, absent)
 		}
 	}
-	if !hasEntryValue(options.Entries, settingsActionPrefixKeymapCategory+keyBindingCategoryLaunch) {
+	if !hasEntryValue(options.Entries, settingsActionPrefixKeymapCategory+keybinding.KeyBindingCategoryLaunch) {
 		t.Fatalf("keybindings entries = %#v, want the category root list", options.Entries)
 	}
 }
@@ -7395,7 +7396,7 @@ func TestSettingsHubKeybindingsAddRoutesRecorderWhenCaptureUnavailable(t *testin
 	})
 	cmd.physicalCaptureAvailable = func() bool { return false }
 
-	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runKeybindingCategorySection(keybinding.KeyBindingCategoryLaunch, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
@@ -7455,13 +7456,13 @@ func TestNormalizeKeybindingRecorderKeyUsesTmuxChordNames(t *testing.T) {
 		wantErr string
 	}{
 		{name: "control letter", key: intpicker.RecorderKey{Name: "ctrl-r"}, want: "C-r"},
-		{name: "alt shifted arrow", key: intpicker.RecorderKey{Name: "alt-shift-left"}, wantErr: keymapReservedAuthoringReason},
-		{name: "modified enter", key: intpicker.RecorderKey{Name: "ctrl-enter"}, wantErr: keymapReservedAuthoringReason},
-		{name: "modified escape", key: intpicker.RecorderKey{Name: "alt-esc"}, wantErr: keymapReservedAuthoringReason},
+		{name: "alt shifted arrow", key: intpicker.RecorderKey{Name: "alt-shift-left"}, wantErr: keybinding.KeymapReservedAuthoringReason},
+		{name: "modified enter", key: intpicker.RecorderKey{Name: "ctrl-enter"}, wantErr: keybinding.KeymapReservedAuthoringReason},
+		{name: "modified escape", key: intpicker.RecorderKey{Name: "alt-esc"}, wantErr: keybinding.KeymapReservedAuthoringReason},
 		{name: "space", key: intpicker.RecorderKey{Text: " "}, want: "Space"},
 		{name: "printable", key: intpicker.RecorderKey{Text: "x"}, want: "x"},
-		{name: "plain enter", key: intpicker.RecorderKey{Name: "enter"}, wantErr: keymapReservedAuthoringReason},
-		{name: "plain escape", key: intpicker.RecorderKey{Name: "esc"}, wantErr: keymapReservedAuthoringReason},
+		{name: "plain enter", key: intpicker.RecorderKey{Name: "enter"}, wantErr: keybinding.KeymapReservedAuthoringReason},
+		{name: "plain escape", key: intpicker.RecorderKey{Name: "esc"}, wantErr: keybinding.KeymapReservedAuthoringReason},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

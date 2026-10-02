@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
@@ -2095,11 +2096,11 @@ func buildShellCommand(binaryPath string, args []string, env map[string]string) 
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
-		command = append(command, key+"="+tmuxShellQuote(value))
+		command = append(command, key+"="+keybinding.TmuxShellQuote(value))
 	}
-	command = append(command, tmuxShellQuote(binaryPath))
+	command = append(command, keybinding.TmuxShellQuote(binaryPath))
 	for _, arg := range args {
-		command = append(command, tmuxShellQuote(arg))
+		command = append(command, keybinding.TmuxShellQuote(arg))
 	}
 	return strings.Join(command, " ")
 }
@@ -2509,27 +2510,27 @@ func pickerKeyMatchesAction(homeDir func() (string, error), lookupEnv func(strin
 }
 
 func effectivePickerKeysForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback []string) []string {
-	actionID, ok := popupToggleActionIDForMode(mode)
+	actionID, ok := keybinding.PopupToggleActionIDForMode(mode)
 	if !ok {
-		return uniqueNonEmptyStrings(fallback)
+		return keybinding.UniqueNonEmptyStrings(fallback)
 	}
 	return effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback)
 }
 
 func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback []string) []string {
-	actions := defaultKeyBindingCatalog()
+	actions := keybinding.DefaultKeyBindingCatalog()
 	if homeDir != nil {
-		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv, pickerDisplay: true}); err == nil {
+		if merged, _, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{HomeDir: homeDir, LookupEnv: lookupEnv, PickerDisplay: true}); err == nil {
 			actions = merged
 		}
 	}
 	defaultActionKeys := map[string]bool{}
 	for _, id := range actionIDs {
-		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
+		action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), id)
 		if !ok {
 			continue
 		}
-		for _, chord := range keyBindingEffectivePlainChords(action) {
+		for _, chord := range keybinding.KeyBindingEffectivePlainChords(action) {
 			if key := pickerKeyFromTmuxChord(chord); key != "" {
 				defaultActionKeys[key] = true
 			}
@@ -2543,17 +2544,17 @@ func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv fun
 		keys = append(keys, key)
 	}
 	for _, id := range actionIDs {
-		action, ok := keyBindingActionByID(actions, id)
+		action, ok := keybinding.KeyBindingActionByID(actions, id)
 		if !ok {
 			continue
 		}
-		for _, chord := range keyBindingEffectivePlainChords(action) {
+		for _, chord := range keybinding.KeyBindingEffectivePlainChords(action) {
 			if key := pickerKeyFromTmuxChord(chord); key != "" {
 				keys = append(keys, key)
 			}
 		}
 	}
-	return uniqueNonEmptyStrings(keys)
+	return keybinding.UniqueNonEmptyStrings(keys)
 }
 
 func pickerKeyFromTmuxChord(chord string) string {
@@ -2622,9 +2623,9 @@ type pickerActionKeyGuideItem struct {
 }
 
 func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string) string, items []pickerActionKeyGuideItem) string {
-	actions := defaultKeyBindingCatalog()
+	actions := keybinding.DefaultKeyBindingCatalog()
 	if homeDir != nil {
-		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv, pickerDisplay: true}); err == nil {
+		if merged, _, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{HomeDir: homeDir, LookupEnv: lookupEnv, PickerDisplay: true}); err == nil {
 			actions = merged
 		}
 	}
@@ -2653,20 +2654,20 @@ func pickerActionGuideReadableChord(chord string) string {
 	return keybindingReadableChord(chord)
 }
 
-func pickerActionGuideChord(actions []keyBindingAction, actionID string) string {
-	action, ok := keyBindingActionByID(actions, actionID)
+func pickerActionGuideChord(actions []keybinding.KeyBindingAction, actionID string) string {
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return ""
 	}
-	chords := keyBindingEffectivePlainChords(action)
-	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	chords := keybinding.KeyBindingEffectivePlainChords(action)
+	defaultAction, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), actionID)
 	if ok {
-		defaultChord := firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction))
+		defaultChord := keybinding.FirstNonEmptyString(keybinding.KeyBindingEffectivePlainChords(defaultAction))
 		if defaultChord != "" && slices.Contains(chords, defaultChord) {
 			return defaultChord
 		}
 	}
-	return firstNonEmptyString(chords)
+	return keybinding.FirstNonEmptyString(chords)
 }
 
 func switchSidebarInitialPos(plan switchPlan) int {

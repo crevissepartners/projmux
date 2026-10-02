@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	corenotify "github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -61,15 +62,15 @@ func TestStatusbarHUDRowFourVisibilityCombinations(t *testing.T) {
 
 			rows := statusbarRowFormatLines(bin, tc.visibility)
 			want := []string{
-				"set -g status-format[0] " + tmuxConfigQuote(tc.wantAux),
-				"set -g status-format[1] " + tmuxConfigQuote(statusbarWindowLineFormat()),
+				"set -g status-format[0] " + keybinding.TmuxConfigQuote(tc.wantAux),
+				"set -g status-format[1] " + keybinding.TmuxConfigQuote(statusbarWindowLineFormat()),
 				"set -gu status-format[2]",
 			}
 			if tc.wantStatus == 1 {
 				// The all-off layout collapses to the bare Window row. No
 				// background job rides along on the surviving row.
 				want = []string{
-					"set -g status-format[0] " + tmuxConfigQuote(statusbarWindowLineFormat()),
+					"set -g status-format[0] " + keybinding.TmuxConfigQuote(statusbarWindowLineFormat()),
 					"set -gu status-format[1]",
 					"set -gu status-format[2]",
 				}
@@ -341,7 +342,7 @@ func TestStatusbarHUDDefaultGeneratedConfigIsByteIdentical(t *testing.T) {
 	t.Parallel()
 
 	effective := fallbackRenderThemeSource().effective
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	standaloneBefore := tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(
 		"/tmp/projmux", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode, config.LiveResourcesOff, catalog, false, effective)
 	standaloneAfter := tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(
@@ -363,7 +364,7 @@ func TestStatusbarHUDGeneratedAppAndStandaloneRowsConvergeForAllCombinations(t *
 	t.Parallel()
 
 	effective := fallbackRenderThemeSource().effective
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	for _, notifications := range []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOff} {
 		for _, usage := range []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOff} {
 			visibility := statusbarHUDVisibilitySet{Notifications: notifications, AgentUsage: usage}

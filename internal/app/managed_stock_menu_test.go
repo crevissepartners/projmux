@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
@@ -263,11 +264,11 @@ func TestManagedStockMenusRenderInAppConfigOnlyAfterUnbindingTmuxStock(t *testin
 
 	// A keymap that puts a managed action on `prefix <` still owns the key: the
 	// menu renders first and the managed bind replaces it.
-	parsed, err := parseKeymapFile("keymap.toml", "schema_version = 2\n\n[bindings.\"window.delete\"]\nprefix = \"<\"\n")
+	parsed, err := keybinding.ParseKeymapFile("keymap.toml", "schema_version = 2\n\n[bindings.\"window.delete\"]\nprefix = \"<\"\n")
 	if err != nil {
 		t.Fatalf("parse keymap: %v", err)
 	}
-	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	merged, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), parsed)
 	if err != nil {
 		t.Fatalf("merge keymap: %v", err)
 	}
@@ -356,8 +357,8 @@ func TestManagedMenuKillCarriesTmuxKillOnlyAsTheMirrorAbsentBranch(t *testing.T)
 	const bin = "/usr/local/bin/projmux"
 	_, pane := managedMenuItemCommands(bin)
 	// The guards are the ones the managed close keys use.
-	if managedDeletePaneGuard != "#{@projmux_pane_uid}" || managedDeleteWindowGuard != "#{@projmux_window_uid}" {
-		t.Fatalf("managed delete guards = %q/%q, want the Pane/Window uid mirrors", managedDeletePaneGuard, managedDeleteWindowGuard)
+	if keybinding.ManagedDeletePaneGuard != "#{@projmux_pane_uid}" || keybinding.ManagedDeleteWindowGuard != "#{@projmux_window_uid}" {
+		t.Fatalf("managed delete guards = %q/%q, want the Pane/Window uid mirrors", keybinding.ManagedDeletePaneGuard, keybinding.ManagedDeleteWindowGuard)
 	}
 	configs := map[string]string{
 		"standalone": tmuxStandaloneConfig(bin, config.StatusbarDecorationOff),
@@ -394,10 +395,10 @@ func TestManagedWindowMenuRunsTheCatalogCreateAndRenameCommands(t *testing.T) {
 
 	const bin = "/usr/local/bin/projmux"
 	app := tmuxAppConfig(bin, "/bin/sh", config.StatusbarDecorationOff)
-	catalog := defaultKeyBindingCatalog()
-	create, _ := keyBindingActionByID(catalog, "new-window")
-	rename, _ := keyBindingActionByID(catalog, "rename-window")
-	createBinding, renameBinding := renderTmuxBindingBody(bin, create), renderTmuxBindingBody(bin, rename)
+	catalog := keybinding.DefaultKeyBindingCatalog()
+	create, _ := keybinding.KeyBindingActionByID(catalog, "new-window")
+	rename, _ := keybinding.KeyBindingActionByID(catalog, "rename-window")
+	createBinding, renameBinding := keybinding.RenderTmuxBindingBody(bin, create), keybinding.RenderTmuxBindingBody(bin, rename)
 	promptHead := `command-prompt -I "#{window_name}" `
 	template, ok := strings.CutPrefix(renameBinding, promptHead)
 	if !ok {

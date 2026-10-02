@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -56,7 +57,7 @@ func runGeneratedRename(t *testing.T, fx canonicalRootFixture, kind coremetadata
 	fx.create.runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: fx.tmux.serverPID}
 	cmd := &tmuxCommand{
 		runner: fx.tmux,
-		stdin:  strings.NewReader(generatedRenameResponseSentinel + response + "\n"),
+		stdin:  strings.NewReader(keybinding.GeneratedRenameResponseSentinel + response + "\n"),
 		windowRename: func(intent windowRenameIntent, stdout, stderr io.Writer) error {
 			return fx.create.renameWindowFromIntent(intent, canonicalFixtureRenamer(fx), stdout, stderr)
 		},
@@ -65,7 +66,7 @@ func runGeneratedRename(t *testing.T, fx canonicalRootFixture, kind coremetadata
 		},
 	}
 	var stdout, stderr bytes.Buffer
-	if err := cmd.Run([]string{route, "--client", generatedRenameTestClient, "--anchor", anchor, generatedRenameStdinFlag}, &stdout, &stderr); err != nil {
+	if err := cmd.Run([]string{route, "--client", generatedRenameTestClient, "--anchor", anchor, keybinding.GeneratedRenameStdinFlag}, &stdout, &stderr); err != nil {
 		t.Fatalf("%s did not converge onto the exact client: %v", route, err)
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
@@ -388,7 +389,7 @@ func TestGeneratedRenameRouteRequiresTheIntactHereDocumentBody(t *testing.T) {
 			if test.args != nil {
 				args = append(args, test.args...)
 			} else {
-				args = append(args, generatedRenameStdinFlag)
+				args = append(args, keybinding.GeneratedRenameStdinFlag)
 			}
 			if err := cmd.Run(args, io.Discard, io.Discard); err != nil {
 				t.Fatalf("Run() error = %v", err)
@@ -405,9 +406,9 @@ func TestGeneratedRenameRouteRequiresTheIntactHereDocumentBody(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"pane-rename", "--client", "/dev/pts/2", "--anchor", "%9"},
-		{"pane-rename", "--client", "/dev/pts/2", "--anchor", "%9", generatedRenameStdinFlag, "--", "notes"},
-		{"pane-rename", "--anchor", "%9", generatedRenameStdinFlag},
-		{"window-rename", "--client", "/dev/pts/2", "--anchor", "9", generatedRenameStdinFlag},
+		{"pane-rename", "--client", "/dev/pts/2", "--anchor", "%9", keybinding.GeneratedRenameStdinFlag, "--", "notes"},
+		{"pane-rename", "--anchor", "%9", keybinding.GeneratedRenameStdinFlag},
+		{"window-rename", "--client", "/dev/pts/2", "--anchor", "9", keybinding.GeneratedRenameStdinFlag},
 	} {
 		called := false
 		cmd := &tmuxCommand{
@@ -458,19 +459,19 @@ func TestGeneratedRenameBindingsCarryTheResponseOnlyInAQuotedHereDocument(t *tes
 	t.Parallel()
 
 	const bin = "/usr/local/bin/projmux"
-	catalog := defaultKeyBindingCatalog()
-	for id, route := range map[string]string{"rename-window": windowRenameRoute, paneRenameActionID: paneRenameRoute} {
-		action, ok := keyBindingActionByID(catalog, id)
-		if !ok || action.TmuxKind != tmuxBindingPromptRunProjmux {
+	catalog := keybinding.DefaultKeyBindingCatalog()
+	for id, route := range map[string]string{"rename-window": keybinding.WindowRenameRoute, keybinding.PaneRenameActionID: keybinding.PaneRenameRoute} {
+		action, ok := keybinding.KeyBindingActionByID(catalog, id)
+		if !ok || action.TmuxKind != keybinding.TmuxBindingPromptRunProjmux {
 			t.Fatalf("%s = %+v, want a prompt-run-projmux action", id, action)
 		}
 		wantBody := route + ` --name-stdin <<'PROJMUX_RENAME_RESPONSE'\nname=%%%\nPROJMUX_RENAME_RESPONSE`
 		if action.TmuxBody != wantBody {
 			t.Fatalf("%s body = %q, want %q", id, action.TmuxBody, wantBody)
 		}
-		runShell := "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+tmuxShellQuote(bin)+" "+action.TmuxBody)
-		rendered := renderTmuxBindingBody(bin, action)
-		if want := "command-prompt " + action.TmuxPromptArgs + " " + tmuxConfigQuote(runShell); rendered != want {
+		runShell := "run-shell " + keybinding.TmuxConfigQuote(keybinding.TmuxPaneEnvPrefix+keybinding.TmuxShellQuote(bin)+" "+action.TmuxBody)
+		rendered := keybinding.RenderTmuxBindingBody(bin, action)
+		if want := "command-prompt " + action.TmuxPromptArgs + " " + keybinding.TmuxConfigQuote(runShell); rendered != want {
 			t.Fatalf("%s rendered = %q, want %q", id, rendered, want)
 		}
 		// The only `%` is the escaped response placeholder, so no Pane handle
@@ -479,7 +480,7 @@ func TestGeneratedRenameBindingsCarryTheResponseOnlyInAQuotedHereDocument(t *tes
 			t.Fatalf("%s rendered placeholders = %q, want exactly one %%%%%% in the here-document", id, rendered)
 		}
 	}
-	if pane, _ := keyBindingActionByID(catalog, paneRenameActionID); pane.Semantics.ResultKind != "rename the focused Pane in the Registry" ||
+	if pane, _ := keybinding.KeyBindingActionByID(catalog, keybinding.PaneRenameActionID); pane.Semantics.ResultKind != "rename the focused Pane in the Registry" ||
 		strings.Contains(strings.ToLower(pane.Description), "clear") {
 		t.Fatalf("Pane rename copy = (%q, %q), want a Registry rename", pane.Semantics.ResultKind, pane.Description)
 	}
@@ -582,23 +583,23 @@ func TestGeneratedRenameBindingDeliversHostileResponsesVerbatimThroughRealTmux(t
 		{response: `back\slash`},
 		{response: "~home"},
 		{response: "%1 and %% and %%%"},
-		{response: generatedRenameHeredocDelimiter},
+		{response: keybinding.GeneratedRenameHeredocDelimiter},
 		{response: ""},
 		{response: "   "},
 		// The documented residual: run-shell format-expands before any shell.
 		{response: "#{session_name}", want: "rename-transport"},
 	}
-	catalog := defaultKeyBindingCatalog()
-	for _, id := range []string{"rename-window", paneRenameActionID} {
-		action, _ := keyBindingActionByID(catalog, id)
+	catalog := keybinding.DefaultKeyBindingCatalog()
+	for _, id := range []string{"rename-window", keybinding.PaneRenameActionID} {
+		action, _ := keybinding.KeyBindingActionByID(catalog, id)
 		conf := filepath.Join(root, "bind.conf")
-		if err := os.WriteFile(conf, []byte("bind-key -T projmux-rename-test r "+renderTmuxBindingBody(recorder, action)+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(conf, []byte("bind-key -T projmux-rename-test r "+keybinding.RenderTmuxBindingBody(recorder, action)+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if out, err := tmux("source-file", conf); err != nil || len(bytes.TrimSpace(out)) != 0 {
 			t.Fatalf("%s generated bind-key does not parse: %v: %s", id, err, out)
 		}
-		template := "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+tmuxShellQuote(recorder)+" "+action.TmuxBody)
+		template := "run-shell " + keybinding.TmuxConfigQuote(keybinding.TmuxPaneEnvPrefix+keybinding.TmuxShellQuote(recorder)+" "+action.TmuxBody)
 		for _, test := range responses {
 			_ = os.Remove(filepath.Join(root, "stdin"))
 			confirm := filepath.Join(root, "confirm.conf")
@@ -626,7 +627,7 @@ func TestGeneratedRenameBindingDeliversHostileResponsesVerbatimThroughRealTmux(t
 				t.Fatalf("%s response %q arrived as %q (stdin %q, err %v), want %q", id, test.response, got, stdin, err, want)
 			}
 			argv, _ := os.ReadFile(filepath.Join(root, "argv"))
-			if !strings.Contains(string(argv), strings.TrimPrefix(strings.Fields(action.TmuxBody)[2], "")) || !strings.HasSuffix(strings.TrimSpace(string(argv)), generatedRenameStdinFlag) {
+			if !strings.Contains(string(argv), strings.TrimPrefix(strings.Fields(action.TmuxBody)[2], "")) || !strings.HasSuffix(strings.TrimSpace(string(argv)), keybinding.GeneratedRenameStdinFlag) {
 				t.Fatalf("%s argv = %q, want the route with only --name-stdin after the anchor", id, argv)
 			}
 		}

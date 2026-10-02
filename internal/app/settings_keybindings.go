@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
@@ -139,7 +140,7 @@ func (c *settingsCommand) runKeybindingCategorySection(categoryID string, stdout
 // runKeybindingSurfaceSection drives one surface group inside the
 // sidebar/picker category.
 func (c *settingsCommand) runKeybindingSurfaceSection(categoryLabel, surface string, stdout, stderr io.Writer) error {
-	surfaceLabel, ok := keyBindingSurfaceLabel(surface)
+	surfaceLabel, ok := keybinding.KeyBindingSurfaceLabel(surface)
 	if !ok {
 		return fmt.Errorf("unknown keybinding surface: %s", surface)
 	}
@@ -194,7 +195,7 @@ func (c *settingsCommand) toggleNativeKeysSetting(stdout, stderr io.Writer) erro
 }
 
 func keyBindingCategoryLabelByID(id string) (string, bool) {
-	for _, category := range keyBindingCategoryOrder {
+	for _, category := range keybinding.KeyBindingCategoryOrder {
 		if category.ID == id {
 			return category.Label, true
 		}
@@ -299,11 +300,11 @@ func (c *settingsCommand) runKeybindingRecorderReplacing(actionID, replace strin
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
@@ -323,13 +324,13 @@ func (c *settingsCommand) runKeybindingRecorderReplacing(actionID, replace strin
 			return c.validateKeybindingCandidateForAction(action.ID, candidate, replace)
 		},
 	}
-	header := "Action: " + keyBindingDisplayName(action)
+	header := "Action: " + keybinding.KeyBindingDisplayName(action)
 	if replace != "" {
 		header += " · Replacing: " + keybindingSequenceDisplay(replace)
 	}
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:            "settings-keybinding-recorder",
-		Title:         "Record Binding - " + keyBindingDisplayName(action),
+		Title:         "Record Binding - " + keybinding.KeyBindingDisplayName(action),
 		Header:        header,
 		Footer:        projmuxFooter("Record 1 to 4 strokes · Enter saves · Backspace removes last · Esc cancels."),
 		DisableSearch: true,
@@ -414,9 +415,9 @@ func normalizeKeybindingRecorderKey(key intpicker.RecorderKey) (string, error) {
 }
 
 func normalizeKeybindingRecorderKeyWithPolicy(key intpicker.RecorderKey, authoring bool) (string, error) {
-	normalize := normalizeKeymapTypedChord
+	normalize := keybinding.NormalizeKeymapTypedChord
 	if authoring {
-		normalize = normalizeKeymapAuthoringChord
+		normalize = keybinding.NormalizeKeymapAuthoringChord
 	}
 	if key.Text != "" {
 		if key.Text == " " {
@@ -487,51 +488,51 @@ func (c *settingsCommand) validateKeymapAliasForAction(actionID, chord string) e
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	chord, err := normalizeKeymapAuthoringChord(chord)
+	chord, err := keybinding.NormalizeKeymapAuthoringChord(chord)
 	if err != nil {
 		return err
 	}
-	current, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	current, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	defaultAction, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", action.ID)
 	}
 	var keys []string
-	if action.Tier == keyBindingTierTransportDependent {
+	if action.Tier == keybinding.KeyBindingTierTransportDependent {
 		if chord == strings.TrimSpace(defaultAction.PlainChord) {
 			return fmt.Errorf("key %q is this action's transport default; choose a separate custom key", chord)
 		}
 		keys = append(keys, keymapConfiguredAliasChords(current, defaultAction)...)
 	} else {
-		keys = append(keys, keyBindingEffectivePlainChords(action)...)
+		keys = append(keys, keybinding.KeyBindingEffectivePlainChords(action)...)
 	}
 	keys = append(keys, chord)
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]keybinding.KeymapOverride{}
 	}
 	override := current.Bindings[action.ID]
 	override.Plain = nil
 	override.KeysSet = true
-	override.Keys = uniqueNonEmptyStrings(keys)
+	override.Keys = keybinding.UniqueNonEmptyStrings(keys)
 	current.Bindings[action.ID] = override
-	_, err = mergeKeymapOverrides(defaultKeyBindingCatalog(), current)
+	_, err = keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), current)
 	return err
 }
 
 func parseKeymapDetailAction(value, actionID string) (string, bool) {
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), actionID)
 	if !ok {
-		action = keyBindingAction{ID: actionID}
+		action = keybinding.KeyBindingAction{ID: actionID}
 	}
 	var matched bool
-	for _, id := range keyBindingActionAliases(action) {
+	for _, id := range keybinding.KeyBindingActionAliases(action) {
 		prefix := settingsActionPrefixKeymap + id + ":"
 		if strings.HasPrefix(value, prefix) {
 			actionID = id
@@ -584,11 +585,11 @@ func keybindingMutationOperation(op string) bool {
 }
 
 func protectedKeybindingActionReason(actionID string) (string, bool) {
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), actionID)
 	if !ok {
 		return "", false
 	}
-	return keyBindingProtectedActionReason(action)
+	return keybinding.KeyBindingProtectedActionReason(action)
 }
 
 func protectKeybindingActionMutation(actionID string) error {
@@ -785,11 +786,11 @@ func (c *settingsCommand) runKeybindingDeliveryTest(actionID, chord string, stdo
 		c.setSettingsFeedback("Test delivery unavailable", reason+"; next: "+next)
 		return nil
 	}
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
@@ -824,7 +825,7 @@ func (c *settingsCommand) runKeybindingDeliveryTest(actionID, chord string, stdo
 // Add path agree on what a key is called, and it deliberately passes no
 // Validate: a delivery test must not run keymap conflict policy against a chord
 // that is already bound to this very action.
-func (c *settingsCommand) observeKeybindingDeliveryWithRecorder(action keyBindingAction, chord string) (keybindingDeliveryObservation, bool, error) {
+func (c *settingsCommand) observeKeybindingDeliveryWithRecorder(action keybinding.KeyBindingAction, chord string) (keybindingDeliveryObservation, bool, error) {
 	var raw string
 	recorder := &intpicker.RecorderOptions{
 		Normalize: func(key intpicker.RecorderKey) (string, error) {
@@ -835,7 +836,7 @@ func (c *settingsCommand) observeKeybindingDeliveryWithRecorder(action keyBindin
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:            "settings-keybinding-delivery-test",
 		Title:         "Test delivery - " + keybindingChordDisplay(chord),
-		Header:        "Press " + keybindingChordDisplay(chord) + " once for " + keyBindingDisplayName(action),
+		Header:        "Press " + keybindingChordDisplay(chord) + " once for " + keybinding.KeyBindingDisplayName(action),
 		Footer:        projmuxFooter("Press the key · Enter reports the result · Esc cancels."),
 		DisableSearch: true,
 		Bindings:      c.settingsCloseBindings(),
@@ -867,14 +868,14 @@ func describeRecorderKeyObservation(key intpicker.RecorderKey) string {
 // observeKeybindingDeliveryWithProbe reads one chord off the controlling tty.
 // The read is bounded by defaultProbeTimeout, and a timeout is a reported
 // key-did-not-arrive result rather than a hang.
-func (c *settingsCommand) observeKeybindingDeliveryWithProbe(action keyBindingAction, chord string) (keybindingDeliveryObservation, error) {
+func (c *settingsCommand) observeKeybindingDeliveryWithProbe(action keybinding.KeyBindingAction, chord string) (keybindingDeliveryObservation, error) {
 	key := probeKey{
 		ActionID:   action.ID,
 		Label:      keybindingChordDisplay(chord),
-		Action:     "delivery test for " + keyBindingDisplayName(action),
+		Action:     "delivery test for " + keybinding.KeyBindingDisplayName(action),
 		PlainChord: chord,
 	}
-	if defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID); ok &&
+	if defaultAction, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID); ok &&
 		strings.TrimSpace(defaultAction.PlainChord) == strings.TrimSpace(chord) {
 		key.Plain = defaultAction.ProbePlain
 	}
@@ -951,16 +952,16 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout, stderr i
 		fmt.Fprintln(stdout, "physical key capture is unavailable in this context; enter a key name instead")
 		return c.runKeybindingTyped(actionID, false, stdout, stderr)
 	}
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
 	key := captureProbeKeyForAction(action)
-	fmt.Fprintf(stdout, "capturing custom key for %s; press the key you want to add\n", keyBindingDisplayName(action))
+	fmt.Fprintf(stdout, "capturing custom key for %s; press the key you want to add\n", keybinding.KeyBindingDisplayName(action))
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultProbeTimeout)
 	defer cancel()
@@ -1011,7 +1012,7 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout, stderr i
 			return false, nil
 		}
 		cancel()
-		chord, err := normalizeKeymapTypedChord(native.chord)
+		chord, err := keybinding.NormalizeKeymapTypedChord(native.chord)
 		if err != nil {
 			return true, err
 		}
@@ -1129,15 +1130,15 @@ func (c *settingsCommand) addCapturedKeybindingChord(actionID, chord string, std
 func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdout, stderr io.Writer) error {
 	replaceValue := ""
 	if replace {
-		keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+		keymap, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 		if err != nil {
 			return err
 		}
-		action, ok := keyBindingActionByID(actions, actionID)
+		action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 		if !ok {
 			return fmt.Errorf("unknown keybinding action: %s", actionID)
 		}
-		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+		defaultAction, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
 		keys := removableKeybindingKeys(keymap, action, defaultAction)
 		if len(keys) == 1 {
 			replaceValue = keys[0]
@@ -1150,11 +1151,11 @@ func (c *settingsCommand) runKeybindingTypedReplacing(actionID, replace string, 
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
@@ -1164,8 +1165,8 @@ func (c *settingsCommand) runKeybindingTypedReplacing(actionID, replace string, 
 	}
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:          "settings-keybinding-type",
-		Entries:     []intpickercompat.Entry{c.backEntry(), {Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
-		Title:       mode + " - " + keyBindingDisplayName(action),
+		Entries:     []intpickercompat.Entry{c.backEntry(), {Label: c.rowLabelInfo("Action", keybinding.KeyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
+		Title:       mode + " - " + keybinding.KeyBindingDisplayName(action),
 		Prompt:      "Enter binding > ",
 		Footer:      projmuxFooter("Enter 1 to 4 strokes, such as C-r or C-o,o."),
 		ExpectKeys:  []string{"enter"},
@@ -1198,11 +1199,11 @@ func (c *settingsCommand) runKeybindingTypedReplacing(actionID, replace string, 
 }
 
 func (c *settingsCommand) captureKeybindingSequenceStrokeWithPolicy(actionID string, strokes []string, authoring bool) (string, bool, error) {
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return "", false, err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return "", false, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
@@ -1223,7 +1224,7 @@ func (c *settingsCommand) captureKeybindingSequenceStrokeWithPolicy(actionID str
 	}
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:            "settings-keybinding-sequence-stroke",
-		Title:         "Record Sequence Stroke - " + keyBindingDisplayName(action),
+		Title:         "Record Sequence Stroke - " + keybinding.KeyBindingDisplayName(action),
 		Header:        fmt.Sprintf("Accumulated: %s", keybindingSequenceDraftSummary(strokes)),
 		Footer:        projmuxFooter(footer),
 		DisableSearch: true,
@@ -1250,9 +1251,9 @@ func (c *settingsCommand) captureKeybindingSequenceStrokeWithPolicy(actionID str
 func normalizeKeybindingSequenceRecorderKey(key intpicker.RecorderKey, authoring bool) (string, error) {
 	if strings.TrimSpace(key.Name) == "enter" && key.Text == "" {
 		if authoring {
-			return normalizeKeymapAuthoringChord("Enter")
+			return keybinding.NormalizeKeymapAuthoringChord("Enter")
 		}
-		return normalizeKeymapTypedChord("Enter")
+		return keybinding.NormalizeKeymapTypedChord("Enter")
 	}
 	return normalizeKeybindingRecorderKeyWithPolicy(key, authoring)
 }
@@ -1266,7 +1267,7 @@ func normalizeKeybindingSequenceStroke(stroke string, index int, authoring bool)
 		return "", fmt.Errorf("stroke is empty")
 	}
 	if authoring {
-		if err := validateKeymapAuthoringChord(stroke); err != nil {
+		if err := keybinding.ValidateKeymapAuthoringChord(stroke); err != nil {
 			return "", err
 		}
 	}
@@ -1276,7 +1277,7 @@ func normalizeKeybindingSequenceStroke(stroke string, index int, authoring bool)
 		value = stroke + " Enter"
 		candidateIndex = 0
 	}
-	normalized, err := normalizeKeymapSequence(value)
+	normalized, err := keybinding.NormalizeKeymapSequence(value)
 	if err != nil {
 		return "", err
 	}
@@ -1314,10 +1315,10 @@ func normalizeKeybindingAuthoringCandidate(value string) (keybindingAuthoringCan
 		return keybindingAuthoringCandidate{Canonical: stroke, Strokes: []string{stroke}}, nil
 	}
 	canonical := strings.Join(fields, " ")
-	if err := validateKeymapAuthoringSequence(canonical); err != nil {
+	if err := keybinding.ValidateKeymapAuthoringSequence(canonical); err != nil {
 		return keybindingAuthoringCandidate{}, err
 	}
-	normalized, err := normalizeKeymapSequence(canonical)
+	normalized, err := keybinding.NormalizeKeymapSequence(canonical)
 	if err != nil {
 		return keybindingAuthoringCandidate{}, err
 	}
@@ -1339,49 +1340,49 @@ func (c *settingsCommand) validateKeybindingCandidateForAction(actionID string, 
 	return err
 }
 
-func (c *settingsCommand) keymapWithBindingCandidate(actionID string, candidate keybindingAuthoringCandidate, replace string) (keymapFile, string, error) {
+func (c *settingsCommand) keymapWithBindingCandidate(actionID string, candidate keybindingAuthoringCandidate, replace string) (keybinding.KeymapFile, string, error) {
 	if err := protectKeybindingActionMutation(actionID); err != nil {
-		return keymapFile{}, "", err
+		return keybinding.KeymapFile{}, "", err
 	}
-	current, actions, _, path, err := loadKeymapForEdit(c.keymapStore())
+	current, actions, _, path, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
-		return keymapFile{}, path, err
+		return keybinding.KeymapFile{}, path, err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
-		return keymapFile{}, path, fmt.Errorf("unknown keybinding action: %s", actionID)
+		return keybinding.KeymapFile{}, path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	defaultAction, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
 	if !ok {
-		return keymapFile{}, path, fmt.Errorf("unknown keybinding action: %s", action.ID)
+		return keybinding.KeymapFile{}, path, fmt.Errorf("unknown keybinding action: %s", action.ID)
 	}
 	if len(candidate.Strokes) == 0 || len(candidate.Strokes) > 4 {
-		return keymapFile{}, path, fmt.Errorf("binding must contain 1 to 4 strokes")
+		return keybinding.KeymapFile{}, path, fmt.Errorf("binding must contain 1 to 4 strokes")
 	}
-	if action.Kind == keyBindingActionPickerInternal && len(candidate.Strokes) > 1 {
-		return keymapFile{}, path, fmt.Errorf("picker-local actions accept one stroke only")
+	if action.Kind == keybinding.KeyBindingActionPickerInternal && len(candidate.Strokes) > 1 {
+		return keybinding.KeymapFile{}, path, fmt.Errorf("picker-local actions accept one stroke only")
 	}
 
 	var keys []string
-	if action.Tier == keyBindingTierTransportDependent {
+	if action.Tier == keybinding.KeyBindingTierTransportDependent {
 		keys = append(keys, keymapConfiguredAliasChords(current, defaultAction)...)
 	} else {
-		keys = append(keys, keyBindingEffectivePlainChords(action)...)
+		keys = append(keys, keybinding.KeyBindingEffectivePlainChords(action)...)
 	}
-	sequences := append([]string(nil), keyBindingEffectiveSequences(action)...)
+	sequences := append([]string(nil), keybinding.KeyBindingEffectiveSequences(action)...)
 	if replace != "" {
 		old, normalizeErr := normalizeKeybindingAuthoringCandidate(replace)
 		if normalizeErr != nil {
-			return keymapFile{}, path, normalizeErr
+			return keybinding.KeymapFile{}, path, normalizeErr
 		}
 		if len(old.Strokes) == 1 {
 			if !slices.Contains(keys, old.Canonical) {
-				return keymapFile{}, path, fmt.Errorf("key %q is not configured for %s", old.Canonical, action.ID)
+				return keybinding.KeymapFile{}, path, fmt.Errorf("key %q is not configured for %s", old.Canonical, action.ID)
 			}
 			keys = removeString(keys, old.Canonical)
 		} else {
 			if !slices.Contains(sequences, old.Canonical) {
-				return keymapFile{}, path, fmt.Errorf("sequence %q is not configured for %s", old.Canonical, action.ID)
+				return keybinding.KeymapFile{}, path, fmt.Errorf("sequence %q is not configured for %s", old.Canonical, action.ID)
 			}
 			sequences = removeString(sequences, old.Canonical)
 		}
@@ -1393,23 +1394,23 @@ func (c *settingsCommand) keymapWithBindingCandidate(actionID string, candidate 
 	}
 
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]keybinding.KeymapOverride{}
 	}
-	id := keymapBindingKeyForAction(current, defaultAction)
+	id := keybinding.KeymapBindingKeyForAction(current, defaultAction)
 	override := current.Bindings[id]
 	if replace != "" || len(candidate.Strokes) == 1 {
 		override.Plain = nil
 		override.KeysSet = true
-		override.Keys = uniqueNonEmptyStrings(keys)
+		override.Keys = keybinding.UniqueNonEmptyStrings(keys)
 	}
 	if replace != "" || len(candidate.Strokes) > 1 {
 		override.SequencesSet = true
-		override.Sequences = uniqueNonEmptyStrings(sequences)
+		override.Sequences = keybinding.UniqueNonEmptyStrings(sequences)
 	}
-	current.SchemaVersion = keymapSchemaVersion
+	current.SchemaVersion = keybinding.KeymapSchemaVersion
 	current.Bindings[id] = override
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
-		return keymapFile{}, path, err
+	if _, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), current); err != nil {
+		return keybinding.KeymapFile{}, path, err
 	}
 	return current, path, nil
 }
@@ -1430,10 +1431,10 @@ func (c *settingsCommand) saveKeybindingCandidateAndApply(actionID string, candi
 	}
 	current, path, saveErr := c.keymapWithBindingCandidate(actionID, candidate, replace)
 	if saveErr == nil && path == "" {
-		path, saveErr = keymapPath(c.homeDir, c.lookupEnv)
+		path, saveErr = keybinding.KeymapPath(c.homeDir, c.lookupEnv)
 	}
 	if saveErr == nil {
-		saveErr = writeKeymapFile(path, current, c.keymapStore().writeFile)
+		saveErr = keybinding.WriteKeymapFile(path, current, c.keymapStore().WriteFile)
 	}
 	return c.finishKeymapApply(schema, path, saveErr, stdout)
 }
@@ -1504,7 +1505,7 @@ func (c *settingsCommand) runKeybindingSequenceDetail(actionID, sequence string,
 // the partial sequence is cancelled, the cancelling stroke is consumed, and
 // no action is dispatched or replayed.
 func (c *settingsCommand) runKeybindingSequenceDeliveryTest(actionID, sequence string) error {
-	sequence, err := normalizeKeymapSequence(sequence)
+	sequence, err := keybinding.NormalizeKeymapSequence(sequence)
 	if err != nil {
 		return err
 	}
@@ -1538,11 +1539,11 @@ func (c *settingsCommand) runKeybindingSequenceDeliveryTest(actionID, sequence s
 	return nil
 }
 
-func captureProbeKeyForAction(action keyBindingAction) probeKey {
+func captureProbeKeyForAction(action keybinding.KeyBindingAction) probeKey {
 	return probeKey{
 		ActionID: action.ID,
 		Label:    "custom key",
-		Action:   "custom key for " + keyBindingDisplayName(action),
+		Action:   "custom key for " + keybinding.KeyBindingDisplayName(action),
 	}
 }
 
@@ -1631,16 +1632,16 @@ func renderKeybindingDeliveryDiagnostic(res probeResult) []string {
 // exactly one category, and search still crosses categories because each
 // category row carries its members' search text.
 func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
-	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	keymap, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, err
 	}
 	locale := c.locale()
-	entries := make([]intpickercompat.Entry, 0, len(keyBindingCategoryOrder)+1)
+	entries := make([]intpickercompat.Entry, 0, len(keybinding.KeyBindingCategoryOrder)+1)
 	entries = append(entries, c.backEntry())
-	for _, category := range keyBindingCategoryOrder {
+	for _, category := range keybinding.KeyBindingCategoryOrder {
 		nodeID := settingsNavKeybindings + "." + category.ID
-		if category.ID == keyBindingCategoryInput {
+		if category.ID == keybinding.KeyBindingCategoryInput {
 			entries = append(entries, intpickercompat.Entry{
 				Label:     c.nodeRowLabel(nodeID, settingsGlyphOpen, settingsColorType, c.keybindingInputDeliverySummary()),
 				Value:     settingsActionPrefixKeymapCategory + category.ID,
@@ -1660,28 +1661,28 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 
 // keybindingActionsInCategory returns the catalog actions assigned to one
 // category, in catalog order.
-func keybindingActionsInCategory(actions []keyBindingAction, category string) []keyBindingAction {
-	members := make([]keyBindingAction, 0, len(actions))
+func keybindingActionsInCategory(actions []keybinding.KeyBindingAction, category string) []keybinding.KeyBindingAction {
+	members := make([]keybinding.KeyBindingAction, 0, len(actions))
 	for _, action := range actions {
-		if assigned, ok := keyBindingActionCategory(action); ok && assigned == category {
+		if assigned, ok := keybinding.KeyBindingActionCategory(action); ok && assigned == category {
 			members = append(members, action)
 		}
 	}
 	return members
 }
 
-func keybindingCategorySearchText(locale i18n.Locale, keymap keymapFile, members []keyBindingAction) string {
+func keybindingCategorySearchText(locale i18n.Locale, keymap keybinding.KeymapFile, members []keybinding.KeyBindingAction) string {
 	parts := make([]string, 0, len(members)*3)
-	defaults := defaultKeyBindingCatalog()
+	defaults := keybinding.DefaultKeyBindingCatalog()
 	for _, action := range members {
-		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
+		defaultAction, _ := keybinding.KeyBindingActionByID(defaults, action.ID)
 		parts = append(parts,
 			action.ID,
-			keyBindingDisplayName(action),
+			keybinding.KeyBindingDisplayName(action),
 			action.Surface,
 			action.Description,
 			strings.Join(keybindingVisibleChords(action), " "),
-			strings.Join(keyBindingEffectiveSequences(action), " "),
+			strings.Join(keybinding.KeyBindingEffectiveSequences(action), " "),
 			keybindingState(keymap, action, defaultAction),
 			keybindingLocalizedSearchText(locale, action),
 		)
@@ -1707,18 +1708,18 @@ func (c *settingsCommand) keybindingInputDeliverySummary() string {
 // nests one more level by surface, because its actions only make sense
 // alongside the surface that owns them.
 func (c *settingsCommand) keybindingCategoryEntries(category string) ([]intpickercompat.Entry, error) {
-	if category == keyBindingCategoryInput {
+	if category == keybinding.KeyBindingCategoryInput {
 		return c.keybindingInputDeliveryEntries(), nil
 	}
-	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	keymap, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, err
 	}
 	locale := c.locale()
 	members := keybindingActionsInCategory(actions, category)
 	entries := []intpickercompat.Entry{c.backEntry()}
-	if category == keyBindingCategorySurfaces {
-		for _, surface := range keyBindingSurfaceOrder {
+	if category == keybinding.KeyBindingCategorySurfaces {
+		for _, surface := range keybinding.KeyBindingSurfaceOrder {
 			surfaceMembers := keybindingActionsInSurface(members, surface.ID)
 			if len(surfaceMembers) == 0 {
 				continue
@@ -1734,8 +1735,8 @@ func (c *settingsCommand) keybindingCategoryEntries(category string) ([]intpicke
 	return append(entries, c.keybindingActionEntries(keymap, members)...), nil
 }
 
-func keybindingActionsInSurface(actions []keyBindingAction, surface string) []keyBindingAction {
-	members := make([]keyBindingAction, 0, len(actions))
+func keybindingActionsInSurface(actions []keybinding.KeyBindingAction, surface string) []keybinding.KeyBindingAction {
+	members := make([]keybinding.KeyBindingAction, 0, len(actions))
 	for _, action := range actions {
 		if action.Surface == surface {
 			members = append(members, action)
@@ -1745,28 +1746,28 @@ func keybindingActionsInSurface(actions []keyBindingAction, surface string) []ke
 }
 
 func (c *settingsCommand) keybindingSurfaceEntries(surface string) ([]intpickercompat.Entry, error) {
-	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	keymap, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, err
 	}
-	members := keybindingActionsInSurface(keybindingActionsInCategory(actions, keyBindingCategorySurfaces), surface)
+	members := keybindingActionsInSurface(keybindingActionsInCategory(actions, keybinding.KeyBindingCategorySurfaces), surface)
 	return append([]intpickercompat.Entry{c.backEntry()}, c.keybindingActionEntries(keymap, members)...), nil
 }
 
 // keybindingActionEntries renders action rows with their active keys and
 // state. Each row opens the action detail; no row mutates a binding.
-func (c *settingsCommand) keybindingActionEntries(keymap keymapFile, members []keyBindingAction) []intpickercompat.Entry {
-	defaults := defaultKeyBindingCatalog()
+func (c *settingsCommand) keybindingActionEntries(keymap keybinding.KeymapFile, members []keybinding.KeyBindingAction) []intpickercompat.Entry {
+	defaults := keybinding.DefaultKeyBindingCatalog()
 	locale := c.locale()
 	entries := make([]intpickercompat.Entry, 0, len(members))
 	for _, action := range members {
-		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
+		defaultAction, _ := keybinding.KeyBindingActionByID(defaults, action.ID)
 		state := keybindingState(keymap, action, defaultAction)
-		displayName := keyBindingDisplayName(action)
+		displayName := keybinding.KeyBindingDisplayName(action)
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, displayName, keybindingListSummary(action, state)),
 			Value:     settingsActionPrefixKeymap + action.ID,
-			SearchKey: strings.Join([]string{action.ID, displayName, action.Surface, action.Description, strings.Join(keybindingVisibleChords(action), " "), strings.Join(keyBindingEffectiveSequences(action), " "), keybindingLocalizedSearchText(locale, action), keybindingInternalSearchText(action)}, " "),
+			SearchKey: strings.Join([]string{action.ID, displayName, action.Surface, action.Description, strings.Join(keybindingVisibleChords(action), " "), strings.Join(keybinding.KeyBindingEffectiveSequences(action), " "), keybindingLocalizedSearchText(locale, action), keybindingInternalSearchText(action)}, " "),
 		})
 	}
 	return entries
@@ -1775,12 +1776,12 @@ func (c *settingsCommand) keybindingActionEntries(keymap keymapFile, members []k
 // keybindingInternalSearchText keeps semantic and shipped-handler discovery
 // available without turning those maintenance contracts back into visible
 // detail rows.
-func keybindingInternalSearchText(action keyBindingAction) string {
+func keybindingInternalSearchText(action keybinding.KeyBindingAction) string {
 	var parts []string
-	if semantics, ok := keyBindingActionSemanticsFor(action); ok {
+	if semantics, ok := keybinding.KeyBindingActionSemanticsFor(action); ok {
 		parts = append(parts, semantics.TargetKind, semantics.ResultKind, semantics.Placement, semantics.Anchor)
 	}
-	if handler, ok := keyBindingActionHandlerFor(action); ok {
+	if handler, ok := keybinding.KeyBindingActionHandlerFor(action); ok {
 		parts = append(parts, handler.Invocation, handler.Manifest, handler.Disposition, strings.Join(handler.Canonical, " "), handler.Note)
 	}
 	return strings.Join(parts, " ")
@@ -1795,25 +1796,25 @@ func (c *settingsCommand) keybindingInputDeliveryEntries() []intpickercompat.Ent
 	switch {
 	case settingErr != nil:
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.nodeRowLabelDim(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", "global config unreadable - "+settingErr.Error()),
+			Label:     c.nodeRowLabelDim(settingsNavKeybindings+"."+keybinding.KeyBindingCategoryInput+".native-macos", "global config unreadable - "+settingErr.Error()),
 			Value:     settingsNoopValue,
 			SearchKey: "native macOS keybindings Accessibility Option",
 		})
 	case !nativeKeysEnvEnabled(c.lookupEnv):
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", settingsGlyphInactive, settingsColorDim, "off - PROJMUX_NATIVE_KEYS override"),
+			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keybinding.KeyBindingCategoryInput+".native-macos", settingsGlyphInactive, settingsColorDim, "off - PROJMUX_NATIVE_KEYS override"),
 			Value:     settingsNativeKeysToggle,
 			SearchKey: "native macOS keybindings Accessibility Option PROJMUX_NATIVE_KEYS off",
 		})
 	case enabled:
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", settingsGlyphToggle, settingsColorAdd, "on - modified chords only, processed locally"),
+			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keybinding.KeyBindingCategoryInput+".native-macos", settingsGlyphToggle, settingsColorAdd, "on - modified chords only, processed locally"),
 			Value:     settingsNativeKeysToggle,
 			SearchKey: "native macOS keybindings Accessibility Option on",
 		})
 	default:
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", settingsGlyphInactive, settingsColorDim, "off - broker and Accessibility prompt disabled"),
+			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keybinding.KeyBindingCategoryInput+".native-macos", settingsGlyphInactive, settingsColorDim, "off - broker and Accessibility prompt disabled"),
 			Value:     settingsNativeKeysToggle,
 			SearchKey: "native macOS keybindings Accessibility Option off",
 		})
@@ -1822,22 +1823,22 @@ func (c *settingsCommand) keybindingInputDeliveryEntries() []intpickercompat.Ent
 }
 
 func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
-	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	keymap, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, "", err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	defaultAction, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
 	state := keybindingState(keymap, action, defaultAction)
-	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
-	mutable := keyBindingEditable(action) && !protected
+	protectedReason, protected := keybinding.KeyBindingProtectedActionReason(defaultAction)
+	mutable := keybinding.KeyBindingEditable(action) && !protected
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo(keyBindingDisplayName(action), state, ""),
+			Label: c.rowLabelInfo(keybinding.KeyBindingDisplayName(action), state, ""),
 			Value: settingsNoopValue,
 		},
 	}
@@ -1859,10 +1860,10 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "key:" + key,
 		})
 	}
-	sequences := keyBindingEffectiveSequences(action)
+	sequences := keybinding.KeyBindingEffectiveSequences(action)
 	sequenceSummary := keybindingSequencesSummary(sequences)
 	sequenceDetail := ""
-	if action.Kind == keyBindingActionPickerInternal {
+	if action.Kind == keybinding.KeyBindingActionPickerInternal {
 		sequenceSummary = "(not available)"
 		sequenceDetail = "picker-local actions use single keys; add or manage a single key above"
 	}
@@ -1877,7 +1878,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		})
 	}
 	if !mutable {
-		title := "Keybinding - " + keyBindingDisplayName(action)
+		title := "Keybinding - " + keybinding.KeyBindingDisplayName(action)
 		return entries, title, nil
 	}
 	entries = append(entries,
@@ -1902,7 +1903,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "reset",
 		})
 	}
-	title := "Keybinding - " + keyBindingDisplayName(action)
+	title := "Keybinding - " + keybinding.KeyBindingDisplayName(action)
 	return entries, title, nil
 }
 
@@ -1925,23 +1926,23 @@ func keybindingSequenceDraftSummary(strokes []string) string {
 }
 
 func (c *settingsCommand) keybindingSequenceDetailEntries(actionID, sequence string) ([]intpickercompat.Entry, string, error) {
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, "", err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	sequence, err = normalizeKeymapSequence(sequence)
+	sequence, err = keybinding.NormalizeKeymapSequence(sequence)
 	if err != nil {
 		return nil, "", err
 	}
-	if !slices.Contains(keyBindingEffectiveSequences(action), sequence) {
+	if !slices.Contains(keybinding.KeyBindingEffectiveSequences(action), sequence) {
 		return nil, "", fmt.Errorf("sequence %q is not configured for %s", sequence, action.ID)
 	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
-	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
+	defaultAction, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
+	protectedReason, protected := keybinding.KeyBindingProtectedActionReason(defaultAction)
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
@@ -1972,21 +1973,21 @@ func (c *settingsCommand) keybindingSequenceDeliveryDiagnostic(sequence string) 
 }
 
 func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]intpickercompat.Entry, string, error) {
-	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	keymap, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, "", err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	defaultAction, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	displayKey := keybindingChordDisplay(chord)
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingState(keymap, action, defaultAction)),
+			Label: c.rowLabelInfo("Action", keybinding.KeyBindingDisplayName(action), keybindingState(keymap, action, defaultAction)),
 			Value: settingsNoopValue,
 		},
 		{
@@ -1994,7 +1995,7 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 			Value: settingsNoopValue,
 		},
 	}
-	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
+	protectedReason, protected := keybinding.KeyBindingProtectedActionReason(defaultAction)
 	if protected {
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabelDim("Editing locked", keybindingProtectedActionVisibleReason),
@@ -2034,7 +2035,7 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 	return entries, "Key - " + displayKey, nil
 }
 
-func keybindingAliasesSummary(action keyBindingAction) string {
+func keybindingAliasesSummary(action keybinding.KeyBindingAction) string {
 	keys := keybindingVisibleChords(action)
 	if len(keys) == 0 {
 		return "(unbound)"
@@ -2046,13 +2047,13 @@ func keybindingAliasesSummary(action keyBindingAction) string {
 	return strings.Join(labels, ", ")
 }
 
-func keybindingLocalizedSearchText(locale i18n.Locale, action keyBindingAction) string {
+func keybindingLocalizedSearchText(locale i18n.Locale, action keybinding.KeyBindingAction) string {
 	switch action.ID {
 	case "last-pane":
 		return settingsCatalogTextLocale(locale, "previously active pane / last pane")
 	case "Resources:Open":
 		return strings.Join([]string{
-			settingsCatalogTextLocale(locale, keyBindingDisplayName(action)),
+			settingsCatalogTextLocale(locale, keybinding.KeyBindingDisplayName(action)),
 			settingsCatalogTextLocale(locale, action.Description),
 		}, " ")
 	default:
@@ -2099,14 +2100,14 @@ func keybindingReadableChord(chord string) string {
 	return strings.Join(out, "-")
 }
 
-func keybindingVisibleChords(action keyBindingAction) []string {
-	if keys := keyBindingEffectivePlainChords(action); len(keys) != 0 {
+func keybindingVisibleChords(action keybinding.KeyBindingAction) []string {
+	if keys := keybinding.KeyBindingEffectivePlainChords(action); len(keys) != 0 {
 		return keys
 	}
 	if action.PlainChords != nil {
 		return nil
 	}
-	if action.Tier == keyBindingTierTransportDependent {
+	if action.Tier == keybinding.KeyBindingTierTransportDependent {
 		if chord := keybindingTransportChord(action); chord != "" {
 			return []string{chord}
 		}
@@ -2114,9 +2115,9 @@ func keybindingVisibleChords(action keyBindingAction) []string {
 	return nil
 }
 
-func keybindingPlainAliasChords(action keyBindingAction) []string {
-	keys := keyBindingEffectivePlainChords(action)
-	if action.Tier != keyBindingTierTransportDependent {
+func keybindingPlainAliasChords(action keybinding.KeyBindingAction) []string {
+	keys := keybinding.KeyBindingEffectivePlainChords(action)
+	if action.Tier != keybinding.KeyBindingTierTransportDependent {
 		return keys
 	}
 	transportDefault := strings.TrimSpace(keybindingTransportChord(action))
@@ -2127,11 +2128,11 @@ func keybindingPlainAliasChords(action keyBindingAction) []string {
 		}
 		aliases = append(aliases, key)
 	}
-	return uniqueNonEmptyStrings(aliases)
+	return keybinding.UniqueNonEmptyStrings(aliases)
 }
 
-func keybindingTransportChord(action keyBindingAction) string {
-	if chord := firstNonEmptyString(keyBindingEffectivePlainChords(action)); chord != "" {
+func keybindingTransportChord(action keybinding.KeyBindingAction) string {
+	if chord := keybinding.FirstNonEmptyString(keybinding.KeyBindingEffectivePlainChords(action)); chord != "" {
 		return chord
 	}
 	label := strings.TrimSpace(action.ProbeLabel)
@@ -2147,12 +2148,12 @@ func keybindingTransportChord(action keyBindingAction) string {
 	return strings.TrimSpace(probeAction[start+1 : end])
 }
 
-func keybindingState(keymap keymapFile, current, def keyBindingAction) string {
-	if len(keyBindingEffectiveSequences(current)) != 0 {
+func keybindingState(keymap keybinding.KeymapFile, current, def keybinding.KeyBindingAction) string {
+	if len(keybinding.KeyBindingEffectiveSequences(current)) != 0 {
 		return "Custom"
 	}
-	if len(keyBindingEffectivePlainChords(current)) != 0 {
-		if !sameStringSlice(keyBindingEffectivePlainChords(current), keyBindingEffectivePlainChords(def)) {
+	if len(keybinding.KeyBindingEffectivePlainChords(current)) != 0 {
+		if !sameStringSlice(keybinding.KeyBindingEffectivePlainChords(current), keybinding.KeyBindingEffectivePlainChords(def)) {
 			return "Custom"
 		}
 		return "Default"
@@ -2160,13 +2161,13 @@ func keybindingState(keymap keymapFile, current, def keyBindingAction) string {
 	if keymapExplicitlyUnbound(keymap, def) {
 		return "Unbound"
 	}
-	if len(keyBindingEffectivePlainChords(def)) == 0 {
+	if len(keybinding.KeyBindingEffectivePlainChords(def)) == 0 {
 		return "Available"
 	}
 	return "Unbound"
 }
 
-func keymapExplicitlyUnbound(keymap keymapFile, action keyBindingAction) bool {
+func keymapExplicitlyUnbound(keymap keybinding.KeymapFile, action keybinding.KeyBindingAction) bool {
 	override, ok := keymapOverrideForAction(keymap, action)
 	return ok && override.KeysSet && len(override.Keys) == 0
 }
@@ -2183,15 +2184,15 @@ func sameStringSlice(a, b []string) bool {
 	return true
 }
 
-func keybindingListSummary(action keyBindingAction, state string) string {
+func keybindingListSummary(action keybinding.KeyBindingAction, state string) string {
 	return strings.Join([]string{
 		"keys " + keybindingListKeysSummary(action),
 		"state " + state,
-		fmt.Sprintf("sequences %d", len(keyBindingEffectiveSequences(action))),
+		fmt.Sprintf("sequences %d", len(keybinding.KeyBindingEffectiveSequences(action))),
 	}, "  ")
 }
 
-func keybindingListKeysSummary(action keyBindingAction) string {
+func keybindingListKeysSummary(action keybinding.KeyBindingAction) string {
 	keys := keybindingVisibleChords(action)
 	if len(keys) == 0 {
 		return "Not bound"
@@ -2203,8 +2204,8 @@ func keybindingListKeysSummary(action keyBindingAction) string {
 	return summary
 }
 
-func keybindingDefaultKeysSummary(action keyBindingAction) string {
-	keys := keyBindingEffectivePlainChords(action)
+func keybindingDefaultKeysSummary(action keybinding.KeyBindingAction) string {
+	keys := keybinding.KeyBindingEffectivePlainChords(action)
 	if len(keys) == 0 {
 		return "(none)"
 	}
@@ -2215,7 +2216,7 @@ func keybindingDefaultKeysSummary(action keyBindingAction) string {
 	return strings.Join(labels, ", ")
 }
 
-func keybindingResetExplanation(defaultAction keyBindingAction) string {
+func keybindingResetExplanation(defaultAction keybinding.KeyBindingAction) string {
 	keys := keybindingDefaultKeysSummary(defaultAction)
 	if keys == "(none)" {
 		return "remove custom single keys and sequences"
@@ -2223,8 +2224,8 @@ func keybindingResetExplanation(defaultAction keyBindingAction) string {
 	return "restore " + keys + " and remove custom sequences"
 }
 
-func keybindingResetActionLabel(state string, defaultAction keyBindingAction) string {
-	if len(keyBindingEffectivePlainChords(defaultAction)) == 0 {
+func keybindingResetActionLabel(state string, defaultAction keybinding.KeyBindingAction) string {
+	if len(keybinding.KeyBindingEffectivePlainChords(defaultAction)) == 0 {
 		return "Reset"
 	}
 	if state == "Unbound" || state == "Available" {
@@ -2237,12 +2238,12 @@ func keybindingShowResetAction(state string) bool {
 	return state == "Custom" || state == "Unbound"
 }
 
-func removableKeybindingKeys(keymap keymapFile, action, defaultAction keyBindingAction) []string {
+func removableKeybindingKeys(keymap keybinding.KeymapFile, action, defaultAction keybinding.KeyBindingAction) []string {
 	keys := keybindingVisibleChords(action)
 	if len(keys) == 0 {
 		return nil
 	}
-	if action.Tier != keyBindingTierTransportDependent {
+	if action.Tier != keybinding.KeyBindingTierTransportDependent {
 		return keys
 	}
 	aliases := keymapConfiguredAliasChords(keymap, defaultAction)
@@ -2263,10 +2264,10 @@ func removeString(items []string, target string) []string {
 	return out
 }
 
-func (c *settingsCommand) keymapStore() keymapStore {
-	return keymapStore{
-		homeDir:   c.homeDir,
-		lookupEnv: c.lookupEnv,
+func (c *settingsCommand) keymapStore() keybinding.KeymapStore {
+	return keybinding.KeymapStore{
+		HomeDir:   c.homeDir,
+		LookupEnv: c.lookupEnv,
 	}
 }
 
@@ -2275,7 +2276,7 @@ func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string,
 		return err
 	}
 	for _, key := range keys {
-		if err := validateKeymapAuthoringChord(key); err != nil {
+		if err := keybinding.ValidateKeymapAuthoringChord(key); err != nil {
 			return err
 		}
 	}
@@ -2283,7 +2284,7 @@ func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string,
 	if err != nil {
 		return err
 	}
-	path, saveErr := saveKeymapKeys(c.keymapStore(), actionID, keys)
+	path, saveErr := keybinding.SaveKeymapKeys(c.keymapStore(), actionID, keys)
 	return c.finishKeymapApply(schema, path, saveErr, stdout)
 }
 
@@ -2292,7 +2293,7 @@ func (c *settingsCommand) saveKeymapSequencesAndApply(actionID string, sequences
 		return err
 	}
 	for _, sequence := range sequences {
-		if err := validateKeymapAuthoringSequence(sequence); err != nil {
+		if err := keybinding.ValidateKeymapAuthoringSequence(sequence); err != nil {
 			return err
 		}
 	}
@@ -2300,7 +2301,7 @@ func (c *settingsCommand) saveKeymapSequencesAndApply(actionID string, sequences
 	if err != nil {
 		return err
 	}
-	path, saveErr := saveKeymapSequences(c.keymapStore(), actionID, sequences)
+	path, saveErr := keybinding.SaveKeymapSequences(c.keymapStore(), actionID, sequences)
 	return c.finishKeymapApply(schema, path, saveErr, stdout)
 }
 
@@ -2312,7 +2313,7 @@ func (c *settingsCommand) resetKeymapSequencesAndApply(actionID string, stdout i
 	if err != nil {
 		return err
 	}
-	path, resetErr := resetKeymapSequences(c.keymapStore(), actionID)
+	path, resetErr := keybinding.ResetKeymapSequences(c.keymapStore(), actionID)
 	return c.finishKeymapApply(schema, path, resetErr, stdout)
 }
 
@@ -2324,7 +2325,7 @@ func (c *settingsCommand) resetKeymapBindingAndApply(actionID string, stdout io.
 	if err != nil {
 		return err
 	}
-	path, resetErr := resetKeymapBinding(c.keymapStore(), actionID)
+	path, resetErr := keybinding.ResetKeymapBinding(c.keymapStore(), actionID)
 	return c.finishKeymapApply(schema, path, resetErr, stdout)
 }
 
@@ -2332,28 +2333,28 @@ func (c *settingsCommand) validateKeymapSequenceForAction(actionID, sequence, re
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	if err := validateKeymapAuthoringSequence(sequence); err != nil {
+	if err := keybinding.ValidateKeymapAuthoringSequence(sequence); err != nil {
 		return err
 	}
-	sequence, err := normalizeKeymapSequence(sequence)
+	sequence, err := keybinding.NormalizeKeymapSequence(sequence)
 	if err != nil {
 		return err
 	}
-	current, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	current, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	defaultAction, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", action.ID)
 	}
-	sequences := append([]string(nil), keyBindingEffectiveSequences(action)...)
+	sequences := append([]string(nil), keybinding.KeyBindingEffectiveSequences(action)...)
 	if replace != "" {
-		replace, err = normalizeKeymapSequence(replace)
+		replace, err = keybinding.NormalizeKeymapSequence(replace)
 		if err != nil {
 			return err
 		}
@@ -2361,14 +2362,14 @@ func (c *settingsCommand) validateKeymapSequenceForAction(actionID, sequence, re
 	}
 	sequences = append(sequences, sequence)
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]keybinding.KeymapOverride{}
 	}
-	id := keymapBindingKeyForAction(current, defaultAction)
+	id := keybinding.KeymapBindingKeyForAction(current, defaultAction)
 	override := current.Bindings[id]
 	override.SequencesSet = true
 	override.Sequences = sequences
 	current.Bindings[id] = override
-	_, err = mergeKeymapOverrides(defaultKeyBindingCatalog(), current)
+	_, err = keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), current)
 	return err
 }
 
@@ -2379,15 +2380,15 @@ func (c *settingsCommand) addKeymapSequenceAndApply(actionID, sequence string, s
 	if err := c.validateKeymapSequenceForAction(actionID, sequence, ""); err != nil {
 		return err
 	}
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	sequences := append([]string(nil), keyBindingEffectiveSequences(action)...)
+	sequences := append([]string(nil), keybinding.KeyBindingEffectiveSequences(action)...)
 	sequences = append(sequences, sequence)
 	return c.saveKeymapSequencesAndApply(action.ID, sequences, stdout)
 }
@@ -2396,19 +2397,19 @@ func (c *settingsCommand) removeKeymapSequenceAndApply(actionID, sequence string
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	sequence, err := normalizeKeymapSequence(sequence)
+	sequence, err := keybinding.NormalizeKeymapSequence(sequence)
 	if err != nil {
 		return err
 	}
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	_, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	sequences := keyBindingEffectiveSequences(action)
+	sequences := keybinding.KeyBindingEffectiveSequences(action)
 	if !slices.Contains(sequences, sequence) {
 		return fmt.Errorf("sequence %q is not configured for %s", sequence, action.ID)
 	}
@@ -2427,7 +2428,7 @@ func (c *settingsCommand) resetKeymapKeysAndApply(actionID string, stdout io.Wri
 	if err != nil {
 		return err
 	}
-	path, resetErr := resetKeymapKeys(c.keymapStore(), actionID)
+	path, resetErr := keybinding.ResetKeymapKeys(c.keymapStore(), actionID)
 	return c.finishKeymapApply(schema, path, resetErr, stdout)
 }
 
@@ -2451,11 +2452,11 @@ func (c *settingsCommand) resetKeymapKeysAndApply(actionID string, stdout io.Wri
 // whose shape is no longer known.
 func (c *settingsCommand) migrateKeymapBeforeSave(stdout io.Writer) (keymapApplyStage, error) {
 	store := c.keymapStore()
-	plan, err := planKeymapMigration(store)
+	plan, err := keybinding.PlanKeymapMigration(store)
 	if err != nil {
 		return keymapApplyStage{Status: keymapApplySkipped, Detail: "keymap could not be read"}, nil
 	}
-	result, err := applyKeymapMigration(store, plan)
+	result, err := keybinding.ApplyKeymapMigration(store, plan)
 	if err != nil {
 		report := keymapApplyReport{
 			Migrated: keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("keymap schema", err)},
@@ -2473,11 +2474,11 @@ func (c *settingsCommand) migrateKeymapBeforeSave(stdout io.Writer) (keymapApply
 //
 // An already-current file reports ok without claiming a migration happened;
 // only a run that actually rewrote bytes names the backup it left behind.
-func keymapSchemaStage(result keymapMigrationResult) keymapApplyStage {
-	detail := fmt.Sprintf("schema_version %d", keymapSchemaVersion)
+func keymapSchemaStage(result keybinding.KeymapMigrationResult) keymapApplyStage {
+	detail := fmt.Sprintf("schema_version %d", keybinding.KeymapSchemaVersion)
 	if result.Migrated {
 		detail = fmt.Sprintf("migrated schema_version %d -> %d, backup: %s",
-			result.Plan.FromVersion, keymapSchemaVersion, result.BackupPath)
+			result.Plan.FromVersion, keybinding.KeymapSchemaVersion, result.BackupPath)
 	}
 	return keymapApplyStage{Status: keymapApplyOK, Detail: detail}
 }
@@ -2486,27 +2487,27 @@ func (c *settingsCommand) removeKeymapKeyAndApply(actionID, chord string, stdout
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	chord, err := normalizeKeymapTypedChord(chord)
+	chord, err := keybinding.NormalizeKeymapTypedChord(chord)
 	if err != nil {
 		return err
 	}
-	current, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	current, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
-	if action.Tier == keyBindingTierTransportDependent {
+	defaultAction, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
+	if action.Tier == keybinding.KeyBindingTierTransportDependent {
 		keys := removeString(keymapConfiguredAliasChords(current, defaultAction), chord)
 		if len(keys) == 0 {
 			return c.resetKeymapKeysAndApply(action.ID, stdout)
 		}
 		return c.saveKeymapKeysAndApply(action.ID, keys, stdout)
 	}
-	keys := removeString(keyBindingEffectivePlainChords(action), chord)
+	keys := removeString(keybinding.KeyBindingEffectivePlainChords(action), chord)
 	return c.saveKeymapKeysAndApply(action.ID, keys, stdout)
 }
 
@@ -2514,20 +2515,20 @@ func (c *settingsCommand) addKeymapAliasAndApply(actionID, chord string, stdout 
 	if err := protectKeybindingActionMutation(actionID); err != nil {
 		return err
 	}
-	chord, err := normalizeKeymapAuthoringChord(chord)
+	chord, err := keybinding.NormalizeKeymapAuthoringChord(chord)
 	if err != nil {
 		return err
 	}
-	current, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	current, actions, _, _, err := keybinding.LoadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
 	}
-	action, ok := keyBindingActionByID(actions, actionID)
+	action, ok := keybinding.KeyBindingActionByID(actions, actionID)
 	if !ok {
 		return fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	if action.Tier == keyBindingTierTransportDependent {
-		defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if action.Tier == keybinding.KeyBindingTierTransportDependent {
+		defaultAction, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), actionID)
 		if !ok {
 			return fmt.Errorf("unknown keybinding action: %s", actionID)
 		}
@@ -2536,20 +2537,20 @@ func (c *settingsCommand) addKeymapAliasAndApply(actionID, chord string, stdout 
 		}
 		keys := append([]string{}, keymapConfiguredAliasChords(current, defaultAction)...)
 		keys = append(keys, chord)
-		return c.saveKeymapKeysAndApply(action.ID, uniqueNonEmptyStrings(keys), stdout)
+		return c.saveKeymapKeysAndApply(action.ID, keybinding.UniqueNonEmptyStrings(keys), stdout)
 	}
-	keys := append([]string{}, keyBindingEffectivePlainChords(action)...)
+	keys := append([]string{}, keybinding.KeyBindingEffectivePlainChords(action)...)
 	keys = append(keys, chord)
-	return c.saveKeymapKeysAndApply(action.ID, uniqueNonEmptyStrings(keys), stdout)
+	return c.saveKeymapKeysAndApply(action.ID, keybinding.UniqueNonEmptyStrings(keys), stdout)
 }
 
-func keymapConfiguredAliasChords(keymap keymapFile, action keyBindingAction) []string {
+func keymapConfiguredAliasChords(keymap keybinding.KeymapFile, action keybinding.KeyBindingAction) []string {
 	override, ok := keymapOverrideForAction(keymap, action)
 	if !ok {
 		return nil
 	}
 	if override.KeysSet {
-		return keybindingPlainAliasChords(keyBindingAction{
+		return keybindingPlainAliasChords(keybinding.KeyBindingAction{
 			ID:          action.ID,
 			Tier:        action.Tier,
 			PlainChord:  action.PlainChord,
@@ -2557,7 +2558,7 @@ func keymapConfiguredAliasChords(keymap keymapFile, action keyBindingAction) []s
 		})
 	}
 	if override.Plain != nil {
-		return keybindingPlainAliasChords(keyBindingAction{
+		return keybindingPlainAliasChords(keybinding.KeyBindingAction{
 			ID:          action.ID,
 			Tier:        action.Tier,
 			PlainChord:  action.PlainChord,
@@ -2567,13 +2568,13 @@ func keymapConfiguredAliasChords(keymap keymapFile, action keyBindingAction) []s
 	return nil
 }
 
-func keymapOverrideForAction(keymap keymapFile, action keyBindingAction) (keymapOverride, bool) {
-	for _, id := range keyBindingActionAliases(action) {
+func keymapOverrideForAction(keymap keybinding.KeymapFile, action keybinding.KeyBindingAction) (keybinding.KeymapOverride, bool) {
+	for _, id := range keybinding.KeyBindingActionAliases(action) {
 		if override, ok := keymap.Bindings[id]; ok {
 			return override, true
 		}
 	}
-	return keymapOverride{}, false
+	return keybinding.KeymapOverride{}, false
 }
 
 func (c *settingsCommand) finishKeymapApply(schema keymapApplyStage, path string, err error, stdout io.Writer) error {

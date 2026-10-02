@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
@@ -416,11 +417,11 @@ func TestStatusbarClickResourcesUsesCanonicalClientScopedPopup(t *testing.T) {
 	if !sawProjmuxArgs(runner.calls, want) {
 		t.Fatalf("calls = %#v, want exact canonical args %#v", runner.calls, want)
 	}
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "Resources:Open")
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "Resources:Open")
 	if !ok || action.TmuxBody != resourceInspectorPopupMode || action.PlainChord != "" || len(action.PlainChords) != 0 {
 		t.Fatalf("Resources:Open = %#v, want same canonical mode and no default shortcut", action)
 	}
-	if got := renderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} resource-inspector\"" {
+	if got := keybinding.RenderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} resource-inspector\"" {
 		t.Fatalf("action body = %q, want byte-equivalent canonical popup path", got)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -1807,14 +1808,14 @@ func TestTmuxConfigWithFallbackEffectiveThemeMatchesDefaultOutput(t *testing.T) 
 	t.Parallel()
 
 	effective := theme.ResolveTheme(theme.ThemeConfig{})
-	got := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
-	want := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	got := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false, effective)
+	want := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false)
 	if got != want {
 		t.Fatalf("fallback themed standalone config changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 
-	gotApp := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
-	wantApp := tmuxAppConfigWithKeymap("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	gotApp := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false, effective)
+	wantApp := tmuxAppConfigWithKeymap("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false)
 	if gotApp != wantApp {
 		t.Fatalf("fallback themed app config changed\n--- got ---\n%s\n--- want ---\n%s", gotApp, wantApp)
 	}
@@ -1831,7 +1832,7 @@ func TestTmuxConfigThemeUsesGlobal256ColorBackgroundWithoutFallbackLeak(t *testi
 	effective := theme.ResolveTheme(globalCfg)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
 
-	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false, effective)
 	for _, want := range []string{
 		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
 		"#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
@@ -1854,7 +1855,7 @@ func TestTmuxConfigExplicitBackgroundRepaintsWindowStyleNotStatus(t *testing.T) 
 	roles := theme.RenderRolesFromEffective(effective)
 	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
 
-	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false, effective)
 
 	// Pane body repaints: window-style carries the background-derived color,
 	// not the historical "bg=default".
@@ -1883,7 +1884,7 @@ func TestTmuxConfigExplicitStatusBackgroundRepaintsStatusNotWindowStyle(t *testi
 	roles := theme.RenderRolesFromEffective(effective)
 	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
 
-	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false, effective)
 
 	// Status repaints: status-style follows status_background, not the fallback.
 	if roles.StatusBg == fallbackRoles.StatusBg {
@@ -2102,7 +2103,7 @@ func TestTmuxPrintConfigCanonicalPaneRenameWritesOnlyLabelBinding(t *testing.T) 
 		}
 	}
 	for _, forbidden := range []string{
-		retiredPaneRenameActionID,
+		keybinding.RetiredPaneRenameActionID,
 		aiPaneTopicOption,
 		aiPaneTopicManualOption,
 		"select-pane -T",
@@ -2729,7 +2730,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set -g window-status-separator \" \"",
 		"set -g allow-rename off",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format " + tmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
+		"set -g automatic-rename-format " + keybinding.TmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
 		"set -g pane-border-style \"fg=colour236\"",
@@ -2927,11 +2928,11 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 		t.Fatalf("styled visible label format = %q, want literal bracket escapes to survive tmux config parsing", styledVisibleLabel)
 	}
 
-	wantPaneBorderLine := "set -g pane-border-format " + tmuxConfigQuote(paneBorder)
+	wantPaneBorderLine := "set -g pane-border-format " + keybinding.TmuxConfigQuote(paneBorder)
 	if !strings.Contains(configText, wantPaneBorderLine+"\n") {
 		t.Fatalf("app config = %q, want pane border to use exact shared visible label line %q", configText, wantPaneBorderLine)
 	}
-	wantAutomaticRenameLine := "set -g automatic-rename-format " + tmuxConfigQuote(visibleLabel)
+	wantAutomaticRenameLine := "set -g automatic-rename-format " + keybinding.TmuxConfigQuote(visibleLabel)
 	if !strings.Contains(configText, wantAutomaticRenameLine+"\n") {
 		t.Fatalf("app config = %q, want automatic rename to use exact visible label helper line %q", configText, wantAutomaticRenameLine)
 	}
@@ -2973,7 +2974,7 @@ func TestTmuxAppShellTitlePolicyDisablesProgramWindowRename(t *testing.T) {
 	for _, want := range []string{
 		"set -g allow-rename off",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format " + tmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
+		"set -g automatic-rename-format " + keybinding.TmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
 	} {
 		if !strings.Contains(configText, want) {
 			t.Fatalf("app config = %q, want shell title policy line %q", configText, want)

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -128,14 +129,14 @@ func buildHookTrustPopupArgs(binaryPath, requestPath, decisionPath string, targe
 		return nil, errors.New("hook trust popup decision path is required")
 	}
 	command := strings.Join([]string{
-		tmuxShellQuote(binaryPath),
+		keybinding.TmuxShellQuote(binaryPath),
 		"internal",
 		"tmux",
 		"hook-trust-prompt",
 		"--request",
-		tmuxShellQuote(requestPath),
+		keybinding.TmuxShellQuote(requestPath),
 		"--decision",
-		tmuxShellQuote(decisionPath),
+		keybinding.TmuxShellQuote(decisionPath),
 	}, " ")
 	return inttmux.BuildDisplayPopupArgs(command, inttmux.PopupOptions{
 		Client:        strings.TrimSpace(target.client),

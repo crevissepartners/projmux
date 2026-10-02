@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
@@ -278,7 +279,7 @@ func TestSwitchVerbCallerArgvParsesUnderItsRoute(t *testing.T) {
 	}
 	substitute("sidebar-focus", build(inttmux.BuildSwitchSidebarFocusCommand(bin)), "/abs/path", switchSettingsSentinel, "")
 
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		body, ok := strings.CutPrefix(action.TmuxBody, "switch ")
 		if !ok {
 			continue

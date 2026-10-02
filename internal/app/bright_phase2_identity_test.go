@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -116,8 +117,8 @@ func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 		}
 		source := newRenderThemeSource(theme.ResolveTheme(cfg))
 		outputs := map[string]string{
-			"standalone": source.tmuxStandaloneConfig("/usr/bin/projmux", decorations, defaultKeyBindingCatalog(), false),
-			"app":        source.tmuxAppConfig("/usr/bin/projmux", "/bin/zsh", decorations, defaultKeyBindingCatalog(), false),
+			"standalone": source.tmuxStandaloneConfig("/usr/bin/projmux", decorations, keybinding.DefaultKeyBindingCatalog(), false),
+			"app":        source.tmuxAppConfig("/usr/bin/projmux", "/bin/zsh", decorations, keybinding.DefaultKeyBindingCatalog(), false),
 		}
 		for kind, body := range outputs {
 			sum := sha256.Sum256([]byte(body))

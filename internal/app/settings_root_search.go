@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -343,10 +344,10 @@ func settingsRootResultInstances(nodeID string, locale i18n.Locale, enclosing []
 		}
 		return out, true
 
-	case settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface":
-		members := keybindingActionsInCategory(defaultKeyBindingCatalog(), keyBindingCategorySurfaces)
+	case settingsNavKeybindings + "." + keybinding.KeyBindingCategorySurfaces + ".surface":
+		members := keybindingActionsInCategory(keybinding.DefaultKeyBindingCatalog(), keybinding.KeyBindingCategorySurfaces)
 		var out []settingsRootResultInstance
-		for _, surface := range keyBindingSurfaceOrder {
+		for _, surface := range keybinding.KeyBindingSurfaceOrder {
 			// A surface with no catalogued member renders no row, exactly as
 			// keybindingCategoryEntries skips it.
 			if len(keybindingActionsInSurface(members, surface.ID)) == 0 {
@@ -359,13 +360,13 @@ func settingsRootResultInstances(nodeID string, locale i18n.Locale, enclosing []
 		}
 		return out, true
 
-	case settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface.action":
-		members := keybindingActionsInCategory(defaultKeyBindingCatalog(), keyBindingCategorySurfaces)
+	case settingsNavKeybindings + "." + keybinding.KeyBindingCategorySurfaces + ".surface.action":
+		members := keybindingActionsInCategory(keybinding.DefaultKeyBindingCatalog(), keybinding.KeyBindingCategorySurfaces)
 		return settingsRootResultActionInstances(locale, keybindingActionsInSurface(members, settingsRootResultNearestKey(enclosing))), true
 	}
 
 	if category, ok := settingsRootResultKeybindingCategory(nodeID); ok {
-		return settingsRootResultActionInstances(locale, keybindingActionsInCategory(defaultKeyBindingCatalog(), category)), true
+		return settingsRootResultActionInstances(locale, keybindingActionsInCategory(keybinding.DefaultKeyBindingCatalog(), category)), true
 	}
 	return nil, false
 }
@@ -388,12 +389,12 @@ func settingsRootResultKeybindingCategory(nodeID string) (string, bool) {
 	return category, true
 }
 
-func settingsRootResultActionInstances(locale i18n.Locale, actions []keyBindingAction) []settingsRootResultInstance {
+func settingsRootResultActionInstances(locale i18n.Locale, actions []keybinding.KeyBindingAction) []settingsRootResultInstance {
 	out := make([]settingsRootResultInstance, 0, len(actions))
 	for _, action := range actions {
 		out = append(out, settingsRootResultInstance{
 			Key:   action.ID,
-			Label: settingsCatalogTextLocale(locale, keyBindingDisplayName(action)),
+			Label: settingsCatalogTextLocale(locale, keybinding.KeyBindingDisplayName(action)),
 		})
 	}
 	return out
@@ -593,9 +594,9 @@ func settingsRootResultRowValue(node settingsNavNode, instances []settingsRootRe
 
 	// Keybindings ----------------------------------------------------------
 	switch node.ID {
-	case settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface":
+	case settingsNavKeybindings + "." + keybinding.KeyBindingCategorySurfaces + ".surface":
 		return settingsActionPrefixKeymapSurface + key, true
-	case settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface.action":
+	case settingsNavKeybindings + "." + keybinding.KeyBindingCategorySurfaces + ".surface.action":
 		return settingsActionPrefixKeymap + key, true
 	}
 	// Every other per-category `<action detail>` template is one row in its

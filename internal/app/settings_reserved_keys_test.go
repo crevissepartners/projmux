@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -29,21 +30,21 @@ func TestReservedKeymapAuthoringPolicyAliasesAndModifiers(t *testing.T) {
 	for chord, wantBase := range cases {
 		t.Run(chord, func(t *testing.T) {
 			t.Parallel()
-			base, reserved := reservedKeymapAuthoringBase(chord)
+			base, reserved := keybinding.ReservedKeymapAuthoringBase(chord)
 			if !reserved || base != wantBase {
 				t.Fatalf("reservedKeymapAuthoringBase(%q) = (%q, %v), want (%q, true)", chord, base, reserved, wantBase)
 			}
-			if err := validateKeymapAuthoringChord(chord); err == nil || err.Error() != keymapReservedAuthoringReason {
-				t.Fatalf("validateKeymapAuthoringChord(%q) error = %v, want shared reason %q", chord, err, keymapReservedAuthoringReason)
+			if err := keybinding.ValidateKeymapAuthoringChord(chord); err == nil || err.Error() != keybinding.KeymapReservedAuthoringReason {
+				t.Fatalf("validateKeymapAuthoringChord(%q) error = %v, want shared reason %q", chord, err, keybinding.KeymapReservedAuthoringReason)
 			}
 		})
 	}
 
 	for _, chord := range []string{"o", "Space", "C-o", "M-7", "F1", "F20", "C-Space"} {
-		if base, reserved := reservedKeymapAuthoringBase(chord); reserved || base != "" {
+		if base, reserved := keybinding.ReservedKeymapAuthoringBase(chord); reserved || base != "" {
 			t.Fatalf("reservedKeymapAuthoringBase(%q) = (%q, %v), want non-reserved", chord, base, reserved)
 		}
-		if err := validateKeymapAuthoringChord(chord); err != nil {
+		if err := keybinding.ValidateKeymapAuthoringChord(chord); err != nil {
 			t.Fatalf("validateKeymapAuthoringChord(%q) error = %v", chord, err)
 		}
 	}
@@ -53,23 +54,23 @@ func TestReservedKeymapAuthoringPreservesSequenceSafetyParity(t *testing.T) {
 	t.Parallel()
 
 	for _, sequence := range []string{"C-o o", "C-o F12", "M-x !"} {
-		if err := validateKeymapAuthoringSequence(sequence); err != nil {
+		if err := keybinding.ValidateKeymapAuthoringSequence(sequence); err != nil {
 			t.Fatalf("authoring policy rejected positive sequence %q: %v", sequence, err)
 		}
-		if got, err := normalizeKeymapSequence(sequence); err != nil || got != sequence {
+		if got, err := keybinding.NormalizeKeymapSequence(sequence); err != nil || got != sequence {
 			t.Fatalf("normalizeKeymapSequence(%q) = %q, %v", sequence, got, err)
 		}
 	}
 	for _, sequence := range []string{"o C-p", `C-o \\x1b`, "C-o User4"} {
-		if err := validateKeymapAuthoringSequence(sequence); err != nil {
+		if err := keybinding.ValidateKeymapAuthoringSequence(sequence); err != nil {
 			t.Fatalf("authoring reserved policy changed non-reserved rejection for %q: %v", sequence, err)
 		}
-		if _, err := normalizeKeymapSequence(sequence); err == nil {
+		if _, err := keybinding.NormalizeKeymapSequence(sequence); err == nil {
 			t.Fatalf("normalizeKeymapSequence(%q) = nil error, want existing safety rejection", sequence)
 		}
 	}
 	for _, sequence := range []string{"C-o Return", "C-o M-Left", "C-o PgDn"} {
-		if err := validateKeymapAuthoringSequence(sequence); err == nil || err.Error() != keymapReservedAuthoringReason {
+		if err := keybinding.ValidateKeymapAuthoringSequence(sequence); err == nil || err.Error() != keybinding.KeymapReservedAuthoringReason {
 			t.Fatalf("validateKeymapAuthoringSequence(%q) error = %v, want shared reserved reason", sequence, err)
 		}
 	}
@@ -78,18 +79,18 @@ func TestReservedKeymapAuthoringPreservesSequenceSafetyParity(t *testing.T) {
 func TestProtectedKeybindingPolicyInspectsEveryShippedTriggerField(t *testing.T) {
 	t.Parallel()
 
-	tests := []keyBindingAction{
+	tests := []keybinding.KeyBindingAction{
 		{PlainChord: "Return"},
 		{PlainChords: []string{"C-o", "M-DC"}},
 		{PrefixChord: "PPage"},
 		{Sequences: []string{"C-k C-p", "M-x S-Home"}},
 	}
 	for i, action := range tests {
-		if reason, protected := keyBindingProtectedActionReason(action); !protected || !strings.Contains(reason, "shipped/default trigger") {
+		if reason, protected := keybinding.KeyBindingProtectedActionReason(action); !protected || !strings.Contains(reason, "shipped/default trigger") {
 			t.Fatalf("synthetic trigger field %d reason = %q, protected=%v", i, reason, protected)
 		}
 	}
-	if reason, protected := keyBindingProtectedActionReason(keyBindingAction{
+	if reason, protected := keybinding.KeyBindingProtectedActionReason(keybinding.KeyBindingAction{
 		PlainChord: "M-1", PlainChords: []string{"C-o"}, PrefixChord: "F", Sequences: []string{"C-k C-p"},
 	}); protected || reason != "" {
 		t.Fatalf("safe synthetic action reason = %q, protected=%v", reason, protected)
@@ -116,8 +117,8 @@ func TestDefaultCatalogProtectedActionInventoryAndMutationRows(t *testing.T) {
 	}
 	cmd := keybindingCorrectnessCommand(t, t.TempDir(), nil)
 	var gotProtected []string
-	for _, action := range defaultKeyBindingCatalog() {
-		reason, protected := keyBindingProtectedActionReason(action)
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
+		reason, protected := keybinding.KeyBindingProtectedActionReason(action)
 		if !protected {
 			continue
 		}
@@ -251,7 +252,7 @@ func TestReservedCaptureTypedAndFinalSaveRejectBeforeMutation(t *testing.T) {
 			if err := tc.run(cmd, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("route error = %v", err)
 			}
-			if cmd.feedback == nil || cmd.feedback.Detail != keymapReservedAuthoringReason {
+			if cmd.feedback == nil || cmd.feedback.Detail != keybinding.KeymapReservedAuthoringReason {
 				t.Fatalf("feedback = %#v, want shared reason", cmd.feedback)
 			}
 			if after := settingsNavConfigSnapshot(t, home); after != before || len(tmuxCalls) != 0 {
@@ -282,7 +283,7 @@ keys = ["M-1"]
 			var calls int
 			cmd.runCommand = func(string, ...string) error { calls++; return nil }
 			err := tc.run(cmd)
-			if err == nil || err.Error() != keymapReservedAuthoringReason {
+			if err == nil || err.Error() != keybinding.KeymapReservedAuthoringReason {
 				t.Fatalf("final save error = %v, want shared reserved reason", err)
 			}
 			after, _ := os.ReadFile(path)
@@ -390,27 +391,27 @@ func TestExistingReservedKeymapStillParsesRendersAndCompiles(t *testing.T) {
 keys = ["Enter", "M-Home", "PPage"]
 sequences = ["C-k Enter", "C-p M-Right"]
 `
-	parsed, err := parseKeymapFile("/tmp/keymap.toml", body)
+	parsed, err := keybinding.ParseKeymapFile("/tmp/keymap.toml", body)
 	if err != nil {
 		t.Fatalf("parse existing reserved config: %v", err)
 	}
-	rendered := renderKeymapFile(parsed)
-	reparsed, err := parseKeymapFile("/tmp/keymap.toml", rendered)
-	if err != nil || renderKeymapFile(reparsed) != rendered {
+	rendered := keybinding.RenderKeymapFile(parsed)
+	reparsed, err := keybinding.ParseKeymapFile("/tmp/keymap.toml", rendered)
+	if err != nil || keybinding.RenderKeymapFile(reparsed) != rendered {
 		t.Fatalf("reserved config render parity failed: err=%v rendered=%q", err, rendered)
 	}
-	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	merged, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), parsed)
 	if err != nil {
 		t.Fatalf("merge existing reserved config: %v", err)
 	}
-	action, ok := keyBindingActionByID(merged, "ProjectSidebarToggle")
+	action, ok := keybinding.KeyBindingActionByID(merged, "ProjectSidebarToggle")
 	if !ok {
 		t.Fatal("merged catalog missing ProjectSidebarToggle")
 	}
-	if got := keyBindingEffectivePlainChords(action); !slices.Equal(got, []string{"Enter", "M-Home", "PPage"}) {
+	if got := keybinding.KeyBindingEffectivePlainChords(action); !slices.Equal(got, []string{"Enter", "M-Home", "PPage"}) {
 		t.Fatalf("effective reserved keys = %#v", got)
 	}
-	lines := strings.Join(tmuxBindLines("/bin/projmux", keyBindingCatalogForScopeFrom(merged, keyBindingScopeStandalone)), "\n")
+	lines := strings.Join(keybinding.TmuxBindLines("/bin/projmux", keybinding.KeyBindingCatalogForScopeFrom(merged, keybinding.KeyBindingScopeStandalone)), "\n")
 	for _, want := range []string{"bind-key Enter", "bind-key -n M-Home", "bind-key PPage"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("runtime binds missing %q:\n%s", want, lines)
@@ -436,8 +437,8 @@ func TestReservedRecorderPolicyUsesSharedReasonForEveryInputShape(t *testing.T) 
 		{Name: "enter"}, {Name: "ctrl-enter"}, {Name: "alt-shift-left"},
 		{Name: "page-up"}, {Name: "backspace"}, {Name: "delete"},
 	} {
-		if _, err := normalizeKeybindingRecorderKey(key); err == nil || err.Error() != keymapReservedAuthoringReason {
-			t.Fatalf("normalizeKeybindingRecorderKey(%#v) error = %v, want %q", key, err, keymapReservedAuthoringReason)
+		if _, err := normalizeKeybindingRecorderKey(key); err == nil || err.Error() != keybinding.KeymapReservedAuthoringReason {
+			t.Fatalf("normalizeKeybindingRecorderKey(%#v) error = %v, want %q", key, err, keybinding.KeymapReservedAuthoringReason)
 		}
 	}
 	if got, err := normalizeKeybindingSequenceStroke("o", 1, true); err != nil || got != "o" {

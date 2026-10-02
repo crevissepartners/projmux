@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -744,7 +745,7 @@ func parseRenameIntentArgs(route string, args []string, stderr io.Writer) (renam
 	fs.SetOutput(stderr)
 	client := fs.String("client", "", "exact tmux client that receives the action result")
 	anchor := fs.String("anchor", "", "exact anchor Pane")
-	fromStdin := fs.Bool(strings.TrimPrefix(generatedRenameStdinFlag, "--"), false, "read the raw prompt response from stdin")
+	fromStdin := fs.Bool(strings.TrimPrefix(keybinding.GeneratedRenameStdinFlag, "--"), false, "read the raw prompt response from stdin")
 	if err := fs.Parse(args); err != nil {
 		return renameIntentArgs{}, flagParseReported(err)
 	}
@@ -758,7 +759,7 @@ func parseRenameIntentArgs(route string, args []string, stderr io.Writer) (renam
 		wantArgs = 0
 	}
 	if parsed.client == "" || parsed.anchor == "" || fs.NArg() != wantArgs {
-		return renameIntentArgs{}, fmt.Errorf("tmux %s requires --client <key> --anchor <%%pane> and either %s or -- <name>", route, generatedRenameStdinFlag)
+		return renameIntentArgs{}, fmt.Errorf("tmux %s requires --client <key> --anchor <%%pane> and either %s or -- <name>", route, keybinding.GeneratedRenameStdinFlag)
 	}
 	if !parsed.fromStdin {
 		parsed.positional = fs.Arg(0)
@@ -786,7 +787,7 @@ func (a renameIntentArgs) readResponse(stdin io.Reader) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read the rename response: %v; nothing was changed", err)
 	}
-	body, sentinel := strings.CutPrefix(string(raw), generatedRenameResponseSentinel)
+	body, sentinel := strings.CutPrefix(string(raw), keybinding.GeneratedRenameResponseSentinel)
 	response, newline := strings.CutSuffix(body, "\n")
 	if len(raw) > maxGeneratedRenameResponse || !sentinel || !newline {
 		return "", errors.New("the rename response was not delivered intact; nothing was changed")
@@ -924,9 +925,9 @@ func (c *tmuxCommand) runDeleteConfirmIntent(args []string, stdout, stderr io.Wr
 	// carries the anchor the way every generated keybinding producer already
 	// does (tmuxPaneEnvPrefix). That makes it exactly `projmux delete window
 	// --yes uid:<W>` run inside that Window, self-queued kill included.
-	env, route := "", "internal tmux pane-menu --client "+tmuxShellQuote(clientKey)+" kill "+paneID
+	env, route := "", "internal tmux pane-menu --client "+keybinding.TmuxShellQuote(clientKey)+" kill "+paneID
 	if target == "window" {
-		env, route = "TMUX_PANE="+paneID+" ", "internal tmux window-delete --client "+tmuxShellQuote(clientKey)+" --anchor "+paneID
+		env, route = "TMUX_PANE="+paneID+" ", "internal tmux window-delete --client "+keybinding.TmuxShellQuote(clientKey)+" --anchor "+paneID
 	}
 	if c.runner == nil {
 		return errors.New("confirm managed delete: tmux runner is not configured")
@@ -939,7 +940,7 @@ func (c *tmuxCommand) runDeleteConfirmIntent(args []string, stdout, stderr io.Wr
 		return fmt.Errorf("confirm managed delete: resolve projmux executable: %w", err)
 	}
 	text := localizeText(appLocale(c.homeDir, c.lookupEnv), prompt.key, prompt.fallback)
-	confirmed := "run-shell " + tmuxConfigQuote(env+tmuxShellQuote(bin)+" "+route)
+	confirmed := "run-shell " + keybinding.TmuxConfigQuote(env+keybinding.TmuxShellQuote(bin)+" "+route)
 	if _, err := c.runner.Run(context.Background(), "tmux", "confirm-before", "-b", "-t", clientKey, "-p", text, confirmed); err != nil {
 		return fmt.Errorf("confirm managed %s delete on client %q: %w", target, clientKey, err)
 	}
@@ -1243,7 +1244,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 			return tmuxPopupToggleMode{}, fmt.Errorf("tmux popup-toggle %s requires an absolute file path", popupToggleAnswerFlag)
 		}
 	}
-	if _, ok := popupToggleActionIDForMode(raw); !ok {
+	if _, ok := keybinding.PopupToggleActionIDForMode(raw); !ok {
 		printRouteUsage(stderr, "internal tmux popup-toggle")
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
@@ -1452,7 +1453,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("write tmux standalone config: %w", err)
 	}
 
-	sourceLine := "source-file " + tmuxConfigQuote(include)
+	sourceLine := "source-file " + keybinding.TmuxConfigQuote(include)
 	if err := c.ensureConfigIncludes(config, sourceLine); err != nil {
 		return err
 	}
@@ -1523,11 +1524,11 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	return config, nil
 }
 
-func (c *tmuxCommand) loadKeyBindingCatalog() ([]keyBindingAction, bool, error) {
-	return loadMergedKeyBindingCatalog(keymapLoader{
-		homeDir:   c.homeDir,
-		lookupEnv: c.lookupEnv,
-		readFile:  c.readFile,
+func (c *tmuxCommand) loadKeyBindingCatalog() ([]keybinding.KeyBindingAction, bool, error) {
+	return keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{
+		HomeDir:   c.homeDir,
+		LookupEnv: c.lookupEnv,
+		ReadFile:  c.readFile,
 	})
 }
 
@@ -1540,10 +1541,10 @@ func (c *tmuxCommand) loadKeyBindingCatalog() ([]keyBindingAction, bool, error) 
 // replacement into a truncate-in-place. Tests drive this through a temporary
 // HOME/XDG instead of through the hooks, which is also the only way to exercise
 // the backup and rename legs at all.
-func (c *tmuxCommand) keymapStore() keymapStore {
-	return keymapStore{
-		homeDir:   c.homeDir,
-		lookupEnv: c.lookupEnv,
+func (c *tmuxCommand) keymapStore() keybinding.KeymapStore {
+	return keybinding.KeymapStore{
+		HomeDir:   c.homeDir,
+		LookupEnv: c.lookupEnv,
 	}
 }
 
@@ -1560,14 +1561,14 @@ func (c *tmuxCommand) keymapStore() keymapStore {
 // read, and refusing to print it because a *future* write would conflict would
 // take away the output the operator needs to diagnose that very conflict.
 func (c *tmuxCommand) reportKeymapMigrationPreflight(stderr io.Writer) {
-	plan, err := planKeymapMigration(c.keymapStore())
+	plan, err := keybinding.PlanKeymapMigration(c.keymapStore())
 	if err != nil {
 		if stderr != nil {
 			fmt.Fprintf(stderr, "keymap migration preflight unavailable: %v\n", err)
 		}
 		return
 	}
-	writeKeymapMigrationPreflight(stderr, plan)
+	keybinding.WriteKeymapMigrationPreflight(stderr, plan)
 }
 
 // RunRoute serves the public `config` spellings that forward into the tmux
@@ -1647,7 +1648,7 @@ func (c *tmuxCommand) runApply(route string, args []string, stdout, stderr io.Wr
 	// Release and source update paths all end in `<new binary> config apply`. So
 	// pinning the migration here is what makes it reachable without a new
 	// public route.
-	if _, err := migrateKeymapForWrite(c.keymapStore()); err != nil {
+	if _, err := keybinding.MigrateKeymapForWrite(c.keymapStore()); err != nil {
 		fmt.Fprintf(stderr, "keymap migration failed: %v\n", err)
 		fmt.Fprintln(stdout, "keymap unchanged")
 		fmt.Fprintln(stdout, "generated tmux config unchanged")
@@ -2532,7 +2533,7 @@ func (c *tmuxCommand) defaultShell() string {
 }
 
 func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecoration) string {
-	return tmuxStandaloneConfigWithKeymap(binaryPath, statusbarDecorationSetFromGlobal(decoration), defaultKeyBindingCatalog(), false)
+	return tmuxStandaloneConfigWithKeymap(binaryPath, statusbarDecorationSetFromGlobal(decoration), keybinding.DefaultKeyBindingCatalog(), false)
 }
 
 const statusbarSettingsIcon = ""
@@ -2758,13 +2759,13 @@ func statusbarRowCountOption(visibility statusbarHUDVisibilitySet) string {
 func statusbarRowFormatLines(bin string, visibility statusbarHUDVisibilitySet) []string {
 	if visibility.anyVisible() {
 		return []string{
-			"set -g status-format[0] " + tmuxConfigQuote(statusbarAuxLineFormatWithVisibility(bin, visibility)),
-			"set -g status-format[1] " + tmuxConfigQuote(statusbarWindowLineFormat()),
+			"set -g status-format[0] " + keybinding.TmuxConfigQuote(statusbarAuxLineFormatWithVisibility(bin, visibility)),
+			"set -g status-format[1] " + keybinding.TmuxConfigQuote(statusbarWindowLineFormat()),
 			"set -gu status-format[2]",
 		}
 	}
 	return []string{
-		"set -g status-format[0] " + tmuxConfigQuote(statusbarWindowLineFormat()),
+		"set -g status-format[0] " + keybinding.TmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[1]",
 		"set -gu status-format[2]",
 	}
@@ -2859,48 +2860,48 @@ func tmuxCenteredWindowNameFormat(width int) string {
 }
 
 func tmuxWindowStatusFormats(binaryPath string, effective theme.EffectiveTheme) (string, string) {
-	bin := tmuxShellQuote(binaryPath)
+	bin := keybinding.TmuxShellQuote(binaryPath)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	return "#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #(" + bin + " attention window #{window_id} #{@projmux_ai_badge_style})#[fg=" + tokens.WindowInactiveFg + "] #I " + statusbarWindowTitleFormat() + " #[default]",
 		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #(" + bin + " attention window #{window_id} #{@projmux_ai_badge_style})#[fg=" + tokens.WindowActiveFg + "] #I " + statusbarWindowTitleFormat() + " #[default]"
 }
 
-func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keybinding.KeyBindingAction, keymapPresent bool) string {
 	return fallbackRenderThemeSource().tmuxStandaloneConfig(binaryPath, decorations, catalog, keymapPresent)
 }
 
-func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusbarDecorationSet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, decorations, config.AIBadgeStyleDot, catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, decorations, badgeStyle, config.DefaultDesktopNotifyMode, config.LiveResourcesOff, catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, defaultStatusbarHUDVisibilitySet(), defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	if hudVisibility.isDefault() {
 		return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, effective)
 	}
 	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	if rowOneVisibility.isDefault() {
 		return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)
 	}
 	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	bin := tmuxShellQuote(binaryPath)
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	bin := keybinding.TmuxShellQuote(binaryPath)
 	roles := theme.RenderRolesFromEffective(effective)
 	windowStatusFormat, windowStatusCurrentFormat := tmuxWindowStatusFormats(binaryPath, effective)
-	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
-	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
+	defaultStandaloneKeyBindings := keybinding.KeyBindingCatalogForScope(keybinding.KeyBindingScopeStandalone)
+	standaloneKeyBindings := keybinding.KeyBindingCatalogForScopeFrom(catalog, keybinding.KeyBindingScopeStandalone)
 	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
 	desktopNotifyMode = config.NormalizeDesktopNotifyMode(string(desktopNotifyMode))
 	liveResourcesMode = config.NormalizeLiveResourcesMode(string(liveResourcesMode))
@@ -2923,23 +2924,23 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set -g " + liveResourcesTmuxOption + " " + string(liveResourcesMode),
 	}
 	lines = append(lines,
-		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
-		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
-		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
-		"set-hook -g pane-exited "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
-		"set-hook -g pane-died "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
-		"set-hook -g after-kill-pane "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneKilled)),
-		"set-hook -g window-unlinked "+tmuxConfigQuote(tmuxWindowUnlinkedHookBody(bin)),
+		"set-hook -g pane-focus-out "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
+		"set-hook -g pane-focus-in "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
+		"set-hook -g after-select-pane "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
+		"set-hook -g pane-exited "+keybinding.TmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
+		"set-hook -g pane-died "+keybinding.TmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
+		"set-hook -g after-kill-pane "+keybinding.TmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneKilled)),
+		"set-hook -g window-unlinked "+keybinding.TmuxConfigQuote(tmuxWindowUnlinkedHookBody(bin)),
 	)
 	lines = append(lines, tmuxRecentWindowRecordHookLines(bin)...)
 	lines = append(lines,
-		"set -g window-status-format "+tmuxConfigQuote(windowStatusFormat),
-		"set -g window-status-current-format "+tmuxConfigQuote(windowStatusCurrentFormat),
+		"set -g window-status-format "+keybinding.TmuxConfigQuote(windowStatusFormat),
+		"set -g window-status-current-format "+keybinding.TmuxConfigQuote(windowStatusCurrentFormat),
 		"set -g status "+statusbarRowCountOption(hudVisibility),
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
-		"set -g status-left "+tmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
-		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon+" projmux")),
+		"set -g status-left "+keybinding.TmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
+		"set -g status-right "+keybinding.TmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon+" projmux")),
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, hudVisibility)...)
 	// Always record generated sequence state. If keymap.toml was removed
@@ -2947,12 +2948,12 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 	// recorded by the last successful source.
 	lines = append(lines, tmuxSequenceStateLines(standaloneKeyBindings)...)
 	if keymapPresent {
-		lines = append(lines, tmuxMergedUnbindLines(defaultStandaloneKeyBindings, standaloneKeyBindings)...)
+		lines = append(lines, keybinding.TmuxMergedUnbindLines(defaultStandaloneKeyBindings, standaloneKeyBindings)...)
 	} else {
-		lines = append(lines, tmuxUnbindLines(standaloneKeyBindings)...)
+		lines = append(lines, keybinding.TmuxUnbindLines(standaloneKeyBindings)...)
 	}
-	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
-	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
+	lines = append(lines, keybinding.TmuxRetiredKeyUnbindLines()...)
+	lines = append(lines, keybinding.TmuxBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxSequenceBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	lines = append(lines, tmuxPaneContextMenuBindings(binaryPath)...)
@@ -2973,13 +2974,13 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 // succeeded, and convergence must still run when there was no layout to
 // rebalance.
 func tmuxPaneExitHookBody(bin string, reason controllerTriggerReason) string {
-	return "run-shell -b " + tmuxConfigQuote(
+	return "run-shell -b " + keybinding.TmuxConfigQuote(
 		"sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true; "+
 			controllerTriggerHookCommand(bin, reason)+" >/dev/null 2>&1 || true")
 }
 
 func tmuxWindowUnlinkedHookBody(bin string) string {
-	return "run-shell -b " + tmuxConfigQuote(
+	return "run-shell -b " + keybinding.TmuxConfigQuote(
 		"sleep 0.05; "+controllerTriggerHookCommand(bin, controllerTriggerWindowUnlinked)+" >/dev/null 2>&1 || true")
 }
 
@@ -3024,59 +3025,59 @@ func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) st
 // job's "returned N" line in a view-mode screen over that pane, so without the
 // guard a refused convergence would present itself as a broken new pane.
 func tmuxRuntimeCreatedHookBody(bin string) string {
-	return "run-shell " + tmuxConfigQuote(
+	return "run-shell " + keybinding.TmuxConfigQuote(
 		controllerTriggerHookCommand(bin, controllerTriggerRuntimeCreated)+" >/dev/null 2>&1 || true")
 }
 
 func tmuxRecentWindowRecordHookLines(bin string) []string {
 	command := bin + " window record >/dev/null 2>&1 || true"
-	body := "run-shell -b " + tmuxConfigQuote(command)
+	body := "run-shell -b " + keybinding.TmuxConfigQuote(command)
 	return []string{
-		"set-hook -g after-select-window " + tmuxConfigQuote(body),
-		"set-hook -g client-session-changed " + tmuxConfigQuote(body),
-		"run-shell -b " + tmuxConfigQuote(command),
+		"set-hook -g after-select-window " + keybinding.TmuxConfigQuote(body),
+		"set-hook -g client-session-changed " + keybinding.TmuxConfigQuote(body),
+		"run-shell -b " + keybinding.TmuxConfigQuote(command),
 	}
 }
 
 func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarDecoration) string {
-	return tmuxAppConfigWithKeymap(binaryPath, defaultShell, statusbarDecorationSetFromGlobal(decoration), defaultKeyBindingCatalog(), false)
+	return tmuxAppConfigWithKeymap(binaryPath, defaultShell, statusbarDecorationSetFromGlobal(decoration), keybinding.DefaultKeyBindingCatalog(), false)
 }
 
-func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keybinding.KeyBindingAction, keymapPresent bool) string {
 	return fallbackRenderThemeSource().tmuxAppConfig(binaryPath, defaultShell, decorations, catalog, keymapPresent)
 }
 
-func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell, decorations, config.AIBadgeStyleDot, catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell, decorations, badgeStyle, config.DefaultDesktopNotifyMode, config.LiveResourcesOff, catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, defaultStatusbarHUDVisibilitySet(), defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	if hudVisibility.isDefault() {
 		return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, effective)
 	}
 	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	if rowOneVisibility.isDefault() {
 		return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)
 	}
 	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	bin := tmuxShellQuote(binaryPath)
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	bin := keybinding.TmuxShellQuote(binaryPath)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	roles := theme.RenderRolesFromEffective(effective)
-	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
+	shell := keybinding.TmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
 	paneLabelFormat := tmuxVisiblePaneLabelFormat()
 	paneBorderFormat := tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle, roles)
 	lines := []string{
@@ -3110,7 +3111,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 		"set -g window-status-separator \" \"",
 		"set -g allow-rename off",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format " + tmuxConfigQuote(paneLabelFormat),
+		"set -g automatic-rename-format " + keybinding.TmuxConfigQuote(paneLabelFormat),
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
 		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
@@ -3127,7 +3128,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 		// from popup/native frame and status backgrounds.
 		"set -g window-style \"bg=" + roles.PaneInactiveBg + "\"",
 		"set -g window-active-style \"bg=" + roles.FocusPaneActiveBg + "\"",
-		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
+		"set -g pane-border-format " + keybinding.TmuxConfigQuote(paneBorderFormat),
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)), "\n")[1:]...)
 	// The creation hooks are app-config only, and the asymmetry with the two
@@ -3140,11 +3141,11 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	// own must stay an unmanaged runtime object that only the Runtime diagnostics
 	// surface shows.
 	lines = append(lines,
-		"set-hook -g after-new-window "+tmuxConfigQuote(tmuxRuntimeCreatedHookBody(bin)),
-		"set-hook -g after-split-window "+tmuxConfigQuote(tmuxRuntimeCreatedHookBody(bin)),
+		"set-hook -g after-new-window "+keybinding.TmuxConfigQuote(tmuxRuntimeCreatedHookBody(bin)),
+		"set-hook -g after-split-window "+keybinding.TmuxConfigQuote(tmuxRuntimeCreatedHookBody(bin)),
 	)
 	lines = append(lines,
-		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
+		"set-hook -g client-attached "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
 	// The managed stock menus render before the catalog key bindings, so a
 	// keymap that deliberately puts a managed action on `prefix <` or `>` still
@@ -3165,8 +3166,8 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	// terminal's cap.
 	lines = append(lines,
 		"set -g status "+statusbarRowCountOption(hudVisibility),
-		"set -g status-left "+tmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
-		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon)),
+		"set -g status-left "+keybinding.TmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
+		"set -g status-right "+keybinding.TmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon)),
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, hudVisibility)...)
 	return withTmuxConfigDigest(strings.Join(lines, "\n") + "\n")
@@ -3178,11 +3179,11 @@ func withTmuxConfigDigest(body string) string {
 	return body + "set -g " + tmuxConfigDigestOption + " " + digest + "\n"
 }
 
-func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPresent bool) []string {
-	defaultAppKeyBindings := keyBindingCatalogForScope(keyBindingScopeApp)
-	appKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeApp)
-	allKeyBindings := filterKeyBindingActions(catalog, func(action keyBindingAction) bool {
-		return action.Kind != keyBindingActionPickerInternal
+func tmuxAppKeyBindings(binaryPath string, catalog []keybinding.KeyBindingAction, keymapPresent bool) []string {
+	defaultAppKeyBindings := keybinding.KeyBindingCatalogForScope(keybinding.KeyBindingScopeApp)
+	appKeyBindings := keybinding.KeyBindingCatalogForScopeFrom(catalog, keybinding.KeyBindingScopeApp)
+	allKeyBindings := keybinding.FilterKeyBindingActions(catalog, func(action keybinding.KeyBindingAction) bool {
+		return action.Kind != keybinding.KeyBindingActionPickerInternal
 	})
 	var lines []string
 	// The app config embeds the standalone config first. Record sequence state
@@ -3192,13 +3193,13 @@ func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPre
 	// keymap also overwrites the previously recorded generated state.
 	lines = append(lines, tmuxSequenceStateLines(allKeyBindings)...)
 	if keymapPresent {
-		lines = append(lines, tmuxMergedUnbindLines(defaultAppKeyBindings, appKeyBindings)...)
+		lines = append(lines, keybinding.TmuxMergedUnbindLines(defaultAppKeyBindings, appKeyBindings)...)
 	} else {
-		lines = append(lines, tmuxUnbindLines(appKeyBindings)...)
+		lines = append(lines, keybinding.TmuxUnbindLines(appKeyBindings)...)
 	}
-	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
-	lines = append(lines, tmuxStockPrefixRestoreLines(defaultAppKeyBindings, appKeyBindings)...)
-	lines = append(lines, tmuxBindLines(binaryPath, appKeyBindings)...)
+	lines = append(lines, keybinding.TmuxRetiredKeyUnbindLines()...)
+	lines = append(lines, keybinding.TmuxStockPrefixRestoreLines(defaultAppKeyBindings, appKeyBindings)...)
+	lines = append(lines, keybinding.TmuxBindLines(binaryPath, appKeyBindings)...)
 	lines = append(lines, tmuxSequenceBindLines(binaryPath, allKeyBindings)...)
 	return lines
 }
@@ -3227,23 +3228,23 @@ func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPre
 // each handler twice. The hardcoded `r` sibling is usage-specific: it calls
 // the throttled refresh subcommand before reopening the same popup.
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
-	bin := tmuxShellQuote(binaryPath)
+	bin := keybinding.TmuxShellQuote(binaryPath)
 	clickCmd := bin + " internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\""
 	// Use tmux's `{...}` block syntax for the if-shell branches so the nested
 	// quotes inside `run-shell` don't need to be escaped through another layer
 	// of tmux config quoting (which the parser rejects). Block syntax requires
 	// tmux 3.0+; projmux already enforces tmux >= 3.4 via the doctor check.
 	mouseDownBind := "bind-key -n MouseDown1Status if-shell -F " +
-		tmuxConfigQuote("#{==:#{mouse_status_range},window}") + " " +
+		keybinding.TmuxConfigQuote("#{==:#{mouse_status_range},window}") + " " +
 		"{ select-window -t = } " +
-		"{ run-shell " + tmuxConfigQuote(clickCmd) + " }"
+		"{ run-shell " + keybinding.TmuxConfigQuote(clickCmd) + " }"
 	// The keyboard table carries `#{client_tty}` for the same reason the mouse
 	// binding does: a status action's popup and its refusal both belong to the
 	// client that pressed the key, and on a session with two clients attached
 	// the invoking client is the only handle that stays correct.
 	statusKey := func(key, action string) string {
 		return "bind-key -T projmux-status " + key + " run-shell " +
-			tmuxConfigQuote(bin+" internal statusbar "+action+" --client \"#{client_tty}\"")
+			keybinding.TmuxConfigQuote(bin+" internal statusbar "+action+" --client \"#{client_tty}\"")
 	}
 	return []string{
 		"unbind-key -q -n MouseDown1Status",
@@ -3291,29 +3292,29 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 func tmuxPaneContextMenuBindings(binaryPath string) []string {
 	// Reuse the keybinding catalog's renderer so the menu action stays
 	// byte-identical to the C-r binding's proven run-shell line.
-	resumeAction := renderTmuxBindingBody(binaryPath, keyBindingAction{
-		TmuxKind: tmuxBindingPopupToggle,
+	resumeAction := keybinding.RenderTmuxBindingBody(binaryPath, keybinding.KeyBindingAction{
+		TmuxKind: keybinding.TmuxBindingPopupToggle,
 		TmuxBody: "ai-split-resume-right",
 	})
-	bin := tmuxShellQuote(binaryPath)
+	bin := keybinding.TmuxShellQuote(binaryPath)
 	// Guard + title + dim conditions mirror tmux 3.4 key-bindings.c: swap
 	// entries are dimmed (`-` prefix) in single-pane windows, Mark/Unmark and
 	// Zoom/Unzoom toggle with pane/window state.
 	menu := "bind-key -n MouseDown3Pane if-shell -F -t = " +
-		tmuxConfigQuote("#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}") + " " +
+		keybinding.TmuxConfigQuote("#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}") + " " +
 		"{ select-pane -t = ; send-keys -M } " +
-		"{ display-menu -T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
-		tmuxConfigQuote("AI Resume Picker") + " a { select-pane -t = ; " + resumeAction + " } " +
+		"{ display-menu -T " + keybinding.TmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
+		keybinding.TmuxConfigQuote("AI Resume Picker") + " a { select-pane -t = ; " + resumeAction + " } " +
 		"'' " +
-		tmuxConfigQuote("Horizontal Split") + " h { " + tmuxPaneMenuAction(bin, "split-right") + " } " +
-		tmuxConfigQuote("Vertical Split") + " v { " + tmuxPaneMenuAction(bin, "split-down") + " } " +
+		keybinding.TmuxConfigQuote("Horizontal Split") + " h { " + tmuxPaneMenuAction(bin, "split-right") + " } " +
+		keybinding.TmuxConfigQuote("Vertical Split") + " v { " + tmuxPaneMenuAction(bin, "split-down") + " } " +
 		"'' " +
-		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Up") + " u { swap-pane -U } " +
-		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Down") + " d { swap-pane -D } " +
+		keybinding.TmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Up") + " u { swap-pane -U } " +
+		keybinding.TmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Down") + " d { swap-pane -D } " +
 		"'' " +
-		tmuxConfigQuote("Kill") + " X { " + tmuxPaneMenuKill(bin) + " } " +
-		tmuxConfigQuote("#{?pane_marked,Unmark,Mark}") + " m { select-pane -m } " +
-		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}") + " z { resize-pane -Z } }"
+		keybinding.TmuxConfigQuote("Kill") + " X { " + tmuxPaneMenuKill(bin) + " } " +
+		keybinding.TmuxConfigQuote("#{?pane_marked,Unmark,Mark}") + " m { select-pane -m } " +
+		keybinding.TmuxConfigQuote("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}") + " z { resize-pane -Z } }"
 	return []string{
 		"unbind-key -q -n MouseDown3Pane",
 		menu,
@@ -3325,7 +3326,7 @@ func tmuxPaneContextMenuBindings(binaryPath string) []string {
 // when the menu opens, so `#{pane_id}` is the clicked Pane for a mouse menu and
 // the current Pane for a keyboard one.
 func tmuxPaneMenuAction(bin, action string) string {
-	return "run-shell " + tmuxConfigQuote(bin+" internal tmux pane-menu --client #{client_tty} "+action+" #{pane_id}")
+	return "run-shell " + keybinding.TmuxConfigQuote(bin+" internal tmux pane-menu --client #{client_tty} "+action+" #{pane_id}")
 }
 
 // tmuxPaneMenuKill is the Kill item of every generated Pane menu. The Pane's
@@ -3334,7 +3335,7 @@ func tmuxPaneMenuAction(bin, action string) string {
 // own stock `kill-pane` menu item, executed by tmux. The menu selection is the
 // confirmation, exactly as it is for tmux's stock item.
 func tmuxPaneMenuKill(bin string) string {
-	return "if-shell -F " + tmuxConfigQuote(managedDeletePaneGuard) + " { " + tmuxPaneMenuAction(bin, "kill") + " } { " + tmuxStockMenuKillPane + " }"
+	return "if-shell -F " + keybinding.TmuxConfigQuote(keybinding.ManagedDeletePaneGuard) + " { " + tmuxPaneMenuAction(bin, "kill") + " } { " + tmuxStockMenuKillPane + " }"
 }
 
 // tmux 3.6's stock menu Kill item bodies. They are the only raw kill a generated
@@ -3371,18 +3372,18 @@ const managedMenuWindowDeleteRoute = "internal tmux window-delete --client #{cli
 // is a prompt-response placeholder, so Rename defers its template's formats to
 // the prompt's own run time (see tmuxMenuPromptCommand).
 func tmuxManagedStockMenuBindings(binaryPath string) []string {
-	bin := tmuxShellQuote(binaryPath)
-	catalog := defaultKeyBindingCatalog()
-	rename, _ := keyBindingActionByID(catalog, "rename-window")
-	create, _ := keyBindingActionByID(catalog, "new-window")
-	windowKill := renderTmuxBindingBody(binaryPath, keyBindingAction{
-		TmuxKind:         tmuxBindingManagedDelete,
-		TmuxManagedGuard: managedDeleteWindowGuard,
+	bin := keybinding.TmuxShellQuote(binaryPath)
+	catalog := keybinding.DefaultKeyBindingCatalog()
+	rename, _ := keybinding.KeyBindingActionByID(catalog, "rename-window")
+	create, _ := keybinding.KeyBindingActionByID(catalog, "new-window")
+	windowKill := keybinding.RenderTmuxBindingBody(binaryPath, keybinding.KeyBindingAction{
+		TmuxKind:         keybinding.TmuxBindingManagedDelete,
+		TmuxManagedGuard: keybinding.ManagedDeleteWindowGuard,
 		TmuxBody:         managedMenuWindowDeleteRoute,
 		TmuxStockBody:    tmuxStockMenuKillWindow,
 	})
 	item := func(name, key, command string) string {
-		return tmuxConfigQuote(name) + " " + key + " { " + command + " }"
+		return keybinding.TmuxConfigQuote(name) + " " + key + " { " + command + " }"
 	}
 	windowItems := strings.Join([]string{
 		item("#{?#{>:#{session_windows},1},,-}Swap Left", "l", "swap-window -t :-1"),
@@ -3393,7 +3394,7 @@ func tmuxManagedStockMenuBindings(binaryPath string) []string {
 		item("#{?pane_marked,Unmark,Mark}", "m", "select-pane -m"),
 		item("Rename", "n", tmuxMenuPromptCommand(binaryPath, rename)),
 		"''",
-		item("New At End", "W", renderTmuxBindingBody(binaryPath, create)),
+		item("New At End", "W", keybinding.RenderTmuxBindingBody(binaryPath, create)),
 	}, " ")
 	paneItems := strings.Join([]string{
 		item("#{?#{m/r:(copy|view)-mode,#{pane_mode}},Go To Top,}", "<", "send-keys -X history-top"),
@@ -3418,8 +3419,8 @@ func tmuxManagedStockMenuBindings(binaryPath string) []string {
 		item("#{?pane_marked,Unmark,Mark}", "m", "select-pane -m"),
 		item("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}", "z", "resize-pane -Z"),
 	}, " ")
-	windowTitle := "-T " + tmuxConfigQuote("#[align=centre]#{window_index}:#{window_name}")
-	paneTitle := "-T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})")
+	windowTitle := "-T " + keybinding.TmuxConfigQuote("#[align=centre]#{window_index}:#{window_name}")
+	paneTitle := "-T " + keybinding.TmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})")
 	return []string{
 		"unbind-key -q <",
 		"bind-key < display-menu " + windowTitle + " -x W -y W " + windowItems,
@@ -3444,8 +3445,8 @@ func tmuxManagedStockMenuBindings(binaryPath string) []string {
 // command tmux finally runs is the catalog key binding's command byte for byte.
 // The prompt arguments (the initial `#{window_name}`) keep expanding at menu
 // open, where they name the clicked Window rather than the current one.
-func tmuxMenuPromptCommand(binaryPath string, action keyBindingAction) string {
-	rendered := renderTmuxBindingBody(binaryPath, action)
+func tmuxMenuPromptCommand(binaryPath string, action keybinding.KeyBindingAction) string {
+	rendered := keybinding.RenderTmuxBindingBody(binaryPath, action)
 	head := strings.TrimSpace("command-prompt "+action.TmuxPromptArgs) + " "
 	return head + strings.ReplaceAll(strings.TrimPrefix(rendered, head), "#", "##")
 }
@@ -3453,7 +3454,7 @@ func tmuxMenuPromptCommand(binaryPath string, action keyBindingAction) string {
 func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd string, env map[string]string) string {
 	parts := []string{}
 	if strings.TrimSpace(cwd) != "" {
-		parts = append(parts, "cd -- "+tmuxShellQuote(cwd))
+		parts = append(parts, "cd -- "+keybinding.TmuxShellQuote(cwd))
 	}
 
 	command := []string{}
@@ -3462,15 +3463,15 @@ func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd strin
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
-		command = append(command, key+"="+tmuxShellQuote(value))
+		command = append(command, key+"="+keybinding.TmuxShellQuote(value))
 	}
-	command = append(command, tmuxShellQuote(binaryPath))
+	command = append(command, keybinding.TmuxShellQuote(binaryPath))
 	for _, arg := range args {
-		command = append(command, tmuxShellQuote(arg))
+		command = append(command, keybinding.TmuxShellQuote(arg))
 	}
 	parts = append(parts, strings.Join(command, " "))
 	parts = append(parts, "code=$?")
-	parts = append(parts, "rm -f -- "+tmuxShellQuote(marker))
+	parts = append(parts, "rm -f -- "+keybinding.TmuxShellQuote(marker))
 	parts = append(parts, "exit $code")
 	return strings.Join(parts, "; ")
 }
@@ -3576,15 +3577,4 @@ func sortedStringKeys(values map[string]string) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-func tmuxShellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
-}
-
-func tmuxConfigQuote(value string) string {
-	return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
 }

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 )
@@ -705,7 +706,7 @@ func TestAppFrontLoadersReportTheirReads(t *testing.T) {
 	expect("resume picker limit", config.SettingConfigAIResume, config.SettingConfigAIResume)
 	resolveAIResumeScanDepth(homeDir, lookupEnv, project)
 	expect("resume scan depth", config.SettingConfigAIResume, config.SettingConfigAIResume)
-	_, _, _ = loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv})
+	_, _, _ = keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{HomeDir: homeDir, LookupEnv: lookupEnv})
 	expect("keymap catalog", config.KeymapFileName)
 
 	// The picker render path reports the same two files as picker display
@@ -718,9 +719,9 @@ func TestAppFrontLoadersReportTheirReads(t *testing.T) {
 	expectPicker("picker key guide", config.KeymapFileName)
 	pickerCloseActionsForPopupToggleMode(homeDir, lookupEnv, "recent-windows", "esc")
 	expectPicker("picker close actions", config.KeymapFileName)
-	_, _, _, _, _ = loadKeymapForEdit(keymapStore{homeDir: homeDir, lookupEnv: lookupEnv})
+	_, _, _, _, _ = keybinding.LoadKeymapForEdit(keybinding.KeymapStore{HomeDir: homeDir, LookupEnv: lookupEnv})
 	expect("keymap edit", config.KeymapFileName)
-	_, _ = planKeymapMigration(keymapStore{homeDir: homeDir, lookupEnv: lookupEnv})
+	_, _ = keybinding.PlanKeymapMigration(keybinding.KeymapStore{HomeDir: homeDir, LookupEnv: lookupEnv})
 	expect("keymap migration", config.KeymapFileName)
 	(&aiCommand{homeDir: homeDir, lookupEnv: lookupEnv}).getMode()
 	expect("split launch default", config.TmuxAISplitModeFileName)

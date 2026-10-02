@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -294,10 +295,10 @@ func TestGeneratedTmuxConfigsPreserveLiveResourcesModesAndOrdering(t *testing.T)
 	for _, mode := range []config.LiveResourcesMode{config.LiveResourcesOff, config.LiveResourcesOn} {
 		configs := map[string]string{
 			"standalone": source.tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(
-				"/tmp/projmux", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode, mode, defaultKeyBindingCatalog(), false,
+				"/tmp/projmux", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode, mode, keybinding.DefaultKeyBindingCatalog(), false,
 			),
 			"app": source.tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(
-				"/tmp/projmux", "/bin/sh", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode, mode, defaultKeyBindingCatalog(), false,
+				"/tmp/projmux", "/bin/sh", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode, mode, keybinding.DefaultKeyBindingCatalog(), false,
 			),
 		}
 		for name, output := range configs {

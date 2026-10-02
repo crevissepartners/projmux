@@ -1,4 +1,4 @@
-package app
+package keybinding
 
 import (
 	"crypto/sha256"
@@ -81,8 +81,8 @@ type keymapMigrationPlan struct {
 
 	// original and migrated are the parsed before/after files. They are
 	// unexported because they are apply-stage inputs, not report data.
-	original     keymapFile
-	migrated     keymapFile
+	original     KeymapFile
+	migrated     KeymapFile
 	originalRaw  []byte
 	migratedBody []byte
 }
@@ -90,8 +90,8 @@ type keymapMigrationPlan struct {
 // Blocked reports whether the plan must not be applied.
 func (p keymapMigrationPlan) Blocked() bool { return len(p.Conflicts) > 0 }
 
-// keymapMigrationResult is what an apply actually did.
-type keymapMigrationResult struct {
+// KeymapMigrationResult is what an apply actually did.
+type KeymapMigrationResult struct {
 	Plan keymapMigrationPlan
 	// Migrated is false when the plan was already satisfied and no bytes were
 	// written.
@@ -101,18 +101,18 @@ type keymapMigrationResult struct {
 	BackupPath string
 }
 
-// planKeymapMigration computes the v0/v1 → v2 plan for the store's keymap.
+// PlanKeymapMigration computes the v0/v1 → v2 plan for the store's keymap.
 //
 // This is the single preflight every entry point shares. It reads, parses,
 // resolves aliases and validates the *whole* merged chord table before deciding
 // anything, so a file that would not merge cleanly is rejected here rather than
 // halfway through a rewrite.
-func planKeymapMigration(store keymapStore) (keymapMigrationPlan, error) {
-	plan := keymapMigrationPlan{ToVersion: keymapSchemaVersion}
-	if store.homeDir == nil {
+func PlanKeymapMigration(store KeymapStore) (keymapMigrationPlan, error) {
+	plan := keymapMigrationPlan{ToVersion: KeymapSchemaVersion}
+	if store.HomeDir == nil {
 		return plan, nil
 	}
-	path, err := keymapPath(store.homeDir, store.lookupEnv)
+	path, err := KeymapPath(store.HomeDir, store.LookupEnv)
 	if err != nil {
 		return plan, err
 	}
@@ -128,7 +128,7 @@ func planKeymapMigration(store keymapStore) (keymapMigrationPlan, error) {
 	plan.Present = true
 	plan.originalRaw = raw
 
-	parsed, err := parseKeymapFile(path, string(raw))
+	parsed, err := ParseKeymapFile(path, string(raw))
 	if err != nil {
 		return plan, err
 	}
@@ -138,10 +138,10 @@ func planKeymapMigration(store keymapStore) (keymapMigrationPlan, error) {
 	// Validate the file as it stands before planning a rewrite. A file that
 	// already fails to merge is a user problem to fix, not something to
 	// silently re-shape into a v1 that fails the same way.
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), parsed); err != nil {
 		return plan, fmt.Errorf("keymap %s: %w", path, err)
 	}
-	if parsed.SchemaVersion == keymapSchemaVersion {
+	if parsed.SchemaVersion == KeymapSchemaVersion {
 		// Current-schema files are read-only at the migration boundary. In
 		// particular, do not canonicalize comments, ordering, unknown tables or
 		// hand formatting merely because apply was repeated.
@@ -158,7 +158,7 @@ func planKeymapMigration(store keymapStore) (keymapMigrationPlan, error) {
 		return plan, nil
 	}
 
-	body := []byte(renderKeymapFile(migrated))
+	body := []byte(RenderKeymapFile(migrated))
 	// v1 already uses canonical action ids and exactly the same keys/plain/
 	// prefix grammar as v2. Its migration is therefore a marker-only edit:
 	// comments, table ordering, unknown tables and hand formatting survive byte
@@ -168,7 +168,7 @@ func planKeymapMigration(store keymapStore) (keymapMigrationPlan, error) {
 		if err != nil {
 			return plan, err
 		}
-		migrated, err = parseKeymapFile(path, string(body))
+		migrated, err = ParseKeymapFile(path, string(body))
 		if err != nil {
 			return plan, fmt.Errorf("verify v2 keymap marker migration: %w", err)
 		}
@@ -210,7 +210,7 @@ func replaceKeymapSchemaMarker(raw []byte, version int) ([]byte, error) {
 //
 // The injected readFile hook (tests and the in-process Settings store) bypasses
 // the filesystem entirely, so the policy only applies to the real path.
-func readKeymapForMigration(store keymapStore, path string) ([]byte, error) {
+func readKeymapForMigration(store KeymapStore, path string) ([]byte, error) {
 	config.NoteFrontRead(config.KeymapFileName, path)
 	if store.readFile != nil {
 		return store.readFile(path)
@@ -238,13 +238,13 @@ func readKeymapForMigration(store keymapStore, path string) ([]byte, error) {
 
 // buildKeymapMigration turns a parsed file into its v1 form plus the disposition
 // of every table it contained.
-func buildKeymapMigration(parsed keymapFile) (keymapFile, []keymapMigrationChange, []keymapMigrationConflict) {
+func buildKeymapMigration(parsed KeymapFile) (KeymapFile, []keymapMigrationChange, []keymapMigrationConflict) {
 	manifest := keymapActionManifest()
 	retired := keymapRetiredIDIndex()
 
-	migrated := keymapFile{
-		SchemaVersion: keymapSchemaVersion,
-		Bindings:      map[string]keymapOverride{},
+	migrated := KeymapFile{
+		SchemaVersion: KeymapSchemaVersion,
+		Bindings:      map[string]KeymapOverride{},
 	}
 	var changes []keymapMigrationChange
 	var conflicts []keymapMigrationConflict
@@ -335,7 +335,7 @@ func buildKeymapMigration(parsed keymapFile) (keymapFile, []keymapMigrationChang
 // keymapCoalesceConflict reports whether the sources for one canonical target
 // disagree, and describes the disagreement when they do.
 func keymapCoalesceConflict(
-	parsed keymapFile,
+	parsed KeymapFile,
 	entry keymapManifestEntry,
 	sources []string,
 ) (keymapMigrationConflict, bool) {
@@ -360,7 +360,7 @@ func keymapCoalesceConflict(
 //
 // Only the stored fields count. lineByKey is provenance for error messages, not
 // content, so two tables that set identical keys from different lines coalesce.
-func keymapOverridesEquivalent(a, b keymapOverride) bool {
+func keymapOverridesEquivalent(a, b KeymapOverride) bool {
 	if a.KeysSet != b.KeysSet {
 		return false
 	}
@@ -390,7 +390,7 @@ func equalStringPointers(a, b *string) bool {
 	}
 }
 
-func describeKeymapOverride(override keymapOverride) string {
+func describeKeymapOverride(override KeymapOverride) string {
 	var parts []string
 	if override.KeysSet {
 		parts = append(parts, "keys = "+formatKeymapStringArray(override.Keys))
@@ -409,7 +409,7 @@ func describeKeymapOverride(override keymapOverride) string {
 	return strings.Join(parts, ", ")
 }
 
-func sortedKeymapBindingIDs(keymap keymapFile) []string {
+func sortedKeymapBindingIDs(keymap KeymapFile) []string {
 	ids := make([]string, 0, len(keymap.Bindings))
 	for id := range keymap.Bindings {
 		ids = append(ids, id)
@@ -418,7 +418,7 @@ func sortedKeymapBindingIDs(keymap keymapFile) []string {
 	return ids
 }
 
-// applyKeymapMigration performs the write half of the migration.
+// ApplyKeymapMigration performs the write half of the migration.
 //
 // The ordering is the safety contract, not an implementation detail:
 //
@@ -431,8 +431,8 @@ func sortedKeymapBindingIDs(keymap keymapFile) []string {
 // A caller must not apply generated or live tmux config until this returns
 // without error. Everything downstream of a keymap rewrite assumes the file on
 // disk is the one that was verified.
-func applyKeymapMigration(store keymapStore, plan keymapMigrationPlan) (keymapMigrationResult, error) {
-	result := keymapMigrationResult{Plan: plan}
+func ApplyKeymapMigration(store KeymapStore, plan keymapMigrationPlan) (KeymapMigrationResult, error) {
+	result := KeymapMigrationResult{Plan: plan}
 	if plan.Blocked() {
 		return result, keymapMigrationConflictError(plan)
 	}
@@ -457,7 +457,7 @@ func applyKeymapMigration(store keymapStore, plan keymapMigrationPlan) (keymapMi
 		return result, err
 	}
 
-	if err := writeKeymapBytes(plan.Path, plan.migratedBody, store.writeFile); err != nil {
+	if err := writeKeymapBytes(plan.Path, plan.migratedBody, store.WriteFile); err != nil {
 		return result, err
 	}
 
@@ -471,7 +471,7 @@ func applyKeymapMigration(store keymapStore, plan keymapMigrationPlan) (keymapMi
 	// backup, so restoring it puts the user back where they started rather than
 	// leaving them with a keymap nothing can read.
 	if err := verifyKeymapMigrationOnDisk(store, plan); err != nil {
-		if rollbackErr := rollbackKeymapMigration(store, backupPath); rollbackErr != nil {
+		if rollbackErr := RollbackKeymapMigration(store, backupPath); rollbackErr != nil {
 			return result, fmt.Errorf(
 				"%w; restoring the backup also failed: %v; recover manually with: cp %s %s",
 				err, rollbackErr, backupPath, plan.Path)
@@ -485,7 +485,7 @@ func applyKeymapMigration(store keymapStore, plan keymapMigrationPlan) (keymapMi
 
 // verifyKeymapMigrationOnDisk re-reads the replaced keymap and proves it still
 // merges to the bindings the plan promised.
-func verifyKeymapMigrationOnDisk(store keymapStore, plan keymapMigrationPlan) error {
+func verifyKeymapMigrationOnDisk(store KeymapStore, plan keymapMigrationPlan) error {
 	raw, err := readKeymapForMigration(store, plan.Path)
 	if err != nil {
 		return fmt.Errorf("verify migrated keymap: %w", err)
@@ -493,11 +493,11 @@ func verifyKeymapMigrationOnDisk(store keymapStore, plan keymapMigrationPlan) er
 	if string(raw) != string(plan.migratedBody) {
 		return errors.New("verify migrated keymap: on-disk content does not match what was written")
 	}
-	reparsed, err := parseKeymapFile(plan.Path, string(raw))
+	reparsed, err := ParseKeymapFile(plan.Path, string(raw))
 	if err != nil {
 		return fmt.Errorf("verify migrated keymap: %w", err)
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), reparsed); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), reparsed); err != nil {
 		return fmt.Errorf("verify migrated keymap: %w", err)
 	}
 	return nil
@@ -510,11 +510,11 @@ func verifyKeymapMigrationOnDisk(store keymapStore, plan keymapMigrationPlan) er
 // `keys = []` unbind, a transport-dependent default plus its aliases and a
 // legacy `plain`/`prefix` pair must all behave the same after the rewrite.
 func verifyKeymapMigrationParity(plan keymapMigrationPlan) error {
-	before, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), plan.original)
+	before, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), plan.original)
 	if err != nil {
 		return fmt.Errorf("verify keymap migration: read current bindings: %w", err)
 	}
-	after, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), plan.migrated)
+	after, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), plan.migrated)
 	if err != nil {
 		return fmt.Errorf("verify keymap migration: read migrated bindings: %w", err)
 	}
@@ -525,21 +525,21 @@ func verifyKeymapMigrationParity(plan keymapMigrationPlan) error {
 		if before[i].ID != after[i].ID {
 			return fmt.Errorf("verify keymap migration: action %d changed from %s to %s", i, before[i].ID, after[i].ID)
 		}
-		if !slices.Equal(keyBindingEffectivePlainChords(before[i]), keyBindingEffectivePlainChords(after[i])) {
+		if !slices.Equal(KeyBindingEffectivePlainChords(before[i]), KeyBindingEffectivePlainChords(after[i])) {
 			return fmt.Errorf("verify keymap migration: %s keys changed from %v to %v",
 				before[i].ID,
-				keyBindingEffectivePlainChords(before[i]),
-				keyBindingEffectivePlainChords(after[i]))
+				KeyBindingEffectivePlainChords(before[i]),
+				KeyBindingEffectivePlainChords(after[i]))
 		}
 		if before[i].PrefixChord != after[i].PrefixChord {
 			return fmt.Errorf("verify keymap migration: %s prefix changed from %q to %q",
 				before[i].ID, before[i].PrefixChord, after[i].PrefixChord)
 		}
-		if !slices.Equal(keyBindingEffectiveSequences(before[i]), keyBindingEffectiveSequences(after[i])) {
+		if !slices.Equal(KeyBindingEffectiveSequences(before[i]), KeyBindingEffectiveSequences(after[i])) {
 			return fmt.Errorf("verify keymap migration: %s sequences changed from %v to %v",
 				before[i].ID,
-				keyBindingEffectiveSequences(before[i]),
-				keyBindingEffectiveSequences(after[i]))
+				KeyBindingEffectiveSequences(before[i]),
+				KeyBindingEffectiveSequences(after[i]))
 		}
 	}
 	return nil
@@ -579,15 +579,15 @@ func verifyKeymapMigrationRoundTrip(plan keymapMigrationPlan) error {
 	if err != nil {
 		return fmt.Errorf("verify keymap migration: read temp file: %w", err)
 	}
-	reparsed, err := parseKeymapFile(tmpName, string(raw))
+	reparsed, err := ParseKeymapFile(tmpName, string(raw))
 	if err != nil {
 		return fmt.Errorf("verify keymap migration: reparse temp file: %w", err)
 	}
-	if reparsed.SchemaVersion != keymapSchemaVersion {
+	if reparsed.SchemaVersion != KeymapSchemaVersion {
 		return fmt.Errorf("verify keymap migration: temp file schema version is %d, want %d",
-			reparsed.SchemaVersion, keymapSchemaVersion)
+			reparsed.SchemaVersion, KeymapSchemaVersion)
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), reparsed); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), reparsed); err != nil {
 		return fmt.Errorf("verify keymap migration: merge temp file: %w", err)
 	}
 	// A v1 -> v2 migration deliberately changes only the schema marker so
@@ -597,7 +597,7 @@ func verifyKeymapMigrationRoundTrip(plan keymapMigrationPlan) error {
 	// is the semantic proof, while replaceKeymapSchemaMarker is covered by an
 	// exact-byte golden. v0 still takes the canonical rendering path.
 	if plan.FromVersion != keymapSchemaVersionV1 {
-		if rendered := renderKeymapFile(reparsed); rendered != string(plan.migratedBody) {
+		if rendered := RenderKeymapFile(reparsed); rendered != string(plan.migratedBody) {
 			return errors.New("verify keymap migration: temp file does not round-trip to the same content")
 		}
 	}
@@ -611,7 +611,7 @@ func verifyKeymapMigrationRoundTrip(plan keymapMigrationPlan) error {
 // same backup: a retried migration reuses it instead of piling up copies, and a
 // *different* original can never overwrite a backup that belongs to another one.
 // Creation is exclusive for the same reason.
-func writeKeymapMigrationBackup(store keymapStore, plan keymapMigrationPlan) (string, error) {
+func writeKeymapMigrationBackup(store KeymapStore, plan keymapMigrationPlan) (string, error) {
 	backupGeneration := plan.ToVersion
 	if plan.FromVersion == keymapSchemaVersionV0 {
 		// Keep the established v0 backup name stable for rollback tooling.
@@ -619,8 +619,8 @@ func writeKeymapMigrationBackup(store keymapStore, plan keymapMigrationPlan) (st
 	}
 	path := keymapMigrationBackupPathForVersion(plan.Path, plan.originalRaw, backupGeneration)
 
-	if store.writeFile != nil {
-		if err := store.writeFile(path, plan.originalRaw, defaultKeymapFileMode); err != nil {
+	if store.WriteFile != nil {
+		if err := store.WriteFile(path, plan.originalRaw, defaultKeymapFileMode); err != nil {
 			return "", fmt.Errorf("write keymap backup %s: %w", path, err)
 		}
 		return path, nil
@@ -657,7 +657,7 @@ func keymapMigrationBackupPathForVersion(path string, original []byte, targetVer
 	return fmt.Sprintf("%s.pre-v%d-%s.bak", path, targetVersion, hex.EncodeToString(sum[:])[:16])
 }
 
-// rollbackKeymapMigration restores a keymap from a migration backup.
+// RollbackKeymapMigration restores a keymap from a migration backup.
 //
 // The backup is parsed before it is restored: a corrupted or truncated backup
 // must fail loudly here rather than become the live keymap. Restoration goes
@@ -666,8 +666,8 @@ func keymapMigrationBackupPathForVersion(path string, original []byte, targetVer
 //
 // Downgrading to a projmux that predates the backup's schema requires running
 // this first so the older binary never sees a marker or field it cannot read.
-func rollbackKeymapMigration(store keymapStore, backupPath string) error {
-	path, err := keymapPath(store.homeDir, store.lookupEnv)
+func RollbackKeymapMigration(store KeymapStore, backupPath string) error {
+	path, err := KeymapPath(store.HomeDir, store.LookupEnv)
 	if err != nil {
 		return err
 	}
@@ -680,14 +680,14 @@ func rollbackKeymapMigration(store keymapStore, backupPath string) error {
 	if err != nil {
 		return fmt.Errorf("read keymap backup %s: %w", backupPath, err)
 	}
-	parsed, err := parseKeymapFile(backupPath, string(raw))
+	parsed, err := ParseKeymapFile(backupPath, string(raw))
 	if err != nil {
 		return fmt.Errorf("keymap backup %s is not a readable keymap: %w", backupPath, err)
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), parsed); err != nil {
 		return fmt.Errorf("keymap backup %s does not merge: %w", backupPath, err)
 	}
-	return writeKeymapBytes(path, raw, store.writeFile)
+	return writeKeymapBytes(path, raw, store.WriteFile)
 }
 
 // keymapMigrationConflictError renders a blocked plan as the error every entry
@@ -703,27 +703,27 @@ func keymapMigrationConflictError(plan keymapMigrationPlan) error {
 	return errors.New(strings.Join(lines, "\n"))
 }
 
-// migrateKeymapForWrite is the preflight-then-apply pair every explicit write or
+// MigrateKeymapForWrite is the preflight-then-apply pair every explicit write or
 // apply boundary calls.
 //
 // Settings key save, `projmux config apply`, the compatibility
 // `projmux config apply`, and every post-update install path converge here. That is
 // what makes the migration lazy but inevitable: whichever of them the user
 // reaches first performs it, and the rest then find nothing to do.
-func migrateKeymapForWrite(store keymapStore) (keymapMigrationResult, error) {
-	plan, err := planKeymapMigration(store)
+func MigrateKeymapForWrite(store KeymapStore) (KeymapMigrationResult, error) {
+	plan, err := PlanKeymapMigration(store)
 	if err != nil {
-		return keymapMigrationResult{Plan: plan}, err
+		return KeymapMigrationResult{Plan: plan}, err
 	}
-	return applyKeymapMigration(store, plan)
+	return ApplyKeymapMigration(store, plan)
 }
 
-// writeKeymapMigrationPreflight reports a plan without changing anything.
+// WriteKeymapMigrationPreflight reports a plan without changing anything.
 //
 // It writes to the caller's diagnostic stream, never to stdout of a route whose
 // stdout is a generated artifact: `config render` must stay byte-identical to
 // the printer it forwards to.
-func writeKeymapMigrationPreflight(w io.Writer, plan keymapMigrationPlan) {
+func WriteKeymapMigrationPreflight(w io.Writer, plan keymapMigrationPlan) {
 	if w == nil || !plan.Present {
 		return
 	}

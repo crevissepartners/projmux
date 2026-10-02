@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -20,8 +21,8 @@ func TestColumnPickerProfileSettingsAndNativeStateParity(t *testing.T) {
 			t.Run(action+map[bool]string{false: "/default", true: "/custom"}[custom], func(t *testing.T) {
 				home := t.TempDir()
 				settings := keybindingCorrectnessCommand(t, home, nil)
-				spec, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action)
-				if !ok || spec.Kind != keyBindingActionPickerInternal || spec.Tier != keyBindingTierNativePickerInternal || spec.PlainChord != "M-w" {
+				spec, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action)
+				if !ok || spec.Kind != keybinding.KeyBindingActionPickerInternal || spec.Tier != keybinding.KeyBindingTierNativePickerInternal || spec.PlainChord != "M-w" {
 					t.Fatalf("catalog: %+v", spec)
 				}
 				wantID := map[string]string{registryColumnProfileAction: "resource-inspector.columns.toggle", runtimeColumnProfileAction: "runtime-diagnostics.columns.toggle"}[action]
@@ -48,7 +49,7 @@ func TestColumnPickerProfileSettingsAndNativeStateParity(t *testing.T) {
 				var before []byte
 				if custom {
 					key = "v"
-					keymapPath, err = saveKeymapKeys(settings.keymapStore(), action, []string{"v"})
+					keymapPath, err = keybinding.SaveKeymapKeys(settings.keymapStore(), action, []string{"v"})
 					if err != nil {
 						t.Fatal(err)
 					}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 )
@@ -34,7 +35,7 @@ func managedDeleteKeyContracts() []managedDeleteKeyContract {
 
 // managedDeleteBody is the exact generated body for one managed close action.
 func managedDeleteBody(bin string, contract managedDeleteKeyContract) string {
-	return `if-shell -F "` + contract.guard + `" { run-shell "` + tmuxPaneEnvPrefix + tmuxShellQuote(bin) +
+	return `if-shell -F "` + contract.guard + `" { run-shell "` + keybinding.TmuxPaneEnvPrefix + keybinding.TmuxShellQuote(bin) +
 		" internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} " + contract.target + `" } { ` + contract.stock + ` }`
 }
 
@@ -64,15 +65,15 @@ func TestManagedDeleteKeyBindingsRenderMirrorGuardedCanonicalRouteWithStockFallb
 	app := tmuxAppConfig(bin, "/bin/sh", config.StatusbarDecorationOff)
 	standalone := tmuxStandaloneConfig(bin, config.StatusbarDecorationOff)
 	for _, contract := range managedDeleteKeyContracts() {
-		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), contract.id)
+		action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), contract.id)
 		if !ok {
 			t.Fatalf("catalog is missing managed close action %q", contract.id)
 		}
-		if action.CanonicalID != contract.canonical || action.Scope != keyBindingScopeApp || action.PrefixChord != contract.chord ||
-			action.TmuxKind != tmuxBindingManagedDelete || !keyBindingEditable(action) || len(keyBindingEffectivePlainChords(action)) != 0 {
+		if action.CanonicalID != contract.canonical || action.Scope != keybinding.KeyBindingScopeApp || action.PrefixChord != contract.chord ||
+			action.TmuxKind != keybinding.TmuxBindingManagedDelete || !keybinding.KeyBindingEditable(action) || len(keybinding.KeyBindingEffectivePlainChords(action)) != 0 {
 			t.Fatalf("managed close action %q = %#v, want app-scoped editable prefix %q action %q", contract.id, action, contract.chord, contract.canonical)
 		}
-		if _, protected := keyBindingProtectedActionReason(action); protected {
+		if _, protected := keybinding.KeyBindingProtectedActionReason(action); protected {
 			t.Fatalf("managed close action %q is read only in Settings", contract.id)
 		}
 
@@ -105,11 +106,11 @@ func TestManagedDeleteKeymapChangeAndDisableReachGeneratedConfig(t *testing.T) {
 	pane, window := contracts[0], contracts[1]
 	decorations := statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff)
 
-	parsed, err := parseKeymapFile("keymap.toml", "schema_version = 2\n\n[bindings.\"pane.delete\"]\nprefix = \"X\"\n\n[bindings.\"window.delete\"]\nprefix = \"\"\n")
+	parsed, err := keybinding.ParseKeymapFile("keymap.toml", "schema_version = 2\n\n[bindings.\"pane.delete\"]\nprefix = \"X\"\n\n[bindings.\"window.delete\"]\nprefix = \"\"\n")
 	if err != nil {
 		t.Fatalf("parse keymap: %v", err)
 	}
-	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	merged, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), parsed)
 	if err != nil {
 		t.Fatalf("merge keymap: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestManagedDeleteKeymapChangeAndDisableReachGeneratedConfig(t *testing.T) {
 	if got := countConfigLines(app, remapped); got != 1 {
 		t.Fatalf("remapped pane.delete binding count = %d, want 1: %s\n%s", got, remapped, app)
 	}
-	if strings.Contains(app, "bind-key x if-shell") || strings.Contains(app, managedDeleteWindowRoute) {
+	if strings.Contains(app, "bind-key x if-shell") || strings.Contains(app, keybinding.ManagedDeleteWindowRoute) {
 		t.Fatalf("a vacated or disabled key kept its managed binding:\n%s", app)
 	}
 	// A key the managed action no longer owns returns to tmux's own binding,
@@ -142,7 +143,7 @@ func TestManagedDeleteKeymapChangeAndDisableReachGeneratedConfig(t *testing.T) {
 	}
 
 	// Settings adds root-table keys; each runs the same branching body.
-	withKey, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), keymapFile{Bindings: map[string]keymapOverride{
+	withKey, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), keybinding.KeymapFile{Bindings: map[string]keybinding.KeymapOverride{
 		"pane.delete": {KeysSet: true, Keys: []string{"M-F9"}},
 	}})
 	if err != nil {
@@ -160,7 +161,7 @@ func TestManagedDeleteKeymapChangeAndDisableReachGeneratedConfig(t *testing.T) {
 
 	// Two managed actions on one prefix key would silently shadow each other.
 	ampersand := "&"
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), keymapFile{Bindings: map[string]keymapOverride{
+	if _, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), keybinding.KeymapFile{Bindings: map[string]keybinding.KeymapOverride{
 		"pane.delete": {Prefix: &ampersand},
 	}}); err == nil || !strings.Contains(err.Error(), `prefix key "&" is bound to both`) {
 		t.Fatalf("duplicate managed prefix key error = %v, want a prefix conflict", err)
@@ -181,8 +182,8 @@ func TestManagedDeleteCatalogSurfaceRowsMapBothDirections(t *testing.T) {
 		verb     runtimeMutationVerb
 		handler  string
 	}{
-		{contract: managedDeleteKeyContracts()[0], route: managedDeletePaneRoute, verb: mutationKillPane, handler: "internal tmux pane-menu kill"},
-		{contract: managedDeleteKeyContracts()[1], route: managedDeleteWindowRoute, verb: mutationKillWindow, handler: "tmuxWindowDeleteRuntime"},
+		{contract: managedDeleteKeyContracts()[0], route: keybinding.ManagedDeletePaneRoute, verb: mutationKillPane, handler: "internal tmux pane-menu kill"},
+		{contract: managedDeleteKeyContracts()[1], route: keybinding.ManagedDeleteWindowRoute, verb: mutationKillWindow, handler: "tmuxWindowDeleteRuntime"},
 	} {
 		id := "catalog." + test.contract.canonical
 		row, ok := rows[id]
@@ -198,7 +199,7 @@ func TestManagedDeleteCatalogSurfaceRowsMapBothDirections(t *testing.T) {
 			t.Fatalf("app config carries %q %d time(s), want 1", test.route, got)
 		}
 		// row -> artifact: the row's legacy alias is the shipped action rendering that route.
-		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), row.LegacyID)
+		action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), row.LegacyID)
 		if !ok || action.CanonicalID != test.contract.canonical || action.TmuxBody != test.route {
 			t.Fatalf("surface row %s does not point back at a catalog action rendering %q: %#v", id, test.route, action)
 		}

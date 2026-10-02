@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -450,18 +451,18 @@ func TestProjectStopSurfaceExecutorMatchesLifecycleTableAndGenericCopyStaysGener
 		!strings.Contains(projectSurface.Effect, "desired Window/Pane topology unchanged") {
 		t.Fatalf("Project Stop production surface diverged from lifecycle table: %+v", projectSurface)
 	}
-	generic, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "SessionPopup:KillSession")
+	generic, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "SessionPopup:KillSession")
 	if !ok {
 		t.Fatal("generic Session stop action missing")
 	}
-	if strings.Contains(generic.Description, "Project UID") || strings.Contains(keyBindingDisplayName(generic), "UID/topology") {
+	if strings.Contains(generic.Description, "Project UID") || strings.Contains(keybinding.KeyBindingDisplayName(generic), "UID/topology") {
 		t.Fatalf("generic Session stop copy incorrectly claims Project identity semantics: label=%q description=%q",
-			keyBindingDisplayName(generic), generic.Description)
+			keybinding.KeyBindingDisplayName(generic), generic.Description)
 	}
 	if !strings.Contains(generic.Description, "Stop only") || !strings.Contains(generic.Description, "managed Registry identity") ||
 		!strings.Contains(generic.Description, "desired topology") {
 		t.Fatalf("generic Session stop copy does not state runtime-only managed-identity preservation: label=%q description=%q",
-			keyBindingDisplayName(generic), generic.Description)
+			keybinding.KeyBindingDisplayName(generic), generic.Description)
 	}
 }
 

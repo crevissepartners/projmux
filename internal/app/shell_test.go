@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -237,10 +238,10 @@ func TestShellWriteAppConfigUnsetThemeMatchesFallback(t *testing.T) {
 
 	// With no global theme, the shell-start writer must be byte-identical to the
 	// built-in fallback render (the pre-change behavior).
-	catalog, present, err := loadMergedKeyBindingCatalog(keymapLoader{
-		homeDir:   cmd.homeDir,
-		lookupEnv: cmd.lookupEnv,
-		readFile:  cmd.readFile,
+	catalog, present, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{
+		HomeDir:   cmd.homeDir,
+		LookupEnv: cmd.lookupEnv,
+		ReadFile:  cmd.readFile,
 	})
 	if err != nil {
 		t.Fatalf("loadMergedKeyBindingCatalog() error = %v", err)

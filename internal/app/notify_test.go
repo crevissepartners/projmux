@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -1858,11 +1859,11 @@ func TestNotifyListSidebarGNoGoneNotificationsIsNoOp(t *testing.T) {
 func TestNotifyListSidebarClearGoneRebindsFromKeymap(t *testing.T) {
 	t.Parallel()
 
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "NotifySidebar:ClearGone")
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "NotifySidebar:ClearGone")
 	if !ok {
 		t.Fatal("NotifySidebar:ClearGone missing from default catalog")
 	}
-	if got := firstNonEmptyString(keyBindingEffectivePlainChords(action)); got != "g" {
+	if got := keybinding.FirstNonEmptyString(keybinding.KeyBindingEffectivePlainChords(action)); got != "g" {
 		t.Fatalf("default ClearGone chord = %q, want g", got)
 	}
 

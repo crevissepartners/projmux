@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"strings"
 	"testing"
 )
@@ -22,9 +23,9 @@ func TestPaneIdentityActionWriteMatrix(t *testing.T) {
 		t.Fatalf("tmux rename-pane error = %v", err)
 	}
 
-	catalog := defaultKeyBindingCatalog()
-	canonical, _ := keyBindingActionByID(catalog, paneRenameActionID)
-	if alias, ok := keyBindingActionByID(catalog, retiredPaneRenameActionID); ok {
+	catalog := keybinding.DefaultKeyBindingCatalog()
+	canonical, _ := keybinding.KeyBindingActionByID(catalog, keybinding.PaneRenameActionID)
+	if alias, ok := keybinding.KeyBindingActionByID(catalog, keybinding.RetiredPaneRenameActionID); ok {
 		t.Fatalf("retired pane rename action unexpectedly resolves to %#v", alias)
 	}
 
@@ -58,7 +59,7 @@ func TestPaneIdentityActionWriteMatrix(t *testing.T) {
 	}
 
 	for _, forbiddenID := range []string{"rename-pane-title", "rename-pane-raw-title", "set-pane-title"} {
-		if action, ok := keyBindingActionByID(catalog, forbiddenID); ok {
+		if action, ok := keybinding.KeyBindingActionByID(catalog, forbiddenID); ok {
 			t.Fatalf("raw-title user action %q unexpectedly resolves to %#v", forbiddenID, action)
 		}
 	}

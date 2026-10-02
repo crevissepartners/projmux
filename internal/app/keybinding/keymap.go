@@ -1,4 +1,4 @@
-package app
+package keybinding
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
-type keymapOverride struct {
+type KeymapOverride struct {
 	Plain        *string
 	Keys         []string
 	KeysSet      bool
@@ -25,13 +25,13 @@ type keymapOverride struct {
 	lineByKey    map[string]int
 }
 
-type keymapFile struct {
+type KeymapFile struct {
 	// SchemaVersion is the root `schema_version` marker. A file that has no
 	// marker is v0 — the only shape projmux wrote before this schema existed —
 	// and decodes as 0 rather than as "assume current", so the migrator can
 	// tell an unversioned file apart from a migrated one.
 	SchemaVersion int
-	Bindings      map[string]keymapOverride
+	Bindings      map[string]KeymapOverride
 }
 
 // keymapSchemaVersion is the keymap TOML schema this binary writes.
@@ -45,41 +45,41 @@ const (
 	keymapSchemaVersionV0 = 0
 	keymapSchemaVersionV1 = 1
 	keymapSchemaVersionV2 = 2
-	keymapSchemaVersion   = keymapSchemaVersionV2
+	KeymapSchemaVersion   = keymapSchemaVersionV2
 )
 
 const keymapSchemaVersionKey = "schema_version"
 
-type keymapLoader struct {
-	homeDir   func() (string, error)
-	lookupEnv func(string) string
-	readFile  func(string) ([]byte, error)
-	// pickerDisplay marks a load made only to show a picker's keys. The
+type KeymapLoader struct {
+	HomeDir   func() (string, error)
+	LookupEnv func(string) string
+	ReadFile  func(string) ([]byte, error)
+	// PickerDisplay marks a load made only to show a picker's keys. The
 	// picker key lookups set it at their call sites; every other load reports
 	// a setting read.
-	pickerDisplay bool
+	PickerDisplay bool
 }
 
-type keymapStore struct {
-	homeDir   func() (string, error)
-	lookupEnv func(string) string
+type KeymapStore struct {
+	HomeDir   func() (string, error)
+	LookupEnv func(string) string
 	readFile  func(string) ([]byte, error)
-	writeFile func(string, []byte, os.FileMode) error
+	WriteFile func(string, []byte, os.FileMode) error
 }
 
-func loadMergedKeyBindingCatalog(loader keymapLoader) ([]keyBindingAction, bool, error) {
-	if loader.homeDir == nil {
-		return defaultKeyBindingCatalog(), false, nil
+func LoadMergedKeyBindingCatalog(loader KeymapLoader) ([]KeyBindingAction, bool, error) {
+	if loader.HomeDir == nil {
+		return DefaultKeyBindingCatalog(), false, nil
 	}
-	path, err := keymapPath(loader.homeDir, loader.lookupEnv)
+	path, err := KeymapPath(loader.HomeDir, loader.LookupEnv)
 	if err != nil {
 		return nil, false, err
 	}
-	readFile := loader.readFile
+	readFile := loader.ReadFile
 	if readFile == nil {
 		readFile = os.ReadFile
 	}
-	if loader.pickerDisplay {
+	if loader.PickerDisplay {
 		config.NotePickerDisplayRead(config.KeymapFileName, path)
 	} else {
 		config.NoteFrontRead(config.KeymapFileName, path)
@@ -87,28 +87,28 @@ func loadMergedKeyBindingCatalog(loader keymapLoader) ([]keyBindingAction, bool,
 	raw, err := readFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return defaultKeyBindingCatalog(), false, nil
+			return DefaultKeyBindingCatalog(), false, nil
 		}
 		return nil, false, fmt.Errorf("read keymap %s: %w", path, err)
 	}
-	parsed, err := parseKeymapFile(path, string(raw))
+	parsed, err := ParseKeymapFile(path, string(raw))
 	if err != nil {
 		return nil, true, err
 	}
-	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	merged, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), parsed)
 	if err != nil {
 		return nil, true, fmt.Errorf("keymap %s: %w", path, err)
 	}
 	return merged, true, nil
 }
 
-func loadKeymapForEdit(store keymapStore) (keymapFile, []keyBindingAction, bool, string, error) {
-	if store.homeDir == nil {
-		return keymapFile{Bindings: map[string]keymapOverride{}}, defaultKeyBindingCatalog(), false, "", nil
+func LoadKeymapForEdit(store KeymapStore) (KeymapFile, []KeyBindingAction, bool, string, error) {
+	if store.HomeDir == nil {
+		return KeymapFile{Bindings: map[string]KeymapOverride{}}, DefaultKeyBindingCatalog(), false, "", nil
 	}
-	path, err := keymapPath(store.homeDir, store.lookupEnv)
+	path, err := KeymapPath(store.HomeDir, store.LookupEnv)
 	if err != nil {
-		return keymapFile{}, nil, false, "", err
+		return KeymapFile{}, nil, false, "", err
 	}
 	readFile := store.readFile
 	if readFile == nil {
@@ -118,39 +118,39 @@ func loadKeymapForEdit(store keymapStore) (keymapFile, []keyBindingAction, bool,
 	raw, err := readFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return keymapFile{Bindings: map[string]keymapOverride{}}, defaultKeyBindingCatalog(), false, path, nil
+			return KeymapFile{Bindings: map[string]KeymapOverride{}}, DefaultKeyBindingCatalog(), false, path, nil
 		}
-		return keymapFile{}, nil, false, path, fmt.Errorf("read keymap %s: %w", path, err)
+		return KeymapFile{}, nil, false, path, fmt.Errorf("read keymap %s: %w", path, err)
 	}
-	parsed, err := parseKeymapFile(path, string(raw))
+	parsed, err := ParseKeymapFile(path, string(raw))
 	if err != nil {
-		return keymapFile{}, nil, true, path, err
+		return KeymapFile{}, nil, true, path, err
 	}
-	merged, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), parsed)
+	merged, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), parsed)
 	if err != nil {
-		return keymapFile{}, nil, true, path, fmt.Errorf("keymap %s: %w", path, err)
+		return KeymapFile{}, nil, true, path, fmt.Errorf("keymap %s: %w", path, err)
 	}
 	return parsed, merged, true, path, nil
 }
 
-func saveKeymapOverride(store keymapStore, actionID, field string, value *string) (string, error) {
+func saveKeymapOverride(store KeymapStore, actionID, field string, value *string) (string, error) {
 	if field != "plain" && field != "prefix" && field != "keys" {
 		return "", fmt.Errorf("unsupported keymap field %q", field)
 	}
-	current, _, _, path, err := loadKeymapForEdit(store)
+	current, _, _, path, err := LoadKeymapForEdit(store)
 	if err != nil {
 		return path, err
 	}
-	defaults := defaultKeyBindingCatalog()
-	action, ok := keyBindingActionByID(defaults, actionID)
+	defaults := DefaultKeyBindingCatalog()
+	action, ok := KeyBindingActionByID(defaults, actionID)
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	actionID = keymapBindingKeyForAction(current, action)
+	actionID = KeymapBindingKeyForAction(current, action)
 
 	override := current.Bindings[actionID]
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]KeymapOverride{}
 	}
 	defaultValue := action.PlainChord
 	if field == "prefix" {
@@ -163,13 +163,13 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 			keys = strings.Split(*value, ",")
 		}
 		for i := range keys {
-			chord, err := normalizeKeymapTypedChord(keys[i])
+			chord, err := NormalizeKeymapTypedChord(keys[i])
 			if err != nil {
 				return path, err
 			}
 			keys[i] = chord
 		}
-		if action.Tier == keyBindingTierTransportDependent {
+		if action.Tier == KeyBindingTierTransportDependent {
 			keys, err = transportPlainAliasChords(action, keys)
 			if err != nil {
 				return path, err
@@ -177,7 +177,7 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 		}
 		override.Plain = nil
 		override.KeysSet = true
-		override.Keys = uniqueNonEmptyStrings(keys)
+		override.Keys = UniqueNonEmptyStrings(keys)
 	} else if value == nil || *value == defaultValue {
 		if field == "plain" {
 			override.Plain = nil
@@ -185,7 +185,7 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 			override.Prefix = nil
 		}
 	} else {
-		if err := validateKeymapChord(*value); err != nil {
+		if err := ValidateKeymapChord(*value); err != nil {
 			return path, err
 		}
 		copied := *value
@@ -201,48 +201,48 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 	} else {
 		current.Bindings[actionID] = override
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), current); err != nil {
 		return path, err
 	}
 
 	if path == "" {
-		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		path, err = KeymapPath(store.HomeDir, store.LookupEnv)
 		if err != nil {
 			return "", err
 		}
 	}
-	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+	if err := WriteKeymapFile(path, current, store.WriteFile); err != nil {
 		return path, err
 	}
 	return path, nil
 }
 
-func saveKeymapKeys(store keymapStore, actionID string, keys []string) (string, error) {
+func SaveKeymapKeys(store KeymapStore, actionID string, keys []string) (string, error) {
 	joined := strings.Join(keys, ",")
 	return saveKeymapOverride(store, actionID, "keys", &joined)
 }
 
-// saveKeymapSequences is the Settings writer seam for schema-v2 sequence
+// SaveKeymapSequences is the Settings writer seam for schema-v2 sequence
 // authoring. It deliberately reuses normalizeKeymapSequence and the merged
 // catalog conflict validator rather than defining a second Settings grammar.
-func saveKeymapSequences(store keymapStore, actionID string, sequences []string) (string, error) {
-	current, _, _, path, err := loadKeymapForEdit(store)
+func SaveKeymapSequences(store KeymapStore, actionID string, sequences []string) (string, error) {
+	current, _, _, path, err := LoadKeymapForEdit(store)
 	if err != nil {
 		return path, err
 	}
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	action, ok := KeyBindingActionByID(DefaultKeyBindingCatalog(), actionID)
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	actionID = keymapBindingKeyForAction(current, action)
+	actionID = KeymapBindingKeyForAction(current, action)
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]KeymapOverride{}
 	}
-	current.SchemaVersion = keymapSchemaVersion
+	current.SchemaVersion = KeymapSchemaVersion
 	override := current.Bindings[actionID]
 	normalized := make([]string, 0, len(sequences))
 	for _, sequence := range sequences {
-		value, normalizeErr := normalizeKeymapSequence(sequence)
+		value, normalizeErr := NormalizeKeymapSequence(sequence)
 		if normalizeErr != nil {
 			return path, normalizeErr
 		}
@@ -251,33 +251,33 @@ func saveKeymapSequences(store keymapStore, actionID string, sequences []string)
 	override.SequencesSet = true
 	override.Sequences = normalized
 	current.Bindings[actionID] = override
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), current); err != nil {
 		return path, err
 	}
 	if path == "" {
-		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		path, err = KeymapPath(store.HomeDir, store.LookupEnv)
 		if err != nil {
 			return "", err
 		}
 	}
-	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+	if err := WriteKeymapFile(path, current, store.WriteFile); err != nil {
 		return path, err
 	}
 	return path, nil
 }
 
-func resetKeymapSequences(store keymapStore, actionID string) (string, error) {
-	current, _, _, path, err := loadKeymapForEdit(store)
+func ResetKeymapSequences(store KeymapStore, actionID string) (string, error) {
+	current, _, _, path, err := LoadKeymapForEdit(store)
 	if err != nil {
 		return path, err
 	}
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	action, ok := KeyBindingActionByID(DefaultKeyBindingCatalog(), actionID)
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	actionID = keymapBindingKeyForAction(current, action)
+	actionID = KeymapBindingKeyForAction(current, action)
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]KeymapOverride{}
 	}
 	override := current.Bindings[actionID]
 	override.Sequences = nil
@@ -287,60 +287,60 @@ func resetKeymapSequences(store keymapStore, actionID string) (string, error) {
 	} else {
 		current.Bindings[actionID] = override
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), current); err != nil {
 		return path, err
 	}
 	if path == "" {
-		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		path, err = KeymapPath(store.HomeDir, store.LookupEnv)
 		if err != nil {
 			return "", err
 		}
 	}
-	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+	if err := WriteKeymapFile(path, current, store.WriteFile); err != nil {
 		return path, err
 	}
 	return path, nil
 }
 
-func resetKeymapBinding(store keymapStore, actionID string) (string, error) {
-	current, _, _, path, err := loadKeymapForEdit(store)
+func ResetKeymapBinding(store KeymapStore, actionID string) (string, error) {
+	current, _, _, path, err := LoadKeymapForEdit(store)
 	if err != nil {
 		return path, err
 	}
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	action, ok := KeyBindingActionByID(DefaultKeyBindingCatalog(), actionID)
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	delete(current.Bindings, keymapBindingKeyForAction(current, action))
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+	delete(current.Bindings, KeymapBindingKeyForAction(current, action))
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), current); err != nil {
 		return path, err
 	}
 	if path == "" {
-		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		path, err = KeymapPath(store.HomeDir, store.LookupEnv)
 		if err != nil {
 			return "", err
 		}
 	}
-	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+	if err := WriteKeymapFile(path, current, store.WriteFile); err != nil {
 		return path, err
 	}
 	return path, nil
 }
 
-func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
-	current, _, _, path, err := loadKeymapForEdit(store)
+func ResetKeymapKeys(store KeymapStore, actionID string) (string, error) {
+	current, _, _, path, err := LoadKeymapForEdit(store)
 	if err != nil {
 		return path, err
 	}
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	action, ok := KeyBindingActionByID(DefaultKeyBindingCatalog(), actionID)
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	actionID = keymapBindingKeyForAction(current, action)
+	actionID = KeymapBindingKeyForAction(current, action)
 
 	override := current.Bindings[actionID]
 	if current.Bindings == nil {
-		current.Bindings = map[string]keymapOverride{}
+		current.Bindings = map[string]KeymapOverride{}
 	}
 	override.Plain = nil
 	override.Keys = nil
@@ -350,33 +350,33 @@ func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
 	} else {
 		current.Bindings[actionID] = override
 	}
-	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+	if _, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), current); err != nil {
 		return path, err
 	}
 
 	if path == "" {
-		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		path, err = KeymapPath(store.HomeDir, store.LookupEnv)
 		if err != nil {
 			return "", err
 		}
 	}
-	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+	if err := WriteKeymapFile(path, current, store.WriteFile); err != nil {
 		return path, err
 	}
 	return path, nil
 }
 
-func keyBindingActionByID(actions []keyBindingAction, id string) (keyBindingAction, bool) {
+func KeyBindingActionByID(actions []KeyBindingAction, id string) (KeyBindingAction, bool) {
 	for _, action := range actions {
-		if slices.Contains(keyBindingActionAliases(action), id) {
+		if slices.Contains(KeyBindingActionAliases(action), id) {
 			return action, true
 		}
 	}
-	return keyBindingAction{}, false
+	return KeyBindingAction{}, false
 }
 
-func writeKeymapFile(path string, keymap keymapFile, writeFile func(string, []byte, os.FileMode) error) error {
-	return writeKeymapBytes(path, []byte(renderKeymapFile(keymap)), writeFile)
+func WriteKeymapFile(path string, keymap KeymapFile, writeFile func(string, []byte, os.FileMode) error) error {
+	return writeKeymapBytes(path, []byte(RenderKeymapFile(keymap)), writeFile)
 }
 
 // writeKeymapBytes is the one durable keymap write. The Settings writer, the
@@ -462,7 +462,7 @@ func resolveKeymapWriteTarget(path string) (string, os.FileMode, error) {
 	return target, info.Mode().Perm(), nil
 }
 
-func renderKeymapFile(keymap keymapFile) string {
+func RenderKeymapFile(keymap KeymapFile) string {
 	var ids []string
 	for id, override := range keymap.Bindings {
 		if !override.KeysSet && !override.SequencesSet && override.Plain == nil && override.Prefix == nil {
@@ -545,7 +545,7 @@ func formatKeymapStringArray(values []string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func keymapPath(homeDir func() (string, error), lookupEnv func(string) string) (string, error) {
+func KeymapPath(homeDir func() (string, error), lookupEnv func(string) string) (string, error) {
 	env := lookupEnv
 	if env == nil {
 		env = os.Getenv
@@ -569,8 +569,8 @@ func keymapPath(homeDir func() (string, error), lookupEnv func(string) string) (
 	return paths.KeymapFile(), nil
 }
 
-func parseKeymapFile(path, raw string) (keymapFile, error) {
-	out := keymapFile{Bindings: map[string]keymapOverride{}}
+func ParseKeymapFile(path, raw string) (KeymapFile, error) {
+	out := KeymapFile{Bindings: map[string]KeymapOverride{}}
 	currentID := ""
 	schemaVersionLine := 0
 	for lineNo, original := range strings.Split(raw, "\n") {
@@ -593,19 +593,19 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			if !validActionID(id, quoted) {
 				return out, keymapParseError(path, lineNo+1, "invalid action id %q", id)
 			}
-			if id == retiredPaneRenameActionID {
+			if id == RetiredPaneRenameActionID {
 				return out, keymapParseError(
 					path,
 					lineNo+1,
 					"keybinding action %q was removed; replace [bindings.%s] with [bindings.%s]",
-					retiredPaneRenameActionID,
-					retiredPaneRenameActionID,
-					paneRenameActionID,
+					RetiredPaneRenameActionID,
+					RetiredPaneRenameActionID,
+					PaneRenameActionID,
 				)
 			}
 			currentID = id
 			if _, ok := out.Bindings[id]; !ok {
-				out.Bindings[id] = keymapOverride{lineByKey: map[string]int{}}
+				out.Bindings[id] = KeymapOverride{lineByKey: map[string]int{}}
 			}
 			continue
 		}
@@ -643,7 +643,7 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			if err != nil {
 				return out, keymapParseError(path, lineNo+1, "%v", err)
 			}
-			if err := validateKeymapChord(value); err != nil {
+			if err := ValidateKeymapChord(value); err != nil {
 				return out, keymapParseError(path, lineNo+1, "%s: %v", key, err)
 			}
 			override.Plain = &value
@@ -670,7 +670,7 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 				return out, keymapParseError(path, lineNo+1, "%v", err)
 			}
 			for i, value := range values {
-				sequence, err := normalizeKeymapSequence(value)
+				sequence, err := NormalizeKeymapSequence(value)
 				if err != nil {
 					return out, keymapParseError(path, lineNo+1, "%s: %v", key, err)
 				}
@@ -683,7 +683,7 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			if err != nil {
 				return out, keymapParseError(path, lineNo+1, "%v", err)
 			}
-			if err := validateKeymapChord(value); err != nil {
+			if err := ValidateKeymapChord(value); err != nil {
 				return out, keymapParseError(path, lineNo+1, "%s: %v", key, err)
 			}
 			override.Prefix = &value
@@ -709,9 +709,9 @@ func parseKeymapSchemaVersion(text string) (int, error) {
 	if version < keymapSchemaVersionV1 {
 		return 0, fmt.Errorf("value must be at least %d; omit the marker for an unversioned file", keymapSchemaVersionV1)
 	}
-	if version > keymapSchemaVersion {
+	if version > KeymapSchemaVersion {
 		return 0, fmt.Errorf("schema version %d is newer than the supported version %d; upgrade projmux to read this keymap",
-			version, keymapSchemaVersion)
+			version, KeymapSchemaVersion)
 	}
 	return version, nil
 }
@@ -746,13 +746,13 @@ func parseKeymapStringArray(text string) ([]string, error) {
 	return out, nil
 }
 
-func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyBindingAction, error) {
+func MergeKeymapOverrides(actions []KeyBindingAction, keymap KeymapFile) ([]KeyBindingAction, error) {
 	byID := map[string]int{}
 	for i, action := range actions {
 		if action.ID == "" {
 			continue
 		}
-		for _, id := range keyBindingActionAliases(action) {
+		for _, id := range KeyBindingActionAliases(action) {
 			byID[id] = i
 		}
 	}
@@ -767,24 +767,24 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 		}
 		if override.KeysSet {
 			keys := override.Keys
-			if actions[idx].Tier == keyBindingTierTransportDependent && len(keys) != 0 {
+			if actions[idx].Tier == KeyBindingTierTransportDependent && len(keys) != 0 {
 				aliases, err := transportPlainAliasChords(actions[idx], keys)
 				if err != nil {
 					return nil, fmt.Errorf("keymap binding %q: %w", id, err)
 				}
 				keys = append([]string{actions[idx].PlainChord}, aliases...)
 			}
-			actions[idx].PlainChords = uniqueNonEmptyStrings(keys)
-			if actions[idx].Tier != keyBindingTierTransportDependent {
-				actions[idx].PlainChord = firstNonEmptyString(actions[idx].PlainChords)
+			actions[idx].PlainChords = UniqueNonEmptyStrings(keys)
+			if actions[idx].Tier != KeyBindingTierTransportDependent {
+				actions[idx].PlainChord = FirstNonEmptyString(actions[idx].PlainChords)
 			}
 		} else if override.Plain != nil {
-			if actions[idx].Tier == keyBindingTierTransportDependent {
+			if actions[idx].Tier == KeyBindingTierTransportDependent {
 				aliases, err := transportPlainAliasChords(actions[idx], []string{*override.Plain})
 				if err != nil {
 					return nil, fmt.Errorf("keymap binding %q: %w", id, err)
 				}
-				actions[idx].PlainChords = uniqueNonEmptyStrings(append([]string{actions[idx].PlainChord}, aliases...))
+				actions[idx].PlainChords = UniqueNonEmptyStrings(append([]string{actions[idx].PlainChord}, aliases...))
 			} else {
 				actions[idx].PlainChord = *override.Plain
 				if *override.Plain == "" {
@@ -798,20 +798,20 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 			actions[idx].PrefixChord = *override.Prefix
 		}
 		if override.SequencesSet {
-			if actions[idx].Kind == keyBindingActionPickerInternal {
+			if actions[idx].Kind == KeyBindingActionPickerInternal {
 				return nil, fmt.Errorf("keymap binding %q: sequences are not supported for picker-local actions", id)
 			}
 			actions[idx].Sequences = append([]string(nil), override.Sequences...)
 		}
 	}
 	migrateLegacyAIPickerDefaultOverrides(actions, keymap)
-	if err := validateKeymapConflicts(actions); err != nil {
+	if err := ValidateKeymapConflicts(actions); err != nil {
 		return nil, err
 	}
 	return actions, nil
 }
 
-func migrateLegacyAIPickerDefaultOverrides(actions []keyBindingAction, keymap keymapFile) {
+func migrateLegacyAIPickerDefaultOverrides(actions []KeyBindingAction, keymap KeymapFile) {
 	type migration struct {
 		actionID       string
 		defaultOwnerID string
@@ -830,26 +830,26 @@ func migrateLegacyAIPickerDefaultOverrides(actions []keyBindingAction, keymap ke
 		idx := keyBindingActionIndex(actions, migration.actionID)
 		defaultOwnerIdx := keyBindingActionIndex(actions, migration.defaultOwnerID)
 		if idx < 0 || defaultOwnerIdx < 0 || keymapActionHasPlainOverride(actions, keymap, migration.defaultOwnerID) ||
-			!slices.Contains(keyBindingEffectivePlainChords(actions[defaultOwnerIdx]), migration.oldChord) {
+			!slices.Contains(KeyBindingEffectivePlainChords(actions[defaultOwnerIdx]), migration.oldChord) {
 			continue
 		}
 		actions[idx].PlainChords = replaceKeymapChord(
-			keyBindingEffectivePlainChords(actions[idx]),
+			KeyBindingEffectivePlainChords(actions[idx]),
 			migration.oldChord,
 			migration.newChord,
 		)
-		actions[idx].PlainChord = firstNonEmptyString(actions[idx].PlainChords)
+		actions[idx].PlainChord = FirstNonEmptyString(actions[idx].PlainChords)
 	}
 }
 
-func keymapOverrideBindsChord(override keymapOverride, chord string) bool {
+func keymapOverrideBindsChord(override KeymapOverride, chord string) bool {
 	if override.KeysSet {
 		return slices.Contains(override.Keys, chord)
 	}
 	return override.Plain != nil && *override.Plain == chord
 }
 
-func keymapActionHasPlainOverride(actions []keyBindingAction, keymap keymapFile, actionID string) bool {
+func keymapActionHasPlainOverride(actions []KeyBindingAction, keymap KeymapFile, actionID string) bool {
 	override, ok := keymapOverrideForActionID(actions, keymap, actionID)
 	return ok && (override.KeysSet || override.Plain != nil)
 }
@@ -862,21 +862,21 @@ func keymapActionHasPlainOverride(actions []keyBindingAction, keymap keymapFile,
 // direct lookup silently misses and the caller concludes the user set nothing —
 // which, for the AI picker default swap below, would resurrect a chord conflict
 // the swap exists to resolve.
-func keymapOverrideForActionID(actions []keyBindingAction, keymap keymapFile, actionID string) (keymapOverride, bool) {
-	action, ok := keyBindingActionByID(actions, actionID)
+func keymapOverrideForActionID(actions []KeyBindingAction, keymap KeymapFile, actionID string) (KeymapOverride, bool) {
+	action, ok := KeyBindingActionByID(actions, actionID)
 	if !ok {
 		override, present := keymap.Bindings[actionID]
 		return override, present
 	}
-	for _, id := range keyBindingActionAliases(action) {
+	for _, id := range KeyBindingActionAliases(action) {
 		if override, present := keymap.Bindings[id]; present {
 			return override, true
 		}
 	}
-	return keymapOverride{}, false
+	return KeymapOverride{}, false
 }
 
-func keyBindingActionIndex(actions []keyBindingAction, actionID string) int {
+func keyBindingActionIndex(actions []KeyBindingAction, actionID string) int {
 	for i, action := range actions {
 		if action.ID == actionID {
 			return i
@@ -893,16 +893,16 @@ func replaceKeymapChord(chords []string, oldChord, newChord string) []string {
 		}
 		replaced[i] = chord
 	}
-	return uniqueNonEmptyStrings(replaced)
+	return UniqueNonEmptyStrings(replaced)
 }
 
-func transportPlainAliasChords(action keyBindingAction, keys []string) ([]string, error) {
-	if action.Tier != keyBindingTierTransportDependent {
-		return uniqueNonEmptyStrings(keys), nil
+func transportPlainAliasChords(action KeyBindingAction, keys []string) ([]string, error) {
+	if action.Tier != KeyBindingTierTransportDependent {
+		return UniqueNonEmptyStrings(keys), nil
 	}
 	transportDefault := strings.TrimSpace(action.PlainChord)
 	var aliases []string
-	for _, key := range uniqueNonEmptyStrings(keys) {
+	for _, key := range UniqueNonEmptyStrings(keys) {
 		if key == transportDefault {
 			return nil, fmt.Errorf("key %q is the transport-dependent default for %s; omit it from plain aliases", key, action.ID)
 		}
@@ -911,7 +911,7 @@ func transportPlainAliasChords(action keyBindingAction, keys []string) ([]string
 	return aliases, nil
 }
 
-func validateKeymapChord(value string) error {
+func ValidateKeymapChord(value string) error {
 	if value == "" {
 		return nil
 	}
@@ -924,13 +924,13 @@ func validateKeymapChord(value string) error {
 	return nil
 }
 
-func normalizeKeymapTypedChord(value string) (string, error) {
+func NormalizeKeymapTypedChord(value string) (string, error) {
 	return normalizeKeymapAliasChord(value)
 }
 
-const keymapReservedAuthoringReason = "reserved control/navigation keys cannot be authored in Settings; choose a printable, function, or non-reserved modified key"
+const KeymapReservedAuthoringReason = "reserved control/navigation keys cannot be authored in Settings; choose a printable, function, or non-reserved modified key"
 
-// reservedKeymapAuthoringBase classifies the logical base key used by the
+// ReservedKeymapAuthoringBase classifies the logical base key used by the
 // Settings authoring policy. It intentionally does not participate in parsing
 // or runtime compilation: existing keymap files and shipped defaults may keep
 // using these keys, while every new Settings write is rejected separately.
@@ -940,7 +940,7 @@ const keymapReservedAuthoringReason = "reserved control/navigation keys cannot b
 // portable modifier prefixes first so a modified spelling cannot bypass the
 // same base-key policy. C-m/C-i/C-[ are terminal aliases for
 // Enter/Tab/Escape, including when another modifier wraps them.
-func reservedKeymapAuthoringBase(chord string) (string, bool) {
+func ReservedKeymapAuthoringBase(chord string) (string, bool) {
 	parts := strings.Split(strings.TrimSpace(chord), "-")
 	if len(parts) == 0 {
 		return "", false
@@ -1001,27 +1001,27 @@ base:
 	}
 }
 
-func validateKeymapAuthoringChord(chord string) error {
-	if _, reserved := reservedKeymapAuthoringBase(chord); reserved {
-		return fmt.Errorf("%s", keymapReservedAuthoringReason)
+func ValidateKeymapAuthoringChord(chord string) error {
+	if _, reserved := ReservedKeymapAuthoringBase(chord); reserved {
+		return fmt.Errorf("%s", KeymapReservedAuthoringReason)
 	}
 	return nil
 }
 
-func normalizeKeymapAuthoringChord(chord string) (string, error) {
-	normalized, err := normalizeKeymapTypedChord(chord)
+func NormalizeKeymapAuthoringChord(chord string) (string, error) {
+	normalized, err := NormalizeKeymapTypedChord(chord)
 	if err != nil {
 		return "", err
 	}
-	if err := validateKeymapAuthoringChord(normalized); err != nil {
+	if err := ValidateKeymapAuthoringChord(normalized); err != nil {
 		return "", err
 	}
 	return normalized, nil
 }
 
-func validateKeymapAuthoringSequence(sequence string) error {
+func ValidateKeymapAuthoringSequence(sequence string) error {
 	for stroke := range strings.FieldsSeq(sequence) {
-		if err := validateKeymapAuthoringChord(stroke); err != nil {
+		if err := ValidateKeymapAuthoringChord(stroke); err != nil {
 			return err
 		}
 	}
@@ -1049,18 +1049,18 @@ func normalizeKeymapAliasChord(value string) (string, error) {
 	if strings.HasPrefix(lower, "user") {
 		return "", fmt.Errorf("key alias must not be a tmux User fallback key")
 	}
-	if err := validateKeymapChord(value); err != nil {
+	if err := ValidateKeymapChord(value); err != nil {
 		return "", err
 	}
 	return value, nil
 }
 
-// normalizeKeymapSequence owns the only whitespace grammar in keymap chords.
+// NormalizeKeymapSequence owns the only whitespace grammar in keymap chords.
 // Each stroke is otherwise parsed by the existing safe chord normalizer. Only
 // the first stroke must be modified/navigation/function; later plain printable
 // strokes remain terminal-delivered. The native broker separately allowlists
 // the subset it can represent as safe physical modified chords.
-func normalizeKeymapSequence(value string) (string, error) {
+func NormalizeKeymapSequence(value string) (string, error) {
 	if strings.TrimSpace(value) != value {
 		return "", fmt.Errorf("sequence must not have leading or trailing whitespace")
 	}
@@ -1137,12 +1137,12 @@ func keymapNavigationOrFunctionStroke(stroke string) bool {
 	return err == nil && n >= 1 && n <= 20
 }
 
-func validateKeymapConflicts(actions []keyBindingAction) error {
+func ValidateKeymapConflicts(actions []KeyBindingAction) error {
 	global := map[string]string{}
 	internal := map[string]map[string]string{}
 	for _, action := range actions {
-		for _, chord := range keyBindingEffectivePlainChords(action) {
-			if action.Kind == keyBindingActionPickerInternal {
+		for _, chord := range KeyBindingEffectivePlainChords(action) {
+			if action.Kind == KeyBindingActionPickerInternal {
 				surface := strings.TrimSpace(action.Surface)
 				if surface == "" {
 					surface = action.ID
@@ -1183,7 +1183,7 @@ func validateKeymapConflicts(actions []keyBindingAction) error {
 	}
 	var sequences []sequenceOwner
 	for _, action := range actions {
-		for _, sequence := range keyBindingEffectiveSequences(action) {
+		for _, sequence := range KeyBindingEffectiveSequences(action) {
 			strokes := strings.Split(sequence, " ")
 			if owner := global[strokes[0]]; owner != "" {
 				return fmt.Errorf("sequence %q for %s starts with key %q already bound to %s", sequence, action.ID, strokes[0], owner)
