@@ -160,6 +160,10 @@ func TestReadinessAndOwnershipFailureRollBack(t *testing.T) {
 }
 
 func TestClaudeCommandPreservesLaunchPolicy(t *testing.T) {
+	h := testHost(t, nil)
+	if _, err := NewHost("host", Command{Path: os.Args[0]}, h.tx, DefaultLimits()); err == nil {
+		t.Fatal("supervisor accepted implicit inherited environment")
+	}
 	args := []string{"--permission-mode", "manual", "--settings", "configured.json", "--model", "haiku"}
 	cmd, err := ClaudeCommand("claude", "/work", []string{"EXPLICIT=1"}, args)
 	if err != nil {

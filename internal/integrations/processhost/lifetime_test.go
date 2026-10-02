@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -123,5 +124,72 @@ func TestOwnerLifetimeReclaimsOnlyOwnedGroup(t *testing.T) {
 			}
 			t.Logf("%s: owned supervisor/child/descendant absent; sibling alive; cleanup=%s", mode, time.Since(began))
 		})
+	}
+}
+
+func TestExitObservationRetainsOwnedGroupUntilWait(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "processhost-provider", "exit0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	observed := make(chan error, 1)
+	go func() { observed <- observeChildExit(cmd.Process.Pid) }()
+	select {
+	case err := <-observed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("exit observation timeout")
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, 0); err != nil {
+		t.Fatalf("group identity released before cleanup: %v", err)
+	}
+	// A signal to the still-reserved group cannot change the already-exited
+	// leader's genuine status. Reaping remains the final authority for that status.
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil || cmd.ProcessState.ExitCode() != 0 {
+		t.Fatalf("lost real Wait status: %v", err)
+	}
+}
+
+func TestFailedExitObservationGrantsNoCleanupAuthority(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "processhost-leaf")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	for _, failure := range []error{syscall.ENOSYS, syscall.ECHILD} {
+		observed := make(chan error, 1)
+		observed <- failure
+		if err := stopGroup(cmd.Process.Pid, time.Second, observed); !errors.Is(err, failure) {
+			t.Fatalf("cancellation ignored failed observation: %v", err)
+		}
+		if _, err := finishOwnedChild(cmd, failure, time.Second); !errors.Is(err, failure) {
+			t.Fatalf("observation failure lost: %v", err)
+		}
+		if cmd.ProcessState != nil {
+			t.Fatal("failed observation called Wait")
+		}
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Fatalf("failed observation signalled saved PID/group: %v", err)
+		}
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	// A genuine, already-consumed child status cannot restore signal authority.
+	if err := observeChildExit(cmd.Process.Pid); err == nil {
+		t.Fatal("already reaped child observed as owned")
+	} else if _, got := finishOwnedChild(nil, err, time.Second); got == nil {
+		t.Fatal("lost ownership yielded an exit receipt")
+	}
+	// Even a present process is not evidence of an owned child.
+	if err := observeChildExit(os.Getpid()); err == nil {
+		t.Fatal("non-child PID granted ownership")
 	}
 }

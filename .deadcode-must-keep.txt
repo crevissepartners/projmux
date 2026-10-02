@@ -188,6 +188,7 @@ createCommand.recordOperatorCreator	In-process operator creator seam for an oper
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 exitOf	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
+finishOwnedChild	Owned-child signals precede actual Wait only after successful exit observation; retained for processhost lifecycle proof.
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
 formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
@@ -223,6 +224,7 @@ notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLi
 notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the live notify sidebar read model retained as the classification seam.
 notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDisplay retained as the sidebar state palette seam.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
+observeChildExit	Owned-child exit observation preserves PID/group identity until signals precede actual Wait; retained for processhost lifecycle proof.
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.

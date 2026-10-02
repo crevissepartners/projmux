@@ -3,6 +3,8 @@ package processhost
 import (
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
+	"os"
 	"syscall"
 	"time"
 )
@@ -23,6 +25,27 @@ func reapGroup(group int, grace time.Duration) error {
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("owned group %d still exists", group)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// Darwin's sysctl reports the owned, unreaped child's exit without consuming
+// wait status. SZOMB=5 is the public extern_proc state in XNU bsd/sys/proc.h:
+// https://github.com/apple/darwin-xnu/blob/main/bsd/sys/proc.h
+// No PID lookup confers ownership here: only ServeSupervisor's own child enters.
+func observeChildExit(pid int) error {
+	const zombie = 5
+	for {
+		info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+		if err != nil {
+			return err
+		}
+		if int(info.Proc.P_pid) != pid || int(info.Eproc.Ppid) != os.Getpid() || int(info.Eproc.Pgid) != pid {
+			return errors.New("owned child observation lost")
+		}
+		if info.Proc.P_stat == zombie {
+			return nil
 		}
 		time.Sleep(time.Millisecond)
 	}

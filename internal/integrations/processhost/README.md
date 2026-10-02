@@ -11,7 +11,13 @@ accepts one launch, creates one dedicated provider group, drains no protocol dat
 itself, and exits after reaping its child and clearing the group. The host drains
 stdout and stderr independently. Linux uses a subreaper in the dedicated helper;
 macOS waits for launchd to reap orphan descendants. The helper is not a daemon.
-Public entrypoint wiring and durable process bindings require a later consumer.
+Before signalling a finished provider group, the helper observes exit without
+reaping the group leader (Linux waitid WNOWAIT; Darwin owned-child SZOMB). Its
+PID/PGID therefore remains reserved until group signalling finishes and actual
+Wait consumes the exit status. Failed or unsupported exit observation yields unknown
+and does not recover cleanup authority from a stored PID or an already-reaped
+group. Such a failure is not successful platform cleanup. Public entrypoint wiring and durable process
+bindings require a later consumer.
 
 The preparation handshake precedes delivery of the launch specification. A helper
 that never prepares cannot have started a provider from that specification and is

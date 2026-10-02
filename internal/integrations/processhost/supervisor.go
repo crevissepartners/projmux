@@ -86,37 +86,67 @@ func ServeSupervisor(lifetime, spec, status *os.File) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(signals)
-	waited := make(chan Exit, 1)
-	go func() { _ = cmd.Wait(); waited <- exitOf(cmd.ProcessState) }()
+	waited := make(chan error, 1)
+	go func() { waited <- observeChildExit(group) }()
 	if err := out.Encode(processStatus{PID: group}); err != nil {
 		_ = syscall.Kill(-group, syscall.SIGKILL)
-		<-waited
-		return err
+		_, cleanupErr := finishOwnedChild(cmd, <-waited, launch.Grace)
+		return errors.Join(err, cleanupErr)
 	}
-	var exit Exit
+	var observationErr error
 	select {
-	case exit = <-waited:
+	case observationErr = <-waited:
 	case <-died:
-		exit = stopGroup(group, launch.Grace, waited)
+		observationErr = stopGroup(group, launch.Grace, waited)
 	case <-signals:
-		exit = stopGroup(group, launch.Grace, waited)
+		observationErr = stopGroup(group, launch.Grace, waited)
 	}
-	// A provider may finish while its tool children still hold stdout/stderr.
-	// Bound their lifetime too, before publishing completion.
-	_ = syscall.Kill(-group, syscall.SIGKILL)
-	if err := reapGroup(group, launch.Grace); err != nil {
+	exit, err := finishOwnedChild(cmd, observationErr, launch.Grace)
+	if err != nil {
 		return err
 	}
 	return out.Encode(processStatus{Exit: &exit})
 }
 
-func stopGroup(group int, grace time.Duration, waited <-chan Exit) Exit {
+func finishOwnedChild(cmd *exec.Cmd, observationErr error, grace time.Duration) (Exit, error) {
+	// Failed observation confers no cleanup authority. In particular, do not
+	// recover authority from a saved PID after another reaper consumed the child.
+	// The caller reports unknown; unsupported observation is a platform failure.
+	if observationErr != nil {
+		return Exit{}, observationErr
+	}
+	group := cmd.Process.Pid
+	// Keep the exited group leader waitable until every signal has been sent.
+	// Reaping first could release its PID/PGID for an unrelated process.
+	// A provider may also finish while tool children retain stdout/stderr.
+	_ = syscall.Kill(-group, syscall.SIGKILL)
+	waitErr := cmd.Wait()
+	var exitErr *exec.ExitError
+	if waitErr != nil && !errors.As(waitErr, &exitErr) {
+		return Exit{}, waitErr
+	}
+	if cmd.ProcessState == nil {
+		return Exit{}, errors.New("owned child Wait produced no status")
+	}
+	if err := reapGroup(group, grace); err != nil {
+		return Exit{}, err
+	}
+	return exitOf(cmd.ProcessState), nil
+}
+
+func stopGroup(group int, grace time.Duration, waited <-chan error) error {
+	// A completed observation (including failure) wins over cancellation.
+	select {
+	case err := <-waited:
+		return err
+	default:
+	}
 	_ = syscall.Kill(-group, syscall.SIGTERM)
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {
-	case exit := <-waited:
-		return exit
+	case err := <-waited:
+		return err
 	case <-timer.C:
 		_ = syscall.Kill(-group, syscall.SIGKILL)
 		return <-waited

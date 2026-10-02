@@ -70,7 +70,7 @@ type Host struct {
 }
 
 func NewHost(instance string, supervisor Command, tx Transactions, limits Limits) (*Host, error) {
-	if instance == "" || supervisor.Path == "" || tx.Reserve == nil || tx.Commit == nil || tx.Current == nil {
+	if instance == "" || supervisor.Path == "" || supervisor.Env == nil || tx.Reserve == nil || tx.Commit == nil || tx.Current == nil {
 		return nil, errors.New("incomplete process host configuration")
 	}
 	if limits.Launches < 1 || limits.FrameBytes < 256 || limits.Events < 2 || limits.Requests < 1 || limits.DiagnosticBytes < 1 || limits.Startup <= 0 || limits.Write <= 0 || limits.Grace <= 0 || limits.Grace > time.Minute {
@@ -191,6 +191,8 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 }
 
 func (p *Handle) spawn(ctx context.Context) error {
+	// Cleanup after a pipe allocation error is best effort: preserve the
+	// allocation error rather than replace it with a secondary close error.
 	// os.File pipes permit bounded write deadlines and explicit close independent
 	// of exec.Wait; descendants holding an output FD cannot hold Wait hostage.
 	inR, inW, err := os.Pipe()
@@ -199,52 +201,52 @@ func (p *Handle) spawn(ctx context.Context) error {
 	}
 	outR, outW, err := os.Pipe()
 	if err != nil {
-		inR.Close()
-		inW.Close()
+		_ = inR.Close()
+		_ = inW.Close()
 		return err
 	}
 	errR, errW, err := os.Pipe()
 	if err != nil {
-		inR.Close()
-		inW.Close()
-		outR.Close()
-		outW.Close()
+		_ = inR.Close()
+		_ = inW.Close()
+		_ = outR.Close()
+		_ = outW.Close()
 		return err
 	}
 	lifeR, lifeW, err := os.Pipe()
 	if err != nil {
-		inR.Close()
-		inW.Close()
-		outR.Close()
-		outW.Close()
-		errR.Close()
-		errW.Close()
+		_ = inR.Close()
+		_ = inW.Close()
+		_ = outR.Close()
+		_ = outW.Close()
+		_ = errR.Close()
+		_ = errW.Close()
 		return err
 	}
 	specR, specW, err := os.Pipe()
 	if err != nil {
-		inR.Close()
-		inW.Close()
-		outR.Close()
-		outW.Close()
-		errR.Close()
-		errW.Close()
-		lifeR.Close()
-		lifeW.Close()
+		_ = inR.Close()
+		_ = inW.Close()
+		_ = outR.Close()
+		_ = outW.Close()
+		_ = errR.Close()
+		_ = errW.Close()
+		_ = lifeR.Close()
+		_ = lifeW.Close()
 		return err
 	}
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
-		inR.Close()
-		inW.Close()
-		outR.Close()
-		outW.Close()
-		errR.Close()
-		errW.Close()
-		lifeR.Close()
-		lifeW.Close()
-		specR.Close()
-		specW.Close()
+		_ = inR.Close()
+		_ = inW.Close()
+		_ = outR.Close()
+		_ = outW.Close()
+		_ = errR.Close()
+		_ = errW.Close()
+		_ = lifeR.Close()
+		_ = lifeW.Close()
+		_ = specR.Close()
+		_ = specW.Close()
 		return err
 	}
 	all := []*os.File{inR, inW, outR, outW, errR, errW, lifeR, lifeW, specR, specW, statusR, statusW}

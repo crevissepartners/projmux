@@ -30,3 +30,16 @@ func reapGroup(group int, grace time.Duration) error {
 		}
 	}
 }
+
+// observeChildExit observes only this helper's direct child, leaving it waitable
+// so the PID and process-group identity cannot be recycled before cleanup.
+func observeChildExit(pid int) error {
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		return err
+	}
+}

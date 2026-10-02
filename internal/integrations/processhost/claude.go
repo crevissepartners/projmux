@@ -236,7 +236,7 @@ func (p *Handle) consume(raw []byte) error {
 		return nil
 	}
 	if frame.Session != "" && p.session != "" && frame.Session != p.session {
-		return errors.New("Claude session changed")
+		return errors.New("provider session changed")
 	}
 	switch frame.Type {
 	case "system":
