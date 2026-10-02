@@ -23,7 +23,7 @@ func runtimeWindowFlagParseTestApp() *App {
 		shell:    &shellCommand{},
 		quit:     &quitCommand{},
 		welcome:  &welcomeCommand{},
-		setup:    &setupCommand{terminal: newInitCommand()},
+		setup:    newSetupCommand(newInitCommand()),
 		// No interactive run-shell client: dispatch stays in-process.
 		lookupEnv: func(string) string { return "" },
 	}

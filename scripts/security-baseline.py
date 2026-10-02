@@ -124,7 +124,7 @@ def metadata(tool: str, generated: list[dict[str, Any]]) -> dict[str, Any]:
             },
             {
                 "rule": "G118",
-                "scope": "internal/app/setup.go key reader",
+                "scope": "internal/app/setupcmd/setup.go key reader",
                 "reason": "reviewed in the completed resource-lifetime phase; no current finding",
             },
         ]

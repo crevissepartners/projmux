@@ -36,7 +36,7 @@ var nonTmuxSpawnSites = map[string]string{
 	"internal/app.popupSttyApply":      "stty",
 	"internal/app.popupSttyStdinGet":   "stty",
 	"internal/app.defaultPopupRawMode": "stty",
-	"internal/app.runSttyOn":           "stty",
+	"internal/app/setupcmd.runSttyOn":  "stty",
 	"internal/app.runSwitchGitCommand": "git: detectGitBranchWithRunner passes git only",
 	// user-supplied command lines
 	"internal/app.defaultEditorRunner": "the user's editor",
