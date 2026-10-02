@@ -115,6 +115,7 @@ type Handle struct {
 	lifetime       *os.File
 	ready          chan struct{}
 	done           chan struct{}
+	statusDone     chan struct{}
 	spawnErr       error
 	stopOnce       sync.Once
 }
@@ -167,7 +168,7 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	// Clone caller-owned slices before the launch can race a caller mutation.
 	launch.Command.Args = slices.Clone(launch.Command.Args)
 	launch.Command.Env = slices.Clone(launch.Command.Env)
-	p := &Handle{host: h, launch: launch, state: "starting", connection: launch.Binding.Operation, ready: make(chan struct{}), done: make(chan struct{}), usedTurns: make(map[string]bool), requests: make(map[string]Request), usedRequests: make(map[string]bool)}
+	p := &Handle{host: h, launch: launch, state: "starting", connection: launch.Binding.Operation, ready: make(chan struct{}), done: make(chan struct{}), statusDone: make(chan struct{}), usedTurns: make(map[string]bool), requests: make(map[string]Request), usedRequests: make(map[string]bool)}
 	h.operations[launch.Binding.Operation], h.panes[launch.Binding.Pane] = p, p
 	h.mu.Unlock()
 	reserveCtx, cancelReserve := context.WithTimeout(ctx, h.limits.Startup)
@@ -353,6 +354,9 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 			}
 		}
 	}
+	// Publish completed status observation before waiting for the helper's own
+	// exit, so ordinary provider EOF need not wait for an artificial grace delay.
+	close(p.statusDone)
 	waitErr := cmd.Wait()
 	if waitErr != nil {
 		_ = stdout.Close()
@@ -360,6 +364,26 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	}
 	_ = p.stdin.Close()
 	_ = p.lifetime.Close()
+	// An escaped descendant may retain either write FD after the owned group
+	// and supervisor are gone. Drain both concurrently under one grace budget.
+	output, diagnostic := outputDone, diagnosticDone
+	timer := time.NewTimer(p.host.limits.Grace)
+	defer timer.Stop()
+	for output != nil || diagnostic != nil {
+		select {
+		case <-output:
+			output = nil
+		case <-diagnostic:
+			diagnostic = nil
+		case <-timer.C:
+			_ = stdout.Close()
+			_ = stderr.Close()
+			p.mu.Lock()
+			p.emitLocked("stream-gap", []byte(`{"reason":"drain-timeout"}`), nil)
+			p.mu.Unlock()
+			output, diagnostic = nil, nil
+		}
+	}
 	<-outputDone
 	<-diagnosticDone
 	_ = stdout.Close()
@@ -522,6 +546,11 @@ func (p *Handle) readOutput(r *os.File) {
 		}
 	}
 	if err := reader.Err(); err != nil {
+		select {
+		case <-p.statusDone:
+			return // closing a bounded drain is reported as a gap by readStatus
+		default:
+		}
 		p.mu.Lock()
 		closed := p.state == "exited" || p.state == "stopping" || p.state == "unknown"
 		p.mu.Unlock()
@@ -530,8 +559,15 @@ func (p *Handle) readOutput(r *os.File) {
 		}
 		return
 	}
-	// EOF ends the control connection, not the process. Stop and actual Wait
-	// determine the exit; this path never manufactures success.
+	// EOF is not exit evidence. Give the independent status reader a bounded
+	// chance to report real Wait before treating an orphaned stream as failure.
+	timer := time.NewTimer(p.host.limits.Grace)
+	defer timer.Stop()
+	select {
+	case <-p.statusDone:
+		return
+	case <-timer.C:
+	}
 	p.mu.Lock()
 	active := p.state != "exited" && p.state != "unknown" && p.state != "stopping"
 	p.mu.Unlock()

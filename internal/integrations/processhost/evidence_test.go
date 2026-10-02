@@ -191,3 +191,68 @@ func TestOversizedResponseExpiresWithoutWireAllow(t *testing.T) {
 		t.Fatal("failed response retried", err)
 	}
 }
+
+func TestProviderCancellationExpiresExactRequest(t *testing.T) {
+	for _, prompt := range []string{"question", "allow"} {
+		t.Run(prompt, func(t *testing.T) {
+			p := start(t, testHost(t, nil), "normal")
+			turn(t, p, "cancelled", prompt)
+			s := observeUntil(t, p, func(s Snapshot) bool { return len(s.Pending) == 1 })
+			req := s.Pending[0]
+			send := func(id string) {
+				p.mu.Lock()
+				err := p.writeLocked(context.Background(), map[string]any{"type": "fixture-cancel", "request_id": id})
+				p.mu.Unlock()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			echoes := func() int {
+				events, _, _ := p.Events(binding(), 0)
+				n := 0
+				for _, e := range events {
+					if bytes.Contains(e.Raw, []byte("cancel_echo")) {
+						n++
+					}
+				}
+				return n
+			}
+			send("foreign-request")
+			s = observeUntil(t, p, func(Snapshot) bool { return echoes() == 1 })
+			if len(s.Pending) != 1 {
+				t.Fatal("foreign cancellation consumed pending request")
+			}
+			send(req.ID)
+			send(req.ID)
+			s = observeUntil(t, p, func(Snapshot) bool { return echoes() == 3 })
+			if len(s.Pending) != 0 || s.Turn != "cancelled" || s.State != "ready" {
+				t.Fatal(s)
+			}
+			if err := p.Respond(context.Background(), authority(p), req, Response{Allow: true}); err != ErrStale {
+				t.Fatal("cancelled request wrote", err)
+			}
+			events, _, _ := p.Events(binding(), 0)
+			expired := 0
+			for _, event := range events {
+				if event.Kind == "control-expired" {
+					expired++
+				}
+				if bytes.Contains(event.Raw, []byte("response_echo")) {
+					t.Fatal("cancel wrote provider response")
+				}
+			}
+			if expired != 1 || hasEvent(p, "control-answered") {
+				t.Fatalf("non-idempotent cancel: %d", expired)
+			}
+			p.mu.Lock()
+			err := p.writeLocked(context.Background(), map[string]any{"type": "fixture-release-interrupt"})
+			p.mu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" })
+			turn(t, p, "after-cancel", "normal")
+			observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" })
+		})
+	}
+}

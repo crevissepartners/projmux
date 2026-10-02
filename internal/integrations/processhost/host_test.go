@@ -41,6 +41,15 @@ func TestMain(m *testing.M) {
 		case "processhost-owner":
 			fixtureOwner()
 			os.Exit(0)
+		case "processhost-escaped-leaf":
+			deadline := time.Now().Add(time.Minute)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(os.Args[2]); err == nil {
+					os.Exit(0)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			os.Exit(1)
 		case "processhost-leaf":
 			for {
 				time.Sleep(time.Hour)
@@ -133,6 +142,23 @@ func fixtureProvider() {
 	switch mode {
 	case "exit0":
 		return
+	case "escaped-stdout", "escaped-stderr", "escaped-both":
+		leaf := exec.Command(os.Args[0], "processhost-escaped-leaf", os.Getenv("PROCESSHOST_RELEASE_FILE"))
+		leaf.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if mode != "escaped-stderr" {
+			leaf.Stdout = os.Stdout
+		}
+		if mode != "escaped-stdout" {
+			leaf.Stderr = os.Stderr
+		}
+		// Start's exec handshake completes setsid before this provider exits.
+		if err := leaf.Start(); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(os.Getenv("PROCESSHOST_LEAF_FILE"), []byte(strconv.Itoa(leaf.Process.Pid)), 0600); err != nil {
+			panic(err)
+		}
+		return
 	case "exit7":
 		os.Exit(7)
 	case "hup":
@@ -214,6 +240,9 @@ func fixtureProvider() {
 			result()
 		case "control_request":
 			_ = writer.Encode(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": frame["request_id"]}})
+		case "fixture-cancel":
+			_ = writer.Encode(map[string]any{"type": "control_cancel_request", "request_id": frame["request_id"]})
+			_ = writer.Encode(map[string]any{"type": "assistant", "session_id": "session", "cancel_echo": frame["request_id"]})
 		case "fixture-release-interrupt":
 			_ = writer.Encode(map[string]any{"type": "result", "subtype": "error_during_execution", "session_id": "session"})
 		}
@@ -406,6 +435,12 @@ func TestRollbackAndActualWait(t *testing.T) {
 			}
 			if mode == "hup" && string(e.Classification) != "killed" {
 				t.Fatal(e)
+			}
+			if mode == "exit0" && (s.Failure != "" || hasEvent(p, "protocol-error")) {
+				t.Fatal("ordinary exit0 misclassified as protocol failure", s)
+			}
+			if mode == "stdout-eof" && (s.Failure == "" || !hasEvent(p, "protocol-error")) {
+				t.Fatal("EOF without Wait lost protocol failure", s)
 			}
 			if mode == "stdout-eof" && s.Exit.Signal == "" {
 				t.Fatal("EOF fabricated exit0")

@@ -9,15 +9,20 @@ limits. The consumer dispatches `ServeSupervisor` in that executable with inheri
 file descriptors 3 (owner lifetime), 4 (launch spec), and 5 (status). The helper
 accepts one launch, creates one dedicated provider group, drains no protocol data
 itself, and exits after reaping its child and clearing the group. The host drains
-stdout and stderr independently. Linux uses a subreaper in the dedicated helper;
+stdout and stderr independently. After supervisor exit, both drains share one
+grace deadline; inherited descriptors cannot delay Wait indefinitely. Closing an
+unfinished drain emits a protected stream-gap before process-exited. Ordinary
+EOF is reconciled with independent child Wait evidence; EOF alone is never exit0.
+Linux uses a subreaper in the dedicated helper;
 macOS waits for launchd to reap orphan descendants. The helper is not a daemon.
 Before signalling a finished provider group, the helper observes exit without
 reaping the group leader (Linux waitid WNOWAIT; Darwin owned-child SZOMB). Its
 PID/PGID therefore remains reserved until group signalling finishes and actual
-Wait consumes the exit status. Failed or unsupported exit observation yields unknown
+Wait consumes the exit status. Failed or unsupported exit observation yields
+unknown
 and does not recover cleanup authority from a stored PID or an already-reaped
-group. Such a failure is not successful platform cleanup. Public entrypoint wiring and durable process
-bindings require a later consumer.
+group. Such a failure is not successful platform cleanup. Public entrypoint
+wiring and durable process bindings require a later consumer.
 
 The preparation handshake precedes delivery of the launch specification. A helper
 that never prepares cannot have started a provider from that specification and is
@@ -66,7 +71,18 @@ execute the package, not just compile it.
 
 `PROCESSHOST_TEST_CLAUDE=1 go test ./internal/integrations/processhost -run
 '^TestInstalledClaudeStream$' -v` opts into a real installed-Claude qualification.
-It needs existing authentication, disables tools/hooks/MCP configuration for its
-isolated process, verifies two turns on one session, and checks that the user's
-settings file is unchanged. Question/approval and interrupt coverage remains
-fixture-based; this qualification is not public headless feature acceptance.
+By default it needs existing authentication, disables tools/hooks/MCP
+configuration for its isolated process, verifies two turns on one session, and
+checks that the user's settings file is unchanged. Questions and permission
+allow remain fixture-only; the opt-in deny/cancellation probes below qualify
+those narrower real-provider paths. None is public headless feature acceptance.
+
+Provider cancellation is explicit: `control_cancel_request` expires only the
+matching pending request on this connection; duplicate/unknown IDs have no effect
+and no permission response is written. This shape is qualified against Claude
+2.1.287 and the [official SDK control reader](https://github.com/anthropics/claude-agent-sdk-python/blob/bfb895c6ef46e095191938b4eda798a025957c09/src/claude_agent_sdk/_internal/query.py#L389).
+Other unsupported frame types remain protocol failures. Opt-in qualification can
+set `PROCESSHOST_TEST_PERMISSION=deny` or `cancel` together with
+`PROCESSHOST_TEST_CLAUDE=1`: a process-local Bash ask rule prevents automatic tool
+execution; the probe only denies or interrupts, then verifies stale response
+rejection and two subsequent turns. User settings remain untouched.

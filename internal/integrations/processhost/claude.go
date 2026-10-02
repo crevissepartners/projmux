@@ -283,6 +283,17 @@ func (p *Handle) consume(raw []byte) error {
 		p.usedRequests[request.ID] = true
 		req := cloneRequest(request)
 		p.emitLocked("control-pending", nil, &req)
+	case "control_cancel_request":
+		// The provider abandons this exact connection-local request. Cancel is
+		// terminal, idempotent and never produces a permission response.
+		if frame.RequestID == "" {
+			return errors.New("cancel without request identity")
+		}
+		if request, ok := p.requests[frame.RequestID]; ok {
+			delete(p.requests, frame.RequestID)
+			req := cloneRequest(request)
+			p.emitLocked("control-expired", raw, &req)
+		}
 	case "control_response":
 		if p.interrupt == "" || frame.Response.RequestID != p.interrupt {
 			return errors.New("unexpected control response")

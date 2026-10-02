@@ -223,3 +223,94 @@ func TestFailedExitObservationGrantsNoCleanupAuthority(t *testing.T) {
 		t.Fatal("non-child PID granted ownership")
 	}
 }
+
+func TestEscapedDescendantCannotHoldWait(t *testing.T) {
+	if err := prepareReaper(); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"escaped-stdout", "escaped-stderr", "escaped-both"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			leafFile, release := filepath.Join(dir, "leaf"), filepath.Join(dir, "release")
+			command := fixtureCommand(mode)
+			command.Env = append(command.Env, "PROCESSHOST_LEAF_FILE="+leafFile, "PROCESSHOST_RELEASE_FILE="+release)
+			p, err := testHost(t, nil).Start(context.Background(), Launch{Binding: binding(), Command: command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				// Only the fixture's explicit release marker ends the escaped leaf.
+				// The product never adopts or signals its stored PID.
+				_ = os.WriteFile(release, nil, 0600)
+				_ = p.Stop(binding())
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, _ = p.Wait(ctx, binding())
+				raw, err := os.ReadFile(leafFile)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				leaf, err := strconv.Atoi(string(raw))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				deadline := time.Now().Add(5 * time.Second)
+				for time.Now().Before(deadline) {
+					var status syscall.WaitStatus
+					_, _ = syscall.Wait4(leaf, &status, syscall.WNOHANG, nil)
+					if syscall.Kill(leaf, 0) == syscall.ESRCH {
+						return
+					}
+					time.Sleep(time.Millisecond)
+				}
+				t.Error("fixture leaf did not exit after release")
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			s, err := p.Wait(ctx, binding())
+			if err != nil || s.State != "exited" || s.Exit == nil || s.Exit.Code != 0 || s.Exit.Signal != "" || s.Failure != "" {
+				t.Fatalf("output retained actual Wait: %+v %v", s, err)
+			}
+			raw, err := os.ReadFile(leafFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaf, err := strconv.Atoi(string(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if group, err := syscall.Getpgid(leaf); err != nil || group != leaf || group == s.PID {
+				t.Fatalf("escaped leaf not independently alive: group=%d err=%v", group, err)
+			}
+			if !hasEvent(p, "stream-gap") || !hasEvent(p, "process-exited") {
+				t.Fatal("truncation or actual exit was hidden")
+			}
+			events, _, _ := p.Events(binding(), 0)
+			var gap, exited uint64
+			for _, event := range events {
+				if event.Kind == "stream-gap" {
+					gap = event.Sequence
+				}
+				if event.Kind == "process-exited" {
+					exited = event.Sequence
+				}
+			}
+			if gap == 0 || gap >= exited {
+				t.Fatalf("gap does not precede actual exit: %d >= %d", gap, exited)
+			}
+			t.Logf("%s: actual Wait0 returned while escaped leaf %d remained alive; gap explicit; fixture release follows assertion", mode, leaf)
+		})
+	}
+}
+
+func TestNormalExitDoesNotWaitForDrainDeadline(t *testing.T) {
+	p := start(t, testHost(t, func(_ *Transactions, limits *Limits) { limits.Grace = 4 * time.Second }), "exit0")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s, err := p.Wait(ctx, binding())
+	if err != nil || s.Exit == nil || s.Exit.Code != 0 || s.Failure != "" || hasEvent(p, "protocol-error") || hasEvent(p, "stream-gap") {
+		t.Fatalf("normal exit delayed/misclassified: %+v %v", s, err)
+	}
+}
