@@ -16,7 +16,8 @@ import (
 
 // TestRenderRootHelpMatchesHistoricalGolden pins the primary command listing to
 // the exact bytes the hand-written printUsage produced before the manifest
-// became its source of truth.
+// became its source of truth. It renders the built-in route table alone, so a
+// route extension never changes the fixture.
 func TestRenderRootHelpMatchesHistoricalGolden(t *testing.T) {
 	t.Parallel()
 
@@ -25,8 +26,8 @@ func TestRenderRootHelpMatchesHistoricalGolden(t *testing.T) {
 		t.Fatalf("read golden: %v", err)
 	}
 	var got bytes.Buffer
-	if err := RenderRootHelp(&got); err != nil {
-		t.Fatalf("RenderRootHelp returned error: %v", err)
+	if err := renderRootHelp(&got, routes); err != nil {
+		t.Fatalf("renderRootHelp returned error: %v", err)
 	}
 	if got.String() != string(want) {
 		t.Fatalf("root help drifted from the golden fixture:\n--- got ---\n%s\n--- want ---\n%s", got.String(), want)

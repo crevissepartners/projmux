@@ -2749,13 +2749,14 @@ var routes = []Route{
 // Routes returns a deep copy of the command manifest. Callers cannot reorder or
 // mutate shared graph storage, and no projection fills a missing authority.
 func Routes() []Route {
-	if err := validateInvocationGraph(routes, nil); err != nil {
+	nodes := manifestRoutes()
+	if err := validateInvocationGraph(nodes, nil); err != nil {
 		panic(err)
 	}
-	if err := validateEffectGraph(routes, nil); err != nil {
+	if err := validateEffectGraph(nodes, nil); err != nil {
 		panic(err)
 	}
-	return cloneRoutes(routes)
+	return cloneRoutes(nodes)
 }
 
 func validateInvocationGraph(nodes []Route, prefix []string) error {

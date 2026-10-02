@@ -93,11 +93,16 @@ func (e versionUsageError) MetadataUsageError() bool { return true }
 // global singleton: every call returns an independent tree bound to the
 // supplied writers and handlers.
 func NewRoot(opts RootOptions) (*Root, error) {
+	return newRoot(opts, manifestRoutes())
+}
+
+// newRoot builds the root over nodes, the top-level routes of the manifest.
+func newRoot(opts RootOptions, nodes []Route) (*Root, error) {
 	if opts.Stdout == nil || opts.Stderr == nil {
 		return nil, fmt.Errorf("cli: root requires both stdout and stderr writers")
 	}
 	var missing []string
-	for _, route := range routes {
+	for _, route := range nodes {
 		if policyOwnedRoutes[route.Name] {
 			continue
 		}
@@ -147,7 +152,7 @@ func NewRoot(opts RootOptions) (*Root, error) {
 		},
 	})
 
-	for _, route := range routes {
+	for _, route := range nodes {
 		if route.Name == "help" {
 			continue
 		}

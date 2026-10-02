@@ -373,11 +373,13 @@ func TestCurrentSchemaV3HandlerOutcomesMatchAllowedEffectsAndGolden(t *testing.T
 	assertGolden(t, "current-handler-effects-schema-v3.golden", rendered.String())
 }
 
+// TestCurrentSchemaV3RouteEffectManifestMatchesGolden pins the effect rows of
+// the built-in route table; a route extension never changes the fixture.
 func TestCurrentSchemaV3RouteEffectManifestMatchesGolden(t *testing.T) {
 	t.Parallel()
 	var rendered strings.Builder
 	rendered.WriteString("schema=v3\n")
-	for _, row := range EffectManifest() {
+	for _, row := range effectManifest(routes) {
 		rendered.WriteString("route=" + row.Route + " " + strings.Join(effectProjection(&row.Effects), " ") + "\n")
 	}
 	assertGolden(t, "route-effects-manifest-schema-v3.golden", rendered.String())

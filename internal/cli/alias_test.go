@@ -107,7 +107,7 @@ func TestNoChildAliasShadowsACanonicalSpelling(t *testing.T) {
 			walk(append(append([]string{}, path...), child.Name), child.Children)
 		}
 	}
-	for _, route := range routes {
+	for _, route := range manifestRoutes() {
 		if len(route.Aliases) > 0 {
 			t.Fatalf("top-level route %q declares aliases; the alias contract covers kind tokens only", route.Name)
 		}

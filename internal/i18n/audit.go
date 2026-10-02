@@ -70,6 +70,8 @@ type StringAuditOptions struct {
 // RuntimeKoreanStringAuditOptions returns the Phase 6 guard used by tests:
 // runtime Go files are scanned for Korean catalog-bypass candidates while
 // catalog data, formatter locale fragments, and test fixtures remain allowed.
+// Catalog data is every internal/i18n file named *_catalog.go: the embedded
+// catalog and each catalog fragment kept in its own file.
 func RuntimeKoreanStringAuditOptions() StringAuditOptions {
 	return StringAuditOptions{
 		DisableEnglishCandidates: true,
@@ -81,12 +83,10 @@ func RuntimeKoreanStringAuditOptions() StringAuditOptions {
 			if strings.HasSuffix(path, "_test.go") {
 				return false
 			}
-			switch path {
-			case "internal/i18n/default_catalog.go", "internal/i18n/formatter.go":
+			if filepath.Dir(path) == "internal/i18n" && strings.HasSuffix(path, "_catalog.go") {
 				return false
-			default:
-				return true
 			}
+			return path != "internal/i18n/formatter.go"
 		},
 	}
 }

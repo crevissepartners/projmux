@@ -134,7 +134,7 @@ func walkCanonicalGraph(nodes []Route, visit func(path []string, route Route)) {
 }
 
 func canonicalFamilyOrder(root string) int {
-	for _, route := range routes {
+	for _, route := range manifestRoutes() {
 		if route.Name == root {
 			return route.CanonicalOrder
 		}
