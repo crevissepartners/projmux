@@ -140,6 +140,8 @@ func fixtureProvider() {
 		mode = os.Args[2]
 	}
 	switch mode {
+	case "ignore-eof-term":
+		ignoreTerm()
 	case "exit0":
 		return
 	case "escaped-stdout", "escaped-stderr", "escaped-both":
@@ -247,7 +249,13 @@ func fixtureProvider() {
 			_ = writer.Encode(map[string]any{"type": "result", "subtype": "error_during_execution", "session_id": "session"})
 		}
 	}
-	if mode == "group" {
+	if mode == "session-end" {
+		time.Sleep(300 * time.Millisecond)
+		if err := os.WriteFile(os.Getenv("PROCESSHOST_SESSION_END_FILE"), []byte("complete"), 0600); err != nil {
+			panic(err)
+		}
+	}
+	if mode == "group" || mode == "ignore-eof" || mode == "ignore-eof-term" {
 		for {
 			time.Sleep(time.Hour)
 		}

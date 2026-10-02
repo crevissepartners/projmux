@@ -318,7 +318,9 @@ func (p *Handle) spawn(ctx context.Context) error {
 func (p *Handle) rollback(cmd *exec.Cmd) {
 	p.stop()
 	_ = cmd.Process.Signal(syscall.SIGCONT)
-	timer := time.NewTimer(2 * p.host.limits.Grace)
+	// Allow EOF grace, TERM grace, group reaping and stream drain, plus
+	// one grace of scheduling margin before killing a nonconforming helper.
+	timer := time.NewTimer(5 * p.host.limits.Grace)
 	defer timer.Stop()
 	select {
 	case <-p.done:
@@ -418,11 +420,13 @@ func (p *Handle) stop() {
 			p.state = "stopping"
 		}
 		p.expireLocked()
-		if p.lifetime != nil {
-			_ = p.lifetime.Close()
-		}
+		// Deliver provider EOF before asking the supervisor to start its bounded
+		// shutdown. Admission and pending control are already closed above.
 		if p.stdin != nil {
 			_ = p.stdin.Close()
+		}
+		if p.lifetime != nil {
+			_ = p.lifetime.Close()
 		}
 		p.mu.Unlock()
 	})
