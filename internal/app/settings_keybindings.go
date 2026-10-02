@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
@@ -859,17 +860,17 @@ func describeRecorderKeyObservation(key intpicker.RecorderKey) string {
 	case strings.TrimSpace(key.Name) != "":
 		return "picker key name " + strings.TrimSpace(key.Name)
 	case key.Text != "":
-		return "printable text " + visibleEscape(key.Text)
+		return "printable text " + setupcmd.VisibleEscape(key.Text)
 	default:
 		return "(no stable key name)"
 	}
 }
 
 // observeKeybindingDeliveryWithProbe reads one chord off the controlling tty.
-// The read is bounded by defaultProbeTimeout, and a timeout is a reported
+// The read is bounded by setupcmd.DefaultProbeTimeout, and a timeout is a reported
 // key-did-not-arrive result rather than a hang.
 func (c *settingsCommand) observeKeybindingDeliveryWithProbe(action keybinding.KeyBindingAction, chord string) (keybindingDeliveryObservation, error) {
-	key := probeKey{
+	key := setupcmd.ProbeKey{
 		ActionID:   action.ID,
 		Label:      keybindingChordDisplay(chord),
 		Action:     "delivery test for " + keybinding.KeyBindingDisplayName(action),
@@ -879,23 +880,23 @@ func (c *settingsCommand) observeKeybindingDeliveryWithProbe(action keybinding.K
 		strings.TrimSpace(defaultAction.PlainChord) == strings.TrimSpace(chord) {
 		key.Plain = defaultAction.ProbePlain
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), defaultProbeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), setupcmd.DefaultProbeTimeout)
 	defer cancel()
-	res, err := c.probeLabKeybindingContext(ctx, key, defaultProbeTimeout)
+	res, err := c.probeLabKeybindingContext(ctx, key, setupcmd.DefaultProbeTimeout)
 	if err != nil {
 		return keybindingDeliveryObservation{}, err
 	}
-	raw := visibleEscape(string(res.Sequence))
+	raw := setupcmd.VisibleEscape(string(res.Sequence))
 	observed := ""
 	switch {
 	case len(res.Sequence) == 0:
 		raw = ""
-	case isAmbiguousEnterSequence(res.Sequence):
+	case setupcmd.IsAmbiguousEnterSequence(res.Sequence):
 		observed = "C-m"
 		if chord == "C-m" {
 			observed = "Enter"
 		}
-	case res.Status == probeStatusPlain:
+	case res.Status == setupcmd.ProbeStatusPlain:
 		observed = chord
 	default:
 		if suggested, ok := suggestedPlainChordForSequence(res.Sequence); ok {
@@ -963,16 +964,16 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout, stderr i
 	key := captureProbeKeyForAction(action)
 	fmt.Fprintf(stdout, "capturing custom key for %s; press the key you want to add\n", keybinding.KeyBindingDisplayName(action))
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultProbeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), setupcmd.DefaultProbeTimeout)
 	defer cancel()
 	type probeCapture struct {
-		result probeResult
+		result setupcmd.ProbeResult
 		err    error
 	}
 	startProbe := func() <-chan probeCapture {
 		results := make(chan probeCapture, 1)
 		go func() {
-			res, err := c.probeLabKeybindingContext(ctx, key, defaultProbeTimeout)
+			res, err := c.probeLabKeybindingContext(ctx, key, setupcmd.DefaultProbeTimeout)
 			results <- probeCapture{result: res, err: err}
 		}()
 		return results
@@ -993,7 +994,7 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout, stderr i
 		}()
 	}
 
-	var res probeResult
+	var res setupcmd.ProbeResult
 	var pendingProbe *probeCapture
 	var nativeGraceTimer *time.Timer
 	var nativeGrace <-chan time.Time
@@ -1045,7 +1046,7 @@ captureLoop:
 			break captureLoop
 		case probe := <-probeResultCh:
 			if preferNative && nativeResultCh != nil {
-				if probe.err == nil && isAmbiguousEnterSequence(probe.result.Sequence) {
+				if probe.err == nil && setupcmd.IsAmbiguousEnterSequence(probe.result.Sequence) {
 					// Enter selected the Press a key row; it is a recorder
 					// control, not a candidate. Read the operator's next key.
 					probeResultCh = startProbe()
@@ -1074,13 +1075,13 @@ captureLoop:
 			break captureLoop
 		}
 	}
-	fmt.Fprintf(stdout, "capture custom key: %s\n", renderProbeStatus(res))
+	fmt.Fprintf(stdout, "capture custom key: %s\n", setupcmd.RenderProbeStatus(res))
 	for _, line := range renderKeybindingDeliveryDiagnostic(res) {
 		fmt.Fprintln(stdout, line)
 	}
 
 	switch res.Status {
-	case probeStatusPlain:
+	case setupcmd.ProbeStatusPlain:
 		chord, ok := captureResultPlainChord(res)
 		if !ok {
 			fmt.Fprintf(stdout, "captured key is plain, but Settings could not normalize it to a key name\n")
@@ -1088,15 +1089,15 @@ captureLoop:
 			return nil
 		}
 		return c.addCapturedKeybindingChord(action.ID, chord, stdout, stderr)
-	case probeStatusUnknown:
+	case setupcmd.ProbeStatusUnknown:
 		chord, ok := suggestedPlainChordForSequence(res.Sequence)
 		if !ok {
-			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; type a custom key name instead\n", visibleEscape(string(res.Sequence)))
+			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; type a custom key name instead\n", setupcmd.VisibleEscape(string(res.Sequence)))
 			c.setSettingsFeedback("Keybinding failed", "captured raw sequence is never stored as a key; use Enter key name manually")
 			return nil
 		}
 		return c.addCapturedKeybindingChord(action.ID, chord, stdout, stderr)
-	case probeStatusTimeout:
+	case setupcmd.ProbeStatusTimeout:
 		fmt.Fprintf(stdout, "no key was captured; nothing changed\n")
 		c.setSettingsFeedback("Keybinding cancelled", "no key was captured before the read timed out")
 		return nil
@@ -1539,15 +1540,15 @@ func (c *settingsCommand) runKeybindingSequenceDeliveryTest(actionID, sequence s
 	return nil
 }
 
-func captureProbeKeyForAction(action keybinding.KeyBindingAction) probeKey {
-	return probeKey{
+func captureProbeKeyForAction(action keybinding.KeyBindingAction) setupcmd.ProbeKey {
+	return setupcmd.ProbeKey{
 		ActionID: action.ID,
 		Label:    "custom key",
 		Action:   "custom key for " + keybinding.KeyBindingDisplayName(action),
 	}
 }
 
-func captureResultPlainChord(res probeResult) (string, bool) {
+func captureResultPlainChord(res setupcmd.ProbeResult) (string, bool) {
 	if chord := strings.TrimSpace(res.Key.PlainChord); chord != "" {
 		return chord, true
 	}
@@ -1571,10 +1572,10 @@ type keybindingDeliveryDiagnostic struct {
 	Summary         string
 }
 
-func keybindingDeliveryDiagnosticForProbe(res probeResult) keybindingDeliveryDiagnostic {
+func keybindingDeliveryDiagnosticForProbe(res setupcmd.ProbeResult) keybindingDeliveryDiagnostic {
 	diag := keybindingDeliveryDiagnostic{
 		LogicalKey:      strings.TrimSpace(res.Key.Label),
-		RawBytes:        visibleEscape(string(res.Sequence)),
+		RawBytes:        setupcmd.VisibleEscape(string(res.Sequence)),
 		TmuxReceivedKey: "(none)",
 	}
 	if diag.LogicalKey == "" {
@@ -1586,13 +1587,13 @@ func keybindingDeliveryDiagnosticForProbe(res probeResult) keybindingDeliveryDia
 		diag.Summary = "key did not arrive; terminal or OS likely intercepted it before tmux"
 		return diag
 	}
-	if isAmbiguousEnterSequence(res.Sequence) {
+	if setupcmd.IsAmbiguousEnterSequence(res.Sequence) {
 		diag.Status = keybindingDeliveryAmbiguous
 		diag.TmuxReceivedKey = "Enter / C-m"
 		diag.Summary = "ambiguous key; Enter and Ctrl-M share this byte sequence"
 		return diag
 	}
-	if chord := strings.TrimSpace(res.Key.PlainChord); chord != "" && res.Status == probeStatusPlain {
+	if chord := strings.TrimSpace(res.Key.PlainChord); chord != "" && res.Status == setupcmd.ProbeStatusPlain {
 		diag.Status = keybindingDeliveryDelivered
 		diag.TmuxReceivedKey = chord
 		diag.Summary = "logical key reached tmux as the expected plain key"
@@ -1604,7 +1605,7 @@ func keybindingDeliveryDiagnosticForProbe(res probeResult) keybindingDeliveryDia
 		diag.Summary = "captured bytes can be saved as a safe tmux plain key"
 		return diag
 	}
-	if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok && res.Status == probeStatusPlain {
+	if chord, ok := suggestedPlainChordForSequence(res.Sequence); ok && res.Status == setupcmd.ProbeStatusPlain {
 		diag.Status = keybindingDeliveryDelivered
 		diag.TmuxReceivedKey = chord
 		diag.Summary = "logical key reached tmux as a plain key"
@@ -1616,7 +1617,7 @@ func keybindingDeliveryDiagnosticForProbe(res probeResult) keybindingDeliveryDia
 	return diag
 }
 
-func renderKeybindingDeliveryDiagnostic(res probeResult) []string {
+func renderKeybindingDeliveryDiagnostic(res setupcmd.ProbeResult) []string {
 	diag := keybindingDeliveryDiagnosticForProbe(res)
 	return []string{
 		"capture result:",
@@ -2795,12 +2796,11 @@ func keymapApplyLine(label string, stage keymapApplyStage, includeDetail bool) s
 	return line
 }
 
-func (c *settingsCommand) probeLabKeybindingContext(ctx context.Context, key probeKey, timeout time.Duration) (probeResult, error) {
+func (c *settingsCommand) probeLabKeybindingContext(ctx context.Context, key setupcmd.ProbeKey, timeout time.Duration) (setupcmd.ProbeResult, error) {
 	if c.probeKeybinding != nil {
 		return c.probeKeybinding(key, timeout)
 	}
-	cmd := &setupCommand{openTTY: openControllingTTY}
-	return cmd.probeControllingTTYKeyContext(ctx, key, timeout)
+	return setupcmd.ProbeControllingTTYKey(ctx, key, timeout)
 }
 
 func (c *settingsCommand) writeTmuxAppConfig() (string, error) {

@@ -80,7 +80,7 @@ func TestSetupTerminalHelpAndFlagsOmitDryRun(t *testing.T) {
 	var help bytes.Buffer
 	err := newSetupCommand(cmd).Run([]string{"terminal", "--help"}, &bytes.Buffer{}, &help)
 	if !errors.Is(err, flag.ErrHelp) {
-		t.Fatalf("setupCommand.Run(terminal --help) error = %v, want flag.ErrHelp", err)
+		t.Fatalf("setupcmd.Command.Run(terminal --help) error = %v, want flag.ErrHelp", err)
 	}
 	if strings.Contains(help.String(), "Usage of ") {
 		t.Fatalf("canonical help prints the flag package default usage:\n%s", help.String())

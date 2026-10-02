@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -170,7 +171,7 @@ type App struct {
 	sessions     *sessionsCommand
 	sessionPopup *sessionPopupCommand
 	settings     *settingsCommand
-	setup        *setupCommand
+	setup        *setupcmd.Command
 	shell        *shellCommand
 	status       *statusCommand
 	statusbar    *statusbarCommand

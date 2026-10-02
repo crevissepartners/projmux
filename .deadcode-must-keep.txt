@@ -210,7 +210,6 @@ settingsCommand.rootEntries	Fallback-locale entry point of the settings root ent
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
-sortedProbeLabels	Ordering helper retained as the test seam that pins the live default probe key catalog coverage of the terminal key spec.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
 tmuxPaneBorderFormat	Default badge-style entry point of tmuxPaneBorderFormatWithAIBadgeStyle retained as the pane border format seam.

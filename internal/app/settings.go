@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -39,7 +40,7 @@ type settingsCommand struct {
 	// reload the app server after a save. The route is then resolved from the
 	// app-owned logical socket, never from an inherited TMUX.
 	reloadAppServer          bool
-	probeKeybinding          func(probeKey, time.Duration) (probeResult, error)
+	probeKeybinding          func(setupcmd.ProbeKey, time.Duration) (setupcmd.ProbeResult, error)
 	nativeKeyCapture         func(context.Context) (string, bool, error)
 	preferNativeKeyCapture   func() bool
 	nativeKeyCaptureGrace    time.Duration

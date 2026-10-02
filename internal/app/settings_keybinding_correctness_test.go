@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -470,8 +471,8 @@ func TestSettingsKeybindingTestDeliveryIsNotANoOp(t *testing.T) {
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		}
 	})
-	cmd.probeKeybinding = func(key probeKey, _ time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte("\x1b1")), nil
+	cmd.probeKeybinding = func(key setupcmd.ProbeKey, _ time.Duration) (setupcmd.ProbeResult, error) {
+		return setupcmd.ClassifyProbeInput(key, []byte("\x1b1")), nil
 	}
 
 	if err := cmd.runKeybindingKeyDetail("ProjectSidebarToggle", "M-1", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -525,8 +526,8 @@ func TestSettingsKeybindingDeliveryTestReportsEveryOutcome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := keybindingCorrectnessCommand(t, t.TempDir(), nil)
-			cmd.probeKeybinding = func(key probeKey, _ time.Duration) (probeResult, error) {
-				return classifyProbeInput(key, tc.sequence), nil
+			cmd.probeKeybinding = func(key setupcmd.ProbeKey, _ time.Duration) (setupcmd.ProbeResult, error) {
+				return setupcmd.ClassifyProbeInput(key, tc.sequence), nil
 			}
 			action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "ProjectSidebarToggle")
 			if !ok {
@@ -581,9 +582,9 @@ func TestSettingsKeybindingDeliveryTestUsesOnePickerReaderInsideTmux(t *testing.
 		return ""
 	}
 	cmd.physicalCaptureAvailable = func() bool { return false }
-	cmd.probeKeybinding = func(probeKey, time.Duration) (probeResult, error) {
+	cmd.probeKeybinding = func(setupcmd.ProbeKey, time.Duration) (setupcmd.ProbeResult, error) {
 		t.Fatalf("the controlling-TTY probe must not run while the popup owns the terminal")
-		return probeResult{}, nil
+		return setupcmd.ProbeResult{}, nil
 	}
 	cmd.nativeKeyCapture = func(context.Context) (string, bool, error) {
 		t.Fatalf("native capture must not run for a delivery test")
@@ -720,8 +721,8 @@ func TestSettingsKeybindingDeliveryTestNeverWritesKeymapOrTmux(t *testing.T) {
 		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 		return nil
 	}
-	cmd.probeKeybinding = func(key probeKey, _ time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte("\x1b[49;3u")), nil
+	cmd.probeKeybinding = func(key setupcmd.ProbeKey, _ time.Duration) (setupcmd.ProbeResult, error) {
+		return setupcmd.ClassifyProbeInput(key, []byte("\x1b[49;3u")), nil
 	}
 
 	before := settingsNavConfigSnapshot(t, home)

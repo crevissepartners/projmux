@@ -1,4 +1,8 @@
-package app
+// Package setupcmd implements `projmux setup`: the per-key delivery probe and
+// the dispatch to its `setup terminal` remediation subcommand. The app wires
+// it with the probe keys derived from the keybinding catalog and with the
+// terminal remediation command, so this package imports neither.
+package setupcmd
 
 import (
 	"context"
@@ -8,37 +12,43 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/app/initcmd"
-	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/cli"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
-// setupCommand walks the operator through a per-key delivery probe so they can
+// TerminalRemediation runs `setup terminal` with the arguments after
+// "terminal".
+type TerminalRemediation interface {
+	Run(args []string, stdout, stderr io.Writer) error
+}
+
+// Command walks the operator through a per-key delivery probe so they can
 // see exactly which projmux bindings reach tmux and which are swallowed by the
 // host terminal before tmux ever sees them.
-type setupCommand struct {
+type Command struct {
 	stdin       io.Reader
 	lookupEnv   func(string) string
 	now         func() time.Time
 	enterRaw    func() (restore func() error, err error)
 	readKey     func(timeout time.Duration) ([]byte, error)
 	openTTY     func() (*os.File, func() error, error)
-	defaultKeys []probeKey
-	terminal    *initcmd.Command
+	defaultKeys []ProbeKey
+	terminal    TerminalRemediation
 }
 
-func newSetupCommand(terminal ...*initcmd.Command) *setupCommand {
-	c := &setupCommand{
+// New returns the setup command that probes keys in order, runs terminal for
+// `setup terminal` (nil makes that subcommand unavailable), and reads the
+// environment through lookupEnv.
+func New(keys []ProbeKey, terminal TerminalRemediation, lookupEnv func(string) string) *Command {
+	c := &Command{
 		stdin:       os.Stdin,
-		lookupEnv:   os.Getenv,
+		lookupEnv:   lookupEnv,
 		now:         time.Now,
-		defaultKeys: defaultProbeKeys(),
-	}
-	if len(terminal) > 0 {
-		c.terminal = terminal[0]
+		defaultKeys: keys,
+		terminal:    terminal,
 	}
 	c.openTTY = openControllingTTY
 	c.enterRaw = func() (func() error, error) {
@@ -47,17 +57,17 @@ func newSetupCommand(terminal ...*initcmd.Command) *setupCommand {
 	return c
 }
 
-// probeKeyStatus categorises how the key reached this process (or did not).
-type probeKeyStatus string
+// ProbeKeyStatus categorises how the key reached this process (or did not).
+type ProbeKeyStatus string
 
 const (
-	probeStatusPlain   probeKeyStatus = "plain"
-	probeStatusUnknown probeKeyStatus = "unknown"
-	probeStatusTimeout probeKeyStatus = "timeout"
+	ProbeStatusPlain   ProbeKeyStatus = "plain"
+	ProbeStatusUnknown ProbeKeyStatus = "unknown"
+	ProbeStatusTimeout ProbeKeyStatus = "timeout"
 )
 
-// probeKey describes a single key the user is asked to press.
-type probeKey struct {
+// ProbeKey describes a single key the user is asked to press.
+type ProbeKey struct {
 	// ActionID is the stable keybinding catalog id for in-app flows. It is
 	// empty only for synthetic tests.
 	ActionID string
@@ -75,30 +85,23 @@ type probeKey struct {
 	PlainChord string
 }
 
-// probeResult captures what we observed when the user pressed (or failed to
+// ProbeResult captures what we observed when the user pressed (or failed to
 // press) a probed key.
-type probeResult struct {
-	Key      probeKey
-	Status   probeKeyStatus
+type ProbeResult struct {
+	Key      ProbeKey
+	Status   ProbeKeyStatus
 	Sequence []byte
 	Reason   string
 }
 
-// defaultProbeKeys returns the keys the setup probe checks. Sequences are
-// derived from the same keybinding catalog as the tmux and terminal remediation
-// renderers.
-func defaultProbeKeys() []probeKey {
-	return probeKeysFromCatalog()
-}
-
 const (
-	defaultProbeTimeout = 5 * time.Second
+	DefaultProbeTimeout = 5 * time.Second
 	probeReadPollDelay  = 5 * time.Millisecond
 )
 
 // Run executes the setup probe or dispatches the terminal remediation
 // subcommand. Bare setup keeps the existing read-only probe behavior.
-func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "terminal" {
 		if c.terminal == nil {
 			return errors.New("setup terminal: remediation command is unavailable")
@@ -108,17 +111,17 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
-	timeout := fs.Duration("timeout", defaultProbeTimeout, "per-key wait timeout (e.g. 5s)")
+	cli.SetRouteUsage(fs)
+	timeout := fs.Duration("timeout", DefaultProbeTimeout, "per-key wait timeout (e.g. 5s)")
 	nonInteractive := fs.Bool("non-interactive", false, "skip TTY raw probe; just print the expected key map")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		return usageError("setup does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "setup does not accept positional arguments"}
 	}
 
 	if *nonInteractive {
@@ -148,7 +151,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	results := make([]probeResult, 0, len(c.defaultKeys))
+	results := make([]ProbeResult, 0, len(c.defaultKeys))
 	for _, key := range c.defaultKeys {
 		fmt.Fprintf(stdout, "Press %-16s (%s) ... ", key.Label, key.Action)
 		seq, readErr := c.readProbeKeyContext(context.Background(), *timeout)
@@ -156,9 +159,9 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stdout, "aborted")
 			return readErr
 		}
-		res := classifyProbeInput(key, seq)
+		res := ClassifyProbeInput(key, seq)
 		results = append(results, res)
-		fmt.Fprintln(stdout, renderProbeStatus(res))
+		fmt.Fprintln(stdout, RenderProbeStatus(res))
 	}
 
 	if restore != nil {
@@ -171,7 +174,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func (c *setupCommand) readProbeKeyContext(ctx context.Context, timeout time.Duration) ([]byte, error) {
+func (c *Command) readProbeKeyContext(ctx context.Context, timeout time.Duration) ([]byte, error) {
 	if c.readKey != nil {
 		return c.readKey(timeout)
 	}
@@ -196,28 +199,35 @@ func (c *setupCommand) readProbeKeyContext(ctx context.Context, timeout time.Dur
 	return readKeySequenceContext(ctx, stdin, timeout)
 }
 
-func (c *setupCommand) printExpectedMap(stdout io.Writer) error {
+func (c *Command) printExpectedMap(stdout io.Writer) error {
 	terminal := detectTerminal(c.lookupEnv)
 	fmt.Fprintf(stdout, "Detected terminal: %s\n\n", terminal.Display())
 	fmt.Fprintln(stdout, "Expected key sequences:")
 	for _, key := range c.defaultKeys {
-		plain := visibleEscape(key.Plain)
+		plain := VisibleEscape(key.Plain)
 		fmt.Fprintf(stdout, "  %-16s plain=%-12s -> %s\n", key.Label, plain, key.Action)
 	}
 	return nil
+}
+
+// ProbeControllingTTYKey probes one key on the controlling terminal, the way
+// the Settings keybinding lab does.
+func ProbeControllingTTYKey(ctx context.Context, key ProbeKey, timeout time.Duration) (ProbeResult, error) {
+	cmd := &Command{openTTY: openControllingTTY}
+	return cmd.probeControllingTTYKeyContext(ctx, key, timeout)
 }
 
 // probeControllingTTYKey reads one keypress from the controlling terminal
 // rather than process stdin. Settings runs inside tmux where stdin may be the
 // picker's pipe/pane path, so /dev/tty is the only reliable source for a raw
 // operator keypress. Tests can still inject openTTY/readKey/enterRaw.
-func (c *setupCommand) probeControllingTTYKeyContext(ctx context.Context, key probeKey, timeout time.Duration) (probeResult, error) {
+func (c *Command) probeControllingTTYKeyContext(ctx context.Context, key ProbeKey, timeout time.Duration) (ProbeResult, error) {
 	if c.readKey != nil && c.openTTY == nil {
 		seq, err := c.readKey(timeout)
 		if err != nil && !errors.Is(err, errProbeTimeout) {
-			return probeResult{}, err
+			return ProbeResult{}, err
 		}
-		return classifyProbeInput(key, seq), nil
+		return ClassifyProbeInput(key, seq), nil
 	}
 
 	openTTY := c.openTTY
@@ -226,7 +236,7 @@ func (c *setupCommand) probeControllingTTYKeyContext(ctx context.Context, key pr
 	}
 	tty, cleanup, err := openTTY()
 	if err != nil {
-		return probeResult{}, fmt.Errorf("open controlling TTY: %w", err)
+		return ProbeResult{}, fmt.Errorf("open controlling TTY: %w", err)
 	}
 	defer func() {
 		if cleanup != nil {
@@ -241,7 +251,7 @@ func (c *setupCommand) probeControllingTTYKeyContext(ctx context.Context, key pr
 		restore, err = enterTTYRawModeFile(tty)
 	}
 	if err != nil {
-		return probeResult{}, fmt.Errorf("enter raw TTY mode: %w", err)
+		return ProbeResult{}, fmt.Errorf("enter raw TTY mode: %w", err)
 	}
 	defer func() {
 		if restore != nil {
@@ -257,93 +267,55 @@ func (c *setupCommand) probeControllingTTYKeyContext(ctx context.Context, key pr
 	}
 	seq, err := readKey(timeout)
 	if err != nil && !errors.Is(err, errProbeTimeout) {
-		return probeResult{}, err
+		return ProbeResult{}, err
 	}
-	return classifyProbeInput(key, seq), nil
+	return ClassifyProbeInput(key, seq), nil
 }
 
-// classifyProbeInput inspects the bytes captured for a single keystroke and
+// ClassifyProbeInput inspects the bytes captured for a single keystroke and
 // classifies whether the terminal delivered the plain sequence projmux
 // expects, an unrelated sequence (different action in the host terminal), or
 // nothing at all.
-func classifyProbeInput(key probeKey, seq []byte) probeResult {
-	res := probeResult{Key: key, Sequence: append([]byte(nil), seq...)}
+func ClassifyProbeInput(key ProbeKey, seq []byte) ProbeResult {
+	res := ProbeResult{Key: key, Sequence: append([]byte(nil), seq...)}
 	if len(seq) == 0 {
-		res.Status = probeStatusTimeout
+		res.Status = ProbeStatusTimeout
 		res.Reason = "no bytes received within timeout (terminal likely swallowed the key)"
 		return res
 	}
 	got := string(seq)
 	if key.Plain != "" && got == key.Plain {
-		res.Status = probeStatusPlain
+		res.Status = ProbeStatusPlain
 		res.Reason = "tmux's plain bind handles this directly"
 		return res
 	}
-	res.Status = probeStatusUnknown
-	res.Reason = "received an unexpected sequence " + visibleEscape(got) + "; terminal probably bound this key to its own action"
+	res.Status = ProbeStatusUnknown
+	res.Reason = "received an unexpected sequence " + VisibleEscape(got) + "; terminal probably bound this key to its own action"
 	return res
 }
 
-func suggestedPlainChordForSequence(seq []byte) (string, bool) {
-	if len(seq) == 0 || isAmbiguousEnterSequence(seq) {
-		return "", false
-	}
-	got := string(seq)
-	for _, action := range keybinding.DefaultKeyBindingCatalog() {
-		if action.ProbePlain != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
-			if chord := keybinding.FirstNonEmptyString(keybinding.KeyBindingEffectivePlainChords(action)); chord != "" {
-				return chord, true
-			}
-			if chord := probeLabelToTmuxChord(action.ProbeLabel); chord != "" {
-				return chord, true
-			}
-		}
-	}
-	if len(seq) == 2 && seq[0] == 0x1b && seq[1] >= 0x21 && seq[1] <= 0x7e {
-		return "M-" + string(seq[1]), true
-	}
-	if len(seq) == 1 && seq[0] >= 0x01 && seq[0] <= 0x1a {
-		return fmt.Sprintf("C-%c", 'a'+seq[0]-1), true
-	}
-	if len(seq) == 1 && seq[0] >= 0x21 && seq[0] <= 0x7e {
-		chord := string(seq)
-		if err := keybinding.ValidateKeymapChord(chord); err == nil {
-			return chord, true
-		}
-	}
-	return "", false
-}
-
-func probeLabelToTmuxChord(label string) string {
-	label = strings.TrimSpace(label)
-	label = strings.ReplaceAll(label, "Alt-Shift-", "M-S-")
-	label = strings.ReplaceAll(label, "Alt-", "M-")
-	label = strings.ReplaceAll(label, "Ctrl-", "C-")
-	return label
-}
-
-func isAmbiguousEnterSequence(seq []byte) bool {
+func IsAmbiguousEnterSequence(seq []byte) bool {
 	return len(seq) == 1 && (seq[0] == '\r' || seq[0] == '\n')
 }
 
-func renderProbeStatus(res probeResult) string {
+func RenderProbeStatus(res ProbeResult) string {
 	switch res.Status {
-	case probeStatusPlain:
-		return "OK plain (" + visibleEscape(string(res.Sequence)) + ")"
-	case probeStatusTimeout:
+	case ProbeStatusPlain:
+		return "OK plain (" + VisibleEscape(string(res.Sequence)) + ")"
+	case ProbeStatusTimeout:
 		return "MISS timeout"
 	default:
-		return "MISS unknown (" + visibleEscape(string(res.Sequence)) + ")"
+		return "MISS unknown (" + VisibleEscape(string(res.Sequence)) + ")"
 	}
 }
 
-func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResult) {
+func renderProbeSummary(w io.Writer, terminal terminalInfo, results []ProbeResult) {
 	fmt.Fprintln(w, "Summary")
 	fmt.Fprintln(w, "-------")
 	fmt.Fprintf(w, "Terminal      : %s\n", terminal.Display())
 	pass, fail := 0, 0
 	for _, r := range results {
-		if r.Status == probeStatusPlain {
+		if r.Status == ProbeStatusPlain {
 			pass++
 		} else {
 			fail++
@@ -359,7 +331,7 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 
 	fmt.Fprintln(w, "Failures:")
 	for _, r := range results {
-		if r.Status == probeStatusPlain {
+		if r.Status == ProbeStatusPlain {
 			continue
 		}
 		label := r.Key.Label
@@ -582,10 +554,10 @@ func detectTerminal(lookup func(string) string) terminalInfo {
 	return terminalInfo{Slug: "unknown", Name: "unknown"}
 }
 
-// visibleEscape renders byte sequences with control characters escaped so the
+// VisibleEscape renders byte sequences with control characters escaped so the
 // summary is readable on a normal terminal (e.g. "\x1b[1;4D" instead of
 // emitting a literal escape that re-triggers the user's terminal).
-func visibleEscape(s string) string {
+func VisibleEscape(s string) string {
 	if s == "" {
 		return "\"\""
 	}
@@ -617,7 +589,7 @@ var errProbeTimeout = errors.New("probe key read timed out")
 // sequences (\x1b[1;4D, \x1b[A, ...) into one read.
 func readKeySequenceContext(ctx context.Context, stdin io.Reader, timeout time.Duration) ([]byte, error) {
 	if timeout <= 0 {
-		timeout = defaultProbeTimeout
+		timeout = DefaultProbeTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -764,15 +736,4 @@ func openControllingTTY() (*os.File, func() error, error) {
 	}
 	cleanup := func() error { return f.Close() }
 	return f, cleanup, nil
-}
-
-// sortedProbeLabels is a tiny helper used in tests to assert label ordering
-// independent of map iteration; exported via package-private call sites.
-func sortedProbeLabels(keys []probeKey) []string {
-	labels := make([]string, 0, len(keys))
-	for _, k := range keys {
-		labels = append(labels, k.Label)
-	}
-	sort.Strings(labels)
-	return labels
 }

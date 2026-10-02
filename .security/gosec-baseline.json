@@ -30,7 +30,7 @@
     },
     {
       "rule": "G118",
-      "scope": "internal/app/setup.go key reader",
+      "scope": "internal/app/setupcmd/setup.go key reader",
       "reason": "reviewed in the completed resource-lifetime phase; no current finding"
     },
     {
@@ -236,7 +236,7 @@
     },
     {
       "rule": "G204",
-      "path": "internal/app/setup.go",
+      "path": "internal/app/setupcmd/setup.go",
       "message": "Subprocess launched with variable",
       "source": "cmd := exec.Command(\"stty\", args...)",
       "max_count": 1

@@ -18,6 +18,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
@@ -3741,27 +3742,27 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 func TestSettingsKeybindingDeliveryDiagnosticsReadModelDistinguishesStates(t *testing.T) {
 	t.Parallel()
 
-	expectedAltOne := probeKey{Label: "Alt-1", Plain: "\x1b1", PlainChord: "M-1"}
-	missing := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(expectedAltOne, nil))
+	expectedAltOne := setupcmd.ProbeKey{Label: "Alt-1", Plain: "\x1b1", PlainChord: "M-1"}
+	missing := keybindingDeliveryDiagnosticForProbe(setupcmd.ClassifyProbeInput(expectedAltOne, nil))
 	if missing.Status != keybindingDeliveryMissing || missing.RawBytes != "(none)" || !strings.Contains(missing.Summary, "did not arrive") {
 		t.Fatalf("missing diagnostic = %#v, want key-did-not-arrive with no raw bytes", missing)
 	}
 
-	ambiguous := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(probeKey{Label: "Ctrl-M", Plain: "\r", PlainChord: "C-m"}, []byte("\r")))
+	ambiguous := keybindingDeliveryDiagnosticForProbe(setupcmd.ClassifyProbeInput(setupcmd.ProbeKey{Label: "Ctrl-M", Plain: "\r", PlainChord: "C-m"}, []byte("\r")))
 	if ambiguous.Status != keybindingDeliveryAmbiguous || ambiguous.TmuxReceivedKey != "Enter / C-m" {
 		t.Fatalf("ambiguous diagnostic = %#v, want ambiguous Enter/C-m", ambiguous)
 	}
 
-	adapterNeeded := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(expectedAltOne, []byte("\x1b[49;3u")))
+	adapterNeeded := keybindingDeliveryDiagnosticForProbe(setupcmd.ClassifyProbeInput(expectedAltOne, []byte("\x1b[49;3u")))
 	if adapterNeeded.Status != keybindingDeliveryAdapterNeeded || adapterNeeded.RawBytes != `\x1b[49;3u` || !strings.Contains(adapterNeeded.Summary, "adapter-needed") {
 		t.Fatalf("adapter diagnostic = %#v, want adapter-needed with raw CSI-u bytes", adapterNeeded)
 	}
 
-	capturedSafe := keybindingDeliveryDiagnosticForProbe(classifyProbeInput(probeKey{Label: "custom key"}, []byte("\x1ba")))
+	capturedSafe := keybindingDeliveryDiagnosticForProbe(setupcmd.ClassifyProbeInput(setupcmd.ProbeKey{Label: "custom key"}, []byte("\x1ba")))
 	if capturedSafe.Status != keybindingDeliveryDelivered || capturedSafe.TmuxReceivedKey != "M-a" {
 		t.Fatalf("captured safe diagnostic = %#v, want delivered M-a", capturedSafe)
 	}
-	lines := strings.Join(renderKeybindingDeliveryDiagnostic(classifyProbeInput(expectedAltOne, []byte("\x1b1"))), "\n")
+	lines := strings.Join(renderKeybindingDeliveryDiagnostic(setupcmd.ClassifyProbeInput(expectedAltOne, []byte("\x1b1"))), "\n")
 	for _, want := range []string{"logical key: Alt-1", `raw bytes: \x1b1`, "tmux received key: M-1", "delivery status: delivered"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("rendered diagnostic = %q, want %q", lines, want)
@@ -4270,9 +4271,9 @@ func TestSettingsKeybindingCapturePrefersNativePhysicalOptionChord(t *testing.T)
 		nativeKeyCapture: func(context.Context) (string, bool, error) {
 			return "M-a", true, nil
 		},
-		probeKeybinding: func(key probeKey, timeout time.Duration) (probeResult, error) {
+		probeKeybinding: func(key setupcmd.ProbeKey, timeout time.Duration) (setupcmd.ProbeResult, error) {
 			time.Sleep(50 * time.Millisecond)
-			return classifyProbeInput(key, nil), nil
+			return setupcmd.ClassifyProbeInput(key, nil), nil
 		},
 	}
 
@@ -4299,12 +4300,12 @@ func TestSettingsKeybindingCapturePrefersNativePhysicalOptionChord(t *testing.T)
 func TestSettingsKeybindingCaptureDarwinWaitsForNativeResult(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		probeResult probeResult
+		probeResult setupcmd.ProbeResult
 		probeErr    error
 	}{
 		{
 			name:        "terminal translated bytes",
-			probeResult: classifyProbeInput(probeKey{Label: "custom key"}, []byte("§")),
+			probeResult: setupcmd.ClassifyProbeInput(setupcmd.ProbeKey{Label: "custom key"}, []byte("§")),
 		},
 		{
 			name:     "terminal capture error",
@@ -4324,7 +4325,7 @@ func TestSettingsKeybindingCaptureDarwinWaitsForNativeResult(t *testing.T) {
 					time.Sleep(10 * time.Millisecond)
 					return "M-6", true, nil
 				},
-				probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+				probeKeybinding: func(setupcmd.ProbeKey, time.Duration) (setupcmd.ProbeResult, error) {
 					close(probeReturned)
 					return tc.probeResult, tc.probeErr
 				},
@@ -4363,14 +4364,14 @@ func TestSettingsKeybindingCaptureDarwinIgnoresActivationEnter(t *testing.T) {
 				return "", false, nil
 			}
 		},
-		probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+		probeKeybinding: func(setupcmd.ProbeKey, time.Duration) (setupcmd.ProbeResult, error) {
 			probeCalls++
 			if probeCalls == 1 {
-				return classifyProbeInput(probeKey{Label: "custom key"}, []byte("\r")), nil
+				return setupcmd.ClassifyProbeInput(setupcmd.ProbeKey{Label: "custom key"}, []byte("\r")), nil
 			}
 			close(secondProbe)
 			time.Sleep(20 * time.Millisecond)
-			return classifyProbeInput(probeKey{Label: "custom key"}, nil), nil
+			return setupcmd.ClassifyProbeInput(setupcmd.ProbeKey{Label: "custom key"}, nil), nil
 		},
 	}
 
@@ -4415,8 +4416,8 @@ func TestSettingsKeybindingCaptureNonDarwinKeepsImmediateTerminalResult(t *testi
 				return "M-6", true, nil
 			}
 		},
-		probeKeybinding: func(key probeKey, timeout time.Duration) (probeResult, error) {
-			return classifyProbeInput(key, []byte{0x12}), nil
+		probeKeybinding: func(key setupcmd.ProbeKey, timeout time.Duration) (setupcmd.ProbeResult, error) {
+			return setupcmd.ClassifyProbeInput(key, []byte{0x12}), nil
 		},
 	}
 
@@ -4695,8 +4696,8 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 		return nil
 	}
 	wireSettingsLiveTestRunner(cmd)
-	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte("\x1ba")), nil
+	cmd.probeKeybinding = func(key setupcmd.ProbeKey, timeout time.Duration) (setupcmd.ProbeResult, error) {
+		return setupcmd.ClassifyProbeInput(key, []byte("\x1ba")), nil
 	}
 
 	var stdout bytes.Buffer
@@ -5188,8 +5189,8 @@ func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 			return intpickercompat.Result{}, nil
 		}
 	})
-	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte("\x1b[A")), nil
+	cmd.probeKeybinding = func(key setupcmd.ProbeKey, timeout time.Duration) (setupcmd.ProbeResult, error) {
+		return setupcmd.ClassifyProbeInput(key, []byte("\x1b[A")), nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -5242,8 +5243,8 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 		return nil
 	}
-	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, nil), nil
+	cmd.probeKeybinding = func(key setupcmd.ProbeKey, timeout time.Duration) (setupcmd.ProbeResult, error) {
+		return setupcmd.ClassifyProbeInput(key, nil), nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -7318,8 +7319,8 @@ func TestSettingsKeybindingPhysicalCaptureAvailabilityDefaults(t *testing.T) {
 
 	probeInjected := &settingsCommand{
 		lookupEnv: tmuxEnv,
-		probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
-			return probeResult{}, nil
+		probeKeybinding: func(setupcmd.ProbeKey, time.Duration) (setupcmd.ProbeResult, error) {
+			return setupcmd.ProbeResult{}, nil
 		},
 	}
 	if !probeInjected.keybindingPhysicalCaptureAvailable() {
@@ -7510,7 +7511,7 @@ func TestSettingsKeybindingCaptureFallsBackToTypedWhenUnavailable(t *testing.T) 
 		runner:                   runner,
 		nativePicker:             nativePickerFromCompatRunner(runner),
 		physicalCaptureAvailable: func() bool { return false },
-		probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+		probeKeybinding: func(setupcmd.ProbeKey, time.Duration) (setupcmd.ProbeResult, error) {
 			panic("probeKeybinding must not run when physical capture is unavailable")
 		},
 		nativeKeyCapture: func(context.Context) (string, bool, error) {
