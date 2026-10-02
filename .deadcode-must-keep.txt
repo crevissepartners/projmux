@@ -263,4 +263,5 @@ validateManagedIdentity	Test-only installed qualification helper retained for fo
 versionOrUnknown	Test-only installed qualification helper retained for nonblank version-tuple evidence.
 waitForProcessExit	Test-only installed qualification helper retained for independently bounded direct kill-wait proof.
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
+waitGroupAbsent	Darwin owned-group absence requires ESRCH after bounded observation, retained with processhost lifecycle proof.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.

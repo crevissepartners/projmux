@@ -6,6 +6,7 @@ package processhost
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -123,13 +124,13 @@ func finishOwnedChild(cmd *exec.Cmd, observationErr error, grace time.Duration) 
 	waitErr := cmd.Wait()
 	var exitErr *exec.ExitError
 	if waitErr != nil && !errors.As(waitErr, &exitErr) {
-		return Exit{}, waitErr
+		return Exit{}, fmt.Errorf("owned child Wait: %w", waitErr)
 	}
 	if cmd.ProcessState == nil {
 		return Exit{}, errors.New("owned child Wait produced no status")
 	}
 	if err := reapGroup(group, grace); err != nil {
-		return Exit{}, err
+		return Exit{}, fmt.Errorf("owned group cleanup after child Wait: %w", err)
 	}
 	return exitOf(cmd.ProcessState), nil
 }

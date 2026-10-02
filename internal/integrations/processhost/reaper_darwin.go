@@ -12,19 +12,26 @@ import (
 func prepareReaper() error { return nil }
 
 func reapGroup(group int, grace time.Duration) error {
+	return waitGroupAbsent(group, grace, func() error { return syscall.Kill(-group, 0) })
+}
+
+func waitGroupAbsent(group int, grace time.Duration, probe func() error) error {
 	// macOS reparents orphan descendants to launchd, which reaps them. Wait for
 	// the exact process group to disappear rather than counting a kill as proof.
 	deadline := time.Now().Add(grace)
 	for {
-		err := syscall.Kill(-group, 0)
+		err := probe()
 		if errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
-		if err != nil {
+		// A group containing only zombies can return EPERM while launchd is
+		// still reaping it. EPERM is not absence: only ESRCH completes cleanup.
+		// Persistent denial remains a bounded failure, never a success receipt.
+		if err != nil && !errors.Is(err, syscall.EPERM) {
 			return err
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("owned group %d still exists", group)
+			return fmt.Errorf("owned group %d absence unconfirmed (last probe: %v)", group, err)
 		}
 		time.Sleep(time.Millisecond)
 	}
