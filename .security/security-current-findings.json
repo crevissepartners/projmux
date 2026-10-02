@@ -6,7 +6,7 @@
     "gosec": {
       "finding_count": 115,
       "fingerprint_count": 94,
-      "finding_identity_sha256": "72983eb201ad099f4dde85330fd52a5dfa14fb1a42dfcb2a7f829604a123361c",
+      "finding_identity_sha256": "e51297838f401d354db9be07d67330addda2d20d7a6eb66e0183c4dc1a06ea11",
       "baseline_sha256": "0b00ec137af28c203c0dd1c52707a849892edf0ec1680ffbe85e3f023fc5b34d"
     },
     "staticcheck": {
