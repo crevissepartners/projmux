@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -27,11 +28,11 @@ type welcomeCommand struct {
 	removeFile func(string) error
 	renameFile func(string, string) error
 	runner     tmuxRunner
-	update     *updateCommand
+	update     *updatecmd.Command
 	writeFile  func(string, []byte, os.FileMode) error
 }
 
-func newWelcomeCommand(update *updateCommand) *welcomeCommand {
+func newWelcomeCommand(update *updatecmd.Command) *welcomeCommand {
 	return &welcomeCommand{
 		executable: resolveExecutablePath,
 		homeDir:    os.UserHomeDir,

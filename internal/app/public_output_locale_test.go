@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -71,10 +72,10 @@ func capturePublicRouteOutputs(t *testing.T, locale string) string {
 			t.Fatalf("startup display locale = %q, want %q", got, locale)
 		}
 		var banner, english bytes.Buffer
-		if err := writeShellWelcome(&banner, "v", updateStatus{}, false, false, false, false, 76, appLocale(homeDir, lookupEnv)); err != nil {
+		if err := writeShellWelcome(&banner, "v", updatecmd.Status{}, false, false, false, false, 76, appLocale(homeDir, lookupEnv)); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeShellWelcome(&english, "v", updateStatus{}, false, false, false, false, 76, i18n.FallbackLocale); err != nil {
+		if err := writeShellWelcome(&english, "v", updatecmd.Status{}, false, false, false, false, 76, i18n.FallbackLocale); err != nil {
 			t.Fatal(err)
 		}
 		if banner.String() == english.String() {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -33,7 +34,7 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 
 	status, hasStatus := c.welcomeUpdateStatus()
 	skipped := hasStatus && c.updatePromptSkipped(status)
-	updateAvailable := hasStatus && shouldPromptShellUpdate(status) && !skipped
+	updateAvailable := hasStatus && updatecmd.ShouldPromptShellUpdate(status) && !skipped
 	upgradeEnabled := hasStatus && shellUpdateCanUpgrade(status)
 	locale := appLocale(c.homeDir, c.env)
 	if err := writeShellWelcome(stdout, current, status, hasStatus, updateAvailable, skipped, upgradeEnabled, c.welcomeWidth(), locale); err != nil {
@@ -77,7 +78,7 @@ func (c *shellCommand) promptWelcome(stdout, stderr io.Writer) (bool, error) {
 	return true, nil
 }
 
-func (c *shellCommand) welcomeUpdateStatus() (updateStatus, bool) {
+func (c *shellCommand) welcomeUpdateStatus() (updatecmd.Status, bool) {
 	c.refreshWelcomeUpdateCache()
 	return resolveWelcomeUpdateStatus(c.update)
 }
@@ -88,7 +89,7 @@ func (c *shellCommand) refreshWelcomeUpdateCache() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.welcomeUpdateCheckTimeout())
 	defer cancel()
-	_ = c.update.refreshCacheIfNeeded(ctx)
+	_ = c.update.RefreshCacheIfNeeded(ctx)
 }
 
 func (c *shellCommand) welcomeUpdateCheckTimeout() time.Duration {
@@ -145,11 +146,11 @@ func welcomeWidthFromEnv(lookupEnv func(string) string) int {
 	return width
 }
 
-func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
-	// Concrete-typed wrapper: keep the nil *updateCommand check here so the
+func resolveWelcomeUpdateStatus(update *updatecmd.Command) (updatecmd.Status, bool) {
+	// Concrete-typed wrapper: keep the nil *updatecmd.Command check here so the
 	// shell/welcome callers never wrap a typed nil pointer in the interface.
 	if update == nil {
-		return updateStatus{}, false
+		return updatecmd.Status{}, false
 	}
 	return resolveWelcomeUpdateStatusFrom(update)
 }
@@ -157,26 +158,26 @@ func resolveWelcomeUpdateStatus(update *updateCommand) (updateStatus, bool) {
 // resolveWelcomeUpdateStatusFrom is the interface-typed variant used by the
 // Settings About > Welcome viewer, which holds its update dependency behind
 // the updateRunner seam.
-func resolveWelcomeUpdateStatusFrom(update updateRunner) (updateStatus, bool) {
+func resolveWelcomeUpdateStatusFrom(update updateRunner) (updatecmd.Status, bool) {
 	if update == nil {
-		return updateStatus{}, false
+		return updatecmd.Status{}, false
 	}
-	status, err := update.status()
+	status, err := update.Status()
 	if err != nil {
-		return updateStatus{}, false
+		return updatecmd.Status{}, false
 	}
 	if status.CacheState != "fresh" || strings.TrimSpace(status.LatestVersion) == "" {
-		return updateStatus{}, false
+		return updatecmd.Status{}, false
 	}
 	switch status.UpdateState {
 	case "current", "update_available":
 		return status, true
 	default:
-		return updateStatus{}, false
+		return updatecmd.Status{}, false
 	}
 }
 
-func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStatus, updateAvailable, skipped, upgradeEnabled bool, width int, locale i18n.Locale) error {
+func writeShellWelcome(w io.Writer, current string, status updatecmd.Status, hasStatus, updateAvailable, skipped, upgradeEnabled bool, width int, locale i18n.Locale) error {
 	if w == nil {
 		return nil
 	}
@@ -238,7 +239,7 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 	return err
 }
 
-func shellWelcomeUpdateLines(status updateStatus, updateAvailable, skipped bool) []string {
+func shellWelcomeUpdateLines(status updatecmd.Status, updateAvailable, skipped bool) []string {
 	latest := strings.TrimSpace(status.LatestVersion)
 	current := strings.TrimSpace(status.CurrentVersion)
 	switch status.UpdateState {

@@ -1,4 +1,4 @@
-package app
+package updatecmd
 
 import (
 	"archive/tar"
@@ -25,14 +25,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
 const (
-	updateCacheFileName = "update.json"
-	updateCacheMaxAge   = 24 * time.Hour
-	updateHTTPTimeout   = 10 * time.Second
+	CacheFileName     = "update.json"
+	updateCacheMaxAge = 24 * time.Hour
+	updateHTTPTimeout = 10 * time.Second
 	// updateVersionProbeTimeout bounds the `projmux version` call that reads
 	// the installed version back. A wedged binary must fail verification, not
 	// hang the apply that just published it.
@@ -62,8 +64,8 @@ const (
 // source is chosen from the detected installer and recorded alongside the
 // answer it produced.
 const (
-	updateSourceGitHubRelease = "github-release"
-	updateSourceNPMRegistry   = "npm-registry"
+	SourceGitHubRelease = "github-release"
+	SourceNPMRegistry   = "npm-registry"
 )
 
 // The release channels an update judgment can be made against.
@@ -74,14 +76,14 @@ const (
 // empty, and an unrecognised value all mean stable, so no configuration error
 // can silently opt an install into prereleases.
 const (
-	updateReleaseChannelStable = "stable"
-	updateReleaseChannelRC     = "rc"
+	ReleaseChannelStable = "stable"
+	ReleaseChannelRC     = "rc"
 )
 
-// updateReleaseChannelEnv is the opt-in switch for the rc channel. It mirrors
+// ReleaseChannelEnv is the opt-in switch for the rc channel. It mirrors
 // PROJMUX_INSTALLER: an explicit value selects the axis, and the resolver seam
-// on updateCommand is what a stored setting will drive later.
-const updateReleaseChannelEnv = "PROJMUX_RELEASE_CHANNEL"
+// on Command is what a stored setting will drive later.
+const ReleaseChannelEnv = "PROJMUX_RELEASE_CHANNEL"
 
 // The npm targets apply can install. They are dist-tags rather than pinned
 // versions on purpose: the registry, not this binary, decides which version a
@@ -102,7 +104,8 @@ const (
 
 var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
 
-type updateHTTPClient interface {
+// HTTPClient is the one request method the update command uses.
+type HTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
@@ -114,23 +117,28 @@ type updateArchiveLimits struct {
 	entries           int
 }
 
-type updateCommand struct {
-	now         func() time.Time
-	getenv      func(string) string
-	cacheDir    func() (string, error)
-	client      updateHTTPClient
-	apiURL      string
-	npmURL      string
+// Command implements `projmux update`. The exported fields are its clock,
+// environment, cache, network, and process edges and the socket it reloads:
+// New binds them to the real ones, and a caller that drives the command
+// through its own surface (the shell welcome, Settings) replaces them in its
+// tests.
+type Command struct {
+	Now         func() time.Time
+	Getenv      func(string) string
+	CacheDir    func() (string, error)
+	Client      HTTPClient
+	APIURL      string
+	NPMURL      string
 	releasesURL string
-	// releaseChannelSource resolves the opted-in release channel. It is a seam
+	// ReleaseChannelSource resolves the opted-in release channel. It is a seam
 	// rather than a plain field so the stored Settings toggle can own the value
 	// without the judgment having to know where it was persisted; when it is
 	// unset the environment answers, and when that is unset the answer is
 	// stable.
-	releaseChannelSource func() string
-	executable           func() (string, error)
-	lookPath             func(string) (string, error)
-	runExternal          func(name string, args []string, stdout, stderr io.Writer) error
+	ReleaseChannelSource func() string
+	Executable           func() (string, error)
+	LookPath             func(string) (string, error)
+	RunExternal          func(name string, args []string, stdout, stderr io.Writer) error
 	// runExternalEnv runs one command with extra environment entries layered
 	// over the caller's environment. `go install` chooses its output directory
 	// from GOBIN and offers no flag for it, so that one publication has to
@@ -139,11 +147,11 @@ type updateCommand struct {
 	// rest of the calling shell still reach the child, so the memoized primary
 	// project root survives the update that publishes the new binary.
 	runExternalEnv func(name string, args []string, env []string, stdout, stderr io.Writer) error
-	// probeVersion reads the raw `projmux version` output of one exact
-	// executable. It is deliberately a separate seam from runExternal: the
+	// ProbeVersion reads the raw `projmux version` output of one exact
+	// executable. It is deliberately a separate seam from RunExternal: the
 	// probe is a reading, not one of the staged apply commands, so it must
 	// never appear in the published command sequence.
-	probeVersion func(exe string) (string, error)
+	ProbeVersion func(exe string) (string, error)
 	goos         string
 	goarch       string
 	mkdirTemp    func(dir, pattern string) (string, error)
@@ -155,9 +163,12 @@ type updateCommand struct {
 	buildInfo    func() (*debug.BuildInfo, bool)
 	userHomeDir  func() (string, error)
 	limits       updateArchiveLimits
+	// AppSocket names the tmux socket the post-update `config apply` reloads.
+	AppSocket string
 }
 
-type updateCache struct {
+// Cache is the on-disk answer of the last availability check.
+type Cache struct {
 	Version   int       `json:"version"`
 	CheckedAt time.Time `json:"checked_at"`
 	// Source names the availability authority this answer came from. It is
@@ -175,20 +186,22 @@ type updateCache struct {
 	PublishedAt time.Time `json:"published_at"`
 }
 
-type updateStatus struct {
-	CurrentVersion string          `json:"current_version"`
-	LatestVersion  string          `json:"latest_version,omitempty"`
-	ReleaseURL     string          `json:"release_url,omitempty"`
-	CheckedAt      *time.Time      `json:"checked_at,omitempty"`
-	CacheState     string          `json:"cache_state"`
-	SourceName     string          `json:"availability_source"`
-	ReleaseChannel string          `json:"release_channel"`
-	UpdateState    string          `json:"update_state"`
-	Installer      updateInstaller `json:"installer"`
-	CachePath      string          `json:"cache_path"`
+// Status is the update state `projmux update status` reports.
+type Status struct {
+	CurrentVersion string     `json:"current_version"`
+	LatestVersion  string     `json:"latest_version,omitempty"`
+	ReleaseURL     string     `json:"release_url,omitempty"`
+	CheckedAt      *time.Time `json:"checked_at,omitempty"`
+	CacheState     string     `json:"cache_state"`
+	SourceName     string     `json:"availability_source"`
+	ReleaseChannel string     `json:"release_channel"`
+	UpdateState    string     `json:"update_state"`
+	Installer      Installer  `json:"installer"`
+	CachePath      string     `json:"cache_path"`
 }
 
-type updateInstaller struct {
+// Installer names the install channel and how it was detected.
+type Installer struct {
 	Source string `json:"source"`
 	Note   string `json:"note"`
 }
@@ -209,20 +222,26 @@ type githubReleaseAsset struct {
 	Digest             string `json:"digest"`
 }
 
-func newUpdateCommand() *updateCommand {
-	cmd := &updateCommand{
-		now:            time.Now,
-		getenv:         os.Getenv,
-		cacheDir:       defaultUpdateCacheDir,
-		client:         &http.Client{Timeout: updateHTTPTimeout},
-		apiURL:         updateReleaseURL,
-		npmURL:         updateNPMRegistryURL,
+// New builds the `projmux update` command bound to the real environment,
+// network, and file system. The app owns both arguments, so they are handed in
+// rather than copied here: executable resolves the running binary for
+// installer detection and replacement, and appSocket names the tmux socket the
+// post-update `config apply` reloads.
+func New(executable func() (string, error), appSocket string) *Command {
+	cmd := &Command{
+		Now:            time.Now,
+		Getenv:         os.Getenv,
+		CacheDir:       DefaultCacheDir,
+		Client:         &http.Client{Timeout: updateHTTPTimeout},
+		APIURL:         updateReleaseURL,
+		NPMURL:         updateNPMRegistryURL,
 		releasesURL:    updateReleaseListURL,
-		executable:     resolveExecutablePath,
-		lookPath:       exec.LookPath,
-		runExternal:    runUpdateExternal,
+		Executable:     executable,
+		AppSocket:      appSocket,
+		LookPath:       exec.LookPath,
+		RunExternal:    runUpdateExternal,
 		runExternalEnv: runUpdateExternalWithEnv,
-		probeVersion:   probeInstalledProjmuxVersion,
+		ProbeVersion:   probeInstalledProjmuxVersion,
 		goos:           runtime.GOOS,
 		goarch:         runtime.GOARCH,
 		mkdirTemp:      os.MkdirTemp,
@@ -239,13 +258,14 @@ func newUpdateCommand() *updateCommand {
 	// resolver keeps PROJMUX_RELEASE_CHANNEL as the fallback for an install
 	// that has never used the toggle, so this only takes the axis away from
 	// the environment once the user has actually chosen.
-	cmd.releaseChannelSource = updateReleaseChannelSource(cmd.getenv, cmd.userHomeDir)
+	cmd.ReleaseChannelSource = NewReleaseChannelSource(cmd.Getenv, cmd.userHomeDir)
 	return cmd
 }
 
-func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
+// Run implements `projmux update <status|check|apply>`.
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("update requires a subcommand")
+		return &coremetadata.InputError{Detail: "update requires a subcommand"}
 	}
 	switch args[0] {
 	case "status":
@@ -255,24 +275,24 @@ func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "apply":
 		return c.runApply(args[1:], stdout, stderr)
 	default:
-		return usageError(fmt.Sprintf("unknown update subcommand: %s", args[0]))
+		return &coremetadata.InputError{Detail: fmt.Sprintf("unknown update subcommand: %s", args[0])}
 	}
 }
 
-func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runApply(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update apply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print installer-specific update command without running it")
 	noApply := fs.Bool("no-apply", false, "skip reloading tmux after 'projmux config apply'")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		return usageError("update apply does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "update apply does not accept positional arguments"}
 	}
 
 	installer := c.detectInstaller()
@@ -303,7 +323,7 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 				return err
 			}
 		}
-		if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine("the updated binary")); err != nil {
+		if _, err := fmt.Fprintln(stdout, KeymapMigrationStagePreviewLine("the updated binary")); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine("the updated binary")); err != nil {
@@ -326,11 +346,11 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 			return err
 		}
 		if err := c.externalRunner()(command.Name, command.Args, stdout, stderr); err != nil {
-			return updateApplyStageError(command, err)
+			return c.updateApplyStageError(command, err)
 		}
 	}
 	if *noApply {
-		if err := writeUpdateExplicitApplyRequired(stdout, defaultAppSocket); err != nil {
+		if err := writeUpdateExplicitApplyRequired(stdout, c.AppSocket); err != nil {
 			return err
 		}
 	}
@@ -388,8 +408,8 @@ func writeUpdateExplicitApplyRequired(stdout io.Writer, socketName string) error
 	return err
 }
 
-func updateApplyStageError(command updateApplyCommand, cause error) error {
-	recovery := updateApplyRecoveryCommand(defaultAppSocket)
+func (c *Command) updateApplyStageError(command updateApplyCommand, cause error) error {
+	recovery := updateApplyRecoveryCommand(c.AppSocket)
 	switch command.Stage {
 	case updateApplyPrePublication:
 		return fmt.Errorf("update pre-publication convergence failed; binary publication not started; recovery: run `%s`: run %s: %w", recovery, command.String(), cause)
@@ -404,13 +424,13 @@ func updateApplyStageError(command updateApplyCommand, cause error) error {
 	}
 }
 
-// keymapMigrationStagePreviewLine describes the migration step for a dry run.
+// KeymapMigrationStagePreviewLine describes the migration step for a dry run.
 //
 // It names the stage and stops there. The exact old→canonical rename table is
 // owned by the candidate binary, which is not installed yet and may not even be
 // downloaded, so promising a diff here would be promising something this
 // process cannot know.
-func keymapMigrationStagePreviewLine(target string) string {
+func KeymapMigrationStagePreviewLine(target string) string {
 	return fmt.Sprintf(
 		"would migrate: keymap schema via %s (the installed binary computes the exact action-id table; this preview does not)",
 		target)
@@ -427,7 +447,7 @@ func (c updateApplyCommand) String() string {
 	return strings.Join(parts, " ")
 }
 
-func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateApplyCommand, error) {
+func (c *Command) applyCommands(source string, noApply bool) ([]updateApplyCommand, error) {
 	switch source {
 	case "npm":
 		// `npm update -g` honors the installed semver range and frequently
@@ -457,7 +477,7 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 			commands = append([]updateApplyCommand{{
 				Stage: updateApplyPrePublication,
 				Name:  current,
-				Args:  preUpdateApplyArgs(target, defaultAppSocket),
+				Args:  preUpdateApplyArgs(target, c.AppSocket),
 			}}, commands...)
 		}
 		postStage := updateApplyVerification
@@ -491,8 +511,8 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 // Once a line's stable release lands, dist-tags.latest outranks the rc it
 // supersedes and the judgment offers that stable version; installing @rc there
 // would hand back the prerelease the user is trying to leave.
-func (c *updateCommand) npmInstallSpec(ctx context.Context) (string, error) {
-	if c.releaseChannel() != updateReleaseChannelRC {
+func (c *Command) npmInstallSpec(ctx context.Context) (string, error) {
+	if c.ReleaseChannel() != ReleaseChannelRC {
 		return npmInstallSpecStable, nil
 	}
 	tags, err := c.fetchNPMDistTags(ctx)
@@ -511,11 +531,11 @@ func (c *updateCommand) npmInstallSpec(ctx context.Context) (string, error) {
 	return npmInstallSpecRC, nil
 }
 
-func (c *updateCommand) npmPublishedTarget() (string, error) {
-	if c.lookPath == nil {
+func (c *Command) npmPublishedTarget() (string, error) {
+	if c.LookPath == nil {
 		return "", errors.New("update apply: npm published-target resolver is not configured")
 	}
-	target, err := c.lookPath("projmux")
+	target, err := c.LookPath("projmux")
 	if err != nil {
 		return "", fmt.Errorf("update apply: resolve npm published target: %w", err)
 	}
@@ -539,14 +559,14 @@ func goPublicationCommand() updateApplyCommand {
 	return updateApplyCommand{Stage: updateApplyPublication, Name: "go", Args: []string{"install", goInstallSpec}}
 }
 
-func (c *updateCommand) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
+func (c *Command) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
 	target, err := c.currentExecutable()
 	if err != nil {
 		return err
 	}
 	if !noApply {
 		if _, err := fmt.Fprintf(stdout, "would run before replacement: %s %s\n",
-			target, strings.Join(preUpdateApplyArgs(target, defaultAppSocket), " ")); err != nil {
+			target, strings.Join(preUpdateApplyArgs(target, c.AppSocket), " ")); err != nil {
 			return err
 		}
 	}
@@ -561,7 +581,7 @@ func (c *updateCommand) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
 		target, strings.Join(postUpdateApplyArgs(noApply), " ")); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(target)); err != nil {
+	if _, err := fmt.Fprintln(stdout, KeymapMigrationStagePreviewLine(target)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(target)); err != nil {
@@ -571,7 +591,7 @@ func (c *updateCommand) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
 		return err
 	}
 	if noApply {
-		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
+		return writeUpdateExplicitApplyRequired(stdout, c.AppSocket)
 	}
 	return nil
 }
@@ -590,7 +610,7 @@ func (c *updateCommand) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
 // removes the guess: the exact active file is what gets updated, through the
 // same replacement plumbing the release backend uses, and the convergence that
 // follows runs the binary that was just written.
-func (c *updateCommand) runGoApply(noApply bool, stdout, stderr io.Writer) error {
+func (c *Command) runGoApply(noApply bool, stdout, stderr io.Writer) error {
 	target, err := c.currentExecutable()
 	if err != nil {
 		return err
@@ -613,13 +633,13 @@ func (c *updateCommand) runGoApply(noApply bool, stdout, stderr io.Writer) error
 		preApply := updateApplyCommand{
 			Stage: updateApplyPrePublication,
 			Name:  target,
-			Args:  preUpdateApplyArgs(target, defaultAppSocket),
+			Args:  preUpdateApplyArgs(target, c.AppSocket),
 		}
 		if _, err := fmt.Fprintf(stdout, ">> running: %s\n", preApply.String()); err != nil {
 			return err
 		}
 		if err := c.externalRunner()(preApply.Name, preApply.Args, stdout, stderr); err != nil {
-			return updateApplyStageError(preApply, err)
+			return c.updateApplyStageError(preApply, err)
 		}
 	}
 
@@ -628,17 +648,17 @@ func (c *updateCommand) runGoApply(noApply bool, stdout, stderr io.Writer) error
 		return err
 	}
 	if err := c.envRunner()(publication.Name, publication.Args, []string{"GOBIN=" + scratch}, stdout, stderr); err != nil {
-		return updateApplyStageError(publication, err)
+		return c.updateApplyStageError(publication, err)
 	}
 
 	published := filepath.Join(scratch, goPublishedBinaryName)
 	if err := verifyGoPublishedBinary(published); err != nil {
-		return updateApplyStageError(publication, err)
+		return c.updateApplyStageError(publication, err)
 	}
 
 	if err := c.atomicReplaceRelease(published, target); err != nil {
 		return fmt.Errorf("update binary publication failed; update not successful; recovery: run `%s`: %w",
-			updateApplyRecoveryCommand(defaultAppSocket), err)
+			updateApplyRecoveryCommand(c.AppSocket), err)
 	}
 	if _, err := fmt.Fprintf(stdout, ">> atomically replaced %s\n", target); err != nil {
 		return err
@@ -662,10 +682,10 @@ func (c *updateCommand) runGoApply(noApply bool, stdout, stderr io.Writer) error
 		if noApply {
 			stage = updateApplyConfigOnly
 		}
-		return updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
+		return c.updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
 	}
 	if noApply {
-		if err := writeUpdateExplicitApplyRequired(stdout, defaultAppSocket); err != nil {
+		if err := writeUpdateExplicitApplyRequired(stdout, c.AppSocket); err != nil {
 			return err
 		}
 	}
@@ -676,7 +696,7 @@ func (c *updateCommand) runGoApply(noApply bool, stdout, stderr io.Writer) error
 // replace. The directory choice is the replacement's precondition, not a
 // preference: the atomic swap is a rename, and a rename only stays atomic
 // within one filesystem.
-func (c *updateCommand) createGoScratchDir(target string) (string, error) {
+func (c *Command) createGoScratchDir(target string) (string, error) {
 	if c.mkdirTemp == nil {
 		return "", errors.New("configure update mkdirTemp: temp directory factory is not configured")
 	}
@@ -719,14 +739,14 @@ func verifyGoPublishedBinary(path string) error {
 	return nil
 }
 
-func (c *updateCommand) envRunner() func(string, []string, []string, io.Writer, io.Writer) error {
+func (c *Command) envRunner() func(string, []string, []string, io.Writer, io.Writer) error {
 	if c.runExternalEnv != nil {
 		return c.runExternalEnv
 	}
 	return runUpdateExternalWithEnv
 }
 
-func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writer) error {
+func (c *Command) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writer) error {
 	target, err := c.currentExecutable()
 	if err != nil {
 		return err
@@ -744,7 +764,7 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 	}
 	if !noApply {
 		if _, err := fmt.Fprintf(stdout, "would run before replacement: %s %s\n",
-			target, strings.Join(preUpdateApplyArgs(target, defaultAppSocket), " ")); err != nil {
+			target, strings.Join(preUpdateApplyArgs(target, c.AppSocket), " ")); err != nil {
 			return err
 		}
 	}
@@ -752,7 +772,7 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 		target, strings.Join(postUpdateApplyArgs(noApply), " ")); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(target)); err != nil {
+	if _, err := fmt.Fprintln(stdout, KeymapMigrationStagePreviewLine(target)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(target)); err != nil {
@@ -762,12 +782,12 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 		return err
 	}
 	if noApply {
-		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
+		return writeUpdateExplicitApplyRequired(stdout, c.AppSocket)
 	}
 	return nil
 }
 
-func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Writer) error {
+func (c *Command) runGitHubReleaseApply(noApply bool, stdout, stderr io.Writer) error {
 	target, err := c.currentExecutable()
 	if err != nil {
 		return err
@@ -776,7 +796,7 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 	// The same authority split the judgment uses. releases/latest is defined to
 	// skip prereleases, so an opted-in install that downloaded from it would be
 	// offered an rc and then handed the stable release instead.
-	rel, err := c.fetchReleaseForChannel(context.Background(), c.releaseChannel())
+	rel, err := c.fetchReleaseForChannel(context.Background(), c.ReleaseChannel())
 	if err != nil {
 		return err
 	}
@@ -811,18 +831,18 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 		preApply := updateApplyCommand{
 			Stage: updateApplyPrePublication,
 			Name:  target,
-			Args:  preUpdateApplyArgs(target, defaultAppSocket),
+			Args:  preUpdateApplyArgs(target, c.AppSocket),
 		}
 		if _, err := fmt.Fprintf(stdout, ">> running: %s\n", preApply.String()); err != nil {
 			return err
 		}
 		if err := c.externalRunner()(preApply.Name, preApply.Args, stdout, stderr); err != nil {
-			return updateApplyStageError(preApply, err)
+			return c.updateApplyStageError(preApply, err)
 		}
 	}
 	if err := c.atomicReplaceRelease(extracted, target); err != nil {
 		return fmt.Errorf("update binary publication failed; update not successful; recovery: run `%s`: %w",
-			updateApplyRecoveryCommand(defaultAppSocket), err)
+			updateApplyRecoveryCommand(c.AppSocket), err)
 	}
 	if _, err := fmt.Fprintf(stdout, ">> atomically replaced %s\n", target); err != nil {
 		return err
@@ -846,17 +866,17 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 		if noApply {
 			stage = updateApplyConfigOnly
 		}
-		return updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
+		return c.updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
 	}
 	if noApply {
-		if err := writeUpdateExplicitApplyRequired(stdout, defaultAppSocket); err != nil {
+		if err := writeUpdateExplicitApplyRequired(stdout, c.AppSocket); err != nil {
 			return err
 		}
 	}
 	return c.verifyPublishedVersion(stdout, "github-release", rel.TagName, before)
 }
 
-func (c *updateCommand) createReleaseScratchDir(target string) (string, error) {
+func (c *Command) createReleaseScratchDir(target string) (string, error) {
 	if c.mkdirTemp == nil {
 		return "", errors.New("configure update mkdirTemp: temp directory factory is not configured")
 	}
@@ -867,8 +887,8 @@ func (c *updateCommand) createReleaseScratchDir(target string) (string, error) {
 	return tmpDir, nil
 }
 
-func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, asset githubReleaseAsset, dst string) error {
-	if c.client == nil {
+func (c *Command) downloadAndExtractReleaseAsset(ctx context.Context, asset githubReleaseAsset, dst string) error {
+	if c.Client == nil {
 		return errors.New("update apply: HTTP client is not configured")
 	}
 	assetURL := strings.TrimSpace(asset.BrowserDownloadURL)
@@ -919,10 +939,10 @@ func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, asse
 	return nil
 }
 
-func (c *updateCommand) doReleaseAssetRequest(req *http.Request) (*http.Response, error) {
-	client, ok := c.client.(*http.Client)
+func (c *Command) doReleaseAssetRequest(req *http.Request) (*http.Response, error) {
+	client, ok := c.Client.(*http.Client)
 	if !ok {
-		return c.client.Do(req)
+		return c.Client.Do(req)
 	}
 	cloned := *client
 	originalCheckRedirect := client.CheckRedirect
@@ -972,7 +992,7 @@ func defaultUpdateArchiveLimits() updateArchiveLimits {
 	}
 }
 
-func (c *updateCommand) archiveLimits() updateArchiveLimits {
+func (c *Command) archiveLimits() updateArchiveLimits {
 	limits := c.limits
 	defaults := defaultUpdateArchiveLimits()
 	if limits.compressedBytes <= 0 {
@@ -1021,7 +1041,7 @@ func verifyReleaseAssetDigest(archive []byte, digest string) error {
 	return nil
 }
 
-func (c *updateCommand) atomicReplaceRelease(src, target string) error {
+func (c *Command) atomicReplaceRelease(src, target string) error {
 	replacer := atomicBinaryReplacer{
 		rename:        c.rename,
 		chmod:         c.chmod,
@@ -1032,7 +1052,7 @@ func (c *updateCommand) atomicReplaceRelease(src, target string) error {
 	return replacer.replace(src, target)
 }
 
-func (c *updateCommand) targetPlatform() (string, string) {
+func (c *Command) targetPlatform() (string, string) {
 	goos := strings.TrimSpace(c.goos)
 	if goos == "" {
 		goos = runtime.GOOS
@@ -1044,21 +1064,21 @@ func (c *updateCommand) targetPlatform() (string, string) {
 	return goos, goarch
 }
 
-func (c *updateCommand) releaseAPIURL() string {
-	if c.apiURL != "" {
-		return c.apiURL
+func (c *Command) releaseAPIURL() string {
+	if c.APIURL != "" {
+		return c.APIURL
 	}
 	return updateReleaseURL
 }
 
-func (c *updateCommand) npmRegistryAPIURL() string {
-	if c.npmURL != "" {
-		return c.npmURL
+func (c *Command) npmRegistryAPIURL() string {
+	if c.NPMURL != "" {
+		return c.NPMURL
 	}
 	return updateNPMRegistryURL
 }
 
-func (c *updateCommand) releaseListAPIURL() string {
+func (c *Command) releaseListAPIURL() string {
 	if c.releasesURL != "" {
 		return c.releasesURL
 	}
@@ -1068,37 +1088,38 @@ func (c *updateCommand) releaseListAPIURL() string {
 // releaseAPIURLForChannel names the endpoint this channel's apply will read, so
 // a dry run does not promise releases/latest to an install that will read the
 // prerelease-carrying list instead.
-func (c *updateCommand) releaseAPIURLForChannel() string {
-	if c.releaseChannel() == updateReleaseChannelRC {
+func (c *Command) releaseAPIURLForChannel() string {
+	if c.ReleaseChannel() == ReleaseChannelRC {
 		return c.releaseListAPIURL()
 	}
 	return c.releaseAPIURL()
 }
 
-// normalizeUpdateReleaseChannel maps any raw value onto the axis.
+// NormalizeReleaseChannel maps any raw value onto the axis.
 //
 // Only an exact opt-in reaches the rc channel. Everything else — unset, empty,
 // misspelled, or a channel a future version knows and this one does not — is
 // stable, because the failure this ordering prevents is an install being shown
 // prereleases it never asked for.
-func normalizeUpdateReleaseChannel(raw string) string {
-	if strings.EqualFold(strings.TrimSpace(raw), updateReleaseChannelRC) {
-		return updateReleaseChannelRC
+func NormalizeReleaseChannel(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), ReleaseChannelRC) {
+		return ReleaseChannelRC
 	}
-	return updateReleaseChannelStable
+	return ReleaseChannelStable
 }
 
-func (c *updateCommand) releaseChannel() string {
-	if c.releaseChannelSource != nil {
-		return normalizeUpdateReleaseChannel(c.releaseChannelSource())
+// ReleaseChannel is the release channel the next judgment runs on.
+func (c *Command) ReleaseChannel() string {
+	if c.ReleaseChannelSource != nil {
+		return NormalizeReleaseChannel(c.ReleaseChannelSource())
 	}
-	if c.getenv != nil {
-		return normalizeUpdateReleaseChannel(c.getenv(updateReleaseChannelEnv))
+	if c.Getenv != nil {
+		return NormalizeReleaseChannel(c.Getenv(ReleaseChannelEnv))
 	}
-	return updateReleaseChannelStable
+	return ReleaseChannelStable
 }
 
-// availabilitySourceForInstaller maps an install channel to the authority that
+// AvailabilitySourceForInstaller maps an install channel to the authority that
 // can answer "is there a newer version I can install".
 //
 // Only npm moves. go resolves GitHub tags through the module proxy and a
@@ -1106,29 +1127,29 @@ func (c *updateCommand) releaseChannel() string {
 // GitHub release is already the channel's own answer; source builds have no
 // channel at all and keep the same default rather than gaining a registry they
 // do not install from.
-func availabilitySourceForInstaller(installer string) string {
+func AvailabilitySourceForInstaller(installer string) string {
 	if installer == "npm" {
-		return updateSourceNPMRegistry
+		return SourceNPMRegistry
 	}
-	return updateSourceGitHubRelease
+	return SourceGitHubRelease
 }
 
-func (c *updateCommand) availabilitySource() string {
-	return availabilitySourceForInstaller(c.detectInstaller().Source)
+func (c *Command) availabilitySource() string {
+	return AvailabilitySourceForInstaller(c.detectInstaller().Source)
 }
 
-// updateAvailabilityRefreshDescription names the authority the check actually
+// AvailabilityRefreshDescription names the authority the check actually
 // contacts. It is derived from the same source the judgment used, so the row
 // cannot drift from what refreshing the cache will do.
-func updateAvailabilityRefreshDescription(source string) string {
-	if source == updateSourceNPMRegistry {
+func AvailabilityRefreshDescription(source string) string {
+	if source == SourceNPMRegistry {
 		return "refresh cached npm registry metadata"
 	}
 	return "refresh cached GitHub release metadata"
 }
 
 func updateAvailabilitySourceLabel(source string) string {
-	if source == updateSourceNPMRegistry {
+	if source == SourceNPMRegistry {
 		return "npm registry"
 	}
 	return "GitHub releases"
@@ -1139,11 +1160,11 @@ func updateAvailabilitySourceLabel(source string) string {
 // An empty field is not unknown: every cache written before the source was
 // recorded came from the GitHub release API, so reading it as such keeps the
 // unchanged channels from being forced through a needless refetch.
-func (cache updateCache) availabilitySource() string {
+func (cache Cache) availabilitySource() string {
 	if source := strings.TrimSpace(cache.Source); source != "" {
 		return source
 	}
-	return updateSourceGitHubRelease
+	return SourceGitHubRelease
 }
 
 // releaseChannel reports which channel this cached answer was judged on.
@@ -1152,8 +1173,8 @@ func (cache updateCache) availabilitySource() string {
 // cache written before the axis existed carries, and what a default install
 // writes today, so reading it as stable keeps the unchanged channel from being
 // forced through a needless refetch.
-func (cache updateCache) releaseChannel() string {
-	return normalizeUpdateReleaseChannel(cache.Channel)
+func (cache Cache) releaseChannel() string {
+	return NormalizeReleaseChannel(cache.Channel)
 }
 
 // updateCacheChannelField is the value stored for a channel.
@@ -1161,8 +1182,8 @@ func (cache updateCache) releaseChannel() string {
 // The default channel stores nothing, which keeps the on-disk shape of a
 // default install byte-identical to the one written before this axis existed.
 func updateCacheChannelField(channel string) string {
-	if normalizeUpdateReleaseChannel(channel) == updateReleaseChannelRC {
-		return updateReleaseChannelRC
+	if NormalizeReleaseChannel(channel) == ReleaseChannelRC {
+		return ReleaseChannelRC
 	}
 	return ""
 }
@@ -1174,39 +1195,39 @@ func updateCacheChannelField(channel string) string {
 // Ageing it out would leave a GitHub answer driving an npm install for up to
 // updateCacheMaxAge, which is the exact failure this judgment split exists to
 // remove, so a mismatch is discarded outright.
-func (c *updateCommand) loadUsableCache() (updateCache, bool, error) {
+func (c *Command) loadUsableCache() (Cache, bool, error) {
 	cache, ok, err := c.loadCache()
 	if err != nil || !ok {
-		return updateCache{}, false, err
+		return Cache{}, false, err
 	}
 	if cache.availabilitySource() != c.availabilitySource() {
-		return updateCache{}, false, nil
+		return Cache{}, false, nil
 	}
 	// The cache key is the pair, not either half. A fresh rc answer is not a
 	// stale stable answer, it is an answer to a different question, so a
 	// mismatch on this axis is discarded exactly as a source mismatch is.
-	if cache.releaseChannel() != c.releaseChannel() {
-		return updateCache{}, false, nil
+	if cache.releaseChannel() != c.ReleaseChannel() {
+		return Cache{}, false, nil
 	}
 	return cache, true, nil
 }
 
-func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		return usageError("update status does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "update status does not accept positional arguments"}
 	}
 
-	st, err := c.status()
+	st, err := c.Status()
 	if err != nil {
 		return err
 	}
@@ -1216,19 +1237,19 @@ func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error
 	return writeUpdateStatusText(stdout, st)
 }
 
-func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runCheck(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		return usageError("update check does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "update check does not accept positional arguments"}
 	}
 
 	cache, err := c.fetchAndSaveLatestAvailability(context.Background())
@@ -1246,21 +1267,23 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 	return writeUpdateCheckText(stdout, st)
 }
 
-func (c *updateCommand) status() (updateStatus, error) {
+// Status reports the update state from the usable cache, without a network
+// request.
+func (c *Command) Status() (Status, error) {
 	cache, ok, err := c.loadUsableCache()
 	if err != nil {
-		return updateStatus{}, err
+		return Status{}, err
 	}
 	if !ok {
-		path, err := c.cachePath()
+		path, err := c.CachePath()
 		if err != nil {
-			return updateStatus{}, err
+			return Status{}, err
 		}
-		return updateStatus{
+		return Status{
 			CurrentVersion: version.String(),
 			CacheState:     "unknown",
 			SourceName:     c.availabilitySource(),
-			ReleaseChannel: c.releaseChannel(),
+			ReleaseChannel: c.ReleaseChannel(),
 			UpdateState:    "unknown",
 			Installer:      c.detectInstaller(),
 			CachePath:      path,
@@ -1269,14 +1292,16 @@ func (c *updateCommand) status() (updateStatus, error) {
 	return c.statusFromCache(cache)
 }
 
-func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
+// RefreshCacheIfNeeded refetches availability when the usable cache is
+// missing or stale.
+func (c *Command) RefreshCacheIfNeeded(ctx context.Context) error {
 	cache, ok, err := c.loadUsableCache()
 	if err != nil {
 		return err
 	}
 	if ok {
 		checked := cache.CheckedAt.UTC()
-		if !checked.IsZero() && c.clock().Sub(checked) <= updateCacheMaxAge {
+		if !checked.IsZero() && c.Clock().Sub(checked) <= updateCacheMaxAge {
 			return nil
 		}
 	}
@@ -1284,36 +1309,36 @@ func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
 	return err
 }
 
-func (c *updateCommand) fetchAndSaveLatestAvailability(ctx context.Context) (updateCache, error) {
+func (c *Command) fetchAndSaveLatestAvailability(ctx context.Context) (Cache, error) {
 	source := c.availabilitySource()
-	cache, err := c.fetchLatestAvailability(ctx, source, c.releaseChannel())
+	cache, err := c.fetchLatestAvailability(ctx, source, c.ReleaseChannel())
 	if err != nil {
-		return updateCache{}, err
+		return Cache{}, err
 	}
 	if cache.TagName == "" {
-		return updateCache{}, fmt.Errorf("update check: %s did not report a latest version", updateAvailabilitySourceLabel(source))
+		return Cache{}, fmt.Errorf("update check: %s did not report a latest version", updateAvailabilitySourceLabel(source))
 	}
 	if err := c.saveCache(cache); err != nil {
-		return updateCache{}, err
+		return Cache{}, err
 	}
 	return cache, nil
 }
 
 // fetchLatestAvailability asks one channel's authority for its newest version.
 //
-// Both branches go through the same c.client, so the request timeout and the
+// Both branches go through the same c.Client, so the request timeout and the
 // redirect ceiling the shell gate already budgets for apply unchanged to the
 // npm channel.
-func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source, channel string) (updateCache, error) {
-	if source == updateSourceNPMRegistry {
+func (c *Command) fetchLatestAvailability(ctx context.Context, source, channel string) (Cache, error) {
+	if source == SourceNPMRegistry {
 		latest, err := c.fetchLatestNPMVersion(ctx, channel)
 		if err != nil {
-			return updateCache{}, err
+			return Cache{}, err
 		}
-		return updateCache{
+		return Cache{
 			Version:   1,
-			CheckedAt: c.clock().UTC(),
-			Source:    updateSourceNPMRegistry,
+			CheckedAt: c.Clock().UTC(),
+			Source:    SourceNPMRegistry,
 			Channel:   updateCacheChannelField(channel),
 			TagName:   updateTagFromNPMVersion(latest),
 			// The registry publishes no release notes, and the GitHub release
@@ -1323,12 +1348,12 @@ func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source, cha
 	}
 	rel, err := c.fetchReleaseForChannel(ctx, channel)
 	if err != nil {
-		return updateCache{}, err
+		return Cache{}, err
 	}
-	return updateCache{
+	return Cache{
 		Version:     1,
-		CheckedAt:   c.clock().UTC(),
-		Source:      updateSourceGitHubRelease,
+		CheckedAt:   c.Clock().UTC(),
+		Source:      SourceGitHubRelease,
 		Channel:     updateCacheChannelField(channel),
 		TagName:     strings.TrimSpace(rel.TagName),
 		Name:        strings.TrimSpace(rel.Name),
@@ -1343,8 +1368,8 @@ func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source, cha
 // and prereleases from it by definition, which is why a default install cannot
 // see an rc even in principle. The rc channel cannot use that endpoint at all
 // for the same reason, so it reads the release list instead.
-func (c *updateCommand) fetchReleaseForChannel(ctx context.Context, channel string) (githubRelease, error) {
-	if normalizeUpdateReleaseChannel(channel) == updateReleaseChannelRC {
+func (c *Command) fetchReleaseForChannel(ctx context.Context, channel string) (githubRelease, error) {
+	if NormalizeReleaseChannel(channel) == ReleaseChannelRC {
 		return c.fetchNewestReleaseIncludingPrereleases(ctx)
 	}
 	return c.fetchLatestRelease(ctx)
@@ -1361,17 +1386,17 @@ func updateTagFromNPMVersion(raw string) string {
 	return "v" + v
 }
 
-func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error) {
-	path, err := c.cachePath()
+func (c *Command) statusFromCache(cache Cache) (Status, error) {
+	path, err := c.CachePath()
 	if err != nil {
-		return updateStatus{}, err
+		return Status{}, err
 	}
 	checked := cache.CheckedAt.UTC()
 	cacheState := "fresh"
-	if checked.IsZero() || c.clock().Sub(checked) > updateCacheMaxAge {
+	if checked.IsZero() || c.Clock().Sub(checked) > updateCacheMaxAge {
 		cacheState = "stale"
 	}
-	return updateStatus{
+	return Status{
 		CurrentVersion: version.String(),
 		LatestVersion:  strings.TrimSpace(cache.TagName),
 		ReleaseURL:     strings.TrimSpace(cache.HTMLURL),
@@ -1385,8 +1410,8 @@ func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error)
 	}, nil
 }
 
-func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, error) {
-	if c.client == nil {
+func (c *Command) fetchLatestRelease(ctx context.Context) (githubRelease, error) {
+	if c.Client == nil {
 		return githubRelease{}, errors.New("update check: HTTP client is not configured")
 	}
 	url := c.releaseAPIURL()
@@ -1397,7 +1422,7 @@ func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "projmux/"+version.String())
 
-	resp, err := c.client.Do(req)
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("update check: fetch latest release: %w", err)
 	}
@@ -1424,8 +1449,8 @@ func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, 
 //
 // Drafts are skipped. A drafted release has no downloadable asset yet, so
 // offering it would be offering an update that cannot be applied.
-func (c *updateCommand) fetchNewestReleaseIncludingPrereleases(ctx context.Context) (githubRelease, error) {
-	if c.client == nil {
+func (c *Command) fetchNewestReleaseIncludingPrereleases(ctx context.Context) (githubRelease, error) {
+	if c.Client == nil {
 		return githubRelease{}, errors.New("update check: HTTP client is not configured")
 	}
 	url := c.releaseListAPIURL()
@@ -1436,7 +1461,7 @@ func (c *updateCommand) fetchNewestReleaseIncludingPrereleases(ctx context.Conte
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "projmux/"+version.String())
 
-	resp, err := c.client.Do(req)
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("update check: fetch release list: %w", err)
 	}
@@ -1485,13 +1510,13 @@ type npmPackageDocument struct {
 // The rc channel costs no extra request: the abbreviated packument the stable
 // judgment already fetches carries every dist-tag, so reading dist-tags.rc
 // alongside dist-tags.latest keeps the shell gate's request budget unchanged.
-func (c *updateCommand) fetchLatestNPMVersion(ctx context.Context, channel string) (string, error) {
+func (c *Command) fetchLatestNPMVersion(ctx context.Context, channel string) (string, error) {
 	tags, err := c.fetchNPMDistTags(ctx)
 	if err != nil {
 		return "", err
 	}
 	latest := strings.TrimSpace(tags["latest"])
-	if normalizeUpdateReleaseChannel(channel) == updateReleaseChannelRC {
+	if NormalizeReleaseChannel(channel) == ReleaseChannelRC {
 		// Newest of the two pointers, so an rc install rejoins the stable line
 		// as soon as that line's release lands rather than being stranded on a
 		// prerelease that nothing supersedes.
@@ -1507,8 +1532,8 @@ func (c *updateCommand) fetchLatestNPMVersion(ctx context.Context, channel strin
 	return latest, nil
 }
 
-func (c *updateCommand) fetchNPMDistTags(ctx context.Context) (map[string]string, error) {
-	if c.client == nil {
+func (c *Command) fetchNPMDistTags(ctx context.Context) (map[string]string, error) {
+	if c.Client == nil {
 		return nil, errors.New("update check: HTTP client is not configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.npmRegistryAPIURL(), nil)
@@ -1521,7 +1546,7 @@ func (c *updateCommand) fetchNPMDistTags(ctx context.Context) (map[string]string
 	req.Header.Set("Accept", "application/vnd.npm.install-v1+json")
 	req.Header.Set("User-Agent", "projmux/"+version.String())
 
-	resp, err := c.client.Do(req)
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("update check: fetch npm dist-tags: %w", err)
 	}
@@ -1655,27 +1680,27 @@ func (r *updateMaxBytesReader) Read(p []byte) (int, error) {
 	return 0, err
 }
 
-func (c *updateCommand) loadCache() (updateCache, bool, error) {
-	path, err := c.cachePath()
+func (c *Command) loadCache() (Cache, bool, error) {
+	path, err := c.CachePath()
 	if err != nil {
-		return updateCache{}, false, err
+		return Cache{}, false, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return updateCache{}, false, nil
+			return Cache{}, false, nil
 		}
-		return updateCache{}, false, fmt.Errorf("update status: read cache %s: %w", path, err)
+		return Cache{}, false, fmt.Errorf("update status: read cache %s: %w", path, err)
 	}
-	var cache updateCache
+	var cache Cache
 	if err := json.Unmarshal(data, &cache); err != nil {
-		return updateCache{}, false, fmt.Errorf("update status: parse cache %s: %w", path, err)
+		return Cache{}, false, fmt.Errorf("update status: parse cache %s: %w", path, err)
 	}
 	return cache, true, nil
 }
 
-func (c *updateCommand) saveCache(cache updateCache) error {
-	path, err := c.cachePath()
+func (c *Command) saveCache(cache Cache) error {
+	path, err := c.CachePath()
 	if err != nil {
 		return err
 	}
@@ -1715,24 +1740,25 @@ func (c *updateCommand) saveCache(cache updateCache) error {
 	return nil
 }
 
-func (c *updateCommand) cachePath() (string, error) {
-	if c.cacheDir == nil {
+// CachePath is the path of the update cache file.
+func (c *Command) CachePath() (string, error) {
+	if c.CacheDir == nil {
 		return "", errors.New("update cache directory resolver is not configured")
 	}
-	dir, err := c.cacheDir()
+	dir, err := c.CacheDir()
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(dir) == "" {
 		return "", errors.New("update cache directory is empty")
 	}
-	return filepath.Join(dir, updateCacheFileName), nil
+	return filepath.Join(dir, CacheFileName), nil
 }
 
-func (c *updateCommand) detectInstaller() updateInstaller {
+func (c *Command) detectInstaller() Installer {
 	source := ""
-	if c.getenv != nil {
-		source = strings.TrimSpace(c.getenv("PROJMUX_INSTALLER"))
+	if c.Getenv != nil {
+		source = strings.TrimSpace(c.Getenv("PROJMUX_INSTALLER"))
 	}
 	// An explicit PROJMUX_INSTALLER always wins. Only fall back to
 	// autodetection when it is unset so that update apply works even when the
@@ -1749,25 +1775,25 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 		if autodetected {
 			note = "Detected npm install; update apply runs `npm install -g projmux@latest`."
 		}
-		return updateInstaller{Source: source, Note: note}
+		return Installer{Source: source, Note: note}
 	case "go":
 		note := "Installed with Go tooling; update apply runs `go install ...@latest` and applies canonical config."
 		if autodetected {
 			note = "Detected `go install` binary; update apply runs `go install ...@latest` and applies canonical config."
 		}
-		return updateInstaller{Source: source, Note: note}
+		return Installer{Source: source, Note: note}
 	case "github-release":
-		return updateInstaller{Source: source, Note: "Installed from a GitHub release binary; update apply replaces the current binary atomically."}
+		return Installer{Source: source, Note: "Installed from a GitHub release binary; update apply replaces the current binary atomically."}
 	case "source":
 		note := "Installed from source; update with `git pull --ff-only && make install`."
 		if autodetected {
 			note = "Detected source build; update with `git pull --ff-only && make install` (not auto-updated)."
 		}
-		return updateInstaller{Source: source, Note: note}
+		return Installer{Source: source, Note: note}
 	case "":
-		return updateInstaller{Source: "unknown", Note: "Could not detect the installer. Set PROJMUX_INSTALLER=npm|go|github-release, or update source builds with `git pull --ff-only && make install`."}
+		return Installer{Source: "unknown", Note: "Could not detect the installer. Set PROJMUX_INSTALLER=npm|go|github-release, or update source builds with `git pull --ff-only && make install`."}
 	default:
-		return updateInstaller{Source: "unknown", Note: "Unrecognized PROJMUX_INSTALLER=" + source + "; expected npm|go|github-release|source."}
+		return Installer{Source: "unknown", Note: "Unrecognized PROJMUX_INSTALLER=" + source + "; expected npm|go|github-release|source."}
 	}
 }
 
@@ -1777,10 +1803,10 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 // reports so callers can print manual guidance instead of failing silently.
 // github-release installs are indistinguishable from a hand-placed binary
 // without a marker, so they continue to require an explicit PROJMUX_INSTALLER.
-func (c *updateCommand) autodetectInstaller() string {
+func (c *Command) autodetectInstaller() string {
 	exe := ""
-	if c.executable != nil {
-		if resolved, err := c.executable(); err == nil {
+	if c.Executable != nil {
+		if resolved, err := c.Executable(); err == nil {
 			exe = strings.TrimSpace(resolved)
 		}
 	}
@@ -1811,7 +1837,7 @@ func isNpmExecutablePath(exe string) bool {
 	return strings.Contains(normalized, "/@projmux/") || strings.Contains(normalized, "node_modules/projmux/")
 }
 
-func (c *updateCommand) isSourceBuild() bool {
+func (c *Command) isSourceBuild() bool {
 	if c.buildInfo == nil {
 		return false
 	}
@@ -1825,7 +1851,7 @@ func (c *updateCommand) isSourceBuild() bool {
 
 // isGoInstallPath reports whether exe sits in the directory `go install` writes
 // to: $GOBIN, else $GOPATH/bin, else ~/go/bin.
-func (c *updateCommand) isGoInstallPath(exe string) bool {
+func (c *Command) isGoInstallPath(exe string) bool {
 	dir := filepath.Dir(exe)
 	for _, candidate := range c.goInstallDirs() {
 		if candidate == "" {
@@ -1838,8 +1864,8 @@ func (c *updateCommand) isGoInstallPath(exe string) bool {
 	return false
 }
 
-func (c *updateCommand) goInstallDirs() []string {
-	getenv := c.getenv
+func (c *Command) goInstallDirs() []string {
+	getenv := c.Getenv
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
@@ -1864,11 +1890,11 @@ func (c *updateCommand) goInstallDirs() []string {
 	return dirs
 }
 
-func (c *updateCommand) currentExecutable() (string, error) {
-	if c.executable == nil {
+func (c *Command) currentExecutable() (string, error) {
+	if c.Executable == nil {
 		return "", errors.New("update apply: executable resolver is not configured")
 	}
-	exe, err := c.executable()
+	exe, err := c.Executable()
 	if err != nil {
 		return "", fmt.Errorf("update apply: resolve current executable: %w", err)
 	}
@@ -1879,9 +1905,9 @@ func (c *updateCommand) currentExecutable() (string, error) {
 	return exe, nil
 }
 
-func (c *updateCommand) externalRunner() func(string, []string, io.Writer, io.Writer) error {
-	if c.runExternal != nil {
-		return c.runExternal
+func (c *Command) externalRunner() func(string, []string, io.Writer, io.Writer) error {
+	if c.RunExternal != nil {
+		return c.RunExternal
 	}
 	return runUpdateExternal
 }
@@ -1898,7 +1924,7 @@ type updateApplyVersionProbe struct {
 	err     error
 }
 
-func (c *updateCommand) probeActiveVersion() updateApplyVersionProbe {
+func (c *Command) probeActiveVersion() updateApplyVersionProbe {
 	exe, v, err := c.activeExecutableVersion()
 	return updateApplyVersionProbe{exe: exe, version: v, err: err}
 }
@@ -1915,12 +1941,12 @@ func (c *updateCommand) probeActiveVersion() updateApplyVersionProbe {
 //
 // PATH comes first and the running executable is the fallback, so an install
 // that lives outside PATH entirely is still verifiable.
-func (c *updateCommand) activeExecutableVersion() (string, string, error) {
+func (c *Command) activeExecutableVersion() (string, string, error) {
 	exe, err := c.activeExecutablePath()
 	if err != nil {
 		return "", "", err
 	}
-	probe := c.probeVersion
+	probe := c.ProbeVersion
 	if probe == nil {
 		probe = probeInstalledProjmuxVersion
 	}
@@ -1935,9 +1961,9 @@ func (c *updateCommand) activeExecutableVersion() (string, string, error) {
 	return exe, v, nil
 }
 
-func (c *updateCommand) activeExecutablePath() (string, error) {
-	if c.lookPath != nil {
-		if exe, err := c.lookPath("projmux"); err == nil {
+func (c *Command) activeExecutablePath() (string, error) {
+	if c.LookPath != nil {
+		if exe, err := c.LookPath("projmux"); err == nil {
 			if exe = strings.TrimSpace(exe); exe != "" {
 				return exe, nil
 			}
@@ -1975,7 +2001,7 @@ func parseProjmuxVersionOutput(raw string) (string, bool) {
 		if rest == "" {
 			continue
 		}
-		if _, ok := parseUpdateVersion(rest); !ok {
+		if _, ok := ParseVersion(rest); !ok {
 			continue
 		}
 		return rest, true
@@ -1987,7 +2013,7 @@ func parseProjmuxVersionOutput(raw string) (string, bool) {
 //
 // It reads the existing cache and never fetches: apply is not a check, and the
 // expected version is diagnostic text, not a gate.
-func (c *updateCommand) cachedLatestVersion() string {
+func (c *Command) cachedLatestVersion() string {
 	cache, ok, err := c.loadUsableCache()
 	if err != nil || !ok {
 		return ""
@@ -2001,7 +2027,7 @@ func (c *updateCommand) cachedLatestVersion() string {
 // Exit codes cannot tell a real upgrade apart from a reinstall of the same
 // version, which is exactly what happens while a release exists on GitHub but
 // not yet on the channel this install pulls from.
-func (c *updateCommand) verifyPublishedVersion(stdout io.Writer, channel, expected string, before updateApplyVersionProbe) error {
+func (c *Command) verifyPublishedVersion(stdout io.Writer, channel, expected string, before updateApplyVersionProbe) error {
 	after := c.probeActiveVersion()
 	expectedText := strings.TrimSpace(expected)
 	if expectedText == "" {
@@ -2086,14 +2112,16 @@ func runUpdateExternalWithEnv(name string, args []string, env []string, stdout, 
 	return cmd.Run()
 }
 
-func (c *updateCommand) clock() time.Time {
-	if c.now == nil {
+// Clock reports the current time on the command's clock.
+func (c *Command) Clock() time.Time {
+	if c.Now == nil {
 		return time.Now()
 	}
-	return c.now()
+	return c.Now()
 }
 
-func defaultUpdateCacheDir() (string, error) {
+// DefaultCacheDir is the directory that holds the update cache.
+func DefaultCacheDir() (string, error) {
 	cacheHome, err := config.ResolveCacheHome("", os.Getenv("XDG_CACHE_HOME"))
 	if err != nil {
 		home, err := os.UserHomeDir()
@@ -2107,7 +2135,19 @@ func defaultUpdateCacheDir() (string, error) {
 	return filepath.Join(cacheHome, "projmux"), nil
 }
 
-func writeUpdateStatusText(w io.Writer, st updateStatus) error {
+// ShouldPromptShellUpdate reports whether status is a fresh answer that names
+// a newer release, the only state in which the shell offers an upgrade.
+func ShouldPromptShellUpdate(status Status) bool {
+	if status.UpdateState != "update_available" {
+		return false
+	}
+	if status.CacheState != "fresh" {
+		return false
+	}
+	return strings.TrimSpace(status.LatestVersion) != ""
+}
+
+func writeUpdateStatusText(w io.Writer, st Status) error {
 	if _, err := fmt.Fprintln(w, "projmux update"); err != nil {
 		return err
 	}
@@ -2135,8 +2175,8 @@ func writeUpdateStatusText(w io.Writer, st updateStatus) error {
 	// The default channel prints no channel row. Naming it would be new text in
 	// a report that every existing install reads, and the axis is only worth a
 	// line once it has been moved off its default.
-	if normalizeUpdateReleaseChannel(st.ReleaseChannel) == updateReleaseChannelRC {
-		if _, err := fmt.Fprintf(w, "  channel:   %s\n", updateReleaseChannelRC); err != nil {
+	if NormalizeReleaseChannel(st.ReleaseChannel) == ReleaseChannelRC {
+		if _, err := fmt.Fprintf(w, "  channel:   %s\n", ReleaseChannelRC); err != nil {
 			return err
 		}
 	}
@@ -2147,7 +2187,7 @@ func writeUpdateStatusText(w io.Writer, st updateStatus) error {
 	return err
 }
 
-func writeUpdateCheckText(w io.Writer, st updateStatus) error {
+func writeUpdateCheckText(w io.Writer, st Status) error {
 	if _, err := fmt.Fprintf(w, "latest: %s\n", st.LatestVersion); err != nil {
 		return err
 	}
@@ -2161,7 +2201,7 @@ func writeUpdateCheckText(w io.Writer, st updateStatus) error {
 	return err
 }
 
-func writeUpdateJSON(w io.Writer, st updateStatus) error {
+func writeUpdateJSON(w io.Writer, st Status) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(st)
@@ -2226,12 +2266,12 @@ func parseUpdateSemver(raw string) (updateSemver, bool) {
 	return out, true
 }
 
-// parseUpdateVersion reads just the numeric core.
+// ParseVersion reads just the numeric core.
 //
 // It is kept as its own reading because the callers that build a tag from a
 // version, or only ask whether a line of output is a version at all, have no
 // use for prerelease precedence.
-func parseUpdateVersion(raw string) ([3]int, bool) {
+func ParseVersion(raw string) ([3]int, bool) {
 	parsed, ok := parseUpdateSemver(raw)
 	return parsed.core, ok
 }

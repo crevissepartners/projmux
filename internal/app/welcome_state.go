@@ -106,7 +106,7 @@ func welcomeStateFileName(current string) string {
 
 func (c *shellCommand) welcomeClock() time.Time {
 	if c.update != nil {
-		return c.update.clock()
+		return c.update.Clock()
 	}
 	return time.Now()
 }

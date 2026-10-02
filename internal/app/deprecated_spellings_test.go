@@ -15,7 +15,7 @@ import (
 // uses, in the isolated environment of the settings layer guard.
 func runDeprecatedSpellingRoute(env *settingsLayerGuardEnv, argv ...string) (string, string, error) {
 	app := New()
-	app.update.client = &http.Client{Transport: refusingTransport{}}
+	app.update.Client = &http.Client{Transport: refusingTransport{}}
 	var stdout, stderr bytes.Buffer
 	err := app.Run(env.expand(argv), &stdout, &stderr)
 	return stdout.String(), stderr.String(), err

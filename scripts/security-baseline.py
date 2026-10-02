@@ -109,7 +109,7 @@ def metadata(tool: str, generated: list[dict[str, Any]]) -> dict[str, Any]:
             },
             {
                 "rule": "G110",
-                "scope": "internal/app/update.go release extraction",
+                "scope": "internal/app/updatecmd/update.go release extraction",
                 "reason": "archive entry and total expanded bytes are bounded before io.Copy",
             },
             {

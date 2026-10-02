@@ -106,6 +106,7 @@ Files:
 
 - `internal/app/welcome*.go`
 - `internal/app/update*.go`
+- `internal/app/updatecmd/*.go`
 - `internal/app/settings*.go`
 - `internal/app/*help*`
 - `docs/cli.md`

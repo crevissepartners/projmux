@@ -29,17 +29,15 @@ var nonTmuxSpawnSites = map[string]string{
 	"internal/app.runClaudeReplyTool":                     "own executable: Claude reply tool argv",
 	"internal/app.startCodexBrokerRuntimeProcessForRoute": "own executable: Codex broker runtime route",
 	"internal/app.restartKeyBrokerProcess":                "own executable: macOS key broker restart",
-	"internal/app.probeInstalledProjmuxVersion":           "installed projmux executable: version probe",
 	// provider and Pane programs
 	"internal/app.execCommittedActivation": "the committed provider activation argv that becomes the Pane program",
 	"internal/app.startSupervisedChild":    "the supervised Pane program argv; its output belongs to the Pane",
 	// terminal and other fixed tools
-	"internal/app.popupSttyApply":           "stty",
-	"internal/app.popupSttyStdinGet":        "stty",
-	"internal/app.defaultPopupRawMode":      "stty",
-	"internal/app.runSttyOn":                "stty",
-	"internal/app.runSwitchGitCommand":      "git: detectGitBranchWithRunner passes git only",
-	"internal/app.runUpdateExternalWithEnv": "update plan programs: go, npm, projmux",
+	"internal/app.popupSttyApply":      "stty",
+	"internal/app.popupSttyStdinGet":   "stty",
+	"internal/app.defaultPopupRawMode": "stty",
+	"internal/app.runSttyOn":           "stty",
+	"internal/app.runSwitchGitCommand": "git: detectGitBranchWithRunner passes git only",
 	// user-supplied command lines
 	"internal/app.defaultEditorRunner": "the user's editor",
 }
