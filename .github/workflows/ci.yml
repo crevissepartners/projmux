@@ -270,7 +270,8 @@ jobs:
           go test -race -count=2 \
             ./internal/integrations/metadata/... \
             ./internal/core/notify/... \
-            ./internal/core/recentwindows/...
+            ./internal/core/recentwindows/... \
+            ./internal/integrations/processhost/...
 
   race-broker:
     name: Race / Codex broker
@@ -351,6 +352,9 @@ jobs:
         run: |
           go test ./internal/platformkeys
           go build ./cmd/projmux
+
+      - name: Exercise owned process lifetime and Claude streams
+        run: go test -race -v -count=1 -timeout=120s ./internal/integrations/processhost
 
       # Builds and links every test binary, including darwin && cgo files, but
       # runs none of them: this gate is darwin test compilation, not darwin
