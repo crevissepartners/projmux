@@ -37,7 +37,14 @@ const (
 	terminalRetention = 24 * time.Hour
 	// lockWait bounds how long a writer queues behind another holder. Holders
 	// keep the lock for one read and at most one fsync'd write.
-	lockWait          = 2 * time.Second
+	lockWait = 2 * time.Second
+	// patientLockWait bounds the queue for Answer and Create. Their callers,
+	// an operator's answer and a hook or the Codex observer recording a new
+	// question, have time to spare, and a holder on a slow disk can spend most
+	// of lockWait in its fsyncs. The other writes keep lockWait: a hook's
+	// settle loop retries them on its next tick, inside the margin its timeout
+	// leaves.
+	patientLockWait   = 10 * time.Second
 	lockRetryInterval = 2 * time.Millisecond
 )
 
@@ -209,6 +216,12 @@ type Store struct {
 	// removeTemp, when set by an in-package test, replaces os.Remove for the
 	// temp files a dead write left.
 	removeTemp func(path string) error
+	// lockWaitFor, when set by an in-package test, maps the bound a write
+	// asked for, lockWait or patientLockWait, to the one withLock waits.
+	lockWaitFor func(bound time.Duration) time.Duration
+	// lockWaiting, when set by an in-package test, sees each retry of a
+	// write queued behind another holder, with the time it has waited.
+	lockWaiting func(waited time.Duration)
 }
 
 // NewStore opens the store under stateDir. Nothing is touched until the first
@@ -258,7 +271,7 @@ func (s *Store) Create(record Record) (Record, error) {
 	if !validRecord(record) || !record.Deadline.After(record.CreatedAt) {
 		return Record{}, ErrInvalidRecord
 	}
-	err := s.withLock(func() error {
+	err := s.withLock(patientLockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -329,7 +342,7 @@ func (s *Store) List(agentUID string) ([]Record, error) {
 // own expiry lands on exactly one side. A refusal changes nothing.
 func (s *Store) Answer(id, agentUID string, answers map[string]string) (Record, error) {
 	var out Record
-	err := s.withLock(func() error {
+	err := s.withLock(patientLockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -443,7 +456,7 @@ func (s *Store) CloseAnsweredElsewhere(id, agentUID, sessionID, requestID string
 
 func (s *Store) transition(id string, next func(Record, time.Time) (State, string, bool)) (Record, error) {
 	var out Record
-	err := s.withLock(func() error {
+	err := s.withLock(lockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -486,7 +499,7 @@ func (s *Store) transition(id string, next func(Record, time.Time) (State, strin
 // to Claude Code's own prompt.
 func (s *Store) CloseAgent(agentUID string) (int, error) {
 	closed := 0
-	err := s.withLock(func() error {
+	err := s.withLock(lockWait, func() error {
 		state, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -605,7 +618,7 @@ func (s *Store) read() (diskState, error) {
 	return s.loadLocked()
 }
 
-func (s *Store) withLock(fn func() error) error {
+func (s *Store) withLock(wait time.Duration, fn func() error) error {
 	if s == nil || s.path == "" {
 		return errors.New("agent question store path is empty")
 	}
@@ -619,9 +632,16 @@ func (s *Store) withLock(fn func() error) error {
 	}
 	defer lock.Close()
 	fd := int(lock.Fd())
+	if s.lockWaitFor != nil {
+		wait = s.lockWaitFor(wait)
+	}
 	err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
-	deadline := time.Now().Add(lockWait)
+	start := time.Now()
+	deadline := start.Add(wait)
 	for lockBusy(err) && time.Now().Before(deadline) {
+		if s.lockWaiting != nil {
+			s.lockWaiting(time.Since(start))
+		}
 		time.Sleep(lockRetryInterval)
 		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
 	}
