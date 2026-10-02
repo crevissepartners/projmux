@@ -6757,6 +6757,7 @@ if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   exit 1
 fi
 startup_agent_launches_before_interrupted_continue="$(wc -l <"$startup_agent_argv")"
+startup_agent_resumes_before_interrupted_continue="$(startup_agent_resume_count)"
 startup_clean_launches_before_continue="$(wc -l <"$startup_clean_argv")"
 if [[ "$startup_clean_launches_before_continue" != "1" ]]; then
   echo "clean A fixture launched $startup_clean_launches_before_continue times before Continue, want 1" >&2
@@ -6784,15 +6785,53 @@ if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   echo "retained Project Continue changed durable topology or lost the resumed Agent conversation" >&2
   exit 1
 fi
+# Interrupted B's shim appends its resume argv from inside its tmux pane, so the
+# client handoff and topology checks above can finish before that line lands.
+# Wait for one more resume line than before the trigger, then count launches;
+# a bare `wc -l` here raced the shim under load.
+startup_wait_for_agent_resume "retained Continue interrupted resume argv" \
+  "$((startup_agent_resumes_before_interrupted_continue + 1))"
 startup_agent_launches_after_interrupted_continue="$(wc -l <"$startup_agent_argv")"
-if [[ "$((startup_agent_launches_after_interrupted_continue - startup_agent_launches_before_interrupted_continue))" != "1" ]] ||
-  [[ "$(wc -l <"$startup_clean_argv")" != "$startup_clean_launches_before_continue" ]] ||
-  ! grep -Fq '"phase": "Offline"' "$startup_root/clean-a-after-retained-continue.json" ||
-  grep -Fq '"paneRef"' "$startup_root/clean-a-after-retained-continue.json" ||
-  ! grep -Fq '"source": "supervisor"' "$startup_root/clean-a-after-retained-continue.json" ||
-  ! grep -Fq '"classification": "normal"' "$startup_root/clean-a-after-retained-continue.json" ||
-  ! grep -Fq 'clean-a-session' "$startup_root/clean-a-after-retained-continue.json"; then
-  echo "Continue eligibility did not keep clean A at launch 0 and interrupted B at launch 1" >&2
+startup_clean_launches_after_continue="$(wc -l <"$startup_clean_argv")"
+startup_agent_launch_delta="$((startup_agent_launches_after_interrupted_continue - startup_agent_launches_before_interrupted_continue))"
+startup_clean_launch_delta="$((startup_clean_launches_after_continue - startup_clean_launches_before_continue))"
+startup_clean_after_continue_json="$startup_root/clean-a-after-retained-continue.json"
+startup_eligibility_false_clauses=()
+if [[ "$startup_agent_launch_delta" != "1" ]]; then
+  startup_eligibility_false_clauses+=("interrupted B launches after retained Continue (wanted 1, have $startup_agent_launch_delta)")
+fi
+if [[ "$startup_clean_launch_delta" != "0" ]]; then
+  startup_eligibility_false_clauses+=("clean A launches after retained Continue (wanted 0, have $startup_clean_launch_delta)")
+fi
+if ! grep -Fq '"phase": "Offline"' "$startup_clean_after_continue_json"; then
+  startup_eligibility_false_clauses+=("clean A phase Offline")
+fi
+if grep -Fq '"paneRef"' "$startup_clean_after_continue_json"; then
+  startup_eligibility_false_clauses+=("clean A has no paneRef")
+fi
+if ! grep -Fq '"source": "supervisor"' "$startup_clean_after_continue_json"; then
+  startup_eligibility_false_clauses+=("clean A source supervisor")
+fi
+if ! grep -Fq '"classification": "normal"' "$startup_clean_after_continue_json"; then
+  startup_eligibility_false_clauses+=("clean A classification normal")
+fi
+if ! grep -Fq 'clean-a-session' "$startup_clean_after_continue_json"; then
+  startup_eligibility_false_clauses+=("clean A keeps clean-a-session")
+fi
+if ((${#startup_eligibility_false_clauses[@]} > 0)); then
+  {
+    echo "Continue eligibility did not keep clean A at launch 0 and interrupted B at launch 1"
+    for startup_eligibility_false_clause in "${startup_eligibility_false_clauses[@]}"; do
+      printf '  false clause: %s\n' "$startup_eligibility_false_clause"
+    done
+    printf '  launches: interrupted B before=%s after=%s; clean A before=%s after=%s\n' \
+      "$startup_agent_launches_before_interrupted_continue" "$startup_agent_launches_after_interrupted_continue" \
+      "$startup_clean_launches_before_continue" "$startup_clean_launches_after_continue"
+    printf '  argv log %s has %s lines:\n' "$startup_agent_argv" "$(wc -l 2>/dev/null <"$startup_agent_argv" || echo missing)"
+    cat -n "$startup_agent_argv" || true
+    printf '  argv log %s has %s lines:\n' "$startup_clean_argv" "$(wc -l 2>/dev/null <"$startup_clean_argv" || echo missing)"
+    cat -n "$startup_clean_argv" || true
+  } >&2
   exit 1
 fi
 
