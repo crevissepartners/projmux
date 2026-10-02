@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
@@ -179,7 +180,7 @@ func TestSendNotiHookDispatcherResolvesHookCWD(t *testing.T) {
 			setup: func(t *testing.T) (string, func() (string, error), string) {
 				wd := filepath.Join(t.TempDir(), "plain")
 				mkdir(t, wd)
-				if root := nearestProjectMarker(wd); root != "" {
+				if root := hookcmd.NearestProjectMarker(wd); root != "" {
 					t.Skipf("temp dir %s has a .projmux or .git ancestor at %s; the walk reaches /", wd, root)
 				}
 				return "", func() (string, error) { return wd, nil }, wd

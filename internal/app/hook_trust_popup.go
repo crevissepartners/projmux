@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,18 +10,31 @@ import (
 	"os"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
-	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
+
+// newHookCommand builds `projmux hook` over homeDir, lookupEnv, and getwd,
+// resolving config paths, locale, the missing-HOME reason, and operands the
+// way every other route does.
+func newHookCommand(homeDir func() (string, error), lookupEnv func(string) string, getwd func() (string, error), stdin io.Reader, editorRunner hookcmd.EditorRunner) *hookcmd.Command {
+	return hookcmd.New(homeDir, lookupEnv, getwd, stdin, editorRunner, hookcmd.Deps{
+		ConfigPaths:     configPaths,
+		Locale:          appLocale,
+		LocalizeText:    localizeText,
+		IsMissingHome:   isMissingHome,
+		PathOrReason:    pathOrReason,
+		SplitOperands:   splitOperands,
+		PrintRouteNotes: printRouteNotes,
+	})
+}
 
 const (
 	hookTrustPopupTitle           = "Trust project automation"
 	hookTrustPopupWidth           = "90"
 	hookTrustPopupHeight          = "24"
-	hookTrustPopupContentWidth    = 86
 	hookTrustInlineEnv            = "PROJMUX_HOOK_TRUST_INLINE"
 	hookTrustPopupTargetClientEnv = "PROJMUX_HOOK_TRUST_TARGET_CLIENT"
 	hookTrustPopupTargetPaneEnv   = "PROJMUX_HOOK_TRUST_TARGET_PANE"
@@ -108,7 +120,7 @@ func runTmuxHookTrustPopup(ctx context.Context, runner tmuxRunner, binaryPath st
 	if err != nil {
 		return hooks.ProjectHookDeny, err
 	}
-	decision := parseHookTrustDecision(string(rawDecision))
+	decision := hookcmd.ParseTrustDecision(string(rawDecision))
 	if decision == "" {
 		return hooks.ProjectHookDeny, nil
 	}
@@ -175,117 +187,11 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 	if err := json.Unmarshal(rawRequest, &req); err != nil {
 		return fmt.Errorf("parse hook trust request: %w", err)
 	}
-	decision := hookTrustPopupPrompt(reader, stdout, req)
+	decision := hookcmd.TrustPrompt(reader, stdout, req)
 	if err := os.WriteFile(*decisionPath, []byte(string(decision)+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write hook trust decision: %w", err)
 	}
 	return nil
-}
-
-func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
-	fmt.Fprintln(writer, hookTrustHeaderStart+" Trust project automation "+projmuxpicker.Reset)
-	scope := hookTrustRequestScope(req)
-	fmt.Fprintln(writer, hookTrustMuted(scope.description))
-	fmt.Fprintln(writer)
-	writeHookTrustField(writer, "repo", req.RepoPath)
-	writeHookTrustField(writer, scope.label, req.RelativePath)
-	if req.PreviousSHA256 != "" {
-		writeHookTrustField(writer, "trusted sha", req.PreviousSHA256)
-	}
-	writeHookTrustField(writer, "current sha", req.SHA256)
-	if strings.TrimSpace(req.Preview) != "" {
-		fmt.Fprintln(writer)
-		fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
-		fmt.Fprintln(writer, hookTrustMuted("preview"))
-		for line := range strings.SplitSeq(req.Preview, "\n") {
-			safeLine := terminaltext.EscapeControls(line)
-			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(safeLine, hookTrustPopupContentWidth-2))
-		}
-	}
-
-	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
-	fmt.Fprintln(writer, hookTrustActionLine("[o] Allow once", "run this time only"))
-	fmt.Fprintln(writer, hookTrustActionLine("[a] Allow always", "trust this exact file hash"))
-	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", scope.denyDetail))
-
-	input := bufio.NewReader(reader)
-	for range 3 {
-		fmt.Fprint(writer, "\n"+hookTrustMuted("choice")+"  ")
-		line, err := input.ReadString('\n')
-		if err != nil && len(line) == 0 {
-			fmt.Fprintln(writer)
-			return hooks.ProjectHookDeny
-		}
-		decision := parseHookTrustDecision(line)
-		if decision != "" {
-			return decision
-		}
-		fmt.Fprintln(writer, hookTrustMuted("Enter o, a, or d."))
-	}
-	return hooks.ProjectHookDeny
-}
-
-type hookTrustScopeCopy struct {
-	label       string
-	description string
-	denyDetail  string
-}
-
-func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCopy {
-	if strings.TrimSpace(req.RelativePath) == ".projmux/config.toml" {
-		return hookTrustScopeCopy{
-			label:       "config",
-			description: "Project-local config is disabled until this file hash is trusted.",
-			denyDetail:  "skip project config",
-		}
-	}
-	return hookTrustScopeCopy{
-		label:       "hook",
-		description: "Project-local automation is disabled until this file hash is trusted.",
-		denyDetail:  "skip this hook",
-	}
-}
-
-func writeHookTrustField(w io.Writer, label, value string) {
-	label = strings.TrimSpace(label)
-	value = strings.TrimSpace(terminaltext.EscapeControls(value))
-	if value == "" {
-		value = "-"
-	}
-	fmt.Fprintf(w, "%s  %s\n",
-		hookTrustMuted(fmt.Sprintf("%-11s", label)),
-		projmuxpicker.TruncateANSI(value, hookTrustPopupContentWidth-13),
-	)
-}
-
-func hookTrustActionLine(action, detail string) string {
-	return fmt.Sprintf("  %-12s %s", action, hookTrustMuted(detail))
-}
-
-// hook-trust popup role escapes (bright Phase 2, B3). Defaults are the
-// historical fallback literals (byte-identical); applyNativeUITheme repoints
-// them at the resolved effective theme at command entry.
-var (
-	hookTrustHeaderStart = projmuxpicker.CurrentStart
-	hookTrustMutedStart  = projmuxpicker.MutedStart
-)
-
-func hookTrustMuted(value string) string {
-	return hookTrustMutedStart + value + projmuxpicker.Reset
-}
-
-func parseHookTrustDecision(value string) hooks.ProjectHookDecision {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "o", "once", string(hooks.ProjectHookAllowOnce):
-		return hooks.ProjectHookAllowOnce
-	case "a", "always", string(hooks.ProjectHookAllowAlways):
-		return hooks.ProjectHookAllowAlways
-	case "d", "deny", "n", "no":
-		return hooks.ProjectHookDeny
-	default:
-		return ""
-	}
 }
 
 func firstNonEmpty(values ...string) string {

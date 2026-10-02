@@ -1,15 +1,18 @@
 package app
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
@@ -166,8 +169,8 @@ func TestBrightPhase2StatusSegmentThemeInjection(t *testing.T) {
 			t.Fatalf("amberANSI = %q, want truecolor of #9a6700", amberANSI("85%"))
 		}
 		// hook-trust popup muted text follows the muted token.
-		if hookTrustMuted("x") == theme.ANSITextMutedStart+"x"+theme.ANSIReset {
-			t.Fatalf("hookTrustMuted still renders the fallback muted literal under a light theme")
+		if strings.Contains(hookTrustPromptText(), theme.ANSITextMutedStart+"choice"+theme.ANSIReset) {
+			t.Fatalf("hook trust prompt still renders the fallback muted literal under a light theme")
 		}
 	})
 
@@ -181,12 +184,20 @@ func TestBrightPhase2StatusSegmentThemeInjection(t *testing.T) {
 	if want := theme.ANSI256FgStart(theme.TmuxStateWarningFg) + "85%" + theme.ANSIReset; amberANSI("85%") != want {
 		t.Fatalf("amberANSI not restored: %q, want %q", amberANSI("85%"), want)
 	}
-	if want := theme.ANSITextMutedStart + "x" + theme.ANSIReset; hookTrustMuted("x") != want {
-		t.Fatalf("hookTrustMuted not restored: %q, want %q", hookTrustMuted("x"), want)
+	if want := theme.ANSITextMutedStart + "choice" + theme.ANSIReset; !strings.Contains(hookTrustPromptText(), want) {
+		t.Fatalf("hook trust prompt muted text not restored: %q, want %q", hookTrustPromptText(), want)
 	}
 	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired, statusSegmentRoles); got != theme.TmuxAIBadgeActionRequiredFg {
 		t.Fatalf("attention badge fg not restored: %q, want %q", got, theme.TmuxAIBadgeActionRequiredFg)
 	}
+}
+
+// hookTrustPromptText is what the hook-trust popup prints for an empty
+// request answered with a deny.
+func hookTrustPromptText() string {
+	var out bytes.Buffer
+	hookcmd.TrustPrompt(strings.NewReader("d\n"), &out, hooks.ProjectHookPromptRequest{})
+	return out.String()
 }
 
 // TestBrightPhase2StatusNotifySegmentFallbackByteIdentity locks the notify

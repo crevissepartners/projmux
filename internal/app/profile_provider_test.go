@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -17,7 +18,7 @@ import (
 // profileInstructionsCommand is `projmux <noun>` (instructions or persona)
 // rooted at the HOME of homeDir.
 func profileInstructionsCommand(noun string, homeDir func() (string, error), lookupEnv func(string) string) *personacmd.Command {
-	return newPersonaCommand(noun, homeDir, lookupEnv, strings.NewReader(""), defaultEditorRunner)
+	return newPersonaCommand(noun, homeDir, lookupEnv, strings.NewReader(""), hookcmd.DefaultEditorRunner)
 }
 
 // personaStoreOf is the persona store of create's HOME.

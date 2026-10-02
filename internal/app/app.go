@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/app/setupcmd"
@@ -136,7 +137,7 @@ type App struct {
 	diagnostics  *diagnosticsCommand
 	focus        *focusCommand
 	get          *getCommand
-	hook         *hookCommand
+	hook         *hookcmd.Command
 	label        *labelCommand
 	persona      *personacmd.Command
 	instructions *personacmd.Command
@@ -415,10 +416,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		diagnostics:        diagnosticsCmd,
 		focus:              focusCmd,
 		get:                getCmd,
-		hook:               newHookCommand(),
+		hook:               newHookCommand(os.UserHomeDir, os.Getenv, os.Getwd, os.Stdin, hookcmd.DefaultEditorRunner),
 		label:              newLabelCommand(),
-		persona:            newPersonaCommand("persona", os.UserHomeDir, os.Getenv, os.Stdin, defaultEditorRunner),
-		instructions:       newPersonaCommand("instructions", os.UserHomeDir, os.Getenv, os.Stdin, defaultEditorRunner),
+		persona:            newPersonaCommand("persona", os.UserHomeDir, os.Getenv, os.Stdin, hookcmd.DefaultEditorRunner),
+		instructions:       newPersonaCommand("instructions", os.UserHomeDir, os.Getenv, os.Stdin, hookcmd.DefaultEditorRunner),
 		profile:            newProfileCommand(),
 		internal:           internalCmd,
 		rebind:             newRebindCommand(),

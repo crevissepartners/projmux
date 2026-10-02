@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/pincmd"
 )
 
@@ -21,7 +22,7 @@ type flagParseUsageRoute struct {
 func hookPinResourceFlagParseRoutes() map[string]flagParseUsageRoute {
 	return map[string]flagParseUsageRoute{
 		"hook": {name: "hook", run: func(args []string) error {
-			return (&hookCommand{}).Run(args, io.Discard, io.Discard)
+			return (&hookcmd.Command{}).Run(args, io.Discard, io.Discard)
 		}},
 		"pin": {name: "pin", run: func(args []string) error {
 			return (&pincmd.Command{}).Run(args, io.Discard, io.Discard)

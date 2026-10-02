@@ -1,24 +1,31 @@
-package app
+package hookcmd
 
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
-// newHookTestCommand builds a hookCommand whose home / env / cwd are all
+// newHookTestCommand builds a Command whose home / env / cwd are all
 // rooted under a temp dir so the test can drive list / edit / validate /
 // trust / untrust without touching the real XDG locations.
 //
 // projectCtx, when non-empty, is exposed via PROJMUX_CWD so
 // resolveProjectContext picks it up without walking the real filesystem.
-func newHookTestCommand(t *testing.T, home, projectCtx, stdin string) (*hookCommand, string, string) {
+func newHookTestCommand(t *testing.T, home, projectCtx, stdin string) (*Command, string, string) {
 	t.Helper()
 	configHome := filepath.Join(home, ".config")
 	stateHome := filepath.Join(home, ".local", "state")
@@ -33,7 +40,7 @@ func newHookTestCommand(t *testing.T, home, projectCtx, stdin string) (*hookComm
 		env["PROJMUX_CWD"] = projectCtx
 	}
 
-	cmd := &hookCommand{
+	cmd := &Command{
 		homeDir:   func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string { return env[name] },
 		getwd:     func() (string, error) { return home, nil },
@@ -41,10 +48,69 @@ func newHookTestCommand(t *testing.T, home, projectCtx, stdin string) (*hookComm
 		editorRunner: func(string, []string, io.Writer, io.Writer) error {
 			return errors.New("editor runner should not be called")
 		},
+		deps: hookTestDeps(),
 	}
 	globalPath := filepath.Join(configHome, "projmux", "config.toml")
 	trustPath := filepath.Join(stateHome, "projmux", "trusted-projects.json")
 	return cmd, globalPath, trustPath
+}
+
+// hookTestDeps stands in for the app helpers the command reads through: config
+// paths under HOME or the XDG homes, the catalog text in the environment locale,
+// the missing-HOME reason, the operand split of the app, which refuses an
+// unknown flag with its reason and the route usage, and the catalog notes.
+func hookTestDeps() Deps {
+	return Deps{
+		ConfigPaths: func(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error) {
+			home, err := homeDir()
+			if err != nil {
+				return config.Paths{}, err
+			}
+			return config.Homes{HomeDir: home, ConfigHome: lookupEnv("XDG_CONFIG_HOME"), StateHome: lookupEnv("XDG_STATE_HOME")}.Paths()
+		},
+		Locale: func(_ func() (string, error), lookupEnv func(string) string) i18n.Locale {
+			return i18n.ResolveLocale(i18n.LocaleOptions{LookupEnv: func(name string) (string, bool) {
+				value := lookupEnv(name)
+				return value, strings.TrimSpace(value) != ""
+			}}).Locale
+		},
+		LocalizeText: func(locale i18n.Locale, key i18n.Key, fallback string) string {
+			text, err := i18n.NewLocalizer(locale).Text(key)
+			if err != nil {
+				return fallback
+			}
+			return text.String()
+		},
+		IsMissingHome: func(err error) bool { return errors.Is(err, config.ErrHomeDirRequired) },
+		PathOrReason: func(path string, err error) string {
+			if err != nil {
+				return "(" + err.Error() + ")"
+			}
+			return path
+		},
+		SplitOperands: func(command string, args []string, stderr io.Writer) ([]string, error) {
+			operands := make([]string, 0, len(args))
+			for i, tok := range args {
+				if tok == "--" {
+					return append(operands, args[i+1:]...), nil
+				}
+				if strings.HasPrefix(tok, "-") && tok != "-" {
+					reason := fmt.Sprintf("%s: unknown flag %s", command, tok)
+					fmt.Fprintln(stderr, reason)
+					cli.WriteRouteUsage(stderr, command)
+					return nil, cli.FlagParseError(errors.New(reason))
+				}
+				operands = append(operands, tok)
+			}
+			return operands, nil
+		},
+		PrintRouteNotes: func(w io.Writer, route string) {
+			for _, note := range cli.RouteNotes(route) {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, note)
+			}
+		},
+	}
 }
 
 func writeHookFile(t *testing.T, path, contents string) {
@@ -607,7 +673,7 @@ func TestHookResolveProjectContextIgnoresTempRootMarker(t *testing.T) {
 	wd := filepath.Join(tempRoot, "scratch", "leaf")
 	mustMkdirAll(t, wd)
 
-	cmd := &hookCommand{
+	cmd := &Command{
 		lookupEnv: func(string) string { return "" },
 		getwd:     func() (string, error) { return wd, nil },
 	}
@@ -629,7 +695,7 @@ func TestHookResolveProjectContextAllowsRepoUnderTempRoot(t *testing.T) {
 	mustMkdirAll(t, filepath.Join(repo, ".git"))
 	mustMkdirAll(t, wd)
 
-	cmd := &hookCommand{
+	cmd := &Command{
 		lookupEnv: func(string) string { return "" },
 		getwd:     func() (string, error) { return wd, nil },
 	}
@@ -650,7 +716,7 @@ func TestHookResolveProjectContextExplicitEnvWinsUnderTempRoot(t *testing.T) {
 	wd := filepath.Join(tempRoot, "scratch")
 	mustMkdirAll(t, wd)
 
-	cmd := &hookCommand{
+	cmd := &Command{
 		lookupEnv: func(name string) string {
 			if name == "PROJMUX_CWD" {
 				return project
@@ -666,6 +732,174 @@ func TestHookResolveProjectContextExplicitEnvWinsUnderTempRoot(t *testing.T) {
 	}
 	if got != project {
 		t.Fatalf("resolveProjectContext() = %q, want explicit PROJMUX_CWD %q", got, project)
+	}
+}
+
+// TestHookEventsNoteListsSupportedEvents pins the catalog `hook` note, which
+// `hook --help`, `hook help`, and every hook refusal print, to the events the
+// hook runner supports.
+func TestHookEventsNoteListsSupportedEvents(t *testing.T) {
+	t.Parallel()
+	want := "Events:\n  " + supportedHookEventList()
+	if notes := cli.RouteNotes("hook"); !slices.Contains(notes, want) {
+		t.Errorf("catalog hook notes = %q, want a note %q", notes, want)
+	}
+}
+
+func TestHookTrustPromptEscapesArtifactAndPreview(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  hooks.ProjectHookPromptRequest
+		want []string
+	}{
+		{
+			name: "config",
+			req: hooks.ProjectHookPromptRequest{
+				RepoPath:     "/workspace/\x1b]0;owned\a",
+				RelativePath: ".projmux/config.toml",
+				ArtifactKind: "project config",
+				SHA256:       "abc123",
+				Preview:      "[startup]\nrun = \"printf '\\x1b]52;c;secret\\a'\"\x1b[31m",
+			},
+			want: []string{
+				"Trust project automation",
+				"Project-local config is disabled",
+				"skip project config",
+				`/workspace/\x1b]0;owned\x07`,
+				`run = "printf`,
+				`\x1b[31m`,
+			},
+		},
+		{
+			name: "hook",
+			req: hooks.ProjectHookPromptRequest{
+				RepoPath:     "/workspace/repo",
+				RelativePath: ".projmux/hooks/post-create\x1b[31m",
+				SHA256:       "abc123",
+				Preview:      "echo hi\x1b]0;owned\a",
+			},
+			want: []string{
+				"Trust project automation",
+				"Project-local automation is disabled",
+				"skip this hook",
+				`.projmux/hooks/post-create\x1b[31m`,
+				`echo hi\x1b]0;owned\x07`,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			decision := TrustPrompt(strings.NewReader("d\n"), &output, tt.req)
+			if decision != hooks.ProjectHookDeny {
+				t.Fatalf("decision = %q, want deny", decision)
+			}
+			rendered := output.String()
+			if strings.Contains(rendered, "\x1b]0;owned\a") || strings.Contains(rendered, "\x1b[31m") {
+				t.Fatalf("prompt rendered project control sequence: %q", rendered)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(rendered, want) {
+					t.Fatalf("prompt = %q, want %q", rendered, want)
+				}
+			}
+		})
+	}
+}
+
+func TestHookTrustPromptEOFMapsCancelToDeny(t *testing.T) {
+	t.Parallel()
+
+	decision := TrustPrompt(strings.NewReader(""), io.Discard, hooks.ProjectHookPromptRequest{
+		RelativePath: ".projmux/config.toml",
+		ArtifactKind: "project config",
+		Preview:      "[startup]\nrun = \"make watch\"",
+	})
+	if decision != hooks.ProjectHookDeny {
+		t.Fatalf("EOF decision = %q, want deny", decision)
+	}
+}
+
+func TestHookTrustUnknownFlagsAreUsageErrorsBeforeTrustStore(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "trust flag", args: []string{"trust", "--zz"}, want: "hook trust: unknown flag --zz"},
+		{name: "untrust flag", args: []string{"untrust", "--zz"}, want: "hook untrust: unknown flag --zz"},
+		{name: "trust dir then flag", args: []string{"trust", ".", "--zz"}, want: "hook trust: unknown flag --zz"},
+		{name: "trust arity", args: []string{"trust", "a", "b"}, want: "trust/untrust takes at most one <project> argument"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			cmd, _, trustPath := newHookTestCommand(t, home, "", "")
+			var envReads, cwdReads atomic.Int32
+			lookup := cmd.lookupEnv
+			cmd.lookupEnv = func(name string) string { envReads.Add(1); return lookup(name) }
+			cmd.getwd = func() (string, error) { cwdReads.Add(1); return home, nil }
+
+			var stdout, stderr bytes.Buffer
+			err := cmd.Run(tt.args, &stdout, &stderr)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !coremetadata.IsUsageError(err) {
+				t.Fatalf("err = %v, want usage error (exit 2)", err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want substring %q", err, tt.want)
+			}
+			if !strings.Contains(stderr.String(), "Usage:") {
+				t.Fatalf("stderr = %q, want usage", stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if envReads.Load() != 0 || cwdReads.Load() != 0 {
+				t.Fatalf("env reads = %d, cwd reads = %d, want none", envReads.Load(), cwdReads.Load())
+			}
+			if _, statErr := os.Stat(trustPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("trust store stat = %v, want not created", statErr)
+			}
+		})
+	}
+}
+
+func TestHookTrustDoubleDashAllowsDashPath(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd, _, _ := newHookTestCommand(t, home, "", "")
+	want, err := filepath.Abs("-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"hook trust", "hook untrust"} {
+		got, _, err := cmd.resolveTrustTarget(verb, []string{"--", "-x"}, io.Discard, func() {})
+		if err != nil {
+			t.Fatalf("%s -- -x: err = %v", verb, err)
+		}
+		if got != filepath.Clean(want) {
+			t.Fatalf("%s -- -x = %q, want %q", verb, got, want)
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"untrust", "--", "-x"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("untrust -- -x: err = %v", err)
+	}
+	if got := stdout.String(); got != "no trust entry for "+filepath.Clean(want)+"\n" {
+		t.Fatalf("untrust stdout = %q", got)
 	}
 }
 

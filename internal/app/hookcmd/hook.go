@@ -1,4 +1,7 @@
-package app
+// Package hookcmd implements `projmux hook`: list, edit, validate, trust, and
+// untrust lifecycle hook config, and the trust prompt the hook-trust popup
+// renders.
+package hookcmd
 
 import (
 	"bufio"
@@ -13,11 +16,17 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/theme"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
-// hookCommand implements the `projmux hook` CLI surface. The CLI shares the
+// Command implements the `projmux hook` CLI surface. The CLI shares the
 // declarative engine with the Settings popup so the two surfaces produce
 // equivalent results — list/edit/validate/trust/untrust all route through
 // the same hooks package APIs (LoadGlobalConfig / LoadProjectConfigFile /
@@ -26,7 +35,7 @@ import (
 //
 // Phase 2.6 dropped the script branch, so `edit` always operates on
 // [hooks.<event>] run = "..." declarative entries.
-type hookCommand struct {
+type Command struct {
 	// homeDir and lookupEnv are seams used by tests to redirect XDG paths.
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
@@ -38,20 +47,48 @@ type hookCommand struct {
 	stdin io.Reader
 	// editorRunner runs $EDITOR-style commands for `edit --editor`. Tests
 	// stub it to a no-op so the CLI can be exercised headlessly.
-	editorRunner func(command string, args []string, stdout, stderr io.Writer) error
+	editorRunner EditorRunner
+	deps         Deps
 }
 
-func newHookCommand() *hookCommand {
-	return &hookCommand{
-		homeDir:      os.UserHomeDir,
-		lookupEnv:    os.Getenv,
-		getwd:        os.Getwd,
-		stdin:        os.Stdin,
-		editorRunner: defaultEditorRunner,
+// EditorRunner runs an editor command with args, writing to stdout and stderr.
+type EditorRunner func(command string, args []string, stdout, stderr io.Writer) error
+
+// Deps are the app-wide helpers the hook command resolves through, so it
+// reads paths, locale, and operands the way every other route does.
+type Deps struct {
+	// ConfigPaths resolves the config and state paths; the trust store lives
+	// in the state directory.
+	ConfigPaths func(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error)
+	// Locale and LocalizeText render the project scope note.
+	Locale       func(homeDir func() (string, error), lookupEnv func(string) string) i18n.Locale
+	LocalizeText func(locale i18n.Locale, key i18n.Key, fallback string) string
+	// IsMissingHome reports the missing-HOME reason, and PathOrReason is what
+	// a path display shows in its place.
+	IsMissingHome func(err error) bool
+	PathOrReason  func(path string, err error) string
+	// SplitOperands refuses an unknown flag of a route without a FlagSet, and
+	// PrintRouteNotes prints the catalog notes of a route under its usage.
+	SplitOperands   func(command string, args []string, stderr io.Writer) ([]string, error)
+	PrintRouteNotes func(w io.Writer, route string)
+}
+
+// New builds `projmux hook` over homeDir, lookupEnv, and getwd. Inline edits
+// read stdin, and `edit --editor` opens the editor through editorRunner.
+func New(homeDir func() (string, error), lookupEnv func(string) string, getwd func() (string, error), stdin io.Reader, editorRunner EditorRunner, deps Deps) *Command {
+	return &Command{
+		homeDir:      homeDir,
+		lookupEnv:    lookupEnv,
+		getwd:        getwd,
+		stdin:        stdin,
+		editorRunner: editorRunner,
+		deps:         deps,
 	}
 }
 
-func defaultEditorRunner(command string, args []string, stdout, stderr io.Writer) error {
+// DefaultEditorRunner runs the editor command attached to the process's
+// stdin.
+func DefaultEditorRunner(command string, args []string, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(command) == "" {
 		return errors.New("editor command is empty")
 	}
@@ -63,20 +100,20 @@ func defaultEditorRunner(command string, args []string, stdout, stderr io.Writer
 }
 
 // Run is the top-level dispatcher for `projmux hook <verb>`.
-func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() == 0 {
-		printRouteUsage(stderr, "hook")
-		printHookEvents(stderr)
-		return usageError("hook requires a subcommand")
+		cli.WriteRouteUsage(stderr, "hook")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "hook requires a subcommand"}
 	}
 	switch fs.Arg(0) {
 	case "list":
@@ -90,9 +127,9 @@ func (c *hookCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "untrust":
 		return c.runUntrust(fs.Args()[1:], stdout, stderr)
 	default:
-		printRouteUsage(stderr, "hook")
-		printHookEvents(stderr)
-		return usageError("unknown hook subcommand: " + fs.Arg(0))
+		cli.WriteRouteUsage(stderr, "hook")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "unknown hook subcommand: " + fs.Arg(0)}
 	}
 }
 
@@ -107,10 +144,10 @@ const (
 	hookListScopeEffective
 )
 
-func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	globalOnly := fs.Bool("global", false, "only show global config entries")
 	projectOnly := fs.Bool("project", false, "only show project config entries")
 	effective := fs.Bool("effective", false, "show merged effective view with source labels")
@@ -118,12 +155,12 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "hook list")
-		printHookEvents(stderr)
-		return usageError("hook list does not accept positional arguments")
+		cli.WriteRouteUsage(stderr, "hook list")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "hook list does not accept positional arguments"}
 	}
 	flags := 0
 	for _, b := range []bool{*globalOnly, *projectOnly, *effective} {
@@ -132,9 +169,9 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	if flags > 1 {
-		printRouteUsage(stderr, "hook list")
-		printHookEvents(stderr)
-		return usageError("hook list: --global, --project, and --effective are mutually exclusive")
+		cli.WriteRouteUsage(stderr, "hook list")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "hook list: --global, --project, and --effective are mutually exclusive"}
 	}
 	scope := hookListScopeContext
 	switch {
@@ -148,12 +185,12 @@ func (c *hookCommand) runList(args []string, stdout, stderr io.Writer) error {
 	return c.printList(scope, stdout, stderr)
 }
 
-func (c *hookCommand) printList(scope hookListScope, stdout, stderr io.Writer) error {
+func (c *Command) printList(scope hookListScope, stdout, stderr io.Writer) error {
 	globalPath, globalCfg, globalErr := c.loadGlobal()
-	if isMissingHome(globalErr) {
+	if c.deps.IsMissingHome(globalErr) {
 		// No config home: there is no global file to read, so the list shows
 		// the reason where the path goes instead of an empty path.
-		globalPath, globalErr = pathOrReason("", globalErr), nil
+		globalPath, globalErr = c.deps.PathOrReason("", globalErr), nil
 	}
 	if globalErr != nil {
 		fmt.Fprintf(stderr, "projmux hook: global config %q parse error: %v\n", globalPath, globalErr)
@@ -195,7 +232,7 @@ func (c *hookCommand) printList(scope hookListScope, stdout, stderr io.Writer) e
 
 // writeScopeTable renders one config file's hooks. note, when non-empty, is
 // printed under the file path (see projectScopeNote).
-func (c *hookCommand) writeScopeTable(stdout io.Writer, scope, path string, cfg hooks.ProjectConfig, note string) error {
+func (c *Command) writeScopeTable(stdout io.Writer, scope, path string, cfg hooks.ProjectConfig, note string) error {
 	fmt.Fprintf(stdout, "%s config: %s\n", scope, path)
 	if note != "" {
 		fmt.Fprintln(stdout, note)
@@ -216,7 +253,7 @@ func (c *hookCommand) writeScopeTable(stdout io.Writer, scope, path string, cfg 
 	return tw.Flush()
 }
 
-func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectPath, projectCtx, projectNote string, globalCfg, projectCfg hooks.ProjectConfig) error {
+func (c *Command) writeEffectiveTable(stdout io.Writer, globalPath, projectPath, projectCtx, projectNote string, globalCfg, projectCfg hooks.ProjectConfig) error {
 	fmt.Fprintf(stdout, "global config:  %s\n", globalPath)
 	if projectCtx == "" {
 		fmt.Fprintln(stdout, "project config: (no project context)")
@@ -293,10 +330,10 @@ func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectP
 
 // --- edit ----------------------------------------------------------------
 
-func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runEdit(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook edit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	global := fs.Bool("global", false, "edit the global config.toml entry")
 	project := fs.Bool("project", false, "force a project-local override in .projmux/config.toml")
 	useEditor := fs.Bool("editor", false, "open the config.toml file in $EDITOR instead of the inline prompt")
@@ -304,21 +341,21 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if *global && *project {
-		printRouteUsage(stderr, "hook edit")
-		printHookEvents(stderr)
-		return usageError("hook edit: --global and --project are mutually exclusive")
+		cli.WriteRouteUsage(stderr, "hook edit")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "hook edit: --global and --project are mutually exclusive"}
 	}
 	if fs.NArg() != 1 {
-		printRouteUsage(stderr, "hook edit")
-		printHookEvents(stderr)
-		return usageError("hook edit requires exactly one <event> argument")
+		cli.WriteRouteUsage(stderr, "hook edit")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "hook edit requires exactly one <event> argument"}
 	}
 	event := strings.TrimSpace(fs.Arg(0))
 	if !isSupportedHookEvent(event) {
-		return usageError(fmt.Sprintf("unsupported hook event %q (supported: %s)", event, supportedHookEventList()))
+		return &coremetadata.InputError{Detail: fmt.Sprintf("unsupported hook event %q (supported: %s)", event, supportedHookEventList())}
 	}
 
 	if *global {
@@ -364,9 +401,9 @@ func (c *hookCommand) runEdit(args []string, stdout, stderr io.Writer) error {
 	return c.printProjectScopeNote(stdout)
 }
 
-func (c *hookCommand) effectiveHookSource(event string) (hooks.EffectiveSource, string, error) {
+func (c *Command) effectiveHookSource(event string) (hooks.EffectiveSource, string, error) {
 	globalPath, globalCfg, globalErr := c.loadGlobal()
-	if isMissingHome(globalErr) {
+	if c.deps.IsMissingHome(globalErr) {
 		// No config home: no global entry can be the source.
 		globalErr = nil
 	}
@@ -394,7 +431,7 @@ func (c *hookCommand) effectiveHookSource(event string) (hooks.EffectiveSource, 
 	return hooks.EffectiveSourceDefault, "", nil
 }
 
-func (c *hookCommand) editGlobalInline(path, event string, stdout, stderr io.Writer) error {
+func (c *Command) editGlobalInline(path, event string, stdout, stderr io.Writer) error {
 	cfg, err := hooks.LoadGlobalConfig(path)
 	if err != nil {
 		return err
@@ -428,7 +465,7 @@ func (c *hookCommand) editGlobalInline(path, event string, stdout, stderr io.Wri
 	return err
 }
 
-func (c *hookCommand) editProjectInline(repo, path, event string, stdout, stderr io.Writer) error {
+func (c *Command) editProjectInline(repo, path, event string, stdout, stderr io.Writer) error {
 	cfg, err := hooks.LoadProjectConfigFile(path)
 	if err != nil {
 		return err
@@ -476,7 +513,7 @@ func (c *hookCommand) editProjectInline(repo, path, event string, stdout, stderr
 // caller pressed Ctrl-D / EOF without typing anything, which is treated as a
 // no-op so the existing entry is preserved. An empty (whitespace-only) line
 // IS a change — it deletes the entry, matching the Settings popup behaviour.
-func (c *hookCommand) readInlineLine(event, current string, stdout io.Writer) (string, bool, error) {
+func (c *Command) readInlineLine(event, current string, stdout io.Writer) (string, bool, error) {
 	if c.stdin == nil {
 		return "", false, errors.New("inline edit requires stdin")
 	}
@@ -500,9 +537,9 @@ func (c *hookCommand) readInlineLine(event, current string, stdout io.Writer) (s
 	return value, true, nil
 }
 
-// editorFromEnv is the editor command a file-editing route opens: $EDITOR,
+// EditorFromEnv is the editor command a file-editing route opens: $EDITOR,
 // then $VISUAL. Empty means neither is set.
-func editorFromEnv(lookupEnv func(string) string) string {
+func EditorFromEnv(lookupEnv func(string) string) string {
 	editor := strings.TrimSpace(lookupEnv("EDITOR"))
 	if editor == "" {
 		editor = strings.TrimSpace(lookupEnv("VISUAL"))
@@ -510,8 +547,8 @@ func editorFromEnv(lookupEnv func(string) string) string {
 	return editor
 }
 
-func (c *hookCommand) openInEditor(path string, stdout, stderr io.Writer) error {
-	editor := editorFromEnv(c.lookupEnv)
+func (c *Command) openInEditor(path string, stdout, stderr io.Writer) error {
+	editor := EditorFromEnv(c.lookupEnv)
 	if editor == "" {
 		return errors.New("$EDITOR and $VISUAL are unset; cannot open editor")
 	}
@@ -522,7 +559,7 @@ func (c *hookCommand) openInEditor(path string, stdout, stderr io.Writer) error 
 	cmd := parts[0]
 	args := append(parts[1:], path)
 	if c.editorRunner == nil {
-		c.editorRunner = defaultEditorRunner
+		c.editorRunner = DefaultEditorRunner
 	}
 	if err := c.editorRunner(cmd, args, stdout, stderr); err != nil {
 		return fmt.Errorf("editor %q exited: %w", editor, err)
@@ -554,28 +591,28 @@ func (e *editorParseError) ExitCode() int { return 1 }
 
 // --- validate ------------------------------------------------------------
 
-func (c *hookCommand) runValidate(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runValidate(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("hook validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "hook validate")
-		printHookEvents(stderr)
-		return usageError("hook validate does not accept positional arguments")
+		cli.WriteRouteUsage(stderr, "hook validate")
+		c.printHookEvents(stderr)
+		return &coremetadata.InputError{Detail: "hook validate does not accept positional arguments"}
 	}
 	globalPath, globalCfg, globalErr := c.loadGlobal()
 	projectPath, projectCfg, projectErr, projectCtx := c.loadProject()
 
 	ok := true
-	if isMissingHome(globalErr) {
+	if c.deps.IsMissingHome(globalErr) {
 		// No config home: there is no global file to validate.
-		fmt.Fprintf(stdout, "global   %s   skipped\n", pathOrReason("", globalErr))
+		fmt.Fprintf(stdout, "global   %s   skipped\n", c.deps.PathOrReason("", globalErr))
 	} else if globalErr != nil {
 		fmt.Fprintf(stdout, "global   %s   PARSE ERROR: %v\n", globalPath, globalErr)
 		ok = false
@@ -631,8 +668,8 @@ func validateHookEvents(cfg hooks.ProjectConfig) error {
 
 // --- trust / untrust -----------------------------------------------------
 
-func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
-	repo, fromContext, err := c.resolveTrustTarget("hook trust", args, stderr, func() { printRouteUsage(stderr, "hook trust"); printHookEvents(stderr) })
+func (c *Command) runTrust(args []string, stdout, stderr io.Writer) error {
+	repo, fromContext, err := c.resolveTrustTarget("hook trust", args, stderr, func() { cli.WriteRouteUsage(stderr, "hook trust"); c.printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -653,8 +690,8 @@ func (c *hookCommand) runTrust(args []string, stdout, stderr io.Writer) error {
 	return c.printProjectScopeNote(stdout)
 }
 
-func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error {
-	repo, fromContext, err := c.resolveTrustTarget("hook untrust", args, stderr, func() { printRouteUsage(stderr, "hook untrust"); printHookEvents(stderr) })
+func (c *Command) runUntrust(args []string, stdout, stderr io.Writer) error {
+	repo, fromContext, err := c.resolveTrustTarget("hook untrust", args, stderr, func() { cli.WriteRouteUsage(stderr, "hook untrust"); c.printHookEvents(stderr) })
 	if err != nil {
 		return err
 	}
@@ -683,8 +720,8 @@ func (c *hookCommand) runUntrust(args []string, stdout, stderr io.Writer) error 
 // prints that verb's usage under every other refusal.
 // fromContext reports that the target is the project context rather than an
 // explicit <project> argument, so only then can a scope note apply.
-func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr io.Writer, printUsage func()) (repo string, fromContext bool, err error) {
-	args, err = splitOperands(command, args, stderr)
+func (c *Command) resolveTrustTarget(command string, args []string, stderr io.Writer, printUsage func()) (repo string, fromContext bool, err error) {
+	args, err = c.deps.SplitOperands(command, args, stderr)
 	if err != nil {
 		return "", false, err
 	}
@@ -696,14 +733,14 @@ func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr i
 		}
 		if repo == "" {
 			printUsage()
-			return "", false, usageError("trust/untrust requires <project> or a project context")
+			return "", false, &coremetadata.InputError{Detail: "trust/untrust requires <project> or a project context"}
 		}
 		return repo, true, nil
 	case 1:
 		raw := strings.TrimSpace(args[0])
 		if raw == "" {
 			printUsage()
-			return "", false, usageError("trust/untrust <project> must not be empty")
+			return "", false, &coremetadata.InputError{Detail: "trust/untrust <project> must not be empty"}
 		}
 		abs, err := filepath.Abs(raw)
 		if err != nil {
@@ -712,25 +749,25 @@ func (c *hookCommand) resolveTrustTarget(command string, args []string, stderr i
 		return filepath.Clean(abs), false, nil
 	default:
 		printUsage()
-		return "", false, usageError("trust/untrust takes at most one <project> argument")
+		return "", false, &coremetadata.InputError{Detail: "trust/untrust takes at most one <project> argument"}
 	}
 }
 
 // --- shared helpers ------------------------------------------------------
 
-func (c *hookCommand) globalConfigPath() (string, error) {
+func (c *Command) globalConfigPath() (string, error) {
 	return hooks.GlobalConfigPath(c.lookupEnv, c.homeDir)
 }
 
-func (c *hookCommand) trustStorePath() (string, error) {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+func (c *Command) trustStorePath() (string, error) {
+	paths, err := c.deps.ConfigPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(paths.StateDir, "trusted-projects.json"), nil
 }
 
-func (c *hookCommand) loadGlobal() (string, hooks.ProjectConfig, error) {
+func (c *Command) loadGlobal() (string, hooks.ProjectConfig, error) {
 	path, err := c.globalConfigPath()
 	if err != nil {
 		return "", hooks.ProjectConfig{}, err
@@ -744,7 +781,7 @@ func (c *hookCommand) loadGlobal() (string, hooks.ProjectConfig, error) {
 // signals "no project context"; callers should branch on it. The returned
 // path is always populated when projectCtx != "" so error messages can name
 // the file even when the parse itself failed.
-func (c *hookCommand) loadProject() (string, hooks.ProjectConfig, error, string) {
+func (c *Command) loadProject() (string, hooks.ProjectConfig, error, string) {
 	repo, err := c.resolveProjectContext()
 	if err != nil || repo == "" {
 		return "", hooks.ProjectConfig{}, nil, ""
@@ -764,7 +801,7 @@ func (c *hookCommand) loadProject() (string, hooks.ProjectConfig, error, string)
 // itself so temp fixtures and other scratch parents do not become project
 // contexts. Returning an empty string is not an error; downstream commands
 // decide whether the context is required.
-func (c *hookCommand) resolveProjectContext() (string, error) {
+func (c *Command) resolveProjectContext() (string, error) {
 	root, _, err := c.resolveProjectScope()
 	return root, err
 }
@@ -772,7 +809,7 @@ func (c *hookCommand) resolveProjectContext() (string, error) {
 // resolveProjectScope returns the project context root and the directory the
 // command runs from (PROJMUX_CWD, else the working directory). The two differ
 // only when the root was found by walking up from the working directory.
-func (c *hookCommand) resolveProjectScope() (root, cwd string, err error) {
+func (c *Command) resolveProjectScope() (root, cwd string, err error) {
 	if c.lookupEnv != nil {
 		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
 			cwd = filepath.Clean(raw)
@@ -790,7 +827,7 @@ func (c *hookCommand) resolveProjectScope() (root, cwd string, err error) {
 	if hooks.SessionProjectConfigPath(wd) != "" {
 		return wd, wd, nil
 	}
-	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
+	if root := NearestProjectMarker(wd, os.TempDir()); root != "" {
 		return root, wd, nil
 	}
 	return "", wd, nil
@@ -805,18 +842,18 @@ const hookProjectScopeNoteFallback = "note: sessions created in {cwd} do not run
 // names the session-scoped surfaces only. send-noti is left out because its
 // dispatcher resolves the project root on its own and does run that file's
 // send-noti hook.
-func (c *hookCommand) projectScopeNote() string {
+func (c *Command) projectScopeNote() string {
 	root, cwd, err := c.resolveProjectScope()
 	if err != nil || root == "" || root == cwd {
 		return ""
 	}
-	template := localizeText(appLocale(c.homeDir, c.lookupEnv), i18n.KeyHookProjectScopeNote, hookProjectScopeNoteFallback)
+	template := c.deps.LocalizeText(c.deps.Locale(c.homeDir, c.lookupEnv), i18n.KeyHookProjectScopeNote, hookProjectScopeNoteFallback)
 	return strings.NewReplacer("{cwd}", cwd, "{root}", root).Replace(template)
 }
 
 // printProjectScopeNote writes projectScopeNote on its own line after a
 // command that acted on the project context, when there is a note to show.
-func (c *hookCommand) printProjectScopeNote(stdout io.Writer) error {
+func (c *Command) printProjectScopeNote(stdout io.Writer) error {
 	note := c.projectScopeNote()
 	if note == "" {
 		return nil
@@ -825,10 +862,10 @@ func (c *hookCommand) printProjectScopeNote(stdout io.Writer) error {
 	return err
 }
 
-// nearestProjectMarker walks parent directories looking for a `.projmux` or
+// NearestProjectMarker walks parent directories looking for a `.projmux` or
 // `.git` marker. Boundary paths are not considered candidates. Returns "" when
 // the walk reaches a boundary or the filesystem root with nothing found.
-func nearestProjectMarker(path string, boundaries ...string) string {
+func NearestProjectMarker(path string, boundaries ...string) string {
 	path = filepath.Clean(path)
 	for {
 		for _, boundary := range boundaries {
@@ -867,8 +904,8 @@ func isSupportedHookEvent(event string) bool {
 
 // printHookEvents prints the catalog note of `hook`, the hook events, under
 // the hook usage block.
-func printHookEvents(w io.Writer) {
-	printRouteNotes(w, "hook")
+func (c *Command) printHookEvents(w io.Writer) {
+	c.deps.PrintRouteNotes(w, "hook")
 }
 
 func supportedHookEventList() string {
@@ -878,4 +915,125 @@ func supportedHookEventList() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// --- trust prompt --------------------------------------------------------
+
+const hookTrustPopupContentWidth = 86
+
+// TrustPrompt renders the trust request req on writer and reads the choice
+// from reader. Anything but a recognised choice, three times, or end of input
+// is a deny.
+func TrustPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
+	fmt.Fprintln(writer, hookTrustHeaderStart+" Trust project automation "+projmuxpicker.Reset)
+	scope := hookTrustRequestScope(req)
+	fmt.Fprintln(writer, hookTrustMuted(scope.description))
+	fmt.Fprintln(writer)
+	writeHookTrustField(writer, "repo", req.RepoPath)
+	writeHookTrustField(writer, scope.label, req.RelativePath)
+	if req.PreviousSHA256 != "" {
+		writeHookTrustField(writer, "trusted sha", req.PreviousSHA256)
+	}
+	writeHookTrustField(writer, "current sha", req.SHA256)
+	if strings.TrimSpace(req.Preview) != "" {
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
+		fmt.Fprintln(writer, hookTrustMuted("preview"))
+		for line := range strings.SplitSeq(req.Preview, "\n") {
+			safeLine := terminaltext.EscapeControls(line)
+			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(safeLine, hookTrustPopupContentWidth-2))
+		}
+	}
+
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
+	fmt.Fprintln(writer, hookTrustActionLine("[o] Allow once", "run this time only"))
+	fmt.Fprintln(writer, hookTrustActionLine("[a] Allow always", "trust this exact file hash"))
+	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", scope.denyDetail))
+
+	input := bufio.NewReader(reader)
+	for range 3 {
+		fmt.Fprint(writer, "\n"+hookTrustMuted("choice")+"  ")
+		line, err := input.ReadString('\n')
+		if err != nil && len(line) == 0 {
+			fmt.Fprintln(writer)
+			return hooks.ProjectHookDeny
+		}
+		decision := ParseTrustDecision(line)
+		if decision != "" {
+			return decision
+		}
+		fmt.Fprintln(writer, hookTrustMuted("Enter o, a, or d."))
+	}
+	return hooks.ProjectHookDeny
+}
+
+type hookTrustScopeCopy struct {
+	label       string
+	description string
+	denyDetail  string
+}
+
+func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCopy {
+	if strings.TrimSpace(req.RelativePath) == ".projmux/config.toml" {
+		return hookTrustScopeCopy{
+			label:       "config",
+			description: "Project-local config is disabled until this file hash is trusted.",
+			denyDetail:  "skip project config",
+		}
+	}
+	return hookTrustScopeCopy{
+		label:       "hook",
+		description: "Project-local automation is disabled until this file hash is trusted.",
+		denyDetail:  "skip this hook",
+	}
+}
+
+func writeHookTrustField(w io.Writer, label, value string) {
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(terminaltext.EscapeControls(value))
+	if value == "" {
+		value = "-"
+	}
+	fmt.Fprintf(w, "%s  %s\n",
+		hookTrustMuted(fmt.Sprintf("%-11s", label)),
+		projmuxpicker.TruncateANSI(value, hookTrustPopupContentWidth-13),
+	)
+}
+
+func hookTrustActionLine(action, detail string) string {
+	return fmt.Sprintf("  %-12s %s", action, hookTrustMuted(detail))
+}
+
+// hook-trust popup role escapes (bright Phase 2, B3). Defaults are the
+// historical fallback literals (byte-identical); ApplyTheme repoints them at
+// the resolved effective theme at command entry.
+var (
+	hookTrustHeaderStart = projmuxpicker.CurrentStart
+	hookTrustMutedStart  = projmuxpicker.MutedStart
+)
+
+// ApplyTheme repoints the trust prompt role escapes at roles. Applying the
+// fallback theme's roles restores byte-identity.
+func ApplyTheme(roles theme.ANSIRoles) {
+	hookTrustHeaderStart = roles.SurfaceActive
+	hookTrustMutedStart = roles.TextMuted
+}
+
+func hookTrustMuted(value string) string {
+	return hookTrustMutedStart + value + projmuxpicker.Reset
+}
+
+// ParseTrustDecision maps a typed choice to its decision; "" is no choice.
+func ParseTrustDecision(value string) hooks.ProjectHookDecision {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "o", "once", string(hooks.ProjectHookAllowOnce):
+		return hooks.ProjectHookAllowOnce
+	case "a", "always", string(hooks.ProjectHookAllowAlways):
+		return hooks.ProjectHookAllowAlways
+	case "d", "deny", "n", "no":
+		return hooks.ProjectHookDeny
+	default:
+		return ""
+	}
 }

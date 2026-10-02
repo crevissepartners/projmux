@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
@@ -151,7 +152,7 @@ func (d *sendNotiHookDispatcher) resolveCWD() string {
 	if wd == "" {
 		return ""
 	}
-	if root := nearestProjectMarker(wd); root != "" {
+	if root := hookcmd.NearestProjectMarker(wd); root != "" {
 		return root
 	}
 	return wd

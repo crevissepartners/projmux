@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -165,85 +163,6 @@ func TestAttentionDoubleDashEndsOptions(t *testing.T) {
 			t.Fatal("window @3 dot made no tmux calls")
 		}
 	})
-}
-
-func TestHookTrustUnknownFlagsAreUsageErrorsBeforeTrustStore(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "trust flag", args: []string{"trust", "--zz"}, want: "hook trust: unknown flag --zz"},
-		{name: "untrust flag", args: []string{"untrust", "--zz"}, want: "hook untrust: unknown flag --zz"},
-		{name: "trust dir then flag", args: []string{"trust", ".", "--zz"}, want: "hook trust: unknown flag --zz"},
-		{name: "trust arity", args: []string{"trust", "a", "b"}, want: "trust/untrust takes at most one <project> argument"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			home := t.TempDir()
-			cmd, _, trustPath := newHookTestCommand(t, home, "", "")
-			var envReads, cwdReads atomic.Int32
-			lookup := cmd.lookupEnv
-			cmd.lookupEnv = func(name string) string { envReads.Add(1); return lookup(name) }
-			cmd.getwd = func() (string, error) { cwdReads.Add(1); return home, nil }
-
-			var stdout, stderr bytes.Buffer
-			err := cmd.Run(tt.args, &stdout, &stderr)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !IsUsageError(err) {
-				t.Fatalf("err = %v, want usage error (exit 2)", err)
-			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("err = %v, want substring %q", err, tt.want)
-			}
-			if !strings.Contains(stderr.String(), "Usage:") {
-				t.Fatalf("stderr = %q, want usage", stderr.String())
-			}
-			if stdout.Len() != 0 {
-				t.Fatalf("stdout = %q, want empty", stdout.String())
-			}
-			if envReads.Load() != 0 || cwdReads.Load() != 0 {
-				t.Fatalf("env reads = %d, cwd reads = %d, want none", envReads.Load(), cwdReads.Load())
-			}
-			if _, statErr := os.Stat(trustPath); !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("trust store stat = %v, want not created", statErr)
-			}
-		})
-	}
-}
-
-func TestHookTrustDoubleDashAllowsDashPath(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	cmd, _, _ := newHookTestCommand(t, home, "", "")
-	want, err := filepath.Abs("-x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, verb := range []string{"hook trust", "hook untrust"} {
-		got, _, err := cmd.resolveTrustTarget(verb, []string{"--", "-x"}, io.Discard, func() {})
-		if err != nil {
-			t.Fatalf("%s -- -x: err = %v", verb, err)
-		}
-		if got != filepath.Clean(want) {
-			t.Fatalf("%s -- -x = %q, want %q", verb, got, want)
-		}
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"untrust", "--", "-x"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("untrust -- -x: err = %v", err)
-	}
-	if got := stdout.String(); got != "no trust entry for "+filepath.Clean(want)+"\n" {
-		t.Fatalf("untrust stdout = %q", got)
-	}
 }
 
 type countingKillTagStore struct {

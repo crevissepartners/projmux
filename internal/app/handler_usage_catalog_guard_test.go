@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/cli"
 )
 
@@ -125,16 +126,30 @@ func hookEditHintProblem(errText string, run func(args []string) error) string {
 
 // newHookEditHintFixture builds a hook command whose post-create hook is
 // defined only in the global config, inside an isolated temp HOME/XDG.
-func newHookEditHintFixture(t *testing.T) (*hookCommand, string) {
+func newHookEditHintFixture(t *testing.T) (*hookcmd.Command, string) {
 	t.Helper()
 	home := t.TempDir()
 	project := filepath.Join(home, "repo")
-	mustMkdirAll(t, filepath.Join(project, ".projmux"))
-	cmd, globalPath, _ := newHookTestCommand(t, home, project, "echo hint-override\n")
-	writeHookFile(t, globalPath, `
+	configHome := filepath.Join(home, ".config")
+	env := map[string]string{
+		"XDG_CONFIG_HOME": configHome,
+		"XDG_STATE_HOME":  filepath.Join(home, ".local", "state"),
+		"PROJMUX_CWD":     project,
+	}
+	globalPath := filepath.Join(configHome, "projmux", "config.toml")
+	for _, dir := range []string{filepath.Join(project, ".projmux"), filepath.Dir(globalPath), filepath.Join(env["XDG_STATE_HOME"], "projmux")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(globalPath, []byte(`
 [hooks.post-create]
 run = "echo global-post-create"
-`)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newHookCommand(func() (string, error) { return home, nil }, func(name string) string { return env[name] },
+		func() (string, error) { return home, nil }, strings.NewReader("echo hint-override\n"), nil)
 	return cmd, project
 }
 

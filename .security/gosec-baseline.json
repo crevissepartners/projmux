@@ -187,7 +187,7 @@
     },
     {
       "rule": "G204",
-      "path": "internal/app/hook.go",
+      "path": "internal/app/hookcmd/hook.go",
       "message": "Subprocess launched with variable",
       "source": "cmd := exec.Command(command, args...)",
       "max_count": 1
@@ -341,7 +341,7 @@
     },
     {
       "rule": "G301",
-      "path": "internal/app/hook.go",
+      "path": "internal/app/hookcmd/hook.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
       "max_count": 2

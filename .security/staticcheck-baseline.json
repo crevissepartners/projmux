@@ -143,9 +143,9 @@
     },
     {
       "rule": "ST1008",
-      "path": "internal/app/hook.go",
+      "path": "internal/app/hookcmd/hook.go",
       "message": "error should be returned as the last argument",
-      "source": "func (c *hookCommand) loadProject() (string, hooks.ProjectConfig, error, string) {",
+      "source": "func (c *Command) loadProject() (string, hooks.ProjectConfig, error, string) {",
       "max_count": 1
     },
     {

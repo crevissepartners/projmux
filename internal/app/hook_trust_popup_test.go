@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,84 +86,6 @@ func TestHookTrustPromptWritesDecision(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want substring %q", stdout.String(), want)
 		}
-	}
-}
-
-func TestHookTrustPromptEscapesArtifactAndPreview(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		req  hooks.ProjectHookPromptRequest
-		want []string
-	}{
-		{
-			name: "config",
-			req: hooks.ProjectHookPromptRequest{
-				RepoPath:     "/workspace/\x1b]0;owned\a",
-				RelativePath: ".projmux/config.toml",
-				ArtifactKind: "project config",
-				SHA256:       "abc123",
-				Preview:      "[startup]\nrun = \"printf '\\x1b]52;c;secret\\a'\"\x1b[31m",
-			},
-			want: []string{
-				"Trust project automation",
-				"Project-local config is disabled",
-				"skip project config",
-				`/workspace/\x1b]0;owned\x07`,
-				`run = "printf`,
-				`\x1b[31m`,
-			},
-		},
-		{
-			name: "hook",
-			req: hooks.ProjectHookPromptRequest{
-				RepoPath:     "/workspace/repo",
-				RelativePath: ".projmux/hooks/post-create\x1b[31m",
-				SHA256:       "abc123",
-				Preview:      "echo hi\x1b]0;owned\a",
-			},
-			want: []string{
-				"Trust project automation",
-				"Project-local automation is disabled",
-				"skip this hook",
-				`.projmux/hooks/post-create\x1b[31m`,
-				`echo hi\x1b]0;owned\x07`,
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			var output bytes.Buffer
-			decision := hookTrustPopupPrompt(strings.NewReader("d\n"), &output, tt.req)
-			if decision != hooks.ProjectHookDeny {
-				t.Fatalf("decision = %q, want deny", decision)
-			}
-			rendered := output.String()
-			if strings.Contains(rendered, "\x1b]0;owned\a") || strings.Contains(rendered, "\x1b[31m") {
-				t.Fatalf("prompt rendered project control sequence: %q", rendered)
-			}
-			for _, want := range tt.want {
-				if !strings.Contains(rendered, want) {
-					t.Fatalf("prompt = %q, want %q", rendered, want)
-				}
-			}
-		})
-	}
-}
-
-func TestHookTrustPromptEOFMapsCancelToDeny(t *testing.T) {
-	t.Parallel()
-
-	decision := hookTrustPopupPrompt(strings.NewReader(""), io.Discard, hooks.ProjectHookPromptRequest{
-		RelativePath: ".projmux/config.toml",
-		ArtifactKind: "project config",
-		Preview:      "[startup]\nrun = \"make watch\"",
-	})
-	if decision != hooks.ProjectHookDeny {
-		t.Fatalf("EOF decision = %q, want deny", decision)
 	}
 }
 

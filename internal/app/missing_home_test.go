@@ -118,7 +118,7 @@ func TestMissingHomeRefusesWritesAndKeepsReadsAtDefaults(t *testing.T) {
 		requireMissingHomeReason(t, "notificationIconDir", err, config.XDGDataHomeVar)
 
 		// Displays show the reason instead of an empty path.
-		hook := &hookCommand{homeDir: homeDir, lookupEnv: noXDG, getwd: os.Getwd}
+		hook := newHookCommand(homeDir, noXDG, os.Getwd, nil, nil)
 		var stdout, stderr bytes.Buffer
 		if err := hook.Run([]string{"list"}, &stdout, &stderr); err != nil {
 			t.Fatalf("hook list error = %v", err)

@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
@@ -110,9 +111,8 @@ func applyNativeUITheme(effective theme.EffectiveTheme) {
 		statusbarSevOKANSI = v
 	}
 
-	// hook-trust popup (hook_trust_popup.go, bright Phase 2 B3)
-	hookTrustHeaderStart = roles.SurfaceActive
-	hookTrustMutedStart = roles.TextMuted
+	// hook-trust popup (hookcmd, bright Phase 2 B3)
+	hookcmd.ApplyTheme(roles)
 
 	// tmux-side status segment / notify HUD / usage HUD roles (status.go,
 	// usagecmd — bright Phase 2 B1)

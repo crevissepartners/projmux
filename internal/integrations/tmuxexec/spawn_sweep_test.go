@@ -38,8 +38,6 @@ var nonTmuxSpawnSites = map[string]string{
 	"internal/app.defaultPopupRawMode": "stty",
 	"internal/app/setupcmd.runSttyOn":  "stty",
 	"internal/app.runSwitchGitCommand": "git: detectGitBranchWithRunner passes git only",
-	// user-supplied command lines
-	"internal/app.defaultEditorRunner": "the user's editor",
 }
 
 // spawnFuncs are the standard-library entry points that start a process,
