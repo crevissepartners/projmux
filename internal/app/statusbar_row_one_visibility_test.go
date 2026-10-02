@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
@@ -128,7 +129,7 @@ func TestStatusbarRowOneIconOffKeepsWorkingDirectoryAndGitText(t *testing.T) {
 		config.LiveResourcesOff,
 		defaultStatusbarHUDVisibilitySet(),
 		defaultStatusbarRowOneVisibilitySet(),
-		defaultKeyBindingCatalog(),
+		keybinding.DefaultKeyBindingCatalog(),
 		false,
 		effective,
 	)
@@ -158,10 +159,10 @@ func TestGeneratedAppAndStandaloneStatusbarHaveNoKubeSurface(t *testing.T) {
 	configs := map[string]string{
 		"standalone": tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(
 			"/tmp/projmux", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode,
-			config.LiveResourcesOn, defaultStatusbarHUDVisibilitySet(), visibility, defaultKeyBindingCatalog(), false, effective),
+			config.LiveResourcesOn, defaultStatusbarHUDVisibilitySet(), visibility, keybinding.DefaultKeyBindingCatalog(), false, effective),
 		"app": tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(
 			"/tmp/projmux", "/bin/sh", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode,
-			config.LiveResourcesOn, defaultStatusbarHUDVisibilitySet(), visibility, defaultKeyBindingCatalog(), false, effective),
+			config.LiveResourcesOn, defaultStatusbarHUDVisibilitySet(), visibility, keybinding.DefaultKeyBindingCatalog(), false, effective),
 	}
 	for surface, generated := range configs {
 		for _, absent := range []string{"range=user|session", "range=user|git", "internal status git", " %Y-%m-%d %H:%M", "range=user|kube", "status kube"} {

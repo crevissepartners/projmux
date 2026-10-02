@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -262,6 +263,12 @@ func TestSettingsStaticBuildersBypassLiteralReverseLookup(t *testing.T) {
 		}
 	}
 	constValues := map[string]string{}
+	// App sources name the key binding constants through the keybinding
+	// subpackage selector; resolve those too so a row whose Value is built from
+	// them stays checked instead of silently falling out of the sweep.
+	for name, value := range settingsTestSubpackageConstants(t, "keybinding") {
+		constValues["keybinding."+name] = value
+	}
 	for changed := true; changed; {
 		changed = false
 		for name, expression := range constExpressions {
@@ -375,9 +382,68 @@ func settingsTestStringExpression(expression ast.Expr, constants map[string]stri
 		return left + right, leftOK && rightOK
 	case *ast.ParenExpr:
 		return settingsTestStringExpression(expression.X, constants)
+	case *ast.SelectorExpr:
+		pkg, ok := expression.X.(*ast.Ident)
+		if !ok {
+			return "", false
+		}
+		value, ok := constants[pkg.Name+"."+expression.Sel.Name]
+		return value, ok
 	default:
 		return "", false
 	}
+}
+
+// settingsTestSubpackageConstants resolves the string constants declared in
+// the non-test sources of one internal/app subpackage.
+func settingsTestSubpackageConstants(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s package: %v", dir, err)
+	}
+	expressions := map[string]ast.Expr{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s/%s: %v", dir, name, err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				valueSpec := spec.(*ast.ValueSpec)
+				for i, ident := range valueSpec.Names {
+					if i < len(valueSpec.Values) {
+						expressions[ident.Name] = valueSpec.Values[i]
+					}
+				}
+			}
+		}
+	}
+	values := map[string]string{}
+	for changed := true; changed; {
+		changed = false
+		for name, expression := range expressions {
+			if _, ok := values[name]; ok {
+				continue
+			}
+			if value, ok := settingsTestStringExpression(expression, values); ok {
+				values[name] = value
+				changed = true
+			}
+		}
+	}
+	if len(values) == 0 {
+		t.Fatalf("no string constants resolved in %s; the label sweep would not see them", dir)
+	}
+	return values
 }
 
 func settingsTestCallName(expr ast.Expr) string {
@@ -964,8 +1030,8 @@ func TestSettingsLegacyVisibleCopyIsRetired(t *testing.T) {
 	// The keymap action labels carry the canonical resource nouns too: the
 	// retired Settings spellings that are not runtime surface names are gone
 	// from them as well.
-	for _, action := range defaultKeyBindingCatalog() {
-		label := keyBindingDisplayName(action)
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
+		label := keybinding.KeyBindingDisplayName(action)
 		for _, legacy := range []string{
 			"Kill Session", "New window", "AI panes", "Notify Sidebar", "Session Popup",
 			"Session State", "Delete Session",
@@ -985,20 +1051,20 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 
 	// Keymap action IDs keep their shipped spelling even though every display
 	// label changed.
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	for _, id := range []string{
 		"new-window", "Sidebar:KillSession", "ai-split-right", "ai-split-claude-down",
 		"current-project-session", "SessionPopup:KillSession", "NotifySidebar:ClearAll",
 		"Settings:SwitchTabNext", "previous-window", "select-pane-left",
 	} {
-		action, ok := keyBindingActionByID(catalog, id)
+		action, ok := keybinding.KeyBindingActionByID(catalog, id)
 		if !ok {
 			t.Fatalf("keymap action %q disappeared from the catalog", id)
 		}
 		if action.ID != id {
 			t.Fatalf("keymap action id = %q, want unchanged %q", action.ID, id)
 		}
-		if label := keyBindingDisplayName(action); label == "" || label == id {
+		if label := keybinding.KeyBindingDisplayName(action); label == "" || label == id {
 			t.Fatalf("keymap action %q display label = %q, want a distinct product label", id, label)
 		}
 	}
@@ -1028,17 +1094,17 @@ func TestSettingsDisplayLabelsKeepMachineIdentifiers(t *testing.T) {
 func TestSettingsKeybindingCategoryExhaustiveness(t *testing.T) {
 	t.Parallel()
 
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	assigned := map[string]int{}
 	for _, action := range catalog {
 		if strings.TrimSpace(action.DisplayName) == "" {
 			t.Fatalf("keymap action %q has no canonical display name", action.ID)
 		}
-		category, ok := keyBindingActionCategory(action)
+		category, ok := keybinding.KeyBindingActionCategory(action)
 		if !ok {
 			t.Fatalf("keymap action %q has no navigation category", action.ID)
 		}
-		if category == keyBindingCategoryInput {
+		if category == keybinding.KeyBindingCategoryInput {
 			t.Fatalf("keymap action %q is assigned to the input-delivery category, which holds no keymap action", action.ID)
 		}
 		if _, ok := keyBindingCategoryLabelByID(category); !ok {
@@ -1046,10 +1112,10 @@ func TestSettingsKeybindingCategoryExhaustiveness(t *testing.T) {
 		}
 		assigned[action.ID]++
 		if action.Surface != "" {
-			if category != keyBindingCategorySurfaces {
+			if category != keybinding.KeyBindingCategorySurfaces {
 				t.Fatalf("surface action %q is in category %q, want the sidebar/picker category", action.ID, category)
 			}
-			if _, ok := keyBindingSurfaceLabel(action.Surface); !ok {
+			if _, ok := keybinding.KeyBindingSurfaceLabel(action.Surface); !ok {
 				t.Fatalf("surface action %q has surface %q with no display label", action.ID, action.Surface)
 			}
 		}
@@ -1399,11 +1465,11 @@ func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 		{"Sidebar:KillSession", []string{"Project", "stop only the Project runtime", "Project UID", "desired Window/Pane topology"}},
 		{"SessionPopup:KillSession", []string{"Session", "stop only the runtime Session", "managed Registry identity", "desired topology"}},
 	} {
-		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), tc.id)
+		action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), tc.id)
 		if !ok {
 			t.Fatalf("catalog missing %q", tc.id)
 		}
-		semantics, ok := keyBindingActionSemanticsFor(action)
+		semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 		if !ok {
 			t.Fatalf("action %q has no declared semantics", tc.id)
 		}
@@ -1432,23 +1498,23 @@ func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 
 	// Every interactive split declares an explicit anchor: none of them may
 	// leave the anchor to a stale primary Pane or to the focused Pane.
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	for _, id := range []string{
 		"ai-split-right", "ai-split-down", "ai-split-codex-right", "ai-split-codex-down",
 		"ai-split-claude-right", "ai-split-claude-down", "ai-split-shell-right", "ai-split-shell-down",
 	} {
-		action, ok := keyBindingActionByID(catalog, id)
+		action, ok := keybinding.KeyBindingActionByID(catalog, id)
 		if !ok {
 			t.Fatalf("catalog missing %q", id)
 		}
-		semantics, ok := keyBindingActionSemanticsFor(action)
+		semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 		if !ok {
 			t.Fatalf("interactive split %q has no declared semantics", id)
 		}
-		if semantics.Anchor != keyBindingAnchorCurrentPaneSplitTarget {
+		if semantics.Anchor != keybinding.KeyBindingAnchorCurrentPaneSplitTarget {
 			t.Fatalf("interactive split %q anchor = %q, want the explicit current Pane split target", id, semantics.Anchor)
 		}
-		if semantics.Placement != keyBindingPlacementRight && semantics.Placement != keyBindingPlacementDown {
+		if semantics.Placement != keybinding.KeyBindingPlacementRight && semantics.Placement != keybinding.KeyBindingPlacementDown {
 			t.Fatalf("interactive split %q placement = %q, want right or down", id, semantics.Placement)
 		}
 	}

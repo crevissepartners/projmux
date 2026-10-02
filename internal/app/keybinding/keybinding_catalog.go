@@ -1,4 +1,7 @@
-package app
+// Package keybinding owns the key binding catalog, the user keymap store and
+// its schema migration, and the tmux bind/unbind lines rendered from them. It
+// does not import internal/app; app wires these into its commands.
+package keybinding
 
 import (
 	"fmt"
@@ -6,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/app/initcmd"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -14,24 +16,24 @@ import (
 type keyBindingScope string
 
 const (
-	keyBindingScopeStandalone keyBindingScope = "standalone"
-	keyBindingScopeApp        keyBindingScope = "app"
+	KeyBindingScopeStandalone keyBindingScope = "standalone"
+	KeyBindingScopeApp        keyBindingScope = "app"
 )
 
 type tmuxBindingKind string
 
 const (
-	tmuxBindingPopupToggle      tmuxBindingKind = "popup-toggle"
-	tmuxBindingRunProjmux       tmuxBindingKind = "run-projmux"
-	tmuxBindingCommand          tmuxBindingKind = "command"
-	tmuxBindingCommandPrompt    tmuxBindingKind = "command-prompt"
-	tmuxBindingPromptRunProjmux tmuxBindingKind = "prompt-run-projmux"
-	// tmuxBindingManagedDelete replaces one stock tmux close key. The binding
+	TmuxBindingPopupToggle      tmuxBindingKind = "popup-toggle"
+	TmuxBindingRunProjmux       tmuxBindingKind = "run-projmux"
+	TmuxBindingCommand          tmuxBindingKind = "command"
+	TmuxBindingCommandPrompt    tmuxBindingKind = "command-prompt"
+	TmuxBindingPromptRunProjmux tmuxBindingKind = "prompt-run-projmux"
+	// TmuxBindingManagedDelete replaces one stock tmux close key. The binding
 	// branches on the target's identity mirror: a mirrored target runs the
 	// projmux confirm route, and a target without the mirror runs tmux's own
 	// stock binding byte for byte. It is the only kind whose PrefixChord is
 	// rendered as a `bind-key`.
-	tmuxBindingManagedDelete tmuxBindingKind = "managed-delete"
+	TmuxBindingManagedDelete tmuxBindingKind = "managed-delete"
 )
 
 type keyBindingTier string
@@ -39,9 +41,9 @@ type keyBindingTier string
 const (
 	keyBindingTierGuaranteedLaunchDefault keyBindingTier = "guaranteed-launch-default"
 	keyBindingTierUserConfigurableDirect  keyBindingTier = "user-configurable-direct-binding"
-	keyBindingTierTransportDependent      keyBindingTier = "transport-dependent-special-chord"
+	KeyBindingTierTransportDependent      keyBindingTier = "transport-dependent-special-chord"
 	keyBindingTierAmbiguousTerminalChord  keyBindingTier = "ambiguous-terminal-chord"
-	keyBindingTierNativePickerInternal    keyBindingTier = "native-picker-internal-command"
+	KeyBindingTierNativePickerInternal    keyBindingTier = "native-picker-internal-command"
 	keyBindingTierPopupLaunchCloseAlias   keyBindingTier = "popup-launch-close-alias"
 )
 
@@ -50,7 +52,7 @@ type keyBindingActionKind string
 const (
 	keyBindingActionTogglePopup    keyBindingActionKind = "toggle-popup"
 	keyBindingActionCommand        keyBindingActionKind = "command"
-	keyBindingActionPickerInternal keyBindingActionKind = "picker-internal"
+	KeyBindingActionPickerInternal keyBindingActionKind = "picker-internal"
 )
 
 // keyBindingActionSemantics is the product meaning projected into Settings
@@ -63,8 +65,8 @@ type keyBindingActionSemantics struct {
 }
 
 const (
-	paneRenameActionID        = "rename-pane-label"
-	retiredPaneRenameActionID = "rename-pane-topic"
+	PaneRenameActionID        = "rename-pane-label"
+	RetiredPaneRenameActionID = "rename-pane-topic"
 )
 
 // The generated Window and Pane rename bindings hand the raw prompt response to
@@ -88,19 +90,28 @@ const (
 // shell parse of the name. Names cannot contain `#`, so a response that still
 // holds one after expansion is refused.
 const (
-	generatedRenameStdinFlag        = "--name-stdin"
-	generatedRenameResponseSentinel = "name="
-	generatedRenameHeredocDelimiter = "PROJMUX_RENAME_RESPONSE"
-	generatedRenameResponseHeredoc  = generatedRenameStdinFlag + " <<'" + generatedRenameHeredocDelimiter + `'\n` +
-		generatedRenameResponseSentinel + `%%%\n` + generatedRenameHeredocDelimiter
+	GeneratedRenameStdinFlag        = "--name-stdin"
+	GeneratedRenameResponseSentinel = "name="
+	GeneratedRenameHeredocDelimiter = "PROJMUX_RENAME_RESPONSE"
+	generatedRenameResponseHeredoc  = GeneratedRenameStdinFlag + " <<'" + GeneratedRenameHeredocDelimiter + `'\n` +
+		GeneratedRenameResponseSentinel + `%%%\n` + GeneratedRenameHeredocDelimiter
 
-	windowRenameRoute = "internal tmux window-rename --client #{client_tty} --anchor #{pane_id}"
-	paneRenameRoute   = "internal tmux pane-rename --client #{client_tty} --anchor #{pane_id}"
+	WindowRenameRoute = "internal tmux window-rename --client #{client_tty} --anchor #{pane_id}"
+	PaneRenameRoute   = "internal tmux pane-rename --client #{client_tty} --anchor #{pane_id}"
 )
 
-// tmuxPaneEnvPrefix carries the exact pane a key binding was pressed in into
+const (
+	// CanonicalCreateTargetClientEnv names the tmux client a key binding was
+	// pressed on for the projmux process run-shell spawns.
+	CanonicalCreateTargetClientEnv = "PROJMUX_POPUP_TARGET_CLIENT"
+	// ResourceInspectorPopupMode is the popup-toggle mode of the resource
+	// inspector.
+	ResourceInspectorPopupMode = "resource-inspector"
+)
+
+// TmuxPaneEnvPrefix carries the exact pane a key binding was pressed in into
 // the projmux process run-shell spawns. See renderTmuxBindingBody.
-const tmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} " + canonicalCreateTargetClientEnv + "=#{client_tty} "
+const TmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} " + CanonicalCreateTargetClientEnv + "=#{client_tty} "
 
 // The two stock tmux close keys projmux replaces. The stock bodies are tmux
 // 3.6's compiled-in defaults, verified against an isolated `tmux -f /dev/null`
@@ -118,18 +129,18 @@ const (
 	tmuxStockKillPaneBinding   = `confirm-before -p "kill-pane #P? (y/n)" kill-pane`
 	tmuxStockKillWindowBinding = `confirm-before -p "kill-window #W? (y/n)" kill-window`
 
-	managedDeletePaneRoute   = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} pane"
-	managedDeleteWindowRoute = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} window"
+	ManagedDeletePaneRoute   = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} pane"
+	ManagedDeleteWindowRoute = "internal tmux delete-confirm --client #{client_tty} --anchor #{pane_id} window"
 	// The guards read the same uid mirrors the canonical routes resolve. A
 	// Window mirror is a window option, so a Pane format lookup inherits it.
-	managedDeletePaneGuard   = "#{" + tmuxopts.PaneUID + "}"
-	managedDeleteWindowGuard = "#{" + tmuxopts.WindowUID + "}"
+	ManagedDeletePaneGuard   = "#{" + tmuxopts.PaneUID + "}"
+	ManagedDeleteWindowGuard = "#{" + tmuxopts.WindowUID + "}"
 )
 
-// keyBindingAction is the in-app source of truth for built-in key actions.
+// KeyBindingAction is the in-app source of truth for built-in key actions.
 // Terminal init adapters and tmux config rendering derive their concrete
 // trigger/action tables from these entries.
-type keyBindingAction struct {
+type KeyBindingAction struct {
 	// ID is the runtime identity of the action. Settings navigation routes,
 	// i18n search keys and every in-process lookup key off it, and the v0
 	// keymap schema stored it directly as the `[bindings.<id>]` table name.
@@ -190,21 +201,21 @@ type keyBindingAction struct {
 	ProbePlain  string
 }
 
-func defaultKeyBindingCatalog() []keyBindingAction {
-	return []keyBindingAction{
+func DefaultKeyBindingCatalog() []KeyBindingAction {
+	return []KeyBindingAction{
 		{
 			ID:              "ProjectSidebarToggle",
 			DisplayName:     "Open / close Project Sidebar",
-			Category:        keyBindingCategoryLaunch,
+			Category:        KeyBindingCategoryLaunch,
 			Semantics:       keyBindingActionSemantics{TargetKind: "Project", ResultKind: "open or close the Project Sidebar", Placement: keyBindingPlacementPopup},
 			CanonicalID:     "project-sidebar.toggle",
 			Description:     "Project sidebar",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
-			Scope:           keyBindingScopeStandalone,
+			Scope:           KeyBindingScopeStandalone,
 			PlainChord:      "M-1",
 			PrefixChord:     "F",
-			TmuxKind:        tmuxBindingPopupToggle,
+			TmuxKind:        TmuxBindingPopupToggle,
 			TmuxBody:        "sessionizer-sidebar",
 			Toggleable:      true,
 			PlainBindOrder:  10,
@@ -224,15 +235,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "NotifySidebarToggle",
 			DisplayName:    "Open / close Notification Sidebar",
-			Category:       keyBindingCategoryLaunch,
+			Category:       KeyBindingCategoryLaunch,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "open or close the Notification Sidebar", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "notification-sidebar.toggle",
 			Description:    "Notify sidebar",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
-			Scope:          keyBindingScopeStandalone,
+			Scope:          KeyBindingScopeStandalone,
 			PlainChord:     "M-2",
-			TmuxKind:       tmuxBindingPopupToggle,
+			TmuxKind:       TmuxBindingPopupToggle,
 			TmuxBody:       "notify-sidebar",
 			Toggleable:     true,
 			PlainBindOrder: 20,
@@ -251,43 +262,43 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopupToggle",
 			DisplayName: "Open / close Session Picker",
-			Category:    keyBindingCategoryLaunch,
+			Category:    KeyBindingCategoryLaunch,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Session", ResultKind: "open or close the Session Picker", Placement: keyBindingPlacementPopup},
 			CanonicalID: "session-picker.toggle",
 			Description: "Existing session popup",
 			Kind:        keyBindingActionTogglePopup,
 			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeStandalone,
-			TmuxKind:    tmuxBindingPopupToggle,
+			Scope:       KeyBindingScopeStandalone,
+			TmuxKind:    TmuxBindingPopupToggle,
 			TmuxBody:    "session-popup",
 			Toggleable:  true,
 		},
 		{
 			ID:          "Resources:Open",
 			DisplayName: "Open Resource Inspector",
-			Category:    keyBindingCategoryLaunch,
+			Category:    KeyBindingCategoryLaunch,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Project, Window, Pane", ResultKind: "open the read-only Resource Inspector", Placement: keyBindingPlacementPopup},
 			CanonicalID: "resource-inspector.open",
 			Description: "Open the read-only Project, Window, and Pane resource inspector",
 			Kind:        keyBindingActionTogglePopup,
 			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeStandalone,
-			TmuxKind:    tmuxBindingPopupToggle,
-			TmuxBody:    resourceInspectorPopupMode,
+			Scope:       KeyBindingScopeStandalone,
+			TmuxKind:    TmuxBindingPopupToggle,
+			TmuxBody:    ResourceInspectorPopupMode,
 			Toggleable:  true,
 		},
 		{
 			ID:             "RecentWindows:Open",
 			DisplayName:    "Open Recent Windows",
-			Category:       keyBindingCategoryLaunch,
+			Category:       KeyBindingCategoryLaunch,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "open the recent Windows queue", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "recent-windows.open",
 			Description:    "Recent windows queue across projects; switches to a live window without restoring a historical pane, distinct from last-pane and the existing-session popup.",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
-			Scope:          keyBindingScopeStandalone,
+			Scope:          KeyBindingScopeStandalone,
 			PlainChord:     "M-3",
-			TmuxKind:       tmuxBindingPopupToggle,
+			TmuxKind:       TmuxBindingPopupToggle,
 			TmuxBody:       "recent-windows",
 			Toggleable:     true,
 			PlainBindOrder: 30,
@@ -306,15 +317,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "AISplitPickerToggle",
 			DisplayName:     "Open Agent / Pane Launcher",
-			Category:        keyBindingCategoryLaunch,
+			Category:        KeyBindingCategoryLaunch,
 			Semantics:       keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "choose a launch target; the chosen target then creates", Placement: keyBindingPlacementPopup},
 			CanonicalID:     "agent-pane-launcher.toggle",
 			Description:     "Toggle the popup picker for choosing an AI split mode",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierUserConfigurableDirect,
-			Scope:           keyBindingScopeStandalone,
+			Scope:           KeyBindingScopeStandalone,
 			PlainChord:      "M-7",
-			TmuxKind:        tmuxBindingPopupToggle,
+			TmuxKind:        TmuxBindingPopupToggle,
 			TmuxBody:        "ai-split-picker-right",
 			TmuxBodyAliases: []string{"ai-split-picker-down"},
 			Toggleable:      true,
@@ -334,15 +345,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "SettingsToggle",
 			DisplayName:    "Open / close Settings",
-			Category:       keyBindingCategoryLaunch,
+			Category:       KeyBindingCategoryLaunch,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Settings", ResultKind: "open or close Settings", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "settings.toggle",
 			Description:    "Settings",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
-			Scope:          keyBindingScopeStandalone,
+			Scope:          KeyBindingScopeStandalone,
 			PlainChord:     "M-5",
-			TmuxKind:       tmuxBindingPopupToggle,
+			TmuxKind:       TmuxBindingPopupToggle,
 			TmuxBody:       "ai-split-settings",
 			Toggleable:     true,
 			PlainBindOrder: 50,
@@ -361,15 +372,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "AIResumePickerToggle",
 			DisplayName:     "Open Agent Resume Picker",
-			Category:        keyBindingCategoryLaunch,
+			Category:        KeyBindingCategoryLaunch,
 			Semantics:       keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "resume one existing Offline or Failed Agent; never creates an Agent", Placement: keyBindingPlacementPopup},
 			CanonicalID:     "agent-resume-picker.toggle",
 			Description:     "Toggle the popup picker for resuming AI sessions",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
-			Scope:           keyBindingScopeStandalone,
+			Scope:           KeyBindingScopeStandalone,
 			PlainChord:      "M-4",
-			TmuxKind:        tmuxBindingPopupToggle,
+			TmuxKind:        TmuxBindingPopupToggle,
 			TmuxBody:        "ai-split-resume-right",
 			TmuxBodyAliases: []string{"ai-split-resume-down"},
 			Toggleable:      true,
@@ -389,15 +400,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ProjectSwitcherToggle",
 			DisplayName:    "Open Project Picker",
-			Category:       keyBindingCategoryLaunch,
+			Category:       KeyBindingCategoryLaunch,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Project", ResultKind: "open the Project Picker", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "project-picker.toggle",
 			Description:    "Project switcher popup",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
+			Scope:          KeyBindingScopeStandalone,
 			PlainChord:     "",
-			TmuxKind:       tmuxBindingPopupToggle,
+			TmuxKind:       TmuxBindingPopupToggle,
 			TmuxBody:       "sessionizer",
 			Toggleable:     true,
 			PlainBindOrder: 60,
@@ -409,16 +420,16 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "rename-window",
 			DisplayName:    "Rename Window",
-			Category:       keyBindingCategoryNavigation,
+			Category:       KeyBindingCategoryNavigation,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "rename the focused Window in the Registry", Placement: keyBindingPlacementInFocusedWindow},
 			CanonicalID:    "window.rename",
 			Description:    "Rename the current Window in the Registry, its name mirror, and its tmux window name",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
+			Scope:          KeyBindingScopeStandalone,
 			PlainChord:     "",
-			TmuxKind:       tmuxBindingPromptRunProjmux,
-			TmuxBody:       windowRenameRoute + " " + generatedRenameResponseHeredoc,
+			TmuxKind:       TmuxBindingPromptRunProjmux,
+			TmuxBody:       WindowRenameRoute + " " + generatedRenameResponseHeredoc,
 			TmuxPromptArgs: "-I \"#{window_name}\"",
 			PlainBindOrder: 70,
 			ProbeOrder:     100,
@@ -427,18 +438,18 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\r",
 		},
 		{
-			ID:             paneRenameActionID,
+			ID:             PaneRenameActionID,
 			DisplayName:    "Rename Pane",
-			Category:       keyBindingCategoryNavigation,
+			Category:       KeyBindingCategoryNavigation,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "rename the focused Pane in the Registry", Placement: keyBindingPlacementInFocusedWindow},
 			CanonicalID:    "pane.rename",
 			Description:    "Rename the current Pane in the Registry and its pane label mirror",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingPromptRunProjmux,
-			TmuxBody:       paneRenameRoute + " " + generatedRenameResponseHeredoc,
-			TmuxPromptArgs: "-p \"pane label:\" -I \"#{" + paneLabelOption + "}\"",
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingPromptRunProjmux,
+			TmuxBody:       PaneRenameRoute + " " + generatedRenameResponseHeredoc,
+			TmuxPromptArgs: "-p \"pane label:\" -I \"#{" + tmuxopts.PaneName + "}\"",
 			ProbeOrder:     110,
 			ProbeLabel:     "Ctrl-Shift-M",
 			ProbeAction:    "Rename pane",
@@ -446,14 +457,14 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "ai-split-right",
 			DisplayName: "Launch default target right",
-			Category:    keyBindingCategoryAgentPane,
-			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:    KeyBindingCategoryAgentPane,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: KeyBindingPlacementRight, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID: "agent-pane.launch-default.right",
 			Description: "Open a new AI split to the right",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeStandalone,
-			TmuxKind:    tmuxBindingRunProjmux,
+			Scope:       KeyBindingScopeStandalone,
+			TmuxKind:    TmuxBindingRunProjmux,
 			TmuxBody:    "internal agent-pane launch-default right",
 			WTID:        "User.projmuxAISplitRight",
 			WTKeys:      "ctrl+shift+r",
@@ -466,14 +477,14 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "ai-split-down",
 			DisplayName: "Launch default target down",
-			Category:    keyBindingCategoryAgentPane,
-			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:    KeyBindingCategoryAgentPane,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: KeyBindingPlacementDown, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID: "agent-pane.launch-default.down",
 			Description: "Open a new AI split below",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeStandalone,
-			TmuxKind:    tmuxBindingRunProjmux,
+			Scope:       KeyBindingScopeStandalone,
+			TmuxKind:    TmuxBindingRunProjmux,
 			TmuxBody:    "internal agent-pane launch-default down",
 			WTID:        "User.projmuxAISplitDown",
 			WTKeys:      "ctrl+shift+l",
@@ -486,113 +497,113 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-codex-right",
 			DisplayName:    "Create Codex Agent right",
-			Category:       keyBindingCategoryAgentPane,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:       KeyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: KeyBindingPlacementRight, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.codex.right",
 			Description:    "Open a Codex split to the right without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingRunProjmux,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal agent-pane launch-provider codex right",
 			PlainBindOrder: 82,
 		},
 		{
 			ID:             "ai-split-codex-down",
 			DisplayName:    "Create Codex Agent down",
-			Category:       keyBindingCategoryAgentPane,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:       KeyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: KeyBindingPlacementDown, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.codex.down",
 			Description:    "Open a Codex split below without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingRunProjmux,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal agent-pane launch-provider codex down",
 			PlainBindOrder: 83,
 		},
 		{
 			ID:             "ai-split-claude-right",
 			DisplayName:    "Create Claude Agent right",
-			Category:       keyBindingCategoryAgentPane,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:       KeyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: KeyBindingPlacementRight, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.claude.right",
 			Description:    "Open a Claude split to the right without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingRunProjmux,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal agent-pane launch-provider claude right",
 			PlainBindOrder: 84,
 		},
 		{
 			ID:             "ai-split-claude-down",
 			DisplayName:    "Create Claude Agent down",
-			Category:       keyBindingCategoryAgentPane,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:       KeyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: KeyBindingPlacementDown, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.claude.down",
 			Description:    "Open a Claude split below without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingRunProjmux,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal agent-pane launch-provider claude down",
 			PlainBindOrder: 85,
 		},
 		{
 			ID:             "ai-split-shell-right",
 			DisplayName:    "Create Shell Pane right",
-			Category:       keyBindingCategoryAgentPane,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:       KeyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: KeyBindingPlacementRight, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "pane.create.shell.right",
 			Description:    "Open a shell split to the right without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingRunProjmux,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal agent-pane launch-shell right",
 			PlainBindOrder: 86,
 		},
 		{
 			ID:             "ai-split-shell-down",
 			DisplayName:    "Create Shell Pane down",
-			Category:       keyBindingCategoryAgentPane,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+			Category:       KeyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: KeyBindingPlacementDown, Anchor: KeyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "pane.create.shell.down",
 			Description:    "Open a shell split below without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeStandalone,
-			TmuxKind:       tmuxBindingRunProjmux,
+			Scope:          KeyBindingScopeStandalone,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal agent-pane launch-shell down",
 			PlainBindOrder: 87,
 		},
 		{
 			ID:                  "current-project-session",
 			DisplayName:         "Open Project for Current Directory",
-			Category:            keyBindingCategoryNavigation,
+			Category:            KeyBindingCategoryNavigation,
 			Semantics:           keyBindingActionSemantics{TargetKind: "Project", ResultKind: "ensure and attach the Project runtime derived from the current Pane cwd", Anchor: keyBindingAnchorCurrentPaneCwdInput},
 			HandlerBoundaryNote: "the retained switch shortcut receives the current Pane cwd and owns the ensure/attach outcome",
 			CanonicalID:         "project.open-for-current-directory",
 			Description:         "Jump to current pane project session",
 			Kind:                keyBindingActionCommand,
 			Tier:                keyBindingTierUserConfigurableDirect,
-			Scope:               keyBindingScopeStandalone,
-			TmuxKind:            tmuxBindingRunProjmux,
+			Scope:               KeyBindingScopeStandalone,
+			TmuxKind:            TmuxBindingRunProjmux,
 			TmuxBody:            "switch open #{q:pane_current_path}",
 		},
 		{
 			ID:             "new-window",
 			DisplayName:    "Create Window",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "new Window with its initial Pane", Placement: "next index in the current Session", Anchor: keyBindingAnchorCurrentPaneCwdSeed},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "new Window with its initial Pane", Placement: "next index in the current Session", Anchor: KeyBindingAnchorCurrentPaneCwdSeed},
 			CanonicalID:    "window.create",
 			Description:    "New tmux window in the current pane directory",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeApp,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "",
-			TmuxKind:       tmuxBindingRunProjmux,
+			TmuxKind:       TmuxBindingRunProjmux,
 			TmuxBody:       "internal tmux window-create --client #{client_tty} --anchor #{pane_id}",
 			PlainBindOrder: 50,
 			WTID:           "User.projmuxNewWindow",
@@ -608,18 +619,18 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// Replaces tmux's stock `prefix x`. See tmuxStockKillPaneBinding.
 			ID:                  "delete-pane",
 			DisplayName:         "Delete Pane",
-			Category:            keyBindingCategoryNavigation,
+			Category:            KeyBindingCategoryNavigation,
 			Semantics:           keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "delete the focused managed Pane and its owning Agent from the Registry after confirmation; a Pane without a Registry mirror keeps tmux's stock prefix binding", Placement: keyBindingPlacementInFocusedWindow, Anchor: keyBindingAnchorCurrentPaneDeleteTarget},
 			HandlerBoundaryNote: "a mirrored Pane confirms on the exact client and reaches the Pane menu Kill route, canonical delete pane; a Pane without the mirror runs tmux's own stock binding",
 			CanonicalID:         "pane.delete",
 			Description:         "Delete the current managed Pane from the Registry",
 			Kind:                keyBindingActionCommand,
 			Tier:                keyBindingTierUserConfigurableDirect,
-			Scope:               keyBindingScopeApp,
+			Scope:               KeyBindingScopeApp,
 			PrefixChord:         tmuxStockPanePrefixChord,
-			TmuxKind:            tmuxBindingManagedDelete,
-			TmuxBody:            managedDeletePaneRoute,
-			TmuxManagedGuard:    managedDeletePaneGuard,
+			TmuxKind:            TmuxBindingManagedDelete,
+			TmuxBody:            ManagedDeletePaneRoute,
+			TmuxManagedGuard:    ManagedDeletePaneGuard,
 			TmuxStockBody:       tmuxStockKillPaneBinding,
 			PrefixBindOrder:     10,
 		},
@@ -627,18 +638,18 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// Replaces tmux's stock `prefix &`. See tmuxStockKillWindowBinding.
 			ID:                  "delete-window",
 			DisplayName:         "Delete Window",
-			Category:            keyBindingCategoryNavigation,
+			Category:            KeyBindingCategoryNavigation,
 			Semantics:           keyBindingActionSemantics{TargetKind: "Window", ResultKind: "delete the focused managed Window with its Panes and Agents from the Registry after confirmation; a Window without a Registry mirror keeps tmux's stock prefix binding", Placement: keyBindingPlacementInFocusedWindow, Anchor: keyBindingAnchorCurrentPaneDeleteTarget},
 			HandlerBoundaryNote: "a mirrored Window confirms on the exact client and reaches canonical delete window; a Window without the mirror runs tmux's own stock binding",
 			CanonicalID:         "window.delete",
 			Description:         "Delete the current managed Window from the Registry",
 			Kind:                keyBindingActionCommand,
 			Tier:                keyBindingTierUserConfigurableDirect,
-			Scope:               keyBindingScopeApp,
+			Scope:               KeyBindingScopeApp,
 			PrefixChord:         tmuxStockWindowPrefixChord,
-			TmuxKind:            tmuxBindingManagedDelete,
-			TmuxBody:            managedDeleteWindowRoute,
-			TmuxManagedGuard:    managedDeleteWindowGuard,
+			TmuxKind:            TmuxBindingManagedDelete,
+			TmuxBody:            ManagedDeleteWindowRoute,
+			TmuxManagedGuard:    ManagedDeleteWindowGuard,
 			TmuxStockBody:       tmuxStockKillWindowBinding,
 			PrefixBindOrder:     20,
 		},
@@ -652,15 +663,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// xterm sequence.
 			ID:             "previous-window",
 			DisplayName:    "Focus previous Window",
-			Category:       keyBindingCategoryNavigation,
+			Category:       KeyBindingCategoryNavigation,
 			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "focus the previous Window", Placement: keyBindingPlacementLeft},
 			CanonicalID:    "window.focus-previous",
 			Description:    "Previous tmux window",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeApp,
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "M-S-Left",
-			TmuxKind:       tmuxBindingCommand,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "previous-window",
 			PlainBindOrder: 60,
 			WTID:           "User.projmuxPrevWindow",
@@ -677,15 +688,15 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// next-window chord (xterm sequence `\x1b[1;4C`).
 			ID:             "next-window",
 			DisplayName:    "Focus next Window",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "focus the next Window", Placement: keyBindingPlacementRight},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "focus the next Window", Placement: KeyBindingPlacementRight},
 			CanonicalID:    "window.focus-next",
 			Description:    "Next tmux window",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeApp,
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "M-S-Right",
-			TmuxKind:       tmuxBindingCommand,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "next-window",
 			PlainBindOrder: 70,
 			WTID:           "User.projmuxNextWindow",
@@ -700,306 +711,306 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "select-pane-left",
 			DisplayName:    "Focus Pane left",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementLeft, Anchor: keyBindingAnchorActiveTmuxPane},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementLeft, Anchor: KeyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-left",
 			Description:    "Move focus to the left pane",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeApp,
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "M-Left",
-			TmuxKind:       tmuxBindingCommand,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "select-pane -L",
 			PlainBindOrder: 10,
 		},
 		{
 			ID:             "select-pane-right",
 			DisplayName:    "Focus Pane right",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorActiveTmuxPane},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: KeyBindingPlacementRight, Anchor: KeyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-right",
 			Description:    "Move focus to the right pane",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeApp,
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "M-Right",
-			TmuxKind:       tmuxBindingCommand,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "select-pane -R",
 			PlainBindOrder: 20,
 		},
 		{
 			ID:             "select-pane-up",
 			DisplayName:    "Focus Pane up",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementUp, Anchor: keyBindingAnchorActiveTmuxPane},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementUp, Anchor: KeyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-up",
 			Description:    "Move focus to the pane above",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeApp,
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "M-Up",
-			TmuxKind:       tmuxBindingCommand,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "select-pane -U",
 			PlainBindOrder: 30,
 		},
 		{
 			ID:             "select-pane-down",
 			DisplayName:    "Focus Pane down",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorActiveTmuxPane},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: KeyBindingPlacementDown, Anchor: KeyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-down",
 			Description:    "Move focus to the pane below",
 			Kind:           keyBindingActionCommand,
-			Tier:           keyBindingTierTransportDependent,
-			Scope:          keyBindingScopeApp,
+			Tier:           KeyBindingTierTransportDependent,
+			Scope:          KeyBindingScopeApp,
 			PlainChord:     "M-Down",
-			TmuxKind:       tmuxBindingCommand,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "select-pane -D",
 			PlainBindOrder: 40,
 		},
 		{
 			ID:             "last-pane",
 			DisplayName:    "Focus last Pane",
-			Category:       keyBindingCategoryNavigation,
-			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the previously active Pane", Anchor: keyBindingAnchorActiveTmuxPane},
+			Category:       KeyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the previously active Pane", Anchor: KeyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-last",
 			Description:    "Return to the previously active pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
-			Scope:          keyBindingScopeApp,
-			TmuxKind:       tmuxBindingCommand,
+			Scope:          KeyBindingScopeApp,
+			TmuxKind:       TmuxBindingCommand,
 			TmuxBody:       "last-pane",
 			PlainBindOrder: 45,
 		},
 		{
 			ID:                  "toggle-mouse",
 			DisplayName:         "Toggle mouse",
-			Category:            keyBindingCategoryNavigation,
+			Category:            KeyBindingCategoryNavigation,
 			Semantics:           keyBindingActionSemantics{TargetKind: "tmux runtime", ResultKind: "turn tmux mouse mode on or off for the running server"},
 			HandlerBoundaryNote: "tmux `if-shell` flips the server-wide mouse option",
 			CanonicalID:         "mouse.toggle",
 			Description:         "Toggle tmux mouse mode",
 			Kind:                keyBindingActionCommand,
 			Tier:                keyBindingTierUserConfigurableDirect,
-			Scope:               keyBindingScopeApp,
-			TmuxKind:            tmuxBindingCommand,
+			Scope:               KeyBindingScopeApp,
+			TmuxKind:            TmuxBindingCommand,
 			TmuxBody:            "if -F \"#{mouse}\" \"set -g mouse off \\; display-message 'tmux mouse: off'\" \"set -g mouse on \\; display-message 'tmux mouse: on'\"",
 		},
 		{
 			ID:          "Resources:ToggleColumnProfile",
 			DisplayName: "Toggle compact / wide columns",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Registry", ResultKind: "toggle compact and wide columns for this open picker", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "resource-inspector.columns.toggle",
 			Description: "Toggle compact and wide columns for this open picker; reopen starts compact",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "Resources",
 			PlainChord:  "M-w",
 		},
 		{
 			ID:          "RuntimeDiagnostics:ToggleColumnProfile",
 			DisplayName: "Toggle compact / wide columns",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Runtime", ResultKind: "toggle compact and wide columns for this open picker", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "runtime-diagnostics.columns.toggle",
 			Description: "Toggle compact and wide columns for this open picker; reopen starts compact",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "RuntimeDiagnostics",
 			PlainChord:  "M-w",
 		},
 		{
 			ID:          "Sidebar:PinProject",
 			DisplayName: "Pin / unpin Project",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Project", ResultKind: "pin or unpin the focused Project", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "project-sidebar.project.pin-toggle",
 			Description: "Pin or unpin the focused project",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
 			PlainChord:  "M-p",
 		},
 		{
 			ID:          "Sidebar:KillSession",
 			DisplayName: "Stop Project Runtime (keep UID/topology)",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Project", ResultKind: "stop only the Project runtime; keep its Project UID and desired Window/Pane topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "project-sidebar.runtime.stop",
 			Description: "Stop only the focused Project runtime; keep its Project UID and desired Window/Pane topology",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
 			PlainChord:  "C-x",
 		},
 		{
 			ID:          "SessionPopup:KillSession",
 			DisplayName: "Stop Runtime Session (keep managed identity)",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Session", ResultKind: "stop only the runtime Session; keep managed Registry identity and desired topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.runtime.stop",
 			Description: "Stop only the focused runtime Session; keep managed Registry identity and desired topology",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
 			PlainChord:  "C-x",
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
 			DisplayName: "Preview previous Window",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Window", ResultKind: "preview the previous Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.window-previous",
 			Description: "Preview previous window",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
 			PlainChord:  "Left",
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewWindowNext",
 			DisplayName: "Preview next Window",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Window", ResultKind: "preview the next Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.window-next",
 			Description: "Preview next window",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
 			PlainChord:  "Right",
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewPanePrev",
 			DisplayName: "Preview previous Pane",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "preview the previous Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.pane-previous",
 			Description: "Preview previous pane",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
 			PlainChord:  "M-Up",
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewPaneNext",
 			DisplayName: "Preview next Pane",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "preview the next Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.pane-next",
 			Description: "Preview next pane",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
 			PlainChord:  "M-Down",
 		},
 		{
 			ID:          "NotifySidebar:FocusAndAck",
 			DisplayName: "Focus source and acknowledge Notification",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "focus the source Pane and acknowledge the Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "notification-sidebar.focus-and-acknowledge",
 			Description: "Focus and acknowledge the selected notification",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
 			PlainChord:  "Enter",
 		},
 		{
 			ID:          "NotifySidebar:Ack",
 			DisplayName: "Acknowledge Notification",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "acknowledge the focused Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "notification-sidebar.acknowledge",
 			Description: "Acknowledge the selected notification",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
 			PlainChord:  "a",
 		},
 		{
 			ID:          "NotifySidebar:AckGroup",
 			DisplayName: "Acknowledge Notification group",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "acknowledge every visible Notification in the focused group", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "notification-sidebar.acknowledge-group",
 			Description: "Acknowledge every visible notification in the selected group",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
 			PlainChord:  "A",
 		},
 		{
 			ID:          "NotifySidebar:ClearNonCritical",
 			DisplayName: "Clear non-critical Notifications",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "clear non-critical Notifications", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "notification-sidebar.clear-non-critical",
 			Description: "Clear non-critical notifications",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
 			PlainChord:  "x",
 		},
 		{
 			ID:          "NotifySidebar:ClearAll",
 			DisplayName: "Clear all Notifications",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "clear all Notifications", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "notification-sidebar.clear-all",
 			Description: "Clear all notifications",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
 			PlainChord:  "C-x",
 		},
 		{
 			ID:          "NotifySidebar:ClearGone",
 			DisplayName: "Clear gone Notifications",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "clear gone Notifications", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "notification-sidebar.clear-gone",
 			Description: "Clear gone notifications",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
 			PlainChord:  "g",
 		},
 		{
 			ID:          "Settings:SwitchTabPrev",
 			DisplayName: "Previous Settings tab",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Settings", ResultKind: "move to the previous Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "settings.tab-previous",
 			Description: "Switch Settings tab left",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "Settings",
 			PlainChord:  "M-S-Left",
 		},
 		{
 			ID:          "Settings:SwitchTabNext",
 			DisplayName: "Next Settings tab",
-			Category:    keyBindingCategorySurfaces,
+			Category:    KeyBindingCategorySurfaces,
 			Semantics:   keyBindingActionSemantics{TargetKind: "Settings", ResultKind: "move to the next Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "settings.tab-next",
 			Description: "Switch Settings tab right",
-			Kind:        keyBindingActionPickerInternal,
-			Tier:        keyBindingTierNativePickerInternal,
+			Kind:        KeyBindingActionPickerInternal,
+			Tier:        KeyBindingTierNativePickerInternal,
 			Surface:     "Settings",
 			PlainChord:  "M-S-Right",
 		},
 	}
 }
 
-func keyBindingCatalogForScope(scope keyBindingScope) []keyBindingAction {
-	return keyBindingCatalogForScopeFrom(defaultKeyBindingCatalog(), scope)
+func KeyBindingCatalogForScope(scope keyBindingScope) []KeyBindingAction {
+	return KeyBindingCatalogForScopeFrom(DefaultKeyBindingCatalog(), scope)
 }
 
-func keyBindingCatalogForScopeFrom(catalog []keyBindingAction, scope keyBindingScope) []keyBindingAction {
-	var out []keyBindingAction
+func KeyBindingCatalogForScopeFrom(catalog []KeyBindingAction, scope keyBindingScope) []KeyBindingAction {
+	var out []KeyBindingAction
 	for _, action := range catalog {
-		if action.Scope == scope && action.Kind != keyBindingActionPickerInternal {
+		if action.Scope == scope && action.Kind != KeyBindingActionPickerInternal {
 			out = append(out, action)
 		}
 	}
@@ -1011,36 +1022,36 @@ func keyBindingCatalogForScopeFrom(catalog []keyBindingAction, scope keyBindingS
 // never inferred from the action ID prefix, because IDs are a compatibility
 // surface and their spelling is not a product taxonomy.
 const (
-	keyBindingCategoryLaunch     = "launch-and-popups"
-	keyBindingCategoryAgentPane  = "agent-and-pane-launch"
-	keyBindingCategoryNavigation = "pane-and-window-navigation"
-	keyBindingCategorySurfaces   = "sidebar-and-picker-actions"
-	keyBindingCategoryInput      = "input-delivery"
+	KeyBindingCategoryLaunch     = "launch-and-popups"
+	KeyBindingCategoryAgentPane  = "agent-and-pane-launch"
+	KeyBindingCategoryNavigation = "pane-and-window-navigation"
+	KeyBindingCategorySurfaces   = "sidebar-and-picker-actions"
+	KeyBindingCategoryInput      = "input-delivery"
 
-	keyBindingCategoryLaunchLabel     = "Launch & popups"
-	keyBindingCategoryAgentPaneLabel  = "Agent & Pane launch"
-	keyBindingCategoryNavigationLabel = "Pane & Window navigation"
-	keyBindingCategorySurfacesLabel   = "Sidebar & picker actions"
-	keyBindingCategoryInputLabel      = "Input delivery"
+	KeyBindingCategoryLaunchLabel     = "Launch & popups"
+	KeyBindingCategoryAgentPaneLabel  = "Agent & Pane launch"
+	KeyBindingCategoryNavigationLabel = "Pane & Window navigation"
+	KeyBindingCategorySurfacesLabel   = "Sidebar & picker actions"
+	KeyBindingCategoryInputLabel      = "Input delivery"
 )
 
-// keyBindingCategoryOrder is the render order of the Keybindings categories.
+// KeyBindingCategoryOrder is the render order of the Keybindings categories.
 // Input delivery holds no keymap action; it owns the native-key toggle only.
-var keyBindingCategoryOrder = []struct {
+var KeyBindingCategoryOrder = []struct {
 	ID    string
 	Label string
 }{
-	{keyBindingCategoryLaunch, keyBindingCategoryLaunchLabel},
-	{keyBindingCategoryAgentPane, keyBindingCategoryAgentPaneLabel},
-	{keyBindingCategoryNavigation, keyBindingCategoryNavigationLabel},
-	{keyBindingCategorySurfaces, keyBindingCategorySurfacesLabel},
-	{keyBindingCategoryInput, keyBindingCategoryInputLabel},
+	{KeyBindingCategoryLaunch, KeyBindingCategoryLaunchLabel},
+	{KeyBindingCategoryAgentPane, KeyBindingCategoryAgentPaneLabel},
+	{KeyBindingCategoryNavigation, KeyBindingCategoryNavigationLabel},
+	{KeyBindingCategorySurfaces, KeyBindingCategorySurfacesLabel},
+	{KeyBindingCategoryInput, KeyBindingCategoryInputLabel},
 }
 
-// keyBindingSurfaceOrder is the second navigation level inside the
+// KeyBindingSurfaceOrder is the second navigation level inside the
 // sidebar/picker category. The surface keys are the existing catalog `Surface`
 // values; only the display labels follow the canonical resource vocabulary.
-var keyBindingSurfaceOrder = []struct {
+var KeyBindingSurfaceOrder = []struct {
 	ID    string
 	Label string
 }{
@@ -1057,7 +1068,7 @@ var keyBindingSurfaceOrder = []struct {
 // passes the current Pane as an explicit anchor, and never falls back to a
 // Window's persisted primary Pane or to whatever pane happens to be focused.
 const (
-	// keyBindingAnchorCurrentPaneSplitTarget is the exact anchor an interactive
+	// KeyBindingAnchorCurrentPaneSplitTarget is the exact anchor an interactive
 	// right/down action passes. A launch that came from a popup resolves it in
 	// aiCommand.splitOriginPane -- the explicit TMUX_SPLIT_TARGET_PANE the popup
 	// carries, which the create intent then states as its anchor because a popup
@@ -1070,21 +1081,21 @@ const (
 	// part that is true and load bearing: the target is explicit and pinned at
 	// press time, so it is neither "whatever Pane is focused when the split
 	// lands" nor the Window's persisted compatibility shell ref.
-	keyBindingAnchorCurrentPaneSplitTarget = "current Pane %N transport id (explicit split target; not the Window compatibility shell ref)"
-	// keyBindingAnchorActiveTmuxPane is the anchor of the direct tmux
+	KeyBindingAnchorCurrentPaneSplitTarget = "current Pane %N transport id (explicit split target; not the Window compatibility shell ref)"
+	// KeyBindingAnchorActiveTmuxPane is the anchor of the direct tmux
 	// navigation commands. They carry no `-t`, so tmux itself resolves the
 	// active Pane of the key-press context; nothing is passed and nothing is
 	// persisted.
-	keyBindingAnchorActiveTmuxPane = "active tmux Pane at press time (tmux resolves it; no explicit target is passed)"
+	KeyBindingAnchorActiveTmuxPane = "active tmux Pane at press time (tmux resolves it; no explicit target is passed)"
 	// keyBindingAnchorCurrentPaneCwdInput is the anchor of the one action that
 	// consumes the current Pane only as a read-only cwd input. Saying so on the
 	// row is what keeps the cwd query from reading as the action's outcome.
 	keyBindingAnchorCurrentPaneCwdInput = "current Pane cwd (read-only input, not the outcome)"
-	// keyBindingAnchorCurrentPaneCwdSeed is the `new-window -c
+	// KeyBindingAnchorCurrentPaneCwdSeed is the `new-window -c
 	// "#{pane_current_path}"` anchor: the current Pane contributes its cwd to
 	// the new Window's initial Pane and nothing else. tmux, not the binding,
 	// chooses the Window index.
-	keyBindingAnchorCurrentPaneCwdSeed = "current Pane cwd (seeds the initial Pane; tmux chooses the Window index)"
+	KeyBindingAnchorCurrentPaneCwdSeed = "current Pane cwd (seeds the initial Pane; tmux chooses the Window index)"
 	// keyBindingAnchorCurrentPaneDeleteTarget is the anchor of the two managed
 	// close keys: the raw `%N` of the Pane the key was pressed in, captured at
 	// press time and carried through confirmation, from which the canonical
@@ -1092,8 +1103,8 @@ const (
 	keyBindingAnchorCurrentPaneDeleteTarget = "current Pane %N transport id (captured at key press and carried through confirmation; the canonical delete route resolves the exact target)"
 	keyBindingAnchorFocusedRow              = "focused row in the open picker"
 
-	keyBindingPlacementRight = "right"
-	keyBindingPlacementDown  = "down"
+	KeyBindingPlacementRight = "right"
+	KeyBindingPlacementDown  = "down"
 	keyBindingPlacementLeft  = "left"
 	keyBindingPlacementUp    = "up"
 	// keyBindingPlacementPopup is the placement of every popup surface: tmux
@@ -1103,7 +1114,7 @@ const (
 	keyBindingPlacementInOpenPicker    = "inside the open picker"
 )
 
-func keyBindingActionSemanticsFor(action keyBindingAction) (keyBindingActionSemantics, bool) {
+func KeyBindingActionSemanticsFor(action KeyBindingAction) (keyBindingActionSemantics, bool) {
 	return action.Semantics, strings.TrimSpace(action.Semantics.TargetKind) != "" && strings.TrimSpace(action.Semantics.ResultKind) != ""
 }
 
@@ -1127,8 +1138,8 @@ type keyBindingActionHandler struct {
 	Note string
 }
 
-// keyBindingActionHandlerFor projects one action's shipped handler.
-func keyBindingActionHandlerFor(action keyBindingAction) (keyBindingActionHandler, bool) {
+// KeyBindingActionHandlerFor projects one action's shipped handler.
+func KeyBindingActionHandlerFor(action KeyBindingAction) (keyBindingActionHandler, bool) {
 	handler, ok := keyBindingActionShippedInvocation(action)
 	if !ok {
 		return keyBindingActionHandler{}, false
@@ -1137,31 +1148,31 @@ func keyBindingActionHandlerFor(action keyBindingAction) (keyBindingActionHandle
 	return handler, true
 }
 
-func keyBindingActionShippedInvocation(action keyBindingAction) (keyBindingActionHandler, bool) {
-	if action.Kind == keyBindingActionPickerInternal {
-		label, ok := keyBindingSurfaceLabel(action.Surface)
+func keyBindingActionShippedInvocation(action KeyBindingAction) (keyBindingActionHandler, bool) {
+	if action.Kind == KeyBindingActionPickerInternal {
+		label, ok := KeyBindingSurfaceLabel(action.Surface)
 		if !ok {
 			label = action.Surface
 		}
 		return keyBindingActionHandler{Invocation: "handled inside the open " + label + " picker"}, true
 	}
 	switch action.TmuxKind {
-	case tmuxBindingPopupToggle:
+	case TmuxBindingPopupToggle:
 		return keyBindingHandlerFromManifest(
 			[]string{"internal", "tmux", "popup-toggle"},
 			"projmux internal tmux popup-toggle "+strings.TrimSpace(action.TmuxBody),
 		), true
-	case tmuxBindingRunProjmux:
+	case TmuxBindingRunProjmux:
 		body := strings.TrimSpace(action.TmuxBody)
 		return keyBindingHandlerFromManifest(strings.Fields(body), "projmux "+body), true
-	case tmuxBindingCommand:
+	case TmuxBindingCommand:
 		return keyBindingActionHandler{Invocation: "tmux " + condenseTmuxHandlerBody(action.TmuxBody)}, true
-	case tmuxBindingCommandPrompt:
+	case TmuxBindingCommandPrompt:
 		return keyBindingActionHandler{Invocation: "tmux command-prompt then " + condenseTmuxHandlerBody(action.TmuxBody)}, true
-	case tmuxBindingPromptRunProjmux:
+	case TmuxBindingPromptRunProjmux:
 		body := strings.TrimSpace(action.TmuxBody)
 		return keyBindingHandlerFromManifest(strings.Fields(body), "tmux command-prompt then projmux "+body), true
-	case tmuxBindingManagedDelete:
+	case TmuxBindingManagedDelete:
 		body := strings.TrimSpace(action.TmuxBody)
 		return keyBindingHandlerFromManifest(strings.Fields(body),
 			"tmux if-shell "+action.TmuxManagedGuard+" then projmux "+body+", else tmux's stock binding"), true
@@ -1198,25 +1209,25 @@ func condenseTmuxHandlerBody(body string) string {
 	return strings.TrimSpace(condensed[:max]) + " ..."
 }
 
-func keyBindingDisplayName(action keyBindingAction) string {
+func KeyBindingDisplayName(action KeyBindingAction) string {
 	if name := strings.TrimSpace(action.DisplayName); name != "" {
 		return name
 	}
 	return humanizeKeyBindingActionID(action.ID)
 }
 
-// keyBindingActionCategory returns the navigation category an action belongs
+// KeyBindingActionCategory returns the navigation category an action belongs
 // to. An unassigned action returns false so the Settings loop can fail loudly
 // instead of hiding the action from every category.
-func keyBindingActionCategory(action keyBindingAction) (string, bool) {
+func KeyBindingActionCategory(action KeyBindingAction) (string, bool) {
 	category := strings.TrimSpace(action.Category)
 	return category, category != ""
 }
 
-// keyBindingSurfaceLabel maps a catalog `Surface` value to its canonical
+// KeyBindingSurfaceLabel maps a catalog `Surface` value to its canonical
 // display label.
-func keyBindingSurfaceLabel(surface string) (string, bool) {
-	for _, entry := range keyBindingSurfaceOrder {
+func KeyBindingSurfaceLabel(surface string) (string, bool) {
+	for _, entry := range KeyBindingSurfaceOrder {
 		if entry.ID == surface {
 			return entry.Label, true
 		}
@@ -1283,33 +1294,33 @@ func isDigitASCII(r rune) bool {
 	return r >= '0' && r <= '9'
 }
 
-// keyBindingActionAliases lists every keymap table id that resolves to this
+// KeyBindingActionAliases lists every keymap table id that resolves to this
 // action, most-canonical first.
 //
 // The v1 canonical id leads because that is what a migrated file names, but the
 // v0 runtime id and any explicit legacy aliases stay in the set: dual-read is
 // the whole point of the versioned schema, and an unmigrated file must keep
 // merging exactly as it did before.
-func keyBindingActionAliases(action keyBindingAction) []string {
+func KeyBindingActionAliases(action KeyBindingAction) []string {
 	ids := []string{action.CanonicalID, action.ID}
-	return uniqueNonEmptyStrings(append(ids, action.Aliases...))
+	return UniqueNonEmptyStrings(append(ids, action.Aliases...))
 }
 
-func keyBindingActionIsPopupToggle(action keyBindingAction) bool {
+func keyBindingActionIsPopupToggle(action KeyBindingAction) bool {
 	return action.Kind == keyBindingActionTogglePopup &&
-		action.TmuxKind == tmuxBindingPopupToggle &&
+		action.TmuxKind == TmuxBindingPopupToggle &&
 		action.Toggleable
 }
 
-func popupToggleModesForAction(action keyBindingAction) []string {
+func popupToggleModesForAction(action KeyBindingAction) []string {
 	if !keyBindingActionIsPopupToggle(action) {
 		return nil
 	}
 	modes := append([]string{action.TmuxBody}, action.TmuxBodyAliases...)
-	return uniqueNonEmptyStrings(modes)
+	return UniqueNonEmptyStrings(modes)
 }
 
-func popupToggleActionIDByModeFromCatalog(actions []keyBindingAction, mode string) (string, bool) {
+func popupToggleActionIDByModeFromCatalog(actions []KeyBindingAction, mode string) (string, bool) {
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		return "", false
@@ -1322,26 +1333,26 @@ func popupToggleActionIDByModeFromCatalog(actions []keyBindingAction, mode strin
 	return "", false
 }
 
-func popupToggleActionIDForMode(mode string) (string, bool) {
-	return popupToggleActionIDByModeFromCatalog(defaultKeyBindingCatalog(), mode)
+func PopupToggleActionIDForMode(mode string) (string, bool) {
+	return popupToggleActionIDByModeFromCatalog(DefaultKeyBindingCatalog(), mode)
 }
 
-func keyBindingEditable(action keyBindingAction) bool {
+func KeyBindingEditable(action KeyBindingAction) bool {
 	switch action.Tier {
-	case keyBindingTierGuaranteedLaunchDefault, keyBindingTierUserConfigurableDirect, keyBindingTierTransportDependent, keyBindingTierNativePickerInternal:
+	case keyBindingTierGuaranteedLaunchDefault, keyBindingTierUserConfigurableDirect, KeyBindingTierTransportDependent, KeyBindingTierNativePickerInternal:
 		return true
 	default:
 		return false
 	}
 }
 
-// keyBindingProtectedActionReason locks Settings editing from the shipped
+// KeyBindingProtectedActionReason locks Settings editing from the shipped
 // catalog, never from an effective/custom action. A user override therefore
 // cannot unlock a protected action, and a legacy reserved override cannot lock
 // an otherwise safe shipped action. Keep every default trigger field in this
 // inventory, including Sequences even though the current shipped catalog has
 // none, so a future default cannot silently bypass the policy.
-func keyBindingProtectedActionReason(action keyBindingAction) (string, bool) {
+func KeyBindingProtectedActionReason(action KeyBindingAction) (string, bool) {
 	triggers := make([]string, 0, 2+len(action.PlainChords)+len(action.Sequences)*4)
 	triggers = append(triggers, action.PlainChord)
 	triggers = append(triggers, action.PlainChords...)
@@ -1350,16 +1361,16 @@ func keyBindingProtectedActionReason(action keyBindingAction) (string, bool) {
 		triggers = append(triggers, strings.Fields(sequence)...)
 	}
 	for _, trigger := range triggers {
-		if base, reserved := reservedKeymapAuthoringBase(trigger); reserved {
+		if base, reserved := ReservedKeymapAuthoringBase(trigger); reserved {
 			return fmt.Sprintf("read only because shipped/default trigger %q uses reserved key %s", strings.TrimSpace(trigger), base), true
 		}
 	}
 	return "", false
 }
 
-func keyBindingEffectivePlainChords(action keyBindingAction) []string {
+func KeyBindingEffectivePlainChords(action KeyBindingAction) []string {
 	if action.PlainChords != nil {
-		return uniqueNonEmptyStrings(action.PlainChords)
+		return UniqueNonEmptyStrings(action.PlainChords)
 	}
 	if strings.TrimSpace(action.PlainChord) == "" {
 		return nil
@@ -1367,7 +1378,7 @@ func keyBindingEffectivePlainChords(action keyBindingAction) []string {
 	return []string{strings.TrimSpace(action.PlainChord)}
 }
 
-func keyBindingEffectiveSequences(action keyBindingAction) []string {
+func KeyBindingEffectiveSequences(action KeyBindingAction) []string {
 	out := make([]string, 0, len(action.Sequences))
 	for _, sequence := range action.Sequences {
 		if sequence = strings.TrimSpace(sequence); sequence != "" {
@@ -1377,7 +1388,7 @@ func keyBindingEffectiveSequences(action keyBindingAction) []string {
 	return out
 }
 
-func uniqueNonEmptyStrings(values []string) []string {
+func UniqueNonEmptyStrings(values []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1391,15 +1402,15 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return out
 }
 
-func tmuxUnbindLines(actions []keyBindingAction) []string {
-	plain := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
-		return len(keyBindingEffectivePlainChords(action)) != 0
+func TmuxUnbindLines(actions []KeyBindingAction) []string {
+	plain := FilterKeyBindingActions(actions, func(action KeyBindingAction) bool {
+		return len(KeyBindingEffectivePlainChords(action)) != 0
 	})
 	sort.SliceStable(plain, func(i, j int) bool {
 		return plain[i].PlainBindOrder < plain[j].PlainBindOrder
 	})
 
-	prefix := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
+	prefix := FilterKeyBindingActions(actions, func(action KeyBindingAction) bool {
 		return action.PrefixChord != ""
 	})
 	sort.SliceStable(prefix, func(i, j int) bool {
@@ -1408,7 +1419,7 @@ func tmuxUnbindLines(actions []keyBindingAction) []string {
 
 	lines := make([]string, 0, len(plain)+len(prefix))
 	for _, action := range plain {
-		for _, chord := range keyBindingEffectivePlainChords(action) {
+		for _, chord := range KeyBindingEffectivePlainChords(action) {
 			lines = append(lines, "unbind-key -q -n "+chord)
 		}
 	}
@@ -1418,7 +1429,7 @@ func tmuxUnbindLines(actions []keyBindingAction) []string {
 	return lines
 }
 
-func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
+func TmuxMergedUnbindLines(defaults, merged []KeyBindingAction) []string {
 	type binding struct {
 		chord string
 		order int
@@ -1426,8 +1437,8 @@ func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
 	seenNoPrefix := map[string]bool{}
 	seenPrefix := map[string]bool{}
 	var plain, prefix []binding
-	add := func(action keyBindingAction) {
-		for _, chord := range keyBindingEffectivePlainChords(action) {
+	add := func(action KeyBindingAction) {
+		for _, chord := range KeyBindingEffectivePlainChords(action) {
 			if !seenNoPrefix[chord] {
 				seenNoPrefix[chord] = true
 				plain = append(plain, binding{chord: chord, order: action.PlainBindOrder})
@@ -1458,7 +1469,7 @@ func tmuxMergedUnbindLines(defaults, merged []keyBindingAction) []string {
 	return lines
 }
 
-func tmuxRetiredKeyUnbindLines() []string {
+func TmuxRetiredKeyUnbindLines() []string {
 	lines := []string{
 		// Historical direct defaults removed during the keybinding surface
 		// cleanup. Keep unbinding them so a live tmux server sourced from an
@@ -1481,7 +1492,7 @@ func tmuxRetiredKeyUnbindLines() []string {
 	return lines
 }
 
-func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
+func TmuxBindLines(binaryPath string, actions []KeyBindingAction) []string {
 	var bindings []struct {
 		chord string
 		line  string
@@ -1489,7 +1500,7 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 	}
 
 	for _, action := range actions {
-		for idx, chord := range keyBindingEffectivePlainChords(action) {
+		for idx, chord := range KeyBindingEffectivePlainChords(action) {
 			bindings = append(bindings, struct {
 				chord string
 				line  string
@@ -1513,12 +1524,12 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 	// tmuxBindingManagedDelete. The line names the prefix table implicitly so a
 	// modified chord such as `C-x` stays in the prefix table instead of the
 	// root table renderTmuxBindLine would pick for it.
-	prefix := filterKeyBindingActions(actions, func(action keyBindingAction) bool {
+	prefix := FilterKeyBindingActions(actions, func(action KeyBindingAction) bool {
 		return keyBindingRendersPrefixChord(action) && strings.TrimSpace(action.PrefixChord) != ""
 	})
 	sort.SliceStable(prefix, func(i, j int) bool { return prefix[i].PrefixBindOrder < prefix[j].PrefixBindOrder })
 	for _, action := range prefix {
-		lines = append(lines, "bind-key "+strings.TrimSpace(action.PrefixChord)+" "+renderTmuxBindingBody(binaryPath, action))
+		lines = append(lines, "bind-key "+strings.TrimSpace(action.PrefixChord)+" "+RenderTmuxBindingBody(binaryPath, action))
 	}
 
 	return lines
@@ -1526,11 +1537,11 @@ func tmuxBindLines(binaryPath string, actions []keyBindingAction) []string {
 
 // keyBindingRendersPrefixChord reports whether an action's PrefixChord becomes
 // a generated `bind-key`.
-func keyBindingRendersPrefixChord(action keyBindingAction) bool {
-	return action.TmuxKind == tmuxBindingManagedDelete
+func keyBindingRendersPrefixChord(action KeyBindingAction) bool {
+	return action.TmuxKind == TmuxBindingManagedDelete
 }
 
-// tmuxStockPrefixRestoreLines hands a stock tmux key back to tmux when the
+// TmuxStockPrefixRestoreLines hands a stock tmux key back to tmux when the
 // managed-delete action that replaced it no longer owns it.
 //
 // The unbind rules clear every default chord so a remapped or disabled action
@@ -1543,14 +1554,14 @@ func keyBindingRendersPrefixChord(action keyBindingAction) bool {
 // no longer handles this key" means. It is emitted after the unbind lines and
 // before the managed bind lines, so a managed action moved onto another stock
 // key still wins there.
-func tmuxStockPrefixRestoreLines(defaults, merged []keyBindingAction) []string {
+func TmuxStockPrefixRestoreLines(defaults, merged []KeyBindingAction) []string {
 	owned := map[string]bool{}
 	for _, action := range merged {
 		if chord := strings.TrimSpace(action.PrefixChord); keyBindingRendersPrefixChord(action) && chord != "" {
 			owned[chord] = true
 		}
 	}
-	stock := filterKeyBindingActions(defaults, func(action keyBindingAction) bool {
+	stock := FilterKeyBindingActions(defaults, func(action KeyBindingAction) bool {
 		return keyBindingRendersPrefixChord(action) && strings.TrimSpace(action.PrefixChord) != "" && action.TmuxStockBody != ""
 	})
 	sort.SliceStable(stock, func(i, j int) bool { return stock[i].PrefixBindOrder < stock[j].PrefixBindOrder })
@@ -1565,21 +1576,21 @@ func tmuxStockPrefixRestoreLines(defaults, merged []keyBindingAction) []string {
 	return lines
 }
 
-func renderTmuxBindLine(binaryPath, chord string, noPrefix bool, action keyBindingAction) string {
+func renderTmuxBindLine(binaryPath, chord string, noPrefix bool, action KeyBindingAction) string {
 	parts := []string{"bind-key"}
 	if noPrefix || strings.HasPrefix(chord, "M-") || strings.HasPrefix(chord, "C-") {
 		parts = append(parts, "-n")
 	}
-	parts = append(parts, chord, renderTmuxBindingBody(binaryPath, action))
+	parts = append(parts, chord, RenderTmuxBindingBody(binaryPath, action))
 	return strings.Join(parts, " ")
 }
 
-func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
-	bin := tmuxShellQuote(binaryPath)
+func RenderTmuxBindingBody(binaryPath string, action KeyBindingAction) string {
+	bin := TmuxShellQuote(binaryPath)
 	switch action.TmuxKind {
-	case tmuxBindingPopupToggle:
-		return "run-shell " + tmuxConfigQuote(bin+" internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} "+action.TmuxBody)
-	case tmuxBindingRunProjmux:
+	case TmuxBindingPopupToggle:
+		return "run-shell " + TmuxConfigQuote(bin+" internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} "+action.TmuxBody)
+	case TmuxBindingRunProjmux:
 		// `run-shell` inherits $TMUX from the server but never exports
 		// $TMUX_PANE: tmux sets that variable only in the shell it spawns for a
 		// pane. A projmux invocation launched from a key binding would
@@ -1590,30 +1601,30 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 		// in. Carrying the exact pane id is what makes a binding address the
 		// pane the operator is looking at. `#{pane_id}` is resolved by run-shell
 		// against the key binding's own target pane.
-		return "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
-	case tmuxBindingCommand:
+		return "run-shell " + TmuxConfigQuote(TmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
+	case TmuxBindingCommand:
 		return action.TmuxBody
-	case tmuxBindingCommandPrompt:
-		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + tmuxConfigQuote(action.TmuxBody))
-	case tmuxBindingPromptRunProjmux:
-		body := "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
-		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + tmuxConfigQuote(body))
-	case tmuxBindingManagedDelete:
+	case TmuxBindingCommandPrompt:
+		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + TmuxConfigQuote(action.TmuxBody))
+	case TmuxBindingPromptRunProjmux:
+		body := "run-shell " + TmuxConfigQuote(TmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
+		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + TmuxConfigQuote(body))
+	case TmuxBindingManagedDelete:
 		// The mirror decides which branch runs, at key press. A mirrored target
 		// reaches projmux, whose only act is a confirmation prompt; the target
 		// without a mirror runs tmux's stock binding exactly as tmux ships it,
 		// executed by tmux. The anchor rides the same env prefix as every other
 		// generated projmux binding.
-		return "if-shell -F " + tmuxConfigQuote(action.TmuxManagedGuard) +
-			" { run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody) + " }" +
+		return "if-shell -F " + TmuxConfigQuote(action.TmuxManagedGuard) +
+			" { run-shell " + TmuxConfigQuote(TmuxPaneEnvPrefix+bin+" "+action.TmuxBody) + " }" +
 			" { " + action.TmuxStockBody + " }"
 	default:
 		return action.TmuxBody
 	}
 }
 
-func filterKeyBindingActions(actions []keyBindingAction, keep func(keyBindingAction) bool) []keyBindingAction {
-	out := make([]keyBindingAction, 0, len(actions))
+func FilterKeyBindingActions(actions []KeyBindingAction, keep func(KeyBindingAction) bool) []KeyBindingAction {
+	out := make([]KeyBindingAction, 0, len(actions))
 	for _, action := range actions {
 		if keep(action) {
 			out = append(out, action)
@@ -1622,93 +1633,22 @@ func filterKeyBindingActions(actions []keyBindingAction, keep func(keyBindingAct
 	return out
 }
 
-// newInitCommand wires terminal remediation with the bundled terminal
-// adapters, injecting the desired bindings derived from the keybinding catalog.
-func newInitCommand() *initcmd.Command {
-	return initcmd.New(
-		initcmd.NewGhosttyAdapter(ghosttyBindingsFromCatalog()),
-		initcmd.NewWindowsTerminalAdapter(windowsTerminalBindingsFromCatalog()),
-	)
-}
-
-func ghosttyBindingsFromCatalog() []initcmd.GhosttyBinding {
-	var actions []keyBindingAction
-	for _, action := range defaultKeyBindingCatalog() {
-		if action.GhosttyTrigger == "" || action.GhosttyAction == "" {
-			continue
-		}
-		actions = append(actions, action)
-	}
-	sort.SliceStable(actions, func(i, j int) bool {
-		return actions[i].GhosttyOrder < actions[j].GhosttyOrder
-	})
-
-	out := make([]initcmd.GhosttyBinding, 0, len(actions))
-	for _, action := range actions {
-		out = append(out, initcmd.GhosttyBinding{
-			Trigger: action.GhosttyTrigger,
-			Action:  action.GhosttyAction,
-		})
-	}
-	return out
-}
-
-func windowsTerminalBindingsFromCatalog() []initcmd.WTBinding {
-	var actions []keyBindingAction
-	for _, action := range defaultKeyBindingCatalog() {
-		if action.WTID == "" {
-			continue
-		}
-		actions = append(actions, action)
-	}
-	sort.SliceStable(actions, func(i, j int) bool {
-		return actions[i].WTOrder < actions[j].WTOrder
-	})
-
-	out := make([]initcmd.WTBinding, 0, len(actions))
-	for _, action := range actions {
-		out = append(out, initcmd.WTBinding{
-			ID:    action.WTID,
-			Keys:  action.WTKeys,
-			Input: action.WTInput,
-		})
-	}
-	return out
-}
-
-func probeKeysFromCatalog() []probeKey {
-	return probeKeysFromActions(defaultKeyBindingCatalog())
-}
-
-func probeKeysFromActions(catalog []keyBindingAction) []probeKey {
-	var actions []keyBindingAction
-	for _, action := range catalog {
-		if action.ProbeLabel != "" {
-			actions = append(actions, action)
-		}
-	}
-	sort.SliceStable(actions, func(i, j int) bool {
-		return actions[i].ProbeOrder < actions[j].ProbeOrder
-	})
-
-	keys := make([]probeKey, 0, len(actions))
-	for _, action := range actions {
-		keys = append(keys, probeKey{
-			ActionID:   action.ID,
-			Label:      action.ProbeLabel,
-			Action:     action.ProbeAction,
-			Plain:      action.ProbePlain,
-			PlainChord: firstNonEmptyString(keyBindingEffectivePlainChords(action)),
-		})
-	}
-	return keys
-}
-
-func firstNonEmptyString(values []string) string {
+func FirstNonEmptyString(values []string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)
 		}
 	}
 	return ""
+}
+
+func TmuxShellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+func TmuxConfigQuote(value string) string {
+	return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
 }

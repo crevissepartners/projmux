@@ -35,7 +35,7 @@
     },
     {
       "rule": "G304",
-      "scope": "internal/app/keymap_migration.go keymap schema migration",
+      "scope": "internal/app/keybinding/keymap_migration.go keymap schema migration",
       "reason": "the keymap path is derived from the resolved XDG/HOME config paths, not from CLI input; reads go through the bounded regular-file/supported-symlink policy and the backup open is O_EXCL"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "rule": "G104",
-      "path": "internal/app/keymap.go",
+      "path": "internal/app/keybinding/keymap.go",
       "message": "Errors unhandled",
       "source": "tmp.Close()",
       "max_count": 1
@@ -348,7 +348,7 @@
     },
     {
       "rule": "G301",
-      "path": "internal/app/keymap.go",
+      "path": "internal/app/keybinding/keymap.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
       "max_count": 1
@@ -467,7 +467,7 @@
     },
     {
       "rule": "G302",
-      "path": "internal/app/keymap.go",
+      "path": "internal/app/keybinding/keymap.go",
       "message": "Expect file permissions to be 0600 or less",
       "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
       "max_count": 1
@@ -593,21 +593,21 @@
     },
     {
       "rule": "G304",
-      "path": "internal/app/keymap_migration.go",
+      "path": "internal/app/keybinding/keymap_migration.go",
       "message": "Potential file inclusion via variable",
       "source": "existing, readErr := os.ReadFile(path)",
       "max_count": 1
     },
     {
       "rule": "G304",
-      "path": "internal/app/keymap_migration.go",
+      "path": "internal/app/keybinding/keymap_migration.go",
       "message": "Potential file inclusion via variable",
       "source": "file, err := os.Open(path)",
       "max_count": 1
     },
     {
       "rule": "G304",
-      "path": "internal/app/keymap_migration.go",
+      "path": "internal/app/keybinding/keymap_migration.go",
       "message": "Potential file inclusion via variable",
       "source": "file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, defaultKeymapFileMode)",
       "max_count": 1

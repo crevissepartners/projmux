@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
@@ -222,7 +223,7 @@ func TestAgentPickerResumeRowOpensTheResumeListInTheSameProcess(t *testing.T) {
 
 			splitKeys := pickerCloseBindingsForPopupToggleMode(cmd.homeDir, cmd.lookupEnv, aiSplitPickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s")
 			resumeKeys := pickerCloseBindingsForPopupToggleMode(cmd.homeDir, cmd.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s")
-			want := closeBindings(uniqueNonEmptyStrings(append(append([]string{}, resumeKeys...), splitKeys...)))
+			want := closeBindings(keybinding.UniqueNonEmptyStrings(append(append([]string{}, resumeKeys...), splitKeys...)))
 			if got := closeBindings(runner.options[1].Bindings); !reflect.DeepEqual(got, want) {
 				t.Fatalf("resume list close bindings = %q, want the resume and launch popup keys %q", got, want)
 			}

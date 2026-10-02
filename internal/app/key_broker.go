@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
@@ -211,20 +212,20 @@ func (c *keyBrokerCommand) Run(args []string, _ io.Writer, stderr io.Writer) err
 }
 
 func (c *keyBrokerCommand) loadBindings() ([]platformkeys.Binding, error) {
-	catalog, _, err := loadMergedKeyBindingCatalog(keymapLoader{
-		homeDir:   c.homeDir,
-		lookupEnv: c.lookupEnv,
-		readFile:  c.readFile,
+	catalog, _, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{
+		HomeDir:   c.homeDir,
+		LookupEnv: c.lookupEnv,
+		ReadFile:  c.readFile,
 	})
 	if err != nil {
 		return nil, err
 	}
 	var chords []string
 	for _, action := range catalog {
-		if action.Kind == keyBindingActionPickerInternal {
+		if action.Kind == keybinding.KeyBindingActionPickerInternal {
 			continue
 		}
-		chords = append(chords, keyBindingEffectivePlainChords(action)...)
+		chords = append(chords, keybinding.KeyBindingEffectivePlainChords(action)...)
 	}
 	chords = append(chords, keyBindingSequenceTransportChords(catalog)...)
 	return platformkeys.ParseBindings(chords), nil

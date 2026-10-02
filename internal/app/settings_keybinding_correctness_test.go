@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -45,21 +46,21 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 	t.Parallel()
 
 	cmd := keybindingCorrectnessCommand(t, t.TempDir(), nil)
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	if len(catalog) == 0 {
 		t.Fatalf("empty keybinding catalog")
 	}
 	handlerClasses := map[string]int{}
 
 	for _, action := range catalog {
-		semantics, ok := keyBindingActionSemanticsFor(action)
+		semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 		if !ok {
 			t.Fatalf("action %q has no declared semantics", action.ID)
 		}
 		if strings.TrimSpace(semantics.TargetKind) == "" || strings.TrimSpace(semantics.ResultKind) == "" {
 			t.Fatalf("action %q semantics = %#v, want a target kind and a result kind", action.ID, semantics)
 		}
-		handler, ok := keyBindingActionHandlerFor(action)
+		handler, ok := keybinding.KeyBindingActionHandlerFor(action)
 		if !ok {
 			t.Fatalf("action %q has no pinned handler", action.ID)
 		}
@@ -67,12 +68,12 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 			t.Fatalf("action %q handler = %#v, want an exact shipped invocation", action.ID, handler)
 		}
 		switch {
-		case action.Kind == keyBindingActionPickerInternal:
+		case action.Kind == keybinding.KeyBindingActionPickerInternal:
 			handlerClasses["picker-internal"]++
 			if handler.Manifest != "" {
 				t.Fatalf("picker-internal action %q projected CLI manifest %q", action.ID, handler.Manifest)
 			}
-		case action.TmuxKind == tmuxBindingCommand || action.TmuxKind == tmuxBindingCommandPrompt:
+		case action.TmuxKind == keybinding.TmuxBindingCommand || action.TmuxKind == keybinding.TmuxBindingCommandPrompt:
 			handlerClasses["direct-tmux"]++
 			if handler.Manifest != "" {
 				t.Fatalf("direct tmux action %q projected CLI manifest %q", action.ID, handler.Manifest)
@@ -106,8 +107,8 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("keybindingDetailEntries(%q) error = %v", action.ID, err)
 		}
-		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
-		if !hasEntryLabelContainingAll(entries, keyBindingDisplayName(action), keybindingState(keymapFile{}, action, defaultAction)) {
+		defaultAction, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), action.ID)
+		if !hasEntryLabelContainingAll(entries, keybinding.KeyBindingDisplayName(action), keybindingState(keybinding.KeymapFile{}, action, defaultAction)) {
 			t.Fatalf("action detail %q = %#v, want the action name and concise state", action.ID, entries)
 		}
 		for _, want := range []string{"Single Keys", "Sequences"} {
@@ -115,8 +116,8 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 				t.Fatalf("action detail %q = %#v, want current binding section %q", action.ID, entries, want)
 			}
 		}
-		if keyBindingEditable(action) {
-			if _, protected := keyBindingProtectedActionReason(defaultAction); !protected {
+		if keybinding.KeyBindingEditable(action) {
+			if _, protected := keybinding.KeyBindingProtectedActionReason(defaultAction); !protected {
 				for _, want := range []string{"+ Add binding", "Enter binding manually"} {
 					if !hasEntryLabelContaining(entries, want) {
 						t.Fatalf("action detail %q = %#v, want interaction %q", action.ID, entries, want)
@@ -228,8 +229,8 @@ func TestSettingsKeybindingActionDetailPrioritizesStateBindingsAndActions(t *tes
 func TestSettingsKeybindingAnchorCopyMatchesTheShippedTransport(t *testing.T) {
 	t.Parallel()
 
-	for _, action := range defaultKeyBindingCatalog() {
-		semantics, ok := keyBindingActionSemanticsFor(action)
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
+		semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 		if !ok {
 			t.Fatalf("action %q has no declared semantics", action.ID)
 		}
@@ -242,31 +243,31 @@ func TestSettingsKeybindingAnchorCopyMatchesTheShippedTransport(t *testing.T) {
 	// need: an explicit target pinned at press time, and never the Window's
 	// persisted compatibility shell ref.
 	for _, want := range []string{"%N", "explicit split target", "not the Window compatibility shell ref"} {
-		if !strings.Contains(keyBindingAnchorCurrentPaneSplitTarget, want) {
-			t.Fatalf("split anchor %q missing %q", keyBindingAnchorCurrentPaneSplitTarget, want)
+		if !strings.Contains(keybinding.KeyBindingAnchorCurrentPaneSplitTarget, want) {
+			t.Fatalf("split anchor %q missing %q", keybinding.KeyBindingAnchorCurrentPaneSplitTarget, want)
 		}
 	}
 	// The direct tmux navigation commands pass no target at all, and say so.
 	for _, id := range []string{"last-pane", "select-pane-left", "select-pane-right", "select-pane-up", "select-pane-down"} {
-		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
+		action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), id)
 		if !ok {
 			t.Fatalf("catalog missing %q", id)
 		}
-		semantics, _ := keyBindingActionSemanticsFor(action)
-		if semantics.Anchor != keyBindingAnchorActiveTmuxPane {
+		semantics, _ := keybinding.KeyBindingActionSemanticsFor(action)
+		if semantics.Anchor != keybinding.KeyBindingAnchorActiveTmuxPane {
 			t.Fatalf("navigation action %q anchor = %q, want the no-explicit-target anchor", id, semantics.Anchor)
 		}
 	}
 	// Window create carries the exact current Pane into the canonical handler.
-	newWindow, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "new-window")
+	newWindow, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "new-window")
 	if !ok {
 		t.Fatalf("catalog missing new-window")
 	}
 	if !strings.Contains(newWindow.TmuxBody, `internal tmux window-create`) || !strings.Contains(newWindow.TmuxBody, `--anchor #{pane_id}`) {
 		t.Fatalf("new-window body = %q, want exact canonical Pane anchor", newWindow.TmuxBody)
 	}
-	newWindowSemantics, _ := keyBindingActionSemanticsFor(newWindow)
-	if newWindowSemantics.Anchor != keyBindingAnchorCurrentPaneCwdSeed {
+	newWindowSemantics, _ := keybinding.KeyBindingActionSemanticsFor(newWindow)
+	if newWindowSemantics.Anchor != keybinding.KeyBindingAnchorCurrentPaneCwdSeed {
 		t.Fatalf("new-window semantic anchor = %q, want preserved cwd-seed meaning", newWindowSemantics.Anchor)
 	}
 }
@@ -279,7 +280,7 @@ func TestSettingsKeybindingKeyDetailRowsAreAllHandled(t *testing.T) {
 	t.Parallel()
 
 	cmd := keybindingCorrectnessCommand(t, t.TempDir(), nil)
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		for _, chord := range keybindingVisibleChords(action) {
 			entries, _, err := cmd.keybindingKeyDetailEntries(action.ID, chord)
 			if err != nil {
@@ -357,21 +358,21 @@ func keybindingRenderedSurfaceLabels(t *testing.T, locale string) []string {
 		t.Fatalf("keybindingEntries() error = %v", err)
 	}
 	collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybindings", Entries: root}).Entries)
-	for _, category := range keyBindingCategoryOrder {
+	for _, category := range keybinding.KeyBindingCategoryOrder {
 		entries, err := cmd.keybindingCategoryEntries(category.ID)
 		if err != nil {
 			t.Fatalf("keybindingCategoryEntries(%q) error = %v", category.ID, err)
 		}
 		collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybindings-category", Entries: entries}).Entries)
 	}
-	for _, surface := range keyBindingSurfaceOrder {
+	for _, surface := range keybinding.KeyBindingSurfaceOrder {
 		entries, err := cmd.keybindingSurfaceEntries(surface.ID)
 		if err != nil {
 			t.Fatalf("keybindingSurfaceEntries(%q) error = %v", surface.ID, err)
 		}
 		collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybindings-surface", Entries: entries}).Entries)
 	}
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		detail, _, err := cmd.keybindingDetailEntries(action.ID)
 		if err != nil {
 			t.Fatalf("keybindingDetailEntries(%q) error = %v", action.ID, err)
@@ -527,7 +528,7 @@ func TestSettingsKeybindingDeliveryTestReportsEveryOutcome(t *testing.T) {
 			cmd.probeKeybinding = func(key probeKey, _ time.Duration) (probeResult, error) {
 				return classifyProbeInput(key, tc.sequence), nil
 			}
-			action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "ProjectSidebarToggle")
+			action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "ProjectSidebarToggle")
 			if !ok {
 				t.Fatalf("catalog missing ProjectSidebarToggle")
 			}
@@ -759,7 +760,7 @@ func TestSettingsKeybindingAddPathsShareNormalizationAndValidation(t *testing.T)
 		if err != nil {
 			t.Fatalf("normalizeKeybindingRecorderKey(%#v) error = %v", tc.key, err)
 		}
-		typed, err := normalizeKeymapTypedChord(tc.typed)
+		typed, err := keybinding.NormalizeKeymapTypedChord(tc.typed)
 		if err != nil {
 			t.Fatalf("normalizeKeymapTypedChord(%q) error = %v", tc.typed, err)
 		}
@@ -850,14 +851,14 @@ func TestSettingsKeybindingTypedNormalizationRejectionIsObservable(t *testing.T)
 func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 	t.Parallel()
 
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "current-project-session")
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "current-project-session")
 	if !ok {
 		t.Fatalf("catalog missing current-project-session")
 	}
-	if got, want := keyBindingDisplayName(action), "Open Project for Current Directory"; got != want {
+	if got, want := keybinding.KeyBindingDisplayName(action), "Open Project for Current Directory"; got != want {
 		t.Fatalf("display name = %q, want %q", got, want)
 	}
-	semantics, ok := keyBindingActionSemanticsFor(action)
+	semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 	if !ok {
 		t.Fatalf("current-project-session has no semantics")
 	}
@@ -868,7 +869,7 @@ func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 		t.Fatalf("anchor = %q, want the cwd query marked as an input", semantics.Anchor)
 	}
 
-	handler, ok := keyBindingActionHandlerFor(action)
+	handler, ok := keybinding.KeyBindingActionHandlerFor(action)
 	if !ok {
 		t.Fatalf("current-project-session has no pinned handler")
 	}
@@ -910,28 +911,28 @@ func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 func TestSettingsKeybindingAgentCreateAndResumeStayDistinct(t *testing.T) {
 	t.Parallel()
 
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	creates := []string{"ai-split-codex-right", "ai-split-codex-down", "ai-split-claude-right", "ai-split-claude-down"}
 	for _, id := range creates {
-		action, ok := keyBindingActionByID(catalog, id)
+		action, ok := keybinding.KeyBindingActionByID(catalog, id)
 		if !ok {
 			t.Fatalf("catalog missing %q", id)
 		}
-		semantics, _ := keyBindingActionSemanticsFor(action)
+		semantics, _ := keybinding.KeyBindingActionSemanticsFor(action)
 		if !strings.Contains(semantics.ResultKind, "always a new Agent") ||
 			!strings.Contains(semantics.ResultKind, "never resumes") {
 			t.Fatalf("create action %q result kind = %q, want an always-new Agent result", id, semantics.ResultKind)
 		}
-		if semantics.Anchor != keyBindingAnchorCurrentPaneSplitTarget {
+		if semantics.Anchor != keybinding.KeyBindingAnchorCurrentPaneSplitTarget {
 			t.Fatalf("create action %q anchor = %q, want the exact current Pane split-target anchor", id, semantics.Anchor)
 		}
 	}
 
-	resume, ok := keyBindingActionByID(catalog, "AIResumePickerToggle")
+	resume, ok := keybinding.KeyBindingActionByID(catalog, "AIResumePickerToggle")
 	if !ok {
 		t.Fatalf("catalog missing AIResumePickerToggle")
 	}
-	resumeSemantics, _ := keyBindingActionSemanticsFor(resume)
+	resumeSemantics, _ := keybinding.KeyBindingActionSemanticsFor(resume)
 	if !strings.Contains(resumeSemantics.ResultKind, "resume one existing Offline or Failed Agent") ||
 		!strings.Contains(resumeSemantics.ResultKind, "never creates an Agent") {
 		t.Fatalf("resume result kind = %q, want an existing-Agent-only result", resumeSemantics.ResultKind)

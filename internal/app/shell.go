@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -1230,10 +1231,10 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create shell app config directory: %w", err)
 	}
-	keyBindings, keymapPresent, err := loadMergedKeyBindingCatalog(keymapLoader{
-		homeDir:   c.homeDir,
-		lookupEnv: c.lookupEnv,
-		readFile:  c.readFile,
+	keyBindings, keymapPresent, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{
+		HomeDir:   c.homeDir,
+		LookupEnv: c.lookupEnv,
+		ReadFile:  c.readFile,
 	})
 	if err != nil {
 		return err

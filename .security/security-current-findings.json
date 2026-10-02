@@ -1,13 +1,13 @@
 {
   "schema": "projmux.security.current-findings.v1",
-  "package_count": 84,
-  "package_set_sha256": "908c5e1c34e4281696f33c6cb35dfb0495bd878df18e2caedfd75a583f2fe8c7",
+  "package_count": 85,
+  "package_set_sha256": "2aeacb9014f37e6b61af4c1e59966044160bcae05d94d5eedaf11cb79d5f9df7",
   "scanners": {
     "gosec": {
       "finding_count": 115,
       "fingerprint_count": 94,
-      "finding_identity_sha256": "72983eb201ad099f4dde85330fd52a5dfa14fb1a42dfcb2a7f829604a123361c",
-      "baseline_sha256": "1ccd3375c3bf083c7e96fe28ea0bb54c7051723c37c461079c6aea0912371422"
+      "finding_identity_sha256": "e51297838f401d354db9be07d67330addda2d20d7a6eb66e0183c4dc1a06ea11",
+      "baseline_sha256": "0b00ec137af28c203c0dd1c52707a849892edf0ec1680ffbe85e3f023fc5b34d"
     },
     "staticcheck": {
       "finding_count": 23,

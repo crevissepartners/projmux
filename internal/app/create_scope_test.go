@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -391,12 +392,12 @@ func TestGeneratedKeyBindingsCarryTheExactPaneIntoCreate(t *testing.T) {
 	t.Parallel()
 
 	var runProjmux int
-	for _, action := range defaultKeyBindingCatalog() {
-		if action.TmuxKind != tmuxBindingRunProjmux {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
+		if action.TmuxKind != keybinding.TmuxBindingRunProjmux {
 			continue
 		}
 		runProjmux++
-		body := renderTmuxBindingBody("/usr/local/bin/projmux", action)
+		body := keybinding.RenderTmuxBindingBody("/usr/local/bin/projmux", action)
 		want := `run-shell "TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '/usr/local/bin/projmux' ` + action.TmuxBody + `"`
 		if body != want {
 			t.Fatalf("action %s rendered\n  %s\nwant\n  %s", action.ID, body, want)
@@ -412,7 +413,7 @@ func TestGeneratedKeyBindingsCarryTheExactPaneIntoCreate(t *testing.T) {
 		"ai-split-claude-down": "internal agent-pane launch-provider claude down",
 		"ai-split-shell-right": "internal agent-pane launch-shell right",
 	}
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		want, ok := creates[action.ID]
 		if !ok {
 			continue
@@ -433,8 +434,8 @@ func TestGeneratedKeyBindingsCarryTheExactPaneIntoCreate(t *testing.T) {
 func TestNoScopeCreateIsTheKeyBindingBody(t *testing.T) {
 	t.Parallel()
 
-	for _, action := range defaultKeyBindingCatalog() {
-		if action.TmuxKind != tmuxBindingRunProjmux || !strings.HasPrefix(action.TmuxBody, "create ") {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
+		if action.TmuxKind != keybinding.TmuxBindingRunProjmux || !strings.HasPrefix(action.TmuxBody, "create ") {
 			continue
 		}
 		argv := strings.Fields(strings.TrimPrefix(action.TmuxBody, "create "))

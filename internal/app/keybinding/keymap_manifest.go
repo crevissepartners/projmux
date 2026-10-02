@@ -1,6 +1,8 @@
-package app
+package keybinding
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // keymapDisposition is what the migrator decided to do with one `[bindings.*]`
 // table it found on disk.
@@ -55,9 +57,9 @@ type keymapRetiredID struct {
 func keymapRetiredIDs() []keymapRetiredID {
 	return []keymapRetiredID{
 		{
-			ID: retiredPaneRenameActionID,
+			ID: RetiredPaneRenameActionID,
 			Remediation: fmt.Sprintf("replace [bindings.%s] with [bindings.%s]",
-				retiredPaneRenameActionID, paneRenameActionID),
+				RetiredPaneRenameActionID, PaneRenameActionID),
 			Fatal: true,
 		},
 		{ID: "sessionizer-sidebar", Remediation: "use the canonical toggle action id instead of the popup mode name"},
@@ -90,11 +92,11 @@ type keymapManifestEntry struct {
 // none. Callers get a map because every consumer is a lookup.
 func keymapActionManifest() map[string]keymapManifestEntry {
 	manifest := map[string]keymapManifestEntry{}
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range DefaultKeyBindingCatalog() {
 		if action.CanonicalID == "" {
 			continue
 		}
-		for _, id := range keyBindingActionAliases(action) {
+		for _, id := range KeyBindingActionAliases(action) {
 			manifest[id] = keymapManifestEntry{
 				SourceID:    id,
 				CanonicalID: action.CanonicalID,
@@ -114,15 +116,15 @@ func keymapRetiredIDIndex() map[string]keymapRetiredID {
 	return index
 }
 
-// keymapBindingKeyForAction picks the table id a write for this action must use.
+// KeymapBindingKeyForAction picks the table id a write for this action must use.
 //
 // An id already present in the file wins, so a save never grows a second table
 // for an action the file already names in another spelling. Otherwise the file's
 // own schema version decides: a v1 file gets the canonical id, a v0 file keeps
 // writing the v0 id it has always used. Settings save migrates first, so in
 // practice this settles on canonical after the first write.
-func keymapBindingKeyForAction(keymap keymapFile, action keyBindingAction) string {
-	for _, id := range keyBindingActionAliases(action) {
+func KeymapBindingKeyForAction(keymap KeymapFile, action KeyBindingAction) string {
+	for _, id := range KeyBindingActionAliases(action) {
 		if _, ok := keymap.Bindings[id]; ok {
 			return id
 		}

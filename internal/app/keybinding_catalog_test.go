@@ -3,85 +3,19 @@ package app
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
-func TestKeyBindingActionMetadataIsCanonicalAndExhaustive(t *testing.T) {
-	t.Parallel()
-
-	seenRuntime := map[string]bool{}
-	seenCanonical := map[string]bool{}
-	for _, action := range defaultKeyBindingCatalog() {
-		if strings.TrimSpace(action.ID) == "" || seenRuntime[action.ID] {
-			t.Fatalf("runtime action id %q is empty or duplicated", action.ID)
-		}
-		seenRuntime[action.ID] = true
-		if strings.TrimSpace(action.CanonicalID) == "" || seenCanonical[action.CanonicalID] {
-			t.Fatalf("canonical action id %q is empty or duplicated", action.CanonicalID)
-		}
-		seenCanonical[action.CanonicalID] = true
-		if got := keyBindingDisplayName(action); got != action.DisplayName || strings.TrimSpace(got) == "" {
-			t.Fatalf("action %q display projection = %q, canonical record = %q", action.ID, got, action.DisplayName)
-		}
-		if got, ok := keyBindingActionCategory(action); !ok || got != action.Category {
-			t.Fatalf("action %q category projection = (%q, %v), canonical record = %q", action.ID, got, ok, action.Category)
-		}
-		if got, ok := keyBindingActionSemanticsFor(action); !ok || got != action.Semantics {
-			t.Fatalf("action %q semantics projection = (%#v, %v), canonical record = %#v", action.ID, got, ok, action.Semantics)
-		}
-		handler, ok := keyBindingActionHandlerFor(action)
-		if !ok || handler.Note != action.HandlerBoundaryNote {
-			t.Fatalf("action %q handler note projection = (%q, %v), canonical record = %q", action.ID, handler.Note, ok, action.HandlerBoundaryNote)
-		}
-	}
-}
-
-func TestRetiredKeyBindingMetadataMapsStayAbsent(t *testing.T) {
-	t.Parallel()
-
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sort.Strings(files)
-	retiredOwners := []string{
-		"keyBindingCategory" + "ByActionID",
-		"keyBindingDisplay" + "Names",
-		"keyBindingActionSemantics" + "ByID",
-		"keyBindingActionHandler" + "Notes",
-	}
-	productionFiles := 0
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
-		productionFiles++
-		source, readErr := os.ReadFile(file)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		for _, retired := range retiredOwners {
-			if strings.Contains(string(source), retired) {
-				t.Fatalf("retired parallel metadata owner %q reappeared in %s", retired, file)
-			}
-		}
-	}
-	if productionFiles == 0 {
-		t.Fatal("retired metadata audit found no production Go files")
-	}
-}
-
 func TestCatalogProjectsTerminalNativeAndProbeInventories(t *testing.T) {
 	t.Parallel()
 
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	ghosttyWant := map[[2]string]int{}
 	windowsWant := map[[3]string]int{}
 	probeWant := map[[5]string]int{}
@@ -94,10 +28,10 @@ func TestCatalogProjectsTerminalNativeAndProbeInventories(t *testing.T) {
 			windowsWant[[3]string{action.WTID, action.WTKeys, action.WTInput}]++
 		}
 		if action.ProbeLabel != "" {
-			probeWant[[5]string{action.ID, action.ProbeLabel, action.ProbeAction, action.ProbePlain, firstNonEmptyString(keyBindingEffectivePlainChords(action))}]++
+			probeWant[[5]string{action.ID, action.ProbeLabel, action.ProbeAction, action.ProbePlain, keybinding.FirstNonEmptyString(keybinding.KeyBindingEffectivePlainChords(action))}]++
 		}
-		if action.Kind != keyBindingActionPickerInternal {
-			nativeChords = append(nativeChords, keyBindingEffectivePlainChords(action)...)
+		if action.Kind != keybinding.KeyBindingActionPickerInternal {
+			nativeChords = append(nativeChords, keybinding.KeyBindingEffectivePlainChords(action)...)
 		}
 	}
 	nativeChords = append(nativeChords, keyBindingSequenceTransportChords(catalog)...)
@@ -142,11 +76,11 @@ func TestCatalogProjectsTerminalNativeAndProbeInventories(t *testing.T) {
 
 func TestProjectRuntimeStopCopyHasEnglishKoreanIdentityAndTopologyParity(t *testing.T) {
 	t.Parallel()
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "Sidebar:KillSession")
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "Sidebar:KillSession")
 	if !ok {
 		t.Fatal("Sidebar:KillSession missing from keybinding catalog")
 	}
-	semantics, ok := keyBindingActionSemanticsFor(action)
+	semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 	if !ok {
 		t.Fatal("Sidebar:KillSession has no semantic contract")
 	}
@@ -161,7 +95,7 @@ func TestProjectRuntimeStopCopyHasEnglishKoreanIdentityAndTopologyParity(t *test
 			wantDesc:   "포커스한 Project 런타임만 중지하고 Project UID와 desired Window/Pane 토폴로지는 유지",
 			wantResult: "Project 런타임만 중지하고 Project UID와 desired Window/Pane 토폴로지는 유지"},
 	} {
-		if got := settingsCatalogTextLocale(test.locale, keyBindingDisplayName(action)); got != test.wantLabel {
+		if got := settingsCatalogTextLocale(test.locale, keybinding.KeyBindingDisplayName(action)); got != test.wantLabel {
 			t.Fatalf("locale=%s Stop label=%q, want %q", test.locale, got, test.wantLabel)
 		}
 		if got := settingsCatalogTextLocale(test.locale, action.Description); got != test.wantDesc {
@@ -175,11 +109,11 @@ func TestProjectRuntimeStopCopyHasEnglishKoreanIdentityAndTopologyParity(t *test
 
 func TestRuntimeSessionStopCopyHasEnglishKoreanManagedIdentityParity(t *testing.T) {
 	t.Parallel()
-	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "SessionPopup:KillSession")
+	action, ok := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "SessionPopup:KillSession")
 	if !ok {
 		t.Fatal("SessionPopup:KillSession missing from keybinding catalog")
 	}
-	semantics, ok := keyBindingActionSemanticsFor(action)
+	semantics, ok := keybinding.KeyBindingActionSemanticsFor(action)
 	if !ok {
 		t.Fatal("SessionPopup:KillSession has no semantic contract")
 	}
@@ -194,7 +128,7 @@ func TestRuntimeSessionStopCopyHasEnglishKoreanManagedIdentityParity(t *testing.
 			wantDesc:   "포커스한 런타임 Session만 중지하고 관리 Registry identity와 desired 토폴로지는 유지",
 			wantResult: "런타임 Session만 중지하고 관리 Registry identity와 desired 토폴로지는 유지"},
 	} {
-		if got := settingsCatalogTextLocale(test.locale, keyBindingDisplayName(action)); got != test.wantLabel {
+		if got := settingsCatalogTextLocale(test.locale, keybinding.KeyBindingDisplayName(action)); got != test.wantLabel {
 			t.Fatalf("locale=%s generic Stop label=%q, want %q", test.locale, got, test.wantLabel)
 		}
 		if got := settingsCatalogTextLocale(test.locale, action.Description); got != test.wantDesc {

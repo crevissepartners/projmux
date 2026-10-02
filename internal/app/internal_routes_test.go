@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -73,7 +74,7 @@ func generatedConfigSurfaces(t *testing.T) map[string]string {
 		Notify: config.StatusbarDecorationSymbol,
 	}
 	effective := theme.ResolveTheme(theme.ThemeConfig{})
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	surfaces := map[string]string{
 		// Live resources on is the non-default branch, so rendering it here is
 		// what keeps the `status resources` segment inside the scan.

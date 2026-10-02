@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -1305,12 +1306,12 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 // the popup at least remains dismissable.
 func statusbarPopupCommand(payload, binaryPath string) string {
 	payload = strings.TrimRight(payload, "\r\n")
-	prefix := "printf %s " + tmuxShellQuote(payload)
+	prefix := "printf %s " + keybinding.TmuxShellQuote(payload)
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
 		return prefix + "; IFS= read -r _"
 	}
-	return prefix + "; " + tmuxShellQuote(binaryPath) + " internal popup-wait-key"
+	return prefix + "; " + keybinding.TmuxShellQuote(binaryPath) + " internal popup-wait-key"
 }
 
 const displayOnlyPopupClosePrompt = "Press any key to close."

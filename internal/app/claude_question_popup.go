@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -322,15 +323,15 @@ func buildClaudeQuestionPopupArgs(binaryPath, title, shown string, target claude
 		return nil, errors.New("question popup needs a client, a question, an Agent, and a store")
 	}
 	words := []string{
-		tmuxShellQuote(binaryPath),
+		keybinding.TmuxShellQuote(binaryPath),
 		"internal",
 		claudeQuestionPickerRoute,
-		"--question", tmuxShellQuote(target.QuestionID),
-		"--agent", tmuxShellQuote(target.AgentUID),
-		"--store", tmuxShellQuote(target.StorePath),
+		"--question", keybinding.TmuxShellQuote(target.QuestionID),
+		"--agent", keybinding.TmuxShellQuote(target.AgentUID),
+		"--store", keybinding.TmuxShellQuote(target.StorePath),
 	}
 	if shown = strings.TrimSpace(shown); shown != "" {
-		words = append(words, "--shown", tmuxShellQuote(shown))
+		words = append(words, "--shown", keybinding.TmuxShellQuote(shown))
 	}
 	command := strings.Join(words, " ")
 	return inttmux.BuildDisplayPopupArgs(command, inttmux.PopupOptions{

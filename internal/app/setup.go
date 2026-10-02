@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 )
 
 // setupCommand walks the operator through a per-key delivery probe so they can
@@ -288,9 +289,9 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 		return "", false
 	}
 	got := string(seq)
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		if action.ProbePlain != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
-			if chord := firstNonEmptyString(keyBindingEffectivePlainChords(action)); chord != "" {
+			if chord := keybinding.FirstNonEmptyString(keybinding.KeyBindingEffectivePlainChords(action)); chord != "" {
 				return chord, true
 			}
 			if chord := probeLabelToTmuxChord(action.ProbeLabel); chord != "" {
@@ -306,7 +307,7 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 	}
 	if len(seq) == 1 && seq[0] >= 0x21 && seq[0] <= 0x7e {
 		chord := string(seq)
-		if err := validateKeymapChord(chord); err == nil {
+		if err := keybinding.ValidateKeymapChord(chord); err == nil {
 			return chord, true
 		}
 	}

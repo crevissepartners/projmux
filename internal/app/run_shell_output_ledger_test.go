@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
@@ -83,10 +84,10 @@ func runShellSurfaceOf(prefix string) runShellSurface {
 // so a sweep of the stock config would never see the producers they render. The
 // ledger is a contract about the renderer, not about one operator's keymap, so
 // the sweep binds them all.
-func keyBindingCatalogWithEveryChordBound() []keyBindingAction {
-	catalog := defaultKeyBindingCatalog()
+func keyBindingCatalogWithEveryChordBound() []keybinding.KeyBindingAction {
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	for i := range catalog {
-		if len(keyBindingEffectivePlainChords(catalog[i])) != 0 {
+		if len(keybinding.KeyBindingEffectivePlainChords(catalog[i])) != 0 {
 			continue
 		}
 		catalog[i].PlainChords = []string{fmt.Sprintf("F%d", i+1)}
@@ -219,17 +220,30 @@ func TestRunShellOutputLedgerHoldsTheNoOverlayContract(t *testing.T) {
 func TestRunShellSourceSitesAreClosed(t *testing.T) {
 	t.Parallel()
 
-	entries, err := os.ReadDir(".")
+	// The sweep covers the package and its subpackages: a producer moved into
+	// a subpackage still emits from internal/app's generated config.
+	var names []string
+	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if entry.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			names = append(names, filepath.ToSlash(path))
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("read package dir: %v", err)
+		t.Fatalf("walk package dir: %v", err)
 	}
 	sites := runShellSourceSites()
 	used := make([]bool, len(sites))
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range names {
 		// This file and the ledger it enforces both spell `run-shell` in prose
 		// and in match tokens; neither emits one.
 		if name == "run_shell_output_ledger.go" || name == "interactive_run_shell.go" {

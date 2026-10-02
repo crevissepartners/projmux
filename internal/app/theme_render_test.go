@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -42,7 +43,7 @@ func TestRenderThemeSourceFeedsPickerAndTmuxFromSameEffectiveTheme(t *testing.T)
 	}
 
 	tmuxTokens := theme.TmuxRenderTokensFromEffective(*pickerOptions.Theme)
-	tmuxConfig := source.tmuxAppConfig("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	tmuxConfig := source.tmuxAppConfig("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false)
 	for _, want := range []string{
 		"set -g status-style \"bg=" + tmuxTokens.StatusBg + ",fg=" + tmuxTokens.StatusFg + "\"",
 		"#[fg=" + tmuxTokens.WindowInactiveFg + ",bg=" + tmuxTokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
@@ -58,8 +59,8 @@ func TestRenderThemeSourceFallbackMatchesCurrentProductionOutput(t *testing.T) {
 	t.Parallel()
 
 	source := fallbackRenderThemeSource()
-	got := source.tmuxStandaloneConfig("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
-	want := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, theme.ResolveTheme(theme.ThemeConfig{}))
+	got := source.tmuxStandaloneConfig("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false)
+	want := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), keybinding.DefaultKeyBindingCatalog(), false, theme.ResolveTheme(theme.ThemeConfig{}))
 	if got != want {
 		t.Fatalf("fallback render source standalone config changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}

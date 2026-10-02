@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -101,7 +102,7 @@ func (s realTmuxQuestionServer) pickerWrapper(t *testing.T) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.root, "projmux")
-	script := "#!/bin/sh\nexec env " + claudeQuestionPickerChildEnv + "=1 " + tmuxShellQuote(image) + " \"$@\"\n"
+	script := "#!/bin/sh\nexec env " + claudeQuestionPickerChildEnv + "=1 " + keybinding.TmuxShellQuote(image) + " \"$@\"\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

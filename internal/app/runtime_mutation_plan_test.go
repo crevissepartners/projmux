@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -364,7 +365,7 @@ func TestGeneratedCatalogMutationAndNavigationArtifactsHaveOneSurfaceRow(t *test
 	}
 	seenCanonical := map[string]string{}
 	seenLegacy := map[string]string{}
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		if strings.TrimSpace(action.CanonicalID) == "" {
 			t.Errorf("generated catalog artifact %q has no public canonical id", action.ID)
 			continue
@@ -387,7 +388,7 @@ func TestGeneratedCatalogMutationAndNavigationArtifactsHaveOneSurfaceRow(t *test
 			// A managed close key's mirror-absent branch is tmux's own stock body
 			// for that key, classified exactly by the full-config sweep. It may be
 			// nothing else and live on no other kind.
-			if action.TmuxKind != tmuxBindingManagedDelete || (action.TmuxStockBody != `confirm-before -p "kill-pane #P? (y/n)" kill-pane` &&
+			if action.TmuxKind != keybinding.TmuxBindingManagedDelete || (action.TmuxStockBody != `confirm-before -p "kill-pane #P? (y/n)" kill-pane` &&
 				action.TmuxStockBody != `confirm-before -p "kill-window #W? (y/n)" kill-window`) {
 				t.Errorf("generated catalog artifact %q carries an unclassified stock body %q", action.ID, action.TmuxStockBody)
 			}
@@ -752,7 +753,7 @@ func TestGeneratedWindowLifecycleActionsReachTypedHandlersWithoutRawManagedVerbs
 		"delete-window": `confirm-before -p "kill-window #W? (y/n)" kill-window`,
 	}
 	seen := map[string]bool{}
-	for _, action := range defaultKeyBindingCatalog() {
+	for _, action := range keybinding.DefaultKeyBindingCatalog() {
 		route, ok := wantRoute[action.ID]
 		if !ok {
 			continue
@@ -761,7 +762,7 @@ func TestGeneratedWindowLifecycleActionsReachTypedHandlersWithoutRawManagedVerbs
 		if action.CanonicalID != wantCanonicalID[action.ID] {
 			t.Fatalf("generated %s canonical id = %q, want %q", action.ID, action.CanonicalID, wantCanonicalID[action.ID])
 		}
-		body := renderTmuxBindingBody("/usr/local/bin/projmux", action)
+		body := keybinding.RenderTmuxBindingBody("/usr/local/bin/projmux", action)
 		if stock, managedDelete := wantStockElse[action.ID]; managedDelete {
 			managed, elseBranch, split := strings.Cut(body, " } { ")
 			if !split || !strings.HasPrefix(managed, `if-shell -F "#{@projmux_`) || elseBranch != stock+" }" {
@@ -959,14 +960,14 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		}
 	}
 
-	overridden, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), keymapFile{Bindings: map[string]keymapOverride{
+	overridden, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), keybinding.KeymapFile{Bindings: map[string]keybinding.KeymapOverride{
 		"window.create": {KeysSet: true, Keys: []string{"M-N"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defaultWindow, _ := keyBindingActionByID(defaultKeyBindingCatalog(), "new-window")
-	overriddenWindow, _ := keyBindingActionByID(overridden, "new-window")
+	defaultWindow, _ := keybinding.KeyBindingActionByID(keybinding.DefaultKeyBindingCatalog(), "new-window")
+	overriddenWindow, _ := keybinding.KeyBindingActionByID(overridden, "new-window")
 	if overriddenWindow.TmuxKind != defaultWindow.TmuxKind || overriddenWindow.TmuxBody != defaultWindow.TmuxBody ||
 		!reflect.DeepEqual(overriddenWindow.TmuxBodyAliases, defaultWindow.TmuxBodyAliases) {
 		t.Fatal("Settings key override changed the closed generated action handler")
@@ -975,7 +976,7 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 	// X, window.delete gives up prefix & entirely. Both vacated stock keys must
 	// come back as tmux's own stock body and nothing else.
 	closeKeyMoved, closeKeyOff := "X", ""
-	closeKeyOverride, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), keymapFile{Bindings: map[string]keymapOverride{
+	closeKeyOverride, err := keybinding.MergeKeymapOverrides(keybinding.DefaultKeyBindingCatalog(), keybinding.KeymapFile{Bindings: map[string]keybinding.KeymapOverride{
 		"pane.delete":   {Prefix: &closeKeyMoved},
 		"window.delete": {Prefix: &closeKeyOff},
 	}})

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
 	coreresources "github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -212,7 +213,7 @@ func TestResourceScopeCountProjection(t *testing.T) {
 func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC)
 	home := t.TempDir()
-	path, err := keymapPath(func() (string, error) { return home, nil }, func(string) string { return "" })
+	path, err := keybinding.KeymapPath(func() (string, error) { return home, nil }, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +925,7 @@ func TestResourceLifecycleNeverOverlapsAndCloseCancelsWithoutPersistence(t *test
 
 func TestResourceCommandFirstPaintAndCustomAliasClose(t *testing.T) {
 	home := t.TempDir()
-	paths, err := keymapPath(func() (string, error) { return home, nil }, func(string) string { return "" })
+	paths, err := keybinding.KeymapPath(func() (string, error) { return home, nil }, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -970,7 +971,7 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 	settings := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
 		return intpickercompat.Result{}, nil
 	})
-	entries, err := settings.keybindingCategoryEntries(keyBindingCategoryLaunch)
+	entries, err := settings.keybindingCategoryEntries(keybinding.KeyBindingCategoryLaunch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +984,7 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 		}
 		return ""
 	}
-	entries, err = settings.keybindingCategoryEntries(keyBindingCategoryLaunch)
+	entries, err = settings.keybindingCategoryEntries(keybinding.KeyBindingCategoryLaunch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -998,7 +999,7 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 		hasEntryLabelContaining(detail, "읽기 전용 프로젝트, 창, pane 리소스 검사기 열기") {
 		t.Fatalf("ko-KR Resources detail = %#v, want concise localized action state without the passive description", detail)
 	}
-	catalog := defaultKeyBindingCatalog()
+	catalog := keybinding.DefaultKeyBindingCatalog()
 	for i := range catalog {
 		if catalog[i].ID == "Resources:Open" {
 			catalog[i].PlainChords = []string{"M-u"}

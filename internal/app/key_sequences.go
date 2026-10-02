@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
@@ -18,18 +19,18 @@ const (
 type keySequenceTrieNode struct {
 	prefix   []string
 	children map[string]*keySequenceTrieNode
-	action   *keyBindingAction
+	action   *keybinding.KeyBindingAction
 }
 
-func compileKeySequenceTrie(actions []keyBindingAction) *keySequenceTrieNode {
+func compileKeySequenceTrie(actions []keybinding.KeyBindingAction) *keySequenceTrieNode {
 	root := &keySequenceTrieNode{children: map[string]*keySequenceTrieNode{}}
 	type entry struct {
 		sequence string
-		action   keyBindingAction
+		action   keybinding.KeyBindingAction
 	}
 	var entries []entry
 	for _, action := range actions {
-		for _, sequence := range keyBindingEffectiveSequences(action) {
+		for _, sequence := range keybinding.KeyBindingEffectiveSequences(action) {
 			entries = append(entries, entry{sequence: sequence, action: action})
 		}
 	}
@@ -68,7 +69,7 @@ func sortedSequenceChildStrokes(node *keySequenceTrieNode) []string {
 	return strokes
 }
 
-func keySequenceGeneratedState(actions []keyBindingAction) (roots, tables []string) {
+func keySequenceGeneratedState(actions []keybinding.KeyBindingAction) (roots, tables []string) {
 	trie := compileKeySequenceTrie(actions)
 	roots = sortedSequenceChildStrokes(trie)
 	var walk func(*keySequenceTrieNode)
@@ -95,11 +96,11 @@ func keySequenceGeneratedState(actions []keyBindingAction) (roots, tables []stri
 // rewritten (leaving a ghost root behind) or unbind a root the file has
 // already re-bound. retireGeneratedKeySequenceState owns the removal from the
 // apply path, where the ordering against source-file is explicit.
-func tmuxSequenceStateLines(actions []keyBindingAction) []string {
+func tmuxSequenceStateLines(actions []keybinding.KeyBindingAction) []string {
 	roots, tables := keySequenceGeneratedState(actions)
 	return []string{
-		"set-option -g " + tmuxSequenceRootsOption + " " + tmuxConfigQuote(strings.Join(roots, " ")),
-		"set-option -g " + tmuxSequenceTablesOption + " " + tmuxConfigQuote(strings.Join(tables, " ")),
+		"set-option -g " + tmuxSequenceRootsOption + " " + keybinding.TmuxConfigQuote(strings.Join(roots, " ")),
+		"set-option -g " + tmuxSequenceTablesOption + " " + keybinding.TmuxConfigQuote(strings.Join(tables, " ")),
 	}
 }
 
@@ -120,7 +121,7 @@ func keySequenceRetireCommandsWithPrefix(prefix []string, roots, tables string) 
 	return commands
 }
 
-func tmuxSequenceBindLines(binaryPath string, actions []keyBindingAction) []string {
+func tmuxSequenceBindLines(binaryPath string, actions []keybinding.KeyBindingAction) []string {
 	trie := compileKeySequenceTrie(actions)
 	var lines []string
 	for _, stroke := range sortedSequenceChildStrokes(trie) {
@@ -140,7 +141,7 @@ func tmuxSequenceBindLines(binaryPath string, actions []keyBindingAction) []stri
 		for _, stroke := range sortedSequenceChildStrokes(node) {
 			child := node.children[stroke]
 			if child.action != nil {
-				lines = append(lines, "bind-key -T "+table+" "+stroke+" "+renderTmuxBindingBody(binaryPath, *child.action))
+				lines = append(lines, "bind-key -T "+table+" "+stroke+" "+keybinding.RenderTmuxBindingBody(binaryPath, *child.action))
 			} else {
 				lines = append(lines, "bind-key -T "+table+" "+stroke+" switch-client -T "+keySequenceTableName(child.prefix))
 			}
@@ -156,10 +157,10 @@ func tmuxSequenceBindLines(binaryPath string, actions []keyBindingAction) []stri
 // keyBindingSequenceTransportChords is transport metadata, not action
 // dispatch. Only strokes representable by the native physical adapter enter
 // the broker allowlist; ordinary later strokes continue through the terminal.
-func keyBindingSequenceTransportChords(actions []keyBindingAction) []string {
+func keyBindingSequenceTransportChords(actions []keybinding.KeyBindingAction) []string {
 	var chords []string
 	for _, action := range actions {
-		for _, sequence := range keyBindingEffectiveSequences(action) {
+		for _, sequence := range keybinding.KeyBindingEffectiveSequences(action) {
 			for stroke := range strings.SplitSeq(sequence, " ") {
 				if _, ok := platformkeys.ParseBinding(stroke); ok {
 					chords = append(chords, stroke)
@@ -167,5 +168,5 @@ func keyBindingSequenceTransportChords(actions []keyBindingAction) []string {
 			}
 		}
 	}
-	return uniqueNonEmptyStrings(chords)
+	return keybinding.UniqueNonEmptyStrings(chords)
 }

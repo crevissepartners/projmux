@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	resourceInspectorPopupMode = "resource-inspector"
+	resourceInspectorPopupMode = keybinding.ResourceInspectorPopupMode
 	resourceRefreshInterval    = 2 * time.Second
 	resourceScanBudget         = resourceRefreshInterval
 )

@@ -22,6 +22,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
@@ -70,7 +71,7 @@ const (
 	aiPaneTranscriptPathOption   = "@projmux_ai_transcript_path"
 	aiPaneResumeUpdatedAtOption  = "@projmux_ai_resume_updated_at"
 
-	canonicalCreateTargetClientEnv = "PROJMUX_POPUP_TARGET_CLIENT"
+	canonicalCreateTargetClientEnv = keybinding.CanonicalCreateTargetClientEnv
 
 	aiBadgeKindInProgress       = aibadge.InProgress
 	aiBadgeKindApprovalRequired = aibadge.ApprovalRequired
@@ -1325,7 +1326,7 @@ func (c *aiCommand) resumePickerCloseBindings(direction string, hostModes ...str
 	for _, mode := range hostModes {
 		keys = append(keys, effectivePickerKeysForPopupToggleMode(c.homeDir, c.lookupEnv, mode, fallback)...)
 	}
-	return pickerCloseBindings(uniqueNonEmptyStrings(keys)...)
+	return pickerCloseBindings(keybinding.UniqueNonEmptyStrings(keys)...)
 }
 
 type aiResumeSelection struct {
