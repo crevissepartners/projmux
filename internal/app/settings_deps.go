@@ -3,6 +3,7 @@ package app
 import (
 	"io"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -31,7 +32,7 @@ type projectContextResolver interface {
 // rows plus the membership lookup, so Settings never has to infer a pin's kind
 // from its spelling.
 type projectDirStore interface {
-	loadPinRows() ([]pinRow, pinSelection, error)
+	loadPinRows() ([]pincmd.Row, pincmd.Selection, error)
 	loadSavedWorkdirs() ([]string, error)
 	envWorkdirSources() []envWorkdirSource
 	filesystemPinEntries() ([]intpickercompat.Entry, error)

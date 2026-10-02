@@ -1,4 +1,8 @@
-package app
+// Package pincmd implements `projmux pin` and the pin authority behind it: the
+// typed pin file resolved against Registry Project identity, which the switch
+// picker and Settings read through the same Authority. The app wires it with
+// the Registry read, so this package does not import the app.
+package pincmd
 
 import (
 	"errors"
@@ -8,13 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 )
 
-type pinCommand struct {
-	authority pinAuthority
+type Command struct {
+	authority Authority
 	storeErr  error
 	// registry projects the display root and name of a managed pin. Listing a pin
 	// reads the Registry rather than remembering a path, which is what makes the
@@ -22,23 +27,28 @@ type pinCommand struct {
 	registry func() (coremetadata.Registry, error)
 }
 
-func newPinCommand() *pinCommand {
+// New builds the pin command over the default pin file. registry is the
+// read-only Registry load both the pin resolution and the list projection use.
+func New(registry func() (coremetadata.Registry, error)) *Command {
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
-		return &pinCommand{
+		return &Command{
 			storeErr: fmt.Errorf("resolve default config paths: %w", err),
-			registry: loadResourceRegistry,
+			registry: registry,
 		}
 	}
 
-	return &pinCommand{
-		authority: newPinAuthority(pins.NewDefaultStore(paths)),
-		registry:  loadResourceRegistry,
-	}
+	return NewCommand(NewAuthority(pins.NewDefaultStore(paths), RegistryProjectRefs(registry)), registry)
+}
+
+// NewCommand builds the pin command over an explicit authority and Registry
+// read.
+func NewCommand(authority Authority, registry func() (coremetadata.Registry, error)) *Command {
+	return &Command{authority: authority, registry: registry}
 }
 
 // Run manages the configured pin subcommands.
-func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	return c.runLevel("pin", args, stdout, stderr)
 }
 
@@ -47,20 +57,20 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 // consumed, so a flag error there prints `Usage of pin project:`. The route
 // gate only lets `pin project …` through, so every public flag error lands on
 // the `pin project` level.
-func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Writer) error {
+func (c *Command) runLevel(route string, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(route, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() == 0 {
 		printPinHelp(stderr, route)
-		return usageError(route + " requires a subcommand")
+		return &coremetadata.InputError{Detail: route + " requires a subcommand"}
 	}
 
 	switch fs.Arg(0) {
@@ -70,9 +80,9 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 	case "project":
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {
-			printRouteUsage(stderr, "pin project")
+			cli.WriteRouteUsage(stderr, "pin project")
 			printPinNotes(stderr)
-			return usageError(fmt.Sprintf("unknown pin project subcommand: %s", rest[0]))
+			return &coremetadata.InputError{Detail: fmt.Sprintf("unknown pin project subcommand: %s", rest[0])}
 		}
 		return c.runLevel("pin project", rest, stdout, stderr)
 	case "list":
@@ -89,7 +99,7 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 		return c.runMigrate(fs.Args()[1:], stdout, stderr)
 	default:
 		printPinHelp(stderr, route)
-		return usageError(fmt.Sprintf("unknown %s subcommand: %s", route, fs.Arg(0)))
+		return &coremetadata.InputError{Detail: fmt.Sprintf("unknown %s subcommand: %s", route, fs.Arg(0))}
 	}
 }
 
@@ -100,25 +110,25 @@ func (c *pinCommand) runLevel(route string, args []string, stdout, stderr io.Wri
 // on every read, and a candidate pin is a path that no Project claims. Workdirs
 // are neither and are not listed here -- they are the scan roots, owned by
 // `projmux settings` and PROJMUX_MANAGED_ROOTS.
-func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runList(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pin project list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	kind := fs.String("kind", "", "Limit the listing to one pin kind (project or candidate)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "pin project list")
+		cli.WriteRouteUsage(stderr, "pin project list")
 		printPinNotes(stderr)
-		return usageError("pin project list does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "pin project list does not accept positional arguments"}
 	}
 	filter, err := parsePinKindFilter(*kind)
 	if err != nil {
-		printRouteUsage(stderr, "pin project list")
+		cli.WriteRouteUsage(stderr, "pin project list")
 		printPinNotes(stderr)
 		return err
 	}
@@ -127,7 +137,7 @@ func (c *pinCommand) runList(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	resolution, err := authority.resolved()
+	resolution, err := authority.Resolved()
 	if err != nil {
 		return fmt.Errorf("list pins: %w", err)
 	}
@@ -154,7 +164,7 @@ func parsePinKindFilter(value string) (pins.Kind, error) {
 	case string(pins.KindCandidate):
 		return pins.KindCandidate, nil
 	default:
-		return "", usageError(fmt.Sprintf("unknown pin kind %q: use %s or %s", value, pins.KindProject, pins.KindCandidate))
+		return "", &coremetadata.InputError{Detail: fmt.Sprintf("unknown pin kind %q: use %s or %s", value, pins.KindProject, pins.KindCandidate)}
 	}
 }
 
@@ -195,9 +205,9 @@ func reportPinResolution(stderr io.Writer, path string, resolution pins.Resoluti
 	}
 }
 
-func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runAdd(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 1 {
-		printRouteUsage(stderr, "pin project add")
+		cli.WriteRouteUsage(stderr, "pin project add")
 		printPinNotes(stderr)
 		return pinArgCountError("pin project add")
 	}
@@ -206,11 +216,11 @@ func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	pin, err := authority.pinTargetForSelector(target)
+	pin, err := authority.PinTargetForSelector(target)
 	if err != nil {
 		return err
 	}
-	if err := authority.add(pin); err != nil {
+	if err := authority.Add(pin); err != nil {
 		return fmt.Errorf("add pin: %w", err)
 	}
 
@@ -218,9 +228,9 @@ func (c *pinCommand) runAdd(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
-func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runRemove(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 1 {
-		printRouteUsage(stderr, "pin project remove")
+		cli.WriteRouteUsage(stderr, "pin project remove")
 		printPinNotes(stderr)
 		return pinArgCountError("pin project remove")
 	}
@@ -229,7 +239,7 @@ func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	pin, err := authority.pinTargetForSelector(target)
+	pin, err := authority.PinTargetForSelector(target)
 	if err != nil {
 		return err
 	}
@@ -241,9 +251,9 @@ func (c *pinCommand) runRemove(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
-func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runToggle(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 1 {
-		printRouteUsage(stderr, "pin project toggle")
+		cli.WriteRouteUsage(stderr, "pin project toggle")
 		printPinNotes(stderr)
 		return pinArgCountError("pin project toggle")
 	}
@@ -252,12 +262,12 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	pin, err := authority.pinTargetForSelector(target)
+	pin, err := authority.PinTargetForSelector(target)
 	if err != nil {
 		return err
 	}
 
-	pinned, err := authority.toggle(pin)
+	pinned, err := authority.Toggle(pin)
 	if err != nil {
 		return fmt.Errorf("toggle pin: %w", err)
 	}
@@ -271,27 +281,27 @@ func (c *pinCommand) runToggle(args []string, stdout, stderr io.Writer) error {
 	return err
 }
 
-func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runClear(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pin project clear", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "pin project clear")
+		cli.WriteRouteUsage(stderr, "pin project clear")
 		printPinNotes(stderr)
-		return usageError("pin project clear does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "pin project clear does not accept positional arguments"}
 	}
 
 	authority, err := c.requireAuthority()
 	if err != nil {
 		return err
 	}
-	if err := authority.clear(); err != nil {
+	if err := authority.Clear(); err != nil {
 		return fmt.Errorf("clear pins: %w", err)
 	}
 
@@ -306,21 +316,21 @@ func (c *pinCommand) runClear(args []string, stdout, stderr io.Writer) error {
 // the bytes it had. A path that no Project claims stays a candidate pin, so
 // nothing is lost by migrating early; a path that two Projects claim refuses the
 // whole migration rather than picking a uid.
-func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
+func (c *Command) runMigrate(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pin project migrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	setRouteUsage(fs)
+	cli.SetRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "Report the migration without writing the pin file")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return flagParseError(err)
+		return cli.FlagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		printRouteUsage(stderr, "pin project migrate")
+		cli.WriteRouteUsage(stderr, "pin project migrate")
 		printPinNotes(stderr)
-		return usageError("pin project migrate does not accept positional arguments")
+		return &coremetadata.InputError{Detail: "pin project migrate does not accept positional arguments"}
 	}
 
 	authority, err := c.requireAuthority()
@@ -358,17 +368,17 @@ func (c *pinCommand) runMigrate(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func (c *pinCommand) requireAuthority() (pinAuthority, error) {
+func (c *Command) requireAuthority() (Authority, error) {
 	if c.storeErr != nil {
-		return pinAuthority{}, fmt.Errorf("configure pin store: %w", c.storeErr)
+		return Authority{}, fmt.Errorf("configure pin store: %w", c.storeErr)
 	}
 	if c.authority.store.Path() == "" {
-		return pinAuthority{}, fmt.Errorf("configure pin store: %w", errNoPinStore)
+		return Authority{}, fmt.Errorf("configure pin store: %w", ErrNoStore)
 	}
 	return c.authority, nil
 }
 
-func (c *pinCommand) readRegistry() coremetadata.Registry {
+func (c *Command) readRegistry() coremetadata.Registry {
 	if c.registry == nil {
 		return coremetadata.Registry{}
 	}
@@ -384,7 +394,7 @@ func (c *pinCommand) readRegistry() coremetadata.Registry {
 // These verbs parse no flags: every argv token, a leading dash included, is an
 // operand, so `pin project add -foo` pins the path `-foo`.
 func pinArgCountError(route string) error {
-	return usageError(fmt.Sprintf("%s requires exactly 1 <dir|uid:uid> argument", route))
+	return &coremetadata.InputError{Detail: fmt.Sprintf("%s requires exactly 1 <dir|uid:uid> argument", route)}
 }
 
 // pinTargetArg accepts either a directory or an explicit `uid:<uid>`.
@@ -404,9 +414,9 @@ func pinTargetArg(arg string) string {
 // cannot state.
 func printPinHelp(w io.Writer, route string) {
 	if route == "pin project" {
-		printRouteUsage(w, "pin project")
+		cli.WriteRouteUsage(w, "pin project")
 	} else {
-		printRouteUsage(w, "pin")
+		cli.WriteRouteUsage(w, "pin")
 	}
 	printPinNotes(w)
 }
@@ -414,5 +424,8 @@ func printPinHelp(w io.Writer, route string) {
 // printPinNotes prints the catalog notes of `pin project`, the pin kinds and
 // the workdir boundary, under a pin usage block.
 func printPinNotes(w io.Writer) {
-	printRouteNotes(w, "pin project")
+	for _, note := range cli.RouteNotes("pin project") {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, note)
+	}
 }

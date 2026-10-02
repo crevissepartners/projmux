@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
@@ -162,7 +163,7 @@ type App struct {
 	// unregister is the canonical spelling of the Registry-only Project removal
 	// that `delete project` keeps reaching under its deprecated name.
 	unregister   *unregisterCommand
-	pin          *pinCommand
+	pin          *pincmd.Command
 	popupWaitKey *popupWaitKeyCommand
 	supervise    *superviseCommand
 	preview      *previewCommand
@@ -433,7 +434,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		openProject:        newProjectLifecycleCommand(projectLifecycleOpen, switcher),
 		stopProject:        newProjectLifecycleCommand(projectLifecycleStop, switcher),
 		unregister:         &unregisterCommand{delete: deleteCmd},
-		pin:                newPinCommand(),
+		pin:                pincmd.New(loadResourceRegistry),
 		popupWaitKey:       popupWaitKeyCmd,
 		supervise:          superviseCmd,
 		preview:            previewCmd,

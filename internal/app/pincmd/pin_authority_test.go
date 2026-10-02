@@ -1,82 +1,72 @@
-package app
+package pincmd
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/core/pins"
-	"github.com/crevissepartners/projmux/internal/core/registryview"
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 )
 
-// authorityOver binds a fake pin file to an explicit Registry projection.
-func authorityOver(store *stubSwitchPinStore, refs ...pins.ProjectRef) pinAuthority {
-	return pinAuthority{
-		store:    store,
-		projects: func() ([]pins.ProjectRef, error) { return refs, nil },
-	}
+// stubPinStore is an in-memory pin file that counts the writes it was asked for.
+type stubPinStore struct {
+	set    pins.Set
+	writes int
+	err    error
 }
 
-// TestManagedPinSurvivesRebindRenameAndMissingRoot is acceptance (2).
-//
-// A managed pin is a uid, so none of the three things that used to lose it can:
-// a rebind rewrites spec.root, a rename rewrites metadata.name, and a vanished
-// directory leaves the row with no usable root at all. The pin, and the sidebar
-// tier it produces, are unchanged through all three.
-func TestManagedPinSurvivesRebindRenameAndMissingRoot(t *testing.T) {
-	t.Parallel()
+// newStubPinStore seeds a typed store with managed pins by uid.
+func newStubPinStore(uids ...string) *stubPinStore {
+	set := pins.Set{Format: pins.FormatTyped}
+	for _, uid := range uids {
+		set = set.With(pins.Pin{Kind: pins.KindProject, Value: uid})
+	}
+	return &stubPinStore{set: set}
+}
 
-	const uid = "proj-app"
-	store := newStubPinStore(uid)
+// newLegacyStubPinStore seeds the pre-v2 shape: bare paths with no statement about
+// which of them a Project claims.
+func newLegacyStubPinStore(paths ...string) *stubPinStore {
+	set := pins.Set{Format: pins.FormatLegacy}
+	for _, path := range paths {
+		set.Pins = append(set.Pins, pins.Pin{Kind: pins.KindCandidate, Value: path})
+	}
+	if len(set.Pins) == 0 {
+		set.Format = pins.FormatAbsent
+	}
+	return &stubPinStore{set: set}
+}
 
-	for _, tc := range []struct {
-		name string
-		refs []pins.ProjectRef
-		row  registryview.Row
-	}{
-		{
-			name: "unchanged",
-			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/app"}},
-			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "app", Root: "/srv/app", Status: resourcegraph.StatusOffline},
-		},
-		{
-			name: "after a rebind to a different root",
-			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/moved"}},
-			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "app", Root: "/srv/moved", Status: resourcegraph.StatusOffline},
-		},
-		{
-			name: "after a rename",
-			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/app"}},
-			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "renamed", Context: registryview.Context{Value: "app", Source: registryview.ContextSourceProjectRoot}, Root: "/srv/app", Status: resourcegraph.StatusOffline},
-		},
-		{
-			name: "with a MissingRoot row that offers rebind instead of open",
-			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/gone"}},
-			row: registryview.Row{
-				Kind: registryview.RowKindProject, UID: uid, Name: "app", Root: "/srv/gone",
-				Status: resourcegraph.StatusOffline, Actions: []registryview.Action{registryview.ActionRebind},
-			},
-		},
-		{
-			name: "with no root at all",
-			refs: []pins.ProjectRef{{UID: uid}},
-			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "app", Status: resourcegraph.StatusOffline},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			selection, err := authorityOver(store, tc.refs...).selection()
-			if err != nil {
-				t.Fatalf("selection() error = %v", err)
-			}
-			if !selection.pinnedProject(uid) {
-				t.Fatalf("Project %s lost its managed pin", uid)
-			}
-			if got := switchManagedProjectTierOf(tc.row, selection); got != switchManagedTierPinned {
-				t.Fatalf("sidebar tier = %d, want the pinned tier", got)
-			}
-		})
+func (s *stubPinStore) Path() string { return "/fixture/pins" }
+
+func (s *stubPinStore) Load() (pins.Set, error) {
+	if s.err != nil {
+		return pins.Set{}, s.err
+	}
+	return s.set, nil
+}
+
+// Update mirrors pins.Store.Update: load, decide, save only when asked to.
+func (s *stubPinStore) Update(update func(pins.Set) (pins.Set, bool, error)) error {
+	stored, err := s.Load()
+	if err != nil {
+		return err
+	}
+	next, write, err := update(stored)
+	if err != nil || !write {
+		return err
+	}
+	s.writes++
+	s.set = next
+	return nil
+}
+
+// authorityOver binds a fake pin file to an explicit Registry projection.
+func authorityOver(store *stubPinStore, refs ...pins.ProjectRef) Authority {
+	return Authority{
+		store:    store,
+		projects: func() ([]pins.ProjectRef, error) { return refs, nil },
 	}
 }
 
@@ -90,11 +80,11 @@ func TestALegacyPathPinIsProjectedNotMigratedByARead(t *testing.T) {
 	store := newLegacyStubPinStore("/srv/app")
 	authority := authorityOver(store, pins.ProjectRef{UID: uid, Root: "/srv/app"})
 
-	selection, err := authority.selection()
+	selection, err := authority.Selection()
 	if err != nil {
 		t.Fatalf("selection() error = %v", err)
 	}
-	if !selection.pinnedProject(uid) {
+	if !selection.PinnedProject(uid) {
 		t.Fatal("a legacy path pin on a registered root must project onto the Project uid")
 	}
 	if store.writes != 0 {
@@ -109,11 +99,11 @@ func TestALegacyPathPinIsProjectedNotMigratedByARead(t *testing.T) {
 		t.Fatalf("migrate() error = %v", err)
 	}
 	moved := authorityOver(store, pins.ProjectRef{UID: uid, Root: "/srv/moved"})
-	movedSelection, err := moved.selection()
+	movedSelection, err := moved.Selection()
 	if err != nil {
 		t.Fatalf("selection() after rebind error = %v", err)
 	}
-	if !movedSelection.pinnedProject(uid) {
+	if !movedSelection.PinnedProject(uid) {
 		t.Fatal("a migrated managed pin did not survive a rebind")
 	}
 }
@@ -130,7 +120,7 @@ func TestAnUnresolvedLegacyPathStaysACandidateAndMintsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate() error = %v", err)
 	}
-	if got, want := resolution.Set.CandidatePaths(), []string{"/srv/unclaimed"}; !equalStrings(got, want) {
+	if got, want := resolution.Set.CandidatePaths(), []string{"/srv/unclaimed"}; !slices.Equal(got, want) {
 		t.Fatalf("candidate pins = %#v, want %#v", got, want)
 	}
 	if len(resolution.Set.ProjectUIDs()) != 0 {
@@ -173,7 +163,7 @@ func TestPinTargetForPathFollowsTheResolveOrCandidateRule(t *testing.T) {
 
 	// An explicit uid selector bypasses the path question entirely, which is the
 	// escape hatch the ambiguity refusal points at.
-	explicit, err := authority.pinTargetForSelector("uid:proj-dup-b")
+	explicit, err := authority.PinTargetForSelector("uid:proj-dup-b")
 	if err != nil {
 		t.Fatalf("pinTargetForSelector(uid) error = %v", err)
 	}
@@ -187,16 +177,16 @@ func TestPinTargetForPathFollowsTheResolveOrCandidateRule(t *testing.T) {
 func TestPinAuthorityRefusesACorruptPinFileWithoutWriting(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{err: pins.ErrCorruptPinFile}
+	store := &stubPinStore{err: pins.ErrCorruptPinFile}
 	authority := authorityOver(store)
 
-	if _, err := authority.resolved(); !errors.Is(err, pins.ErrCorruptPinFile) {
+	if _, err := authority.Resolved(); !errors.Is(err, pins.ErrCorruptPinFile) {
 		t.Fatalf("resolved() error = %v, want ErrCorruptPinFile", err)
 	}
 	if _, err := authority.migrate(); !errors.Is(err, pins.ErrCorruptPinFile) {
 		t.Fatalf("migrate() error = %v, want ErrCorruptPinFile", err)
 	}
-	if err := authority.add(pins.Pin{Kind: pins.KindCandidate, Value: "/srv/a"}); !errors.Is(err, pins.ErrCorruptPinFile) {
+	if err := authority.Add(pins.Pin{Kind: pins.KindCandidate, Value: "/srv/a"}); !errors.Is(err, pins.ErrCorruptPinFile) {
 		t.Fatalf("add() error = %v, want ErrCorruptPinFile", err)
 	}
 	if store.writes != 0 {
@@ -210,18 +200,18 @@ func TestPinAuthorityRefusesACorruptPinFileWithoutWriting(t *testing.T) {
 func TestPinDiscoveryPathsTakeTheRootFromTheRegistry(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
+	store := &stubPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
 		{Kind: pins.KindProject, Value: "proj-app"},
 		{Kind: pins.KindCandidate, Value: "/srv/scratch"},
 		{Kind: pins.KindProject, Value: "proj-gone"},
 	}}}
 	authority := authorityOver(store, pins.ProjectRef{UID: "proj-app", Root: "/srv/moved"})
 
-	paths, err := authority.discoveryPaths()
+	paths, err := authority.DiscoveryPaths()
 	if err != nil {
 		t.Fatalf("discoveryPaths() error = %v", err)
 	}
-	if want := []string{"/srv/moved", "/srv/scratch"}; !equalStrings(paths, want) {
+	if want := []string{"/srv/moved", "/srv/scratch"}; !slices.Equal(paths, want) {
 		t.Fatalf("discoveryPaths() = %#v, want %#v; a pin with no Registry Project contributes no path", paths, want)
 	}
 }
@@ -231,11 +221,11 @@ func TestPinDiscoveryPathsTakeTheRootFromTheRegistry(t *testing.T) {
 func TestPinnedRowsSeparateTheActionReferenceFromTheDisplayedRoot(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
+	store := &stubPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
 		{Kind: pins.KindProject, Value: "proj-app"},
 		{Kind: pins.KindCandidate, Value: "/srv/scratch"},
 	}}}
-	rows, _, err := authorityOver(store, pins.ProjectRef{UID: "proj-app", Root: "/srv/app"}).pinnedRows()
+	rows, _, err := authorityOver(store, pins.ProjectRef{UID: "proj-app", Root: "/srv/app"}).PinnedRows()
 	if err != nil {
 		t.Fatalf("pinnedRows() error = %v", err)
 	}

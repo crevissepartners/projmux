@@ -1,14 +1,12 @@
-package app
+package pincmd
 
 import (
 	"bytes"
 	"errors"
-	"os"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 )
@@ -16,14 +14,10 @@ import (
 // pinFixture wires the pin command over an in-memory typed pin file and an
 // explicit Registry, so every assertion below is about the two collections rather
 // than about whatever the host machine happens to have registered.
-func pinFixture(store *stubSwitchPinStore, projects ...coremetadata.Project) *pinCommand {
+func pinFixture(store *stubPinStore, projects ...coremetadata.Project) *Command {
 	registry := coremetadata.Registry{Projects: projects}
-	authority := newPinAuthority(store)
-	authority.projects = func() ([]pins.ProjectRef, error) { return projectRefsOf(registry), nil }
-	return &pinCommand{
-		authority: authority,
-		registry:  func() (coremetadata.Registry, error) { return registry, nil },
-	}
+	authority := NewAuthority(store, func() ([]pins.ProjectRef, error) { return ProjectRefsOf(registry), nil })
+	return NewCommand(authority, func() (coremetadata.Registry, error) { return registry, nil })
 }
 
 func pinFixtureProject(uid, name, root string) coremetadata.Project {
@@ -41,7 +35,7 @@ func pinFixtureProject(uid, name, root string) coremetadata.Project {
 func TestPinListStatesTheKindOfEveryEntry(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
+	store := &stubPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
 		{Kind: pins.KindProject, Value: "proj-app"},
 		{Kind: pins.KindCandidate, Value: "/srv/scratch"},
 		{Kind: pins.KindProject, Value: "proj-gone"},
@@ -66,7 +60,7 @@ func TestPinListStatesTheKindOfEveryEntry(t *testing.T) {
 func TestPinListKindFilterSelectsOneCollection(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
+	store := &stubPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
 		{Kind: pins.KindProject, Value: "proj-app"},
 		{Kind: pins.KindCandidate, Value: "/srv/scratch"},
 	}}}
@@ -226,7 +220,7 @@ func TestPinRemoveAndToggleAddressTypedPins(t *testing.T) {
 func TestPinClearEmptiesBothCollectionsAndIsWriteFreeWhenEmpty(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
+	store := &stubPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
 		{Kind: pins.KindProject, Value: "proj-app"},
 		{Kind: pins.KindCandidate, Value: "/srv/scratch"},
 	}}}
@@ -397,72 +391,15 @@ func TestPinCommandRejectsInvalidUsage(t *testing.T) {
 	}
 }
 
-// TestPinUsageSeparatesTheThreeCollections is acceptance (5)'s CLI half: the help
-// text names the two pin kinds and points workdirs somewhere else, so the surface
-// itself states which authority is which.
-func TestPinUsageSeparatesTheThreeCollections(t *testing.T) {
-	isolateRuntimeWindowFlagParseEnv(t)
-
-	var stdout, stderr bytes.Buffer
-	if err := New().Run([]string{"pin", "project", "--help"}, &stdout, &stderr); err != nil {
-		t.Fatalf("pin project --help: err = %v (stderr=%q)", err, stderr.String())
-	}
-	out := stdout.String()
-	for _, want := range []string{
-		"projmux pin project list [--kind project|candidate]",
-		"projmux pin project add <dir|uid:uid>",
-		"projmux pin project migrate [--dry-run]",
-		"a Registry Project uid",
-		"a filesystem path that no Registry Project claims",
-		"Discovery roots (workdirs) are a separate collection",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("usage %q does not state %q", out, want)
-		}
-	}
-}
-
 func TestPinCommandPropagatesStoreSetupError(t *testing.T) {
 	t.Parallel()
 
-	cmd := &pinCommand{storeErr: errors.New("no home directory")}
+	cmd := &Command{storeErr: errors.New("no home directory")}
 	err := cmd.Run([]string{"list"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "configure pin store") {
 		t.Fatalf("error = %v, want configure pin store", err)
-	}
-}
-
-// TestNewPinCommandWritesTheTypedEnvelopeToTheDefaultPath is the end-to-end file
-// shape: a fresh pin on a machine with no Registry is a candidate pin, stored in
-// the v2 envelope.
-func TestNewPinCommandWritesTheTypedEnvelopeToTheDefaultPath(t *testing.T) {
-	t.Setenv("HOME", "/home/tester")
-
-	configHome := t.TempDir()
-	stateHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("XDG_STATE_HOME", stateHome)
-
-	cmd := newPinCommand()
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"add", "/tmp/app"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run(add) error = %v", err)
-	}
-
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil {
-		t.Fatalf("DefaultPathsFromEnv() error = %v", err)
-	}
-
-	data, err := os.ReadFile(paths.PinFile())
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if got, want := string(data), "projmux-pins v2\ncandidate /tmp/app\n"; got != want {
-		t.Fatalf("pin file = %q, want %q", got, want)
 	}
 }

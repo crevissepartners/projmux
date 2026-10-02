@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
@@ -61,7 +62,7 @@ var switchPinHiddenWhitelist = []string{
 type candidateDiscoverer func(inputs candidates.Inputs) ([]string, error)
 
 // switchPinStore is the pin file the switch surfaces read and write. Every rule
-// about what a pin means lives in pinAuthority; this is bytes.
+// about what a pin means lives in pincmd.Authority; this is bytes.
 type switchPinStore interface {
 	Path() string
 	Load() (pins.Set, error)
@@ -221,7 +222,7 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		diagnostics:   recorderFrom(recorders),
 		discover:      candidates.Discover,
 		pinStore:      newDefaultSwitchPinStore,
-		pinProjects:   registryProjectRefs,
+		pinProjects:   pincmd.RegistryProjectRefs(loadResourceRegistry),
 		tagStore:      newDefaultSwitchTagStore,
 		tmuxRunner:    inttmux.ExecRunner{},
 		sessions:      client,
@@ -814,31 +815,31 @@ func (c *switchCommand) resolveHomeDir() (string, error) {
 }
 
 // pinAuthority binds the configured pin file to the Registry read that types it.
-func (c *switchCommand) pinAuthority() (pinAuthority, error) {
+func (c *switchCommand) pinAuthority() (pincmd.Authority, error) {
 	store, err := c.loadPinStore()
 	if err != nil {
-		return pinAuthority{}, err
+		return pincmd.Authority{}, err
 	}
 	if store == nil {
-		return pinAuthority{}, errNoPinStore
+		return pincmd.Authority{}, pincmd.ErrNoStore
 	}
 	// The Registry read is the caller's, not this type's default: a switch
 	// command assembled without one resolves against no Projects at all rather
 	// than reaching for whatever Registry the host machine happens to have.
-	return pinAuthority{store: store, projects: c.pinProjects}, nil
+	return pincmd.NewAuthority(store, c.pinProjects), nil
 }
 
 // loadPinDiscoveryPaths returns the paths the pin collections contribute to
 // filesystem candidate discovery.
 func (c *switchCommand) loadPinDiscoveryPaths() ([]string, error) {
 	authority, err := c.pinAuthority()
-	if errors.Is(err, errNoPinStore) {
+	if errors.Is(err, pincmd.ErrNoStore) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	paths, err := authority.discoveryPaths()
+	paths, err := authority.DiscoveryPaths()
 	if err != nil {
 		return nil, fmt.Errorf("load pin set: %w", err)
 	}
@@ -2910,12 +2911,12 @@ func (c *switchCommand) togglePin(target string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	pin, err := authority.pinTargetForSelector(target)
+	pin, err := authority.PinTargetForSelector(target)
 	if err != nil {
 		return err
 	}
 
-	pinned, err := authority.toggle(pin)
+	pinned, err := authority.Toggle(pin)
 	if err != nil {
 		return fmt.Errorf("toggle switch candidate pin: %w", err)
 	}
@@ -2934,18 +2935,18 @@ func (c *switchCommand) togglePin(target string, stdout io.Writer) error {
 
 func (c *switchCommand) addPin(target string, stdout io.Writer) error {
 	authority, err := c.pinAuthority()
-	if errors.Is(err, errNoPinStore) {
+	if errors.Is(err, pincmd.ErrNoStore) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	pin, err := authority.pinTargetForSelector(target)
+	pin, err := authority.PinTargetForSelector(target)
 	if err != nil {
 		return err
 	}
 
-	if err := authority.add(pin); err != nil {
+	if err := authority.Add(pin); err != nil {
 		return fmt.Errorf("add switch pin: %w", err)
 	}
 
@@ -3063,7 +3064,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			AttentionRank: attentionRanks[sessionName],
 			AIBadgeKind:   aiBadgeKinds[sessionName],
 			AIBadgeStyle:  aiBadgeStyle,
-			Pinned:        selection.pinnedCandidate(candidatePath),
+			Pinned:        selection.PinnedCandidate(candidatePath),
 		})
 	}
 	// Home is chrome, not a Project, and it leads the list.
@@ -3331,17 +3332,17 @@ func switchProjectName(path, sessionName string) string {
 }
 
 // loadPinSelection reads the pin lookups the row renderers need.
-func (c *switchCommand) loadPinSelection() (pinSelection, error) {
+func (c *switchCommand) loadPinSelection() (pincmd.Selection, error) {
 	authority, err := c.pinAuthority()
-	if errors.Is(err, errNoPinStore) {
-		return pinSelection{}, nil
+	if errors.Is(err, pincmd.ErrNoStore) {
+		return pincmd.Selection{}, nil
 	}
 	if err != nil {
-		return pinSelection{}, err
+		return pincmd.Selection{}, err
 	}
-	selection, err := authority.selection()
+	selection, err := authority.Selection()
 	if err != nil {
-		return pinSelection{}, fmt.Errorf("load pin set: %w", err)
+		return pincmd.Selection{}, fmt.Errorf("load pin set: %w", err)
 	}
 	return selection, nil
 }
@@ -3417,7 +3418,7 @@ func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
 		Value: "add-interactive",
 	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
-	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !selection.pinnedPath(currentTarget) {
+	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !selection.PinnedPath(currentTarget) {
 		entries = append(entries, intpickercompat.Entry{
 			Label: localizeUIText(locale, "+ Add current pin  ") + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
 			Value: "add:" + currentTarget,
@@ -3439,28 +3440,28 @@ func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
 }
 
 // loadPinRows reads the typed pin rows and the membership lookup in one pass.
-func (c *switchCommand) loadPinRows() ([]pinRow, pinSelection, error) {
+func (c *switchCommand) loadPinRows() ([]pincmd.Row, pincmd.Selection, error) {
 	authority, err := c.pinAuthority()
-	if errors.Is(err, errNoPinStore) {
-		return nil, pinSelection{}, nil
+	if errors.Is(err, pincmd.ErrNoStore) {
+		return nil, pincmd.Selection{}, nil
 	}
 	if err != nil {
-		return nil, pinSelection{}, err
+		return nil, pincmd.Selection{}, err
 	}
-	rows, _, err := authority.pinnedRows()
+	rows, _, err := authority.PinnedRows()
 	if err != nil {
-		return nil, pinSelection{}, fmt.Errorf("load pin set: %w", err)
+		return nil, pincmd.Selection{}, fmt.Errorf("load pin set: %w", err)
 	}
-	selection, err := authority.selection()
+	selection, err := authority.Selection()
 	if err != nil {
-		return nil, pinSelection{}, fmt.Errorf("load pin set: %w", err)
+		return nil, pincmd.Selection{}, fmt.Errorf("load pin set: %w", err)
 	}
 	return rows, selection, nil
 }
 
 // switchPinRowLabel renders a typed pin the way an operator recognizes it: the
 // directory when one is known, and the uid when the Registry no longer answers.
-func switchPinRowLabel(row pinRow, homeDir, repoRoot string) string {
+func switchPinRowLabel(row pincmd.Row, homeDir, repoRoot string) string {
 	if root := strings.TrimSpace(row.Root); root != "" {
 		return intrender.PrettyPath(root, homeDir, repoRoot)
 	}
@@ -3495,7 +3496,7 @@ func (c *switchCommand) addPinEntries() ([]intpickercompat.Entry, error) {
 
 	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
-		if path == switchSettingsSentinel || selection.pinnedPath(path) {
+		if path == switchSettingsSentinel || selection.PinnedPath(path) {
 			continue
 		}
 
@@ -3527,7 +3528,7 @@ func (c *switchCommand) filesystemPinEntries() ([]intpickercompat.Entry, error) 
 
 	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
-		if selection.pinnedPath(path) {
+		if selection.PinnedPath(path) {
 			continue
 		}
 		entries = append(entries, intpickercompat.Entry{
@@ -3854,13 +3855,13 @@ func runSwitchGitCommand(ctx context.Context, name string, args ...string) ([]by
 
 func (c *switchCommand) clearPins() error {
 	authority, err := c.pinAuthority()
-	if errors.Is(err, errNoPinStore) {
+	if errors.Is(err, pincmd.ErrNoStore) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err := authority.clear(); err != nil {
+	if err := authority.Clear(); err != nil {
 		return fmt.Errorf("clear switch pins: %w", err)
 	}
 	return nil

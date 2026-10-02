@@ -171,11 +171,12 @@ func TestWindowsCandidateSpellingFoldsWithoutMintingIdentity(t *testing.T) {
 			store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
 				{Kind: pins.KindCandidate, Value: tc.candidate},
 			}}}
-			selection, err := authorityOver(store, pins.ProjectRef{UID: tc.projectUID, Root: tc.projectRoot}).selection()
+			authority := authorityOver(store, pins.ProjectRef{UID: tc.projectUID, Root: tc.projectRoot})
+			selection, err := authority.Selection()
 			if err != nil {
 				t.Fatalf("selection() error = %v", err)
 			}
-			if !selection.pinnedCandidate(tc.candidate) {
+			if !selection.PinnedCandidate(tc.candidate) {
 				t.Fatal("the stored candidate spelling is not recognized as pinned")
 			}
 			// The alias question is answered by the platform's own rules, which is
@@ -185,8 +186,13 @@ func TestWindowsCandidateSpellingFoldsWithoutMintingIdentity(t *testing.T) {
 			if got := candidates.MatchKey(tc.candidateAlias) == candidates.MatchKey(tc.candidate); got != wantFolded && tc.goos == "linux" {
 				t.Fatalf("alias folding = %t, want %t on the running host", got, wantFolded)
 			}
-			if len(selection.projectUIDs) != 0 {
-				t.Fatalf("a candidate pin produced managed pins: %#v", selection.projectUIDs)
+			// The selection's managed set is built from this resolution.
+			resolution, err := authority.Resolved()
+			if err != nil {
+				t.Fatalf("Resolved() error = %v", err)
+			}
+			if uids := resolution.Set.ProjectUIDs(); len(uids) != 0 {
+				t.Fatalf("a candidate pin produced managed pins: %#v", uids)
 			}
 		})
 	}

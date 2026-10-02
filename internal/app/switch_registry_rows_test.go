@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
@@ -880,5 +881,72 @@ func TestSwitchSidebarRefreshIsZeroWriteAndSingleSocket(t *testing.T) {
 				t.Fatalf("a sidebar refresh issued the write verb %q: %v", forbidden, call)
 			}
 		}
+	}
+}
+
+// authorityOver binds a fake pin file to an explicit Registry projection.
+func authorityOver(store *stubSwitchPinStore, refs ...pins.ProjectRef) pincmd.Authority {
+	return pincmd.NewAuthority(store, func() ([]pins.ProjectRef, error) { return refs, nil })
+}
+
+// TestManagedPinSurvivesRebindRenameAndMissingRoot is acceptance (2).
+//
+// A managed pin is a uid, so none of the three things that used to lose it can:
+// a rebind rewrites spec.root, a rename rewrites metadata.name, and a vanished
+// directory leaves the row with no usable root at all. The pin, and the sidebar
+// tier it produces, are unchanged through all three.
+func TestManagedPinSurvivesRebindRenameAndMissingRoot(t *testing.T) {
+	t.Parallel()
+
+	const uid = "proj-app"
+	store := newStubPinStore(uid)
+
+	for _, tc := range []struct {
+		name string
+		refs []pins.ProjectRef
+		row  registryview.Row
+	}{
+		{
+			name: "unchanged",
+			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/app"}},
+			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "app", Root: "/srv/app", Status: resourcegraph.StatusOffline},
+		},
+		{
+			name: "after a rebind to a different root",
+			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/moved"}},
+			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "app", Root: "/srv/moved", Status: resourcegraph.StatusOffline},
+		},
+		{
+			name: "after a rename",
+			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/app"}},
+			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "renamed", Context: registryview.Context{Value: "app", Source: registryview.ContextSourceProjectRoot}, Root: "/srv/app", Status: resourcegraph.StatusOffline},
+		},
+		{
+			name: "with a MissingRoot row that offers rebind instead of open",
+			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/gone"}},
+			row: registryview.Row{
+				Kind: registryview.RowKindProject, UID: uid, Name: "app", Root: "/srv/gone",
+				Status: resourcegraph.StatusOffline, Actions: []registryview.Action{registryview.ActionRebind},
+			},
+		},
+		{
+			name: "with no root at all",
+			refs: []pins.ProjectRef{{UID: uid}},
+			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "app", Status: resourcegraph.StatusOffline},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			selection, err := authorityOver(store, tc.refs...).Selection()
+			if err != nil {
+				t.Fatalf("selection() error = %v", err)
+			}
+			if !selection.PinnedProject(uid) {
+				t.Fatalf("Project %s lost its managed pin", uid)
+			}
+			if got := switchManagedProjectTierOf(tc.row, selection); got != switchManagedTierPinned {
+				t.Fatalf("sidebar tier = %d, want the pinned tier", got)
+			}
+		})
 	}
 }

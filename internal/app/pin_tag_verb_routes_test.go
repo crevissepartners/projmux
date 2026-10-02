@@ -2,15 +2,20 @@ package app
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 )
 
-// pinVerbRoutes are the verbs `(*pinCommand).runLevel` dispatches at the
+// pinVerbRoutes are the verbs `(*pincmd.Command).runLevel` dispatches at the
 // `pin project` level, each a public catalog child of `pin project`.
 var pinVerbRoutes = []string{"list", "add", "remove", "toggle", "clear", "migrate"}
 
@@ -52,11 +57,19 @@ func TestPinAndTagVerbsAreCatalogChildren(t *testing.T) {
 	}
 }
 
+// pinFixture wires the pin command over an in-memory typed pin file and an
+// explicit Registry.
+func pinFixture(store *stubSwitchPinStore, projects ...coremetadata.Project) *pincmd.Command {
+	registry := coremetadata.Registry{Projects: projects}
+	authority := pincmd.NewAuthority(store, func() ([]pins.ProjectRef, error) { return pincmd.ProjectRefsOf(registry), nil })
+	return pincmd.NewCommand(authority, func() (coremetadata.Registry, error) { return registry, nil })
+}
+
 // pinVerbNotes is the pin-kind note block every pin rejection prints under
 // its usage.
 func pinVerbNotes() string {
 	var notes bytes.Buffer
-	printPinNotes(&notes)
+	printRouteNotes(&notes, "pin project")
 	return notes.String()
 }
 
@@ -346,5 +359,62 @@ func TestPinAndTagVerbGuardsCatchAMissingCatalogNode(t *testing.T) {
 		if clean := routeVerbDrift(position, catalogRouteVerbUsage(t)[position], d, dispatched); clean != "" {
 			t.Errorf("route verb guard over the real catalog: %s", clean)
 		}
+	}
+}
+
+// TestPinUsageSeparatesTheThreeCollections is acceptance (5)'s CLI half: the help
+// text names the two pin kinds and points workdirs somewhere else, so the surface
+// itself states which authority is which.
+func TestPinUsageSeparatesTheThreeCollections(t *testing.T) {
+	isolateRuntimeWindowFlagParseEnv(t)
+
+	var stdout, stderr bytes.Buffer
+	if err := New().Run([]string{"pin", "project", "--help"}, &stdout, &stderr); err != nil {
+		t.Fatalf("pin project --help: err = %v (stderr=%q)", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"projmux pin project list [--kind project|candidate]",
+		"projmux pin project add <dir|uid:uid>",
+		"projmux pin project migrate [--dry-run]",
+		"a Registry Project uid",
+		"a filesystem path that no Registry Project claims",
+		"Discovery roots (workdirs) are a separate collection",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("usage %q does not state %q", out, want)
+		}
+	}
+}
+
+// TestNewPinCommandWritesTheTypedEnvelopeToTheDefaultPath is the end-to-end file
+// shape: a fresh pin on a machine with no Registry is a candidate pin, stored in
+// the v2 envelope.
+func TestNewPinCommandWritesTheTypedEnvelopeToTheDefaultPath(t *testing.T) {
+	t.Setenv("HOME", "/home/tester")
+
+	configHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	cmd := pincmd.New(loadResourceRegistry)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"add", "/tmp/app"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(add) error = %v", err)
+	}
+
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatalf("DefaultPathsFromEnv() error = %v", err)
+	}
+
+	data, err := os.ReadFile(paths.PinFile())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got, want := string(data), "projmux-pins v2\ncandidate /tmp/app\n"; got != want {
+		t.Fatalf("pin file = %q, want %q", got, want)
 	}
 }

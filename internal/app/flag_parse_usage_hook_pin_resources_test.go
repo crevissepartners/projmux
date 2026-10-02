@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 )
 
 // flagParseUsageRoute drives one public route whose flag parsing fails before
@@ -22,7 +24,7 @@ func hookPinResourceFlagParseRoutes() map[string]flagParseUsageRoute {
 			return (&hookCommand{}).Run(args, io.Discard, io.Discard)
 		}},
 		"pin": {name: "pin", run: func(args []string) error {
-			return (&pinCommand{}).Run(args, io.Discard, io.Discard)
+			return (&pincmd.Command{}).Run(args, io.Discard, io.Discard)
 		}},
 		"attention": {name: "attention", run: func(args []string) error {
 			return (&attentionCommand{}).Run(args, io.Discard, io.Discard)

@@ -1,4 +1,4 @@
-package app
+package pincmd
 
 import (
 	"errors"
@@ -50,8 +50,8 @@ func (s *pausingPinStore) writeCount() int {
 	return s.writes
 }
 
-func pinFileAuthority(store pinSetStore, refs ...pins.ProjectRef) pinAuthority {
-	return pinAuthority{
+func pinFileAuthority(store SetStore, refs ...pins.ProjectRef) Authority {
+	return Authority{
 		store:    store,
 		projects: func() ([]pins.ProjectRef, error) { return refs, nil },
 	}
@@ -117,26 +117,26 @@ func TestPinAuthorityWritesKeepAnOverlappingPinWriteUnderTheLock(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		seed  string
-		first func(pinAuthority) error
+		first func(Authority) error
 		want  string
 	}{
 		{
 			name:  "add",
 			seed:  typedSeed,
-			first: func(a pinAuthority) error { return a.add(alpha) },
+			first: func(a Authority) error { return a.Add(alpha) },
 			want:  "projmux-pins v2\nproject proj-keep\nproject proj-alpha\ncandidate /srv/beta\n",
 		},
 		{
 			name:  "remove",
 			seed:  "projmux-pins v2\nproject proj-keep\nproject proj-alpha\n",
-			first: func(a pinAuthority) error { return a.remove(alpha) },
+			first: func(a Authority) error { return a.remove(alpha) },
 			want:  "projmux-pins v2\nproject proj-keep\ncandidate /srv/beta\n",
 		},
 		{
 			name: "toggle",
 			seed: typedSeed,
-			first: func(a pinAuthority) error {
-				pinned, err := a.toggle(alpha)
+			first: func(a Authority) error {
+				pinned, err := a.Toggle(alpha)
 				if err == nil && !pinned {
 					return errors.New("toggle() reported the pin as removed")
 				}
@@ -147,13 +147,13 @@ func TestPinAuthorityWritesKeepAnOverlappingPinWriteUnderTheLock(t *testing.T) {
 		{
 			name:  "clear",
 			seed:  typedSeed,
-			first: func(a pinAuthority) error { return a.clear() },
+			first: func(a Authority) error { return a.Clear() },
 			want:  "projmux-pins v2\ncandidate /srv/beta\n",
 		},
 		{
 			name: "migrate",
 			seed: "/srv/app\n/srv/loose\n",
-			first: func(a pinAuthority) error {
+			first: func(a Authority) error {
 				resolution, err := a.migrate()
 				if err == nil && len(resolution.Moved) != 1 {
 					return errors.New("migrate() did not move /srv/app onto its Project")
@@ -184,7 +184,7 @@ func TestPinAuthorityWritesKeepAnOverlappingPinWriteUnderTheLock(t *testing.T) {
 			}
 
 			secondDone := make(chan error, 1)
-			go func() { secondDone <- pinFileAuthority(pins.NewStore(path), refs...).add(beta) }()
+			go func() { secondDone <- pinFileAuthority(pins.NewStore(path), refs...).Add(beta) }()
 
 			close(paused.release)
 			if err := <-firstDone; err != nil {
@@ -214,7 +214,7 @@ func TestPinAuthorityWriteGivesUpWhenThePinLockIsHeld(t *testing.T) {
 		t.Fatalf("Flock() error = %v", err)
 	}
 
-	err = pinFileAuthority(pins.NewStore(path)).add(lockTestProjectPin(t, "proj-alpha"))
+	err = pinFileAuthority(pins.NewStore(path)).Add(lockTestProjectPin(t, "proj-alpha"))
 	if !errors.Is(err, state.ErrLockTimeout) {
 		t.Fatalf("add() error = %v, want state.ErrLockTimeout", err)
 	}
@@ -229,9 +229,9 @@ func TestPinAuthorityRefusesAnAmbiguousLegacyFileUnderTheLockWithoutWriting(t *t
 	const legacy = "/srv/app\n"
 	refs := []pins.ProjectRef{{UID: "proj-one", Root: "/srv/app"}, {UID: "proj-two", Root: "/srv/app/"}}
 
-	for name, op := range map[string]func(pinAuthority) error{
-		"migrate": func(a pinAuthority) error { _, err := a.migrate(); return err },
-		"add":     func(a pinAuthority) error { return a.add(lockTestProjectPin(t, "proj-alpha")) },
+	for name, op := range map[string]func(Authority) error{
+		"migrate": func(a Authority) error { _, err := a.migrate(); return err },
+		"add":     func(a Authority) error { return a.Add(lockTestProjectPin(t, "proj-alpha")) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -264,14 +264,14 @@ func TestPinAuthorityRepeatedPinUnderTheLockWritesOnce(t *testing.T) {
 	authority := pinFileAuthority(store)
 	alpha := lockTestProjectPin(t, "proj-alpha")
 
-	if err := authority.add(alpha); err != nil {
+	if err := authority.Add(alpha); err != nil {
 		t.Fatalf("first add() error = %v", err)
 	}
 	before, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if err := authority.add(alpha); err != nil {
+	if err := authority.Add(alpha); err != nil {
 		t.Fatalf("second add() error = %v", err)
 	}
 	after, err := os.Stat(path)

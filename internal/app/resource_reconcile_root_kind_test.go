@@ -109,22 +109,22 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "audits Project session projections and roots; the control-root invariants it needs live in Registry.Validate",
 	},
 	{
-		File: "internal/app/pin_authority.go", Func: "projectRefsOf",
+		File: "internal/app/pincmd/pin_authority.go", Func: "ProjectRefsOf",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "a pin is uid-or-path and both spellings need a root; pins.KindProject is the only managed pin kind",
 	},
 	{
-		File: "internal/app/pin_authority.go", Func: "pinAuthority.selection",
+		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.Selection",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
-		Why: "reads the ProjectRef set projectRefsOf already scoped",
+		Why: "reads the ProjectRef set ProjectRefsOf already scoped",
 	},
 	{
-		File: "internal/app/pin_authority.go", Func: "pinAuthority.pinnedRows",
+		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.PinnedRows",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
-		Why: "reads the ProjectRef set projectRefsOf already scoped",
+		Why: "reads the ProjectRef set ProjectRefsOf already scoped",
 	},
 	{
-		File: "internal/app/pin_authority.go", Func: "pinAuthority.discoveryPaths",
+		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.DiscoveryPaths",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
 		Why: "contributes Project roots to discovery; a ControlSession contributes no path by construction",
 	},

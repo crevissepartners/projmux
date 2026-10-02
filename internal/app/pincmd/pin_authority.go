@@ -1,4 +1,4 @@
-package app
+package pincmd
 
 import (
 	"errors"
@@ -18,44 +18,47 @@ import (
 // answered wrong in a different way -- a rebind lost the pin, an unregistered
 // directory looked managed, and a filesystem scan decided membership.
 //
-// pinAuthority keeps them apart. Workdirs stay a scan source and are not read
+// Authority keeps them apart. Workdirs stay a scan source and are not read
 // here at all. The Registry stays managed identity: this type reads it, never
 // writes it, and never mints a uid from a path. Pins stay preferences, typed by
 // which of the two they point at.
 
-// pinSetStore is the file half of the pin collection. Load is the unlocked read
+// SetStore is the file half of the pin collection. Load is the unlocked read
 // every rendering surface uses; Update is the only write, and it runs one
 // read-decide-write under the pin file's lock.
-type pinSetStore interface {
+type SetStore interface {
 	Path() string
 	Load() (pins.Set, error)
 	Update(func(pins.Set) (pins.Set, bool, error)) error
 }
 
-// pinAuthority resolves stored pins against Registry Project identity.
-type pinAuthority struct {
-	store pinSetStore
+// Authority resolves stored pins against Registry Project identity.
+type Authority struct {
+	store SetStore
 	// projects reads the Registry identities a resolution matches against. It is
 	// a read-only snapshot: resolving a pin must not create Registry state on a
 	// machine that has none.
 	projects func() ([]pins.ProjectRef, error)
 }
 
-// newPinAuthority binds a pin file to the Registry read.
-func newPinAuthority(store pinSetStore) pinAuthority {
-	return pinAuthority{store: store, projects: registryProjectRefs}
+// NewAuthority binds a pin file to the Registry read that types it.
+func NewAuthority(store SetStore, projects func() ([]pins.ProjectRef, error)) Authority {
+	return Authority{store: store, projects: projects}
 }
 
-// registryProjectRefs reads every Project's uid and root without writing.
-func registryProjectRefs() ([]pins.ProjectRef, error) {
-	registry, err := loadResourceRegistry()
-	if err != nil {
-		return nil, err
+// RegistryProjectRefs returns a read of every Project's uid and root through
+// load, without writing.
+func RegistryProjectRefs(load func() (coremetadata.Registry, error)) func() ([]pins.ProjectRef, error) {
+	return func() ([]pins.ProjectRef, error) {
+		registry, err := load()
+		if err != nil {
+			return nil, err
+		}
+		return ProjectRefsOf(registry), nil
 	}
-	return projectRefsOf(registry), nil
 }
 
-func projectRefsOf(registry coremetadata.Registry) []pins.ProjectRef {
+func ProjectRefsOf(registry coremetadata.Registry) []pins.ProjectRef {
 	refs := make([]pins.ProjectRef, 0, len(registry.Projects))
 	for _, project := range registry.Projects {
 		refs = append(refs, pins.ProjectRef{UID: project.Metadata.UID, Root: project.Spec.Root})
@@ -63,19 +66,19 @@ func projectRefsOf(registry coremetadata.Registry) []pins.ProjectRef {
 	return refs
 }
 
-func (a pinAuthority) refs() ([]pins.ProjectRef, error) {
+func (a Authority) refs() ([]pins.ProjectRef, error) {
 	if a.projects == nil {
 		return nil, nil
 	}
 	return a.projects()
 }
 
-// resolved returns the typed reading of the pin file. It writes nothing, so every
+// Resolved returns the typed reading of the pin file. It writes nothing, so every
 // rendering surface can call it on a refresh.
 //
 // A legacy file is projected rather than migrated, which is what keeps the
 // sidebar identical before and after `pin project migrate`.
-func (a pinAuthority) resolved() (pins.Resolution, error) {
+func (a Authority) Resolved() (pins.Resolution, error) {
 	stored, resolver, err := a.read()
 	if err != nil {
 		return pins.Resolution{}, err
@@ -91,16 +94,16 @@ func (a pinAuthority) resolved() (pins.Resolution, error) {
 // with the pin file byte-identical, because the write is the last thing that
 // happens and every refusal happens before it. The read, the resolution and the
 // write share one pin-file lock; the Registry snapshot is read before it.
-func (a pinAuthority) migrate() (pins.Resolution, error) {
+func (a Authority) migrate() (pins.Resolution, error) {
 	return a.runMigration(true)
 }
 
 // planMigration is migrate without the write.
-func (a pinAuthority) planMigration() (pins.Resolution, error) {
+func (a Authority) planMigration() (pins.Resolution, error) {
 	return a.runMigration(false)
 }
 
-func (a pinAuthority) runMigration(write bool) (pins.Resolution, error) {
+func (a Authority) runMigration(write bool) (pins.Resolution, error) {
 	if !write {
 		stored, resolver, err := a.read()
 		if err != nil {
@@ -113,7 +116,7 @@ func (a pinAuthority) runMigration(write bool) (pins.Resolution, error) {
 		return resolution, nil
 	}
 	if a.store == nil {
-		return pins.Resolution{}, errNoPinStore
+		return pins.Resolution{}, ErrNoStore
 	}
 	refs, err := a.refs()
 	if err != nil {
@@ -133,14 +136,14 @@ func (a pinAuthority) runMigration(write bool) (pins.Resolution, error) {
 	return resolution, err
 }
 
-func (a pinAuthority) ambiguousMigration(resolution pins.Resolution) error {
+func (a Authority) ambiguousMigration(resolution pins.Resolution) error {
 	return &pins.AmbiguousMigrationError{Path: a.store.Path(), Ambiguous: resolution.Ambiguous}
 }
 
 // read loads the stored set together with the resolver that types it.
-func (a pinAuthority) read() (pins.Set, pins.Resolver, error) {
+func (a Authority) read() (pins.Set, pins.Resolver, error) {
 	if a.store == nil {
-		return pins.Set{}, pins.Resolver{}, errNoPinStore
+		return pins.Set{}, pins.Resolver{}, ErrNoStore
 	}
 	stored, err := a.store.Load()
 	if err != nil {
@@ -153,26 +156,26 @@ func (a pinAuthority) read() (pins.Set, pins.Resolver, error) {
 	return stored, pins.Resolver{Projects: refs}, nil
 }
 
-// pinSelection is the row-level pin lookup of one render pass.
+// Selection is the row-level pin lookup of one render pass.
 //
 // The two maps answer different questions and that is the point. A managed Project
 // is pinned by uid, so the tier survives a rebind, a rename and a missing root. An
 // unregistered candidate is pinned by its folded path key, because a path is the
 // only thing anyone knows about it. projectsByRootKey is the bridge a path
 // argument crosses to reach the first question.
-type pinSelection struct {
+type Selection struct {
 	projectUIDs       map[string]bool
 	candidateKeys     map[string]bool
 	projectsByRootKey map[string][]string
 }
 
-// selection builds the render-pass pin lookup. It writes nothing.
-func (a pinAuthority) selection() (pinSelection, error) {
+// Selection builds the render-pass pin lookup. It writes nothing.
+func (a Authority) Selection() (Selection, error) {
 	stored, resolver, err := a.read()
 	if err != nil {
-		return pinSelection{}, err
+		return Selection{}, err
 	}
-	out := pinSelection{
+	out := Selection{
 		projectUIDs:       map[string]bool{},
 		candidateKeys:     map[string]bool{},
 		projectsByRootKey: map[string][]string{},
@@ -194,23 +197,23 @@ func (a pinAuthority) selection() (pinSelection, error) {
 	return out, nil
 }
 
-// pinnedProject reports whether a Registry Project carries a managed pin.
-func (s pinSelection) pinnedProject(uid string) bool {
+// PinnedProject reports whether a Registry Project carries a managed pin.
+func (s Selection) PinnedProject(uid string) bool {
 	return s.projectUIDs[strings.TrimSpace(uid)]
 }
 
-// pinnedCandidate reports whether an unregistered path carries a candidate pin.
-func (s pinSelection) pinnedCandidate(path string) bool {
+// PinnedCandidate reports whether an unregistered path carries a candidate pin.
+func (s Selection) PinnedCandidate(path string) bool {
 	key := candidates.MatchKey(path)
 	return key != "" && s.candidateKeys[key]
 }
 
-// pinnedPath reports whether the pin a path argument resolves to is present.
+// PinnedPath reports whether the pin a path argument resolves to is present.
 //
 // It follows the same resolve-or-candidate rule the pin actions use, so the row
 // that says "already pinned" and the action that would pin it agree about which
 // entry they mean.
-func (s pinSelection) pinnedPath(path string) bool {
+func (s Selection) PinnedPath(path string) bool {
 	key := candidates.MatchKey(path)
 	if key == "" {
 		return false
@@ -223,20 +226,20 @@ func (s pinSelection) pinnedPath(path string) bool {
 	return s.candidateKeys[key]
 }
 
-// pinRow is one typed pin prepared for a picker row.
+// Row is one typed pin prepared for a picker row.
 //
 // Reference is what an action carries and Root is what a human reads. Keeping them
 // apart is what makes a managed pin survive a rebind: the action still names the
 // uid, and the directory shown is re-read from the Registry every render.
-type pinRow struct {
+type Row struct {
 	Pin       pins.Pin
 	Reference string
 	Root      string
 }
 
-// pinnedRows returns the pin collections as rows, in file order, together with the
+// PinnedRows returns the pin collections as rows, in file order, together with the
 // resolution they came from.
-func (a pinAuthority) pinnedRows() ([]pinRow, pins.Resolution, error) {
+func (a Authority) PinnedRows() ([]Row, pins.Resolution, error) {
 	stored, resolver, err := a.read()
 	if err != nil {
 		return nil, pins.Resolution{}, err
@@ -248,9 +251,9 @@ func (a pinAuthority) pinnedRows() ([]pinRow, pins.Resolution, error) {
 		known[ref.UID] = true
 	}
 	resolution := resolver.Resolve(stored)
-	rows := make([]pinRow, 0, len(resolution.Set.Pins))
+	rows := make([]Row, 0, len(resolution.Set.Pins))
 	for _, pin := range resolution.Set.Pins {
-		row := pinRow{Pin: pin, Reference: pin.Value}
+		row := Row{Pin: pin, Reference: pin.Value}
 		if pin.Kind == pins.KindProject {
 			row.Reference = "uid:" + pin.Value
 			row.Root = strings.TrimSpace(roots[pin.Value])
@@ -262,7 +265,7 @@ func (a pinAuthority) pinnedRows() ([]pinRow, pins.Resolution, error) {
 	return rows, resolution, nil
 }
 
-// discoveryPaths returns the paths the pin collections contribute to filesystem
+// DiscoveryPaths returns the paths the pin collections contribute to filesystem
 // candidate discovery and pane attribution.
 //
 // Both kinds contribute a path, but they get it from different places, and that is
@@ -274,7 +277,7 @@ func (a pinAuthority) pinnedRows() ([]pinRow, pins.Resolution, error) {
 // Contributing a path here is not membership. Nothing in discovery registers a
 // Project; the sidebar drops any discovered path a Project already claims, and
 // what remains is a candidate.
-func (a pinAuthority) discoveryPaths() ([]string, error) {
+func (a Authority) DiscoveryPaths() ([]string, error) {
 	stored, resolver, err := a.read()
 	if err != nil {
 		return nil, err
@@ -319,7 +322,7 @@ func (e *errAmbiguousPinTarget) Error() string {
 // pin managed, no Project makes it a candidate, and more than one is refused. The
 // match folds path spellings, which is a statement about the path; the uid it
 // finds already existed, so nothing here mints or merges managed identity.
-func (a pinAuthority) pinTargetForPath(path string) (pins.Pin, error) {
+func (a Authority) pinTargetForPath(path string) (pins.Pin, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return pins.Pin{}, fmt.Errorf("%w: empty path", pins.ErrInvalidPin)
@@ -345,9 +348,9 @@ func (a pinAuthority) pinTargetForPath(path string) (pins.Pin, error) {
 	}
 }
 
-// pinTargetForSelector types an explicit `uid:<uid>` argument or falls back to the
+// PinTargetForSelector types an explicit `uid:<uid>` argument or falls back to the
 // path rule.
-func (a pinAuthority) pinTargetForSelector(value string) (pins.Pin, error) {
+func (a Authority) PinTargetForSelector(value string) (pins.Pin, error) {
 	value = strings.TrimSpace(value)
 	if uid, ok := strings.CutPrefix(value, "uid:"); ok {
 		return pins.ProjectPin(uid)
@@ -362,9 +365,9 @@ func (a pinAuthority) pinTargetForSelector(value string) (pins.Pin, error) {
 // The migration, the change and the write happen in one locked pin-file update,
 // so an overlapping pin write cannot land between them and be dropped. The
 // Registry snapshot the migration resolves against is read before the lock.
-func (a pinAuthority) mutate(apply func(pins.Set) pins.Set) error {
+func (a Authority) mutate(apply func(pins.Set) pins.Set) error {
 	if a.store == nil {
-		return errNoPinStore
+		return ErrNoStore
 	}
 	refs, err := a.refs()
 	if err != nil {
@@ -385,8 +388,8 @@ func (a pinAuthority) mutate(apply func(pins.Set) pins.Set) error {
 	})
 }
 
-// add pins a typed target.
-func (a pinAuthority) add(pin pins.Pin) error {
+// Add pins a typed target.
+func (a Authority) Add(pin pins.Pin) error {
 	if _, err := pinValidated(pin); err != nil {
 		return err
 	}
@@ -394,12 +397,12 @@ func (a pinAuthority) add(pin pins.Pin) error {
 }
 
 // remove unpins a typed target.
-func (a pinAuthority) remove(pin pins.Pin) error {
+func (a Authority) remove(pin pins.Pin) error {
 	return a.mutate(func(set pins.Set) pins.Set { return set.Without(pin) })
 }
 
-// toggle flips a typed target and reports whether it is now pinned.
-func (a pinAuthority) toggle(pin pins.Pin) (bool, error) {
+// Toggle flips a typed target and reports whether it is now pinned.
+func (a Authority) Toggle(pin pins.Pin) (bool, error) {
 	if _, err := pinValidated(pin); err != nil {
 		return false, err
 	}
@@ -418,16 +421,16 @@ func (a pinAuthority) toggle(pin pins.Pin) (bool, error) {
 	return pinned, nil
 }
 
-// clear drops every pin of both kinds.
+// Clear drops every pin of both kinds.
 //
 // Unlike the other mutations it accepts a legacy file: dropping every preference
 // needs no Registry lookup, and the empty typed envelope it leaves behind is the
 // migrated state. An already-empty typed file is a write-free no-op. It takes the
 // pin-file lock like every other mutation, so it cannot erase or be erased by an
 // overlapping one.
-func (a pinAuthority) clear() error {
+func (a Authority) Clear() error {
 	if a.store == nil {
-		return errNoPinStore
+		return ErrNoStore
 	}
 	return a.store.Update(func(stored pins.Set) (pins.Set, bool, error) {
 		if len(stored.Pins) == 0 && stored.Format == pins.FormatTyped {
@@ -450,6 +453,6 @@ func pinValidated(pin pins.Pin) (pins.Pin, error) {
 	}
 }
 
-// errNoPinStore reports an unconfigured pin store rather than silently doing
+// ErrNoStore reports an unconfigured pin store rather than silently doing
 // nothing, so a broken configuration cannot look like an empty pin set.
-var errNoPinStore = errors.New("pin store is not configured")
+var ErrNoStore = errors.New("pin store is not configured")

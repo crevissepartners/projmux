@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/app/pincmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -181,9 +182,9 @@ func TestControlOwnedRegistryKeepsPinsGreen(t *testing.T) {
 	seed := seedControlOwnedGraph(t, store, nil, "home")
 	controlUID := seed.binding.ControlSession.Metadata.UID
 
-	refs := projectRefsOf(store.registry)
+	refs := pincmd.ProjectRefsOf(store.registry)
 	if got, want := len(refs), len(store.registry.Projects); got != want {
-		t.Fatalf("projectRefsOf returned %d refs over %d Projects", got, want)
+		t.Fatalf("ProjectRefsOf returned %d refs over %d Projects", got, want)
 	}
 	for _, ref := range refs {
 		if ref.UID == controlUID {
@@ -202,17 +203,17 @@ func TestControlOwnedRegistryKeepsPinsGreen(t *testing.T) {
 		Kind: pins.KindCandidate, Value: seed.pane.Spec.CWD,
 	})}, refs...)
 
-	selection, err := authority.selection()
+	selection, err := authority.Selection()
 	if err != nil {
 		t.Fatalf("pin selection over a control-owned Registry: %v", err)
 	}
-	if !selection.pinnedProject("prj-alpha") {
+	if !selection.PinnedProject("prj-alpha") {
 		t.Errorf("the managed pin stopped resolving")
 	}
-	if selection.pinnedProject(controlUID) {
+	if selection.PinnedProject(controlUID) {
 		t.Errorf("the ControlSession uid reads as a pinned Project")
 	}
-	rows, resolution, err := authority.pinnedRows()
+	rows, resolution, err := authority.PinnedRows()
 	if err != nil {
 		t.Fatalf("pinned rows over a control-owned Registry: %v", err)
 	}
@@ -222,7 +223,7 @@ func TestControlOwnedRegistryKeepsPinsGreen(t *testing.T) {
 	if len(resolution.Ambiguous) != 0 {
 		t.Errorf("a control-owned Registry made a pin ambiguous: %+v", resolution.Ambiguous)
 	}
-	paths, err := authority.discoveryPaths()
+	paths, err := authority.DiscoveryPaths()
 	if err != nil {
 		t.Fatalf("discovery paths over a control-owned Registry: %v", err)
 	}
@@ -234,7 +235,7 @@ func TestControlOwnedRegistryKeepsPinsGreen(t *testing.T) {
 	// Pane sits in is not a managed root, so migration leaves it a candidate
 	// rather than typing it onto anything. Nothing here may mint a Project for
 	// it either.
-	migrated, err := legacy.resolved()
+	migrated, err := legacy.Resolved()
 	if err != nil {
 		t.Fatalf("legacy pin resolution over a control-owned Registry: %v", err)
 	}
