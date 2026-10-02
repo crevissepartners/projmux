@@ -44,6 +44,11 @@ func appLocaleLookup(lookupEnv func(string) string) func(string) (string, bool) 
 }
 
 func localizeText(locale i18n.Locale, key i18n.Key, fallback string) string {
+	return LocalizeText(locale, key, fallback)
+}
+
+// LocalizeText resolves a catalog key, returning fallback unchanged on error.
+func LocalizeText(locale i18n.Locale, key i18n.Key, fallback string) string {
 	text, err := i18n.NewLocalizer(locale).Text(key)
 	if err != nil {
 		return fallback

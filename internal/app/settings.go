@@ -137,10 +137,22 @@ func (c *settingsCommand) statFile(path string) (os.FileInfo, error) {
 	return os.Stat(path)
 }
 
+// HomeDir reads the currently injected home directory provider.
+// Callers retain responsibility for checking whether the provider is configured.
+func (c *settingsCommand) HomeDir() (string, error) {
+	return c.homeDir()
+}
+
+// LookupEnv reads the currently injected environment provider without fallback.
+// Callers retain responsibility for checking whether the provider is configured.
+func (c *settingsCommand) LookupEnv(key string) string {
+	return c.lookupEnv(key)
+}
+
 func (c *settingsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		printRouteUsage(stderr, "settings")
-		return usageError("settings does not accept positional arguments")
+		return NewUsageError("settings does not accept positional arguments")
 	}
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")

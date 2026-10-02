@@ -94,6 +94,11 @@ func (e *UsageError) MetadataUsageError() bool { return true }
 
 // usageError builds a UsageError with the supplied message.
 func usageError(message string) error {
+	return NewUsageError(message)
+}
+
+// NewUsageError marks invalid CLI input while preserving its message.
+func NewUsageError(message string) error {
 	return &UsageError{Message: message}
 }
 

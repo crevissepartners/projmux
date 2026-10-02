@@ -61,7 +61,7 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) resolveSettingsProjectContext() settingsProjectContext {
 	if c.lookupEnv != nil {
-		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
+		if raw := strings.TrimSpace(c.LookupEnv("PROJMUX_CWD")); raw != "" {
 			return newSettingsProjectContext(filepath.Clean(raw), "PROJMUX_CWD env")
 		}
 	}
