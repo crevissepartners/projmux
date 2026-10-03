@@ -207,6 +207,7 @@ buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 claudeProcessControl.closeRecord	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 claudeProcessControl.sync	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
+claudeProcessControl.syncControls	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 claudeProcessService.check	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 claudeProcessService.close	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 claudeProcessService.exchange	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
@@ -233,6 +234,7 @@ codexProcessControl.answer	Internal dedicated Codex process binding/control/rece
 codexProcessControl.closeRecord	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 codexProcessControl.create	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 codexProcessControl.sync	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessControl.syncControls	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 codexProcessEndpoint.authority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 codexProcessEndpoint.call	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 codexProcessEndpoint.close	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.

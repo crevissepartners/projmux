@@ -34,7 +34,16 @@ type processAttentionPending struct {
 	Sequence uint64
 }
 
-type processAttentionStore struct{ path string }
+// The process stream has no picker action deadline. Give a burst of durable
+// writers its own finite budget; a held lock still returns ErrLockTimeout.
+const processAttentionLockWaitLimit = 5 * time.Second
+
+type processAttentionStore struct {
+	path string
+	// Internal test seams for observing contention and exercising expiry.
+	lockWaitLimit      time.Duration
+	afterContendedLock func()
+}
 
 func newProcessAttentionStore(stateDir string) *processAttentionStore {
 	return &processAttentionStore{path: filepath.Join(stateDir, "process-attention.json")}
@@ -69,7 +78,13 @@ func (s *processAttentionStore) update(change func(map[string]processAttentionRe
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-	deadline := time.Now().Add(localstate.LockWaitLimit)
+	limit := s.lockWaitLimit
+	if limit <= 0 {
+		limit = processAttentionLockWaitLimit
+	}
+	deadline := time.Now().Add(limit)
+	delay := time.Millisecond
+	contended := false
 	for {
 		err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
@@ -78,10 +93,19 @@ func (s *processAttentionStore) update(change func(map[string]processAttentionRe
 		if !errors.Is(err, unix.EWOULDBLOCK) {
 			return err
 		}
+		if !contended && s.afterContendedLock != nil {
+			s.afterContendedLock()
+		}
+		contended = true
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return localstate.ErrLockTimeout
+		}
+		time.Sleep(min(delay, remaining))
+		delay = min(2*delay, 10*time.Millisecond)
 		if !time.Now().Before(deadline) {
 			return localstate.ErrLockTimeout
 		}
-		time.Sleep(time.Millisecond)
 	}
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
 	records, err := s.read()
