@@ -308,6 +308,41 @@ func TestInstallReplacementDrainIntegration(t *testing.T) {
 		t.Fatalf("tmux is required for the isolated fleet: %v", err)
 	}
 
+	t.Run("another domain is reported without draining or failing", func(t *testing.T) {
+		fleet := newInstallReplacementFleet(t, source)
+		domain := filepath.Join(fleet.root, "other")
+		broker := fleet.start(t, "internal", "codex-broker", "serve", "--state-domain", domain,
+			"--idle-timeout", "10m", "--endpoint-state-domain", "other-install-domain", "--endpoint-generation", "generation-other", "--endpoint-default")
+		waitFor(t, "other-domain publication", 15*time.Second, func() bool {
+			entries, _ := os.ReadDir(filepath.Join(domain, "broker"))
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".sock") {
+					return true
+				}
+			}
+			return false
+		})
+		fleet.publish(t, source)
+		out, err := fleet.run(t, nil, "internal", "install-replace")
+		if err != nil || !strings.Contains(out, "domain=other") {
+			t.Fatalf("other replacement = %v: %s", err, out)
+		}
+		outcome := fleet.replacementOutcome(t)
+		if outcome.Outcome != installReplacementOutcomeNoTarget || outcome.Attempted != 0 || outcome.Drained != 0 || outcome.Reported != 1 || outcome.OtherDomainReported != 1 {
+			t.Fatalf("other outcome = %+v", outcome)
+		}
+		if !broker.alive() {
+			t.Fatal("other-domain broker exited")
+		}
+		row := fleet.replacementRow(t, nil)
+		if signalValue(row, doctorReplacementSignalPassOtherDomainReported) != "1" || signalValue(row, doctorReplacementSignalPassOutcome) != installReplacementOutcomeNoTarget {
+			t.Fatalf("other doctor = %+v", row)
+		}
+		if !broker.alive() {
+			t.Fatal("doctor reached other-domain broker")
+		}
+	})
+
 	t.Run("a superseded broker is replaced and the row turns to replaced", func(t *testing.T) {
 		fleet := newInstallReplacementFleet(t, source)
 

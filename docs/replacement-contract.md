@@ -418,6 +418,25 @@ composite authority until a current broker binding opens. When the old broker
 finishes its accepted work and exits, the observer can bind to the replacement
 and publish authority; messages remain refused while the binding is absent.
 
+An existing exact binding remains on the old broker during drain. In an isolated
+copied-binary test with an auth-free provider fixture, public `agent message
+send` and `agent message status` retained terminal `delivered` receipts across
+atomic replacement: active inputs reached `turn/steer`, and idle/completed
+inputs reached `turn/start`, once per message reference. The Agent, activation
+generation, broker runtime, connection epoch, and binding epoch were unchanged.
+New native bindings were refused while the old broker remained; after the last
+existing connection closed, a new runtime accepted bindings and public messages.
+A successful Agent creation alone does not establish a native binding or control
+that has composite authority.
+
+This measures provider acceptance, not model completion or reply content. The
+fixture reused thread/turn identifiers. Real model execution, peer replies,
+approval waits, observer resync, crash/version upgrades, Darwin, and live
+installation were not measured. Binding transfer and immediate new native Agent
+availability are outside this guarantee. Current tracked turn state and fences
+still determine which controls an existing binding can accept.
+
+
 ### The install pass
 
 `projmux internal install-replace` runs as a step of `make install`, immediately
@@ -428,7 +447,9 @@ those whose PID hints select this executable's residual processes. PID is only
 a selection hint; the existing ownership and credential checks still authorize
 the connection. The legacy default endpoint key locates the directory and is
 not assumed to be the published runtime. The pass waits a bounded moment and
-writes `install-replacement.json`.
+writes `install-replacement.json`. Confirmed other-domain brokers are removed
+from the drain target set before discovery or dialing. They remain running and
+produce a localized warning; they do not fail this replacement pass.
 
 A welcome from a current-image runtime cannot stand in for a residual target.
 A drain/closing refusal confirms reachability; if the exact socket disappears
@@ -448,7 +469,7 @@ still runs the residue census, then fails because replacement did not finish.
 The binary publication and config convergence have already completed; this
 failure does not roll them back. Accepted drains that are still carrying work
 remain successful, as do complete, no-target, and unsupported-platform passes.
-Their output is unchanged.
+Same-domain drain results keep their existing outcomes and notices.
 
 On an unreachable result, stderr retains the count and refusal and adds the
 remaining drain targets' role, pid, and mapped executable revision, followed by
@@ -472,8 +493,21 @@ under another `HOME`, say) is never reachable from this domain's discovery, so
 `domain=other` means its own operator, not this install, decides when it ends.
 From the target's environment the recheck keeps only `HOME` and
 `XDG_STATE_HOME` and discards every other entry; it also answers `unknown` when
-the executable link no longer names the image the census saw. The verdict
-changes neither target selection nor the exit code.
+the executable link no longer names the image the census saw. Only a confirmed `other` verdict excludes a target from drain selection.
+`this` follows the existing drain/settle path; `unknown` remains eligible and
+retains the unreachable failure even if a published record has the same PID.
+A matching PID cannot establish an unknown target's domain; only confirmed
+`this` targets are dialed. Mixed fleets still drain confirmed this-domain
+targets while reporting the unknown failure.
+The selection snapshot validates process-directory identity, process birth
+(`/proc/<pid>/stat` field 22), executable link, and argv before and after reading
+origin. Changed or unreadable identity yields `unknown`. An absolute explicit
+state-domain argument can establish the domain even when the environment is
+unreadable, provided process identity is stable. Repeated, relative, missing, or malformed
+explicit state-domain arguments yield `unknown`; HOME fallback applies only
+when the flag is absent. Words behind `--` are caller text and are not read.
+A different executable path
+remains outside this install's target set.
 
 These identities are transient terminal output only:
 `install-replacement.json` and the residue ledger retain counts and tokens.
@@ -483,8 +517,8 @@ The replacement record adds `failureStage` on an unsuccessful request:
 or response failed or did not accept a drain. `refusal` keeps its existing broker
 token, when one is available. A current-image welcome has no refusal token.
 Successful, pending, no-target, and unsupported records omit `failureStage`.
-The diagnostic states that later Codex Agents may lack control while the old
-broker remains. Let existing work finish, check that the named processes exit
+The failure diagnostic states that later Codex Agents may lack control while the old
+broker remains in their domain. Let existing work finish, check that the named processes exit
 naturally, and retry `make install`. If they remain, the operator reviews the
 targets before deciding on termination; the install does not signal them.
 
@@ -494,11 +528,31 @@ Its outcome vocabulary is closed, and it reaches the `L2` row as
 | Outcome | Meaning |
 | --- | --- |
 | `replacement-unsupported-platform` | no process table to take a census from |
-| `replacement-no-target` | no residual process sits in a drainable role |
+| `replacement-no-target` | no eligible residual drain target; confirmed other-domain brokers may still be reported |
 | `replacement-complete` | the drain was asked for and finished inside the settle window |
 | `replacement-drain-pending` | the drain was accepted and is still carrying work |
 | `replacement-target-unreachable` | a residual target the shipped path could not reach; `replacement.refusal` says which door was closed |
 | `replacement-not-attempted` | written by no pass — what the row says when no record exists at all |
+
+`attempted` counts this/unknown-domain drain targets from the request snapshot;
+`drained` counts accepted original targets that disappeared during settle.
+`reported` counts report-only roles plus confirmed other-domain brokers.
+`otherDomainReported` is the other-domain subset of `reported`; it is additive
+and omitted when zero, so older records read as zero. Doctor emits the optional
+`replacement.other-domain-reported` signal only when nonzero. These counters
+contain no process, path, environment, or socket identities.
+
+| Fleet at the replacement path | Outcome and exit | Counts |
+| --- | --- | --- |
+| other only | `replacement-no-target`, exit 0 and warning | attempted/drained 0; other brokers included in reported and otherDomainReported |
+| this only | existing complete/pending/unreachable result | existing attempted/drained; otherDomainReported omitted |
+| this + other | this drain result and other warning | attempted/drained describe this targets; reported includes other |
+| unknown + other | unreachable exit 1; other warning | attempted includes unknown; reported includes other |
+| another executable path only | `replacement-no-target`, exit 0 | no drain targets and no otherDomainReported |
+
+Install success does not imply every residual process has exited. The live
+census in doctor still reports residual brokers in other domains and may show a
+cutoff warning independently of the successful replacement-pass outcome.
 
 ### The drain cutoff
 
@@ -624,6 +678,7 @@ reconstruction.
 | `replacement.attempted` | `L2` | counter |
 | `replacement.drained` | `L2` | counter |
 | `replacement.reported` | `L2` | counter |
+| `replacement.other-domain-reported` | `L2` | optional nonzero counter |
 | `registry.observed` | `L3` | `true` / `false` |
 | `sessions.running` | `L3` | counter |
 | `sessions.live` | `L3` | counter |

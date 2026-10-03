@@ -1080,3 +1080,24 @@ func TestDoctorReplacementJSONCarriesResidualDomainCountsWithoutPaths(t *testing
 		}
 	}
 }
+
+func TestDoctorReplacementOtherDomainReportIsOptional(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{0, 2} {
+		row := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+			Processes: replacementFreshResidualVintage(), ReplacementOK: true,
+			Replacement: installReplacementOutcome{Outcome: installReplacementOutcomeNoTarget, Reported: count, OtherDomainReported: count},
+		}), doctorReplacementLayerProcesses)
+		signals := map[string]string{}
+		for _, signal := range row.Signals {
+			signals[signal.Key] = signal.Value
+		}
+		value, exists := signals[doctorReplacementSignalPassOtherDomainReported]
+		if count == 0 && exists || count > 0 && (!exists || value != "2") {
+			t.Fatalf("counter %d: %v", count, signals)
+		}
+		if signals[doctorReplacementSignalPassOutcome] != installReplacementOutcomeNoTarget {
+			t.Fatal("doctor changed pass outcome")
+		}
+	}
+}

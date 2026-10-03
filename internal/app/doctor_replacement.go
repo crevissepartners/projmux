@@ -159,18 +159,19 @@ const (
 	// the last pass's own account of what it did, and they are absent when no
 	// pass has run -- an absent account is a different fact from a pass that
 	// found nothing, and collapsing the two would hide which one happened.
-	doctorReplacementSignalCutoffSeconds    = "replacement.cutoff-seconds"
-	doctorReplacementSignalBeyondCutoff     = "replacement.beyond-cutoff"
-	doctorReplacementSignalPassOutcome      = "replacement.outcome"
-	doctorReplacementSignalPassRefusal      = "replacement.refusal"
-	doctorReplacementSignalPassAttempted    = "replacement.attempted"
-	doctorReplacementSignalPassDrained      = "replacement.drained"
-	doctorReplacementSignalPassReported     = "replacement.reported"
-	doctorReplacementSignalRegistryObserved = "registry.observed"
-	doctorReplacementSignalSessionsRunning  = "sessions.running"
-	doctorReplacementSignalSessionsLive     = "sessions.live"
-	doctorReplacementSignalSessionsDead     = "sessions.dead"
-	doctorReplacementSignalSessionsUnobs    = "sessions.unobservable"
+	doctorReplacementSignalCutoffSeconds           = "replacement.cutoff-seconds"
+	doctorReplacementSignalBeyondCutoff            = "replacement.beyond-cutoff"
+	doctorReplacementSignalPassOutcome             = "replacement.outcome"
+	doctorReplacementSignalPassRefusal             = "replacement.refusal"
+	doctorReplacementSignalPassAttempted           = "replacement.attempted"
+	doctorReplacementSignalPassDrained             = "replacement.drained"
+	doctorReplacementSignalPassReported            = "replacement.reported"
+	doctorReplacementSignalPassOtherDomainReported = "replacement.other-domain-reported"
+	doctorReplacementSignalRegistryObserved        = "registry.observed"
+	doctorReplacementSignalSessionsRunning         = "sessions.running"
+	doctorReplacementSignalSessionsLive            = "sessions.live"
+	doctorReplacementSignalSessionsDead            = "sessions.dead"
+	doctorReplacementSignalSessionsUnobs           = "sessions.unobservable"
 )
 
 // doctorReplacementSignalRoleResidualPrefix names one process role's residual
@@ -239,6 +240,7 @@ var doctorReplacementFixedSignalInventory = []string{
 	doctorReplacementSignalPassAttempted,
 	doctorReplacementSignalPassDrained,
 	doctorReplacementSignalPassReported,
+	doctorReplacementSignalPassOtherDomainReported,
 	doctorReplacementSignalRegistryObserved,
 	doctorReplacementSignalSessionsRunning,
 	doctorReplacementSignalSessionsLive,
@@ -679,6 +681,9 @@ func projectDoctorReplacementProcessRow(in doctorReplacementInputs) doctorReplac
 			doctorReplacementSignalPassDrained, strconv.Itoa(in.Replacement.Drained),
 			doctorReplacementSignalPassReported, strconv.Itoa(in.Replacement.Reported),
 		)
+		if in.Replacement.OtherDomainReported > 0 {
+			signals = append(signals, doctorReplacementSignalPassOtherDomainReported, strconv.Itoa(in.Replacement.OtherDomainReported))
+		}
 		if refusal := strings.TrimSpace(in.Replacement.Refusal); refusal != "" {
 			signals = append(signals, doctorReplacementSignalPassRefusal, refusal)
 		}

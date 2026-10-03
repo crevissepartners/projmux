@@ -2,6 +2,7 @@ package i18n
 
 var defaultCatalogData = map[Locale]map[Key]Entry{
 	FallbackLocale: {
+		KeyInstallReplacementOtherDomains:                                    textEntry("Warning: confirmed other-domain brokers were left running; they do not fail this replacement pass."),
 		KeyInstallReplacementIncomplete:                                      textEntry("The binary and config are already installed; broker replacement is incomplete."),
 		KeyInstallReplacementUnknown:                                         textEntry("No remaining target could be identified on recheck; the process table may have changed."),
 		KeyInstallReplacementRemaining:                                       textEntry("Remaining targets at failure recheck:"),
@@ -996,6 +997,7 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("agent.question.picker.answer_not_used"):                         textEntry("Question {id}: this answer was not used ({reason})."),
 	},
 	Locale("ko-KR"): {
+		KeyInstallReplacementOtherDomains:                                    textEntry("경고: 다른 state domain으로 확인된 broker는 실행 상태로 두었습니다. 이 대상은 교체 단계를 실패시키지 않습니다."),
 		KeyInstallReplacementIncomplete:                                      textEntry("바이너리와 config는 이미 설치되었으며 broker 교체가 완료되지 않았습니다."),
 		KeyInstallReplacementUnknown:                                         textEntry("재확인 시 남은 대상을 식별하지 못했습니다. 프로세스 목록이 달라졌을 수 있습니다."),
 		KeyInstallReplacementRemaining:                                       textEntry("실패 후 재확인한 남은 대상:"),

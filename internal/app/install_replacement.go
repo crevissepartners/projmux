@@ -109,12 +109,14 @@ type installReplacementOutcome struct {
 	Outcome string `json:"outcome"`
 	// CutoffSeconds is the drain cutoff this pass ran under.
 	CutoffSeconds int64 `json:"cutoffSeconds"`
-	// Attempted is how many residual processes sat in a drainable role.
+	// Attempted counts residual drain targets in this or an unknown domain.
 	Attempted int `json:"attempted"`
 	// Drained is how many of them were gone when the pass stopped watching.
 	Drained int `json:"drained"`
-	// Reported is how many residual processes the policy table left alone.
+	// Reported counts report-only roles and confirmed other-domain brokers.
 	Reported int `json:"reported"`
+	// OtherDomainReported is the confirmed other-domain subset of Reported.
+	OtherDomainReported int `json:"otherDomainReported,omitempty"`
 	// BeyondCutoff is how many residual processes had already outlived the
 	// cutoff when the pass ran.
 	BeyondCutoff int `json:"beyondCutoff"`
@@ -205,14 +207,18 @@ func (c *installReplacementCommand) Run(stderr io.Writer) error {
 	if c.readVintage != nil {
 		vintage = c.readVintage(now)
 	}
+	var reportedTargets []installReplacementTarget
 	outcome.Supported = vintage.Supported
 	if vintage.Supported {
 		outcome.Attempted, outcome.Reported = replacementResidualByDisposition(vintage.Roles)
 		outcome.BeyondCutoff = replacementResidualBeyondCutoff(vintage.Roles, cutoff)
-		c.replace(&outcome)
+		reportedTargets = c.replace(&outcome)
 	}
 
 	c.write(outcome)
+	if len(reportedTargets) > 0 && stderr != nil {
+		_, _ = io.WriteString(stderr, renderInstallReplacementOtherDomains(reportedTargets, c.locale))
+	}
 	if text := renderInstallReplacementNotice(outcome); text != "" && stderr != nil {
 		_, _ = io.WriteString(stderr, text)
 	}
@@ -238,7 +244,7 @@ func (installReplacementExitError) ExitCode() int { return 1 }
 
 // replace asks the exact residual targets for this pass and watches for
 // their answers.
-func (c *installReplacementCommand) replace(outcome *installReplacementOutcome) {
+func (c *installReplacementCommand) replace(outcome *installReplacementOutcome) (reported []installReplacementTarget) {
 	if outcome.Attempted == 0 {
 		outcome.Outcome = installReplacementOutcomeNoTarget
 		return
@@ -255,6 +261,9 @@ func (c *installReplacementCommand) replace(outcome *installReplacementOutcome) 
 	// A target may have exited between them; counts must follow the same exact
 	// snapshot the request used, never turn that normal absence into failure.
 	outcome.Attempted = result.attempted
+	reported = result.otherDomains
+	outcome.OtherDomainReported = len(reported)
+	outcome.Reported += len(reported)
 	if result.attempted == 0 && result.failureStage == "" {
 		outcome.Outcome = installReplacementOutcomeNoTarget
 		return
@@ -277,9 +286,12 @@ func (c *installReplacementCommand) replace(outcome *installReplacementOutcome) 
 		return
 	}
 	outcome.Outcome = installReplacementOutcomePending
+	return
 }
 
 type installReplacementDrainResult struct {
+	// otherDomains is transient terminal evidence, never persisted identities.
+	otherDomains []installReplacementTarget
 	attempted    int
 	accepted     int
 	refusal      string
@@ -420,7 +432,7 @@ func pluralizeInstallReplacementSubject(count int) string {
 // endpoints already published in this state domain. The legacy default key is
 // a directory locator, not the key a managed Agent's broker publishes.
 func defaultInstallReplacementDrainRequest(ctx context.Context) installReplacementDrainResult {
-	residual := readInstallReplacementTargets(nil, nil)
+	residual := defaultInstallReplacementTargets()
 	if len(residual) == 0 {
 		return installReplacementDrainResult{}
 	}
@@ -432,7 +444,21 @@ func defaultInstallReplacementDrainRequest(ctx context.Context) installReplaceme
 }
 
 func requestInstallReplacementDrain(ctx context.Context, domain string, residual []installReplacementTarget) installReplacementDrainResult {
-	result := installReplacementDrainResult{attempted: len(residual)}
+	result := installReplacementDrainResult{}
+	var eligible []installReplacementTarget
+	unknown := false
+	for _, target := range residual {
+		if target.origin.domain == installReplacementDomainOther {
+			result.otherDomains = append(result.otherDomains, target)
+		} else {
+			eligible = append(eligible, target)
+			if target.origin.domain != installReplacementDomainThis {
+				unknown = true
+			}
+		}
+	}
+	residual = eligible
+	result.attempted = len(residual)
 	if len(residual) == 0 {
 		return result
 	}
@@ -441,6 +467,9 @@ func requestInstallReplacementDrain(ctx context.Context, domain string, residual
 		if result.failureStage == "" {
 			result.failureStage, result.refusal = stage, reason
 		}
+	}
+	if unknown {
+		fail(string(codexbroker.DialStageDiscovery), string(codexbroker.RefusalHostUnavailable))
 	}
 	if refusal != "" || len(published) == 0 {
 		if refusal == "" {
@@ -454,7 +483,9 @@ func requestInstallReplacementDrain(ctx context.Context, domain string, residual
 	// record's endpoint and credential, and completion uses the socket inode.
 	wanted := make(map[int]bool, len(residual))
 	for _, target := range residual {
-		wanted[target.pid] = true
+		if target.origin.domain == installReplacementDomainThis {
+			wanted[target.pid] = true
+		}
 	}
 	var targets []installReplacementSocket
 	welcomed := false

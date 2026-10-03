@@ -283,3 +283,133 @@ func TestInstallReplacementTargetValueQuotesUnsafePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallReplacementOriginRequiresStableProcessIdentity(t *testing.T) {
+	t.Parallel()
+	one, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := codexProcessImage{PID: 9, Exe: "/bin/projmux (deleted)", Cmdline: []string{"projmux", "internal", "codex-broker", "serve", "--state-domain", "/other"}}
+	stable := installReplacementIdentity{directory: one, birth: "1234", exe: image.Exe, cmdline: image.Cmdline}
+	for _, tc := range []struct {
+		name       string
+		mutate     func(*installReplacementIdentity)
+		unreadable bool
+		want       string
+	}{
+		{name: "stable explicit argv despite unreadable environment", want: installReplacementDomainOther},
+		{name: "recycled pid", mutate: func(v *installReplacementIdentity) { v.birth = "1235" }, want: installReplacementDomainUnknown},
+		{name: "replaced directory", mutate: func(v *installReplacementIdentity) { v.directory = two }, want: installReplacementDomainUnknown},
+		{name: "changed image", mutate: func(v *installReplacementIdentity) { v.exe = "/other/projmux" }, want: installReplacementDomainUnknown},
+		{name: "changed argv", mutate: func(v *installReplacementIdentity) { v.cmdline = []string{"other"} }, want: installReplacementDomainUnknown},
+		{name: "unreadable identity", unreadable: true, want: installReplacementDomainUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			reader := checkedInstallReplacementTargetOriginReader("/this", func(codexProcessImage) (installReplacementEnviron, bool) { return installReplacementEnviron{}, false }, func(codexProcessImage) (installReplacementIdentity, bool) {
+				calls++
+				v := stable
+				if calls == 2 && tc.mutate != nil {
+					tc.mutate(&v)
+				}
+				return v, !tc.unreadable
+			})
+			got := reader(image)
+			if got.domain != tc.want {
+				t.Fatalf("origin=%+v", got)
+			}
+			if tc.want == installReplacementDomainUnknown && (got.stateDomain != "" || got.home != "") {
+				t.Fatal("uncertain process lent paths to verdict")
+			}
+		})
+	}
+}
+
+func TestInstallReplacementIdentityChecksActualImageAndArgv(t *testing.T) {
+	t.Parallel()
+	root := "/proc/" + strconv.Itoa(os.Getpid())
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Skip("procfs unavailable")
+	}
+	exe, err := os.Readlink(root + "/exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := os.ReadFile(root + "/cmdline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := codexProcessImage{PID: os.Getpid(), Exe: exe, StartedAt: info.ModTime(), Cmdline: strings.Split(strings.TrimRight(string(argv), "\x00"), "\x00")}
+	got, ok := readInstallReplacementIdentity(image)
+	if !ok || got.birth == "" {
+		t.Fatal("positive process identity unreadable")
+	}
+	image.Exe += " (deleted)"
+	if _, ok := readInstallReplacementIdentity(image); ok {
+		t.Fatal("changed executable accepted")
+	}
+	image.Exe = exe
+	image.Cmdline = []string{"invented"}
+	if _, ok := readInstallReplacementIdentity(image); ok {
+		t.Fatal("changed argv accepted")
+	}
+	image.Cmdline = got.cmdline
+	image.StartedAt = image.StartedAt.Add(-time.Second)
+	if _, ok := readInstallReplacementIdentity(image); ok {
+		t.Fatal("changed start accepted")
+	}
+}
+
+func TestInstallReplacementStatBirthParsing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		payload string
+		want    bool
+	}{
+		{"9 (name ) with spaces) S " + strings.Repeat("0 ", 18) + "1234 0", true},
+		{"9 (name) S 0", false}, {"missing", false},
+		{"9 (name) S " + strings.Repeat("0 ", 18) + "bad", false},
+		{"9 (name) S " + strings.Repeat("0 ", 18) + "0", false},
+	} {
+		if _, ok := installReplacementStatBirth([]byte(tc.payload)); ok != tc.want {
+			t.Fatalf("parse %q=%v", tc.payload, ok)
+		}
+	}
+}
+
+func TestInstallReplacementExplicitDomainAmbiguityNeverBorrowsHome(t *testing.T) {
+	t.Parallel()
+	broker := []string{"projmux", "internal", "codex-broker", "serve"}
+	env := installReplacementEnviron{home: "/other/home"}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "absolute", args: []string{"--state-domain", "/this"}, want: installReplacementDomainThis},
+		{name: "absent HOME fallback", want: installReplacementDomainOther},
+		{name: "other then this", args: []string{"--state-domain", "/other", "--state-domain", "/this"}, want: installReplacementDomainUnknown},
+		{name: "this then other", args: []string{"--state-domain=/this", "-state-domain=/other"}, want: installReplacementDomainUnknown},
+		{name: "relative", args: []string{"--state-domain", "relative"}, want: installReplacementDomainUnknown},
+		{name: "empty", args: []string{"--state-domain="}, want: installReplacementDomainUnknown},
+		{name: "missing", args: []string{"--state-domain"}, want: installReplacementDomainUnknown},
+		{name: "missing before flag", args: []string{"--state-domain", "--idle-timeout", "10m"}, want: installReplacementDomainUnknown},
+		{name: "caller text excluded", args: []string{"--", "--state-domain", "/this"}, want: installReplacementDomainOther},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveInstallReplacementTargetOrigin("/this", append(slices.Clone(broker), tc.args...), env, true)
+			if got.domain != tc.want {
+				t.Fatalf("origin=%+v want %s", got, tc.want)
+			}
+			if tc.want == installReplacementDomainUnknown && got.stateDomain != "" {
+				t.Fatal("ambiguous argv borrowed fallback")
+			}
+		})
+	}
+}
