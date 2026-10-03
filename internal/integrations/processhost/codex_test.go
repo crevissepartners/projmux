@@ -68,6 +68,20 @@ func codexFixture(mode string) {
 			}
 			reply(map[string]any{"userAgent": "projmux/0.160.0"})
 		case "initialized":
+		case "thread/resume":
+			var p struct {
+				ThreadID string `json:"threadId"`
+			}
+			_ = json.Unmarshal(message.Params, &p)
+			if mode == "codex-resume-refused" {
+				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32600, "message": "recorded thread unavailable"}})
+				continue
+			}
+			id := p.ThreadID
+			if mode == "codex-resume-wrong-thread" {
+				id = "another-thread"
+			}
+			reply(map[string]any{"thread": map[string]string{"id": id}, "model": "fixture-model", "reasoningEffort": "high", "sandbox": map[string]string{"type": "readOnly"}, "approvalPolicy": "on-request"})
 		case "thread/start":
 			var p struct {
 				Model    string            `json:"model"`

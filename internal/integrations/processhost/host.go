@@ -84,9 +84,11 @@ func NewHost(instance string, supervisor Command, tx Transactions, limits Limits
 // Launch fixes one operation's exact command and binding. Retrying with changed
 // parameters is refused even if the earlier launch has already exited.
 type Launch struct {
-	Binding Binding
-	Command Command
-	adapter adapterConfig
+	Binding                  Binding
+	Command                  Command
+	adapter                  adapterConfig
+	resume                   *SessionRecord
+	resumeTurn, resumePrompt string
 }
 
 // Handle is tied to one owned supervisor/child pair and cannot adopt a PID.
@@ -135,6 +137,7 @@ type Snapshot struct {
 	Pending                                   []Request
 	Diagnostic                                string
 	Exit                                      *Exit
+	Resume                                    *ResumeHistory
 }
 
 // Event carries host-local sequence and exact binding; Raw is bounded by the
@@ -174,6 +177,11 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	// Clone caller-owned slices before the launch can race a caller mutation.
 	launch.Command.Args = slices.Clone(launch.Command.Args)
 	launch.Command.Env = slices.Clone(launch.Command.Env)
+	if launch.resume != nil {
+		record := *launch.resume
+		record.Pending = slices.Clone(record.Pending)
+		launch.resume = &record
+	}
 	if launch.adapter != nil {
 		launch.adapter = launch.adapter.clone()
 	}
@@ -191,8 +199,12 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	}
 	if err == nil {
 		err = p.spawn(ctx)
-		if err == nil && p.adapter != nil {
-			err = p.adapter.initialize(ctx)
+		if err == nil && (p.adapter != nil || launch.resume != nil) {
+			if p.adapter != nil {
+				err = p.adapter.initialize(ctx)
+			} else {
+				err = p.initializeResume(ctx)
+			}
 			if err != nil {
 				p.protocolFailure(err)
 				waitCtx, cancel := context.WithTimeout(context.Background(), 5*h.limits.Grace)
@@ -498,6 +510,9 @@ func (p *Handle) snapshotLocked() Snapshot {
 	if p.exit != nil {
 		e := *p.exit
 		s.Exit = &e
+	}
+	if p.launch.resume != nil {
+		s.Resume = p.launch.resume.history()
 	}
 	for _, req := range p.requests {
 		s.Pending = append(s.Pending, cloneRequest(req))
