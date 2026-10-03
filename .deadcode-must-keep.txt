@@ -299,6 +299,8 @@ prepareReaper	Internal processhost implementation retained for owned-process and
 processAttentionFailed	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 processAttentionProjection.push	Internal process attention enqueue/compaction seam retained for fixture proof before foreground activation; remove this entry when that caller ships.
 processAttentionProjection.sync	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionRecord.applyEvent	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionRecord.reconcilePending	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
 processAttentionStore.activate	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 processClaudeControlID	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 processClaudeLaunchEnv	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.

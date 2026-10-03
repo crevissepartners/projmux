@@ -98,10 +98,12 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 
 	panes, listErr := c.listLivePaneRows()
 	if listErr != nil {
+		result.Errors = append(result.Errors, listErr.Error())
+	}
+	if listErr != nil && len(panes) == 0 {
 		// Common case: tmux is not running. Treat as soft failure so the
 		// post-install hook does not break. Inventory-dependent TTL eviction
 		// is skipped, but the hard cap remains safe to enforce.
-		result.Errors = append(result.Errors, listErr.Error())
 		eviction, reconcileErr := store.Reconcile(nil)
 		if reconcileErr != nil {
 			return fmt.Errorf("reconcile notifications: %w", reconcileErr)
@@ -235,7 +237,7 @@ func newNotifyLiveSessionSet(rows []livePaneRow) notifyLiveSessionSet {
 // GONE classification as the notify UI. Session/window-only rows fall back to
 // session membership because they do not carry a concrete pane id.
 func reconcileTargetExists(entry notify.Notification, paneSet notifyLivePaneSet, sessionSet notifyLiveSessionSet) bool {
-	if paneSet == nil || sessionSet == nil {
+	if paneSet == nil || sessionSet == nil || paneSet.tmuxUnknown(entry) {
 		return true
 	}
 	if strings.TrimSpace(entry.Pane) != "" {

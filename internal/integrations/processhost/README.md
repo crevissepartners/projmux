@@ -256,3 +256,22 @@ against a localhost model stub with isolated HOME and no real API or credentials
 Native questions and approvals remain fixture-qualified. Late notifications
 following turn/completed were not observed in the installed 0.160.0 success and
 failure stub probes; no speculative late-frame policy is added.
+
+## Process attention preparation
+
+The application seam stores process attention in the per-user state directory's
+`process-attention.json`, keyed by PaneUID with the exact host binding and
+generation in each record. Activation requires the previous generation; event
+writes and badge clears compare the current binding, and clears also compare the
+observed sequence. Older events or acknowledgments cannot clear a newer request.
+A persistent-inode writer lock serializes updates; private temporary files, file
+and directory sync, and rename make publication atomic. Only request identities,
+kinds, sequences and badge metadata are stored, never conversation text.
+
+Claude and Codex stream events share the existing badge priority and aggregation.
+Actual host termination closes pending requests while retaining completion and
+error notices. Badge clear and notification acknowledgment remain separate, and
+the notification queue retains its existing TTL, cap and expired-plus-gone rules.
+Mixed inventory failures preserve the tmux error diagnostic and treat unobserved
+tmux targets as unknown while still projecting process rows. The seam is dormant
+until explicitly injected; public activation remains a later step.

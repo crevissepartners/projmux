@@ -9,11 +9,13 @@ import "github.com/crevissepartners/projmux/internal/core/notify"
 // interpret raw pane options or title glyphs.
 type livePaneRow struct {
 	processNotice *notify.PushInput
-	Session       string
-	Window        string
-	Pane          string
-	Socket        string
-	Title         string
+	// A partial inventory preserves unknown tmux targets and its diagnostic.
+	tmuxObservationError error
+	Session              string
+	Window               string
+	Pane                 string
+	Socket               string
+	Title                string
 	// AttentionState is the raw attention state string, carried only so the
 	// `notify list --live` JSON keeps surfacing it verbatim.
 	AttentionState string

@@ -502,3 +502,95 @@ func TestProcessAttentionCodexPriorityAckRetentionAndConsumerIntegration(t *test
 		t.Fatalf("expired gone parity: %+v %v", evicted, err)
 	}
 }
+
+func TestProcessAttentionMixedInventoryFailurePreservesUnknownTmux(t *testing.T) {
+	b := processhost.Binding{Pane: "process-pane", Project: "process-project", Window: "window", Host: "host", Generation: "generation"}
+	s, q, _ := newProcessAttentionFixture(t, t.TempDir(), b, "claude")
+	if err := s.update(func(records map[string]processAttentionRecord) error {
+		r := records[b.Pane]
+		r.Badge = aibadge.ResponseComplete
+		r.NoticeSequence = 1
+		r.NoticeKind = aibadge.ResponseComplete
+		records[b.Pane] = r
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	consumer := &processAttentionConsumer{store: s, bindings: []processhost.Binding{b}}
+	failure := errors.New("tmux fixture unavailable")
+	runner := &recordingAttentionRunner{err: failure}
+	attention := &attentionCommand{runner: runner, process: consumer}
+	rows, err := attention.listAttentionPanes()
+	if !errors.Is(err, failure) || len(rows) != 1 {
+		t.Fatalf("partial attention: %v %v", rows, err)
+	}
+	var out bytes.Buffer
+	if err = attention.runList([]string{"--json"}, &out, io.Discard); !errors.Is(err, failure) || !strings.Contains(out.String(), b.Pane) {
+		t.Fatalf("attention output: %s %v", out.String(), err)
+	}
+	_, _, err = q.Push(notify.PushInput{ID: "ai:tmux-old", Text: "retained", TTL: time.Minute, Target: notify.Target{Session: "tmux-session", Pane: "%1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.SetClock(func() time.Time { return time.Now().Add(time.Hour) })
+	cmd := &notifyCommand{store: q, livePanes: attentionLivePaneLister{runner: runner, process: consumer}}
+	out.Reset()
+	if err = cmd.runReconcile([]string{"--json"}, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), failure.Error()) || !strings.Contains(out.String(), `"evicted": 0`) {
+		t.Fatalf("summary: %s", out.String())
+	}
+	entries, err := q.List()
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("retention: %+v %v", entries, err)
+	}
+	report, err := cmd.buildNotifyLiveReport(entries)
+	if err != nil || len(report.Live) != 1 || len(report.Errors) != 1 || !strings.Contains(report.Errors[0], failure.Error()) {
+		t.Fatalf("report: %+v %v", report, err)
+	}
+}
+
+func TestProcessAttentionEventStateMachine(t *testing.T) {
+	for _, tc := range []struct {
+		event       processhost.Event
+		kind, badge string
+		terminal    bool
+	}{
+		{event: processhost.Event{Kind: "turn-submitted"}, badge: aibadge.InProgress},
+		{event: processhost.Event{Kind: "control-pending", Request: &processhost.Request{ID: "q", Kind: "question"}}, kind: aibadge.InputRequired},
+		{event: processhost.Event{Kind: "control-pending", Request: &processhost.Request{ID: "a", Kind: "permission"}}, kind: aibadge.ApprovalRequired},
+		{event: processhost.Event{Kind: "turn-result", Raw: []byte(`{"subtype":"success"}`)}, kind: aibadge.ResponseComplete, badge: aibadge.ResponseComplete},
+		{event: processhost.Event{Kind: "turn-result", Raw: []byte(`{"is_error":true}`)}, kind: "error", badge: aibadge.ResponseComplete},
+		{event: processhost.Event{Kind: "stream-gap"}, kind: "error", badge: aibadge.ResponseComplete},
+		{event: processhost.Event{Kind: "process-exited"}, terminal: true},
+	} {
+		t.Run(tc.event.Kind+tc.kind, func(t *testing.T) {
+			r := processAttentionRecord{Pending: map[string]processAttentionPending{}}
+			kind, err := r.applyEvent(tc.event)
+			if err != nil || kind != tc.kind || r.Badge != tc.badge || r.Terminal != tc.terminal {
+				t.Fatalf("state: %+v kind %s err %v", r, kind, err)
+			}
+		})
+	}
+	r := processAttentionRecord{Pending: map[string]processAttentionPending{"q": {Kind: aibadge.InputRequired, Sequence: 1}, "a": {Kind: aibadge.ApprovalRequired, Sequence: 2}}}
+	_, err := r.applyEvent(processhost.Event{Kind: "control-answered", Request: &processhost.Request{ID: "q"}})
+	if err != nil || len(r.Pending) != 1 {
+		t.Fatalf("answer: %+v %v", r, err)
+	}
+	pushes := 0
+	if err = r.reconcilePending(processhost.Snapshot{Sequence: 3, Pending: []processhost.Request{{ID: "a", Kind: "permission"}}}, func(notify.PushInput) error { pushes++; return nil }); err != nil || pushes != 0 || r.Pending["a"].Sequence != 2 {
+		t.Fatalf("reconcile: %+v %v", r, err)
+	}
+	_, err = r.applyEvent(processhost.Event{Kind: "control-expired", Request: &processhost.Request{ID: "a"}})
+	if err != nil || !r.PendingEnded {
+		t.Fatal("expiry lost")
+	}
+	kind, err := r.applyEvent(processhost.Event{Kind: "process-exited"})
+	if err != nil || kind != "error" {
+		t.Fatal("terminal pending loss")
+	}
+	if err = r.reconcilePending(processhost.Snapshot{Sequence: 4, Pending: []processhost.Request{{ID: "a"}}}, func(notify.PushInput) error { t.Fatal("terminal replay"); return nil }); err != nil || len(r.Pending) != 0 {
+		t.Fatalf("terminal: %+v %v", r, err)
+	}
+}

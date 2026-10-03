@@ -158,9 +158,9 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 		return usageError("attention list does not accept positional arguments")
 	}
 
-	rows, err := c.listAttentionPanes()
-	if err != nil {
-		return err
+	rows, listErr := c.listAttentionPanes()
+	if listErr != nil && len(rows) == 0 {
+		return listErr
 	}
 	if !*all {
 		rows = filterAttentionRows(rows)
@@ -172,9 +172,9 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return errors.Join(enc.Encode(rows), listErr)
 	}
-	return writeAttentionTable(stdout, rows)
+	return errors.Join(writeAttentionTable(stdout, rows), listErr)
 }
 
 func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
@@ -596,10 +596,7 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 		AllowExtraFields: true,
 	})
 	if err != nil {
-		if c.process != nil {
-			return processRows, nil
-		}
-		return nil, fmt.Errorf("tmux list-panes: %w", err)
+		return processRows, fmt.Errorf("tmux list-panes: %w", err)
 	}
 
 	out := make([]attentionPaneRow, 0, len(rows))
@@ -670,10 +667,14 @@ func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 	if processErr != nil {
 		return nil, processErr
 	}
+	if l.runner == nil && l.process != nil {
+		return processRows, nil
+	}
 	rows, err := (&attentionCommand{runner: l.runner}).listAttentionPanes()
 	if err != nil {
-		if l.process != nil {
-			return processRows, nil
+		if len(processRows) > 0 {
+			processRows[0].tmuxObservationError = err
+			return processRows, err
 		}
 		return nil, err
 	}

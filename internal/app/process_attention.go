@@ -90,40 +90,9 @@ func (p *processAttentionProjection) sync(handle processAttentionHost, binding p
 			if event.Sequence <= r.Sequence {
 				continue
 			}
-			kind := ""
-			switch event.Kind {
-			case "turn-submitted", "message-reserved":
-				r.PendingEnded = false
-				r.Badge = aibadge.InProgress
-			case "control-pending":
-				if event.Request == nil {
-					return errors.New("process request has no identity")
-				}
-				kind = aibadge.ApprovalRequired
-				if event.Request.Kind == "question" {
-					kind = aibadge.InputRequired
-				}
-				r.Pending[event.Request.ID] = processAttentionPending{Kind: kind, Sequence: event.Sequence}
-			case "turn-result":
-				r.PendingEnded = false
-				r.Badge, kind = aibadge.ResponseComplete, aibadge.ResponseComplete
-				if processAttentionFailed(event.Raw) {
-					kind = "error"
-				}
-			case "protocol-error", "host-unknown", "stream-gap":
-				r.Badge, kind = aibadge.ResponseComplete, "error"
-			case "control-expired", "control-answered":
-				if event.Request != nil {
-					if _, exists := r.Pending[event.Request.ID]; exists && event.Kind == "control-expired" {
-						r.PendingEnded = true
-					}
-					delete(r.Pending, event.Request.ID)
-				}
-			case "process-exited":
-				r.Terminal = true
-				if r.PendingEnded || len(r.Pending) > 0 || (event.Exit != nil && (event.Exit.Code != 0 || event.Exit.Signal != "")) {
-					r.Badge, kind = aibadge.ResponseComplete, "error"
-				}
+			kind, applyErr := r.applyEvent(event)
+			if applyErr != nil {
+				return applyErr
 			}
 			if kind != "" {
 				if err = p.push(processAttentionInput(r, event.Sequence, kind)); err != nil {
@@ -135,36 +104,82 @@ func (p *processAttentionProjection) sync(handle processAttentionHost, binding p
 			}
 			r.Sequence = event.Sequence
 		}
-		previous := r.Pending
-		r.Pending = map[string]processAttentionPending{}
-		if snap.Exit != nil || snap.State == "unknown" || snap.State == "failed" {
-			r.Terminal = true
+		if err = r.reconcilePending(snap, p.push); err != nil {
+			return err
 		}
-		if !r.Terminal {
-			for _, request := range snap.Pending {
-				kind := aibadge.ApprovalRequired
-				if request.Kind == "question" {
-					kind = aibadge.InputRequired
-				}
-				pending, exists := previous[request.ID]
-				if !exists {
-					pending = processAttentionPending{Kind: kind, Sequence: snap.Sequence}
-					if err = p.push(processAttentionInput(r, pending.Sequence, kind)); err != nil {
-						return err
-					}
-				}
-				r.Pending[request.ID] = pending
-			}
-		}
-		// Pending is authoritative, so settling one request cannot clear another
-		// request or leave an obsolete required-action badge after an answer.
-		if snap.Turn != "" && r.Badge != aibadge.ResponseComplete {
-			r.Badge = aibadge.InProgress
-		}
-		r.Sequence = snap.Sequence
 		records[binding.Pane] = r
 		return nil
 	})
+}
+
+func (r *processAttentionRecord) applyEvent(event processhost.Event) (string, error) {
+	kind := ""
+	switch event.Kind {
+	case "turn-submitted", "message-reserved":
+		r.PendingEnded = false
+		r.Badge = aibadge.InProgress
+	case "control-pending":
+		if event.Request == nil {
+			return "", errors.New("process request has no identity")
+		}
+		kind = aibadge.ApprovalRequired
+		if event.Request.Kind == "question" {
+			kind = aibadge.InputRequired
+		}
+		r.Pending[event.Request.ID] = processAttentionPending{Kind: kind, Sequence: event.Sequence}
+	case "turn-result":
+		r.PendingEnded = false
+		r.Badge, kind = aibadge.ResponseComplete, aibadge.ResponseComplete
+		if processAttentionFailed(event.Raw) {
+			kind = "error"
+		}
+	case "protocol-error", "host-unknown", "stream-gap":
+		r.Badge, kind = aibadge.ResponseComplete, "error"
+	case "control-expired", "control-answered":
+		if event.Request != nil {
+			if _, exists := r.Pending[event.Request.ID]; exists && event.Kind == "control-expired" {
+				r.PendingEnded = true
+			}
+			delete(r.Pending, event.Request.ID)
+		}
+	case "process-exited":
+		r.Terminal = true
+		if r.PendingEnded || len(r.Pending) > 0 || (event.Exit != nil && (event.Exit.Code != 0 || event.Exit.Signal != "")) {
+			r.Badge, kind = aibadge.ResponseComplete, "error"
+		}
+	}
+	return kind, nil
+}
+
+func (r *processAttentionRecord) reconcilePending(snap processhost.Snapshot, push func(notify.PushInput) error) error {
+	previous := r.Pending
+	r.Pending = map[string]processAttentionPending{}
+	if snap.Exit != nil || snap.State == "unknown" || snap.State == "failed" {
+		r.Terminal = true
+	}
+	if !r.Terminal {
+		for _, request := range snap.Pending {
+			kind := aibadge.ApprovalRequired
+			if request.Kind == "question" {
+				kind = aibadge.InputRequired
+			}
+			pending, exists := previous[request.ID]
+			if !exists {
+				pending = processAttentionPending{Kind: kind, Sequence: snap.Sequence}
+				if err := push(processAttentionInput(*r, pending.Sequence, kind)); err != nil {
+					return err
+				}
+			}
+			r.Pending[request.ID] = pending
+		}
+	}
+	// Pending is authoritative, so settling one request cannot clear another
+	// request or leave an obsolete required-action badge after an answer.
+	if snap.Turn != "" && r.Badge != aibadge.ResponseComplete {
+		r.Badge = aibadge.InProgress
+	}
+	r.Sequence = snap.Sequence
+	return nil
 }
 
 func (p *processAttentionProjection) push(in notify.PushInput) error {
