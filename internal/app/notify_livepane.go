@@ -1,16 +1,19 @@
 package app
 
+import "github.com/crevissepartners/projmux/internal/core/notify"
+
 // livePaneRow is the neutral projection of one live tmux pane that the
 // notify cluster consumes. Producers (today: the attention-side lister in
 // attention.go) compute the badge/state semantics up front — ReplyState and
 // TitleBadge — so notify code never reaches into attention internals to
 // interpret raw pane options or title glyphs.
 type livePaneRow struct {
-	Session string
-	Window  string
-	Pane    string
-	Socket  string
-	Title   string
+	processNotice *notify.PushInput
+	Session       string
+	Window        string
+	Pane          string
+	Socket        string
+	Title         string
 	// AttentionState is the raw attention state string, carried only so the
 	// `notify list --live` JSON keeps surfacing it verbatim.
 	AttentionState string

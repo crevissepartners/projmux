@@ -34,6 +34,7 @@ type notifyStore interface {
 }
 
 type notifyCommand struct {
+	process     *processAttentionConsumer
 	diagnostics *diagnostics.NotifyFocusRecorder
 	store       notifyStore
 	storeErr    error
@@ -1491,6 +1492,9 @@ func (c *notifyCommand) notifyOriginClient(explicit string) string {
 }
 
 func (c *notifyCommand) focusNotification(entry notify.Notification, source, kind, clientTTY string) error {
+	if c.process != nil && strings.HasPrefix(entry.ID, "ai:process:") {
+		return errors.New("process Pane has no terminal focus target; acknowledge the notification explicitly")
+	}
 	if c.runner == nil {
 		return errors.New("notify focus runner is not configured")
 	}
@@ -1930,7 +1934,7 @@ func notifyLivePanesFromRows(rows []livePaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {
 		live := notifyLivePane{
-			ID:                   buildAttentionNotifyID(row.Session, row.Pane),
+			ID:                   reconcileEntryID(row),
 			Session:              row.Session,
 			Window:               row.Window,
 			Pane:                 row.Pane,

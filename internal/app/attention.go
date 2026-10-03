@@ -45,6 +45,7 @@ var attentionListFormats = []string{
 var attentionListFormat = intmux.JoinFormats(attentionListSeparator, attentionListFormats...)
 
 type attentionCommand struct {
+	process              *processAttentionConsumer
 	runner               tmuxRunner
 	producer             attentionNotifyProducer
 	sidebarPreviewActive func() bool
@@ -202,6 +203,9 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	paneID, err := c.resolveOptionalAttentionTarget(args, "attention clear", stderr, func() { printRouteUsage(stderr, "attention clear") })
 	if err != nil || paneID == "" {
 		return err
+	}
+	if handled, clearErr := c.process.clear(paneID); handled {
+		return clearErr
 	}
 	if c.sidebarPreviewGateActive() {
 		return nil
@@ -456,8 +460,20 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 }
 
 func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
+	processRows := []attentionWindowRow{}
+	if c != nil && c.process != nil {
+		records, err := c.process.records()
+		if err != nil {
+			return nil
+		}
+		for _, r := range records {
+			if r.Binding.Window == windowID {
+				processRows = append(processRows, attentionWindowRow{AIBadgeKind: r.badge()})
+			}
+		}
+	}
 	if c == nil || c.runner == nil {
-		return nil
+		return processRows
 	}
 	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
 		Target: windowID,
@@ -469,10 +485,10 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 		},
 	})
 	if err != nil {
-		return nil
+		return processRows
 	}
 	if len(rows) == 0 {
-		return c.legacyWindowAttentionRows(windowID)
+		return append(processRows, c.legacyWindowAttentionRows(windowID)...)
 	}
 
 	out := make([]attentionWindowRow, 0, len(rows))
@@ -484,7 +500,7 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 			AIBadgeKind: fields[3],
 		})
 	}
-	return out
+	return append(processRows, out...)
 }
 
 func (c *attentionCommand) legacyWindowAttentionRows(windowID string) []attentionWindowRow {
@@ -563,7 +579,14 @@ func tmuxAIBadgeKindFg(kind string, roles theme.RenderRoles) string {
 }
 
 func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
+	processRows, processErr := c.processPaneRows()
+	if processErr != nil {
+		return nil, processErr
+	}
 	if c == nil || c.runner == nil {
+		if c != nil && c.process != nil {
+			return processRows, nil
+		}
 		return nil, errors.New("attention tmux runner is not configured")
 	}
 	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
@@ -573,6 +596,9 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 		AllowExtraFields: true,
 	})
 	if err != nil {
+		if c.process != nil {
+			return processRows, nil
+		}
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
 	}
 
@@ -595,7 +621,29 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return append(processRows, out...), nil
+}
+
+func (c *attentionCommand) processPaneRows() ([]attentionPaneRow, error) {
+	if c == nil || c.process == nil {
+		return nil, nil
+	}
+	records, err := c.process.records()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]attentionPaneRow, 0, len(records))
+	for _, r := range records {
+		state, aiState := "", "idle"
+		switch r.badge() {
+		case aibadge.InProgress:
+			state, aiState = attentionStateBusy, "thinking"
+		case aibadge.InputRequired, aibadge.ApprovalRequired, aibadge.ResponseComplete:
+			state, aiState = attentionStateReply, "waiting"
+		}
+		rows = append(rows, attentionPaneRow{Session: r.Binding.Project, Window: r.Binding.Window, Pane: r.Binding.Pane, Agent: r.Provider, AttentionState: state, AIState: aiState})
+	}
+	return rows, nil
 }
 
 // attentionLivePaneLister implements the notify cluster's livePaneLister
@@ -603,7 +651,8 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 // attentionPaneRow into the neutral livePaneRow DTO so the notify side does
 // not depend on attention internals (state consts, title-prefix helpers).
 type attentionLivePaneLister struct {
-	runner tmuxRunner
+	runner  tmuxRunner
+	process *processAttentionConsumer
 }
 
 func newAttentionLivePaneLister(runner tmuxRunner) livePaneLister {
@@ -617,8 +666,15 @@ func newDefaultLivePaneLister() livePaneLister {
 }
 
 func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
+	processRows, processErr := l.process.liveRows()
+	if processErr != nil {
+		return nil, processErr
+	}
 	rows, err := (&attentionCommand{runner: l.runner}).listAttentionPanes()
 	if err != nil {
+		if l.process != nil {
+			return processRows, nil
+		}
 		return nil, err
 	}
 	out := make([]livePaneRow, 0, len(rows))
@@ -637,7 +693,7 @@ func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 			TitleBadge:     hasAttentionPrefix(row.Title) || intrender.HasBraillePrefix(row.Title),
 		})
 	}
-	return out, nil
+	return append(processRows, out...), nil
 }
 
 func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {

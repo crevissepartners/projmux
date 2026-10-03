@@ -44,6 +44,9 @@ func reconcileShouldHaveQueueEntry(p livePaneRow) bool {
 // Reusing the shared helper guarantees push/ack/reconcile all agree on the
 // key.
 func reconcileEntryID(p livePaneRow) string {
+	if p.processNotice != nil {
+		return p.processNotice.ID
+	}
 	return buildAttentionNotifyID(p.Session, p.Pane)
 }
 
@@ -51,6 +54,9 @@ func reconcileEntryID(p livePaneRow) string {
 // Reusing the shared helper guarantees the agent/topic rendering stays in
 // lockstep with the event-driven path.
 func reconcileEntryText(p livePaneRow) string {
+	if p.processNotice != nil {
+		return p.processNotice.Text
+	}
 	return composeAttentionReplyText(p.Agent, p.Topic)
 }
 
@@ -131,6 +137,9 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 	for id, pane := range wantByID {
 		want := reconcileEntryText(pane)
 		metadata := mergeAttentionNotifyMetadata(nil, pane.Agent, pane.Topic, notify.SeverityInfo)
+		if pane.processNotice != nil {
+			metadata = pane.processNotice.Metadata
+		}
 		if pane.AuthorityFence != "" {
 			metadata[notify.MetaAgentUID] = pane.AgentUID
 			metadata[notify.MetaPaneUID] = pane.PaneUID
@@ -155,6 +164,9 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 				Window:  pane.Window,
 				Pane:    pane.Pane,
 			},
+		}
+		if pane.processNotice != nil {
+			in = *pane.processNotice
 		}
 		started := c.clock()
 		_, pushResult, err := store.Push(in)
