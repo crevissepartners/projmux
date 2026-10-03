@@ -401,6 +401,7 @@ func TestCompletionRunsBeforeWaitAndPreservesExit(t *testing.T) {
 	h := testHost(t, func(_ *Transactions, limits *Limits) { limits.Write = 5 * time.Second })
 	entered, release := make(chan struct{}), make(chan struct{})
 	calls := 0
+	var before Snapshot
 	completion := &Completion{Cleanup: func(ctx context.Context) error {
 		// Both locks must be available to cleanup; actual exit evidence is already
 		// visible, while Wait must still be fenced behind completion.
@@ -411,6 +412,7 @@ func TestCompletionRunsBeforeWaitAndPreservesExit(t *testing.T) {
 		if err != nil || snapshot.Exit == nil {
 			return fmt.Errorf("cleanup lacks actual exit: %+v %v", snapshot, err)
 		}
+		before = snapshot
 		calls++
 		close(entered)
 		select {
@@ -450,8 +452,10 @@ func TestCompletionRunsBeforeWaitAndPreservesExit(t *testing.T) {
 	}
 	close(release)
 	s, err := p.Wait(ctx, binding())
-	if err != nil || s.Exit == nil || s.Exit.Code != 0 || s.Failure != "" || s.Diagnostic != "" {
-		t.Fatalf("completion changed actual exit: %+v %v", s, err)
+	// A race-instrumented fixture can be terminated during its exit delay.
+	// Preserve the actual result captured before cleanup, including its signal.
+	if err != nil || s.Exit == nil || *s.Exit != *before.Exit || s.State != before.State || s.Failure != before.Failure || s.Diagnostic != before.Diagnostic {
+		t.Fatalf("completion changed actual exit: before=%+v state=%s failure=%q after=%+v state=%s failure=%q err=%v", before.Exit, before.State, before.Failure, s.Exit, s.State, s.Failure, err)
 	}
 	again, err := h.Start(context.Background(), launch)
 	if err != nil || again != p || calls != 1 {
@@ -468,8 +472,17 @@ func TestCompletionFailureAndTimeoutAreDiagnosticOnly(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			h := testHost(t, nil)
 			release, returned := make(chan struct{}), make(chan struct{})
+			observed := make(chan Snapshot, 1)
 			completion := &Completion{Cleanup: func(context.Context) error {
 				defer close(returned)
+				h.mu.Lock()
+				owned := h.operations[binding().Operation]
+				h.mu.Unlock()
+				snapshot, err := owned.Observe(binding())
+				if err != nil || snapshot.Exit == nil {
+					return fmt.Errorf("cleanup lacks actual exit: %+v %v", snapshot, err)
+				}
+				observed <- snapshot
 				if mode == "timeout" {
 					<-release
 				}
@@ -486,9 +499,16 @@ func TestCompletionFailureAndTimeoutAreDiagnosticOnly(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			s, err := p.Wait(ctx, binding())
-			if err != nil || s.Exit == nil || s.Exit.Code != 0 || s.Failure != "" || s.State != "exited" {
-				t.Fatalf("cleanup overwrote actual exit: %+v %v", s, err)
+			var before Snapshot
+			select {
+			case before = <-observed:
+			case <-ctx.Done():
+				t.Fatal("cleanup did not observe exit")
 			}
+			if err != nil || s.Exit == nil || *s.Exit != *before.Exit || s.State != before.State || s.Failure != before.Failure {
+				t.Fatalf("cleanup overwrote actual exit: before=%+v state=%s failure=%q after=%+v state=%s failure=%q err=%v", before.Exit, before.State, before.Failure, s.Exit, s.State, s.Failure, err)
+			}
+			t.Logf("cleanup=%s preserved actual Wait=%+v state=%s failure=%q", mode, s.Exit, s.State, s.Failure)
 			expected := "cleanup fixture failure"
 			if mode == "timeout" {
 				expected = "context deadline exceeded"
