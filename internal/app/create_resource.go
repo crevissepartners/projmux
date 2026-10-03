@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -1066,7 +1067,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	var results []createResult
 	var selectedWindowUIDs []string
 	var notices []string
-	if err := c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	if err := c.transactAdmitted(diagnostics.CreateKindPane, c.processAnchorAdmission(scope, flags, spelling), func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
@@ -1353,9 +1354,29 @@ func (c *createCommand) planPaneTargets(
 		if err != nil {
 			return panePlan{}, err
 		}
+		if _, _, err := c.processRuntime.admit(registry, anchorUID, resourcegraph.ProcessCreatePane); err != nil {
+			return panePlan{}, err
+		}
 		plan.targets = append(plan.targets, paneTarget{windowUID: match.UID, anchorUID: anchorUID, storedAnchor: storedAnchor})
 	}
 	return plan, nil
+}
+
+// processAnchorAdmission runs against the locked Registry before route binding,
+// reconciliation, default-shell reads, or resource allocation. Nil keeps the
+// established tmux transaction order.
+func (c *createCommand) processAnchorAdmission(scope createScope, flags resourceCreateFlags, spelling string) func(coremetadata.Registry) error {
+	if c.processRuntime == nil {
+		return nil
+	}
+	return func(registry coremetadata.Registry) error {
+		project, err := c.resolveProject(registry, scope)
+		if err != nil {
+			return err
+		}
+		_, err = c.planPaneTargets(registry, project, scope, flags, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling)
+		return err
+	}
 }
 
 // primaryWindowSpelling names how argv asked for the exact-one primary Window,
@@ -2179,13 +2200,17 @@ func markSupervisedSpawn(ctx context.Context) {
 // journal failure never reaches the create's result. kind names the create;
 // createKindUnrecorded records nothing.
 func (c *createCommand) transact(kind diagnostics.CreateKind, op createOperation, guards ...createPreReconcile) error {
+	return c.transactAdmitted(kind, nil, op, guards...)
+}
+
+func (c *createCommand) transactAdmitted(kind diagnostics.CreateKind, admission func(coremetadata.Registry) error, op createOperation, guards ...createPreReconcile) error {
 	if c == nil {
 		return errCreateRoutesNotConfigured
 	}
 	clock := c.createOutcomeClock()
 	started := clock()
 	lock := createLockSpan{clock: clock}
-	err := c.runTransaction(&lock, op, guards...)
+	err := c.runTransaction(&lock, admission, op, guards...)
 	if kind != createKindUnrecorded {
 		result := diagnostics.LifecycleSuccess
 		if err != nil {
@@ -2211,7 +2236,7 @@ var errCreateRoutesNotConfigured = errors.New("create: the resource-backed creat
 // a pre-create hook refusal, a stale anchor, a tmux error -- leaves the registry
 // file byte-identical. The tmux objects the body created are undone from the
 // runtime ledger, which is the half no transaction can roll back for us.
-func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation, guards ...createPreReconcile) error {
+func (c *createCommand) runTransaction(lock *createLockSpan, admission func(coremetadata.Registry) error, op createOperation, guards ...createPreReconcile) error {
 	if c == nil || c.store == nil || c.store.update == nil || c.runtime == nil || c.reconciler == nil {
 		return errCreateRoutesNotConfigured
 	}
@@ -2222,8 +2247,10 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 	// handler reaches the transaction. Bind the exact app-owned route here so
 	// malformed argv keeps its stable usage failure and no environment probe can
 	// preempt it, while reconciliation and every later write share one route.
-	if err := c.ensureRuntimeRoute(ctx); err != nil {
-		return err
+	if admission == nil {
+		if err := c.ensureRuntimeRoute(ctx); err != nil {
+			return err
+		}
 	}
 	operationID, err := c.newOperationID()
 	if err != nil {
@@ -2236,10 +2263,13 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 	// scope closes before rollback, so unwinding re-proves identity in full.
 	c.runtime.openRouteIdentityCache(operationID)
 	defer c.runtime.closeRouteIdentityCache()
-	// A pane launched without a command of its own resolves the server's
-	// default-shell/default-command. Read them now, before the lock; the launch
-	// uses them only while the route still reads through the same socket.
-	defer c.runtime.prefetchPaneDefaults(ctx)()
+	// Default-shell reads stay before the lock for tmux-only invocations.
+	// Process-aware creates defer these reads until locked anchor admission.
+	clearDefaults := func() {}
+	if admission == nil {
+		clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
+	}
+	defer func() { clearDefaults() }()
 	guard := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
 		var selected liveSessionIdentity
 		for _, candidate := range guards {
@@ -2267,6 +2297,15 @@ func (c *createCommand) runTransaction(lock *createLockSpan, op createOperation,
 		// Whatever the closure returns, what follows it -- normalize, validate,
 		// the durable write, the unlock -- is the store-write phase.
 		defer lock.mark(diagnostics.CreatePhaseStoreWrite)
+		if admission != nil {
+			if err := admission(working.Clone()); err != nil {
+				return err
+			}
+			if err := c.ensureRuntimeRoute(ctx); err != nil {
+				return err
+			}
+			clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
+		}
 		preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
 		if err != nil {
 			return err
