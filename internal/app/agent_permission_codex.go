@@ -12,6 +12,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 // codexPermissionCapabilitySpelling is the capability cell `agent approval
@@ -91,6 +92,10 @@ func codexPermissionAuditReason(decision codexappserver.ApprovalDecision) string
 // The answer line names the decision sent and, for a deny, whether the turn
 // continues (decline) or stops (cancel).
 func (c *agentCommand) codexPermissionApproval(request agentPermissionRequest, registry coremetadata.Registry, agent coremetadata.Agent, refuse func(string, string) error, stdout io.Writer) error {
+	if codexProcessHookObservationOnly(c.lookupEnv) {
+		return fmt.Errorf("%s: %w", request.spelling, processhost.ErrStale)
+	}
+
 	answering := c.permissionAnswering()
 	if request.action == "answer" && answering != config.AgentApprovalAnsweringProjmux {
 		return refuse(permissionReasonAnsweringOff, "cannot be answered from projmux while agent-approval-answering is claude; run `projmux config agent-approvals --answering projmux` first, or answer in the Codex TUI or with `projmux agent approval review`")

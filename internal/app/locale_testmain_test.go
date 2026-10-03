@@ -25,6 +25,7 @@ import (
 // global projmux config (e.g. locale=ko-KR), which outranks the LANG rung below.
 func TestMain(m *testing.M) {
 	exitIfClaudeProcessFixtureChild()
+	exitIfCodexProcessFixtureChild()
 	exitIfSettingsLayerGuardChild()
 	exitIfClaudeQuestionHookChild()
 	exitIfClaudePermissionHookChild()

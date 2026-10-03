@@ -62,6 +62,10 @@ func (c *CodexHandle) Turn(ctx context.Context, a Authority, operation, prompt s
 func (c *CodexHandle) Interrupt(ctx context.Context, a Authority, turn string) error {
 	return c.handle.adapter.(*codexAdapter).interrupt(ctx, a, turn)
 }
+func (c *CodexHandle) ValidateAuthority(ctx context.Context, a Authority) error {
+	return c.handle.ValidateAuthority(ctx, a)
+}
+
 func (c *CodexHandle) Expire(a Authority, token Request) error { return c.handle.Expire(a, token) }
 
 // RespondApproval uses the exact decoded envelope and its safe decisions.
@@ -119,9 +123,11 @@ func (c *CodexHandle) RespondQuestion(ctx context.Context, a Authority, token Re
 type codexAdapter struct {
 	p      *Handle
 	client *codexappserver.Client
-	// Serializes typed controls and projections so notifications preceding a
-	// turn/start answer cannot outrun the exact turn ID returned by that answer.
-	control chan struct{}
+	// Typed writes serialize, but the reader must keep draining while an RPC
+	// waits. A bounded queue preserves start/interrupt reply ordering.
+	control       chan struct{}
+	awaitingReply bool                          // guarded by p.mu
+	replyQueue    []codexappserver.Notification // guarded by p.mu
 }
 
 func (cfg CodexConfig) clone() adapterConfig { cfg.Roots = slices.Clone(cfg.Roots); return cfg }
@@ -200,12 +206,15 @@ func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt 
 	// Consume operation before the write. Even a refused operation cannot be
 	// replayed; an uncertain outcome still terminates the owned connection.
 	p.usedTurns[operation] = true
+	c.awaitingReply = true
 	p.mu.Unlock()
 	settings := p.launch.adapter.(CodexConfig).Settings
 	turn, err := c.client.StartTurnWithOptions(ctx, a.Session, prompt, operation, settings.Model, settings.Effort)
 	if err != nil {
 		if codexappserver.IsResponseError(err) {
 			p.mu.Lock()
+			c.awaitingReply = false
+			c.replyQueue = nil
 			raw, _ := json.Marshal(map[string]string{"status": "failed", "operation": operation, "reason": "server-refused"})
 			p.emitLocked("turn-result", raw, nil)
 			p.mu.Unlock()
@@ -215,12 +224,31 @@ func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt 
 		return err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.state != "ready" {
+		p.mu.Unlock()
 		return ErrClosed
 	}
 	p.turn = turn
+	c.awaitingReply = false
 	p.emitLocked("turn-submitted", nil, nil)
+	err = c.drainReplyLocked()
+	p.mu.Unlock()
+	if err != nil {
+		p.protocolFailure(err)
+	}
+	return err
+}
+
+// drainReplyLocked preserves wire order while the command semaphore still
+// blocks another turn admission. The reader never waits on that semaphore.
+func (c *codexAdapter) drainReplyLocked() error {
+	queued := c.replyQueue
+	c.replyQueue = nil
+	for _, n := range queued {
+		if err := c.consumeLocked(n); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (c *codexAdapter) interrupt(ctx context.Context, a Authority, turn string) error {
@@ -241,25 +269,40 @@ func (c *codexAdapter) interrupt(ctx context.Context, a Authority, turn string) 
 		return ErrStale
 	}
 	p.interrupt = turn
+	c.awaitingReply = true
 	p.mu.Unlock()
 	if _, err := codexappserver.InterruptExactTurnOn(ctx, c.client, a.Session, turn); err != nil {
 		if codexappserver.IsResponseError(err) {
 			p.mu.Lock()
+			// A confirmed server refusal did not interrupt the turn. A later
+			// explicit request may try again; uncertain writes remain fenced.
+			p.interrupt = ""
+			c.awaitingReply = false
 			p.emitLocked("interrupt-refused", nil, nil)
+			queueErr := c.drainReplyLocked()
 			p.mu.Unlock()
+			if queueErr != nil {
+				p.protocolFailure(queueErr)
+			}
 		} else {
 			p.protocolFailure(err)
 		}
 		return err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.state != "ready" {
+		p.mu.Unlock()
 		return ErrClosed
 	}
+	c.awaitingReply = false
 	p.interruptAck = true
 	p.emitLocked("interrupt-ack", nil, nil)
-	return nil
+	err := c.drainReplyLocked()
+	p.mu.Unlock()
+	if err != nil {
+		p.protocolFailure(err)
+	}
+	return err
 }
 func (c *codexAdapter) respond(ctx context.Context, a Authority, token Request, build func(codexappserver.Notification) (any, error)) error {
 	ctx, cancel := context.WithTimeout(ctx, c.p.host.limits.Startup)
@@ -308,13 +351,7 @@ func (c *codexAdapter) respond(ctx context.Context, a Authority, token Request, 
 func (c *codexAdapter) readOutput() {
 	defer c.client.Close()
 	for n := range c.client.Notifications() {
-		ctx, cancel := context.WithTimeout(context.Background(), c.p.host.limits.Startup)
-		err := c.lock(ctx)
-		cancel()
-		if err == nil {
-			err = c.consume(n)
-			c.unlock()
-		}
+		err := c.consume(n)
 		if err != nil {
 			c.p.protocolFailure(err)
 			return
@@ -343,6 +380,19 @@ func (c *codexAdapter) consume(n codexappserver.Notification) error {
 	if p.state != "ready" {
 		return nil
 	}
+	if c.awaitingReply {
+		if len(c.replyQueue) >= p.host.limits.Events {
+			return ErrBusy
+		}
+		c.replyQueue = append(c.replyQueue, n)
+		return nil
+	}
+	return c.consumeLocked(n)
+}
+
+// consumeLocked runs in wire order after exact turn admission is known.
+func (c *codexAdapter) consumeLocked(n codexappserver.Notification) error {
+	p := c.p
 	var identity struct {
 		ThreadID   string          `json:"threadId"`
 		TurnID     string          `json:"turnId"`

@@ -32,6 +32,11 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 		return err
 	}
 
+	if codexProcessHookObservationOnly(c.env) {
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason("process-hook-observation-only"), ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		return nil
+	}
+
 	paneID, nativeRouted, nativeAllowed, nativeReason := c.routeNativeCodexHook(payload.matchThreadID())
 	if nativeRouted && !nativeAllowed {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(nativeReason), ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})

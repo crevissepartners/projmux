@@ -126,6 +126,15 @@ func codexFixture(mode string) {
 				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32000, "message": "turn refused"}})
 				continue
 			}
+			if mode == "codex-turn-backlog" || mode == "codex-turn-overflow" {
+				count := 96
+				if mode == "codex-turn-overflow" {
+					count = 2048
+				}
+				for range count {
+					emit("item/agentMessage/delta", map[string]any{"threadId": "thread", "turnId": current, "delta": "before reply"})
+				}
+			}
 			// Intentionally send the first notification before the turn/start reply.
 			emit("turn/started", map[string]any{"threadId": "thread", "turn": map[string]string{"id": current}})
 			reply(map[string]any{"turn": map[string]string{"id": current}})
@@ -152,6 +161,11 @@ func codexFixture(mode string) {
 				complete()
 			}
 		case "turn/interrupt":
+			if mode == "codex-interrupt-before-ack" {
+				complete()
+				reply(map[string]any{})
+				continue
+			}
 			if mode == "codex-interrupt-refusal" {
 				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32000, "message": "interrupt refused"}})
 				continue
@@ -546,10 +560,76 @@ func TestCodexInterruptRefusalPreservesActiveTurn(t *testing.T) {
 	if s.State != "ready" || s.Exit != nil || s.Turn != before.Turn || hasEvent(c.handle, "interrupt-ack") || syscall.Kill(s.PID, 0) != nil || !hasEvent(c.handle, "interrupt-refused") {
 		t.Fatalf("refusal=%+v", s)
 	}
-	if err := c.Interrupt(context.Background(), a, s.Turn); !errors.Is(err, ErrStale) {
-		t.Fatalf("interrupt replay=%v", err)
-	}
 	if countMethod(codexWire(t, log), "turn/interrupt") != 1 {
-		t.Fatal("interrupt replay reached wire")
+		t.Fatal("refusal automatically retried")
+	}
+	if err := c.Interrupt(context.Background(), a, s.Turn); !codexappserver.IsResponseError(err) {
+		t.Fatalf("explicit retry=%v", err)
+	}
+	if countMethod(codexWire(t, log), "turn/interrupt") != 2 {
+		t.Fatal("explicit retry missing")
+	}
+}
+
+func TestCodexTurnBacklogDrainsBeforeReply(t *testing.T) {
+	c, _, _ := codexStart(t, testHost(t, nil), "codex-turn-backlog")
+	if err := c.Turn(context.Background(), codexAuthority(c), "backlog", "done"); err != nil {
+		t.Fatal(err)
+	}
+	s := observeUntil(t, c.handle, func(s Snapshot) bool { return s.Turn == "" })
+	if s.State != "ready" || s.Exit != nil {
+		t.Fatalf("backlog: %+v", s)
+	}
+}
+func TestCodexExplicitInterruptRetryAfterRefusal(t *testing.T) {
+	c, _, log := codexStart(t, testHost(t, nil), "codex-interrupt-refusal")
+	a := codexAuthority(c)
+	if err := c.Turn(context.Background(), a, "hold", "hold"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := c.Observe(binding())
+	for range 2 {
+		if err := c.Interrupt(context.Background(), a, s.Turn); !codexappserver.IsResponseError(err) {
+			t.Fatalf("explicit refusal retry: %v", err)
+		}
+	}
+	if countMethod(codexWire(t, log), "turn/interrupt") != 2 {
+		t.Fatal("explicit retry missing")
+	}
+}
+
+func TestCodexStartQueueOverflowIsBoundedAndExplicit(t *testing.T) {
+	c, _, _ := codexStart(t, testHost(t, func(_ *Transactions, l *Limits) { l.Events = 128 }), "codex-turn-overflow")
+	_ = c.Turn(context.Background(), codexAuthority(c), "overflow", "hold")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s, err := c.Wait(ctx, binding())
+	if err != nil || s.Exit == nil || s.Failure == "" {
+		t.Fatalf("queue overflow: %+v %v", s, err)
+	}
+}
+
+func TestCodexInterruptResultBeforeAckKeepsExactTurn(t *testing.T) {
+	c, _, _ := codexStart(t, testHost(t, nil), "codex-interrupt-before-ack")
+	a := codexAuthority(c)
+	if err := c.Turn(context.Background(), a, "hold", "hold"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := c.Observe(binding())
+	turn := s.Turn
+	if err := c.Interrupt(context.Background(), a, turn); err != nil {
+		t.Fatal(err)
+	}
+	s = observeUntil(t, c.handle, func(s Snapshot) bool { return s.Turn == "" })
+	if s.Exit != nil || s.State != "ready" {
+		t.Fatalf("interrupt: %+v", s)
+	}
+	for _, e := range events(c.handle) {
+		if e.Kind == "interrupt-ack" && e.Turn != turn {
+			t.Fatalf("ack wrong turn: %+v", e)
+		}
+	}
+	if err := c.Turn(context.Background(), a, "next", "hold"); err != nil {
+		t.Fatal(err)
 	}
 }

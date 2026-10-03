@@ -22,6 +22,7 @@ import (
 // aside. TestProviderGuardOptInEnvCoversTheInstalledTests keeps the list
 // closed.
 var providerGuardOptInEnv = []string{
+	"PROCESSHOST_TEST_CODEX",
 	"CODEX_DIAGNOSTIC_FAILURE",
 	"CODEX_DIAGNOSTIC_HELPER",
 	"CODEX_DIAGNOSTIC_INITIALIZE_DELAY",

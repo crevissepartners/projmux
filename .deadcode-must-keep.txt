@@ -33,7 +33,10 @@ CodexHandle.RespondApproval	Owned processhost Codex preparation retained for ded
 CodexHandle.RespondQuestion	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexHandle.Stop	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexHandle.Turn	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.ValidateAuthority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 CodexHandle.Wait	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexProcessRouteEvidence.Provider	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+CodexProcessRouteEvidence.sameAuthority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
 DecideTeardownEvent	The pure teardown decision API is called by the product path and retained for lifecycle authority proofs.
@@ -156,6 +159,7 @@ RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAI
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
+ResolveProcessCodexRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
 ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained with the per-provider ResumeCommand wrappers after snapshot replay, its only product caller, was removed.
@@ -213,6 +217,8 @@ claudeProcessService.serve	Internal exact Claude process message reservation/lif
 cloneRequest	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 codexAdapter.attach	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexAdapter.consume	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.consumeLocked	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexAdapter.drainReplyLocked	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 codexAdapter.initialize	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexAdapter.interrupt	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexAdapter.lock	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -221,6 +227,21 @@ codexAdapter.respond	Owned processhost Codex preparation retained for dedicated 
 codexAdapter.turn	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexAdapter.unlock	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained as the managed Codex hook block seam.
+codexProcessControl.answer	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessControl.closeRecord	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessControl.create	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessControl.sync	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.authority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.call	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.close	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.current	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.exchange	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.route	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessEndpoint.serve	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessMessages.deliver	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessMessages.receive	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessMessages.reply	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+codexProcessMessages.send	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
@@ -274,6 +295,10 @@ pickerOptionsFromCompatPicker	Compat picker option projection retained as the te
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 processClaudeControlID	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 processClaudeLaunchEnv	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+processCodexControlID	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+processCodexMessageRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
@@ -292,6 +317,7 @@ shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand rend
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
 startProcessClaude	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
+startProcessCodex	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 stopGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
