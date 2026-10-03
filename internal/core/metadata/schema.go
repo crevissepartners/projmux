@@ -222,6 +222,20 @@ func MigrateRegistryWithEnvironment(set MigrationSet, reg Registry, env Migratio
 	if err != nil {
 		return Registry{}, false, report, err
 	}
+	// Degraded graph reads bypass Registry.Validate, but an unknown runtime
+	// vocabulary must never be projected as a supported host. Check the closed
+	// wire tags before allowing either a read-only or mutation consumer through.
+	for _, pane := range reg.Panes {
+		kind := pane.Spec.Runtime.EffectiveKind()
+		if kind != RuntimeTmux && kind != RuntimeProcess {
+			return Registry{}, false, report, stateErr("read registry", ErrInvalidRegistry,
+				"runtime-kind-unsupported: pane %q runtime kind %q", pane.Metadata.Name, kind)
+		}
+		if tag := pane.Status.Activation.Kind; tag != "" && tag != RuntimeTmux && tag != RuntimeProcess {
+			return Registry{}, false, report, stateErr("read registry", ErrInvalidRegistry,
+				"runtime-binding-invalid: pane %q activation kind %q", pane.Metadata.Name, tag)
+		}
+	}
 	working := reg.Clone()
 	shapeNormalized, err := normalizeWindowSpecShapes(&working, &report)
 	if err != nil {

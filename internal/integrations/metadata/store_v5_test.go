@@ -43,6 +43,14 @@ func TestV4ReadOnlyMigrationAndV5UnknownKindNeverWrite(t *testing.T) {
 	}
 	writeRegistryFile(t, store, string(unknown))
 	before = dirListing(t, filepath.Dir(store.Path()))
+	for _, read := range []func() (coremetadata.Registry, error){store.LoadSnapshot, store.LoadDegradedReadOnly, store.LoadReadOnly} {
+		if _, err := read(); !errors.Is(err, coremetadata.ErrInvalidRegistry) {
+			t.Fatalf("read accepted unknown runtime kind: %v", err)
+		}
+		if readFile(t, store.Path()) != string(unknown) || !reflect.DeepEqual(before, dirListing(t, filepath.Dir(store.Path()))) {
+			t.Fatal("unknown kind read modified state")
+		}
+	}
 	called := false
 	if _, err := store.Update(func(*coremetadata.Registry) error { called = true; return nil }); !errors.Is(err, coremetadata.ErrInvalidRegistry) {
 		t.Fatalf("unknown runtime kind: %v", err)

@@ -204,3 +204,22 @@ func TestV5RejectsUnknownKindAndForeignProcessEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestV5ReadBoundaryRejectsUnknownKinds(t *testing.T) {
+	t.Parallel()
+	for _, activationTag := range []bool{false, true} {
+		reg := processSchemaFixture(t)
+		for i := range reg.Panes {
+			if reg.Panes[i].Spec.Runtime.Kind == RuntimeProcess {
+				if activationTag {
+					reg.Panes[i].Status.Activation.Kind = "future"
+				} else {
+					reg.Panes[i].Spec.Runtime.Kind = "future"
+				}
+			}
+		}
+		if _, _, _, err := MigrateRegistryWithEnvironment(nil, reg, MigrationEnvironment{}); !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("read boundary accepted unknown kind (activation=%t): %v", activationTag, err)
+		}
+	}
+}

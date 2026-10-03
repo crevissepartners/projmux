@@ -163,8 +163,20 @@ func (r Registry) validatePaneRuntime(pane Pane) error {
 		if s.Provider == "codex" {
 			session = s.ThreadID
 		}
-		if !ok || (s.Provider != "claude" && s.Provider != "codex") || agent.Spec.Provider != s.Provider || !r.validProcessBinding(pane, s.Binding) || (s.Provider == "codex" && s.SessionID != "") || (s.Provider == "claude" && s.ThreadID != "") || (session != "" && !processIdentityToken(session)) || (s.ConnectionID != "" && !processIdentityToken(s.ConnectionID)) || (s.TurnID != "" && !processIdentityToken(s.TurnID)) || (s.ResumeState != ProcessResumeUnknown && s.ResumeState != ProcessResumable) || (s.ResumeState == ProcessResumable && (session == "" || s.ConnectionID == "")) || !validProcessControls(s.Pending, s.ConnectionID, session, s.TurnID) {
-			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: incomplete or foreign durable session evidence")
+		if !ok || (s.Provider != "claude" && s.Provider != "codex") || agent.Spec.Provider != s.Provider {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: provider does not match the owning Agent")
+		}
+		if !r.validProcessBinding(pane, s.Binding) {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: durable binding has incomplete or foreign ownership evidence")
+		}
+		if (s.Provider == "codex" && s.SessionID != "") || (s.Provider == "claude" && s.ThreadID != "") || (session != "" && !processIdentityToken(session)) || (s.ConnectionID != "" && !processIdentityToken(s.ConnectionID)) || (s.TurnID != "" && !processIdentityToken(s.TurnID)) {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: conversation, connection or turn identity is invalid")
+		}
+		if (s.ResumeState != ProcessResumeUnknown && s.ResumeState != ProcessResumable) || (s.ResumeState == ProcessResumable && (session == "" || s.ConnectionID == "")) {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: unsupported resume state or missing conversation and connection")
+		}
+		if !validProcessControls(s.Pending, s.ConnectionID, session, s.TurnID) {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: pending controls do not match the recorded connection, conversation and turn")
 		}
 		if h := s.History; h != nil {
 			if !r.validProcessBinding(pane, h.Binding) || h.Binding.Generation == s.Binding.Generation || !processIdentityToken(h.SessionID) || h.SessionID != session || (h.InterruptedTurnID != "" && !processIdentityToken(h.InterruptedTurnID)) {
