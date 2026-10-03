@@ -84,7 +84,7 @@ func TestNativeCodexBindingRemainsAdditiveInCurrentSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"schemaVersion":4`, `"codex":{"threadId":"thread-native","turnId":"turn-native"}`} {
+	for _, want := range []string{`"schemaVersion":5`, `"codex":{"threadId":"thread-native","turnId":"turn-native"}`} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("current-schema native bytes missing %s: %s", want, raw)
 		}

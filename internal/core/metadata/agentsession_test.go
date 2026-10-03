@@ -533,7 +533,7 @@ func TestAgentSessionRefSerializationGolden(t *testing.T) {
 	}
 
 	got := mustJSON(t, reg.Normalize()) + "\n"
-	for _, want := range []string{`"schemaVersion": 4`, `"claude": {`, `"sessionId": "claude-session-1"`, `"codex": {`, `"threadId": "codex-thread-1"`, `"antigravity": {`, `"conversationId": "antigravity-conversation-1"`} {
+	for _, want := range []string{`"schemaVersion": 5`, `"claude": {`, `"sessionId": "claude-session-1"`, `"codex": {`, `"threadId": "codex-thread-1"`, `"antigravity": {`, `"conversationId": "antigravity-conversation-1"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("session ref serialization missing %s:\n%s", want, got)
 		}

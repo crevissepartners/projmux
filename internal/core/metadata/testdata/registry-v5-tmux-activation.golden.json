@@ -1,0 +1,151 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 5,
+  "updatedAt": "2026-08-15T09:30:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-01",
+        "name": "alpha",
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "root": "/srv/alpha",
+        "primaryWindowRef": "window-01"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-01",
+        "name": "window-01",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-01",
+        "defaultShellPaneRef": "pane-01"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-01",
+        "name": "pane-01",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "runtime": {
+          "kind": "tmux"
+        },
+        "role": "shell",
+        "cwd": "/srv/alpha"
+      },
+      "status": {
+        "activation": {
+          "generation": "gen-shell-1",
+          "runtimeID": "%10",
+          "startedAt": "2026-08-15T09:30:00Z"
+        }
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-02",
+        "name": "pane-02",
+        "ownerRef": {
+          "kind": "Agent",
+          "uid": "agent-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "runtime": {
+          "kind": "tmux"
+        },
+        "role": "agent",
+        "cwd": "/srv/alpha"
+      },
+      "status": {
+        "activation": {
+          "generation": "gen-agent-1",
+          "runtimeID": "%11",
+          "agentUID": "agent-01",
+          "startedAt": "2026-08-15T09:30:00Z"
+        }
+      }
+    }
+  ],
+  "agents": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-01",
+        "name": "agent-01",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "provider": "codex"
+      },
+      "status": {
+        "phase": "Running",
+        "paneRef": "pane-02",
+        "lastTransitionAt": "2026-08-15T09:30:00Z"
+      }
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "alpha",
+      "uid": "project-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Window",
+      "name": "window-01",
+      "uid": "window-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Pane",
+      "name": "pane-01",
+      "uid": "pane-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Agent",
+      "name": "agent-01",
+      "uid": "agent-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Pane",
+      "name": "pane-02",
+      "uid": "pane-02"
+    }
+  ]
+}

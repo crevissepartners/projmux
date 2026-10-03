@@ -186,12 +186,15 @@ marker-only edit with a digest-named pre-v2 backup. [docs/keybindings.md](keybin
 table, the upgrade ordering and the downgrade procedure.
 
 This marker is a separate version domain from the CLI resource registry's
-`apiVersion: projmux.io/v1alpha1` / camelCase `schemaVersion: 3` envelope. The
+`apiVersion: projmux.io/v1alpha1` / camelCase `schemaVersion: 5` envelope. The
 two have separate markers, separate backups and separate rollbacks; neither one
-failing affects the other. A successful Registry v1/v2 → v3 migration keeps its
+failing affects the other. A successful Registry v1–v4 → v5 migration keeps its
 private repair/loss evidence at `<exact-versioned-backup>.migration-report.json`,
 including that backup's absolute path and SHA-256; failed or repeated passes
 publish no report.
+
+See [Registry schema and backup/restore](registry.md) before upgrading the
+Registry storage version or reverting the binary.
 
 Legacy `prefix = ...` entries still parse during migration so existing files
 do not break. Settings preserves existing prefix entries when rewriting the

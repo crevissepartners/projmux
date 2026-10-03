@@ -14,7 +14,7 @@ const APIVersion = "projmux.io/v1alpha1"
 
 // SchemaVersion is the current registry envelope version. A registry file
 // carrying a higher value is rejected fail-closed; see schema.go.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // Kind is the closed set of Projmux resource kinds. A persistent tmux Session
 // is intentionally absent: it is a 1:1 runtime projection of a Project stored
@@ -540,9 +540,10 @@ type Pane struct {
 // PaneSpec records the declared pane recipe inputs. Command never participates
 // in durable naming.
 type PaneSpec struct {
-	Role    PaneRole `json:"role"`
-	CWD     string   `json:"cwd,omitempty"`
-	Command string   `json:"command,omitempty"`
+	Runtime PaneRuntimeSpec `json:"runtime,omitzero"`
+	Role    PaneRole        `json:"role"`
+	CWD     string          `json:"cwd,omitempty"`
+	Command string          `json:"command,omitempty"`
 }
 
 // PaneStatus carries the observed conditions and activation evidence of one
@@ -552,7 +553,8 @@ type PaneSpec struct {
 // from a live observation at read time, and Conditions only preserves the
 // reason a runtime object went away.
 type PaneStatus struct {
-	Conditions []Condition `json:"conditions,omitempty"`
+	ProcessSession *ProcessSessionRecord `json:"processSession,omitempty"`
+	Conditions     []Condition           `json:"conditions,omitempty"`
 	// Activation names the current materialization of this Pane. It is the
 	// value a launched supervisor quotes back, and the only thing that
 	// separates the running process from the one a resume replaced.
@@ -574,6 +576,7 @@ type PaneStatus struct {
 // preserving it in the schema-v4 wire model.
 func (s *PaneStatus) UnmarshalJSON(data []byte) error {
 	type wireStatus struct {
+		ProcessSession  *ProcessSessionRecord `json:"processSession"`
 		DisplayTitle    string                `json:"displayTitle"`
 		Conditions      []Condition           `json:"conditions"`
 		Activation      PaneActivation        `json:"activation"`
@@ -590,7 +593,8 @@ func (s *PaneStatus) UnmarshalJSON(data []byte) error {
 	}
 	_, present := fields["displayTitle"]
 	*s = PaneStatus{
-		Conditions: wire.Conditions, Activation: wire.Activation,
+		ProcessSession: wire.ProcessSession,
+		Conditions:     wire.Conditions, Activation: wire.Activation,
 		LastTermination: wire.LastTermination, Teardown: wire.Teardown,
 		removedDisplayTitle: removedPresentation{present: present, value: wire.DisplayTitle},
 	}
@@ -603,6 +607,7 @@ func (p Pane) Clone() Pane {
 	out.Metadata = p.Metadata.Clone()
 	out.Status.Conditions = slices.Clone(p.Status.Conditions)
 	out.Status.Activation = p.Status.Activation.Clone()
+	out.Status.ProcessSession = p.Status.ProcessSession.Clone()
 	out.Status.LastTermination = p.Status.LastTermination.Clone()
 	out.Status.Teardown = p.Status.Teardown.Clone()
 	return out

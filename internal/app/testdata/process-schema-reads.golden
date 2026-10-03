@@ -1,0 +1,132 @@
+== get pane json ==
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "kind": "Pane",
+  "metadata": {
+    "uid": "pane-02",
+    "name": "pane-02",
+    "ownerRef": {
+      "kind": "Agent",
+      "uid": "agent-01"
+    },
+    "createdAt": "2026-08-15T09:30:00Z"
+  },
+  "spec": {
+    "runtime": {
+      "kind": "process"
+    },
+    "role": "agent",
+    "cwd": "/srv/alpha"
+  },
+  "status": {
+    "processSession": {
+      "provider": "codex",
+      "binding": {
+        "hostInstanceID": "host-one",
+        "projectUID": "project-01",
+        "windowUID": "window-01",
+        "agentUID": "agent-01",
+        "paneUID": "pane-02",
+        "generation": "gen-one",
+        "operationID": "op-one"
+      },
+      "threadID": "thread-one",
+      "connectionID": "connection-one",
+      "turnID": "turn-one",
+      "resumeState": "resumable",
+      "pending": [
+        {
+          "id": "control-one",
+          "kind": "question",
+          "connectionID": "connection-one",
+          "sessionID": "thread-one",
+          "turnID": "turn-one"
+        }
+      ],
+      "history": {
+        "binding": {
+          "hostInstanceID": "host-one",
+          "projectUID": "project-01",
+          "windowUID": "window-01",
+          "agentUID": "agent-01",
+          "paneUID": "pane-02",
+          "generation": "gen-retired",
+          "operationID": "op-retired"
+        },
+        "sessionID": "thread-one",
+        "interruptedTurnID": "turn-retired",
+        "expired": [
+          {
+            "id": "control-retired",
+            "kind": "permission",
+            "connectionID": "connection-retired",
+            "sessionID": "thread-one",
+            "turnID": "turn-retired"
+          }
+        ]
+      }
+    },
+    "activation": {
+      "kind": "process",
+      "process": {
+        "binding": {
+          "hostInstanceID": "host-one",
+          "projectUID": "project-01",
+          "windowUID": "window-01",
+          "agentUID": "agent-01",
+          "paneUID": "pane-02",
+          "generation": "gen-one",
+          "operationID": "op-one"
+        },
+        "hostProcess": {
+          "pid": 11,
+          "ownerUID": 1000,
+          "start": "host-start"
+        },
+        "child": {
+          "pid": 12,
+          "ownerUID": 1000,
+          "start": "child-start"
+        }
+      },
+      "generation": "gen-one",
+      "agentUID": "agent-01",
+      "operationID": "op-one"
+    }
+  }
+}
+== describe pane ==
+Kind:              Pane
+Name:              pane-02
+UID:               pane-02
+CreatedAt:         2026-08-15T09:30:00Z
+Context:           
+ContextSource:     
+ContextObserved:   false
+Owner:             project/alpha window/window-01 agent/agent-01
+Status:            offline
+Role:              agent
+RuntimeKind:       process
+ProcessActivation: {"binding":{"hostInstanceID":"host-one","projectUID":"project-01","windowUID":"window-01","agentUID":"agent-01","paneUID":"pane-02","generation":"gen-one","operationID":"op-one"},"hostProcess":{"pid":11,"ownerUID":1000,"start":"host-start"},"child":{"pid":12,"ownerUID":1000,"start":"child-start"}}
+ProcessSession:    {"provider":"codex","binding":{"hostInstanceID":"host-one","projectUID":"project-01","windowUID":"window-01","agentUID":"agent-01","paneUID":"pane-02","generation":"gen-one","operationID":"op-one"},"threadID":"thread-one","connectionID":"connection-one","turnID":"turn-one","resumeState":"resumable","pending":[{"id":"control-one","kind":"question","connectionID":"connection-one","sessionID":"thread-one","turnID":"turn-one"}],"history":{"binding":{"hostInstanceID":"host-one","projectUID":"project-01","windowUID":"window-01","agentUID":"agent-01","paneUID":"pane-02","generation":"gen-retired","operationID":"op-retired"},"sessionID":"thread-one","interruptedTurnID":"turn-retired","expired":[{"id":"control-retired","kind":"permission","connectionID":"connection-retired","sessionID":"thread-one","turnID":"turn-retired"}]}}
+CWD:               /srv/alpha
+== describe agent ==
+Kind:              Agent
+Name:              agent-01
+UID:               agent-01
+CreatedAt:         2026-08-15T09:30:00Z
+Context:           codex
+ContextSource:     agent-provider
+ContextObserved:   false
+Owner:             project/alpha window/window-01
+Status:            offline
+Provider:          codex
+Phase:             Running
+Interaction:       unknown
+Activation:        not_requested
+WorkspaceCWD:      /srv/alpha
+PhaseSince:        2026-08-15T09:30:00Z
+PaneRef:           pane-02
+RuntimeKind:       process
+ProcessActivation: {"binding":{"hostInstanceID":"host-one","projectUID":"project-01","windowUID":"window-01","agentUID":"agent-01","paneUID":"pane-02","generation":"gen-one","operationID":"op-one"},"hostProcess":{"pid":11,"ownerUID":1000,"start":"host-start"},"child":{"pid":12,"ownerUID":1000,"start":"child-start"}}
+ProcessSession:    {"provider":"codex","binding":{"hostInstanceID":"host-one","projectUID":"project-01","windowUID":"window-01","agentUID":"agent-01","paneUID":"pane-02","generation":"gen-one","operationID":"op-one"},"threadID":"thread-one","connectionID":"connection-one","turnID":"turn-one","resumeState":"resumable","pending":[{"id":"control-one","kind":"question","connectionID":"connection-one","sessionID":"thread-one","turnID":"turn-one"}],"history":{"binding":{"hostInstanceID":"host-one","projectUID":"project-01","windowUID":"window-01","agentUID":"agent-01","paneUID":"pane-02","generation":"gen-retired","operationID":"op-retired"},"sessionID":"thread-one","interruptedTurnID":"turn-retired","expired":[{"id":"control-retired","kind":"permission","connectionID":"connection-retired","sessionID":"thread-one","turnID":"turn-retired"}]}}

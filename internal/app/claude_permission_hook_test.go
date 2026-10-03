@@ -981,8 +981,8 @@ func TestClaudePostToolUseIngestIsUnchangedByThePermissionClose(t *testing.T) {
 func TestClaudePermissionCaptureLeavesProtocolVersionsAlone(t *testing.T) {
 	t.Parallel()
 
-	if claudeCoordinationVersion != 5 || coremetadata.SchemaVersion != 4 {
-		t.Fatalf("claudeCoordinationVersion = %d, SchemaVersion = %d; want 5 and 4", claudeCoordinationVersion, coremetadata.SchemaVersion)
+	if claudeCoordinationVersion != 5 || coremetadata.SchemaVersion != 5 {
+		t.Fatalf("claudeCoordinationVersion = %d, SchemaVersion = %d; want 5 and 5", claudeCoordinationVersion, coremetadata.SchemaVersion)
 	}
 }
 

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -184,6 +185,11 @@ func writeResourceDescription(stdout io.Writer, spelling string, kind coremetada
 	}
 	rows = append(rows, [2]string{"Status", string(match.Status)})
 	rows = append(rows, describeSpecRows(resource)...)
+	if agent, ok := resource.(coremetadata.Agent); ok {
+		if pane, found := registry.Pane(agent.Status.PaneRef); found && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+			rows = append(rows, describeRuntimeRows(*pane)...)
+		}
+	}
 	rows = append(rows, runtimeRows...)
 	rows = append(rows, describeMapRows("Labels", meta.Labels)...)
 	rows = append(rows, describeMapRows("Annotations", meta.Annotations)...)
@@ -219,6 +225,7 @@ func describeSpecRows(resource any) [][2]string {
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Pane:
 		rows := [][2]string{{"Role", string(typed.Spec.Role)}}
+		rows = append(rows, describeRuntimeRows(typed)...)
 		if typed.Spec.CWD != "" {
 			rows = append(rows, [2]string{"CWD", typed.Spec.CWD})
 		}
@@ -290,6 +297,22 @@ func describeSpecRows(resource any) [][2]string {
 	default:
 		return nil
 	}
+}
+
+// describeRuntimeRows consumes the complete content-free process schema. JSON
+// blocks keep every ownership/control identity visible without inventing live
+// liveness or querying provider state from this read-only projection.
+func describeRuntimeRows(pane coremetadata.Pane) [][2]string {
+	rows := [][2]string{{"RuntimeKind", string(pane.Spec.Runtime.EffectiveKind())}}
+	if pane.Status.Activation.Process != nil {
+		value, _ := json.Marshal(pane.Status.Activation.Process)
+		rows = append(rows, [2]string{"ProcessActivation", string(value)})
+	}
+	if pane.Status.ProcessSession != nil {
+		value, _ := json.Marshal(pane.Status.ProcessSession)
+		rows = append(rows, [2]string{"ProcessSession", string(value)})
+	}
+	return rows
 }
 
 // describeTerminationRows renders the stored termination receipt of one Pane or
