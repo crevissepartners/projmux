@@ -24,7 +24,16 @@ func fixtureOwner() {
 	if err != nil {
 		panic(err)
 	}
-	p, err := h.Start(context.Background(), Launch{Binding: binding(), Command: fixtureCommand("group")})
+	var p *Handle
+	if os.Getenv("PROCESSHOST_OWNER_CODEX") == "1" {
+		var owned *CodexHandle
+		owned, err = h.StartCodex(context.Background(), Launch{Binding: binding(), Command: fixtureCommand("codex-group")}, CodexConfig{})
+		if owned != nil {
+			p = owned.handle
+		}
+	} else {
+		p, err = h.Start(context.Background(), Launch{Binding: binding(), Command: fixtureCommand("group")})
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -40,7 +49,10 @@ func fixtureOwner() {
 	}
 }
 
-func TestOwnerLifetimeReclaimsOnlyOwnedGroup(t *testing.T) {
+func TestOwnerLifetimeReclaimsOnlyOwnedGroup(t *testing.T)      { testOwnerLifetime(t, false) }
+func TestCodexOwnerLifetimeReclaimsOnlyOwnedGroup(t *testing.T) { testOwnerLifetime(t, true) }
+
+func testOwnerLifetime(t *testing.T, codex bool) {
 	// Linux: this test process reaps its orphaned supervisor after killing the
 	// owner, emulating init without relying on a container PID1's zombie policy.
 	if err := prepareReaper(); err != nil {
@@ -56,6 +68,9 @@ func TestOwnerLifetimeReclaimsOnlyOwnedGroup(t *testing.T) {
 			leafPath := filepath.Join(t.TempDir(), "leaf")
 			owner := exec.Command(os.Args[0], "processhost-owner")
 			owner.Env = append(os.Environ(), "PROCESSHOST_LEAF_FILE="+leafPath)
+			if codex {
+				owner.Env = append(owner.Env, "PROCESSHOST_OWNER_CODEX=1")
+			}
 			stdin, err := owner.StdinPipe()
 			if err != nil {
 				t.Fatal(err)

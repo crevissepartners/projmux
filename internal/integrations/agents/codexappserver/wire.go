@@ -92,9 +92,10 @@ type wireTurn struct {
 }
 
 type threadStartParams struct {
-	CWD                   string   `json:"cwd,omitempty"`
-	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
-	Model                 string   `json:"model,omitempty"`
+	Config                map[string]string `json:"config,omitempty"`
+	CWD                   string            `json:"cwd,omitempty"`
+	RuntimeWorkspaceRoots []string          `json:"runtimeWorkspaceRoots,omitempty"`
+	Model                 string            `json:"model,omitempty"`
 	// DeveloperInstructions is the agent guidance and persona the thread is
 	// started with. Upstream records it once as the thread's `developer`
 	// message, so it is a start-only field: thread/resume neither records nor
@@ -134,8 +135,8 @@ type threadResumeParams struct {
 // for every caller that asked for none.
 //
 // Model and ReasoningEffort are the model and effort the thread's next turn
-// runs with. They are read only by a resume that applies settings
-// (ResumeThreadWithSettings); a null effort decodes as "".
+// runs with. They are checked by start/resume operations that apply settings;
+// a null effort decodes as "".
 type threadResult struct {
 	Thread          wireThread      `json:"thread"`
 	Sandbox         json.RawMessage `json:"sandbox"`

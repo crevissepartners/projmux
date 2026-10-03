@@ -184,6 +184,18 @@ func (c *Client) StartThread(ctx context.Context, cwd string, roots []string, de
 }
 
 func (c *Client) StartThreadWithModel(ctx context.Context, cwd string, roots []string, developerInstructions string, policy ThreadPolicy, model string) (ThreadBinding, error) {
+	return c.startThread(ctx, cwd, roots, developerInstructions, ThreadSettings{Model: model, Policy: policy}, false)
+}
+
+// StartThreadWithSettings creates exactly one new thread and checks its effective
+// settings directly. A new thread has no durable rollout before its first turn,
+// so thread/resume cannot be used as the initial settings barrier.
+func (c *Client) StartThreadWithSettings(ctx context.Context, cwd string, roots []string, developerInstructions string, settings ThreadSettings) (ThreadBinding, error) {
+	return c.startThread(ctx, cwd, roots, developerInstructions, settings, true)
+}
+
+func (c *Client) startThread(ctx context.Context, cwd string, roots []string, developerInstructions string, settings ThreadSettings, verifySettings bool) (ThreadBinding, error) {
+	policy, model := settings.Policy, settings.Model
 	if err := policy.validate(); err != nil {
 		return ThreadBinding{}, err
 	}
@@ -191,11 +203,15 @@ func (c *Client) StartThreadWithModel(ctx context.Context, cwd string, roots []s
 	if err != nil {
 		return ThreadBinding{}, err
 	}
+	var config map[string]string
+	if settings.Effort != "" {
+		config = map[string]string{"model_reasoning_effort": settings.Effort}
+	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadStart, threadStartParams{
 		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, Model: model,
 		DeveloperInstructions: developerInstructions,
-		Sandbox:               policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy,
+		Sandbox:               policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy, Config: config,
 	}, &result); err != nil {
 		return ThreadBinding{}, err
 	}
@@ -205,6 +221,11 @@ func (c *Client) StartThreadWithModel(ctx context.Context, cwd string, roots []s
 	}
 	if err := checkThreadPolicy(methodThreadStart, policy, result); err != nil {
 		return ThreadBinding{}, err
+	}
+	if verifySettings {
+		if err := checkThreadSettings(methodThreadStart, settings, result); err != nil {
+			return ThreadBinding{}, err
+		}
 	}
 	return ThreadBinding{ThreadID: threadID}, nil
 }

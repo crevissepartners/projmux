@@ -86,6 +86,7 @@ func NewHost(instance string, supervisor Command, tx Transactions, limits Limits
 type Launch struct {
 	Binding Binding
 	Command Command
+	adapter adapterConfig
 }
 
 // Handle is tied to one owned supervisor/child pair and cannot adopt a PID.
@@ -118,6 +119,7 @@ type Handle struct {
 	statusDone     chan struct{}
 	spawnErr       error
 	stopOnce       sync.Once
+	adapter        providerAdapter
 }
 
 // Snapshot is a bounded resynchronization view. Turn results do not set Exit.
@@ -168,7 +170,13 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	// Clone caller-owned slices before the launch can race a caller mutation.
 	launch.Command.Args = slices.Clone(launch.Command.Args)
 	launch.Command.Env = slices.Clone(launch.Command.Env)
+	if launch.adapter != nil {
+		launch.adapter = launch.adapter.clone()
+	}
 	p := &Handle{host: h, launch: launch, state: "starting", connection: launch.Binding.Operation, ready: make(chan struct{}), done: make(chan struct{}), statusDone: make(chan struct{}), usedTurns: make(map[string]bool), requests: make(map[string]Request), usedRequests: make(map[string]bool)}
+	if launch.adapter != nil {
+		p.adapter = launch.adapter.newAdapter(p)
+	}
 	h.operations[launch.Binding.Operation], h.panes[launch.Binding.Pane] = p, p
 	h.mu.Unlock()
 	reserveCtx, cancelReserve := context.WithTimeout(ctx, h.limits.Startup)
@@ -179,6 +187,15 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	}
 	if err == nil {
 		err = p.spawn(ctx)
+		if err == nil && p.adapter != nil {
+			err = p.adapter.initialize(ctx)
+			if err != nil {
+				p.protocolFailure(err)
+				waitCtx, cancel := context.WithTimeout(context.Background(), 5*h.limits.Grace)
+				_, _ = p.Wait(waitCtx, launch.Binding)
+				cancel()
+			}
+		}
 	}
 	p.spawnErr = err
 	close(p.ready)
@@ -291,7 +308,17 @@ func (p *Handle) spawn(ctx context.Context) error {
 	}
 	first := make(chan error, 1)
 	outputDone := make(chan struct{})
-	go func() { defer close(outputDone); p.readOutput(outR) }()
+	if p.adapter != nil {
+		p.adapter.attach(&ownedStream{in: p.stdin, out: outR, lifetime: p.lifetime, reader: bufio.NewReaderSize(outR, 4096), limit: p.host.limits.FrameBytes, write: p.host.limits.Write})
+	}
+	go func() {
+		defer close(outputDone)
+		if p.adapter != nil {
+			p.adapter.readOutput()
+		} else {
+			p.readOutput(outR)
+		}
+	}()
 	diagnosticDone := make(chan struct{})
 	go func() { defer close(diagnosticDone); p.readDiagnostics(errR) }()
 	go p.readStatus(cmd, statusR, outR, errR, first, outputDone, diagnosticDone)
@@ -601,4 +628,61 @@ func (s Snapshot) Termination(at time.Time) (metadata.TerminationEvidence, bool)
 		e.ExitCode = &code
 	}
 	return e, true
+}
+
+// adapterConfig is immutable launch identity; clones freeze caller-owned slices.
+type adapterConfig interface {
+	clone() adapterConfig
+	newAdapter(*Handle) providerAdapter
+}
+type providerAdapter interface {
+	attach(io.ReadWriteCloser)
+	initialize(context.Context) error
+	readOutput()
+}
+
+// ownedStream leaves child Wait to the supervisor. Close cancels only this
+// transport and owner lifetime; it unblocks a stalled reader/writer immediately.
+type ownedStream struct {
+	in, out, lifetime *os.File
+	reader            *bufio.Reader
+	frame             []byte
+	limit             int
+	write             time.Duration
+	once              sync.Once
+}
+
+func (s *ownedStream) Read(b []byte) (int, error) {
+	if len(s.frame) == 0 {
+		for {
+			part, err := s.reader.ReadSlice('\n')
+			if len(s.frame)+len(part) > s.limit {
+				return 0, errors.New("provider frame exceeds host limit")
+			}
+			s.frame = append(s.frame, part...)
+			if errors.Is(err, bufio.ErrBufferFull) {
+				continue
+			}
+			if err != nil {
+				return 0, err
+			}
+			break
+		}
+	}
+	n := copy(b, s.frame)
+	s.frame = s.frame[n:]
+	return n, nil
+}
+func (s *ownedStream) Write(b []byte) (int, error) {
+	if len(b) > s.limit {
+		return 0, errors.New("provider control frame exceeds host limit")
+	}
+	if err := s.in.SetWriteDeadline(time.Now().Add(s.write)); err != nil {
+		return 0, err
+	}
+	return s.in.Write(b)
+}
+func (s *ownedStream) Close() error {
+	s.once.Do(func() { _ = s.in.Close(); _ = s.out.Close(); _ = s.lifetime.Close() })
+	return nil
 }

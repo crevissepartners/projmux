@@ -2,6 +2,7 @@ package codexappserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -196,5 +197,40 @@ func TestThreadSettingsRefuseAnUnknownPolicyBeforeTheWire(t *testing.T) {
 	}
 	if methods, _ := collect(); len(methods) != 0 {
 		t.Fatalf("reached the wire: %v", methods)
+	}
+}
+
+func TestNewThreadSettingsRequireEffectiveEchoWithoutResume(t *testing.T) {
+	for _, field := range []string{"match", "model", "effort", "policy"} {
+		t.Run(field, func(t *testing.T) {
+			model, effort, approval := "gpt-new", "high", "never"
+			switch field {
+			case "model":
+				model = "other"
+			case "effort":
+				effort = "low"
+			case "policy":
+				approval = "on-request"
+			}
+			client, collect := scriptedEndpoint(t, map[string]string{methodThreadStart: threadSettingsTestAnswer(model, effort, "readOnly", approval)})
+			binding, err := client.StartThreadWithSettings(context.Background(), "/work", nil, "persona", threadSettingsTestRequest)
+			if field == "match" {
+				if err != nil || binding.ThreadID != "thread-settings" {
+					t.Fatalf("start=%+v %v", binding, err)
+				}
+			} else if err == nil {
+				t.Fatal("settings mismatch accepted")
+			}
+			methods, params := collect()
+			if !reflect.DeepEqual(methods, []string{methodThreadStart}) {
+				t.Fatalf("methods=%v", methods)
+			}
+			var wire struct {
+				Config map[string]string `json:"config"`
+			}
+			if err := json.Unmarshal(params[0], &wire); err != nil || wire.Config["model_reasoning_effort"] != "high" {
+				t.Fatalf("effort config=%s %v", params[0], err)
+			}
+		})
 	}
 }
