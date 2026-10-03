@@ -354,7 +354,9 @@ jobs:
           go build ./cmd/projmux
 
       - name: Exercise owned process lifetime and Claude streams
-        run: go test -race -v -count=1 -timeout=120s ./internal/integrations/processhost
+        # The full race suite takes about 121s on Darwin. Keep every test and
+        # allow more than twice that duration while retaining a finite bound.
+        run: go test -race -v -count=1 -timeout=300s ./internal/integrations/processhost
 
       - name: Exercise process Claude binding and endpoint receipts
         run: go test -race -v -count=1 -timeout=120s -run "^TestClaudeProcess|^TestProcessClaudeRoute" ./internal/app ./internal/core/metadata

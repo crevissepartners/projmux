@@ -292,6 +292,25 @@ DARWIN_TEST_COMPILE_STEP = "Compile every test package without running it"
 DARWIN_TEST_COMPILE_COMMAND = "go test -exec /usr/bin/true -count=1 -run '^$' ./..."
 
 
+def assert_darwin_processhost_race_budget(workflow: str) -> None:
+    """Keep the complete race suite bounded with room above its 121s observation."""
+    darwin = workflow_job(workflow, "darwin-native")
+    step = workflow_step(darwin, "Exercise owned process lifetime and Claude streams")
+    if "continue-on-error:" in step or step_field(step, "if") is not None:
+        raise AssertionError("Darwin processhost race suite must always gate the job")
+    command = step_script(step).strip()
+    match = re.fullmatch(
+        r"go test -race -v -count=1 -timeout=([0-9]+)s "
+        r"\./internal/integrations/processhost",
+        command,
+    )
+    if match is None or int(match.group(1)) < 300:
+        raise AssertionError(
+            "Darwin processhost must run the complete race suite once "
+            "with an explicit timeout of at least 300s"
+        )
+
+
 def assert_darwin_native_compiles_every_test_package(workflow: str) -> None:
     """Fail unless the native macOS job builds every test binary behind `Test`."""
     darwin = workflow_job(workflow, "darwin-native")
@@ -1010,6 +1029,36 @@ class CIWorkflowContractTest(unittest.TestCase):
                     )
                     with self.assertRaises(AssertionError):
                         assert_artifact_uploads_run_only_on_github_com(mutated)
+
+    def test_darwin_processhost_race_budget_preserves_full_coverage(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        assert_darwin_processhost_race_budget(workflow)
+        step = workflow_step(
+            workflow_job(workflow, "darwin-native"),
+            "Exercise owned process lifetime and Claude streams",
+        )
+        marker = "      - name: Exercise owned process lifetime and Claude streams\n"
+        block = marker + step + "\n"
+        command = step_script(step).strip()
+        mutations = {
+            "saturated budget": block.replace("-timeout=300s", "-timeout=120s"),
+            "below minimum": block.replace("-timeout=300s", "-timeout=299s"),
+            "implicit budget": block.replace("-timeout=300s ", ""),
+            "race omitted": block.replace("-race ", ""),
+            "filtered tests": block.replace(command, command + " -run '^TestStop'"),
+            "cached tests": block.replace("-count=1", "-count=0"),
+            "soft failure": block.replace(
+                marker, marker + "        continue-on-error: true\n"
+            ),
+            "skipped suite": block.replace(marker, marker + "        if: false\n"),
+        }
+        for name, mutation in mutations.items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(mutation, block)
+                with self.assertRaises(AssertionError):
+                    assert_darwin_processhost_race_budget(
+                        workflow.replace(block, mutation)
+                    )
 
     def test_darwin_native_compiles_every_test_package_behind_the_aggregate(
         self,
