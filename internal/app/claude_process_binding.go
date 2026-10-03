@@ -88,7 +88,7 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 					return
 				}
 				peer, parent, err := localipc.PeerProcess(conn)
-				if err != nil || peer.OwnerUID != uint32(os.Getuid()) {
+				if err != nil || int64(peer.OwnerUID) != int64(os.Getuid()) {
 					return
 				}
 				result := claudeProcessCheckResult{}
@@ -173,7 +173,14 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 		}
 		return handle, launchErr
 	}
-	go func() { _, _ = handle.Wait(context.Background(), launch.Binding); closeListener() }()
+	// Launch cancellation fences startup, not the already owned process lifetime.
+	// Keep the host endpoint until independent child Wait completes after Stop
+	// or owner loss; preserve caller values without a startup deadline.
+	lifetime := context.WithoutCancel(ctx)
+	go func(waitCtx context.Context) {
+		_, _ = handle.Wait(waitCtx, launch.Binding)
+		closeListener()
+	}(lifetime)
 	return handle, nil
 }
 
