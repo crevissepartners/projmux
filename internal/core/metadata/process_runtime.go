@@ -13,6 +13,11 @@ const (
 	RuntimeProcess RuntimeKind = "process"
 )
 
+// Valid includes the omitted legacy kind, which retains tmux semantics.
+func (k RuntimeKind) Valid() bool {
+	return k == "" || k == RuntimeTmux || k == RuntimeProcess
+}
+
 type PaneRuntimeSpec struct {
 	Kind RuntimeKind `json:"kind,omitempty"`
 }
@@ -138,7 +143,7 @@ func validProcessControls(controls []ProcessRecordedControl, connection, session
 func (r Registry) validatePaneRuntime(pane Pane) error {
 	const op = "validate registry"
 	kind := pane.Spec.Runtime.EffectiveKind()
-	if kind != RuntimeTmux && kind != RuntimeProcess {
+	if !kind.Valid() {
 		return stateErr(op, ErrInvalidRegistry, "runtime-kind-unsupported: pane %q runtime kind %q", pane.Metadata.Name, kind)
 	}
 	a := pane.Status.Activation
@@ -157,38 +162,45 @@ func (r Registry) validatePaneRuntime(pane Pane) error {
 			return stateErr(op, ErrInvalidRegistry, "runtime-binding-invalid: process activation has incomplete or foreign ownership evidence")
 		}
 	}
-	if s := pane.Status.ProcessSession; s != nil {
-		agent, ok := r.Agent(pane.Metadata.OwnerUID())
-		session := s.SessionID
-		if s.Provider == "codex" {
-			session = s.ThreadID
+	return r.validateProcessSession(pane)
+}
+
+func (r Registry) validateProcessSession(pane Pane) error {
+	const op = "validate registry"
+	s := pane.Status.ProcessSession
+	if s == nil {
+		return nil
+	}
+	agent, ok := r.Agent(pane.Metadata.OwnerUID())
+	session := s.SessionID
+	if s.Provider == "codex" {
+		session = s.ThreadID
+	}
+	if !ok || (s.Provider != "claude" && s.Provider != "codex") || agent.Spec.Provider != s.Provider {
+		return stateErr(op, ErrInvalidRegistry, "process-session-invalid: provider does not match the owning Agent")
+	}
+	if !r.validProcessBinding(pane, s.Binding) {
+		return stateErr(op, ErrInvalidRegistry, "process-session-invalid: durable binding has incomplete or foreign ownership evidence")
+	}
+	if (s.Provider == "codex" && s.SessionID != "") || (s.Provider == "claude" && s.ThreadID != "") || (session != "" && !processIdentityToken(session)) || (s.ConnectionID != "" && !processIdentityToken(s.ConnectionID)) || (s.TurnID != "" && !processIdentityToken(s.TurnID)) {
+		return stateErr(op, ErrInvalidRegistry, "process-session-invalid: conversation, connection or turn identity is invalid")
+	}
+	if (s.ResumeState != ProcessResumeUnknown && s.ResumeState != ProcessResumable) || (s.ResumeState == ProcessResumable && (session == "" || s.ConnectionID == "")) {
+		return stateErr(op, ErrInvalidRegistry, "process-session-invalid: unsupported resume state or missing conversation and connection")
+	}
+	if !validProcessControls(s.Pending, s.ConnectionID, session, s.TurnID) {
+		return stateErr(op, ErrInvalidRegistry, "process-session-invalid: pending controls do not match the recorded connection, conversation and turn")
+	}
+	if h := s.History; h != nil {
+		if !r.validProcessBinding(pane, h.Binding) || h.Binding.Generation == s.Binding.Generation || !processIdentityToken(h.SessionID) || h.SessionID != session || (h.InterruptedTurnID != "" && !processIdentityToken(h.InterruptedTurnID)) {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: resume history is not a retired generation")
 		}
-		if !ok || (s.Provider != "claude" && s.Provider != "codex") || agent.Spec.Provider != s.Provider {
-			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: provider does not match the owning Agent")
+		connection := ""
+		if len(h.Expired) != 0 {
+			connection = h.Expired[0].ConnectionID
 		}
-		if !r.validProcessBinding(pane, s.Binding) {
-			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: durable binding has incomplete or foreign ownership evidence")
-		}
-		if (s.Provider == "codex" && s.SessionID != "") || (s.Provider == "claude" && s.ThreadID != "") || (session != "" && !processIdentityToken(session)) || (s.ConnectionID != "" && !processIdentityToken(s.ConnectionID)) || (s.TurnID != "" && !processIdentityToken(s.TurnID)) {
-			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: conversation, connection or turn identity is invalid")
-		}
-		if (s.ResumeState != ProcessResumeUnknown && s.ResumeState != ProcessResumable) || (s.ResumeState == ProcessResumable && (session == "" || s.ConnectionID == "")) {
-			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: unsupported resume state or missing conversation and connection")
-		}
-		if !validProcessControls(s.Pending, s.ConnectionID, session, s.TurnID) {
-			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: pending controls do not match the recorded connection, conversation and turn")
-		}
-		if h := s.History; h != nil {
-			if !r.validProcessBinding(pane, h.Binding) || h.Binding.Generation == s.Binding.Generation || !processIdentityToken(h.SessionID) || h.SessionID != session || (h.InterruptedTurnID != "" && !processIdentityToken(h.InterruptedTurnID)) {
-				return stateErr(op, ErrInvalidRegistry, "process-session-invalid: resume history is not a retired generation")
-			}
-			connection := ""
-			if len(h.Expired) != 0 {
-				connection = h.Expired[0].ConnectionID
-			}
-			if !validProcessControls(h.Expired, connection, h.SessionID, h.InterruptedTurnID) {
-				return stateErr(op, ErrInvalidRegistry, "process-session-invalid: inconsistent expired control identities")
-			}
+		if !validProcessControls(h.Expired, connection, h.SessionID, h.InterruptedTurnID) {
+			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: inconsistent expired control identities")
 		}
 	}
 	return nil

@@ -56,6 +56,7 @@ type codexResultError struct {
 }
 
 func (h *Host) StartCodex(ctx context.Context, launch Launch, config CodexConfig) (*CodexHandle, error) {
+	launch.provider = "codex"
 	launch.adapter = config
 	p, err := h.Start(ctx, launch)
 	if p == nil {

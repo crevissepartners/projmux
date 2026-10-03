@@ -14,12 +14,9 @@ import (
 func TestClaudeProcessControlIDRequestReuse(t *testing.T) {
 	b := processhost.Binding{Host: "h", Agent: "a", Pane: "p", Generation: "g", Operation: "o"}
 	r := processhost.Request{ID: "reused", Connection: "connection", Turn: "first", Kind: "question"}
-	first := processClaudeControlID(b, r)
-	if first != processCodexControlID(b, r) {
-		t.Fatal("providers disagree on control identity")
-	}
+	first := processControlID(b, r)
 	r.Turn = "second"
-	if first == processClaudeControlID(b, r) || first == processCodexControlID(b, r) {
+	if first == processControlID(b, r) {
 		t.Fatal("new turn reused an earlier store answer")
 	}
 }
@@ -60,7 +57,7 @@ func TestCodexProcessReusedRequestsAwaitNewAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, request := range snap.Pending {
-		id := processCodexControlID(f.endpoint.binding, request)
+		id := processControlID(f.endpoint.binding, request)
 		if request.Kind == "question" {
 			record, found, err := f.control.questions.Get(id)
 			if err != nil || !found || record.State != agentquestion.StateWaiting {

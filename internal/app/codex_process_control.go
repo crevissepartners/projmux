@@ -27,9 +27,6 @@ type codexProcessControl struct {
 	records                        map[string]processhost.Request
 }
 
-func processCodexControlID(b processhost.Binding, r processhost.Request) string {
-	return processControlID(b, r)
-}
 func (c *codexProcessControl) closeRecord(id string, r processhost.Request) {
 	if r.Kind == "question" {
 		_, _ = c.questions.Close(id, agentquestion.CloseReasonTurnEnded)
@@ -78,7 +75,7 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 	}
 	pending := make(map[string]bool, len(snap.Pending))
 	for _, r := range snap.Pending {
-		id := processCodexControlID(e.binding, r)
+		id := processControlID(e.binding, r)
 		pending[id] = true
 		if _, known := c.records[id]; !known {
 			if err = c.create(id, r); err != nil {
