@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -49,6 +50,8 @@ func newProcessAttentionStore(stateDir string) *processAttentionStore {
 	return &processAttentionStore{path: filepath.Join(stateDir, "process-attention.json")}
 }
 
+var errProcessAttentionDamaged = errors.New("damaged process attention store")
+
 func (s *processAttentionStore) read() (map[string]processAttentionRecord, error) {
 	data, err := os.ReadFile(s.path) // #nosec G304 -- explicit per-user state path, never provider input.
 	if errors.Is(err, os.ErrNotExist) {
@@ -59,10 +62,10 @@ func (s *processAttentionStore) read() (map[string]processAttentionRecord, error
 	}
 	var records map[string]processAttentionRecord
 	if err = json.Unmarshal(data, &records); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errProcessAttentionDamaged, err)
 	}
 	if records == nil {
-		return nil, errors.New("invalid process attention store")
+		return nil, errProcessAttentionDamaged
 	}
 	return records, nil
 }
@@ -84,12 +87,50 @@ func (s *processAttentionStore) update(change func(map[string]processAttentionRe
 	defer func() { _ = lock.Close() }()
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
 	records, err := s.read()
+	if errors.Is(err, errProcessAttentionDamaged) {
+		if err = s.recoverDamaged(); err != nil {
+			return err
+		}
+		records = map[string]processAttentionRecord{}
+	}
 	if err != nil {
 		return err
 	}
 	if err = change(records); err != nil {
 		return err
 	}
+	return s.write(records)
+}
+
+// Called only while holding the persistent writer lock. Preserve the exact
+// damaged bytes durably before replacing the store; backup failure keeps the
+// original intact. Backups have no automatic retention or deletion policy.
+func (s *processAttentionStore) recoverDamaged() error {
+	data, err := os.ReadFile(s.path) // #nosec G304 -- exact per-user store path under its writer lock.
+	if err != nil {
+		return err
+	}
+	backup, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".damaged-*")
+	if err != nil {
+		return fmt.Errorf("back up damaged process attention store: %w", err)
+	}
+	defer func() { _ = backup.Close() }()
+	if _, err = backup.Write(data); err != nil {
+		return err
+	}
+	if err = backup.Sync(); err != nil {
+		return err
+	}
+	if err = backup.Close(); err != nil {
+		return err
+	}
+	if err = s.syncDirectory(); err != nil {
+		return err
+	}
+	return s.write(map[string]processAttentionRecord{})
+}
+
+func (s *processAttentionStore) write(records map[string]processAttentionRecord) error {
 	data, err := json.Marshal(records)
 	if err != nil {
 		return err
@@ -113,7 +154,11 @@ func (s *processAttentionStore) update(change func(map[string]processAttentionRe
 	if err = os.Rename(temp.Name(), s.path); err != nil {
 		return err
 	}
-	directory, err := os.Open(dir) // #nosec G304 -- EnsurePrivateDir validated this exact store parent.
+	return s.syncDirectory()
+}
+
+func (s *processAttentionStore) syncDirectory() error {
+	directory, err := os.Open(filepath.Dir(s.path)) // #nosec G304 -- EnsurePrivateDir validated this exact store parent.
 	if err != nil {
 		return err
 	}

@@ -209,12 +209,18 @@ MessageRef turn through the exact registered helper's kernel identity before the
 native post. Host stdin turns and endpoint reservations share one admission
 mutex; busy and duplicate inputs write nothing. Definite prewrite failure releases
 the reservation. Uncertain delivery appears as `awaiting-message-handoff` in the
-internal snapshot and remains pending until a provider result or actual exit.
-Interrupt acknowledgment alone does not infer cancellation; its result releases
-the reservation. An idle interrupt may return only an ack: that reservation
-stays pending and requires Stop with actual Wait evidence before a new generation
-can admit input. Stop resolves the owned process lifetime; it does not reopen the
-stopped generation. Existing tmux tests are
+internal snapshot. The internal `Limits.MessageReservation` defaults to 30 seconds
+and bounds that handoff wait, including a helper that never reports an outcome.
+At expiry the snapshot reports `MessageReservation = "expired"` and the host emits
+`message-reservation-expired`. Expiry does not infer completion, replay input,
+terminate the child, or admit another turn on that generation. An interrupt ack
+alone does not settle the reservation. A late actual result may still settle the
+old turn and return the child to idle; otherwise the caller must Stop, observe
+actual Wait evidence, and explicitly resume with a new generation before sending
+the next turn. Before expiry, a proven handoff or definite prewrite refusal cancels the timer.
+Late helper outcomes cannot reopen an expired reservation; only an actual result
+can settle it on the same generation.
+Stop resolves the owned process lifetime; it does not reopen the stopped generation. Existing tmux tests are
 unchanged. The processhost fixtures additionally check hook/init agreement.
 
 `PMX_TEST_REAL_CLAUDE_BIN=/absolute/path/to/claude go test ./internal/app -run
@@ -290,6 +296,21 @@ observed sequence. Older events or acknowledgments cannot clear a newer request.
 A persistent-inode writer lock serializes updates; private temporary files, file
 and directory sync, and rename make publication atomic. Only request identities,
 kinds, sequences and badge metadata are stored, never conversation text.
+
+A malformed JSON store is reported by read-only consumers without mutation. The
+next writer preserves its exact bytes in a private, uniquely named
+`process-attention.json.damaged-*` sibling before atomically recreating `{}`.
+Backup failure leaves the original store intact and returns an error. Backups
+are retained for operator inspection; no automatic deletion policy is applied.
+An active host may reconstruct only its own record after revalidating the exact
+binding and generation while holding the writer lock. Observations without that
+authority, stale hosts and stale badge clears cannot recreate records. Missing
+history is recovered from the bounded host snapshot/events and the existing
+notification queue, not invented provider results.
+
+Process Ready, Input required, Approval required and Process attention error
+messages use `notify.process.*` catalog keys with en-US/ko-KR parity tests.
+Persisted notification text keeps the queue's canonical English contract.
 
 Claude and Codex stream events share the existing badge priority and aggregation.
 Actual host termination closes pending requests while retaining completion and

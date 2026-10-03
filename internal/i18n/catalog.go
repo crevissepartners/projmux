@@ -9,6 +9,13 @@ import (
 // Key identifies one user-facing message in the catalog.
 type Key string
 
+const (
+	KeyNotifyProcessReady            Key = "notify.process.ready"
+	KeyNotifyProcessInputRequired    Key = "notify.process.input_required"
+	KeyNotifyProcessApprovalRequired Key = "notify.process.approval_required"
+	KeyNotifyProcessError            Key = "notify.process.error"
+)
+
 const KeyInstallReplacementOtherDomains Key = "install.replacement.other_domains"
 
 const (

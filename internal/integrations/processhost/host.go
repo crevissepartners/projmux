@@ -49,11 +49,11 @@ type Transactions struct {
 // turn a retry into a duplicate child. A new Host is a new instance/lifetime.
 type Limits struct {
 	Launches, FrameBytes, Events, Requests, DiagnosticBytes int
-	Startup, Write, Grace                                   time.Duration
+	Startup, Write, Grace, MessageReservation               time.Duration
 }
 
 func DefaultLimits() Limits {
-	return Limits{Launches: 64, FrameBytes: 1 << 20, Events: 256, Requests: 32, DiagnosticBytes: 8192, Startup: 10 * time.Second, Write: time.Second, Grace: 2 * time.Second}
+	return Limits{Launches: 64, FrameBytes: 1 << 20, Events: 256, Requests: 32, DiagnosticBytes: 8192, Startup: 10 * time.Second, Write: time.Second, Grace: 2 * time.Second, MessageReservation: 30 * time.Second}
 }
 
 // Host owns all handles it creates. Supervisor is a resolved executable that
@@ -75,6 +75,12 @@ func NewHost(instance string, supervisor Command, tx Transactions, limits Limits
 	}
 	if limits.Launches < 1 || limits.FrameBytes < 256 || limits.Events < 2 || limits.Requests < 1 || limits.DiagnosticBytes < 1 || limits.Startup <= 0 || limits.Write <= 0 || limits.Grace <= 0 || limits.Grace > time.Minute {
 		return nil, errors.New("invalid process limits")
+	}
+	if limits.MessageReservation == 0 {
+		limits.MessageReservation = DefaultLimits().MessageReservation
+	}
+	if limits.MessageReservation < 0 {
+		return nil, errors.New("invalid message reservation limit")
 	}
 	supervisor.Args = slices.Clone(supervisor.Args)
 	supervisor.Env = slices.Clone(supervisor.Env)
@@ -136,13 +142,15 @@ type Handle struct {
 	stopOnce               sync.Once
 	adapter                providerAdapter
 	completionContext      context.Context
+
+	messageReservationTimer *time.Timer
 }
 
 // Snapshot is a bounded resynchronization view. Turn results do not set Exit.
 type Snapshot struct {
 	Binding                                   Binding
 	State, Session, Connection, Turn, Failure string
-	MessageReservation                        string
+	MessageReservation, Provider              string
 	PID, SupervisorPID                        int
 	Sequence                                  uint64
 	Pending                                   []Request
@@ -448,7 +456,7 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	p.expireLocked()
 	if actual != nil && waitErr == nil {
 		p.exit, p.state = actual, "exited"
-		p.messageReservation = ""
+		p.clearMessageReservationLocked()
 		p.emitLocked("process-exited", nil, nil)
 	} else {
 		p.state = "unknown"
@@ -460,6 +468,9 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 }
 
 func (p *Handle) finish() {
+	p.mu.Lock()
+	p.stopMessageReservationTimerLocked()
+	p.mu.Unlock()
 	if completion := p.launch.Completion; completion != nil && completion.Cleanup != nil {
 		ctx, cancel := context.WithTimeout(p.completionContext, p.host.limits.Write)
 		result := make(chan error, 1)
@@ -492,6 +503,7 @@ func (p *Handle) finish() {
 func (p *Handle) stop() {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
+		p.stopMessageReservationTimerLocked()
 		if p.state != "exited" && p.state != "unknown" {
 			p.state = "stopping"
 		}
@@ -538,7 +550,11 @@ func (p *Handle) Observe(binding Binding) (Snapshot, error) {
 }
 
 func (p *Handle) snapshotLocked() Snapshot {
-	s := Snapshot{Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
+	provider := "claude"
+	if p.adapter != nil {
+		provider = "codex"
+	}
+	s := Snapshot{Provider: provider, Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
 	if p.exit != nil {
 		e := *p.exit
 		s.Exit = &e
