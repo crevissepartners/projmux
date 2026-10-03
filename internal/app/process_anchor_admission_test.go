@@ -92,3 +92,49 @@ func TestProcessAdmissionCreatePaneTmuxParity(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessAdmissionMixedSplitAnchor(t *testing.T) {
+	run := func(process bool) string {
+		store := newFakeResourceStore(t)
+		created, err := store.mutator().AddPane(&store.registry, "win-beta-main", coremetadata.BootstrapPane{Name: "process"}, "/bin/zsh", "fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pane, _ := store.registry.Pane(created.Metadata.UID)
+		pane.Status.Activation.Generation = "process-generation"
+		runtime := &processPaneRuntime{targets: []processhost.InventoryTarget{{Binding: processhost.Binding{Host: "host", Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation}}}}
+		tmux := newFakeTmux()
+		session := tmux.addSession("beta")
+		tmuxAnchor := session.windows[0].panes[0].id
+		sibling, _ := store.registry.Pane("pan-beta-zsh")
+		sibling.Status.Activation.RuntimeID = tmuxAnchor
+		create, _ := newTestResourceCreateCommand(t, store, tmux)
+		m := create.runtime
+		m.expectedSocketPath = tmux.socketPath
+		m.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}
+		before, _ := json.Marshal(store.registry)
+		if process {
+			m.processAnchor = &processTerminalTarget{runtime: runtime, registry: store.registry.Clone(), paneUID: pane.Metadata.UID}
+			id, err := m.splitPane(context.Background(), pane.Status.Activation.RuntimeID, "right", "/srv/beta", nil)
+			if err == nil || !strings.Contains(err.Error(), "process-capability-unsupported") || id != "" || len(tmux.calls) != 0 {
+				t.Fatalf("process split: id=%q err=%v calls=%v", id, err, tmux.calls)
+			}
+		}
+		id, err := m.splitPane(context.Background(), tmuxAnchor, "right", "/srv/beta", nil)
+		if err != nil || id == "" {
+			t.Fatalf("tmux sibling split: id=%q err=%v calls=%v", id, err, tmux.calls)
+		}
+		after, _ := json.Marshal(store.registry)
+		if string(before) != string(after) || store.writes != 0 {
+			t.Fatal("internal split wrote Registry")
+		}
+		calls, _ := json.Marshal(tmux.calls)
+		t.Logf("process_target=%v process_anchor_calls=0 tmux_split_id=%s tmux_calls=%d registry_writes=%d", process, id, len(tmux.calls), store.writes)
+		return string(calls)
+	}
+	baseline := run(false)
+	mixed := run(true)
+	if baseline != mixed {
+		t.Fatal("process target changed tmux sibling split trace")
+	}
+}

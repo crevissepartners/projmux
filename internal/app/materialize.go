@@ -2600,12 +2600,26 @@ func splitPlacementFlag(placement string) string {
 	return "-h"
 }
 
+// admitSplitAnchor limits the invocation target to the anchor being split.
+// A process declaration has no tmux handle; an exact tmux sibling keeps its
+// existing transport guard and split behavior on the same materializer.
+func (t *processTerminalTarget) admitSplitAnchor(anchorPaneID string) error {
+	if t == nil {
+		return nil
+	}
+	pane, ok := t.registry.Pane(t.paneUID)
+	if ok && anchorPaneID != pane.Status.Activation.RuntimeID {
+		return nil
+	}
+	return t.admit(resourcegraph.ProcessSplit)
+}
+
 // splitPane splits an anchor pane detached and returns the new pane id.
 //
 // `-d` is the whole point: tmux leaves the previously active pane active, so
 // the split is a pure structural mutation with no focus side effect.
 func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string) (string, error) {
-	if err := m.processAnchor.admit(resourcegraph.ProcessSplit); err != nil {
+	if err := m.processAnchor.admitSplitAnchor(anchorPaneID); err != nil {
 		return "", err
 	}
 	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
