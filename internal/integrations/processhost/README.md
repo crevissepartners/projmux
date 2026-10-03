@@ -126,7 +126,9 @@ wire format and policy checks.
 A well-formed server refusal of turn/start produces a failed `turn-result`
 with the consumed operation ID while preserving the session and owned child.
 A refused interrupt produces `interrupt-refused`, without an acknowledgement or
-an inferred turn completion. Neither refusal permits replay of the same control.
+an inferred turn completion. A refused turn operation stays consumed. A confirmed
+interrupt refusal permits a later explicit attempt on the still-active turn;
+uncertain transport outcomes do not permit replay.
 Malformed protocol, transport loss, and uncertain request outcomes still stop
 the owned connection. The typed refusal classifier preserves existing callers'
 error classifications and request bytes.
@@ -145,7 +147,9 @@ consumer-owned deadline policy remain outside this adapter.
 The same frame, diagnostic, output-event and protected-control limits apply.
 The typed Client also has its own bounded notification backlog; overflow terminates
 the connection explicitly rather than blocking control or Wait. Notifications are
-serialized with typed controls so a turn event preceding the turn/start answer
+drained independently of typed control waits. A reply queue bounded by the host's
+`Events` limit preserves turn/start and interrupt ordering; exceeding that bound
+fails the owned connection explicitly. Notifications before the turn/start answer
 cannot be assigned to another turn. Stream closure unblocks owned reads and writes;
 independent supervisor Wait remains authoritative.
 
@@ -205,3 +209,42 @@ and a localhost SSE stub, with no real model API. It covers SessionStart binding
 question and permission deny/allow, repeated init, interrupt, native endpoint
 receipt round trips with question/approval/result, duplicate rejection and a
 subsequent host turn. Real-model behavior and the future public consumer remain unqualified.
+
+
+## Codex process binding and answer bridge
+
+The app preparation seam registers a non-durable endpoint only after the owned
+host witnesses typed readiness and the Registry's exact ownership generation.
+Its authority includes the host instance, child and host kernel birth identities,
+thread and connection. It does not borrow shared broker epochs. The public tmux
+route resolver remains unchanged; a separate process constructor requires both
+Registry ownership and live Handle proof.
+
+Process launch marks internal hooks as observation-only, including malformed or
+stale bootstrap claims. The host alone projects stream requests into the existing
+question and approval stores. IDs derive from binding, connection and the scalar
+request ID; identical hook/stream observations produce one question, and stale,
+expired or duplicate answers write no provider response. Configured windows and
+safe decision selection retain their existing owners. Timeout or disconnect never
+automatically allows a request.
+
+The internal endpoint is currently a same-host loopback and accepts only its
+owning host's exact kernel identity. A separate foreground client's peer policy
+requires a decision at the later public activation step.
+Peer coordination uses the existing message store and immutable envelope, with
+both source and target revalidated before the host submits a typed turn. A receipt
+is delivered after turn/start acceptance; later completion remains a separate
+event. Reply correlation and terminal-once receipts reuse the existing store.
+Busy and stale routes write no provider turn, and an uncertain delivery is never
+automatically resent. Public consumers and provider-side CLI routing remain a
+later activation step.
+
+App typed fixtures cover binding rejection, duplicate questions/approvals,
+response races, timeout/disconnect, unchanged termination evidence, and
+bidirectional receipts through real local sockets. The opt-in app test
+`PROCESSHOST_TEST_CODEX=1 go test ./internal/app -run
+'^TestCodexProcessInstalledBidirectionalReceipts$' -v` qualifies installed Codex
+against a localhost model stub with isolated HOME and no real API or credentials.
+Native questions and approvals remain fixture-qualified. Late notifications
+following turn/completed were not observed in the installed 0.160.0 success and
+failure stub probes; no speculative late-frame policy is added.

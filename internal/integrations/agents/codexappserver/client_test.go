@@ -433,3 +433,47 @@ func TestIsResponseErrorPreservesExistingClassifications(t *testing.T) {
 		}
 	}
 }
+
+// With no notification consumer, queue overflow and preservation of every
+// admitted frame are deterministic, independent of reader scheduling.
+func TestProcessClientNotificationBoundAndDefaultParity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		limit   int
+		process bool
+	}{
+		{"existing", 64, false}, {"process", 96, true}, {"small", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport, peer := net.Pipe()
+			var client *Client
+			if tc.process {
+				client = NewProcessClient(transport, tc.limit)
+			} else {
+				client = NewClient(transport)
+			}
+			t.Cleanup(func() { _ = client.Close(); _ = peer.Close() })
+			if cap(client.events) != tc.limit {
+				t.Fatalf("queue capacity=%d want=%d", cap(client.events), tc.limit)
+			}
+			for i := range tc.limit {
+				frame := fmt.Appendf(nil, `{"method":"test/event","params":{"sequence":%d}}`, i)
+				if err := client.routeFrame(frame); err != nil {
+					t.Fatalf("frame %d: %v", i, err)
+				}
+			}
+			if err := client.routeFrame([]byte(`{"method":"test/event","params":{"sequence":999}}`)); !errors.Is(err, ErrProtocol) {
+				t.Fatalf("overflow=%v", err)
+			}
+			for i := range tc.limit {
+				event := <-client.events
+				if string(event.Params) != fmt.Sprintf(`{"sequence":%d}`, i) {
+					t.Fatalf("frame %d lost/reordered: %s", i, event.Params)
+				}
+			}
+			if len(client.events) != 0 {
+				t.Fatal("overflow frame admitted")
+			}
+		})
+	}
+}

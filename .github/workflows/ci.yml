@@ -358,6 +358,8 @@ jobs:
 
       - name: Exercise process Claude binding and endpoint receipts
         run: go test -race -v -count=1 -timeout=120s -run "^TestClaudeProcess|^TestProcessClaudeRoute" ./internal/app ./internal/core/metadata
+      - name: Verify process Codex binding and receipt fixtures
+        run: go test -race -v -count=1 -timeout=120s -run "^TestCodexProcess|^TestProcessCodexRoute" ./internal/app ./internal/core/metadata
 
       # Builds and links every test binary, including darwin && cgo files, but
       # runs none of them: this gate is darwin test compilation, not darwin

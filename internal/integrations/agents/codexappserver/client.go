@@ -155,11 +155,24 @@ func (c *Client) PeerIdentity() PeerIdentity { return c.peer }
 // NewClient starts a bounded reader over stream. The caller must Initialize
 // before sending any other request.
 func NewClient(stream readWriteCloser) *Client {
+	return newClient(stream, notificationBacklog)
+}
+
+// NewProcessClient binds the owned process notification queue to its host's
+// event limit. Other transports retain NewClient's existing 64-event bound.
+func NewProcessClient(stream readWriteCloser, eventLimit int) *Client {
+	if eventLimit <= 0 {
+		eventLimit = notificationBacklog
+	}
+	return newClient(stream, eventLimit)
+}
+
+func newClient(stream readWriteCloser, eventLimit int) *Client {
 	c := &Client{
 		stream:   stream,
 		nextID:   1,
 		pending:  make(map[int64]chan response),
-		events:   make(chan Notification, notificationBacklog),
+		events:   make(chan Notification, eventLimit),
 		done:     make(chan struct{}),
 		answered: make(map[string]struct{}),
 

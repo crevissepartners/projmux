@@ -48,6 +48,11 @@ func (r AgentRouteRef) Incarnation() string {
 			return ""
 		}
 		material = "codex-session"
+	case CodexProcessRouteEvidence:
+		if !authority.Valid() {
+			return ""
+		}
+		material = "codex-session"
 	case ClaudeAuthorityRef:
 		if !authority.Valid() {
 			return ""
@@ -81,6 +86,11 @@ func (r AgentRouteRef) FullIncarnation() string {
 		material = fmt.Sprintf("codex\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d", authority.ThreadID,
 			authority.Authority.StateDomainID, authority.Authority.EndpointGenerationID,
 			authority.Authority.BrokerRuntimeID, authority.Authority.ConnectionEpoch, authority.Authority.BindingEpoch)
+	case CodexProcessRouteEvidence:
+		if !authority.Valid() {
+			return ""
+		}
+		material = fmt.Sprintf("codex-process\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%d\x00%d\x00%s", authority.HostInstance, authority.Generation, authority.ThreadID, authority.Connection, authority.Process.PID, authority.Process.OwnerUID, authority.Process.Start, authority.HostProcess.PID, authority.HostProcess.OwnerUID, authority.HostProcess.Start)
 	case ClaudeAuthorityRef:
 		if !authority.Valid() {
 			return ""
@@ -187,6 +197,43 @@ func ResolveProcessClaudeRoute(reg Registry, agentUID string, evidence ClaudePro
 		return AgentRouteRef{}, "process Claude authority is unavailable"
 	}
 	return route, ""
+}
+
+// CodexProcessRouteEvidence is a non-durable authority for one dedicated
+// host child. It never borrows the shared broker's composite epochs.
+type CodexProcessRouteEvidence struct {
+	HostInstance, PaneUID, Generation, ThreadID, Connection string
+	Process, HostProcess                                    ProcessIdentity
+}
+
+func (CodexProcessRouteEvidence) Provider() string   { return "codex" }
+func (CodexProcessRouteEvidence) providerAuthority() {}
+func (e CodexProcessRouteEvidence) Valid() bool {
+	return e.HostInstance != "" && e.PaneUID != "" && e.Generation != "" && ValidCodexIdentityToken(e.ThreadID) && e.Connection != "" && e.Process.Valid() && e.HostProcess.Valid()
+}
+func (e CodexProcessRouteEvidence) sameAuthority(other ProviderAuthorityRef) bool {
+	b, ok := other.(CodexProcessRouteEvidence)
+	return ok && e.Valid() && b.Valid() && e == b
+}
+
+// ResolveProcessCodexRoute is internal preparation. Registry ownership and a
+// live exact Handle proof are both required; the public resolver stays tmux-only.
+func ResolveProcessCodexRoute(reg Registry, agentUID string, e CodexProcessRouteEvidence, verify func(CodexProcessRouteEvidence) bool) (AgentRouteRef, string) {
+	refused := func() (AgentRouteRef, string) { return AgentRouteRef{}, "process Codex authority is unavailable" }
+	agent, ok := reg.Agent(agentUID)
+	pane, found := reg.Pane(e.PaneUID)
+	if !ok || !found || !e.Valid() || agent.Spec.Provider != "codex" || agent.Status.Phase != PhaseRunning || agent.Status.PaneRef != e.PaneUID || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != KindWindow || pane.Spec.Role != PaneRoleAgent || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindAgent || pane.Metadata.OwnerUID() != agentUID {
+		return refused()
+	}
+	a := pane.Status.Activation
+	window, wok := reg.Window(agent.Metadata.OwnerUID())
+	if !wok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != KindProject || a.RuntimeID != "" || a.AgentUID != agentUID || a.Generation != e.Generation || verify == nil || !verify(e) {
+		return refused()
+	}
+	if _, ok := reg.Project(window.Metadata.OwnerUID()); !ok {
+		return refused()
+	}
+	return AgentRouteRef{AgentUID: agentUID, PaneUID: e.PaneUID, Generation: e.Generation, authority: e}, ""
 }
 
 func resolveAgentRoute(reg Registry, agentUID string, requireRuntime bool) (AgentRouteRef, string) {
