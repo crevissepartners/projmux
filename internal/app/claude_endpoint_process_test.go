@@ -29,6 +29,10 @@ import (
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
+// Each fixture operation gets its own bound. Successful observations return
+// immediately; this leaves room for the measured CPU contention on CI runners.
+const claudeEndpointProcessWaitTimeout = 30 * time.Second
+
 // The synthetic provider owns a disposable socket and token, emits only the
 // public SessionStart input, and accepts exactly the documented auth line plus
 // the one owner-frozen user frame. It never runs a model or uses a vendor
@@ -156,7 +160,7 @@ func processFixtureReplyTmux(t *testing.T, root, paneUID string) ([]string, stri
 	}
 	environment = append(environment, "TMUX_TMPDIR="+temporary)
 	run := func(args ...string) ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 		defer cancel()
 		command := exec.CommandContext(ctx, binary, args...)
 		command.Env = environment
@@ -176,7 +180,7 @@ func processFixtureReplyTmux(t *testing.T, root, paneUID string) ([]string, stri
 		// Exact captured socket under the isolated root; inherited tmux context
 		// was removed from every command, including this cleanup invocation.
 		_, _ = run("-S", socket, "kill-server")
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(claudeEndpointProcessWaitTimeout)
 		for {
 			pending := false
 			for _, identity := range identities {
@@ -303,7 +307,7 @@ func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, cl
 	var observed codexbroker.Event
 	select {
 	case observed = <-events:
-	case <-time.After(5 * time.Second):
+	case <-time.After(claudeEndpointProcessWaitTimeout):
 		cleanup()
 		t.Fatal("source broker snapshot timed out")
 	}
@@ -399,23 +403,22 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-done:
-		case <-time.After(3 * time.Second):
+		case <-time.After(claudeEndpointProcessWaitTimeout):
 			_ = cmd.Process.Kill()
-			t.Error("provider process did not stop")
+			t.Error("provider cleanup: waiting for process exit timed out")
 		}
 		cleanupClaudeEndpointTestActivation(metadataStore, superviseSpec{RegistryPath: registryPath, PaneUID: h.paneUID, AgentUID: h.agentUID, Generation: h.envGeneration})
 	}()
-	_ = capture.SetDeadline(time.Now().Add(8 * time.Second))
+	_ = capture.SetDeadline(time.Now().Add(claudeEndpointProcessWaitTimeout))
 	readReceipt, err := capture.AcceptUnix()
 	if err != nil {
-		t.Fatal("provider capture startup failed")
+		t.Fatalf("provider capture accept: waiting for connection failed: %v", err)
 	}
 	defer readReceipt.Close()
-	_ = readReceipt.SetReadDeadline(time.Now().Add(8 * time.Second))
-	reader := bufio.NewReader(readReceipt)
-	line, err := reader.ReadBytes('\n')
+	reader := &claudeProcessCaptureReader{connection: readReceipt, reader: bufio.NewReader(readReceipt)}
+	line, err := reader.ReadBytes("private registration receipt")
 	if err != nil {
-		t.Fatal("provider did not produce private registration receipt")
+		t.Fatalf("provider private registration receipt: %v", err)
 	}
 	var private struct {
 		Socket, Token, PaneEnv, GenerationEnv, RegistryEnv string
@@ -474,7 +477,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		challenge := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: ref, Target: target,
 			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: original.Deadline, BrokerEnvelope: &original}
 		_, _ = writeControl.WriteString(command + "\n")
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "qualify", Target: target, Envelope: &challenge, Qualification: ptrQualification(exactQualificationEvidence(route, time.Now().UTC())), ExplicitOptIn: true})
 		cancel()
@@ -483,7 +486,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 		assertProviderReceipt(t, reader, "qualification", claudeQualificationMarkerPrefix)
 		waitLine(t, reader, "qualification-explicit-returned\n")
-		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 		status, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "qualification-status", Target: target, QualificationRef: response.QualificationRef})
 		cancel()
@@ -518,7 +521,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 		runCLI := func(args ...string) ([]byte, error) {
 			t.Helper()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 			defer cancel()
 			command := exec.CommandContext(ctx, binary, args...)
 			command.Dir = root
@@ -584,7 +587,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		privateEnvelope := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: ref, Target: target,
 			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: public.Deadline, BrokerEnvelope: &public}
 		_, _ = writeControl.WriteString(command + "\n")
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "submit", Target: target, Envelope: &privateEnvelope})
 		cancel()
@@ -609,7 +612,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		t.Fatal("replacement inherited the old registration")
 	}
 	target, _ := claudeTargetForRoute(second)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 	unqualified, callErr := callClaudeCoordination(ctx, registryPath, second, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "submit", Target: target, Envelope: ptrCoordination(dialogueForRoute("pre-ready", second, time.Now().UTC()))})
 	cancel()
@@ -645,9 +648,9 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			if _, err := writeControl.Write(append(request, '\n')); err != nil {
 				t.Fatal(err)
 			}
-			line, err := reader.ReadBytes('\n')
+			line, err := reader.ReadBytes("explicit reply process result")
 			if err != nil {
-				t.Fatal("provider reply process did not return")
+				t.Fatalf("provider explicit reply process result did not return: %v", err)
 			}
 			var result struct {
 				Exit   int    `json:"replyExit"`
@@ -664,7 +667,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 		status := func(ref string) agentMessageReceipt {
 			t.Helper()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
 			defer cancel()
 			command := exec.CommandContext(ctx, binary, "agent", "message", "status", ref, "-o", "json")
 			command.Env, command.Dir = claudeEndpointProcessEnv(root, binary), root
@@ -743,8 +746,8 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal("provider process failed")
 		}
-	case <-time.After(8 * time.Second):
-		t.Fatal("provider exit deadline")
+	case <-time.After(claudeEndpointProcessWaitTimeout):
+		t.Fatal("provider exit: waiting for process exit timed out")
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatal("registration process wrote stdout or stderr")
@@ -762,17 +765,40 @@ func dialogueForRoute(ref string, route coremetadata.AgentRouteRef, now time.Tim
 	return envelope
 }
 
-func waitLine(t *testing.T, reader *bufio.Reader, want string) {
+// Capture reads must not share an absolute deadline across provider stages.
+// Keep the buffered reader so bytes arriving ahead of a stage stay observable.
+type claudeProcessCaptureReader struct {
+	connection net.Conn
+	reader     *bufio.Reader
+}
+
+func (r *claudeProcessCaptureReader) ReadBytes(stage string) ([]byte, error) {
+	if err := r.connection.SetReadDeadline(time.Now().Add(claudeEndpointProcessWaitTimeout)); err != nil {
+		return nil, fmt.Errorf("%s: set capture read deadline: %w", stage, err)
+	}
+	line, err := r.reader.ReadBytes('\n')
+	if err != nil {
+		return line, fmt.Errorf("%s: waiting for capture line: %w", stage, err)
+	}
+	return line, nil
+}
+
+func (r *claudeProcessCaptureReader) ReadString(stage string) (string, error) {
+	line, err := r.ReadBytes(stage)
+	return string(line), err
+}
+
+func waitLine(t *testing.T, reader *claudeProcessCaptureReader, want string) {
 	t.Helper()
-	line, err := reader.ReadString('\n')
+	line, err := reader.ReadString("provider barrier " + strconv.Quote(want))
 	if err != nil || line != want {
 		t.Fatalf("provider barrier=%q err=%v, want %q", line, err, want)
 	}
 }
 
-func assertProviderReceipt(t *testing.T, reader *bufio.Reader, kind, contains string) {
+func assertProviderReceipt(t *testing.T, reader *claudeProcessCaptureReader, kind, contains string) {
 	t.Helper()
-	line, err := reader.ReadBytes('\n')
+	line, err := reader.ReadBytes("provider " + kind + " receipt containing " + strconv.Quote(contains))
 	var receipt struct {
 		Received string `json:"received"`
 		Content  string `json:"content"`
