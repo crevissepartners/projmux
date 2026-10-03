@@ -320,7 +320,7 @@ func (c *codexAdapter) readOutput() {
 	active := c.p.state == "ready" || c.p.state == "starting"
 	c.p.mu.Unlock()
 	if active {
-		c.p.protocolFailure(errors.New("Codex connection lost"))
+		c.p.protocolFailure(errors.New("codex connection lost"))
 	}
 }
 func (c *codexAdapter) consume(n codexappserver.Notification) error {
@@ -344,7 +344,7 @@ func (c *codexAdapter) consume(n codexappserver.Notification) error {
 		return errors.New("malformed Codex notification")
 	}
 	if identity.ThreadID != "" && identity.ThreadID != p.session {
-		return errors.New("Codex thread changed")
+		return errors.New("codex thread changed")
 	}
 	if identity.Turn.ID != "" {
 		identity.TurnID = identity.Turn.ID
@@ -380,7 +380,7 @@ func (c *codexAdapter) consume(n codexappserver.Notification) error {
 		}
 		raw, _ := json.Marshal(n)
 		if len(raw) > p.host.limits.FrameBytes {
-			return errors.New("Codex token exceeds host limit")
+			return errors.New("codex token exceeds host limit")
 		}
 		req := Request{ID: key, Connection: p.connection, Session: p.session, Turn: p.turn, Kind: kind, Tool: n.Method, Input: raw}
 		p.requests[key] = req
