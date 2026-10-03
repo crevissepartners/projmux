@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 func newProcessAttentionFixture(t *testing.T, root string, b processhost.Binding, provider string) (*processAttentionStore, *notify.Store, *processAttentionProjection) {
@@ -182,19 +183,56 @@ func attentionRecord(t *testing.T, s *processAttentionStore, pane string) proces
 	return r[pane]
 }
 
+type processAttentionRetryMeasurement struct {
+	attempts, timeouts int
+	longest            time.Duration
+}
+
+// Each attempt models a fresh sync: only a lock timeout is retried, and the
+// store callback is never replayed automatically after a timed-out acquisition.
+func activateProcessAttentionWithRetry(t *testing.T, s *processAttentionStore, b processhost.Binding) (processAttentionRetryMeasurement, error) {
+	t.Helper()
+	var measured processAttentionRetryMeasurement
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		began := time.Now()
+		err = s.activate(b, "claude", "")
+		measured.attempts++
+		measured.longest = max(measured.longest, time.Since(began))
+		if !errors.Is(err, localstate.ErrLockTimeout) {
+			return measured, err
+		}
+		measured.timeouts++
+		t.Logf("writer %s attempt %d: explicit lock timeout: %v", b.Pane, attempt, err)
+	}
+	return measured, err
+}
+
 func TestProcessAttentionConcurrentWritersRestartAndStaleGeneration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "attention.json")
 	var wg sync.WaitGroup
+	measurements := make(chan processAttentionRetryMeasurement, 24)
 	for i := range 24 {
 		wg.Go(func() {
 			s := &processAttentionStore{path: path}
 			b := processhost.Binding{Pane: fmt.Sprintf("pane-%d", i), Host: "host", Generation: "old"}
-			if err := s.activate(b, "claude", ""); err != nil {
-				t.Error(err)
+			measured, err := activateProcessAttentionWithRetry(t, s, b)
+			if err != nil {
+				t.Errorf("writer %s exhausted bounded attempts: %v", b.Pane, err)
 			}
+			measurements <- measured
 		})
 	}
 	wg.Wait()
+	close(measurements)
+	var retries, timeouts int
+	var longest time.Duration
+	for measured := range measurements {
+		retries += measured.attempts - 1
+		timeouts += measured.timeouts
+		longest = max(longest, measured.longest)
+	}
+	t.Logf("24 durable writers: retries=%d explicit timeouts=%d max attempt duration (lock-wait upper bound)=%s", retries, timeouts, longest)
 	s := &processAttentionStore{path: path}
 	records, err := s.read()
 	if err != nil || len(records) != 24 {
@@ -592,5 +630,287 @@ func TestProcessAttentionEventStateMachine(t *testing.T) {
 	}
 	if err = r.reconcilePending(processhost.Snapshot{Sequence: 4, Pending: []processhost.Request{{ID: "a"}}}, func(notify.PushInput) error { t.Fatal("terminal replay"); return nil }); err != nil || len(r.Pending) != 0 {
 		t.Fatalf("terminal: %+v %v", r, err)
+	}
+}
+
+// Holding the real lock is the input; contention and the persisted result are
+// the assertions. The delay models a durable writer slower than the picker
+// budget, rather than a window in which a goroutine is assumed to run.
+func TestProcessAttentionLockWaitsBeyondPickerBudget(t *testing.T) {
+	s := newProcessAttentionStore(t.TempDir())
+	lock, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	contended := make(chan struct{})
+	s.afterContendedLock = func() { close(contended) }
+	b := processhost.Binding{Pane: "pane", Host: "host", Generation: "generation"}
+	done := make(chan error, 1)
+	go func() { done <- s.activate(b, "claude", "") }()
+	<-contended
+	time.Sleep(600 * time.Millisecond)
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if attentionRecord(t, s, b.Pane).Binding != b {
+		t.Fatal("writer lost after contention")
+	}
+}
+
+func TestProcessAttentionLockTimeoutDoesNotRunChange(t *testing.T) {
+	s := newProcessAttentionStore(t.TempDir())
+	b := processhost.Binding{Pane: "pane", Host: "host", Generation: "generation"}
+	if err := s.activate(b, "claude", ""); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.OpenFile(s.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	s.lockWaitLimit = 20 * time.Millisecond
+	calls := 0
+	change := func(records map[string]processAttentionRecord) error {
+		calls++
+		r := records[b.Pane]
+		r.Sequence++
+		records[b.Pane] = r
+		return nil
+	}
+	if err = s.update(change); !errors.Is(err, localstate.ErrLockTimeout) {
+		t.Fatalf("held lock: %v", err)
+	}
+	if calls != 0 || attentionRecord(t, s, b.Pane).Sequence != 0 {
+		t.Fatal("timed out writer changed state")
+	}
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	s.lockWaitLimit = 0
+	if err = s.update(change); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || attentionRecord(t, s, b.Pane).Sequence != 1 {
+		t.Fatal("retry did not commit exactly once")
+	}
+}
+
+func assertProcessAttentionControlProgress(t *testing.T, s *processAttentionStore, syncControl func() error, waitCompleted func(), nextTurn func()) {
+	t.Helper()
+	lock, err := os.OpenFile(s.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	contended := make(chan struct{}, 2)
+	s.afterContendedLock = func() { contended <- struct{}{} }
+	done := make(chan error, 2)
+	calls := 0
+	defer func() {
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		for range calls {
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	began := time.Now()
+	go func() { done <- syncControl() }()
+	calls++
+	<-contended
+	// The provider's completion is observed while the attention lock remains
+	// held. A second control reconciliation must also pass the first waiter.
+	waitCompleted()
+	nextTurn()
+	go func() { done <- syncControl() }()
+	calls++
+	<-contended
+	waitCompleted()
+	t.Logf("response and next turn completed with attention locked: %s", time.Since(began))
+}
+
+func TestProcessAttentionLockDoesNotBlockClaudeControl(t *testing.T) {
+	f := newProcessClaudeFixture(t, nil)
+	s, _, p := newProcessAttentionFixture(t, f.root, f.binding, "claude")
+	f.control.attention = p
+	f.turn(t, "question", "question")
+	f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
+	if err := f.control.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	q, err := f.control.questions.List(f.binding.Agent)
+	if err != nil || len(q) != 1 {
+		t.Fatalf("questions: %v %v", q, err)
+	}
+	if _, err = f.control.questions.Answer(q[0].ID, f.binding.Agent, map[string]string{"Color?": "blue"}); err != nil {
+		t.Fatal(err)
+	}
+	assertProcessAttentionControlProgress(t, s,
+		func() error { return f.control.sync(context.Background()) },
+		func() { f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" }) },
+		func() { f.turn(t, "next", "success") })
+}
+
+func TestProcessAttentionLockDoesNotBlockCodexControl(t *testing.T) {
+	f := newProcessCodexFixture(t, nil)
+	b := f.endpoint.binding
+	s, _, p := newProcessAttentionFixture(t, f.root, b, "codex")
+	f.control.attention = p
+	f.turn(t, "controls", "controls")
+	f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+	if err := f.control.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	q, err := f.control.questions.List(b.Agent)
+	if err != nil || len(q) != 1 {
+		t.Fatalf("questions: %v %v", q, err)
+	}
+	a, err := f.control.approvals.List(b.Agent)
+	if err != nil || len(a) != 1 {
+		t.Fatalf("approvals: %v %v", a, err)
+	}
+	if _, err = f.control.questions.Answer(q[0].ID, b.Agent, map[string]string{"q": `["blue"]`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.control.approvals.Answer(a[0].ID, b.Agent, false, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	assertProcessAttentionControlProgress(t, s,
+		func() error { return f.control.sync(context.Background()) },
+		func() { f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" }) },
+		func() { f.turn(t, "next", "success") })
+}
+
+func TestProcessAttentionConcurrentWritersRetryAfterTimeout(t *testing.T) {
+	root := t.TempDir()
+	path := newProcessAttentionStore(root).path
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+
+	contended := make(chan struct{}, 24)
+	callbacks := make(chan struct{}, 24)
+	first := make(chan error, 24)
+	stores := make([]*processAttentionStore, 24)
+	bindings := make([]processhost.Binding, 24)
+	for i := range 24 {
+		b := processhost.Binding{Pane: fmt.Sprintf("pane-%d", i), Host: "host", Generation: "generation"}
+		s := &processAttentionStore{path: path, lockWaitLimit: 20 * time.Millisecond, afterContendedLock: func() { contended <- struct{}{} }}
+		stores[i], bindings[i] = s, b
+		go func() {
+			first <- s.update(func(records map[string]processAttentionRecord) error {
+				callbacks <- struct{}{}
+				records[b.Pane] = processAttentionRecord{Binding: b, Sequence: 1}
+				return nil
+			})
+		}()
+	}
+	for range 24 {
+		<-contended
+	}
+	for range 24 {
+		if err = <-first; !errors.Is(err, localstate.ErrLockTimeout) {
+			t.Fatalf("first attempt: %v", err)
+		}
+	}
+	records, err := (&processAttentionStore{path: path}).read()
+	if err != nil || len(records) != 0 || len(callbacks) != 0 {
+		t.Fatalf("timeout committed: records=%d callbacks=%d err=%v", len(records), len(callbacks), err)
+	}
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+
+	results := make(chan processAttentionRetryMeasurement, 24)
+	var wg sync.WaitGroup
+	for i := range 24 {
+		stores[i].lockWaitLimit, stores[i].afterContendedLock = 0, nil
+		wg.Go(func() {
+			measured, retryErr := activateProcessAttentionWithRetry(t, stores[i], bindings[i])
+			if retryErr != nil {
+				t.Errorf("retry %s: %v", bindings[i].Pane, retryErr)
+			}
+			results <- measured
+		})
+	}
+	wg.Wait()
+	close(results)
+	var retries = 24 // each writer starts a new sync after its explicit timeout
+	var longest time.Duration
+	for measured := range results {
+		retries += measured.attempts - 1
+		longest = max(longest, measured.longest)
+	}
+	records, err = (&processAttentionStore{path: path}).read()
+	if err != nil || len(records) != 24 || len(callbacks) != 0 {
+		t.Fatalf("retry lost state: records=%d callbacks=%d err=%v", len(records), len(callbacks), err)
+	}
+	for _, b := range bindings {
+		if r := records[b.Pane]; r.Binding != b || r.Sequence != 0 {
+			t.Fatalf("late timed-out callback or lost writer: %+v", r)
+		}
+	}
+	t.Logf("explicit first timeouts=24 callbacks=0; final records=24 retries=%d max retry duration (lock-wait upper bound)=%s", retries, longest)
+}
+
+func TestProcessAttentionProjectionLockTimeoutRetriesCursor(t *testing.T) {
+	f := newProcessCodexFixture(t, nil)
+	b := f.endpoint.binding
+	s, queue, projection := newProcessAttentionFixture(t, f.root, b, "codex")
+	f.turn(t, "attention-cursor", "controls")
+	f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+	before := attentionRecord(t, s, b.Pane)
+	lock, err := os.OpenFile(s.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	s.lockWaitLimit = 20 * time.Millisecond
+	if err = projection.sync(f.endpoint.handle, b); !errors.Is(err, localstate.ErrLockTimeout) {
+		t.Fatalf("first sync: %v", err)
+	}
+	after := attentionRecord(t, s, b.Pane)
+	notices, err := queue.List()
+	if err != nil || after.Sequence != before.Sequence || len(after.Pending) != 0 || len(notices) != 0 {
+		t.Fatalf("timeout consumed events: %+v notices=%d err=%v", after, len(notices), err)
+	}
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	s.lockWaitLimit = 0
+	for range 2 {
+		if err = projection.sync(f.endpoint.handle, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after = attentionRecord(t, s, b.Pane)
+	notices, err = queue.List()
+	if err != nil || after.Sequence <= before.Sequence || len(after.Pending) != 2 || len(notices) != 2 {
+		t.Fatalf("retry lost or duplicated events: %+v notices=%d err=%v", after, len(notices), err)
 	}
 }

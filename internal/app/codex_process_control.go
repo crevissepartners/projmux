@@ -49,6 +49,23 @@ func (c *codexProcessControl) closeRecord(id string, r processhost.Request) {
 	}
 }
 func (c *codexProcessControl) sync(ctx context.Context) error {
+	controlErr := c.syncControls(ctx)
+	if c.endpoint == nil {
+		return controlErr
+	}
+	// Durable attention writers must not hold up another control response.
+	// Even a closed control authority still needs its terminal projection.
+	attentionErr := c.attention.sync(c.endpoint.handle, c.endpoint.binding)
+	if controlErr == nil {
+		return attentionErr
+	}
+	if attentionErr == nil {
+		return controlErr
+	}
+	return errors.Join(controlErr, attentionErr)
+}
+
+func (c *codexProcessControl) syncControls(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.endpoint == nil || c.questions == nil || c.approvals == nil || c.now == nil || c.questionWindow <= 0 || c.approvalWindow <= 0 {
@@ -58,9 +75,6 @@ func (c *codexProcessControl) sync(ctx context.Context) error {
 		c.records = make(map[string]processhost.Request)
 	}
 	e := c.endpoint
-	if err := c.attention.sync(e.handle, e.binding); err != nil {
-		return err
-	}
 	if _, err := e.route(ctx); err != nil {
 		for id, r := range c.records {
 			c.closeRecord(id, r)

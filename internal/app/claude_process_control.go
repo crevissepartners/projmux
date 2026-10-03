@@ -45,13 +45,27 @@ func processClaudeControlID(b processhost.Binding, r processhost.Request) string
 // sync reconciles one bounded snapshot. All response writes go through the
 // Handle's exact pending token, including concurrent callers and stale answers.
 func (c *claudeProcessControl) sync(ctx context.Context) error {
+	controlErr := c.syncControls(ctx)
+	if c.handle == nil {
+		return controlErr
+	}
+	// Durable attention writers must not hold up another control response.
+	// Even a closed control authority still needs its terminal projection.
+	attentionErr := c.attention.sync(c.handle, c.binding)
+	if controlErr == nil {
+		return attentionErr
+	}
+	if attentionErr == nil {
+		return controlErr
+	}
+	return errors.Join(controlErr, attentionErr)
+}
+
+func (c *claudeProcessControl) syncControls(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.handle == nil || c.questions == nil || c.approvals == nil || c.now == nil || c.questionWindow <= 0 || c.approvalWindow <= 0 {
 		return errors.New("incomplete Claude process control")
-	}
-	if err := c.attention.sync(c.handle, c.binding); err != nil {
-		return err
 	}
 	snap, err := c.handle.Observe(c.binding)
 	if err != nil {
