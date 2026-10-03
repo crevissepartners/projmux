@@ -41,11 +41,12 @@ func (claudeProcessProof) String() string   { return "[private process binding]"
 func (claudeProcessProof) GoString() string { return "[private process binding]" }
 
 type claudeProcessCheck struct {
-	Binding  processhost.Binding
-	Session  string
-	Register bool
-	Lookup   bool
-	Input    *claudeProcessInput
+	Binding    processhost.Binding
+	Session    string
+	Register   bool
+	Lookup     bool
+	Input      *claudeProcessInput
+	Foreground *processForegroundRequest
 }
 
 type claudeProcessInput struct {
@@ -86,6 +87,9 @@ func (s *claudeProcessService) close(ctx context.Context) error {
 func listenProcessHost(socket string) (*localipc.Listener, func(context.Context) error, error) {
 	dir := filepath.Dir(socket)
 	if err := os.Mkdir(dir, 0700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil, nil, errors.Join(processhost.ErrBusy, err)
+		}
 		return nil, nil, err
 	}
 	owned, err := os.Lstat(dir)
@@ -160,6 +164,15 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	}
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
+	if request.Foreground != nil {
+		if request.Input != nil || request.Register || request.Lookup {
+			return
+		}
+		r := *request.Foreground
+		result := controlProcessForeground(bounded, peer, r, s.currentForeground, func() error { return applyClaudeForeground(bounded, s.handle, r) })
+		_ = localipc.WriteJSON(conn, result)
+		return
+	}
 	_ = localipc.WriteJSON(conn, s.check(bounded, request, peer, parent))
 }
 
@@ -191,6 +204,41 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 		return refused
 	}
 	return claudeProcessCheckResult{Process: process, Valid: true, Binding: binding}
+}
+
+// Foreground control revalidates the same immutable owned child and Registry
+// chain as registration, without registering hooks or writing Registry state.
+func (s *claudeProcessService) currentForeground(ctx context.Context, a processhost.Authority) error {
+	if a.Binding != s.binding || s.handle.ValidateAuthority(ctx, a) != nil {
+		return processhost.ErrStale
+	}
+	snap, err := s.handle.Observe(s.binding)
+	if err != nil || (snap.State != "ready" && snap.State != "starting") {
+		return processhost.ErrStale
+	}
+	child, parent, err := localipc.Process(snap.PID)
+	if err != nil || child != s.ownedProcess {
+		return processhost.ErrStale
+	}
+	_, hostPID, err := localipc.Process(parent)
+	if err != nil || hostPID != os.Getpid() {
+		return processhost.ErrStale
+	}
+	reg, err := intmetadata.NewStore(s.registryPath).LoadDegradedReadOnly()
+	if err != nil {
+		return err
+	}
+	pane, ok := reg.Pane(s.binding.Pane)
+	agent, found := reg.Agent(s.binding.Agent)
+	window, windowFound := reg.Window(s.binding.Window)
+	if !ok || !found || !windowFound || pane.Status.Activation.RuntimeID != "" ||
+		pane.Status.Activation.Generation != s.binding.Generation || pane.Status.Activation.OperationID != s.binding.Operation ||
+		pane.Status.Activation.AgentUID != s.binding.Agent || pane.Metadata.OwnerUID() != s.binding.Agent ||
+		agent.Status.PaneRef != s.binding.Pane || agent.Metadata.OwnerUID() != s.binding.Window || window.Metadata.OwnerUID() != s.binding.Project ||
+		(pane.Status.Activation.Claude != nil && pane.Status.Activation.Claude.Process != child) {
+		return processhost.ErrStale
+	}
+	return nil
 }
 
 func (s *claudeProcessService) recordActivation(process coremetadata.ProcessIdentity) error {

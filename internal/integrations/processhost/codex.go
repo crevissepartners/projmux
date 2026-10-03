@@ -207,13 +207,13 @@ func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt 
 		p.mu.Unlock()
 		return ErrStale
 	}
-	if p.turn != "" || len(p.usedTurns) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+	if p.turn != "" || p.activeCriticalLocked() >= p.host.limits.Events {
 		p.mu.Unlock()
 		return ErrBusy
 	}
 	// Consume operation before the write. Even a refused operation cannot be
 	// replayed; an uncertain outcome still terminates the owned connection.
-	p.usedTurns[operation] = true
+	p.rememberTurnLocked(operation)
 	c.awaitingReply = true
 	p.mu.Unlock()
 	settings := p.launch.adapter.(CodexConfig).Settings
@@ -446,7 +446,7 @@ func (c *codexAdapter) consumeLocked(n codexappserver.Notification) error {
 		if p.usedRequests[key] {
 			return nil
 		}
-		if len(p.requests) >= p.host.limits.Requests || len(p.usedRequests) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+		if len(p.requests) >= p.host.limits.Requests || len(p.usedRequests) >= p.host.limits.Events || p.activeCriticalLocked() >= p.host.limits.Events {
 			return ErrBusy
 		}
 		raw, _ := json.Marshal(n)
@@ -469,6 +469,7 @@ func (c *codexAdapter) consumeLocked(n codexappserver.Notification) error {
 		p.emitLocked("turn-result", n.Params, nil)
 		p.turn, p.interrupt = "", ""
 		p.interruptAck = false
+		p.trimCriticalLocked()
 	default:
 		if identity.TurnID != "" && identity.TurnID != p.turn {
 			return ErrStale
