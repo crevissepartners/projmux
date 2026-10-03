@@ -121,7 +121,7 @@ func TestUpdateConvergentSkipsTheAtomicWriteForAnUnchangedRegistry(t *testing.T)
 
 const newerSchemaRegistry = `{
   "apiVersion": "projmux.io/v2",
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "updatedAt": "2026-08-15T09:30:00Z",
   "projects": [
     {
@@ -510,7 +510,7 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 	}
 	got := []byte(readFile(t, store.Path()))
 	if bytes.Contains(got, []byte(`"primaryPaneRef"`)) || bytes.Contains(got, []byte(`"displayName"`)) ||
-		bytes.Contains(got, []byte(`"displayTitle"`)) || !bytes.Contains(got, []byte(`"schemaVersion": 4`)) {
+		bytes.Contains(got, []byte(`"displayTitle"`)) || !bytes.Contains(got, []byte(`"schemaVersion": 5`)) {
 		t.Fatalf("migrated bytes do not use the canonical v4 shape:\n%s", got)
 	}
 	var migrated coremetadata.Registry
@@ -620,7 +620,7 @@ func TestSchemaV3WriterSimulationRefusesV4BeforeItsMutationCallback(t *testing.T
 		return nil
 	}
 	err := legacyV3Write(data, func() { writes++ })
-	if envelope.SchemaVersion != 4 || !errors.Is(err, coremetadata.ErrSchemaTooNew) || writes != 0 || !bytes.Equal(data, before) {
+	if envelope.SchemaVersion != coremetadata.SchemaVersion || !errors.Is(err, coremetadata.ErrSchemaTooNew) || writes != 0 || !bytes.Equal(data, before) {
 		t.Fatalf("v3 writer downgrade refusal = version:%d err:%v writes:%d bytesChanged:%t",
 			envelope.SchemaVersion, err, writes, !bytes.Equal(data, before))
 	}
@@ -913,7 +913,7 @@ func TestRegisteredProjectPersistsTheOfflineTopologyAndFinalWindowRefs(t *testin
 	}
 
 	got := readFile(t, store.Path())
-	if !strings.Contains(got, `"schemaVersion": 4`) || strings.Contains(got, `"displayName"`) || strings.Contains(got, `"displayTitle"`) {
+	if !strings.Contains(got, `"schemaVersion": 5`) || strings.Contains(got, `"displayName"`) || strings.Contains(got, `"displayTitle"`) {
 		t.Fatalf("registry file does not use the canonical v4 shape:\n%s", got)
 	}
 

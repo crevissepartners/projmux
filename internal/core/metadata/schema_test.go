@@ -68,7 +68,7 @@ func TestRegistryGenerationMigrationGoldens(t *testing.T) {
 			assertExistingIdentityAndAgentPointersPreserved(t, before, migrated)
 
 			got := []byte(mustJSON(t, migrated) + "\n")
-			if !bytes.Contains(got, []byte(`"schemaVersion": 4`)) || bytes.Contains(got, []byte(`"displayName"`)) || bytes.Contains(got, []byte(`"displayTitle"`)) {
+			if !bytes.Contains(got, []byte(`"schemaVersion": 5`)) || bytes.Contains(got, []byte(`"displayName"`)) || bytes.Contains(got, []byte(`"displayTitle"`)) {
 				t.Fatalf("generation migration did not produce a presentation-free v4 document:\n%s", got)
 			}
 
@@ -160,7 +160,7 @@ func TestValidV3CanonicalAnchorMigratesOnceToV4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ran || report.FromVersion != 3 || report.ToVersion != 4 {
+	if !ran || report.FromVersion != 3 || report.ToVersion != SchemaVersion {
 		t.Fatalf("valid v3 anchor migration = ran:%t report:%s", ran, report.String())
 	}
 	again, ranAgain, secondReport, err := MigrateRegistryWithEnvironment(nil, migrated, migrationGoldenEnvironment())
@@ -184,7 +184,7 @@ func TestCanonicalV2MigratesToV3WithoutInformationLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ran || report.FromVersion != 2 || report.ToVersion != 4 || len(report.Repairs) != 0 || report.InformationLossCount() != 0 {
+	if !ran || report.FromVersion != 2 || report.ToVersion != SchemaVersion || len(report.Repairs) != 0 || report.InformationLossCount() != 0 {
 		t.Fatalf("v2 -> v4 migration = ran:%t report:%s", ran, report.String())
 	}
 	var v3 Registry
@@ -448,7 +448,7 @@ func rewriteLegacyReservationScopes(reg *Registry) {
 func TestProductionShipsEveryMigrationThroughRootScopedSchemaV4(t *testing.T) {
 	t.Parallel()
 
-	if len(productionMigrations) != 3 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil {
+	if len(productionMigrations) != 4 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil || productionMigrations[4] == nil {
 		t.Fatalf("production migrations = %v, want v1 -> v2, v2 -> v3, and v3 -> v4 steps", productionMigrations)
 	}
 }
@@ -506,7 +506,7 @@ func TestARegisteredOlderStepTurnsRejectionIntoMigrationWithoutChangingProductio
 		t.Fatalf("classify with an injected step = %d, want migrate", action)
 	}
 	// Registering a step in a private set never mutates the production set.
-	if len(productionMigrations) != 3 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil {
+	if len(productionMigrations) != 4 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil || productionMigrations[4] == nil {
 		t.Fatalf("production migrations were mutated: %v", productionMigrations)
 	}
 }

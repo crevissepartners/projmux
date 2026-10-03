@@ -21,8 +21,9 @@ import (
 // The registry read result fence pins what the envelope read returns for every
 // input shape the two-pass decode order can see, so a later rewrite of that
 // order has to reproduce it exactly. Pinned values below are literals observed
-// on main 1e7888ca. They must not be edited to follow a product change: a
-// change that moves one of them is a behavior change, not a fence update.
+// initially on main 1e7888ca. Schema v5 deliberately changes the current
+// envelope and migration output; its literals were re-observed with that
+// storage change. Decode order and refusal categories remain pinned.
 
 // legacyReadWithoutRepairWithReport is a frozen copy of
 // (*Store).readWithoutRepairWithReport as of main 1e7888ca: decode the
@@ -113,7 +114,7 @@ func legacyClassifyRegistryBytes(info *RegistryFileInfo, data []byte, migrations
 	info.Contents = contentsOf(migrated)
 }
 
-// fenceCurrentFields is every top-level field of a valid schema-v4 registry
+// fenceCurrentFields is every top-level field of a valid schema-v5 registry
 // except schemaVersion, so rows can place the version key (or its absence,
 // duplicates, and case variants) anywhere around the same body. Every root is
 // absolute and absent from any machine.
@@ -126,7 +127,7 @@ const fenceCurrentFields = `  "apiVersion": "projmux.io/v1alpha1",
     {"apiVersion": "projmux.io/v1alpha1", "kind": "Window", "metadata": {"uid": "window-fence", "name": "editor", "ownerRef": {"kind": "Project", "uid": "project-fence"}, "createdAt": "2026-08-15T09:30:00Z"}, "spec": {"anchorPaneRef": "pane-fence", "defaultShellPaneRef": "pane-fence"}}
   ],
   "panes": [
-    {"apiVersion": "projmux.io/v1alpha1", "kind": "Pane", "metadata": {"uid": "pane-fence", "name": "shell", "ownerRef": {"kind": "Window", "uid": "window-fence"}, "createdAt": "2026-08-15T09:30:00Z"}, "spec": {"role": "shell", "cwd": "/projmux-fence-missing/fence", "command": "zsh"}, "status": {}}
+    {"apiVersion": "projmux.io/v1alpha1", "kind": "Pane", "metadata": {"uid": "pane-fence", "name": "shell", "ownerRef": {"kind": "Window", "uid": "window-fence"}, "createdAt": "2026-08-15T09:30:00Z"}, "spec": {"runtime": {"kind": "tmux"}, "role": "shell", "cwd": "/projmux-fence-missing/fence", "command": "zsh"}, "status": {}}
   ],
   "nameReservations": [
     {"kind": "Project", "name": "fence", "uid": "project-fence"},
@@ -240,15 +241,15 @@ type registryReadFenceRow struct {
 // registryReadFenceRows is the one input matrix shared by the fence tables, the
 // differential test, and the fuzz seeds.
 func registryReadFenceRows() []registryReadFenceRow {
-	current := fenceEnvelope(`"schemaVersion": 4`, "")
-	unknown := fenceEnvelope(`"schemaVersion": 5`, "")
+	current := fenceEnvelope(`"schemaVersion": 5`, "")
+	unknown := fenceEnvelope(`"schemaVersion": 6`, "")
 	return []registryReadFenceRow{
-		{name: "current-v4-valid", data: current},
-		{name: "current-v4-valid-initialized", data: current, initialized: true},
+		{name: "current-v5-valid", data: current},
+		{name: "current-v5-valid-initialized", data: current, initialized: true},
 		{name: "migration-v1-valid", data: []byte(fenceV1Registry)},
 		{name: "migration-v2-valid", data: []byte(fenceV2Registry)},
 		{name: "migration-v3-valid", data: []byte(v3RootCollisionRegistry)},
-		{name: "newer-v5", data: []byte(newerSchemaRegistry)},
+		{name: "newer-v6", data: []byte(newerSchemaRegistry)},
 		{name: "negative-version", data: fenceEnvelope(`"schemaVersion": -1`, "")},
 		{name: "zero-version", data: fenceEnvelope(`"schemaVersion": 0`, "")},
 		{name: "absent-version", data: fenceEnvelope("", "")},
@@ -257,8 +258,8 @@ func registryReadFenceRows() []registryReadFenceRow {
 		{name: "null-version", data: fenceEnvelope(`"schemaVersion": null`, "")},
 		// A string, a float literal, and an int64 overflow all fail the
 		// envelope decode itself, so they are malformed and never classified.
-		{name: "string-version", data: fenceEnvelope(`"schemaVersion": "4"`, "")},
-		{name: "float-version", data: fenceEnvelope(`"schemaVersion": 4.0`, "")},
+		{name: "string-version", data: fenceEnvelope(`"schemaVersion": "5"`, "")},
+		{name: "float-version", data: fenceEnvelope(`"schemaVersion": 5.0`, "")},
 		{name: "overflow-version", data: fenceEnvelope(`"schemaVersion": 99999999999999999999`, "")},
 		// json.Unmarshal validates the whole input before decoding, so a
 		// truncated or trailing-garbage document is malformed even when its
@@ -266,31 +267,31 @@ func registryReadFenceRows() []registryReadFenceRow {
 		{name: "truncated-known-version", data: current[:len(current)/2]},
 		{name: "truncated-unknown-version", data: unknown[:len(unknown)/2]},
 		{name: "trailing-garbage", data: append(bytes.Clone(current), "garbage"...)},
-		{name: "trailing-second-document", data: append(bytes.Clone(current), `{"schemaVersion": 5}`...)},
-		{name: "version-last-key", data: fenceEnvelope("", `"schemaVersion": 4`)},
+		{name: "trailing-second-document", data: append(bytes.Clone(current), `{"schemaVersion": 6}`...)},
+		{name: "version-last-key", data: fenceEnvelope("", `"schemaVersion": 5`)},
 		// encoding/json matches object keys case-insensitively and the last
 		// matching key wins, for the envelope and the body alike.
-		{name: "duplicate-known-then-unknown", data: fenceEnvelope(`"schemaVersion": 4`, `"schemaVersion": 5`)},
-		{name: "duplicate-unknown-then-known", data: fenceEnvelope(`"schemaVersion": 5`, `"schemaVersion": 4`)},
-		{name: "case-variant-known", data: fenceEnvelope(`"SchemaVersion": 4`, "")},
-		{name: "case-variant-unknown", data: fenceEnvelope(`"SCHEMAVERSION": 5`, "")},
-		{name: "exact-known-then-case-variant-unknown", data: fenceEnvelope(`"schemaVersion": 4`, `"SCHEMAVERSION": 5`)},
-		{name: "case-variant-unknown-then-exact-known", data: fenceEnvelope(`"SCHEMAVERSION": 5`, `"schemaVersion": 4`)},
-		{name: "exact-unknown-then-case-variant-known", data: fenceEnvelope(`"schemaVersion": 5`, `"SchemaVersion": 4`)},
-		{name: "case-variant-known-then-exact-unknown", data: fenceEnvelope(`"SchemaVersion": 4`, `"schemaVersion": 5`)},
-		{name: "child-only-version", data: fenceEnvelope(`"extensions": {"schemaVersion": 4}`, "")},
-		{name: "top-level-array", data: []byte(`[{"schemaVersion": 4}]`)},
+		{name: "duplicate-known-then-unknown", data: fenceEnvelope(`"schemaVersion": 5`, `"schemaVersion": 6`)},
+		{name: "duplicate-unknown-then-known", data: fenceEnvelope(`"schemaVersion": 6`, `"schemaVersion": 5`)},
+		{name: "case-variant-known", data: fenceEnvelope(`"SchemaVersion": 5`, "")},
+		{name: "case-variant-unknown", data: fenceEnvelope(`"SCHEMAVERSION": 6`, "")},
+		{name: "exact-known-then-case-variant-unknown", data: fenceEnvelope(`"schemaVersion": 5`, `"SCHEMAVERSION": 6`)},
+		{name: "case-variant-unknown-then-exact-known", data: fenceEnvelope(`"SCHEMAVERSION": 6`, `"schemaVersion": 5`)},
+		{name: "exact-unknown-then-case-variant-known", data: fenceEnvelope(`"schemaVersion": 6`, `"SchemaVersion": 5`)},
+		{name: "case-variant-known-then-exact-unknown", data: fenceEnvelope(`"SchemaVersion": 5`, `"schemaVersion": 6`)},
+		{name: "child-only-version", data: fenceEnvelope(`"extensions": {"schemaVersion": 5}`, "")},
+		{name: "top-level-array", data: []byte(`[{"schemaVersion": 5}]`)},
 		{name: "top-level-string", data: []byte(`"schemaVersion"`)},
 		{name: "top-level-number", data: []byte(`4`)},
 		// A top-level null decodes into the envelope without error, so it is
 		// classified as version 0 rather than rejected as malformed.
 		{name: "top-level-null", data: []byte(`null`)},
 		{name: "utf8-bom", data: append([]byte("\xef\xbb\xbf"), current...)},
-		{name: "current-body-type-error", data: []byte(`{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 4, "projects": "x"}`)},
+		{name: "current-body-type-error", data: []byte(`{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5, "projects": "x"}`)},
 		{name: "migration-v3-body-type-error", data: []byte(`{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 3, "projects": "x"}`)},
 		// C-1: an unknown version is refused before the body is decoded, so a
 		// body type error behind it must surface as a schema error.
-		{name: "unknown-body-type-error", data: []byte(`{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5, "projects": "x"}`)},
+		{name: "unknown-body-type-error", data: []byte(`{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 6, "projects": "x"}`)},
 		{name: "current-invalid-graph", data: bytes.Replace(current, []byte(`"ownerRef": {"kind": "Window", "uid": "window-fence"}`), []byte(`"ownerRef": {"kind": "Window", "uid": "window-missing"}`), 1)},
 		{name: "migration-v3-invalid-owner-graph", data: []byte(strings.Replace(v3RootCollisionRegistry,
 			`"ownerRef":{"kind":"Project","uid":"project-root"}`, `"ownerRef":{"kind":"Project","uid":"missing-root"}`, 1))},
@@ -298,8 +299,8 @@ func registryReadFenceRows() []registryReadFenceRow {
 		{name: "empty-initialized", data: []byte{}, initialized: true},
 		{name: "whitespace-first-use", data: []byte(" \n\t\r\n")},
 		{name: "whitespace-initialized", data: []byte(" \n\t\r\n"), initialized: true},
-		{name: "large-current-valid", data: fenceLargeRegistry(4), large: true},
-		{name: "large-unknown-version", data: fenceLargeRegistry(5), large: true},
+		{name: "large-current-valid", data: fenceLargeRegistry(5), large: true},
+		{name: "large-unknown-version", data: fenceLargeRegistry(6), large: true},
 	}
 }
 
@@ -617,20 +618,20 @@ func fenceJSON(value any) string {
 	return string(data)
 }
 
-// Pinned literals shared by many rows. They were observed on main 1e7888ca and
-// are deliberately not recomputed from the code under test.
+// Pinned literals shared by many rows, re-observed for schema v5. They are
+// deliberately not recomputed from the code under test.
 const (
 	// fenceZeroRegistry is the digest of coremetadata.Registry{}, the registry
 	// every refused read answers.
 	fenceZeroRegistry = "04e514cff1341646a8d470e18315231801705cd2d256963e749c6896003d0115"
 	// fenceFirstUseRegistry is the digest of coremetadata.NewRegistry().
-	fenceFirstUseRegistry = "cadb810ad97404ef4e94798a4941186f4b8485a6e52a3500cfb4a41b33f21ce0"
-	// fenceCurrentRegistry is the digest of the current-v4-valid row's read.
-	fenceCurrentRegistry = "54246bac6506d2b706eb2559170ce53f50e0e1d23321d923d78b0cb01a13986f"
+	fenceFirstUseRegistry = "dcf47ddccf0c347343035e07ac723a5482c76c2cb273618b0634031680f5278d"
+	// fenceCurrentRegistry is the digest of the current-v5-valid row's read.
+	fenceCurrentRegistry = "e365b21788e9a445f1ff4b31c7b6f2a8fa352a81e805e56cdf313249636b217e"
 	// fenceEmptyReport is the digest of coremetadata.MigrationReport{}.
 	fenceEmptyReport = "bd77ee8eb79f7c4853af1fd47e24f58af7c8e833eeedd8b9e45ba06dc2c7590d"
-	// fenceCurrentReport is the digest of a no-repair 4 -> 4 report.
-	fenceCurrentReport = "b6259fe1333f69cb86a7d01a9e11a895b52394e6f03f17c08bce5b49a3851390"
+	// fenceCurrentReport is the digest of a no-repair 5 -> 5 report.
+	fenceCurrentReport = "2d9a848fd8c2a209e3c02f0f1e6cd8a49f69fef7c3e91a4f1e4e2389757247b9"
 
 	fenceFactsNil          = "nil"
 	fenceFactsTooNew       = "ErrSchemaTooNew *metadata.StateError"
@@ -639,25 +640,25 @@ const (
 	fenceFactsType         = "ErrMalformedRegistry *json.UnmarshalTypeError"
 	fenceFactsInvalid      = "ErrInvalidRegistry *metadata.StateError"
 	fenceFactsStateLost    = "ErrRegistryStateLost"
-	fenceDetailTooNew      = "<registry>: read registry: schemaVersion 5 is newer than the supported version 4; refusing to read or write"
-	fenceDetailUnversioned = "<registry>: read registry: registry document has no usable schemaVersion; schemaVersion 4 is the first envelope projmux has ever written, so an unversioned document is refused rather than migrated"
-	fenceErrTooNew         = "metadata: <registry>: read registry: schemaVersion 5 is newer than the supported version 4; refusing to read or write"
-	fenceErrUnversioned    = "metadata: <registry>: read registry: registry document has no usable schemaVersion; schemaVersion 4 is the first envelope projmux has ever written, so an unversioned document is refused rather than migrated"
+	fenceDetailTooNew      = "<registry>: read registry: schemaVersion 6 is newer than the supported version 5; refusing to read or write"
+	fenceDetailUnversioned = "<registry>: read registry: registry document has no usable schemaVersion; schemaVersion 5 is the first envelope projmux has ever written, so an unversioned document is refused rather than migrated"
+	fenceErrTooNew         = "metadata: <registry>: read registry: schemaVersion 6 is newer than the supported version 5; refusing to read or write"
+	fenceErrUnversioned    = "metadata: <registry>: read registry: registry document has no usable schemaVersion; schemaVersion 5 is the first envelope projmux has ever written, so an unversioned document is refused rather than migrated"
 	fenceErrStateLostEmpty = "metadata: resource registry is missing after initialization: <marker> records a completed registry write but <registry> is empty; restore a verified copy from <recovery>, or remove the marker to accept an empty registry"
 )
 
 var registryReadFencePins = map[string]registryReadFencePin{
-	"current-v4-valid": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"current-v5-valid": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"current-v4-valid-initialized": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"current-v5-valid-initialized": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"migration-v1-valid": {version: 1, existed: true, registry: "a3d14df834c1d4fbaed3188e9260853d1b36f49360b7653d1f97900f9e989dc4", report: "7353713bd7a75b8642fe0b21bdfe5e71c25a11637068bc8bf462a13a5e2aabc3",
+	"migration-v1-valid": {version: 1, existed: true, registry: "d1b318deae80503b2eca993623ece890294df35a282256e3cd864eb33749dd9b", report: "1971bfc39531f8652d3d3ebdeee46df3216908edf4fddf694482b6059ecd8511",
 		facts: fenceFactsNil, err: ""},
-	"migration-v2-valid": {version: 2, existed: true, registry: "794b5eb8b0edc20447ed89132ce4ce6e1e2d0d3605f3035c123aa14db88513c7", report: "a2f47d2fc93299ae38bf5d2127558e56864a7407c94785f3d3630b9b6e646324",
+	"migration-v2-valid": {version: 2, existed: true, registry: "1234ecc1c6adec1b264b15acef2b298b157cf114617e2518e6514743a86caaa0", report: "c5eedad792aea2b42c82be5c4956db25fceb02a86a6987cf4ade6ab463092643",
 		facts: fenceFactsNil, err: ""},
-	"migration-v3-valid": {version: 3, existed: true, registry: "b44376507560ad29d9951c0785e9d4b54423db7f671999cbaa2b21ff4d04deb3", report: "b46d79f8e95089a511acac36221244658e366db4991f8fe78f430b82aebbee62",
+	"migration-v3-valid": {version: 3, existed: true, registry: "fa2ba992466b3f55ae17ac11d92a073887dd5bea4069069f71d59d3ce41ffc54", report: "9ca5701fd6cfaeef6419d45ecd40b8466bdb59fa1180e3bfde5b33caa6893a51",
 		facts: fenceFactsNil, err: ""},
-	"newer-v5": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"newer-v6": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
 	"negative-version": {version: -1, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsUnsupported, err: "metadata: <registry>: read registry: schemaVersion -1 is negative"},
@@ -670,7 +671,7 @@ var registryReadFencePins = map[string]registryReadFencePin{
 	"string-version": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal string into Go struct field .schemaVersion of type int"},
 	"float-version": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
-		facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal number 4.0 into Go struct field .schemaVersion of type int"},
+		facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal number 5.0 into Go struct field .schemaVersion of type int"},
 	"overflow-version": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal number 99999999999999999999 into Go struct field .schemaVersion of type int"},
 	"truncated-known-version": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
@@ -681,23 +682,23 @@ var registryReadFencePins = map[string]registryReadFencePin{
 		facts: fenceFactsSyntax, err: "malformed resource registry JSON <registry>: invalid character 'g' after top-level value"},
 	"trailing-second-document": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsSyntax, err: "malformed resource registry JSON <registry>: invalid character '{' after top-level value"},
-	"version-last-key": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"version-last-key": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"duplicate-known-then-unknown": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"duplicate-known-then-unknown": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
-	"duplicate-unknown-then-known": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"duplicate-unknown-then-known": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"case-variant-known": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"case-variant-known": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"case-variant-unknown": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"case-variant-unknown": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
-	"exact-known-then-case-variant-unknown": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"exact-known-then-case-variant-unknown": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
-	"case-variant-unknown-then-exact-known": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"case-variant-unknown-then-exact-known": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"exact-unknown-then-case-variant-known": {version: 4, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
+	"exact-unknown-then-case-variant-known": {version: 5, existed: true, registry: fenceCurrentRegistry, report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"case-variant-known-then-exact-unknown": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"case-variant-known-then-exact-unknown": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
 	"child-only-version": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsUnsupported, err: fenceErrUnversioned},
@@ -711,62 +712,62 @@ var registryReadFencePins = map[string]registryReadFencePin{
 		facts: fenceFactsUnsupported, err: fenceErrUnversioned},
 	"utf8-bom": {version: 0, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsSyntax, err: "malformed resource registry JSON <registry>: invalid character 'ï' looking for beginning of value"},
-	"current-body-type-error": {version: 4, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"current-body-type-error": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal string into Go struct field Registry.projects of type []metadata.Project"},
 	"migration-v3-body-type-error": {version: 3, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal string into Go struct field Registry.projects of type []metadata.Project"},
-	"unknown-body-type-error": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"unknown-body-type-error": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
-	"current-invalid-graph": {version: 4, existed: true, registry: "2fb9134c1b500021ebd66f2fc7526f9745093ac8808f880427dd193d399e4177", report: fenceCurrentReport,
+	"current-invalid-graph": {version: 5, existed: true, registry: "bc674fe3a1a6dd5cd51186665274c6a0105c26039f26cfc48bf35144a68bd1c8", report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
 	"migration-v3-invalid-owner-graph": {version: 3, existed: true, registry: fenceZeroRegistry, report: "1da81af93cafeb450218500f5f4d9ffa9319e05e6c5a6d962b3dbf65f28add17",
 		facts: fenceFactsInvalid, err: "metadata: <registry>: resolve name scope: cannot resolve Window owner \"missing-root\" to a Project or ControlSession root"},
-	"empty-first-use": {version: 4, existed: false, registry: fenceFirstUseRegistry, report: fenceEmptyReport,
+	"empty-first-use": {version: 5, existed: false, registry: fenceFirstUseRegistry, report: fenceEmptyReport,
 		facts: fenceFactsNil, err: ""},
 	"empty-initialized": {version: 0, existed: false, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsStateLost, err: fenceErrStateLostEmpty},
-	"whitespace-first-use": {version: 4, existed: false, registry: fenceFirstUseRegistry, report: fenceEmptyReport,
+	"whitespace-first-use": {version: 5, existed: false, registry: fenceFirstUseRegistry, report: fenceEmptyReport,
 		facts: fenceFactsNil, err: ""},
 	"whitespace-initialized": {version: 0, existed: false, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsStateLost, err: fenceErrStateLostEmpty},
-	"large-current-valid": {version: 4, existed: true, registry: "39b85b02ca23094aa2b7df94eca587a296f29f5b23af358e55b281e7f86734f3", report: fenceCurrentReport,
+	"large-current-valid": {version: 5, existed: true, registry: "e128edb3836c554caa642b725f47ab3373c320fa4c958906bad4a63a38c9919b", report: fenceCurrentReport,
 		facts: fenceFactsNil, err: ""},
-	"large-unknown-version": {version: 5, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
+	"large-unknown-version": {version: 6, existed: true, registry: fenceZeroRegistry, report: fenceEmptyReport,
 		facts: fenceFactsTooNew, err: fenceErrTooNew},
 }
 
 var registryEntryFencePins = map[string]registryEntryFencePin{
-	"current-v4-valid": {
+	"current-v5-valid": {
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
-	"current-v4-valid-initialized": {
+	"current-v5-valid-initialized": {
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"migration-v1-valid": {
-		degraded: registryEntryFenceOutcome{"a3d14df834c1d4fbaed3188e9260853d1b36f49360b7653d1f97900f9e989dc4", fenceFactsNil, ""},
-		readOnly: registryEntryFenceOutcome{"a3d14df834c1d4fbaed3188e9260853d1b36f49360b7653d1f97900f9e989dc4", fenceFactsNil, ""},
-		migration: registryMigrationFenceOutcome{registry: "a3d14df834c1d4fbaed3188e9260853d1b36f49360b7653d1f97900f9e989dc4", facts: fenceFactsNil, err: "",
-			fromVersion: 1, migrated: true, backupPath: "<registry>.v1.20260815T093000Z.bak", reportPath: "<registry>.v1.20260815T093000Z.bak.migration-report.json", report: "7353713bd7a75b8642fe0b21bdfe5e71c25a11637068bc8bf462a13a5e2aabc3"},
+		degraded: registryEntryFenceOutcome{"d1b318deae80503b2eca993623ece890294df35a282256e3cd864eb33749dd9b", fenceFactsNil, ""},
+		readOnly: registryEntryFenceOutcome{"d1b318deae80503b2eca993623ece890294df35a282256e3cd864eb33749dd9b", fenceFactsNil, ""},
+		migration: registryMigrationFenceOutcome{registry: "d1b318deae80503b2eca993623ece890294df35a282256e3cd864eb33749dd9b", facts: fenceFactsNil, err: "",
+			fromVersion: 1, migrated: true, backupPath: "<registry>.v1.20260815T093000Z.bak", reportPath: "<registry>.v1.20260815T093000Z.bak.migration-report.json", report: "1971bfc39531f8652d3d3ebdeee46df3216908edf4fddf694482b6059ecd8511"},
 	},
 	"migration-v2-valid": {
-		degraded: registryEntryFenceOutcome{"794b5eb8b0edc20447ed89132ce4ce6e1e2d0d3605f3035c123aa14db88513c7", fenceFactsNil, ""},
-		readOnly: registryEntryFenceOutcome{"794b5eb8b0edc20447ed89132ce4ce6e1e2d0d3605f3035c123aa14db88513c7", fenceFactsNil, ""},
-		migration: registryMigrationFenceOutcome{registry: "794b5eb8b0edc20447ed89132ce4ce6e1e2d0d3605f3035c123aa14db88513c7", facts: fenceFactsNil, err: "",
-			fromVersion: 2, migrated: true, backupPath: "<registry>.v2.20260815T093000Z.bak", reportPath: "<registry>.v2.20260815T093000Z.bak.migration-report.json", report: "a2f47d2fc93299ae38bf5d2127558e56864a7407c94785f3d3630b9b6e646324"},
+		degraded: registryEntryFenceOutcome{"1234ecc1c6adec1b264b15acef2b298b157cf114617e2518e6514743a86caaa0", fenceFactsNil, ""},
+		readOnly: registryEntryFenceOutcome{"1234ecc1c6adec1b264b15acef2b298b157cf114617e2518e6514743a86caaa0", fenceFactsNil, ""},
+		migration: registryMigrationFenceOutcome{registry: "1234ecc1c6adec1b264b15acef2b298b157cf114617e2518e6514743a86caaa0", facts: fenceFactsNil, err: "",
+			fromVersion: 2, migrated: true, backupPath: "<registry>.v2.20260815T093000Z.bak", reportPath: "<registry>.v2.20260815T093000Z.bak.migration-report.json", report: "c5eedad792aea2b42c82be5c4956db25fceb02a86a6987cf4ade6ab463092643"},
 	},
 	"migration-v3-valid": {
-		degraded: registryEntryFenceOutcome{"b44376507560ad29d9951c0785e9d4b54423db7f671999cbaa2b21ff4d04deb3", fenceFactsNil, ""},
-		readOnly: registryEntryFenceOutcome{"b44376507560ad29d9951c0785e9d4b54423db7f671999cbaa2b21ff4d04deb3", fenceFactsNil, ""},
-		migration: registryMigrationFenceOutcome{registry: "b44376507560ad29d9951c0785e9d4b54423db7f671999cbaa2b21ff4d04deb3", facts: fenceFactsNil, err: "",
-			fromVersion: 3, migrated: true, backupPath: "<registry>.v3.20260815T093000Z.bak", reportPath: "<registry>.v3.20260815T093000Z.bak.migration-report.json", report: "b46d79f8e95089a511acac36221244658e366db4991f8fe78f430b82aebbee62"},
+		degraded: registryEntryFenceOutcome{"fa2ba992466b3f55ae17ac11d92a073887dd5bea4069069f71d59d3ce41ffc54", fenceFactsNil, ""},
+		readOnly: registryEntryFenceOutcome{"fa2ba992466b3f55ae17ac11d92a073887dd5bea4069069f71d59d3ce41ffc54", fenceFactsNil, ""},
+		migration: registryMigrationFenceOutcome{registry: "fa2ba992466b3f55ae17ac11d92a073887dd5bea4069069f71d59d3ce41ffc54", facts: fenceFactsNil, err: "",
+			fromVersion: 3, migrated: true, backupPath: "<registry>.v3.20260815T093000Z.bak", reportPath: "<registry>.v3.20260815T093000Z.bak.migration-report.json", report: "9ca5701fd6cfaeef6419d45ecd40b8466bdb59fa1180e3bfde5b33caa6893a51"},
 	},
-	"newer-v5": {
+	"newer-v6": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsTooNew, fenceErrTooNew},
 		readOnly: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsTooNew, fenceErrTooNew},
 		migration: registryMigrationFenceOutcome{registry: fenceZeroRegistry, facts: fenceFactsTooNew, err: fenceErrTooNew,
@@ -803,9 +804,9 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 			fromVersion: 0, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
 	},
 	"float-version": {
-		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsType, "malformed resource registry JSON <registry>: json: cannot unmarshal number 4.0 into Go struct field .schemaVersion of type int"},
-		readOnly: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsType, "malformed resource registry JSON <registry>: json: cannot unmarshal number 4.0 into Go struct field .schemaVersion of type int"},
-		migration: registryMigrationFenceOutcome{registry: fenceZeroRegistry, facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal number 4.0 into Go struct field .schemaVersion of type int",
+		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsType, "malformed resource registry JSON <registry>: json: cannot unmarshal number 5.0 into Go struct field .schemaVersion of type int"},
+		readOnly: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsType, "malformed resource registry JSON <registry>: json: cannot unmarshal number 5.0 into Go struct field .schemaVersion of type int"},
+		migration: registryMigrationFenceOutcome{registry: fenceZeroRegistry, facts: fenceFactsType, err: "malformed resource registry JSON <registry>: json: cannot unmarshal number 5.0 into Go struct field .schemaVersion of type int",
 			fromVersion: 0, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
 	},
 	"overflow-version": {
@@ -842,7 +843,7 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"duplicate-known-then-unknown": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsTooNew, fenceErrTooNew},
@@ -854,13 +855,13 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"case-variant-known": {
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"case-variant-unknown": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsTooNew, fenceErrTooNew},
@@ -878,13 +879,13 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"exact-unknown-then-case-variant-known": {
 		degraded: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceCurrentRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceCurrentRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"case-variant-known-then-exact-unknown": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsTooNew, fenceErrTooNew},
@@ -947,7 +948,7 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 			fromVersion: 0, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
 	},
 	"current-invalid-graph": {
-		degraded: registryEntryFenceOutcome{"2fb9134c1b500021ebd66f2fc7526f9745093ac8808f880427dd193d399e4177", fenceFactsNil, ""},
+		degraded: registryEntryFenceOutcome{"bc674fe3a1a6dd5cd51186665274c6a0105c26039f26cfc48bf35144a68bd1c8", fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsInvalid, "validate registry: Pane \"shell\" ownerRef \"window-missing\" does not exist"},
 		migration: registryMigrationFenceOutcome{registry: fenceZeroRegistry, facts: fenceFactsInvalid, err: "validate registry: Pane \"shell\" ownerRef \"window-missing\" does not exist",
 			fromVersion: 0, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
@@ -962,7 +963,7 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 		degraded: registryEntryFenceOutcome{fenceFirstUseRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceFirstUseRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceFirstUseRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
 	},
 	"empty-initialized": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsStateLost, fenceErrStateLostEmpty},
@@ -974,7 +975,7 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 		degraded: registryEntryFenceOutcome{fenceFirstUseRegistry, fenceFactsNil, ""},
 		readOnly: registryEntryFenceOutcome{fenceFirstUseRegistry, fenceFactsNil, ""},
 		migration: registryMigrationFenceOutcome{registry: fenceFirstUseRegistry, facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
 	},
 	"whitespace-initialized": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsStateLost, fenceErrStateLostEmpty},
@@ -983,10 +984,10 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 			fromVersion: 0, migrated: false, backupPath: "", reportPath: "", report: fenceEmptyReport},
 	},
 	"large-current-valid": {
-		degraded: registryEntryFenceOutcome{"39b85b02ca23094aa2b7df94eca587a296f29f5b23af358e55b281e7f86734f3", fenceFactsNil, ""},
-		readOnly: registryEntryFenceOutcome{"39b85b02ca23094aa2b7df94eca587a296f29f5b23af358e55b281e7f86734f3", fenceFactsNil, ""},
-		migration: registryMigrationFenceOutcome{registry: "39b85b02ca23094aa2b7df94eca587a296f29f5b23af358e55b281e7f86734f3", facts: fenceFactsNil, err: "",
-			fromVersion: 4, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
+		degraded: registryEntryFenceOutcome{"e128edb3836c554caa642b725f47ab3373c320fa4c958906bad4a63a38c9919b", fenceFactsNil, ""},
+		readOnly: registryEntryFenceOutcome{"e128edb3836c554caa642b725f47ab3373c320fa4c958906bad4a63a38c9919b", fenceFactsNil, ""},
+		migration: registryMigrationFenceOutcome{registry: "e128edb3836c554caa642b725f47ab3373c320fa4c958906bad4a63a38c9919b", facts: fenceFactsNil, err: "",
+			fromVersion: 5, migrated: false, backupPath: "", reportPath: "", report: fenceCurrentReport},
 	},
 	"large-unknown-version": {
 		degraded: registryEntryFenceOutcome{fenceZeroRegistry, fenceFactsTooNew, fenceErrTooNew},
@@ -997,9 +998,9 @@ var registryEntryFencePins = map[string]registryEntryFencePin{
 }
 
 var classifyRegistryBytesFencePins = map[string]RegistryFileInfo{
-	"current-v4-valid": {State: RegistryStateValid, SchemaVersion: 4,
+	"current-v5-valid": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
-	"current-v4-valid-initialized": {State: RegistryStateValid, SchemaVersion: 4,
+	"current-v5-valid-initialized": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
 	"migration-v1-valid": {State: RegistryStateValid, SchemaVersion: 1,
 		Contents: RegistryContents{Projects: 2, Windows: 3, Panes: 3, Agents: 0, Reservations: 8}},
@@ -1007,7 +1008,7 @@ var classifyRegistryBytesFencePins = map[string]RegistryFileInfo{
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
 	"migration-v3-valid": {State: RegistryStateValid, SchemaVersion: 3,
 		Contents: RegistryContents{Projects: 1, Windows: 2, Panes: 2, Agents: 0, Reservations: 5}},
-	"newer-v5": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"newer-v6": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
 	"negative-version": {State: RegistryStateSchemaTooNew, SchemaVersion: -1,
 		Detail: "<registry>: read registry: schemaVersion -1 is negative"},
@@ -1020,7 +1021,7 @@ var classifyRegistryBytesFencePins = map[string]RegistryFileInfo{
 	"string-version": {State: RegistryStateMalformed, SchemaVersion: 0,
 		Detail: "<registry> is not decodable JSON: json: cannot unmarshal string into Go struct field .schemaVersion of type int"},
 	"float-version": {State: RegistryStateMalformed, SchemaVersion: 0,
-		Detail: "<registry> is not decodable JSON: json: cannot unmarshal number 4.0 into Go struct field .schemaVersion of type int"},
+		Detail: "<registry> is not decodable JSON: json: cannot unmarshal number 5.0 into Go struct field .schemaVersion of type int"},
 	"overflow-version": {State: RegistryStateMalformed, SchemaVersion: 0,
 		Detail: "<registry> is not decodable JSON: json: cannot unmarshal number 99999999999999999999 into Go struct field .schemaVersion of type int"},
 	"truncated-known-version": {State: RegistryStateMalformed, SchemaVersion: 0,
@@ -1031,23 +1032,23 @@ var classifyRegistryBytesFencePins = map[string]RegistryFileInfo{
 		Detail: "<registry> is not decodable JSON: invalid character 'g' after top-level value"},
 	"trailing-second-document": {State: RegistryStateMalformed, SchemaVersion: 0,
 		Detail: "<registry> is not decodable JSON: invalid character '{' after top-level value"},
-	"version-last-key": {State: RegistryStateValid, SchemaVersion: 4,
+	"version-last-key": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
-	"duplicate-known-then-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"duplicate-known-then-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
-	"duplicate-unknown-then-known": {State: RegistryStateValid, SchemaVersion: 4,
+	"duplicate-unknown-then-known": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
-	"case-variant-known": {State: RegistryStateValid, SchemaVersion: 4,
+	"case-variant-known": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
-	"case-variant-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"case-variant-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
-	"exact-known-then-case-variant-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"exact-known-then-case-variant-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
-	"case-variant-unknown-then-exact-known": {State: RegistryStateValid, SchemaVersion: 4,
+	"case-variant-unknown-then-exact-known": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
-	"exact-unknown-then-case-variant-known": {State: RegistryStateValid, SchemaVersion: 4,
+	"exact-unknown-then-case-variant-known": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1, Windows: 1, Panes: 1, Agents: 0, Reservations: 3}},
-	"case-variant-known-then-exact-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"case-variant-known-then-exact-unknown": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
 	"child-only-version": {State: RegistryStateSchemaTooNew, SchemaVersion: 0,
 		Detail: fenceDetailUnversioned},
@@ -1061,13 +1062,13 @@ var classifyRegistryBytesFencePins = map[string]RegistryFileInfo{
 		Detail: fenceDetailUnversioned},
 	"utf8-bom": {State: RegistryStateMalformed, SchemaVersion: 0,
 		Detail: "<registry> is not decodable JSON: invalid character 'ï' looking for beginning of value"},
-	"current-body-type-error": {State: RegistryStateMalformed, SchemaVersion: 4,
+	"current-body-type-error": {State: RegistryStateMalformed, SchemaVersion: 5,
 		Detail: "<registry> does not decode into a registry: json: cannot unmarshal string into Go struct field Registry.projects of type []metadata.Project"},
 	"migration-v3-body-type-error": {State: RegistryStateMalformed, SchemaVersion: 3,
 		Detail: "<registry> does not decode into a registry: json: cannot unmarshal string into Go struct field Registry.projects of type []metadata.Project"},
-	"unknown-body-type-error": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"unknown-body-type-error": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
-	"current-invalid-graph": {State: RegistryStateInvalid, SchemaVersion: 4,
+	"current-invalid-graph": {State: RegistryStateInvalid, SchemaVersion: 5,
 		Detail: "<registry> is not a valid resource graph: validate registry: Pane \"shell\" ownerRef \"window-missing\" does not exist"},
 	"migration-v3-invalid-owner-graph": {State: RegistryStateInvalid, SchemaVersion: 3,
 		Detail: "<registry> cannot be migrated to the current schema: resolve name scope: cannot resolve Window owner \"missing-root\" to a Project or ControlSession root"},
@@ -1079,8 +1080,8 @@ var classifyRegistryBytesFencePins = map[string]RegistryFileInfo{
 		Detail: "<registry> holds no content"},
 	"whitespace-initialized": {State: RegistryStateEmpty, SchemaVersion: 0,
 		Detail: "<registry> holds no content"},
-	"large-current-valid": {State: RegistryStateValid, SchemaVersion: 4,
+	"large-current-valid": {State: RegistryStateValid, SchemaVersion: 5,
 		Contents: RegistryContents{Projects: 1200, Windows: 1200, Panes: 1200, Agents: 0, Reservations: 3600}},
-	"large-unknown-version": {State: RegistryStateSchemaTooNew, SchemaVersion: 5,
+	"large-unknown-version": {State: RegistryStateSchemaTooNew, SchemaVersion: 6,
 		Detail: fenceDetailTooNew},
 }

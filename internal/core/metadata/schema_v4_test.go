@@ -68,7 +68,7 @@ func TestV3ToV4CanonicalizationUsesDuplicateAllMembersAndDestinationFixedPoint(t
 	if err != nil {
 		t.Fatalf("migrate v3: %v", err)
 	}
-	if !ran || migrated.SchemaVersion != 4 {
+	if !ran || migrated.SchemaVersion != SchemaVersion {
 		t.Fatalf("migration ran=%t schema=%d, want true/4", ran, migrated.SchemaVersion)
 	}
 	wantNames := map[string]string{
@@ -110,7 +110,7 @@ func TestV3ToV4CanonicalizationUsesDuplicateAllMembersAndDestinationFixedPoint(t
 	if err := migrated.Validate(); err != nil {
 		t.Fatalf("migrated Registry invalid: %v", err)
 	}
-	golden, err := os.ReadFile("testdata/registry-v4-destination-closure.golden.json")
+	golden, err := os.ReadFile("testdata/registry-v5-tmux.golden.json")
 	if err != nil {
 		t.Fatalf("read destination-closure golden: %v", err)
 	}

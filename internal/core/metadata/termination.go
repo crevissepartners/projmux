@@ -197,11 +197,13 @@ func (t *TerminationEvidence) Summary() string {
 // handles, so the generation -- not the handle -- is what a receipt is matched
 // against.
 type PaneActivation struct {
-	Generation  string    `json:"generation"`
-	RuntimeID   string    `json:"runtimeID,omitempty"`
-	AgentUID    string    `json:"agentUID,omitempty"`
-	OperationID string    `json:"operationID,omitempty"`
-	StartedAt   time.Time `json:"startedAt,omitzero"`
+	Kind        RuntimeKind        `json:"kind,omitempty"`
+	Process     *ProcessActivation `json:"process,omitempty"`
+	Generation  string             `json:"generation"`
+	RuntimeID   string             `json:"runtimeID,omitempty"`
+	AgentUID    string             `json:"agentUID,omitempty"`
+	OperationID string             `json:"operationID,omitempty"`
+	StartedAt   time.Time          `json:"startedAt,omitzero"`
 	// Codex is the provider-native conversation/turn observed for exactly this
 	// materialization. The durable conversation pointer remains on the Agent;
 	// this refinement is nested under the generation so replacement clears it.
@@ -253,7 +255,7 @@ func (r CodexAuthorityRef) Authorizes(presented CodexAuthorityRef) bool {
 // IsZero lets registry documents written before activation generations existed
 // re-encode without the additive block.
 func (a PaneActivation) IsZero() bool {
-	return a.Generation == "" && a.RuntimeID == "" && a.AgentUID == "" &&
+	return a.Kind == "" && a.Process == nil && a.Generation == "" && a.RuntimeID == "" && a.AgentUID == "" &&
 		a.OperationID == "" && a.StartedAt.IsZero() && a.Codex == nil && a.Claude == nil
 }
 
@@ -261,6 +263,10 @@ func (a PaneActivation) IsZero() bool {
 // source Registry snapshot.
 func (a PaneActivation) Clone() PaneActivation {
 	out := a
+	if a.Process != nil {
+		process := *a.Process
+		out.Process = &process
+	}
 	if a.Claude != nil {
 		binding := *a.Claude
 		if binding.Registration != nil {

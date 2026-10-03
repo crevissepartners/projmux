@@ -1,0 +1,215 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 5,
+  "updatedAt": "2026-08-15T09:30:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-01",
+        "name": "alpha",
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "root": "/srv/alpha",
+        "primaryWindowRef": "window-01"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-01",
+        "name": "window-01",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-01",
+        "defaultShellPaneRef": "pane-01"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-01",
+        "name": "pane-01",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell",
+        "cwd": "/srv/alpha"
+      },
+      "status": {
+        "activation": {
+          "generation": "gen-shell-1",
+          "startedAt": "2026-08-15T09:30:00Z"
+        }
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-02",
+        "name": "pane-02",
+        "ownerRef": {
+          "kind": "Agent",
+          "uid": "agent-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "runtime": {
+          "kind": "process"
+        },
+        "role": "agent",
+        "cwd": "/srv/alpha"
+      },
+      "status": {
+        "processSession": {
+          "provider": "codex",
+          "binding": {
+            "hostInstanceID": "host-one",
+            "projectUID": "project-01",
+            "windowUID": "window-01",
+            "agentUID": "agent-01",
+            "paneUID": "pane-02",
+            "generation": "gen-one",
+            "operationID": "op-one"
+          },
+          "threadID": "thread-one",
+          "connectionID": "connection-one",
+          "turnID": "turn-one",
+          "resumeState": "resumable",
+          "pending": [
+            {
+              "id": "control-one",
+              "kind": "question",
+              "connectionID": "connection-one",
+              "sessionID": "thread-one",
+              "turnID": "turn-one"
+            }
+          ],
+          "history": {
+            "binding": {
+              "hostInstanceID": "host-one",
+              "projectUID": "project-01",
+              "windowUID": "window-01",
+              "agentUID": "agent-01",
+              "paneUID": "pane-02",
+              "generation": "gen-retired",
+              "operationID": "op-retired"
+            },
+            "sessionID": "thread-one",
+            "interruptedTurnID": "turn-retired",
+            "expired": [
+              {
+                "id": "control-retired",
+                "kind": "permission",
+                "connectionID": "connection-retired",
+                "sessionID": "thread-one",
+                "turnID": "turn-retired"
+              }
+            ]
+          }
+        },
+        "activation": {
+          "kind": "process",
+          "process": {
+            "binding": {
+              "hostInstanceID": "host-one",
+              "projectUID": "project-01",
+              "windowUID": "window-01",
+              "agentUID": "agent-01",
+              "paneUID": "pane-02",
+              "generation": "gen-one",
+              "operationID": "op-one"
+            },
+            "hostProcess": {
+              "pid": 11,
+              "ownerUID": 1000,
+              "start": "host-start"
+            },
+            "child": {
+              "pid": 12,
+              "ownerUID": 1000,
+              "start": "child-start"
+            }
+          },
+          "generation": "gen-one",
+          "agentUID": "agent-01",
+          "operationID": "op-one"
+        }
+      }
+    }
+  ],
+  "agents": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-01",
+        "name": "agent-01",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "provider": "codex"
+      },
+      "status": {
+        "phase": "Running",
+        "paneRef": "pane-02",
+        "lastTransitionAt": "2026-08-15T09:30:00Z"
+      }
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "alpha",
+      "uid": "project-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Window",
+      "name": "window-01",
+      "uid": "window-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Pane",
+      "name": "pane-01",
+      "uid": "pane-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Agent",
+      "name": "agent-01",
+      "uid": "agent-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Pane",
+      "name": "pane-02",
+      "uid": "pane-02"
+    }
+  ]
+}

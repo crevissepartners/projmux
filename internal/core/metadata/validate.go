@@ -142,6 +142,9 @@ func (r Registry) Validate() error {
 		if activation := pane.Status.Activation; !activation.IsZero() && strings.TrimSpace(activation.Generation) == "" {
 			return stateErr(op, ErrInvalidRegistry, "pane %q has an activation record without a generation", pane.Metadata.Name)
 		}
+		if err := r.validatePaneRuntime(pane); err != nil {
+			return err
+		}
 		if binding := pane.Status.Activation.Codex; binding != nil {
 			if pane.Spec.Role != PaneRoleAgent || strings.TrimSpace(pane.Status.Activation.AgentUID) == "" || strings.TrimSpace(binding.ThreadID) == "" {
 				return stateErr(op, ErrInvalidRegistry, "pane %q has an invalid native Codex activation binding", pane.Metadata.Name)

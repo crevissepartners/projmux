@@ -102,7 +102,7 @@ func TestV3ToV4StoreMigrationPublishesExactBackupContentFreeReportAndRepeatNoop(
 		t.Fatalf("report leaked removed content: %s", reportBytes)
 	}
 	firstBytes := readFile(t, store.Path())
-	if strings.Contains(firstBytes, "displayName") || strings.Contains(firstBytes, "displayTitle") || !strings.Contains(firstBytes, `"schemaVersion": 4`) {
+	if strings.Contains(firstBytes, "displayName") || strings.Contains(firstBytes, "displayTitle") || !strings.Contains(firstBytes, `"schemaVersion": 5`) {
 		t.Fatalf("v4 registry retained removed schema fields:\n%s", firstBytes)
 	}
 	listingAfterFirst := dirListing(t, filepath.Dir(store.Path()))
@@ -141,7 +141,7 @@ func TestV3ToV4StoreMigrationPublishesExactBackupContentFreeReportAndRepeatNoop(
 func TestCurrentV4RootWideCollisionLoadIsTotalZeroWrite(t *testing.T) {
 	t.Parallel()
 
-	currentCollision := strings.Replace(v3RootCollisionRegistry, `"schemaVersion": 3`, `"schemaVersion": 4`, 1)
+	currentCollision := strings.Replace(v3RootCollisionRegistry, `"schemaVersion": 3`, `"schemaVersion": 5`, 1)
 	store := testStore(t)
 	writeRegistryFile(t, store, currentCollision)
 	before := readFile(t, store.Path())
@@ -188,7 +188,7 @@ func TestCurrentV4RootWideCollisionRecoveryImportRestoreIsTotalZeroWrite(t *test
 	}
 	liveBefore := readFile(t, store.Path())
 	durableBefore := durableFingerprint(t, filepath.Dir(store.Path()))
-	currentCollision := strings.Replace(v3RootCollisionRegistry, `"schemaVersion": 3`, `"schemaVersion": 4`, 1)
+	currentCollision := strings.Replace(v3RootCollisionRegistry, `"schemaVersion": 3`, `"schemaVersion": 5`, 1)
 	source := filepath.Join(t.TempDir(), "current-v4-collision.json")
 	if err := os.WriteFile(source, []byte(currentCollision), 0o600); err != nil {
 		t.Fatal(err)

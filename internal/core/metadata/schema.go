@@ -129,6 +129,24 @@ var productionMigrations = MigrationSet{
 	1: migrateV1ToV2,
 	2: migrateV2ToV3,
 	3: migrateV3ToV4,
+	4: migrateV4ToV5,
+}
+
+// migrateV4ToV5 makes the legacy tmux recipe explicit without changing any
+// activation, name, ownership, reservation, or provider evidence.
+func migrateV4ToV5(reg *Registry, _ MigrationEnvironment, _ *MigrationReport) error {
+	for i := range reg.Panes {
+		pane := &reg.Panes[i]
+		if pane.Spec.Runtime.Kind != "" && pane.Spec.Runtime.Kind != RuntimeTmux {
+			return stateErr("migrate registry v4 to v5", ErrInvalidRegistry, "runtime-kind-unsupported: v4 pane %q contains a non-tmux recipe", pane.Metadata.Name)
+		}
+		if pane.Status.Activation.Process != nil || pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != RuntimeTmux) {
+			return stateErr("migrate registry v4 to v5", ErrInvalidRegistry, "runtime-binding-invalid: v4 contains process evidence")
+		}
+		pane.Spec.Runtime.Kind = RuntimeTmux
+	}
+	reg.SchemaVersion = 5
+	return nil
 }
 
 // resolveMigrations treats a nil set as the production set, so callers that do

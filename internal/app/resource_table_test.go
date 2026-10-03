@@ -821,6 +821,7 @@ func TestSingularDefaultProjectionIsUnchangedByTheColumnarList(t *testing.T) {
 			"Owner:           project/alpha window/main\n" +
 			"Status:          live\n" +
 			"Role:            shell\n" +
+			"RuntimeKind:     tmux\n" +
 			"CWD:             /srv/alpha\n" +
 			"Labels:          role=shell\n"
 		if stdout != want {

@@ -170,8 +170,8 @@ func TestDecodeRegistryDocumentStages(t *testing.T) {
 	}{
 		// An unknown version is refused before the body decode, so the body
 		// type error behind it is never the answer.
-		{name: "newer-with-body-type-error", data: []byte(`{"schemaVersion": 5, "projects": "x"}`),
-			wantStage: registrySchemaRefused, wantVersion: 5, wantErr: isErr(coremetadata.ErrSchemaTooNew)},
+		{name: "newer-with-body-type-error", data: []byte(`{"schemaVersion": 6, "projects": "x"}`),
+			wantStage: registrySchemaRefused, wantVersion: 6, wantErr: isErr(coremetadata.ErrSchemaTooNew)},
 		{name: "negative-with-body-type-error", data: []byte(`{"schemaVersion": -1, "projects": "x"}`),
 			wantStage: registrySchemaRefused, wantVersion: -1, wantErr: isErr(coremetadata.ErrSchemaUnsupported)},
 		{name: "zero-with-body-type-error", data: []byte(`{"schemaVersion": 0, "projects": "x"}`),
