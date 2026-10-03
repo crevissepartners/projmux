@@ -72,3 +72,30 @@ func TestHistoryRetainsPendingRequestEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Output may have an older eviction cursor than independently trimmed control
+// history. Its next eviction must not hide the newer control gap.
+func TestHistoryGapNeverRegressesAcrossQueues(t *testing.T) {
+	p := &Handle{host: &Host{limits: Limits{Events: 2}}, requests: map[string]Request{}}
+	p.emitLocked("output", nil, nil)
+	p.emitLocked("output", nil, nil)
+	for range 4 {
+		p.emitLocked("turn-result", nil, nil)
+	}
+	gap := p.droppedThrough
+	p.emitLocked("output", nil, nil)
+	if p.droppedThrough != gap {
+		t.Fatalf("gap regressed from %d to %d", gap, p.droppedThrough)
+	}
+}
+
+func TestHistoryReportsGapWithoutOutput(t *testing.T) {
+	p := &Handle{host: &Host{limits: Limits{Events: 2}}, requests: map[string]Request{}}
+	for range 4 {
+		p.emitLocked("turn-result", nil, nil)
+	}
+	events, _, err := p.Events(Binding{}, 0)
+	if err != nil || len(events) != 3 || events[0].Kind != "stream-gap" {
+		t.Fatalf("critical-only eviction gap: %v %v", events, err)
+	}
+}

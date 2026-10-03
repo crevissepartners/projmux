@@ -561,7 +561,7 @@ func (p *Handle) Events(binding Binding, after uint64) ([]Event, Snapshot, error
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var result []Event
-	if len(p.events) > 0 && p.droppedThrough > after {
+	if p.droppedThrough > after {
 		result = append(result, Event{Binding: binding, Sequence: p.droppedThrough, Kind: "stream-gap"})
 	}
 	combined := append(append([]Event{}, p.events...), p.critical...)
@@ -648,7 +648,7 @@ func (p *Handle) emitLocked(kind string, raw []byte, request *Request) {
 		return
 	}
 	if len(p.events) == p.host.limits.Events {
-		p.droppedThrough = p.events[0].Sequence
+		p.droppedThrough = max(p.droppedThrough, p.events[0].Sequence)
 		copy(p.events, p.events[1:])
 		p.events = p.events[:len(p.events)-1]
 	}

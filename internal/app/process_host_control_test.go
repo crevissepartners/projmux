@@ -49,7 +49,6 @@ func TestProcessForegroundClientHelper(t *testing.T) {
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(result)
 	}
-	return
 }
 
 func TestCodexProcessForegroundExactPeerControls(t *testing.T) {
@@ -282,7 +281,7 @@ func TestCodexProcessForegroundExactPeerControls(t *testing.T) {
 }
 
 func TestClaudeProcessHostLeaseBusyIsRetryableWithoutAdoption(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "lease", "host.sock")
+	socket := filepath.Join(shortTempDomain(t), "lease", "host.sock")
 	_, closeLease, err := listenProcessHost(socket)
 	if err != nil {
 		t.Fatal(err)
