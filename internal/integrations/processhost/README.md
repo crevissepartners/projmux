@@ -100,3 +100,65 @@ set `PROCESSHOST_TEST_PERMISSION=deny` or `cancel` together with
 `PROCESSHOST_TEST_CLAUDE=1`: a process-local Bash ask rule prevents automatic tool
 execution; the probe only denies or interrupts, then verifies stale response
 rejection and two subsequent turns. User settings remain untouched.
+
+## Dedicated Codex stdio adapter
+
+`CodexCommand` selects `codex app-server --listen stdio://` with an explicit
+resolved executable, environment and settings arguments. `Host.StartCodex` owns
+this app-server through the same supervisor, lifetime pipe and real child Wait
+as Claude. It never uses a daemon, default proxy, broker, or fallback endpoint.
+This remains internal preparation for process hosts used by scripts and CI
+without tmux; no public command or durable schema activates it yet.
+
+The host supplies a bounded owned stream to the existing `codexappserver.Client`.
+Initialization negotiates the experimental capability, starts exactly one thread,
+checks effective model, reasoning effort and sandbox/approval policy, then commits
+the exact binding before ready. Operation retries return the same handle, including
+failed starts, and never create another thread. A fresh thread has no durable
+rollout before its first turn, so `thread/resume` cannot verify its initial settings.
+The small `StartThreadWithSettings` extension checks the `thread/start` answer
+using the existing settings verifier and sends requested effort through the native
+`config.model_reasoning_effort` override. Existing thread/start callers retain their
+wire format and policy checks.
+
+A well-formed server refusal of turn/start produces a failed `turn-result`
+with the consumed operation ID while preserving the session and owned child.
+A refused interrupt produces `interrupt-refused`, without an acknowledgement or
+an inferred turn completion. Neither refusal permits replay of the same control.
+Malformed protocol, transport loss, and uncertain request outcomes still stop
+the owned connection. The typed refusal classifier preserves existing callers'
+error classifications and request bytes.
+
+`CodexHandle` keeps the Client private. Turn operations use the typed turn request
+and consume their operation identity before any uncertain write. Interrupt uses
+an exact provider turn ID from `Snapshot.Turn`; its acknowledgement and the eventual
+turn result remain separate from child exit. Approval responses use the existing
+safe-decision decoder and response builder. Question responses reuse the existing
+Codex question parser and selection validation. Both carry the original scalar
+request ID on the exact connection; numeric and string IDs remain distinct.
+Stale, consumed or expired tokens write nothing. Unknown server requests and
+connection loss fail explicitly and never grant permission. Hook registration and
+consumer-owned deadline policy remain outside this adapter.
+
+The same frame, diagnostic, output-event and protected-control limits apply.
+The typed Client also has its own bounded notification backlog; overflow terminates
+the connection explicitly rather than blocking control or Wait. Notifications are
+serialized with typed controls so a turn event preceding the turn/start answer
+cannot be assigned to another turn. Stream closure unblocks owned reads and writes;
+independent supervisor Wait remains authoritative.
+
+`TestCodexDedicatedThreadSettingsAndOperationRetry`,
+`TestCodexTurnsQuestionsApprovalsInterrupt`,
+`TestCodexInitializationFailureRollsBackOnlyOwnedChild`,
+`TestCodexBoundedStreamsWaitAndControl`, and
+`TestCodexOwnerLifetimeReclaimsOnlyOwnedGroup` cover settings/identity, startup
+rollback, exact responses, bounded I/O and owner EOF/TERM/KILL with a surviving
+sibling. Linux unit/race and native Darwin CI run these fixtures on the same head.
+
+`PROCESSHOST_TEST_CODEX=1 go test ./internal/integrations/processhost -run
+'^TestInstalledCodexStdio$' -v` qualifies an installed Codex using isolated
+HOME/CODEX_HOME and an in-process local stub model provider, with no credentials
+or real model API calls. It checks two turn results on one owned thread, requested
+settings, and actual exit0 after Stop. Interactive question/approval semantics
+remain deterministic-fixture evidence; this probe does not claim public CLI
+or hook acceptance.

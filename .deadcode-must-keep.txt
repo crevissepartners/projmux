@@ -22,6 +22,18 @@ Catalog.MissingFallbackKeys	Fallback-locale projection of MissingLocaleKeys reta
 ClassifySchemaVersion	Ambient-environment entry point of ClassifySchemaVersionWith retained as the test seam that pins fail-closed registry schema classification.
 ClaudeCommand	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
+CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexConfig.newAdapter	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Events	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Expire	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Interrupt	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Observe	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.RespondApproval	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.RespondQuestion	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Stop	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Turn	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.Wait	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
 DecideTeardownEvent	The pure teardown decision API is called by the product path and retained for lifecycle authority proofs.
@@ -82,9 +94,11 @@ Handle.writeLocked	Internal processhost implementation retained for owned-proces
 HeaderLine	Default-theme entry point of HeaderLineWithTheme retained as the picker chrome golden seam.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
 Host.Start	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
+Host.StartCodex	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 InheritedEnv	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 InstalledTestEnvReads	Test-only guard API retained: it keeps each package's provider opt-in gates closed over the variables its installed tests read.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
+IsResponseError	Typed server-refusal classifier retained for dedicated processhost control until public activation supplies an importer.
 IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
@@ -180,6 +194,15 @@ buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test 
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 cloneRequest	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
+codexAdapter.attach	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.consume	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.initialize	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.interrupt	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.lock	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.readOutput	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.respond	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.turn	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+codexAdapter.unlock	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexHooksBlock	Default-events entry point of codexHooksBlockForEvents retained as the managed Codex hook block seam.
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
@@ -226,6 +249,9 @@ notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDi
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 observeChildExit	Owned-child exit observation preserves PID/group identity until signals precede actual Wait; retained for processhost lifecycle proof.
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
+ownedStream.Close	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+ownedStream.Write	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.

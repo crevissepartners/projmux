@@ -411,3 +411,25 @@ func TestWebSocketFrameLengthHeaderBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestIsResponseErrorPreservesExistingClassifications(t *testing.T) {
+	for _, kind := range []error{nil, ErrUnsupported, ErrThreadNotDurable, ErrThreadAbsent} {
+		err := &responseError{code: -32000, kind: kind}
+		wrapped := fmt.Errorf("request: %w", err)
+		if !IsResponseError(wrapped) {
+			t.Fatalf("not a server refusal: %v", wrapped)
+		}
+		want := ErrProtocol
+		if kind == ErrUnsupported {
+			want = ErrUnsupported
+		}
+		if !errors.Is(wrapped, want) {
+			t.Fatalf("existing classification changed: %v", wrapped)
+		}
+	}
+	for _, err := range []error{nil, ErrProtocol, ErrDisconnected, ErrPayloadTooLarge, context.Canceled} {
+		if IsResponseError(err) {
+			t.Fatalf("transport or local error classified as refusal: %v", err)
+		}
+	}
+}

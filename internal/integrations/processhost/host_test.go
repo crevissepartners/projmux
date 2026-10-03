@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 func TestMain(m *testing.M) {
@@ -56,7 +58,7 @@ func TestMain(m *testing.M) {
 			}
 		}
 	}
-	os.Exit(m.Run())
+	os.Exit(liveguard.RunTests(m, liveguard.ProviderOptIn("PROCESSHOST_TEST_CODEX", "PROCESSHOST_TEST_CLAUDE")))
 }
 
 func fixtureCommand(mode string) Command {
@@ -138,6 +140,10 @@ func fixtureProvider() {
 	mode := "normal"
 	if len(os.Args) > 2 {
 		mode = os.Args[2]
+	}
+	if strings.HasPrefix(mode, "codex-") {
+		codexFixture(mode)
+		return
 	}
 	switch mode {
 	case "ignore-eof-term":
@@ -549,3 +555,5 @@ func TestOutputCannotEvictControlOrTermination(t *testing.T) {
 		t.Fatal("unbounded queue")
 	}
 }
+
+func TestLiveMachineGuardHolds(t *testing.T) { liveguard.RequireActive(t) }
