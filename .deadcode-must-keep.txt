@@ -153,6 +153,7 @@ QualificationResult.Validate	Phase 0 strict generation qualification consistency
 ReadArchive	Lock-free reader of the agent message store and reclaim log, retained as the archive read contract its own read_test.go suite enters directly; the in-repo product consumer left with the web layer.
 ReadLifecycleSnapshotOn	The shared requester lifecycle decoder remains a compatibility seam and the independent differential oracle for the owned bounded reader.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
+RecordSession	Internal content-free provider session persistence seam retained until the foreground consumer records explicit resume state.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
 Registry.rebuildMissingReservations	v0-to-v1 name reservation rebuild retained as the migration proof for the live scopeFor reservation scoping.
 RenderBar	Uncolored HUD bar renderer retained as the test seam that pins the BarFillCount fill math shared with RenderColoredBar.

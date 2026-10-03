@@ -275,3 +275,43 @@ the notification queue retains its existing TTL, cap and expired-plus-gone rules
 Mixed inventory failures preserve the tmux error diagnostic and treat unobserved
 tmux targets as unknown while still projecting process rows. The seam is dormant
 until explicitly injected; public activation remains a later step.
+
+## Explicit recorded-session resume preparation
+
+`SessionRecord` is an internal persistence value containing the provider session,
+old ownership binding, connection, turn and pending control identities. It stores
+no prompts, question text or decisions and does not write Registry schema.
+`Availability` distinguishes a recorded resume candidate (`resumable`) from a
+missing identity (`unknown`); it does not promise provider acceptance or imply
+that a live host has exited. The consumer must retire the old host and reserve
+the new ownership generation before resuming. Actual process termination still
+requires Wait evidence.
+
+`ResumeCodex` starts a new dedicated app-server and reuses the typed Client's
+`ResumeThreadWithSettings`. It never invokes thread/start or shared discovery.
+`ResumeClaude` adds `--resume` for exactly the recorded session and requires an
+explicit new prompt and turn ID. Stream-json emits init only after input, so
+success waits for bounded init with the same session. If init reports a different
+session, the new prompt has already been sent before the child is terminated.
+The previous turn is never
+resent. Conflicting session arguments, unchanged generations, missing sessions,
+provider refusals and returned identity mismatches fail explicitly through
+`ErrResumeRefused`; they never authorize a fresh conversation. Retrying the same
+launch operation returns the same handle without writing another prompt.
+
+The new snapshot's `ResumeHistory` retains the old binding, an interrupted turn
+and expired control identities. These are historical records, never current
+pending requests. All control admission still requires the new binding and
+connection, even when the provider session is unchanged. No public command,
+route, schema, automatic restart or relaunch consumer activates this seam yet.
+
+`TestResume*` covers content-free record round trips, interrupted/expired history,
+new-generation control, stale response/ack wire zero, idempotent launch and
+refusal without replacement conversations. Linux and native Darwin run these
+fixtures. `PROCESSHOST_TEST_CLAUDE=1 PROCESSHOST_TEST_CODEX=1 go test
+./internal/integrations/processhost -run '^TestInstalledResume' -v` qualifies
+installed providers against localhost SSE stubs in isolated HOME with no real
+API. Both verify the preceding user turn and assistant reply in the resumed
+model request and explicit missing-session refusal without another model call.
+Codex also rejects thread/resume before the first durable turn. Native question
+and approval controls remain fixture-qualified; public activation is separate.

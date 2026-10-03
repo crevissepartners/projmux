@@ -145,6 +145,10 @@ func fixtureProvider() {
 		codexFixture(mode)
 		return
 	}
+	if mode == "resume-claude" || mode == "resume-claude-wrong-session" || mode == "resume-claude-refused" {
+		resumeClaudeFixture(mode)
+		return
+	}
 	switch mode {
 	case "ignore-eof-term":
 		ignoreTerm()

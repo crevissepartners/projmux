@@ -167,7 +167,13 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	if _, err := c.client.InitializeExperimental(ctx, cfg.Version); err != nil {
 		return err
 	}
-	thread, err := c.client.StartThreadWithSettings(ctx, c.p.launch.Command.Dir, cfg.Roots, cfg.DeveloperInstructions, cfg.Settings)
+	var thread codexappserver.ThreadBinding
+	var err error
+	if record := c.p.launch.resume; record != nil {
+		thread, err = c.client.ResumeThreadWithSettings(ctx, record.Session, c.p.launch.Command.Dir, cfg.Roots, cfg.Settings)
+	} else {
+		thread, err = c.client.StartThreadWithSettings(ctx, c.p.launch.Command.Dir, cfg.Roots, cfg.DeveloperInstructions, cfg.Settings)
+	}
 	if err != nil {
 		return err
 	}
