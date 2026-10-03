@@ -739,6 +739,9 @@ func (m Mutator) ObserveRuntimeBindings(reg *Registry, observed RuntimeObservati
 	}
 	for i := range reg.Panes {
 		pane := &reg.Panes[i]
+		if observed.ProcessPanes[pane.Metadata.UID] {
+			continue
+		}
 		if m.refreshRuntimeCondition(&pane.Status.Conditions,
 			observed.BoundPane(pane.Metadata.UID),
 			"no live tmux pane mirrors pane uid "+pane.Metadata.UID, now) {

@@ -75,6 +75,9 @@ func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLoo
 				inventory = reader.observe(context.Background(), transport)
 			}
 		}
+		if reader != nil && reader.processes != nil {
+			inventory.Processes = reader.processes(context.Background(), registry).Clone()
+		}
 		graph := resourcegraph.Resolve(registry, inventory)
 		return resourceReadSnapshot{
 			runtime:    graphRuntimeObservation(graph),
@@ -96,6 +99,7 @@ func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLoo
 // observation could be taken at all.
 func graphRuntimeObservation(graph resourcegraph.Graph) coremetadata.RuntimeObservation {
 	observed := coremetadata.RuntimeObservation{
+		ProcessPanes:     make(map[string]bool),
 		Windows:          make(map[string]bool),
 		Panes:            make(map[string]bool),
 		Sessions:         make(map[string]bool),
@@ -118,6 +122,9 @@ func graphRuntimeObservation(graph resourcegraph.Graph) coremetadata.RuntimeObse
 	}
 	for _, node := range graph.Panes {
 		mark(observed.Panes, node.Pane.Metadata.UID, node.Status)
+		if node.Process != nil {
+			observed.ProcessPanes[node.Pane.Metadata.UID] = true
+		}
 	}
 	for _, node := range graph.Agents {
 		if node.Status == resourcegraph.StatusUnknown {

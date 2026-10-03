@@ -3098,11 +3098,43 @@ func (c *aiCommand) muxRunner() intmux.Runner {
 }
 
 type aiCommandMuxBackend struct {
-	runCommand  func(ctx context.Context, name string, args ...string) error
-	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
+	processTarget *processTerminalTarget
+	runCommand    func(ctx context.Context, name string, args ...string) error
+	readCommand   func(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+// withProcessTarget binds admission through the existing transport seams,
+// preserving the full clone contract and the nil default invocation.
+func (c *aiCommand) withProcessTarget(target *processTerminalTarget) *aiCommand {
+	if target == nil {
+		return c
+	}
+	clone := c.cloneSeams()
+	clone.runCommand = func(ctx context.Context, name string, args ...string) error {
+		if err := target.admitTmux(name, args); err != nil {
+			return err
+		}
+		if c.runCommand == nil {
+			return errors.New("ai command runner is not configured")
+		}
+		return c.runCommand(ctx, name, args...)
+	}
+	clone.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if err := target.admitTmux(name, args); err != nil {
+			return nil, err
+		}
+		if c.readCommand == nil {
+			return nil, errors.New("ai command reader is not configured")
+		}
+		return c.readCommand(ctx, name, args...)
+	}
+	return clone
 }
 
 func (b aiCommandMuxBackend) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if err := b.processTarget.admitTmux(name, args); err != nil {
+		return nil, err
+	}
 	if name == "tmux" && !aiMuxCommandNeedsOutput(args) {
 		if b.runCommand != nil {
 			return nil, b.runCommand(ctx, name, args...)

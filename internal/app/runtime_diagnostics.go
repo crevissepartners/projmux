@@ -50,6 +50,9 @@ import (
 
 // runtimeDiagnosticsReader resolves one exact host into a resolved graph.
 type runtimeDiagnosticsReader struct {
+	// processes is an internal invocation declaration; public activation is staged separately.
+	processes func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
+
 	runner    tmuxCommandRunner
 	lookupEnv func(string) string
 	// loadRegistry is the read-only Registry load. It never creates state: the
@@ -137,7 +140,11 @@ func (r *runtimeDiagnosticsReader) resolve(ctx context.Context, transport resour
 	if r.observe == nil {
 		return resourcegraph.Graph{}, errors.New("runtime diagnostics observer is not configured")
 	}
-	return resourcegraph.Resolve(registry, r.observe(ctx, transport)), nil
+	inventory := r.observe(ctx, transport)
+	if r.processes != nil {
+		inventory.Processes = r.processes(ctx, registry).Clone()
+	}
+	return resourcegraph.Resolve(registry, inventory), nil
 }
 
 // socketPath asks the observed server for its own `#{socket_path}`.

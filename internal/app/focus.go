@@ -43,6 +43,8 @@ type focusNotifier interface {
 }
 
 type focusCommand struct {
+	processRuntime *processPaneRuntime
+
 	diagnostics       *diagnostics.LifecycleRecorder
 	notifyDiagnostics *diagnostics.NotifyFocusRecorder
 	runner            focusCommandRunner

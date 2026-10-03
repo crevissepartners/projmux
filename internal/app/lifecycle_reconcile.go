@@ -37,6 +37,8 @@ import (
 // `#{hook_pane}`, so a producer that pretended to know would be inventing the
 // one field that matters.
 type lifecycleDirtyEvent struct {
+	processes resourcegraph.ProcessInventory
+
 	// target is the exact tmux server to re-observe. The zero value routes
 	// through the inherited client, which is the absolute socket in $TMUX; a
 	// non-zero value is an explicit -L/-S and addresses that server only.
@@ -320,6 +322,9 @@ func planExactLifecycleCascade(
 	event lifecycleDirtyEvent,
 	mutator coremetadata.Mutator,
 ) (exactLifecycleCascadePlan, error) {
+	if pane, ok := registry.Pane(event.paneUID); ok && event.processes.Declares(*pane) {
+		return exactLifecycleCascadePlan{}, nil
+	}
 	if (event.teardownKind != coremetadata.TeardownEventPaneExited &&
 		event.teardownKind != coremetadata.TeardownEventWindowUnlinked) ||
 		event.target.Flag() == "" || event.target.Value == "" {
@@ -388,6 +393,9 @@ func planExactLifecycleCascade(
 			coremetadata.TeardownReasonConflictingOwnerFacts, "current dead Pane observation has incomplete stable containment")
 	}
 	pane, ok := registry.Pane(observed.PaneUID)
+	if ok && event.processes.Declares(*pane) {
+		return exactLifecycleCascadePlan{}, nil
+	}
 	if !ok || (event.preexistingRecovery && pane.Status.Activation.RuntimeID != observed.PaneID) ||
 		(strings.TrimSpace(event.generation) != "" && pane.Status.Activation.Generation != strings.TrimSpace(event.generation)) {
 		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
@@ -457,7 +465,7 @@ func planExactLifecycleCascade(
 	liveSiblingPane := false
 	for i := range registry.Panes {
 		sibling := registry.Panes[i]
-		if sibling.Metadata.UID == pane.Metadata.UID || !live[sibling.Metadata.UID] || deadUIDs[sibling.Metadata.UID] {
+		if sibling.Metadata.UID == pane.Metadata.UID || (!live[sibling.Metadata.UID] && !event.processes.Declares(sibling)) || deadUIDs[sibling.Metadata.UID] {
 			continue
 		}
 		if siblingWindow, exists := paneWindowUID(registry, sibling); exists && siblingWindow == windowUID {
@@ -473,7 +481,7 @@ func planExactLifecycleCascade(
 		for i := range registry.Panes {
 			candidate := registry.Panes[i]
 			if candidateWindow, exists := paneWindowUID(registry, candidate); exists &&
-				candidateWindow == siblingWindow.Metadata.UID && live[candidate.Metadata.UID] && !deadUIDs[candidate.Metadata.UID] {
+				candidateWindow == siblingWindow.Metadata.UID && (live[candidate.Metadata.UID] || event.processes.Declares(candidate)) && !deadUIDs[candidate.Metadata.UID] {
 				liveSiblingRootWindow = true
 				break
 			}
@@ -564,6 +572,9 @@ func planExactWindowUnlinkCascade(
 	var pane *coremetadata.Pane
 	for i := range registry.Panes {
 		candidate := &registry.Panes[i]
+		if event.processes.Declares(*candidate) {
+			continue
+		}
 		evidence := candidate.Status.Teardown
 		if evidence == nil || evidence.SocketIdentity != event.target.Label() ||
 			evidence.RuntimeSessionID != strings.TrimSpace(event.runtimeSessionID) ||
@@ -604,6 +615,12 @@ func planExactWindowUnlinkCascade(
 			liveSiblingRootWindows++
 		}
 	}
+	processSiblingRootWindow := false
+	for _, sibling := range registry.WindowsOf(evidence.RootUID) {
+		if sibling.Metadata.UID != evidence.WindowUID && processInWindow(registry, event.processes, sibling.Metadata.UID) {
+			processSiblingRootWindow = true
+		}
+	}
 	// Every remaining runtime Window in the exact event session must be an exact
 	// sibling Registry Window. Unmirrored or cross-session rows make the pair
 	// foreign rather than broadening deletion authority.
@@ -620,13 +637,20 @@ func planExactWindowUnlinkCascade(
 	paneEvent := coremetadata.TeardownEvent{
 		Kind: coremetadata.TeardownEventPaneExited, Classification: evidence.Classification,
 		Generation: coremetadata.TeardownGenerationCurrent, Observation: coremetadata.TeardownObservationExactSocket,
-		Chain: chain, LiveSiblingRootWindow: liveSiblingRootWindows > 0,
+		Chain: chain, LiveSiblingRootWindow: liveSiblingRootWindows > 0 || processSiblingRootWindow,
 	}
 	unlinked := paneEvent
 	unlinked.Kind = coremetadata.TeardownEventWindowUnlinked
 	now := time.Now
 	if mutator.Now != nil {
 		now = mutator.Now
+	}
+	if processInWindow(registry, event.processes, evidence.WindowUID) {
+		// The tmux Pane receipt still applies, but its Window contains a child
+		// outside tmux authority. Delete only the exact Pane/Agent pair.
+		paneEvent.LiveSiblingPane = true
+		plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, paneEvent, now().UTC())
+		return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan, subject: subject}, err
 	}
 	plan, err := coremetadata.PlanWindowRootCascadeDelete(registry, paneEvent, unlinked, now().UTC())
 	return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, root: plan, subject: subject}, err
@@ -888,6 +912,9 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindow
 	var out []coremetadata.TerminationProjectionInput
 	for i := range registry.Panes {
 		paneUID := registry.Panes[i].Metadata.UID
+		if event.processes.Declares(registry.Panes[i]) {
+			continue
+		}
 		// A clean last-Pane receipt retains the complete subtree until its exact
 		// window-unlinked half arrives. A generic absence projection must not
 		// release the Agent binding or invalidate the Window anchor in between.
@@ -1200,4 +1227,16 @@ func reconcileLifecycle(
 		result.skipped = "the locked exact-host observation left nothing to reconcile: " + event.describe()
 	}
 	return result, nil
+}
+
+// A declared child constrains ancestor deletion without claiming tmux liveness.
+func processInWindow(registry coremetadata.Registry, processes resourcegraph.ProcessInventory, windowUID string) bool {
+	for _, pane := range registry.Panes {
+		if processes.Declares(pane) {
+			if uid, ok := paneWindowUID(registry, pane); ok && uid == windowUID {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -111,6 +111,10 @@ func (r *resolver) resolveClaims() {
 			continue
 		}
 		pane, _ := r.registry.Pane(uid)
+		if r.inventory.Processes.Declares(*pane) {
+			r.reject(ObjectPane, uid, ConflictKindMismatch, "process Pane cannot claim a tmux runtime", refs)
+			continue
+		}
 		windowUID, _, rootUID := r.paneOwnerChain(*pane)
 		if detail, contradicted := r.paneContainmentContradiction(claimants[0], windowUID, rootUID); contradicted {
 			r.reject(ObjectPane, uid, ConflictOwnerMismatch, detail, refs)

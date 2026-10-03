@@ -4,6 +4,14 @@ This package is an internal host and Claude stream adapter, exercised through
 fixtures. No public command starts it yet. It does not write Registry records,
 create tmux resources, attach to existing providers, or change user settings.
 
+`InventoryTarget` supplies an exact owned binding and an optional `Handle` for
+one invocation. `ObserveInventory` converts only `Handle.Observe` results into
+the pure resource graph inventory; it never discovers or starts a host.
+Declarations remain present when a handle is unavailable or observation fails,
+so the child stays unknown. A ready exact host is live; only actual child exit
+evidence is offline. Inventory contains host, Pane, and generation identity,
+without provider content or a fabricated tmux handle.
+
 `NewHost` requires an explicit supervisor executable, transaction callbacks, and
 limits. The consumer dispatches `ServeSupervisor` in that executable with inherited
 file descriptors 3 (owner lifetime), 4 (launch spec), and 5 (status). The helper

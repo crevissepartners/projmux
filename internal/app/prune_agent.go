@@ -415,7 +415,7 @@ func observePruneAgentPanes(registry coremetadata.Registry, observe pruneAgentOb
 	out := pruneAgentPaneLiveness{live: map[string]bool{}}
 	out.available, out.reason = pruneAgentObservationAuthority(inventory)
 	for _, node := range resourcegraph.Resolve(registry, inventory).Panes {
-		if node.Runtime != nil || node.Class == resourcegraph.ClassConflict {
+		if node.Process != nil || node.Runtime != nil || node.Class == resourcegraph.ClassConflict {
 			out.live[node.Pane.Metadata.UID] = true
 		}
 	}

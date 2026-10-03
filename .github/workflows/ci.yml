@@ -361,6 +361,8 @@ jobs:
       - name: Verify process Codex binding and receipt fixtures
         run: go test -race -v -count=1 -timeout=120s -run "^TestCodexProcess|^TestProcessCodexRoute" ./internal/app ./internal/core/metadata
 
+      - name: Verify typed process inventory, convergence, and admission
+        run: go test -race -v -count=1 -timeout=120s -run '^TestProcessInventory|^TestProcessAdmission|^TestProcessPane|^TestProcessInvocation|^TestProcessConvergence|^TestProcessSupported' ./internal/core/resourcegraph ./internal/core/controller ./internal/core/registryview ./internal/core/selector ./internal/core/metadata ./internal/app ./internal/integrations/processhost
       # Builds and links every test binary, including darwin && cgo files, but
       # runs none of them: this gate is darwin test compilation, not darwin
       # test results.

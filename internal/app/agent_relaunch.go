@@ -14,6 +14,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
@@ -157,6 +158,9 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
 	}
 	target := agent.Clone()
+	if _, handled, err := c.processRuntime.admit(registry, target.Status.PaneRef, resourcegraph.ProcessRelaunch); handled {
+		return err
+	}
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, target.Metadata.Name, detail, reason))
 	}
