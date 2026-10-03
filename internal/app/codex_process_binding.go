@@ -31,10 +31,15 @@ type codexProcessEndpoint struct {
 	registryPath   string
 	listener       *localipc.Listener
 	once           sync.Once
+	closeLease     func(context.Context) error
+	closeErr       error
 	messages       atomic.Pointer[codexProcessMessages]
 }
 
-func (e *codexProcessEndpoint) close() { e.once.Do(func() { _ = e.listener.Close() }) }
+func (e *codexProcessEndpoint) close(ctx context.Context) error {
+	e.once.Do(func() { e.closeErr = e.closeLease(ctx) })
+	return e.closeErr
+}
 func (e *codexProcessEndpoint) authority() processhost.Authority {
 	return processhost.Authority{Binding: e.binding, Session: e.evidence.ThreadID, Connection: e.evidence.Connection}
 }
@@ -96,15 +101,18 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 		return nil, errors.New("invalid process activation registry")
 	}
 	socket := claudeActivationLeaseDir(registryPath, launch.Binding.Pane, launch.Binding.Generation) + "/codex-host.sock"
-	listener, err := localipc.Listen(socket)
+	listener, closeLease, err := listenProcessHost(socket)
 	if err != nil {
 		return nil, err
 	}
-	endpoint := &codexProcessEndpoint{binding: launch.Binding, socket: socket, listener: listener, registryPath: registryPath}
+	endpoint := &codexProcessEndpoint{binding: launch.Binding, socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
 	launch.Command.Env = processCodexLaunchEnv(launch, socket)
+	launch.Completion = &processhost.Completion{Cleanup: endpoint.close}
 	endpoint.handle, err = host.StartCodex(ctx, launch, config)
 	rollback := func() {
-		endpoint.close()
+		cleanup, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), localipc.Deadline)
+		_ = endpoint.close(cleanup)
+		cancelCleanup()
 		if endpoint.handle != nil {
 			_ = endpoint.handle.Stop(launch.Binding)
 			wait, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*localipc.Deadline)
@@ -142,9 +150,6 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 		return nil, err
 	}
 	go endpoint.serve(context.WithoutCancel(ctx))
-	// The owned child outlives the launch request; close its endpoint only after
-	// its actual exit, even if that request is canceled.
-	go func() { _, _ = endpoint.handle.Wait(context.WithoutCancel(ctx), launch.Binding); endpoint.close() }()
 	return endpoint, nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -70,9 +71,64 @@ type claudeProcessService struct {
 	launchErr    error
 	ownedProcess coremetadata.ProcessIdentity
 	once         sync.Once
+	closeLease   func(context.Context) error
+	closeErr     error
 }
 
-func (s *claudeProcessService) close() { s.once.Do(func() { _ = s.listener.Close() }) }
+func (s *claudeProcessService) close(ctx context.Context) error {
+	s.once.Do(func() { s.closeErr = s.closeLease(ctx) })
+	return s.closeErr
+}
+
+// A process host creates its activation directory exclusively. Cleanup removes
+// only its recorded directory inode, only when empty; it never sweeps siblings
+// or deletes entries owned by another endpoint.
+func listenProcessHost(socket string) (*localipc.Listener, func(context.Context) error, error) {
+	dir := filepath.Dir(socket)
+	if err := os.Mkdir(dir, 0700); err != nil {
+		return nil, nil, err
+	}
+	owned, err := os.Lstat(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	removeDir := func() error {
+		current, err := os.Lstat(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(owned, current) {
+			return errors.New("process host lease directory replaced")
+		}
+		return os.Remove(dir)
+	}
+	listener, err := localipc.Listen(socket)
+	if err != nil {
+		return nil, nil, errors.Join(err, removeDir())
+	}
+	closeLease := func(ctx context.Context) error {
+		socketErr := listener.Close()
+		// Claude's helper owns its additional entries and removes them when host
+		// authority disappears. Wait for that bounded shutdown, never remove them.
+		for {
+			dirErr := removeDir()
+			if !errors.Is(dirErr, syscall.ENOTEMPTY) {
+				return errors.Join(socketErr, dirErr)
+			}
+			timer := time.NewTimer(10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return errors.Join(socketErr, dirErr, ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return listener, closeLease, nil
+}
 
 func (s *claudeProcessService) serve(ctx context.Context) {
 	for {
@@ -223,7 +279,9 @@ func (s *claudeProcessService) initialize(ctx context.Context, host *processhost
 }
 
 func (s *claudeProcessService) rollback(ctx context.Context) {
-	s.close()
+	cleanup, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), localipc.Deadline)
+	_ = s.close(cleanup)
+	cancelCleanup()
 	if s.handle == nil {
 		return
 	}
@@ -240,21 +298,21 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 		return nil, errors.New("invalid process activation registry")
 	}
 	socket := processClaudeHostSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation)
-	listener, err := localipc.Listen(socket)
+	listener, closeLease, err := listenProcessHost(socket)
 	if err != nil {
 		return nil, err
 	}
-	service := &claudeProcessService{registryPath: registryPath, binding: launch.Binding, listener: listener, ready: make(chan struct{})}
+	service := &claudeProcessService{registryPath: registryPath, binding: launch.Binding, listener: listener, closeLease: closeLease, ready: make(chan struct{})}
 	// Startup cancellation does not shorten the already owned child lifetime.
 	lifetime := context.WithoutCancel(ctx)
 	go service.serve(lifetime)
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, socket)
+	launch.Completion = &processhost.Completion{Cleanup: service.close}
 	service.initialize(ctx, host, launch)
 	if service.launchErr != nil {
 		service.rollback(ctx)
 		return service.handle, service.launchErr
 	}
-	go func(waitCtx context.Context) { _, _ = service.handle.Wait(waitCtx, launch.Binding); service.close() }(lifetime)
 	return service.handle, nil
 }
 

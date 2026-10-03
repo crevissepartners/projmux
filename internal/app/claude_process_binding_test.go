@@ -121,11 +121,10 @@ func newProcessClaudeFixture(t *testing.T, command func(string, string) processh
 
 func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) processhost.Command, sharedPath string) *processClaudeFixture {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "pcc-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	// Keep copied supervisor/provider paths short on both supported platforms.
+	t.Setenv("TMPDIR", "/tmp")
+	root := t.TempDir()
+	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
 	if err != nil {
@@ -228,6 +227,10 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 		s, err := handle.Wait(ctx, b)
 		if err != nil || s.Exit == nil {
 			t.Errorf("Wait: %+v %v", s, err)
+		}
+		leaseDir := filepath.Dir(processClaudeHostSocket(path, b.Pane, b.Generation))
+		if _, err := os.Lstat(leaseDir); !os.IsNotExist(err) {
+			t.Errorf("host lease remains after actual Wait: %s (%v)", leaseDir, err)
 		}
 	})
 	questions := agentquestion.NewStore(filepath.Join(root, "answers"))

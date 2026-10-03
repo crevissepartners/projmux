@@ -86,9 +86,18 @@ func NewHost(instance string, supervisor Command, tx Transactions, limits Limits
 type Launch struct {
 	Binding                  Binding
 	Command                  Command
+	Completion               *Completion
 	adapter                  adapterConfig
 	resume                   *SessionRecord
 	resumeTurn, resumePrompt string
+}
+
+// Completion binds owned cleanup to a launch before any child can exit. Its
+// pointer is part of the launch identity: retries must retain the same owner.
+// Cleanup is immutable after Start, runs without Handle/Host locks, and receives
+// the host's bounded write budget. It must honor cancellation.
+type Completion struct {
+	Cleanup func(context.Context) error
 }
 
 // Handle is tied to one owned supervisor/child pair and cannot adopt a PID.
@@ -125,6 +134,7 @@ type Handle struct {
 	spawnErr               error
 	stopOnce               sync.Once
 	adapter                providerAdapter
+	completionContext      context.Context
 }
 
 // Snapshot is a bounded resynchronization view. Turn results do not set Exit.
@@ -185,7 +195,7 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	if launch.adapter != nil {
 		launch.adapter = launch.adapter.clone()
 	}
-	p := &Handle{host: h, launch: launch, state: "starting", connection: launch.Binding.Operation, ready: make(chan struct{}), done: make(chan struct{}), statusDone: make(chan struct{}), usedTurns: make(map[string]bool), requests: make(map[string]Request), usedRequests: make(map[string]bool)}
+	p := &Handle{host: h, launch: launch, completionContext: context.WithoutCancel(ctx), state: "starting", connection: launch.Binding.Operation, ready: make(chan struct{}), done: make(chan struct{}), statusDone: make(chan struct{}), usedTurns: make(map[string]bool), requests: make(map[string]Request), usedRequests: make(map[string]bool)}
 	if launch.adapter != nil {
 		p.adapter = launch.adapter.newAdapter(p)
 	}
@@ -449,6 +459,27 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 }
 
 func (p *Handle) finish() {
+	if completion := p.launch.Completion; completion != nil && completion.Cleanup != nil {
+		ctx, cancel := context.WithTimeout(p.completionContext, p.host.limits.Write)
+		result := make(chan error, 1)
+		go func() { result <- completion.Cleanup(ctx) }()
+		var cleanupErr error
+		select {
+		case cleanupErr = <-result:
+		case <-ctx.Done():
+			cleanupErr = ctx.Err()
+		}
+		cancel()
+		if cleanupErr != nil {
+			p.mu.Lock()
+			p.diagnostics = append(p.diagnostics, fmt.Appendf(nil, "\nowned completion cleanup: %v\n", cleanupErr)...)
+			if len(p.diagnostics) > p.host.limits.DiagnosticBytes {
+				p.diagnostics = bytes.Clone(p.diagnostics[len(p.diagnostics)-p.host.limits.DiagnosticBytes:])
+			}
+			p.mu.Unlock()
+		}
+	}
+
 	p.host.mu.Lock()
 	if p.host.panes[p.launch.Binding.Pane] == p {
 		delete(p.host.panes, p.launch.Binding.Pane)
