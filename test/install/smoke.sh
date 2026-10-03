@@ -118,37 +118,47 @@ cat >"$install_mv" <<'INSTALL_MV'
 #!/usr/bin/env bash
 set -euo pipefail
 : >"$PROJMUX_INSTALL_SEAM_READY"
-for _ in {1..500}; do
-  [[ -f "$PROJMUX_INSTALL_SEAM_RELEASE" ]] && exec /bin/mv "$@"
+release_deadline=$((SECONDS + 60))
+while [[ ! -f "$PROJMUX_INSTALL_SEAM_RELEASE" ]]; do
+  if ! kill -0 "$PROJMUX_INSTALL_MAKE_PID" 2>/dev/null; then
+    echo "make install exited while waiting for install publication seam release" >&2
+    exit 1
+  fi
+  if (( SECONDS >= release_deadline )); then
+    echo "timed out after 60s waiting for install publication seam release" >&2
+    exit 1
+  fi
   sleep 0.01
 done
-echo "timed out waiting for install publication seam release" >&2
-exit 1
+exec /bin/mv "$@"
 INSTALL_MV
 chmod 0755 "$install_mv"
 
-make install \
-  BUILD_DIR="$build_dir" \
-  PROJMUX_BIN="$build_dir/projmux" \
-  INSTALL_DIR="$install_dir" \
-	INSTALL_MV="$install_mv" \
-	>"$PROJMUX_SMOKE_WORKDIR/make-install.out" \
-	2>"$PROJMUX_SMOKE_WORKDIR/make-install.err" &
+(
+  export PROJMUX_INSTALL_MAKE_PID="$BASHPID"
+  exec make install \
+    BUILD_DIR="$build_dir" \
+    PROJMUX_BIN="$build_dir/projmux" \
+    INSTALL_DIR="$install_dir" \
+    INSTALL_MV="$install_mv" \
+    >"$PROJMUX_SMOKE_WORKDIR/make-install.out" \
+    2>"$PROJMUX_SMOKE_WORKDIR/make-install.err"
+) &
 install_make_pid=$!
-for _ in {1..500}; do
-  [[ -f "$install_seam_ready" ]] && break
+ready_deadline=$((SECONDS + 60))
+while [[ ! -f "$install_seam_ready" ]]; do
   if ! kill -0 "$install_make_pid" 2>/dev/null; then
     wait "$install_make_pid" || true
     echo "make install exited before the publication seam" >&2
     cat "$PROJMUX_SMOKE_WORKDIR/make-install.err" >&2
     exit 1
   fi
+  if (( SECONDS >= ready_deadline )); then
+    echo "timed out after 60s waiting for make install to reach the publication seam" >&2
+    exit 1
+  fi
   sleep 0.01
 done
-if [[ ! -f "$install_seam_ready" ]]; then
-  echo "make install did not reach the publication seam" >&2
-  exit 1
-fi
 
 prepublished_marker="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_socket_name)"
 if [[ "$prepublished_marker" != "$PROJMUX_SMOKE_TMUX_SOCKET" ]]; then
