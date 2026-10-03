@@ -54,7 +54,7 @@ func TestClaudeStreamInitMustAgreeWithVerifiedHook(t *testing.T) {
 }
 
 func TestClaudeMessageReservationReleaseAndUncertainty(t *testing.T) {
-	for _, mode := range []string{"definite-failure", "uncertain-interrupt", "uncertain-stop"} {
+	for _, mode := range []string{"definite-failure", "uncertain-interrupt", "uncertain-stop", "uncertain-idle-stop"} {
 		t.Run(mode, func(t *testing.T) {
 			p := start(t, testHost(t, nil), "normal")
 			turn(t, p, "first", "ordinary")
@@ -77,7 +77,20 @@ func TestClaudeMessageReservationReleaseAndUncertainty(t *testing.T) {
 			if err := p.FinishClaudeMessage(context.Background(), a, "message-1", false, uncertain); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "uncertain-stop" {
+			if mode == "uncertain-idle-stop" {
+				if err := p.Interrupt(context.Background(), a, "message-1"); err != nil {
+					t.Fatal(err)
+				}
+				observeUntil(t, p, func(Snapshot) bool { return hasEvent(p, "interrupt-ack") })
+				s, _ = p.Observe(binding())
+				if s.Turn != "message-1" || s.MessageReservation != "awaiting-message-handoff" || s.Exit != nil {
+					t.Fatal("idle ack inferred cancellation", s)
+				}
+				if err := p.Turn(context.Background(), a, "blocked-after-idle-ack", "ordinary"); err != ErrBusy {
+					t.Fatal("idle ack admitted next turn", err)
+				}
+			}
+			if mode == "uncertain-stop" || mode == "uncertain-idle-stop" {
 				if err := p.Stop(binding()); err != nil {
 					t.Fatal(err)
 				}
@@ -86,6 +99,9 @@ func TestClaudeMessageReservationReleaseAndUncertainty(t *testing.T) {
 				s, err := p.Wait(ctx, binding())
 				if err != nil || s.Exit == nil || s.MessageReservation != "" {
 					t.Fatal("Stop did not resolve owned lifetime", s, err)
+				}
+				if err := p.Turn(context.Background(), a, "after-stop", "ordinary"); err != ErrClosed {
+					t.Fatal("old generation reopened", err)
 				}
 				return
 			}

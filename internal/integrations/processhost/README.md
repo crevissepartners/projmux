@@ -192,7 +192,10 @@ mutex; busy and duplicate inputs write nothing. Definite prewrite failure releas
 the reservation. Uncertain delivery appears as `awaiting-message-handoff` in the
 internal snapshot and remains pending until a provider result or actual exit.
 Interrupt acknowledgment alone does not infer cancellation; its result releases
-the reservation, and Stop resolves the owned process lifetime. Existing tmux tests are
+the reservation. An idle interrupt may return only an ack: that reservation
+stays pending and requires Stop with actual Wait evidence before a new generation
+can admit input. Stop resolves the owned process lifetime; it does not reopen the
+stopped generation. Existing tmux tests are
 unchanged. The processhost fixtures additionally check hook/init agreement.
 
 `PMX_TEST_REAL_CLAUDE_BIN=/absolute/path/to/claude go test ./internal/app -run

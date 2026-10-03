@@ -340,7 +340,7 @@ func (p *Handle) consume(raw []byte) error {
 		return fmt.Errorf("malformed Claude frame: %w", err)
 	}
 	if frame.Type == "" {
-		return errors.New("Claude frame missing type")
+		return errors.New("claude frame missing type")
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()

@@ -262,6 +262,46 @@ func TestInstalledProcessClaudeBinding(t *testing.T) {
 	if s.Exit != nil || s.State != "ready" {
 		t.Fatal("native endpoint lost session", s)
 	}
+
+	authority := processhost.Authority{Binding: f.binding, Connection: s.Connection, Session: s.Session}
+	const uncertainTurn = "native-uncertain-zero-delivery"
+	if err := f.handle.ReserveClaudeMessage(context.Background(), authority, uncertainTurn); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handle.FinishClaudeMessage(context.Background(), authority, uncertainTurn, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handle.Interrupt(context.Background(), authority, uncertainTurn); err != nil {
+		t.Fatal(err)
+	}
+	s = f.wait(t, func(processhost.Snapshot) bool {
+		events, _, _ := f.handle.Events(f.binding, 0)
+		for _, e := range events {
+			if e.Kind == "interrupt-ack" && e.Turn == uncertainTurn {
+				return true
+			}
+		}
+		return false
+	})
+	if s.Turn != uncertainTurn || s.MessageReservation != "awaiting-message-handoff" || s.Exit != nil {
+		t.Fatal("idle ack inferred cancellation", s)
+	}
+	if err := f.handle.Turn(context.Background(), authority, "blocked-after-ack", "ordinary"); err != processhost.ErrBusy {
+		t.Fatal("uncertain admission opened", err)
+	}
+	if err := f.handle.Stop(f.binding); err != nil {
+		t.Fatal(err)
+	}
+	wait, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s, err := f.handle.Wait(wait, f.binding)
+	cancel()
+	if err != nil || s.Exit == nil || s.MessageReservation != "" {
+		t.Fatal("idle uncertainty lacked actual Wait", s, err)
+	}
+	if err := f.handle.Turn(context.Background(), authority, "after-old-generation-stop", "ordinary"); err != processhost.ErrClosed {
+		t.Fatal("old generation reopened", err)
+	}
+	t.Logf("idle uncertain reservation: ack retained; Stop actual Wait exit=%+v; old generation remains closed", s.Exit)
 	t.Logf("native receipt round trip: peer init/question/deny/allow/result and subsequent host turn; localhost requests=%d", calls.Load())
 	t.Logf("installed Claude session=%s PID=%d localhost requests=%d; question1/deny1/allow1, repeated init, interrupt and follow-up", proof.Session, s.PID, calls.Load())
 }
