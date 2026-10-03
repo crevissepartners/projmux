@@ -145,7 +145,7 @@ func (p *Handle) writeLocked(ctx context.Context, frame any) error {
 }
 
 // Turn submits exactly one user input. Its return acknowledges the wire write,
-// not provider readiness or completion. Reusing a turn ID never writes again.
+// not provider readiness or completion. A retained turn ID never writes again.
 func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -155,16 +155,16 @@ func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) err
 	if turn == "" || len(turn) > 256 || p.usedTurns[turn] {
 		return ErrStale
 	}
-	if p.turn != "" || len(p.usedTurns) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+	if p.turn != "" || p.activeCriticalLocked() >= p.host.limits.Events {
 		return ErrBusy
 	}
 	p.turn = turn
-	p.usedTurns[turn] = true
+	p.rememberTurnLocked(turn)
 	frame := map[string]any{"type": "user", "session_id": p.session, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": prompt}}
 	if err := p.writeLocked(ctx, frame); err != nil {
 		if p.state != "stopping" {
 			p.turn = ""
-			delete(p.usedTurns, turn)
+			p.forgetUnwrittenTurnLocked(turn)
 		}
 		return err
 	}
@@ -187,11 +187,11 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] {
 		return ErrStale
 	}
-	if p.turn != "" || len(p.usedTurns) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+	if p.turn != "" || p.activeCriticalLocked() >= p.host.limits.Events {
 		return ErrBusy
 	}
 	p.turn = turn
-	p.usedTurns[turn] = true
+	p.rememberTurnLocked(turn)
 	p.messageReservation = "awaiting-message-handoff"
 	p.messageOutcomeRecorded = false
 	p.emitLocked("message-reserved", nil, nil)
@@ -382,7 +382,7 @@ func (p *Handle) consume(raw []byte) error {
 		if p.usedRequests[frame.RequestID] {
 			return nil
 		}
-		if len(p.requests) >= p.host.limits.Requests || len(p.usedRequests) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+		if len(p.requests) >= p.host.limits.Requests || len(p.usedRequests) >= p.host.limits.Events || p.activeCriticalLocked() >= p.host.limits.Events {
 			return errors.New("control request capacity exceeded")
 		}
 		var input map[string]any
@@ -428,6 +428,7 @@ func (p *Handle) consume(raw []byte) error {
 		p.emitLocked("turn-result", raw, nil)
 		p.turn, p.interrupt, p.messageReservation = "", "", ""
 		p.interruptAck = false
+		p.trimCriticalLocked()
 	case "rate_limit_event":
 		p.emitLocked("provider-event", raw, nil)
 	case "stream_event", "assistant", "user", "tool_progress", "tool_use_summary":

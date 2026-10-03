@@ -157,6 +157,7 @@ type codexProcessExchange struct {
 	Binding    processhost.Binding
 	Evidence   coremetadata.CodexProcessRouteEvidence
 	MessageRef string
+	Foreground *processForegroundRequest
 }
 type codexProcessExchangeResult struct {
 	Valid   bool
@@ -181,10 +182,29 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 	if localipc.ReadJSON(conn, &request) != nil {
 		return
 	}
-	// This preparation endpoint accepts the exact owning host's orchestration
-	// client. A same-user process or hook cannot appoint itself a control writer.
+	// Message orchestration retains its owning-host peer boundary. Foreground
+	// control separately requires per-user credentials and current exact authority.
 	peer, _, err := localipc.PeerProcess(conn)
-	if err != nil || peer != e.evidence.HostProcess {
+	if err != nil {
+		return
+	}
+	if request.Foreground != nil {
+		if request.MessageRef != "" {
+			return
+		}
+		r := *request.Foreground
+		current := func(ctx context.Context, a processhost.Authority) error {
+			if a != e.authority() {
+				return processhost.ErrStale
+			}
+			_, err := e.route(ctx)
+			return err
+		}
+		result := controlProcessForeground(bounded, peer, r, current, func() error { return applyCodexForeground(bounded, e.handle, r) })
+		_ = localipc.WriteJSON(conn, result)
+		return
+	}
+	if peer != e.evidence.HostProcess {
 		return
 	}
 	result := codexProcessExchangeResult{}

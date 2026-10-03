@@ -115,6 +115,7 @@ type Handle struct {
 	interrupt              string
 	interruptAck           bool
 	usedTurns              map[string]bool
+	usedTurnOrder          []string
 	requests               map[string]Request
 	usedRequests           map[string]bool
 	seq                    uint64
@@ -583,11 +584,67 @@ func (p *Handle) Events(binding Binding, after uint64) ([]Event, Snapshot, error
 	return result, p.snapshotLocked(), nil
 }
 
+// Completed operation IDs are a bounded stale fence, not lifetime admission.
+// The current operation stays in the fence until it completes.
+func (p *Handle) rememberTurnLocked(operation string) {
+	for len(p.usedTurnOrder) >= p.host.limits.Events {
+		oldest := p.usedTurnOrder[0]
+		p.usedTurnOrder = p.usedTurnOrder[1:]
+		delete(p.usedTurns, oldest)
+	}
+	p.usedTurns[operation] = true
+	p.usedTurnOrder = append(p.usedTurnOrder, operation)
+	// Request IDs belong to the exact active turn, never the whole session.
+	clear(p.usedRequests)
+}
+
+func (p *Handle) forgetUnwrittenTurnLocked(operation string) {
+	delete(p.usedTurns, operation)
+	p.usedTurnOrder = slices.DeleteFunc(p.usedTurnOrder, func(id string) bool { return id == operation })
+}
+
+// Control history is independent of output. Preserve live request evidence
+// and current-turn transitions; only completed history can become a gap.
+func (p *Handle) trimCriticalLocked() {
+	for len(p.critical) > p.host.limits.Events {
+		index := -1
+		for i, event := range p.critical {
+			if event.Kind == "process-exited" || event.Kind == "stream-gap" ||
+				(p.turn != "" && event.Turn == p.turn) {
+				continue
+			}
+			if event.Request != nil {
+				if _, pending := p.requests[event.Request.ID]; pending {
+					continue
+				}
+			}
+			index = i
+			break
+		}
+		if index < 0 {
+			return
+		}
+		p.droppedThrough = max(p.droppedThrough, p.critical[index].Sequence)
+		p.critical = append(p.critical[:index], p.critical[index+1:]...)
+	}
+}
+
+func (p *Handle) activeCriticalLocked() int {
+	count := 0
+	for _, event := range p.critical {
+		if p.turn != "" && event.Turn == p.turn {
+			count++
+		}
+	}
+	return count
+}
+
 func (p *Handle) emitLocked(kind string, raw []byte, request *Request) {
 	p.seq++
 	event := Event{Binding: p.launch.Binding, Session: p.session, Connection: p.connection, Turn: p.turn, Sequence: p.seq, Kind: kind, Raw: bytes.Clone(raw), Request: request, Exit: p.exit}
 	if kind != "output" && kind != "provider-event" {
 		p.critical = append(p.critical, event)
+		p.trimCriticalLocked()
 		return
 	}
 	if len(p.events) == p.host.limits.Events {

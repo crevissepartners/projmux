@@ -68,15 +68,22 @@ synthesize allow. Hook integration must consume these events rather than obtain 
 second response authority.
 
 All retained state is bounded. Defaults retain 64 launch operations, 256 output
-events, 32 pending requests, 8 KiB of diagnostics, and frames below 1 MiB. Output
-overflow records a gap and returns the current snapshot. Protected control and
-terminal transitions are retained separately and cannot be evicted by output.
-New turns and requests stop at the protected-event admission limit; reserved
-space for outstanding request expiry and terminal evidence bounds that list by
-`Events + Requests + 6`. Used turn/request IDs are capped by `Events`; operation
-history is never evicted to make a retry spawn again. Capacity exhaustion requires
-an explicit new lifecycle rather than silent history loss. Stream gaps identify
-incomplete observation, not successful completion or an archive.
+and completed control-history events per lane, 32 pending requests, 8 KiB of
+diagnostics, and frames below 1 MiB. Output cannot evict protected control
+transitions. Completed control history expires independently and reports a
+stream-gap; current-turn transitions and pending-request evidence remain
+protected. Admission counts the live turn's transitions, not completed history.
+Reserved expiry and termination evidence bounds protected overflow by
+`Events + Requests + 6`.
+
+Turn operation IDs retain a bounded stale fence of the most recent `Events`
+operations, including the current operation. A recent duplicate is refused;
+completed IDs outside that horizon are forgotten. Consumers must generate fresh
+operation IDs and must not treat a gap as a receipt or retry an old operation
+outside the retained horizon. Request IDs are scoped to the exact current turn.
+Launch operation history is separate and is never evicted to spawn again.
+Sequential completed turns therefore do not exhaust lifetime admission. Stream
+gaps identify incomplete observation, not successful completion or an archive.
 
 The deterministic suite covers operation concurrency, preparation and init
 failure, binding rollback, multi-turn NDJSON, question/permission response races,
@@ -236,9 +243,25 @@ expired or duplicate answers write no provider response. Configured windows and
 safe decision selection retain their existing owners. Timeout or disconnect never
 automatically allows a request.
 
-The internal endpoint is currently a same-host loopback and accepts only its
-owning host's exact kernel identity. A separate foreground client's peer policy
-requires a decision at the later public activation step.
+The internal endpoint preserves the exact owning-host loopback for messages.
+Short-lived foreground clients use the per-user boundary: a 0700 directory,
+0600 socket, and kernel peer credentials whose user matches the host's user.
+Every request revalidates the exact Agent, Pane, host, generation, connection
+and session against both Registry ownership and the live host. Claimed caller
+PIDs and source UIDs provide no authentication and no client enrollment is
+needed. A foreign user, stale generation, another host or mismatched ownership
+writes no provider control. Clients independently verify the owning host's
+kernel birth and socket inode; replacement never causes rediscovery or
+automatic replay. Existing hook and message peer boundaries remain unchanged.
+These are internal seams, with no public command or flag.
+
+The host lease directory is exclusive. An existing directory returns an error
+matching both `ErrBusy` and the underlying existence error. A caller may retry
+after the owning lifetime has finished and removed its lease; it must not adopt,
+remove or replace the existing directory. This does not promise that reissuing
+an app launch returns an already running endpoint. Launch-level idempotency in
+`Host.Start` remains separate from socket admission.
+
 Peer coordination uses the existing message store and immutable envelope, with
 both source and target revalidated before the host submits a typed turn. A receipt
 is delivered after turn/start acceptance; later completion remains a separate
