@@ -44,6 +44,9 @@ func reconcileShouldHaveQueueEntry(p livePaneRow) bool {
 // Reusing the shared helper guarantees push/ack/reconcile all agree on the
 // key.
 func reconcileEntryID(p livePaneRow) string {
+	if p.processNotice != nil {
+		return p.processNotice.ID
+	}
 	return buildAttentionNotifyID(p.Session, p.Pane)
 }
 
@@ -51,6 +54,9 @@ func reconcileEntryID(p livePaneRow) string {
 // Reusing the shared helper guarantees the agent/topic rendering stays in
 // lockstep with the event-driven path.
 func reconcileEntryText(p livePaneRow) string {
+	if p.processNotice != nil {
+		return p.processNotice.Text
+	}
 	return composeAttentionReplyText(p.Agent, p.Topic)
 }
 
@@ -92,10 +98,12 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 
 	panes, listErr := c.listLivePaneRows()
 	if listErr != nil {
+		result.Errors = append(result.Errors, listErr.Error())
+	}
+	if listErr != nil && len(panes) == 0 {
 		// Common case: tmux is not running. Treat as soft failure so the
 		// post-install hook does not break. Inventory-dependent TTL eviction
 		// is skipped, but the hard cap remains safe to enforce.
-		result.Errors = append(result.Errors, listErr.Error())
 		eviction, reconcileErr := store.Reconcile(nil)
 		if reconcileErr != nil {
 			return fmt.Errorf("reconcile notifications: %w", reconcileErr)
@@ -131,6 +139,9 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 	for id, pane := range wantByID {
 		want := reconcileEntryText(pane)
 		metadata := mergeAttentionNotifyMetadata(nil, pane.Agent, pane.Topic, notify.SeverityInfo)
+		if pane.processNotice != nil {
+			metadata = pane.processNotice.Metadata
+		}
 		if pane.AuthorityFence != "" {
 			metadata[notify.MetaAgentUID] = pane.AgentUID
 			metadata[notify.MetaPaneUID] = pane.PaneUID
@@ -155,6 +166,9 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 				Window:  pane.Window,
 				Pane:    pane.Pane,
 			},
+		}
+		if pane.processNotice != nil {
+			in = *pane.processNotice
 		}
 		started := c.clock()
 		_, pushResult, err := store.Push(in)
@@ -223,7 +237,7 @@ func newNotifyLiveSessionSet(rows []livePaneRow) notifyLiveSessionSet {
 // GONE classification as the notify UI. Session/window-only rows fall back to
 // session membership because they do not carry a concrete pane id.
 func reconcileTargetExists(entry notify.Notification, paneSet notifyLivePaneSet, sessionSet notifyLiveSessionSet) bool {
-	if paneSet == nil || sessionSet == nil {
+	if paneSet == nil || sessionSet == nil || paneSet.tmuxUnknown(entry) {
 		return true
 	}
 	if strings.TrimSpace(entry.Pane) != "" {

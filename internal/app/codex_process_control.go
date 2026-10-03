@@ -19,6 +19,7 @@ import (
 // This bridge projects only the host's exact stream requests. Hooks never
 // register requests; existing stores own answer windows and terminal states.
 type codexProcessControl struct {
+	attention                      *processAttentionProjection
 	mu                             sync.Mutex
 	endpoint                       *codexProcessEndpoint
 	questions                      *agentquestion.Store
@@ -57,6 +58,9 @@ func (c *codexProcessControl) sync(ctx context.Context) error {
 		c.records = make(map[string]processhost.Request)
 	}
 	e := c.endpoint
+	if err := c.attention.sync(e.handle, e.binding); err != nil {
+		return err
+	}
 	if _, err := e.route(ctx); err != nil {
 		for id, r := range c.records {
 			c.closeRecord(id, r)

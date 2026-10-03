@@ -18,6 +18,7 @@ import (
 // Hooks never enter these stores for process launches. The caller supplies the
 // existing configured windows; this seam neither selects policy nor opens UI.
 type claudeProcessControl struct {
+	attention                      *processAttentionProjection
 	mu                             sync.Mutex
 	handle                         *processhost.Handle
 	binding                        processhost.Binding
@@ -48,6 +49,9 @@ func (c *claudeProcessControl) sync(ctx context.Context) error {
 	defer c.mu.Unlock()
 	if c.handle == nil || c.questions == nil || c.approvals == nil || c.now == nil || c.questionWindow <= 0 || c.approvalWindow <= 0 {
 		return errors.New("incomplete Claude process control")
+	}
+	if err := c.attention.sync(c.handle, c.binding); err != nil {
+		return err
 	}
 	snap, err := c.handle.Observe(c.binding)
 	if err != nil {

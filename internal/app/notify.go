@@ -34,6 +34,7 @@ type notifyStore interface {
 }
 
 type notifyCommand struct {
+	process     *processAttentionConsumer
 	diagnostics *diagnostics.NotifyFocusRecorder
 	store       notifyStore
 	storeErr    error
@@ -1491,6 +1492,9 @@ func (c *notifyCommand) notifyOriginClient(explicit string) string {
 }
 
 func (c *notifyCommand) focusNotification(entry notify.Notification, source, kind, clientTTY string) error {
+	if c.process != nil && strings.HasPrefix(entry.ID, "ai:process:") {
+		return errors.New("process Pane has no terminal focus target; acknowledge the notification explicitly")
+	}
 	if c.runner == nil {
 		return errors.New("notify focus runner is not configured")
 	}
@@ -1720,6 +1724,8 @@ func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notificatio
 	panes, paneSet, err := c.listNotifyLivePanesAndSet()
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
+	}
+	if err != nil && len(panes) == 0 {
 		for _, entry := range entries {
 			report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, "live-unavailable", notifyLiveExplanation("live-unavailable", locale)))
 		}
@@ -1829,7 +1835,7 @@ func (c *notifyCommand) notifyLiveStateBestEffort() (map[string]notifyLivePane, 
 		return nil, nil
 	}
 	panes, paneSet, err := c.listNotifyLivePanesAndSet()
-	if err != nil {
+	if err != nil && len(panes) == 0 {
 		return nil, nil
 	}
 	return notifyLiveShouldQueueByID(panes), paneSet
@@ -1882,6 +1888,9 @@ func notifyLivePaneSetKey(session, pane string) string {
 func newNotifyLivePaneSet(rows []livePaneRow) notifyLivePaneSet {
 	set := make(notifyLivePaneSet, len(rows))
 	for _, row := range rows {
+		if row.tmuxObservationError != nil {
+			set[notifyUnknownTmuxInventory] = struct{}{}
+		}
 		if strings.TrimSpace(row.Pane) == "" {
 			continue
 		}
@@ -1896,7 +1905,17 @@ func newNotifyLivePaneSet(rows []livePaneRow) notifyLivePaneSet {
 // Has reports whether the entry's pane target is present in the live
 // inventory. It is only meaningful for pane-target rows; window/session-only
 // rows should not be tested for membership (see classifyNotifyRowState).
+const notifyUnknownTmuxInventory = "\x00tmux-observation-unavailable"
+
+func (s notifyLivePaneSet) tmuxUnknown(entry notify.Notification) bool {
+	_, unknown := s[notifyUnknownTmuxInventory]
+	return unknown && !strings.HasPrefix(entry.ID, "ai:process:")
+}
+
 func (s notifyLivePaneSet) Has(entry notify.Notification) bool {
+	if s.tmuxUnknown(entry) {
+		return true
+	}
 	if s == nil {
 		return false
 	}
@@ -1920,17 +1939,14 @@ func (c *notifyCommand) listLivePaneRows() ([]livePaneRow, error) {
 // subprocess.
 func (c *notifyCommand) listNotifyLivePanesAndSet() ([]notifyLivePane, notifyLivePaneSet, error) {
 	rows, err := c.listLivePaneRows()
-	if err != nil {
-		return nil, nil, err
-	}
-	return notifyLivePanesFromRows(rows), newNotifyLivePaneSet(rows), nil
+	return notifyLivePanesFromRows(rows), newNotifyLivePaneSet(rows), err
 }
 
 func notifyLivePanesFromRows(rows []livePaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {
 		live := notifyLivePane{
-			ID:                   buildAttentionNotifyID(row.Session, row.Pane),
+			ID:                   reconcileEntryID(row),
 			Session:              row.Session,
 			Window:               row.Window,
 			Pane:                 row.Pane,

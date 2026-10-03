@@ -283,6 +283,7 @@ nativeVisibleLen	Default entry point over projmuxpicker.VisibleLen retained as t
 newClientWithEnv	Environment injection constructor retained as the only seam that pins tmux client attach and switch routing without a live tmux server.
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
+newProcessAttentionStore	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLiveReportLocale retained as the notify row classification seam.
 notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the live notify sidebar read model retained as the classification seam.
 notifySidebarStateBadge	Live-display entry point of notifySidebarStateBadgeForDisplay retained as the sidebar state palette seam.
@@ -295,6 +296,12 @@ ownedStream.Write	Owned processhost Codex preparation retained for dedicated std
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
+processAttentionFailed	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionProjection.push	Internal process attention enqueue/compaction seam retained for fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionProjection.sync	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionRecord.applyEvent	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionRecord.reconcilePending	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionStore.activate	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 processClaudeControlID	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 processClaudeLaunchEnv	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 processCodexControlID	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
