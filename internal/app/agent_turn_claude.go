@@ -12,6 +12,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
@@ -77,7 +78,12 @@ func exactClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, n
 // exactClaudePane reads the current tmux target through the UID mirror and
 // verifies its runtime ID again on the exact target. The caller repeats this
 // immediately before send-keys, so a replaced Pane cannot inherit the key.
-func exactClaudePane(ctx context.Context, runner tmuxCommandRunner, paneUID, runtime string) (string, error) {
+func exactClaudePane(ctx context.Context, runner tmuxCommandRunner, paneUID, runtime string, processTargets ...*processTerminalTarget) (string, error) {
+	for _, target := range processTargets {
+		if err := target.admit(resourcegraph.ProcessKeys); err != nil {
+			return "", err
+		}
+	}
 	target, found, err := intmetadata.NewMirror(runner).FindPaneTargetForUID(ctx, paneUID)
 	if err != nil {
 		return "", fmt.Errorf("read live Pane: %w", err)
@@ -125,6 +131,16 @@ func parseClaudePaneFrame(out []byte) ([]string, error) {
 // the caller-reported client, already checked against the operatorclient rule,
 // and the audit records it as received.
 func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, via string, stdout io.Writer) error {
+	if pane, ok := registry.Pane(agent.Status.PaneRef); ok && c.processRuntime.inventory().Declares(*pane) {
+		return c.processRuntime.control(context.Background(), registry, pane.Metadata.UID, resourcegraph.ProcessInterrupt, agent.Status.Progress.TurnRef, "")
+	}
+	var processTarget *processTerminalTarget
+	for _, key := range c.processRuntime.inventory().Declared {
+		if key.Pane == agent.Status.PaneRef {
+			processTarget = &processTerminalTarget{runtime: c.processRuntime, registry: registry, paneUID: agent.Status.PaneRef}
+			break
+		}
+	}
 	now := time.Now
 	if c.now != nil {
 		now = c.now
@@ -143,7 +159,7 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 		return fmt.Errorf("claude turn interrupt unavailable: resolve exact tmux socket: %w", err)
 	}
 	runner := explicitTmuxRunner{runner: c.controlRunner, target: tmuxRoute.target}
-	if _, err := exactClaudePane(ctx, runner, route.PaneUID, runtime); err != nil {
+	if _, err := exactClaudePane(ctx, runner, route.PaneUID, runtime, processTarget); err != nil {
 		return fmt.Errorf("claude turn interrupt unavailable: %w", err)
 	}
 	paths, err := c.controlPaths()
@@ -179,7 +195,7 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 		current.Status.Progress.StartedAt != agent.Status.Progress.StartedAt {
 		return fail(errors.New("exact Claude Agent turn or Pane activation changed"))
 	}
-	target, err := exactClaudePane(ctx, runner, route.PaneUID, runtime)
+	target, err := exactClaudePane(ctx, runner, route.PaneUID, runtime, processTarget)
 	if err != nil {
 		return fail(err)
 	}

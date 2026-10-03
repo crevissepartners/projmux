@@ -178,7 +178,9 @@ func (k *resourceControllerKernel) plan(ctx context.Context, registry coremetada
 	if err != nil {
 		return controllerPass{}, err
 	}
-	registryPlan, err := k.planner.build(ctx, registry)
+	planner := k.planner
+	planner.processes = inventory.Processes.Clone()
+	registryPlan, err := planner.build(ctx, registry)
 	if err != nil {
 		return controllerPass{}, err
 	}

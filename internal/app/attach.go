@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
@@ -31,6 +32,7 @@ type attachSessionKiller interface {
 }
 
 type attachCommand struct {
+	processTarget        *processTerminalTarget
 	diagnostics          *diagnostics.LifecycleRecorder
 	inventory            attachInventoryResolver
 	sessions             attachSessionManager
@@ -73,6 +75,9 @@ func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachComman
 }
 
 func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
+	if err := c.processTarget.admit(resourcegraph.ProcessAttach); err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)

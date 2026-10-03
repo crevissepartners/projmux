@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -197,6 +198,9 @@ func (c *focusCommand) resolveUIDNavigation(ctx context.Context, opts focusOptio
 			return "", fallbackSocket, focusUIDNotInRegistry(reg, coremetadata.KindPane, paneRef, uidOf(paneRef))
 		}
 		pane = found
+		if _, handled, err := c.processRuntime.admit(loaded, pane.Metadata.UID, resourcegraph.ProcessFocus); handled {
+			return "", fallbackSocket, err
+		}
 		windowUID, ok := focusPaneWindowUID(reg, *pane)
 		if !ok {
 			return "", fallbackSocket, focusUIDNoLiveRuntime(subject, "its ownerRef reaches no Window in the Registry")

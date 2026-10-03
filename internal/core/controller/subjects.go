@@ -111,6 +111,11 @@ func IndexHandles(graph resourcegraph.Graph) Handles {
 	}
 	handles := Handles{byID: map[string]Handle{}, byTarget: map[string]string{}}
 	for _, node := range graph.Runtime {
+		if slices.ContainsFunc(graph.Panes, func(pane resourcegraph.PaneNode) bool {
+			return pane.Process != nil && pane.Pane.Metadata.UID == node.UID
+		}) {
+			continue
+		}
 		enclosure := false
 		for id := containerOf[node.Ref.ID]; id != ""; id = containerOf[id] {
 			if managedID[id] {

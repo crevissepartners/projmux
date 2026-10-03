@@ -294,6 +294,9 @@ func planTopologyWindowAgents(
 	var out []registryTopologyAgentPlan
 	for order, agent := range registry.AgentsOf(window.Metadata.UID) {
 		label := window.Metadata.Name + "/" + agent.Metadata.Name
+		if pane, ok := registry.Pane(agent.Status.PaneRef); ok && plan.processes.Declares(*pane) {
+			continue
+		}
 		materialized := false
 		var release []string
 		reusePaneUID := ""

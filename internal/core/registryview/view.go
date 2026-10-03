@@ -86,9 +86,10 @@ const (
 // for a candidate, so it cannot change when a display name, a tmux object, or a
 // sort input changes.
 type Row struct {
-	Section Section `json:"section"`
-	Kind    RowKind `json:"kind"`
-	ID      string  `json:"id"`
+	Process *resourcegraph.ProcessKey `json:"-"`
+	Section Section                   `json:"section"`
+	Kind    RowKind                   `json:"kind"`
+	ID      string                    `json:"id"`
 	// UID is the Registry uid, empty for a candidate or the runtime link.
 	UID string `json:"uid,omitempty"`
 	// ParentID is the ID of the row that owns this one, empty at a section root.
@@ -402,7 +403,7 @@ func (b *builder) controlWindowPanes(windowUID, windowID string) {
 			Section: SectionControl, Kind: RowKindAgent, ID: agentID, UID: agent.Agent.Metadata.UID,
 			ParentID: windowID, Depth: 2, Name: agent.Agent.Metadata.Name,
 			Context: b.contexts.For(coremetadata.KindAgent, agent.Agent.Metadata.UID), Provider: agent.Agent.Spec.Provider,
-			Phase: string(agent.Agent.Status.Phase), Progress: agent.Agent.Status.Progress, Status: agent.Status, Runtime: agent.Runtime,
+			Phase: string(agent.Agent.Status.Phase), Progress: agent.Agent.Status.Progress, Status: agent.Status, Runtime: agent.Runtime, Process: agent.Process,
 			Reason: statusReason(agent.Status, false), Termination: agent.Agent.Status.LastTermination.Clone(),
 		})
 		for _, pane := range b.graph.Panes {
@@ -488,8 +489,9 @@ func (b *builder) agents(windowUID, windowID, root string) {
 			Status:      agent.Status,
 			MissingRoot: agent.MissingRoot,
 			Runtime:     agent.Runtime,
-			Actions:     resourceActions(RowKindAgent, agent.Status, agent.MissingRoot),
-			Reason:      statusReason(agent.Status, agent.MissingRoot),
+			Process:     agent.Process,
+			Actions:     agentActions(agent),
+			Reason:      statusReason(agent.Status, agent.MissingRoot && agent.Process == nil),
 			Termination: agent.Agent.Status.LastTermination.Clone(),
 		})
 		for _, pane := range b.graph.Panes {
@@ -543,8 +545,9 @@ func (b *builder) paneRow(pane resourcegraph.PaneNode, parentID string, depth in
 		Status:      pane.Status,
 		MissingRoot: pane.MissingRoot,
 		Runtime:     pane.Runtime,
-		Actions:     resourceActions(RowKindPane, pane.Status, pane.MissingRoot),
-		Reason:      statusReason(pane.Status, pane.MissingRoot),
+		Process:     pane.Process,
+		Actions:     paneActions(pane),
+		Reason:      statusReason(pane.Status, pane.MissingRoot && pane.Process == nil),
 		Termination: pane.Pane.Status.LastTermination.Clone(),
 	}
 }
@@ -688,4 +691,17 @@ func cleanPath(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
+}
+
+func paneActions(pane resourcegraph.PaneNode) []Action {
+	if pane.Process != nil {
+		return []Action{ActionDelete}
+	}
+	return resourceActions(RowKindPane, pane.Status, pane.MissingRoot)
+}
+func agentActions(agent resourcegraph.AgentNode) []Action {
+	if agent.Process != nil {
+		return []Action{ActionDelete}
+	}
+	return resourceActions(RowKindAgent, agent.Status, agent.MissingRoot)
 }

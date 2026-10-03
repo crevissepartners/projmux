@@ -29,6 +29,8 @@ import (
 // `create agent` already owns, so nothing here can invent a third way to start
 // a provider either.
 type registryTopologyPlan struct {
+	processes resourcegraph.ProcessInventory
+
 	project     coremetadata.Project
 	sessionName string
 	sessionLive bool
@@ -88,6 +90,9 @@ func planRegistryTopology(
 		return nil, err
 	}
 	plan := &registryTopologyPlan{project: project}
+	if reconciler != nil {
+		plan.processes = reconciler.processes.Clone()
+	}
 	plan.sessionName = materializeSessionName(registry, project, reconciler)
 	if plan.sessionName == "" {
 		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, "status.session.name and the configured persistent session name are both empty")
@@ -132,17 +137,21 @@ func planRegistryTopology(
 		}
 		target = &session
 	}
-	if target == nil {
+	windows := registry.WindowsOf(project.Metadata.UID)
+	materializableWindow := slices.ContainsFunc(windows, func(window coremetadata.Window) bool {
+		anchor, ok := registry.WindowAnchor(window.Metadata.UID)
+		return !ok || !plan.processes.Declares(*anchor)
+	})
+	if target == nil && materializableWindow {
 		plan.addItem(0, coremetadata.KindProject, project.Metadata.Name, project.Metadata.UID, "materialize")
 		if exactTarget.Flag() == "-S" {
 			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name,
 				"offline Project session creation via --socket-path cannot preserve exact name-only PROJMUX_SOCKET hook re-entry")
 		}
-	} else {
+	} else if target != nil {
 		plan.sessionLive = true
 	}
 
-	windows := registry.WindowsOf(project.Metadata.UID)
 	if len(windows) == 0 {
 		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, "selected Project has no Registry Window topology")
 		return plan, nil
@@ -198,6 +207,10 @@ func planRegistryTopology(
 			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window anchorPaneRef must resolve to an exact same-Window shell or managed Agent Pane")
 			continue
 		}
+		if plan.processes.Declares(*anchor) {
+			// A process anchor cannot bootstrap a tmux Window.
+			continue
+		}
 		work.anchor = *anchor
 		defaultShell, hasDefaultShell := registry.WindowDefaultShell(window.Metadata.UID)
 		if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" && !hasDefaultShell {
@@ -206,10 +219,10 @@ func planRegistryTopology(
 		}
 		if anchor.Spec.Role == coremetadata.PaneRoleShell && anchor.Metadata.OwnerUID() == window.Metadata.UID {
 			work.bootstrap = *anchor
-		} else if hasDefaultShell {
+		} else if hasDefaultShell && !plan.processes.Declares(*defaultShell) {
 			work.bootstrap = *defaultShell
 		}
-		eligible := registry.PanesOf(window.Metadata.UID)
+		eligible := slices.DeleteFunc(registry.PanesOf(window.Metadata.UID), func(pane coremetadata.Pane) bool { return plan.processes.Declares(pane) })
 		// A stored Pane whose cwd is gone is one item of the desired topology, not
 		// a verdict on the Project. It is refused here and left out of the plan, so
 		// the tmux pass never tries to open a directory that does not exist and the

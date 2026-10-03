@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
@@ -171,10 +172,11 @@ type claudeQuestionPopup interface {
 // Open tells a popup that showed from one tmux never drew; nil makes it in the
 // temporary directory.
 type tmuxClaudeQuestionPopup struct {
-	runner     tmuxRunner
-	executable func() (string, error)
-	lookupEnv  func(string) string
-	newMarker  func() (string, error)
+	processTarget *processTerminalTarget
+	runner        tmuxRunner
+	executable    func() (string, error)
+	lookupEnv     func(string) string
+	newMarker     func() (string, error)
 	// routed means runner already carries an exact tmux socket. Detached
 	// Codex observers have no inherited TMUX even when their Pane is live.
 	routed bool
@@ -195,6 +197,9 @@ func defaultClaudeQuestionPopup() claudeQuestionPopup {
 // Without $TMUX there is no server to ask; clients of other servers are never
 // seen.
 func (p tmuxClaudeQuestionPopup) ViewingClient(ctx context.Context, paneID string) (string, error) {
+	if err := p.processTarget.admit(resourcegraph.ProcessPopup); err != nil {
+		return "", err
+	}
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" || p.runner == nil || (!p.routed && (p.lookupEnv == nil || strings.TrimSpace(p.lookupEnv("TMUX")) == "")) {
 		return "", nil
@@ -225,6 +230,9 @@ func claudeQuestionViewingClient(rows, paneID string) string {
 }
 
 func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestionPopupTarget) error {
+	if err := p.processTarget.admit(resourcegraph.ProcessPopup); err != nil {
+		return err
+	}
 	if p.runner == nil || p.executable == nil {
 		return errors.New("question popup is not configured")
 	}

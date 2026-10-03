@@ -49,6 +49,8 @@ var resumableAgentPhases = []coremetadata.AgentPhase{
 // `resume` is the one route with logic of its own, because it is the only way
 // an existing Agent is ever reused: `create agent` always mints a new uid.
 type agentCommand struct {
+	processRuntime *processPaneRuntime
+
 	ai               rawArgvCommand
 	usage            rawArgvCommand
 	listCodexModels  func(context.Context) ([]string, error)

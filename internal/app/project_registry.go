@@ -52,6 +52,8 @@ import (
 // steps 1 and 4 may mint a new object, but no existing uid is ever changed,
 // merged, or reassigned, and nothing is ever deleted or pruned.
 type registryReconciler struct {
+	processes resourcegraph.ProcessInventory
+
 	// discoverRoots returns the selectable workdirs, already absolute.
 	discoverRoots func() ([]string, error)
 	// liveSessions returns the live tmux session-name set. A machine with no
@@ -495,13 +497,13 @@ func (r *registryReconciler) observeRuntime(ctx context.Context, working *coreme
 	}
 	panes, paneErr := inventory.LivePaneUIDs(ctx)
 	if paneErr == nil {
-		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{}))
+		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{processes: r.processes}))
 	}
 	windows, windowErr := inventory.LiveWindowUIDs(ctx)
 	if paneErr != nil || windowErr != nil {
 		return
 	}
-	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes})
+	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes, ProcessPanes: processPaneUIDs(*working, r.processes)})
 }
 
 // observedSession is one live tmux session the import step read but could not
@@ -1020,6 +1022,9 @@ func (r *registryReconciler) paneBindingFor(
 	}
 	match := binder.MatchPane(registry, windowUID, legacyPane.UID)
 	if match.Matched() {
+		if pane, ok := registry.Pane(match.UID); ok && r.processes.Declares(*pane) {
+			return "", false, false
+		}
 		return match.UID, match.Kind != coremetadata.AdoptionRebind, true
 	}
 	if match.Kind == coremetadata.AdoptionRefused {

@@ -183,9 +183,14 @@ const ReasonRuntimeUnbound = "RuntimeUnbound"
 // Sessions; the zero value of both keeps the historical reading, which is what
 // identity-only resolvers built with no observation rely on.
 type RuntimeObservation struct {
+	// ProcessPanes names current process generations excluded from tmux observations.
+	ProcessPanes map[string]bool
+
 	// Windows is the set of Window uids a live tmux window still mirrors.
 	Windows map[string]bool
-	// Panes is the set of Pane uids a live tmux pane still mirrors.
+	// Panes is the set of Pane uids observed live, through an exact tmux
+	// mirror or a typed process-host observation. ProcessPanes keeps the
+	// process subset separate from tmux convergence authority.
 	Panes map[string]bool
 	// Sessions is the set of Project uids whose persistent tmux session was
 	// observed live. It is consulted only when SessionsObserved is set; without
@@ -227,6 +232,7 @@ func (o RuntimeObservation) IsUnobserved(uid string) bool { return o.Unobserved[
 // changing under it.
 func (o RuntimeObservation) Clone() RuntimeObservation {
 	return RuntimeObservation{
+		ProcessPanes:     cloneBoolSet(o.ProcessPanes),
 		Windows:          cloneBoolSet(o.Windows),
 		Panes:            cloneBoolSet(o.Panes),
 		Sessions:         cloneBoolSet(o.Sessions),

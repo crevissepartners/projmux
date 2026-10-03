@@ -198,6 +198,7 @@ VersionTuple.normalized	Test-only installed qualification helper retained for ex
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
+aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
 boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
@@ -300,6 +301,7 @@ processCodexControlID	Internal dedicated Codex process binding/control/receipt p
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexMessageRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+processPaneRuntime.control	Internal typed process control admission seam, retained while invocation defaults remain dormant ahead of foreground activation.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.

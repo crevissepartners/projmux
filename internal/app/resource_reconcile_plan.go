@@ -235,6 +235,8 @@ func (p resourceReconcilePlan) refusedItems() int {
 }
 
 type resourceReconcilePlanner struct {
+	processes resourcegraph.ProcessInventory
+
 	reader        tmuxCommandRunner
 	store         *resourceStore
 	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
@@ -276,6 +278,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		newReconciler = newRegistryReconciler
 	}
 	reconciler := newReconciler(recorder, sessions)
+	reconciler.processes = p.processes.Clone()
 	exactSocketPath := p.exactSocketPath
 	reconciler.sessionSocketPath = func() string { return exactSocketPath }
 	reconciler.initializeRefusalBookkeeping()

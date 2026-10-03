@@ -656,6 +656,9 @@ func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 			missingRoot = hasMissingRoot(*project)
 		}
 	}
+	if r.observed.ProcessPanes[agent.Status.PaneRef] {
+		missingRoot = false
+	}
 	return Match{
 		Kind:    metadata.KindAgent,
 		UID:     agent.Metadata.UID,
@@ -697,6 +700,9 @@ func (r *Resolver) agentBound(agent metadata.Agent) bool {
 // live window offlines exactly that Pane.
 func (r *Resolver) paneMatch(pane metadata.Pane) Match {
 	owner, missingRoot := r.paneOwner(pane)
+	if r.observed.ProcessPanes[pane.Metadata.UID] {
+		missingRoot = false
+	}
 	return Match{
 		Kind:    metadata.KindPane,
 		UID:     pane.Metadata.UID,

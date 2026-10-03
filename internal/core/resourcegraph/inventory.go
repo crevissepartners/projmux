@@ -144,6 +144,7 @@ type Unavailability struct {
 // so a test can state a machine state directly instead of scripting tmux
 // output.
 type Inventory struct {
+	Processes   ProcessInventory `json:"-"`
 	Transport   Transport        `json:"transport"`
 	HostMode    HostMode         `json:"hostMode"`
 	Sessions    []Session        `json:"sessions,omitempty"`
@@ -156,6 +157,7 @@ type Inventory struct {
 // changing under it.
 func (i Inventory) Clone() Inventory {
 	out := i
+	out.Processes = i.Processes.Clone()
 	out.Sessions = slices.Clone(i.Sessions)
 	out.Windows = slices.Clone(i.Windows)
 	out.Panes = slices.Clone(i.Panes)

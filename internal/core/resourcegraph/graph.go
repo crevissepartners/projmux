@@ -72,7 +72,7 @@ const (
 	// and no runtime object mirrors it.
 	StatusOffline Status = "offline"
 	// StatusMissingRoot means the owning Project lost its spec.root. It
-	// outranks every runtime answer: the row needs an explicit rebind or prune
+	// outranks tmux runtime answers: the row needs an explicit rebind or prune
 	// whatever tmux is doing.
 	StatusMissingRoot Status = "missing-root"
 	// StatusUnknown means the observation this row would have been judged
@@ -160,6 +160,7 @@ type WindowNode struct {
 // chain. WindowUID is the effective containing Window: for an Agent-owned Pane
 // that is the Agent's Window, which is the containment tmux can testify to.
 type PaneNode struct {
+	Process     *ProcessKey       `json:"-"`
 	Pane        coremetadata.Pane `json:"pane"`
 	AgentUID    string            `json:"agentUID,omitempty"`
 	WindowUID   string            `json:"windowUID,omitempty"`
@@ -179,6 +180,7 @@ type PaneNode struct {
 // lifecycle decision: nothing here transitions a phase, and Agent.Status.Phase
 // is reported verbatim from the Registry.
 type AgentNode struct {
+	Process     *ProcessKey        `json:"-"`
 	Agent       coremetadata.Agent `json:"agent"`
 	WindowUID   string             `json:"windowUID,omitempty"`
 	RootKind    coremetadata.Kind  `json:"rootKind,omitempty"`
@@ -274,6 +276,7 @@ func Resolve(registry coremetadata.Registry, inventory Inventory) Graph {
 	r := newResolver(registry, inventory)
 	r.resolveClaims()
 	r.buildRegistryNodes()
+	r.projectProcesses()
 	r.buildRuntimeNodes()
 	return r.graph()
 }
