@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
@@ -42,16 +44,21 @@ func processAttentionFailed(raw json.RawMessage) bool {
 }
 
 func processAttentionInput(r processAttentionRecord, sequence uint64, kind string) notify.PushInput {
-	severity, text, event := notify.SeverityInfo, "Ready", "turn-complete"
+	severity, key, event := notify.SeverityInfo, i18n.KeyNotifyProcessReady, "turn-complete"
 	switch kind {
 	case aibadge.InputRequired:
-		severity, text, event = notify.SeverityCritical, "Input required", "question"
+		severity, key, event = notify.SeverityCritical, i18n.KeyNotifyProcessInputRequired, "question"
 	case aibadge.ApprovalRequired:
-		severity, text, event = notify.SeverityCritical, "Approval required", "permission"
+		severity, key, event = notify.SeverityCritical, i18n.KeyNotifyProcessApprovalRequired, "permission"
 	case "error":
-		severity, text, event = notify.SeverityCritical, "Process attention error", "stop-failure"
+		severity, key, event = notify.SeverityCritical, i18n.KeyNotifyProcessError, "stop-failure"
 	}
-	return notify.PushInput{ID: processAttentionID(r.Binding, sequence), Text: text, Severity: severity, Source: notify.SourceAI, TTL: attentionNotifyTTL,
+	// Durable notification text follows the queue's canonical English contract.
+	text, err := i18n.NewLocalizer(i18n.FallbackLocale).Text(key)
+	if err != nil {
+		panic(err)
+	} // Missing embedded keys are a build defect.
+	return notify.PushInput{ID: processAttentionID(r.Binding, sequence), Text: text.String(), Severity: severity, Source: notify.SourceAI, TTL: attentionNotifyTTL,
 		Target: notify.Target{Session: r.Binding.Project, Window: r.Binding.Window, Pane: r.Binding.Pane},
 		Metadata: mergeAttentionNotifyMetadata(map[string]string{notify.MetaEvent: event, notify.MetaAgentUID: r.Binding.Agent, notify.MetaPaneUID: r.Binding.Pane,
 			notify.MetaAuthorityFence: processAttentionID(r.Binding, 0), notify.MetaCategory: kind}, r.Provider, "", severity)}
@@ -73,7 +80,13 @@ func (p *processAttentionProjection) sync(handle processAttentionHost, binding p
 	}
 	return p.store.update(func(records map[string]processAttentionRecord) error {
 		r, ok := records[binding.Pane]
-		if !ok || r.Binding != binding {
+		if !ok {
+			var err error
+			r, err = processAttentionRestore(handle, binding)
+			if err != nil {
+				return err
+			}
+		} else if r.Binding != binding {
 			return processhost.ErrStale
 		}
 		if r.Pending == nil {
@@ -112,6 +125,30 @@ func (p *processAttentionProjection) sync(handle processAttentionHost, binding p
 	})
 }
 
+// Only a live owned host can reconstruct its own record after recovery.
+// Observational implementations of Events never gain generation authority.
+func processAttentionRestore(handle processAttentionHost, binding processhost.Binding) (processAttentionRecord, error) {
+	validator, ok := handle.(interface {
+		ValidateAuthority(context.Context, processhost.Authority) error
+	})
+	if !ok {
+		return processAttentionRecord{}, processhost.ErrStale
+	}
+	_, snap, err := handle.Events(binding, 0)
+	if err != nil {
+		return processAttentionRecord{}, err
+	}
+	if snap.Binding != binding || snap.Exit != nil || (snap.State != "starting" && snap.State != "ready") || (snap.Provider != "claude" && snap.Provider != "codex") {
+		return processAttentionRecord{}, processhost.ErrStale
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), processAttentionLockWaitLimit)
+	defer cancel()
+	if err = validator.ValidateAuthority(ctx, processhost.Authority{Binding: binding, Connection: snap.Connection, Session: snap.Session}); err != nil {
+		return processAttentionRecord{}, err
+	}
+	return processAttentionRecord{Binding: binding, Provider: snap.Provider, Pending: map[string]processAttentionPending{}}, nil
+}
+
 func (r *processAttentionRecord) applyEvent(event processhost.Event) (string, error) {
 	kind := ""
 	switch event.Kind {
@@ -133,7 +170,7 @@ func (r *processAttentionRecord) applyEvent(event processhost.Event) (string, er
 		if processAttentionFailed(event.Raw) {
 			kind = "error"
 		}
-	case "protocol-error", "host-unknown", "stream-gap":
+	case "protocol-error", "host-unknown", "stream-gap", "message-reservation-expired":
 		r.Badge, kind = aibadge.ResponseComplete, "error"
 	case "control-expired", "control-answered":
 		if event.Request != nil {

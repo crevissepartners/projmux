@@ -194,13 +194,15 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 	p.rememberTurnLocked(turn)
 	p.messageReservation = "awaiting-message-handoff"
 	p.messageOutcomeRecorded = false
+	p.startMessageReservationTimerLocked(turn)
 	p.emitLocked("message-reserved", nil, nil)
 	return nil
 }
 
 // FinishClaudeMessage records a proven write outcome, never provider completion.
 // A definite zero-write releases the reservation but keeps the operation ID
-// consumed. Uncertain delivery remains pending until an actual result or exit.
+// consumed. Uncertain delivery expires visibly but keeps turn admission fenced
+// until an actual result or exit; expiry never infers provider completion.
 func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn string, written, uncertain bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -219,17 +221,54 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 	}
 	p.messageOutcomeRecorded = true
 	if written {
-		p.messageReservation = ""
+		if p.messageReservation != "expired" {
+			p.clearMessageReservationLocked()
+		}
 		p.emitLocked("message-handed-off", nil, nil)
 	} else if uncertain {
-		p.messageReservation = "awaiting-message-handoff"
+		// A late handoff outcome cannot undo the expiry fence.
+		if p.messageReservation != "expired" {
+			p.messageReservation = "awaiting-message-handoff"
+		}
 		p.emitLocked("message-handoff-unknown", nil, nil)
 	} else {
 		p.emitLocked("message-prewrite-refused", nil, nil)
-		p.turn = ""
-		p.messageReservation = ""
+		if p.messageReservation != "expired" {
+			p.turn = ""
+			p.clearMessageReservationLocked()
+		}
 	}
 	return nil
+}
+
+// Timer identity fences callbacks already waiting on the mutex when a result
+// completes the reservation or another reservation replaces it.
+func (p *Handle) startMessageReservationTimerLocked(turn string) {
+	p.stopMessageReservationTimerLocked()
+	var timer *time.Timer
+	timer = time.AfterFunc(p.host.limits.MessageReservation, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.messageReservationTimer != timer || p.turn != turn || p.messageReservation != "awaiting-message-handoff" || (p.state != "starting" && p.state != "ready") {
+			return
+		}
+		p.messageReservationTimer = nil
+		p.messageReservation = "expired"
+		p.emitLocked("message-reservation-expired", nil, nil)
+	})
+	p.messageReservationTimer = timer
+}
+
+func (p *Handle) stopMessageReservationTimerLocked() {
+	if p.messageReservationTimer != nil {
+		p.messageReservationTimer.Stop()
+		p.messageReservationTimer = nil
+	}
+}
+
+func (p *Handle) clearMessageReservationLocked() {
+	p.stopMessageReservationTimerLocked()
+	p.messageReservation = ""
 }
 
 // Respond is the only response writer. Hook consumers can observe Request but
@@ -426,7 +465,8 @@ func (p *Handle) consume(raw []byte) error {
 		}
 		p.expireLocked()
 		p.emitLocked("turn-result", raw, nil)
-		p.turn, p.interrupt, p.messageReservation = "", "", ""
+		p.turn, p.interrupt = "", ""
+		p.clearMessageReservationLocked()
 		p.interruptAck = false
 		p.trimCriticalLocked()
 	case "rate_limit_event":

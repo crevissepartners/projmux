@@ -312,6 +312,7 @@ processAttentionProjection.push	Internal process attention enqueue/compaction se
 processAttentionProjection.sync	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 processAttentionRecord.applyEvent	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
 processAttentionRecord.reconcilePending	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
+processAttentionRestore	Internal process attention exact-binding reconstruction retained while its projection is dormant; remove this entry when the foreground activation caller ships.
 processAttentionStore.activate	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
 processClaudeControlID	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 processClaudeLaunchEnv	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
