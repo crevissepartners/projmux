@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.17.0](https://github.com/crevissepartners/projmux/compare/v0.16.1...v0.17.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **metadata:** add Registry schema v5 with pane runtime kind and process bindings ([#1427](https://github.com/crevissepartners/projmux/issues/1427))
+
+### Features
+
+* **agent:** give Codex agents their project's label link rules on fresh creates ([#1382](https://github.com/crevissepartners/projmux/issues/1382)) ([b929e71](https://github.com/crevissepartners/projmux/commit/b929e71577a2a81fc8d39798671a24e8f3dcac1a))
+* **agent:** reopen a Codex question popup whose client left instead of handing the question back ([#1381](https://github.com/crevissepartners/projmux/issues/1381)) ([8f0d89e](https://github.com/crevissepartners/projmux/commit/8f0d89e0fdc1f63a0428246abfcb908ad5fcd3d6))
+* **agent:** tell Codex agents their own agent uid for --creator and --source ([#1386](https://github.com/crevissepartners/projmux/issues/1386)) ([b79af45](https://github.com/crevissepartners/projmux/commit/b79af45e5a9e56799fcea1a995cb63d1e939e672))
+* **attention:** keep process-hosted pane attention per generation without tmux options ([#1414](https://github.com/crevissepartners/projmux/issues/1414)) ([03f488e](https://github.com/crevissepartners/projmux/commit/03f488eb3abe385df6398163c4a28232242fb0ab))
+* **diagnostics:** journal each Codex broker refusal with its closed reason ([#1389](https://github.com/crevissepartners/projmux/issues/1389)) ([4ad8582](https://github.com/crevissepartners/projmux/commit/4ad85825ddc52c7c8f8fb3aa71e8dbfa70d59836))
+* **metadata:** add Registry schema v5 with pane runtime kind and process bindings ([#1427](https://github.com/crevissepartners/projmux/issues/1427)) ([924dcbb](https://github.com/crevissepartners/projmux/commit/924dcbb9627f0a80b7eeafe6e34741d78fd389ef))
+* **processhost:** bind process-hosted Claude to its endpoint with one control writer ([#1410](https://github.com/crevissepartners/projmux/issues/1410)) ([1fd85b6](https://github.com/crevissepartners/projmux/commit/1fd85b697a270abff19349c8e71806dbfdbe7a0c))
+* **processhost:** bind process-hosted Codex with one control writer ([#1411](https://github.com/crevissepartners/projmux/issues/1411)) ([be4a551](https://github.com/crevissepartners/projmux/commit/be4a5511b753a2dcde45efa0a5f7924b24fbb190))
+* **processhost:** expire uncertain message reservations and recover a damaged attention store ([#1426](https://github.com/crevissepartners/projmux/issues/1426)) ([bc2be44](https://github.com/crevissepartners/projmux/commit/bc2be4409c90a0aa7bb1ae9d5affd34ee9c5e0d3))
+* **processhost:** own a dedicated Codex app-server over stdio ([#1409](https://github.com/crevissepartners/projmux/issues/1409)) ([f6ed700](https://github.com/crevissepartners/projmux/commit/f6ed700667e731e21e8d3736690860c73c7d6d7a))
+* **processhost:** resume a recorded provider session into a new generation ([#1417](https://github.com/crevissepartners/projmux/issues/1417)) ([aea23c0](https://github.com/crevissepartners/projmux/commit/aea23c0842f86efc5cd6ad4d42438eb79b653c6a))
+* **resourcegraph:** keep process-hosted panes typed through inventory, convergence, and admission ([#1412](https://github.com/crevissepartners/projmux/issues/1412)) ([06e5a53](https://github.com/crevissepartners/projmux/commit/06e5a5334371dd5b786bc4612364d027f73d0c2c))
+* **runtime:** add an owned process host and Claude stream adapter ([#1406](https://github.com/crevissepartners/projmux/issues/1406)) ([6ad4261](https://github.com/crevissepartners/projmux/commit/6ad4261f233de490951b28a4cfdc5cfc6de8d1d4))
+
+
+### Bug Fixes
+
+* **agent:** apply a Codex relaunch's model, effort, sandbox and approval to the thread's next turns ([#1384](https://github.com/crevissepartners/projmux/issues/1384)) ([847e976](https://github.com/crevissepartners/projmux/commit/847e9761382fc33ddba101ea39e1fefb1c623206))
+* **agent:** tell Codex agents to pass --socket only to commands that take it ([#1408](https://github.com/crevissepartners/projmux/issues/1408)) ([f031cd5](https://github.com/crevissepartners/projmux/commit/f031cd5a0f16acedb29d9cd000a3b59d3ce7da0c))
+* **agent:** wait out a slow store writer before refusing an answer or a new request as busy ([#1394](https://github.com/crevissepartners/projmux/issues/1394)) ([00a5f44](https://github.com/crevissepartners/projmux/commit/00a5f4485b3fe4e309fe3526e00a41cdd1788130))
+* **attention:** keep the process attention store lock bounded under load ([#1416](https://github.com/crevissepartners/projmux/issues/1416)) ([192a549](https://github.com/crevissepartners/projmux/commit/192a549d46404d66f2ff4a2644f62db7b8eeff6f))
+* **codex:** start the shared Codex app server without the caller's pane identity ([#1385](https://github.com/crevissepartners/projmux/issues/1385)) ([ec632ad](https://github.com/crevissepartners/projmux/commit/ec632ad35066d73097c9c347dce94d7e72a9bc44))
+* **doctor:** count residual processes by whether they serve this state domain ([#1390](https://github.com/crevissepartners/projmux/issues/1390)) ([442a900](https://github.com/crevissepartners/projmux/commit/442a900389f605af9d3970007a9017a5c57d3280))
+* **install:** name the state domain and home of each unreachable replacement target ([#1388](https://github.com/crevissepartners/projmux/issues/1388)) ([1452fa1](https://github.com/crevissepartners/projmux/commit/1452fa193fb94c5e57585dd8a8547b8bf4fbb0c8))
+* **install:** report confirmed other-domain brokers without failing replacement ([#1413](https://github.com/crevissepartners/projmux/issues/1413)) ([d56e0a6](https://github.com/crevissepartners/projmux/commit/d56e0a6bd60374a9d9b9ee33041382284d70394d))
+* **processhost:** allow graceful provider shutdown before termination ([#1407](https://github.com/crevissepartners/projmux/issues/1407)) ([12ea91a](https://github.com/crevissepartners/projmux/commit/12ea91ae8dae8d24ddda35e772e23c1ad9057ba1))
+* **processhost:** bound process host history to live turns and admit exact foreground peers ([#1421](https://github.com/crevissepartners/projmux/issues/1421)) ([4dff6ed](https://github.com/crevissepartners/projmux/commit/4dff6ed295d4914ca61a4d5642b54cbd3f58f0db))
+* **processhost:** remove the host socket directory when a process host stops ([#1419](https://github.com/crevissepartners/projmux/issues/1419)) ([f20d744](https://github.com/crevissepartners/projmux/commit/f20d744c946691efd56731115804d58b5b63d740))
+* **resourcegraph:** refuse process-hosted pane anchors for create pane before tmux ([#1415](https://github.com/crevissepartners/projmux/issues/1415)) ([f5d86aa](https://github.com/crevissepartners/projmux/commit/f5d86aac7c59ec87e237b59e0623692c22006aaa))
+
 ## [0.16.1](https://github.com/crevissepartners/projmux/compare/v0.16.0...v0.16.1) (2026-09-30)
 
 
