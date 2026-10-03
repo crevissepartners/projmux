@@ -93,6 +93,7 @@ type Launch struct {
 	Binding                  Binding
 	Command                  Command
 	Completion               *Completion
+	provider                 string
 	adapter                  adapterConfig
 	resume                   *SessionRecord
 	resumeTurn, resumePrompt string
@@ -173,6 +174,9 @@ type Event struct {
 }
 
 func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
+	if launch.provider == "" {
+		launch.provider = "claude"
+	}
 	if !launch.Binding.valid(h.instance) || launch.Command.Path == "" || launch.Command.Env == nil {
 		return nil, errors.New("invalid launch or implicit environment")
 	}
@@ -550,11 +554,7 @@ func (p *Handle) Observe(binding Binding) (Snapshot, error) {
 }
 
 func (p *Handle) snapshotLocked() Snapshot {
-	provider := "claude"
-	if p.adapter != nil {
-		provider = "codex"
-	}
-	s := Snapshot{Provider: provider, Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
+	s := Snapshot{Provider: p.launch.provider, Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
 	if p.exit != nil {
 		e := *p.exit
 		s.Exit = &e

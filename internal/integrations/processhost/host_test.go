@@ -37,6 +37,19 @@ func TestMain(m *testing.M) {
 			for {
 				time.Sleep(time.Hour)
 			}
+		case "processhost-race":
+			var x int
+			var wg sync.WaitGroup
+			for range 2 {
+				wg.Go(func() {
+					for range 10000 {
+						x++
+					}
+				})
+			}
+			wg.Wait()
+			fmt.Fprintln(os.Stdout, x)
+			os.Exit(0)
 		case "processhost-provider":
 			fixtureProvider()
 			os.Exit(0)
@@ -61,8 +74,22 @@ func TestMain(m *testing.M) {
 	os.Exit(liveguard.RunTests(m, liveguard.ProviderOptIn("PROCESSHOST_TEST_CODEX", "PROCESSHOST_TEST_CLAUDE")))
 }
 
+// Only re-executed fixture children skip the race runtime's default one-second
+// exit delay. The parent test binary retains its normal race settings, and all
+// other inherited GORACE options (including fatal reports) remain unchanged.
+func fixtureEnv() []string {
+	env := os.Environ()
+	for i, value := range env {
+		if strings.HasPrefix(value, "GORACE=") {
+			env[i] = value + " atexit_sleep_ms=0"
+			return env
+		}
+	}
+	return append(env, "GORACE=atexit_sleep_ms=0")
+}
+
 func fixtureCommand(mode string) Command {
-	return Command{Path: os.Args[0], Args: []string{"processhost-provider", mode}, Env: os.Environ()}
+	return Command{Path: os.Args[0], Args: []string{"processhost-provider", mode}, Env: fixtureEnv()}
 }
 func testHost(t *testing.T, change func(*Transactions, *Limits)) *Host {
 	t.Helper()
@@ -74,7 +101,7 @@ func testHost(t *testing.T, change func(*Transactions, *Limits)) *Host {
 	if change != nil {
 		change(&tx, &limits)
 	}
-	host, err := NewHost("host", Command{Path: os.Args[0], Args: []string{"processhost-supervisor"}, Env: os.Environ()}, tx, limits)
+	host, err := NewHost("host", Command{Path: os.Args[0], Args: []string{"processhost-supervisor"}, Env: fixtureEnv()}, tx, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

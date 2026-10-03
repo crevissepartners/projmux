@@ -27,10 +27,6 @@ type claudeProcessControl struct {
 	records                        map[string]processhost.Request
 }
 
-func processClaudeControlID(b processhost.Binding, r processhost.Request) string {
-	return processControlID(b, r)
-}
-
 // sync reconciles one bounded snapshot. All response writes go through the
 // Handle's exact pending token, including concurrent callers and stale answers.
 func (c *claudeProcessControl) sync(ctx context.Context) error {
@@ -74,7 +70,7 @@ func (c *claudeProcessControl) syncControls(ctx context.Context) error {
 	}
 	pending := make(map[string]bool, len(snap.Pending))
 	for _, request := range snap.Pending {
-		id := processClaudeControlID(c.binding, request)
+		id := processControlID(c.binding, request)
 		pending[id] = true
 		if _, known := c.records[id]; !known {
 			created := c.now().UTC()

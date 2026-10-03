@@ -227,11 +227,11 @@ func MigrateRegistryWithEnvironment(set MigrationSet, reg Registry, env Migratio
 	// wire tags before allowing either a read-only or mutation consumer through.
 	for _, pane := range reg.Panes {
 		kind := pane.Spec.Runtime.EffectiveKind()
-		if kind != RuntimeTmux && kind != RuntimeProcess {
+		if !kind.Valid() {
 			return Registry{}, false, report, stateErr("read registry", ErrInvalidRegistry,
 				"runtime-kind-unsupported: pane %q runtime kind %q", pane.Metadata.Name, kind)
 		}
-		if tag := pane.Status.Activation.Kind; tag != "" && tag != RuntimeTmux && tag != RuntimeProcess {
+		if tag := pane.Status.Activation.Kind; !tag.Valid() {
 			return Registry{}, false, report, stateErr("read registry", ErrInvalidRegistry,
 				"runtime-binding-invalid: pane %q activation kind %q", pane.Metadata.Name, tag)
 		}

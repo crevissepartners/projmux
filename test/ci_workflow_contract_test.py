@@ -295,6 +295,8 @@ DARWIN_TEST_COMPILE_COMMAND = "go test -exec /usr/bin/true -count=1 -run '^$' ./
 def assert_darwin_processhost_race_budget(workflow: str) -> None:
     """Keep the complete race suite bounded with room above its 121s observation."""
     darwin = workflow_job(workflow, "darwin-native")
+    if not re.search(r"(?m)^    timeout-minutes: 30$", darwin):
+        raise AssertionError("Darwin native job must have an explicit 30-minute bound")
     step = workflow_step(darwin, "Exercise owned process lifetime and Claude streams")
     if "continue-on-error:" in step or step_field(step, "if") is not None:
         raise AssertionError("Darwin processhost race suite must always gate the job")
@@ -1037,6 +1039,12 @@ class CIWorkflowContractTest(unittest.TestCase):
             workflow_job(workflow, "darwin-native"),
             "Exercise owned process lifetime and Claude streams",
         )
+        for mutation in [
+            workflow.replace("    timeout-minutes: 30\n", "", 1),
+            workflow.replace("    timeout-minutes: 30\n", "    timeout-minutes: 60\n", 1),
+        ]:
+            with self.assertRaises(AssertionError):
+                assert_darwin_processhost_race_budget(mutation)
         marker = "      - name: Exercise owned process lifetime and Claude streams\n"
         block = marker + step + "\n"
         command = step_script(step).strip()
