@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func TestInstallReplacementDrainsPublishedGenerationTargets(t *testing.T) {
 	if _, err := os.Lstat(fallback.RecordPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("default endpoint must be unpublished")
 	}
-	result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{{pid: 101}, {pid: 102}})
+	result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{{pid: 101, origin: installReplacementTargetOrigin{domain: installReplacementDomainThis}}, {pid: 102, origin: installReplacementTargetOrigin{domain: installReplacementDomainThis}}})
 	if result.accepted != 2 || result.refusal != "drain-required" || result.failureStage != "" {
 		t.Fatalf("drain result = accepted %d refusal %s stage %s", result.accepted, result.refusal, result.failureStage)
 	}
@@ -110,7 +111,7 @@ func TestInstallReplacementWelcomeCannotStandInForResidualTarget(t *testing.T) {
 	t.Parallel()
 	domain := newBrokerStateDomain(t)
 	host, _ := startInstallDrainHost(t, domain, "current-generation", 101, false)
-	result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{{pid: 101}})
+	result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{{pid: 101, origin: installReplacementTargetOrigin{domain: installReplacementDomainThis}}})
 	if result.accepted != 0 || result.failureStage != "handshake" || result.refusal != "" {
 		t.Fatalf("current welcome = accepted %d refusal %s stage %s", result.accepted, result.refusal, result.failureStage)
 	}
@@ -122,7 +123,7 @@ func TestInstallReplacementWelcomeCannotStandInForResidualTarget(t *testing.T) {
 func TestInstallReplacementMissingPublishedTargetIsDiscoveryFailure(t *testing.T) {
 	t.Parallel()
 	domain := newBrokerStateDomain(t)
-	result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{{pid: 101}})
+	result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{{pid: 101, origin: installReplacementTargetOrigin{domain: installReplacementDomainThis}}})
 	if result.accepted != 0 || result.failureStage != "discovery" || result.refusal != "host-unavailable" {
 		t.Fatalf("missing target = accepted %d refusal %s stage %s", result.accepted, result.refusal, result.failureStage)
 	}
@@ -241,5 +242,96 @@ func TestInstallReplacementUsesRuntimeIdentityWhenSocketInodeIsReused(t *testing
 	}
 	if target.superseded(info) {
 		t.Fatal("missing record alone proved completion")
+	}
+}
+
+// Other-domain targets never enter this domain's discovery/dial path, even in
+// a mixed fleet where a real same-domain host accepts the drain.
+func TestInstallReplacementOtherDomainMixedFleet(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"other-only", "this-only", "this-other", "unknown", "unknown-other"} {
+		t.Run(mode, func(t *testing.T) {
+			domain := newBrokerStateDomain(t)
+			otherDomain := newBrokerStateDomain(t)
+			other, _ := startInstallDrainHost(t, otherDomain, "other", 202, true)
+			otherTarget := installReplacementTarget{pid: 202, origin: installReplacementTargetOrigin{domain: installReplacementDomainOther, stateDomain: otherDomain}}
+			var targets []installReplacementTarget
+			wantAttempted, wantOther := 0, 0
+			wantOutcome := installReplacementOutcomeNoTarget
+			var current *codexbroker.Host
+			if strings.Contains(mode, "this") {
+				current, _ = startInstallDrainHost(t, domain, "this", 201, true)
+				targets = append(targets, installReplacementTarget{pid: 201, origin: installReplacementTargetOrigin{domain: installReplacementDomainThis}})
+				wantAttempted = 1
+				wantOutcome = installReplacementOutcomeComplete
+			}
+			if strings.Contains(mode, "unknown") {
+				targets = append(targets, installReplacementTarget{pid: 203, origin: installReplacementTargetOrigin{domain: installReplacementDomainUnknown}})
+				wantAttempted = 1
+				wantOutcome = installReplacementOutcomeUnreachable
+			}
+			if strings.Contains(mode, "other") {
+				targets = append(targets, otherTarget)
+				wantOther = 1
+			}
+			result := requestInstallReplacementDrain(t.Context(), domain, targets)
+			var stderr bytes.Buffer
+			state := t.TempDir()
+			command := installReplacementCommand{stateDir: func() (string, error) { return state, nil }, readVintage: func(time.Time) projmuxProcessVintage {
+				return projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+					{Role: codexControlPlaneRoleBroker, Processes: len(targets), Replaced: len(targets)},
+					{Role: projmuxProcessRoleSessionClient, Processes: 1, Replaced: 1},
+				}}
+			}, requestDrain: func(context.Context) installReplacementDrainResult { return result }, settle: time.Second, poll: time.Millisecond}
+			err := command.Run(&stderr)
+			if (err != nil) != (wantOutcome == installReplacementOutcomeUnreachable) {
+				t.Fatalf("Run = %v: %s", err, stderr.String())
+			}
+			outcome, ok := readInstallReplacementOutcome(filepath.Join(state, installReplacementFile))
+			if !ok || outcome.Outcome != wantOutcome || outcome.Attempted != wantAttempted || outcome.Reported != 1+wantOther || outcome.OtherDomainReported != wantOther {
+				t.Fatalf("outcome = %+v", outcome)
+			}
+			if wantOther > 0 && !strings.Contains(stderr.String(), "domain=other") {
+				t.Fatal("missing other-domain warning")
+			}
+			if other.Stats().Draining {
+				t.Fatal("other-domain broker was drained")
+			}
+			if current != nil && outcome.Drained != 1 {
+				t.Fatalf("same-domain drained = %d", outcome.Drained)
+			}
+			payload, _ := os.ReadFile(filepath.Join(state, installReplacementFile))
+			if strings.Contains(string(payload), otherDomain) || strings.Contains(string(payload), "pid") {
+				t.Fatal("persisted target identities")
+			}
+		})
+	}
+}
+
+func TestInstallReplacementUnknownCannotBorrowPublishedDrain(t *testing.T) {
+	t.Parallel()
+	for _, verdict := range []string{"", installReplacementDomainUnknown} {
+		t.Run("unknown="+verdict, func(t *testing.T) {
+			domain := newBrokerStateDomain(t)
+			unknown, _ := startInstallDrainHost(t, domain, "unknown-reachable", 301, true)
+			_, _ = startInstallDrainHost(t, domain, "known-this", 302, true)
+			result := requestInstallReplacementDrain(t.Context(), domain, []installReplacementTarget{
+				{pid: 301, origin: installReplacementTargetOrigin{domain: verdict}},
+				{pid: 302, origin: installReplacementTargetOrigin{domain: installReplacementDomainThis}},
+				{pid: 303, origin: installReplacementTargetOrigin{domain: installReplacementDomainOther}},
+			})
+			if result.attempted != 2 || result.accepted != 1 || result.failureStage != "discovery" || result.refusal != "host-unavailable" || len(result.otherDomains) != 1 {
+				t.Fatalf("unknown result=%+v", result)
+			}
+			if unknown.Stats().Draining {
+				t.Fatal("unknown host was dialed despite uncertain origin")
+			}
+			command := installReplacementCommand{settle: time.Second, poll: time.Millisecond, requestDrain: func(context.Context) installReplacementDrainResult { return result }}
+			outcome := installReplacementOutcome{Attempted: 3}
+			command.replace(&outcome)
+			if outcome.Outcome != installReplacementOutcomeUnreachable || outcome.Attempted != 2 || outcome.Drained != 1 || outcome.Reported != 1 || outcome.OtherDomainReported != 1 {
+				t.Fatalf("mixed unknown outcome=%+v", outcome)
+			}
+		})
 	}
 }

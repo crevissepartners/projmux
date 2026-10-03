@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,7 +69,7 @@ func defaultInstallReplacementTargets() []installReplacementTarget {
 		executorDomain = ""
 	}
 	return readInstallReplacementTargets(installReplacementProcessRevision,
-		installReplacementTargetOriginReader(executorDomain, readInstallReplacementEnviron))
+		checkedInstallReplacementTargetOriginReader(executorDomain, readInstallReplacementEnviron, readInstallReplacementIdentity))
 }
 
 func readInstallReplacementTargets(revision func(codexProcessImage) string, origin func(codexProcessImage) installReplacementTargetOrigin) []installReplacementTarget {
@@ -178,28 +179,36 @@ func resolveInstallReplacementTargetOrigin(executorDomain string, cmdline []stri
 	return origin
 }
 
-// installReplacementArgvStateDomain reads an absolute --state-domain from the
-// route words of one argv. Words behind a bare `--` are a caller's text and are
-// never read; a relative value is one the broker itself would refuse.
+// installReplacementArgvStateDomain returns whether an explicit flag is present.
+// A present but malformed or repeated flag yields an empty domain: it must not
+// borrow HOME fallback or the first value of ambiguous arguments to skip drain.
+// Route words behind a bare -- remain caller text and are never interpreted.
 func installReplacementArgvStateDomain(cmdline []string) (string, bool) {
 	words := projmuxProcessRouteWords(cmdline)
-	for index, word := range words {
-		name, value, inline := strings.Cut(word, "=")
+	domain := ""
+	present := false
+	for index := 0; index < len(words); index++ {
+		name, value, inline := strings.Cut(words[index], "=")
 		if name != "--state-domain" && name != "-state-domain" {
 			continue
 		}
+		if present {
+			return "", true
+		}
+		present = true
 		if !inline {
 			if index+1 >= len(words) {
-				return "", false
+				return "", true
 			}
-			value = words[index+1]
+			index++
+			value = words[index]
 		}
 		if !filepath.IsAbs(value) {
-			return "", false
+			return "", true
 		}
-		return filepath.Clean(value), true
+		domain = filepath.Clean(value)
 	}
-	return "", false
+	return domain, present
 }
 
 // readInstallReplacementEnviron reads HOME and XDG_STATE_HOME from one target's
@@ -294,5 +303,93 @@ func renderInstallReplacementFailure(targets []installReplacementTarget, locale 
 		"Codex Agents created afterward may have no control while the old broker remains.") + "\n")
 	out.WriteString("   " + localizeText(locale, i18n.KeyInstallReplacementRecovery,
 		"Let existing Codex work finish, check that the listed processes exit naturally, then retry make install. If they remain, have the operator review the targets before deciding on termination.") + "\n")
+	return out.String()
+}
+
+// A domain verdict changes install success, so argv and environment must belong
+// to one stable process, not a recycled PID or an image that changed mid-read.
+// These identities remain transient and never authorize a broker connection.
+type installReplacementIdentity struct {
+	directory os.FileInfo
+	birth     string
+	exe       string
+	cmdline   []string
+}
+
+func checkedInstallReplacementTargetOriginReader(domain string, environ func(codexProcessImage) (installReplacementEnviron, bool), identity func(codexProcessImage) (installReplacementIdentity, bool)) func(codexProcessImage) installReplacementTargetOrigin {
+	return func(image codexProcessImage) installReplacementTargetOrigin {
+		unknown := installReplacementTargetOrigin{domain: installReplacementDomainUnknown}
+		before, ok := identity(image)
+		if !ok {
+			return unknown
+		}
+		origin := installReplacementTargetOriginReader(domain, environ)(image)
+		after, ok := identity(image)
+		if !ok || !os.SameFile(before.directory, after.directory) || before.birth != after.birth || before.exe != after.exe || !slices.Equal(before.cmdline, after.cmdline) {
+			return unknown
+		}
+		return origin
+	}
+}
+
+func readInstallReplacementIdentity(image codexProcessImage) (installReplacementIdentity, bool) {
+	if image.PID <= 0 || image.StartedAt.IsZero() {
+		return installReplacementIdentity{}, false
+	}
+	root := "/proc/" + strconv.Itoa(image.PID)
+	directory, err := os.Stat(root) // #nosec G304 -- positive process-table PID under fixed procfs root.
+	if err != nil || !directory.ModTime().Equal(image.StartedAt) {
+		return installReplacementIdentity{}, false
+	}
+	payload, err := os.ReadFile(root + "/stat") // #nosec G304 -- positive process-table PID under fixed procfs root.
+	if err != nil {
+		return installReplacementIdentity{}, false
+	}
+	birth, ok := installReplacementStatBirth(payload)
+	if !ok {
+		return installReplacementIdentity{}, false
+	}
+	exe, err := os.Readlink(root + "/exe")
+	if err != nil || exe != image.Exe {
+		return installReplacementIdentity{}, false
+	}
+	file, err := os.Open(root + "/cmdline") // #nosec G304 -- positive process-table PID under fixed procfs root.
+	if err != nil {
+		return installReplacementIdentity{}, false
+	}
+	defer file.Close()
+	argv, err := io.ReadAll(io.LimitReader(file, (8<<10)+1))
+	if err != nil || len(argv) == 0 || len(argv) > 8<<10 {
+		return installReplacementIdentity{}, false
+	}
+	words := strings.Split(strings.TrimRight(string(argv), "\x00"), "\x00")
+	if !slices.Equal(words, image.Cmdline) {
+		return installReplacementIdentity{}, false
+	}
+	return installReplacementIdentity{directory: directory, birth: birth, exe: exe, cmdline: words}, true
+}
+
+func installReplacementStatBirth(payload []byte) (string, bool) {
+	end := bytes.LastIndexByte(payload, ')')
+	if end < 0 {
+		return "", false
+	}
+	fields := strings.Fields(string(payload[end+1:]))
+	if len(fields) < 20 {
+		return "", false
+	}
+	birth := fields[19]
+	value, err := strconv.ParseUint(birth, 10, 64)
+	return birth, err == nil && value > 0
+}
+
+func renderInstallReplacementOtherDomains(targets []installReplacementTarget, locale i18n.Locale) string {
+	var out strings.Builder
+	out.WriteString("   " + localizeText(locale, i18n.KeyInstallReplacementOtherDomains,
+		"Warning: confirmed other-domain brokers were left running; they do not fail this replacement pass.") + "\n")
+	for _, target := range targets {
+		fmt.Fprintf(&out, "     role=%s pid=%d revision=%s domain=other stateDomain=%s home=%s\n",
+			target.role, target.pid, target.revision, renderInstallReplacementTargetValue(target.origin.stateDomain), renderInstallReplacementTargetValue(target.origin.home))
+	}
 	return out.String()
 }

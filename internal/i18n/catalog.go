@@ -9,6 +9,8 @@ import (
 // Key identifies one user-facing message in the catalog.
 type Key string
 
+const KeyInstallReplacementOtherDomains Key = "install.replacement.other_domains"
+
 const (
 	KeyNotifyAIResponseComplete      Key = "notify.ai.response_complete"
 	KeyNotifyAIApprovalRequired      Key = "notify.ai.approval_required"

@@ -527,3 +527,26 @@ func TestInstallReplacementImpactSpeaksOnlyOfAgentsCreatedAfterward(t *testing.T
 		}
 	}
 }
+
+func TestInstallReplacementOtherDomainCounterCompatibility(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, installReplacementFile)
+	old := `{"at":"2026-10-03T06:00:00Z","supported":true,"outcome":"replacement-no-target","attempted":0,"drained":0,"reported":1}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := readInstallReplacementOutcome(path)
+	if !ok || outcome.OtherDomainReported != 0 || outcome.Reported != 1 {
+		t.Fatalf("old record = %+v/%v", outcome, ok)
+	}
+	payload, err := json.Marshal(outcome)
+	if err != nil || strings.Contains(string(payload), "otherDomainReported") {
+		t.Fatalf("zero counter must be omitted: %s/%v", payload, err)
+	}
+	outcome.OtherDomainReported = 1
+	payload, err = json.Marshal(outcome)
+	if err != nil || !strings.Contains(string(payload), `"otherDomainReported":1`) {
+		t.Fatalf("new counter missing: %s/%v", payload, err)
+	}
+}

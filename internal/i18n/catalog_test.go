@@ -199,3 +199,12 @@ func TestDefaultCatalogManagedDeleteConfirmParity(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallReplacementOtherDomainWarningIsLocalized(t *testing.T) {
+	for _, locale := range []Locale{FallbackLocale, Locale("ko-KR")} {
+		text, err := NewLocalizer(locale).Text(KeyInstallReplacementOtherDomains)
+		if err != nil || text.Locale() != locale || text.String() == "" {
+			t.Fatalf("%s warning = %v/%v", locale, text, err)
+		}
+	}
+}
