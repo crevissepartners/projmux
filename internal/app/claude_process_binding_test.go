@@ -437,54 +437,64 @@ func TestClaudeProcessRegistrationRejectsSelfAssertionStaleHostAndBirth(t *testi
 }
 
 func TestClaudeProcessTimeoutAndDisconnectNeverAutoAllow(t *testing.T) {
-	for _, disconnect := range []bool{false, true} {
-		t.Run(fmt.Sprint(disconnect), func(t *testing.T) {
-			f := newProcessClaudeFixture(t, nil)
-			_ = f.proof(t)
-			now := time.Now()
-			f.control.now = func() time.Time { return now }
-			f.control.questions = f.control.questions.WithClock(func() time.Time { return now })
-			f.control.approvals = f.control.approvals.WithClock(func() time.Time { return now })
-			f.turn(t, "pending", "question")
-			s := f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
-			if err := f.control.sync(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			records, _ := f.control.questions.List(f.binding.Agent)
-			if len(records) != 1 {
-				t.Fatal("missing question")
-			}
-			if disconnect {
-				_ = f.handle.Stop(f.binding)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_, err := f.handle.Wait(ctx, f.binding)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := f.control.sync(context.Background()); err == nil {
-					t.Fatal("disconnected control remained available")
-				}
-			} else {
-				now = now.Add(2 * time.Minute)
+	for _, kind := range []string{"question", "permission"} {
+		for _, disconnect := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/disconnect=%t", kind, disconnect), func(t *testing.T) {
+				f := newProcessClaudeFixture(t, nil)
+				_ = f.proof(t)
+				now := time.Now()
+				f.control.now = func() time.Time { return now }
+				f.control.questions = f.control.questions.WithClock(func() time.Time { return now })
+				f.control.approvals = f.control.approvals.WithClock(func() time.Time { return now })
+				f.turn(t, "pending", kind)
+				s := f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
 				if err := f.control.sync(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				s, _ = f.handle.Observe(f.binding)
-				if len(s.Pending) != 0 {
-					t.Fatal("timeout retained pending token")
+				token := s.Pending[0]
+				if kind == "question" {
+					records, err := f.control.questions.List(f.binding.Agent)
+					if err != nil || len(records) != 1 {
+						t.Fatal("missing question", err)
+					}
+				} else {
+					records, err := f.control.approvals.List(f.binding.Agent)
+					if err != nil || len(records) != 1 {
+						t.Fatal("missing approval", err)
+					}
 				}
-				if err := f.handle.Respond(context.Background(), processhost.Authority{Binding: f.binding, Connection: s.Connection, Session: s.Session}, processhost.Request{ID: "question-1"}, processhost.Response{Allow: true}); err != processhost.ErrStale {
-					t.Fatal(err)
+				if disconnect {
+					_ = f.handle.Stop(f.binding)
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, err := f.handle.Wait(ctx, f.binding)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := f.control.sync(context.Background()); err == nil {
+						t.Fatal("disconnected control remained available")
+					}
+				} else {
+					now = now.Add(2 * time.Minute)
+					if err := f.control.sync(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+					s, _ = f.handle.Observe(f.binding)
+					if len(s.Pending) != 0 {
+						t.Fatal("timeout retained pending token")
+					}
+					if err := f.handle.Respond(context.Background(), processhost.Authority{Binding: f.binding, Connection: s.Connection, Session: s.Session}, token, processhost.Response{Allow: true}); err != processhost.ErrStale {
+						t.Fatal(err)
+					}
 				}
-			}
-			events, _, _ := f.handle.Events(f.binding, 0)
-			for _, event := range events {
-				if event.Kind == "control-answered" || bytes.Contains(event.Raw, []byte(`"wire_echo"`)) {
-					t.Fatal("timeout/disconnect wrote response")
+				events, _, _ := f.handle.Events(f.binding, 0)
+				for _, event := range events {
+					if event.Kind == "control-answered" || bytes.Contains(event.Raw, []byte(`"wire_echo"`)) {
+						t.Fatal("timeout/disconnect wrote response")
+					}
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
