@@ -142,7 +142,9 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 		return nil, err
 	}
 	go endpoint.serve(context.WithoutCancel(ctx))
-	go func() { _, _ = endpoint.handle.Wait(context.Background(), launch.Binding); endpoint.close() }()
+	// The owned child outlives the launch request; close its endpoint only after
+	// its actual exit, even if that request is canceled.
+	go func() { _, _ = endpoint.handle.Wait(context.WithoutCancel(ctx), launch.Binding); endpoint.close() }()
 	return endpoint, nil
 }
 

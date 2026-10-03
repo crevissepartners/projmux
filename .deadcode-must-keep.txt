@@ -132,6 +132,7 @@ MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironmen
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewHost	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
+NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
 NewWithConfig	Credential and endpoint injection constructor retained as the only seam that exercises the live Claude usage adapter without real credentials.

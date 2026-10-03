@@ -135,7 +135,9 @@ func (cfg CodexConfig) newAdapter(p *Handle) providerAdapter {
 	return &codexAdapter{p: p, control: make(chan struct{}, 1)}
 }
 
-func (c *codexAdapter) attach(stream io.ReadWriteCloser) { c.client = codexappserver.NewClient(stream) }
+func (c *codexAdapter) attach(stream io.ReadWriteCloser) {
+	c.client = codexappserver.NewProcessClient(stream, c.p.host.limits.Events)
+}
 func (c *codexAdapter) lock(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
