@@ -1112,6 +1112,18 @@ exec "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@"
 DOCTOR_TMUX
 chmod 0755 "$doctor_mux_dir/tmux"
 
+# Keep the byte-for-byte check, but show changed lines when Doctor mutates a snapshot.
+doctor_assert_unchanged() {
+  local comparison_status
+  if cmp -s "$1" "$2"; then
+    return 0
+  else
+    comparison_status=$?
+  fi
+  diff -u "$1" "$2" >&2 || true
+  return "$comparison_status"
+}
+
 doctor_config="$XDG_CONFIG_HOME/projmux/tmux.conf"
 # Doctor's public runtime probe is intentionally fixed to -L projmux. The
 # wrapper maps that logical test name to the run-unique physical test server,
@@ -1135,22 +1147,22 @@ env -u TMUX -u TMUX_PANE \
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json" '"code": "runtime.socket.reachable"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json" '"code": "runtime.config.generated-current"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json" '"code": "runtime.config.applied-current"'
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-config.before" "$doctor_config"
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-operations.before" "$operations_log"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-config.before" "$doctor_config"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-operations.before" "$operations_log"
 find "$XDG_STATE_HOME/projmux" "$XDG_CONFIG_HOME/projmux" -printf '%p|%m|%s|%T@\n' | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-inventory.after"
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-inventory.before" "$PROJMUX_SMOKE_WORKDIR/doctor-inventory.after"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-inventory.before" "$PROJMUX_SMOKE_WORKDIR/doctor-inventory.after"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -g >"$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.after"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-sessions -F '#{session_id}|#{session_name}|#{session_windows}|#{session_attached}' >"$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.after"
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.before" "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.after"
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.before" "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.after"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.before" "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.after"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.before" "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.after"
 pgrep -x tmux | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-process-state.after" || true
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-process-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-process-state.after"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-process-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-process-state.after"
 for package_state in /var/lib/dpkg/status /lib/apk/db/installed /var/lib/rpm/rpmdb.sqlite; do
   if [[ -e "$package_state" ]]; then
     stat -c '%n|%m|%s|%Y' "$package_state"
   fi
 done >"$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
-cmp "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
+doctor_assert_unchanged "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
 
 # Marker diagnosis is read-only and distinguishes the three bounded app-owned
 # states in both the real tmux probe and JSON projection.
