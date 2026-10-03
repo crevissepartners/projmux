@@ -73,8 +73,21 @@ func (f LinesFile) Update(update func(lines []string) ([]string, bool, error)) e
 // acquireLock opens the persistent lock file and takes an exclusive flock on
 // it, waiting at most the configured limit.
 func (f LinesFile) acquireLock() (*os.File, error) {
-	lockPath := f.LockPath()
-	held, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, PrivateFileMode) // #nosec G304 -- path is the LinesFile's own private lock sibling
+	var afterContended func()
+	if f.hooks != nil {
+		afterContended = f.hooks.afterContendedLock
+	}
+	return AcquireFileLock(f.LockPath(), f.lockWaitLimit, afterContended)
+}
+
+// AcquireFileLock opens a persistent private lock inode and waits for its
+// exclusive flock. A non-positive limit uses LockWaitLimit. The caller owns
+// unlock and close only on success; a timed-out blocking waiter retains its
+// descriptor until the kernel grants it, then immediately releases and closes
+// it. afterContended is an optional observation hook, called once after the
+// initial non-blocking attempt encounters another writer.
+func AcquireFileLock(lockPath string, limit time.Duration, afterContended func()) (*os.File, error) {
+	held, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, PrivateFileMode) // #nosec G304 -- explicit private store lock sibling, never provider input.
 	if err != nil {
 		return nil, fmt.Errorf("state: open lock %s: %w", lockPath, err)
 	}
@@ -88,11 +101,10 @@ func (f LinesFile) acquireLock() (*os.File, error) {
 		_ = held.Close()
 		return nil, fmt.Errorf("state: acquire lock %s: %w", lockPath, err)
 	}
-	if f.hooks != nil && f.hooks.afterContendedLock != nil {
-		f.hooks.afterContendedLock()
+	if afterContended != nil {
+		afterContended()
 	}
 
-	limit := f.lockWaitLimit
 	if limit <= 0 {
 		limit = LockWaitLimit
 	}
