@@ -80,8 +80,9 @@ func TestBrokerPushRecordsWaitWhileReplyCommitRefuses(t *testing.T) {
 		{"MarkHandoff", func() error { return broker.MarkHandoff(envelope) }},
 		{"MarkDelivered", func() error { return broker.MarkDelivered(envelope, time.Now().UTC()) }},
 	} {
-		time.AfterFunc(hold, holdMessageStoreLock(t, path))
+		// Include any preemption while scheduling the holder release in the wait.
 		started := time.Now()
+		time.AfterFunc(hold, holdMessageStoreLock(t, path))
 		err := mark.run()
 		if waited := time.Since(started); err != nil || waited < hold {
 			t.Fatalf("%s behind a brief holder err=%v waited=%s, want success after %s", mark.name, err, waited, hold)
