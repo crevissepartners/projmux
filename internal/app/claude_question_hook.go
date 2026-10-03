@@ -270,6 +270,9 @@ type claudeQuestionPayload struct {
 // run is the whole hook. It reports nothing to its caller: every outcome is
 // either the decision on stdout or silence.
 func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) {
+	if claudeProcessHookObservationOnly() {
+		return
+	}
 	fs := flag.NewFlagSet("internal "+claudeQuestionHookRoute, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	paneRef := fs.String("pane", "", aiHookPaneArgumentUsage)

@@ -197,6 +197,9 @@ type claudePermissionPayload struct {
 // run is the whole hook. It reports nothing to its caller: every outcome is
 // either the decision on stdout or silence.
 func (h claudePermissionHook) run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) {
+	if claudeProcessHookObservationOnly() {
+		return
+	}
 	fs := flag.NewFlagSet("internal "+claudePermissionHookRoute, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	paneRef := fs.String("pane", "", aiHookPaneArgumentUsage)

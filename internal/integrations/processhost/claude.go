@@ -39,6 +39,50 @@ type Request struct {
 
 func cloneRequest(r Request) Request { r.Input = bytes.Clone(r.Input); return r }
 
+// BindClaudeHook fences a SessionStart observation on the host's owned child.
+// The caller must verify the hook peer's kernel parent identity before passing
+// pid. This does not promote hook data to stream readiness or commit a session:
+// the first system/init must independently agree before the binding is ready.
+func (p *Handle) BindClaudeHook(ctx context.Context, binding Binding, pid int, session string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.checkClaudeHookLocked(ctx, binding, pid, session); err != nil {
+		return err
+	}
+	p.hookSession = session
+	return nil
+}
+
+// CheckClaudeHook only revalidates an already observed SessionStart. It cannot
+// create session authority from a lease/helper payload.
+func (p *Handle) CheckClaudeHook(ctx context.Context, binding Binding, pid int, session string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.hookSession == "" || p.hookSession != session {
+		return ErrStale
+	}
+	return p.checkClaudeHookLocked(ctx, binding, pid, session)
+}
+
+func (p *Handle) checkClaudeHookLocked(ctx context.Context, binding Binding, pid int, session string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if binding != p.launch.Binding || p.adapter != nil || pid <= 0 || pid != p.pid || session == "" || len(session) > 256 ||
+		(p.session != "" && p.session != session) || (p.hookSession != "" && p.hookSession != session) {
+		return ErrStale
+	}
+	if p.state != "starting" && p.state != "ready" {
+		return ErrClosed
+	}
+	current, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
+	defer cancel()
+	if err := p.host.tx.Current(current, binding); err != nil {
+		return err
+	}
+	return current.Err()
+}
+
 // Response discriminates question answers from permission decisions. Deny is
 // the only negative response; timeouts/transport loss never synthesize Allow.
 type Response struct {
@@ -57,6 +101,14 @@ func (p *Handle) admitLocked(ctx context.Context, a Authority) error {
 	currentCtx, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
 	defer cancel()
 	return p.host.tx.Current(currentCtx, p.launch.Binding)
+}
+
+// ValidateAuthority checks current ownership before a consumer projects a
+// pending token into an answer domain. Snapshot presence alone is not admission.
+func (p *Handle) ValidateAuthority(ctx context.Context, a Authority) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.admitLocked(ctx, a)
 }
 
 func (p *Handle) writeLocked(ctx context.Context, frame any) error {
@@ -244,7 +296,7 @@ func (p *Handle) consume(raw []byte) error {
 			p.emitLocked("provider-event", raw, nil)
 			return nil
 		}
-		if frame.Session == "" || p.turn == "" {
+		if frame.Session == "" || p.turn == "" || (p.hookSession != "" && p.hookSession != frame.Session) {
 			return errors.New("init without session or first input")
 		}
 		if p.session == frame.Session {

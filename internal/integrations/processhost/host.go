@@ -96,6 +96,7 @@ type Handle struct {
 	mu             sync.Mutex
 	state          string
 	session        string
+	hookSession    string
 	connection     string
 	turn           string
 	interrupt      string
