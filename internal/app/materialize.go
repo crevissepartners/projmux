@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -232,9 +233,11 @@ func (o runtimeObject) ownershipOption() string {
 // client or pane is focused, so the operator's view is byte-identical before
 // and after a create.
 type materializer struct {
-	runner   tmuxCommandRunner
-	mirror   intmetadata.Mirror
-	sessions sessionMaterializer
+	// processAnchor is an invocation-scoped exact split target; nil keeps tmux.
+	processAnchor *processTerminalTarget
+	runner        tmuxCommandRunner
+	mirror        intmetadata.Mirror
+	sessions      sessionMaterializer
 	// target is the immutable logical route shared by runner, mirror, and
 	// sessions. Every printable action carries it and every write reobserves
 	// the server's #{socket_path} through that same route first.
@@ -2597,11 +2600,28 @@ func splitPlacementFlag(placement string) string {
 	return "-h"
 }
 
+// admitSplitAnchor limits the invocation target to the anchor being split.
+// A process declaration has no tmux handle; an exact tmux sibling keeps its
+// existing transport guard and split behavior on the same materializer.
+func (t *processTerminalTarget) admitSplitAnchor(anchorPaneID string) error {
+	if t == nil {
+		return nil
+	}
+	pane, ok := t.registry.Pane(t.paneUID)
+	if ok && anchorPaneID != pane.Status.Activation.RuntimeID {
+		return nil
+	}
+	return t.admit(resourcegraph.ProcessSplit)
+}
+
 // splitPane splits an anchor pane detached and returns the new pane id.
 //
 // `-d` is the whole point: tmux leaves the previously active pane active, so
 // the split is a pure structural mutation with no focus side effect.
 func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string) (string, error) {
+	if err := m.processAnchor.admitSplitAnchor(anchorPaneID); err != nil {
+		return "", err
+	}
 	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
 	if beforeErr != nil {
 		return "", fmt.Errorf("list tmux panes around %q before split: %w", anchorPaneID, beforeErr)

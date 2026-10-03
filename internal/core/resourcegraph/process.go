@@ -78,15 +78,17 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 type ProcessAction string
 
 const (
-	ProcessAttach    ProcessAction = "attach"
-	ProcessFocus     ProcessAction = "focus"
-	ProcessKeys      ProcessAction = "send-keys"
-	ProcessCapture   ProcessAction = "capture"
-	ProcessPopup     ProcessAction = "popup"
-	ProcessRelaunch  ProcessAction = "relaunch"
-	ProcessTurn      ProcessAction = "turn"
-	ProcessInterrupt ProcessAction = "interrupt"
-	ProcessStop      ProcessAction = "stop"
+	ProcessAttach     ProcessAction = "attach"
+	ProcessFocus      ProcessAction = "focus"
+	ProcessKeys       ProcessAction = "send-keys"
+	ProcessCapture    ProcessAction = "capture"
+	ProcessPopup      ProcessAction = "popup"
+	ProcessRelaunch   ProcessAction = "relaunch"
+	ProcessCreatePane ProcessAction = "create-pane"
+	ProcessSplit      ProcessAction = "split"
+	ProcessTurn       ProcessAction = "turn"
+	ProcessInterrupt  ProcessAction = "interrupt"
+	ProcessStop       ProcessAction = "stop"
 )
 
 // AdmitProcess rejects terminal operations before any transport or Registry
@@ -99,6 +101,8 @@ func (p ProcessInventory) AdmitProcess(pane coremetadata.Pane, action ProcessAct
 	switch action {
 	case ProcessAttach, ProcessFocus, ProcessKeys, ProcessCapture, ProcessPopup, ProcessRelaunch:
 		return ProcessKey{}, fmt.Errorf("process-pane-no-tmux-target: %s is unavailable for this process Pane; use host turn, interrupt, or Stop", action)
+	case ProcessCreatePane, ProcessSplit:
+		return ProcessKey{}, fmt.Errorf("process-capability-unsupported: %s has no tmux target for this process Pane; use a tmux Pane or Window anchor in the same Window", action)
 	case ProcessTurn, ProcessInterrupt, ProcessStop:
 		if status == StatusLive {
 			return *key, nil
