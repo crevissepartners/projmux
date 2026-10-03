@@ -396,3 +396,122 @@ func TestStopEscalatesUnresponsiveProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletionRunsBeforeWaitAndPreservesExit(t *testing.T) {
+	h := testHost(t, func(_ *Transactions, limits *Limits) { limits.Write = 5 * time.Second })
+	entered, release := make(chan struct{}), make(chan struct{})
+	calls := 0
+	completion := &Completion{Cleanup: func(ctx context.Context) error {
+		// Both locks must be available to cleanup; actual exit evidence is already
+		// visible, while Wait must still be fenced behind completion.
+		h.mu.Lock()
+		owned := h.operations[binding().Operation]
+		h.mu.Unlock()
+		snapshot, err := owned.Observe(binding())
+		if err != nil || snapshot.Exit == nil {
+			return fmt.Errorf("cleanup lacks actual exit: %+v %v", snapshot, err)
+		}
+		calls++
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	launch := Launch{Binding: binding(), Command: fixtureCommand("normal"), Completion: completion}
+	p, err := h.Start(context.Background(), launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		_ = p.Stop(binding())
+	})
+	if err = p.Stop(binding()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("cleanup did not enter")
+	}
+	select {
+	case <-p.done:
+		t.Fatal("Wait opened before cleanup finished")
+	default:
+	}
+	close(release)
+	s, err := p.Wait(ctx, binding())
+	if err != nil || s.Exit == nil || s.Exit.Code != 0 || s.Failure != "" || s.Diagnostic != "" {
+		t.Fatalf("completion changed actual exit: %+v %v", s, err)
+	}
+	again, err := h.Start(context.Background(), launch)
+	if err != nil || again != p || calls != 1 {
+		t.Fatalf("same cleanup owner retried: %p %v calls=%d", again, err, calls)
+	}
+	launch.Completion = &Completion{Cleanup: completion.Cleanup}
+	if _, err := h.Start(context.Background(), launch); err != ErrStale {
+		t.Fatalf("changed cleanup owner: %v", err)
+	}
+}
+
+func TestCompletionFailureAndTimeoutAreDiagnosticOnly(t *testing.T) {
+	for _, mode := range []string{"failure", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			h := testHost(t, nil)
+			release, returned := make(chan struct{}), make(chan struct{})
+			completion := &Completion{Cleanup: func(context.Context) error {
+				defer close(returned)
+				if mode == "timeout" {
+					<-release
+				}
+				return errors.New("cleanup fixture failure")
+			}}
+			p, err := h.Start(context.Background(), Launch{Binding: binding(), Command: fixtureCommand("normal"), Completion: completion})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { close(release); <-returned })
+			if err = p.Stop(binding()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s, err := p.Wait(ctx, binding())
+			if err != nil || s.Exit == nil || s.Exit.Code != 0 || s.Failure != "" || s.State != "exited" {
+				t.Fatalf("cleanup overwrote actual exit: %+v %v", s, err)
+			}
+			expected := "cleanup fixture failure"
+			if mode == "timeout" {
+				expected = "context deadline exceeded"
+			}
+			if !strings.Contains(s.Diagnostic, "owned completion cleanup: "+expected) {
+				t.Fatalf("cleanup diagnostic: %q", s.Diagnostic)
+			}
+		})
+	}
+}
+
+func TestCompletionAlsoReclaimsLaunchRollback(t *testing.T) {
+	calls := 0
+	reserveErr := errors.New("reservation fixture failure")
+	h := testHost(t, func(tx *Transactions, _ *Limits) {
+		tx.Reserve = func(context.Context, Binding) error { return reserveErr }
+	})
+	p, err := h.Start(context.Background(), Launch{Binding: binding(), Command: fixtureCommand("normal"), Completion: &Completion{Cleanup: func(context.Context) error { calls++; return nil }}})
+	if !errors.Is(err, reserveErr) || p == nil || calls != 1 {
+		t.Fatalf("rollback cleanup: %v calls=%d", err, calls)
+	}
+	s, err := p.Wait(context.Background(), binding())
+	if err != nil || s.Exit != nil || s.Failure != reserveErr.Error() {
+		t.Fatalf("rollback fabricated exit: %+v %v", s, err)
+	}
+}

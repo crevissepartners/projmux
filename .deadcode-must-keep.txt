@@ -270,6 +270,7 @@ guardSweepHelperRoots	Test-only guard helper retained behind the shared guard AP
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+listenProcessHost	Internal exact process activation endpoint cleanup; remove this retention row when the foreground consumer wires process-hosted lifetimes.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).

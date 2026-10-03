@@ -82,11 +82,10 @@ func newProcessCodexFixture(t *testing.T, command func(string, string, []string)
 
 func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int) *processCodexFixture {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "pcf-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	// Keep copied supervisor/provider paths short on both supported platforms.
+	t.Setenv("TMPDIR", "/tmp")
+	root := t.TempDir()
+	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
 	if err != nil {
@@ -165,6 +164,10 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 		s, err := endpoint.handle.Wait(ctx, b)
 		if err != nil || s.Exit == nil {
 			t.Errorf("actual Wait: %+v %v", s, err)
+		}
+		leaseDir := filepath.Dir(endpoint.socket)
+		if _, err := os.Lstat(leaseDir); !os.IsNotExist(err) {
+			t.Errorf("host lease remains after actual Wait: %s (%v)", leaseDir, err)
 		}
 	})
 	f := &processCodexFixture{root: root, path: path, binary: binary, endpoint: endpoint, store: store}
@@ -563,17 +566,60 @@ func TestCodexProcessCommittedReceiptsDoNotExhaustOutcomeCache(t *testing.T) {
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 	right.endpoint.messages.Store(m)
 	ctx := context.Background()
+	retries := 0
 	for i := range 258 {
 		now := time.Now().UTC()
-		receipt, err := m.send(ctx, left.endpoint.binding.Agent, right.endpoint.binding.Agent, fmt.Sprintf("message-cache-%d", i), fmt.Sprintf("conversation-cache-%d", i), "complete", now, now.Add(time.Minute))
+		messageRef, conversationRef := fmt.Sprintf("message-cache-%d", i), fmt.Sprintf("conversation-cache-%d", i)
+		deadline := now.Add(time.Minute)
+		if i == 0 {
+			// Force a bounded IPC failure while the server waits for the receipt lock.
+			// Keep the injected caller deadline shorter than the server exchange budget.
+			// The lost reply is explicit; retrying the same envelope must not replay a
+			// turn whose outcome was already committed by the first exchange.
+			m.mu.Lock()
+			first, cancel := context.WithTimeout(ctx, time.Second)
+			_, err := m.send(first, left.endpoint.binding.Agent, right.endpoint.binding.Agent, messageRef, conversationRef, "complete", now, deadline)
+			cancel()
+			m.mu.Unlock()
+			if err == nil || !strings.Contains(err.Error(), "bounded frame read failed") {
+				t.Fatalf("forced IPC timeout must be explicit: %v", err)
+			}
+			retries++
+		}
+		retryCtx, cancel := context.WithDeadline(ctx, deadline)
+		var receipt codexProcessReceipt
+		var err error
+		for range 32 {
+			receipt, err = m.send(retryCtx, left.endpoint.binding.Agent, right.endpoint.binding.Agent, messageRef, conversationRef, "complete", now, deadline)
+			if err == nil {
+				break
+			}
+			if retryCtx.Err() != nil {
+				break
+			}
+			if !errors.Is(err, messagestore.ErrBusy) && !errors.Is(err, processhost.ErrBusy) && !strings.Contains(err.Error(), "bounded frame read failed") {
+				break
+			}
+			retries++
+		}
+		cancel()
 		if err != nil || receipt.Delivery.State != coremessage.StateDelivered {
-			t.Fatalf("message %d: %+v %v", i, receipt, err)
+			t.Fatalf("message %d after bounded retry: %+v %v", i, receipt, err)
 		}
 		right.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
 		if processCodexOutcomeCount(m) != 0 {
 			t.Fatalf("message %d retained committed outcome", i)
 		}
 	}
+	wire, err := os.ReadFile(filepath.Join(right.root, "wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(wire), `"method":"turn/start"`); count != 258 {
+		t.Fatalf("258 delivered messages wrote %d turns", count)
+	}
+	t.Logf("delivered=258 explicit retries=%d committed outcomes=0 turn writes=258", retries)
+
 	// A write can persist the terminal record but fail its final directory sync.
 	// Confirming that durable receipt also releases the corresponding cache slot.
 	record, found, err := m.store.Get("message-cache-257")
