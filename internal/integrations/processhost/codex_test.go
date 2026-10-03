@@ -536,13 +536,22 @@ func TestCodexTurnRefusalPreservesChildAndSession(t *testing.T) {
 	if s.State != "ready" || s.Exit != nil || s.Turn != "" || s.Session != before.Session || s.Connection != before.Connection || syscall.Kill(s.PID, 0) != nil {
 		t.Fatalf("refusal killed child or session: %+v", s)
 	}
-	var result map[string]string
+	var result struct {
+		ThreadID string `json:"threadId"`
+		Turn     struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Error  struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"turn"`
+	}
 	for _, e := range events(c.handle) {
 		if e.Kind == "turn-result" {
 			_ = json.Unmarshal(e.Raw, &result)
 		}
 	}
-	if result["status"] != "failed" || result["operation"] != "refused" {
+	if result.ThreadID != a.Session || result.Turn.Status != "failed" || result.Turn.ID != "refused" || result.Turn.Error.Message != "server-refused" {
 		t.Fatalf("refusal result=%v", result)
 	}
 	if err := c.Turn(context.Background(), a, "refused", "retry"); !errors.Is(err, ErrStale) {

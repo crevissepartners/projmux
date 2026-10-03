@@ -40,6 +40,21 @@ type CodexConfig struct {
 // expose the Client or its response writer to another consumer.
 type CodexHandle struct{ handle *Handle }
 
+// A local refusal has no provider turn ID; the consumed operation is its ID.
+// Completed provider payloads keep their full turn object and share this shape.
+type codexTurnResult struct {
+	ThreadID string          `json:"threadId"`
+	Turn     codexResultTurn `json:"turn"`
+}
+type codexResultTurn struct {
+	ID     string            `json:"id"`
+	Status string            `json:"status"`
+	Error  *codexResultError `json:"error,omitempty"`
+}
+type codexResultError struct {
+	Message string `json:"message"`
+}
+
 func (h *Host) StartCodex(ctx context.Context, launch Launch, config CodexConfig) (*CodexHandle, error) {
 	launch.adapter = config
 	p, err := h.Start(ctx, launch)
@@ -223,7 +238,7 @@ func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt 
 			p.mu.Lock()
 			c.awaitingReply = false
 			c.replyQueue = nil
-			raw, _ := json.Marshal(map[string]string{"status": "failed", "operation": operation, "reason": "server-refused"})
+			raw, _ := json.Marshal(codexTurnResult{ThreadID: a.Session, Turn: codexResultTurn{ID: operation, Status: "failed", Error: &codexResultError{Message: "server-refused"}}})
 			p.emitLocked("turn-result", raw, nil)
 			p.mu.Unlock()
 		} else {

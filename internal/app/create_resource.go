@@ -2270,7 +2270,88 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 		clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
 	}
 	defer func() { clearDefaults() }()
-	guard := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
+	guard := combineCreateGuards(guards)
+
+	_, err = c.store.update(func(working *coremetadata.Registry) error {
+		lock.enter()
+		// Whatever the closure returns, what follows it -- normalize, validate,
+		// the durable write, the unlock -- is the store-write phase.
+		defer lock.mark(diagnostics.CreatePhaseStoreWrite)
+		if admission != nil {
+			if err := admission(working.Clone()); err != nil {
+				return err
+			}
+			if err := c.ensureRuntimeRoute(ctx); err != nil {
+				return err
+			}
+			clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
+		}
+		return c.reconcileCreateOperation(ctx, working, lock, operationID, ledger, guard, op)
+	})
+	lock.leave()
+	if err != nil {
+		// Rollback runs after the scope is closed, so every guard of the
+		// unwind -- and of the lease clear after it -- proves identity in full.
+		c.runtime.closeRouteIdentityCache()
+		c.runtime.rollback(ctx, ledger)
+		c.runtime.clearCreateOperations(ctx, ledger)
+		return MapMetadataError(err)
+	}
+	// On success the lease clear is the transaction's last guarded write and
+	// runs inside the scope: its guards may reuse the commit re-proof (or the
+	// post-effect proof of the previous guarded write), which no write of ours
+	// has followed. Its own guarded-write seam drops that proof after the
+	// write, so the post-effect observation proves identity again.
+	c.runtime.clearCreateOperations(ctx, ledger)
+	c.runtime.closeRouteIdentityCache()
+	return nil
+}
+
+// reconcileCreateOperation retains the preflight proof only until a guarded
+// write occurs, then re-proves both reconciliation and commit authority.
+func (c *createCommand) reconcileCreateOperation(ctx context.Context, working *coremetadata.Registry, lock *createLockSpan, operationID string, ledger *runtimeLedger, guard createPreReconcile, op createOperation) error {
+	preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
+	if err != nil {
+		return err
+	}
+	// The first reconcile pass asks the same guards the same question about
+	// the same Registry before any write of ours: it reuses the preflight
+	// answer while no guarded write has run since. The second pass follows
+	// the create's own writes and always asks tmux again.
+	preflightWrites := c.runtime.guardedWrites
+	firstPass := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
+		if c.runtime.guardedWrites == preflightWrites {
+			return preflight, nil
+		}
+		return guard(ctx, working, mutator, operationID)
+	}
+	lock.mark(diagnostics.CreatePhaseFirstReconcile)
+	if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, firstPass); err != nil {
+		return err
+	}
+	lock.mark(diagnostics.CreatePhaseOperation)
+	if err := op(ctx, working, c.store.mutator(), operationID, ledger); err != nil {
+		return err
+	}
+	lock.mark(diagnostics.CreatePhaseSecondReconcile)
+	// The lifecycle hook caused by our own tmux mutation deliberately
+	// defers while this transaction owns the registry lock. Re-run the same
+	// reconciler after all explicit mirrors are in place so the committed
+	// status and the live tmux projection agree before create returns.
+	if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard); err != nil {
+		return err
+	}
+	lock.mark(diagnostics.CreatePhaseReprove)
+	// Any identity reused inside this transaction is proved once more
+	// before commit, so a server that drifted after the first proof rolls
+	// the whole operation back instead of committing on stale evidence.
+	return c.runtime.reproveReusedRouteIdentity(ctx)
+}
+
+// combineCreateGuards preserves each guard's private Registry snapshot and
+// refuses conflicting exact session selections before reconciliation.
+func combineCreateGuards(guards []createPreReconcile) createPreReconcile {
+	return func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
 		var selected liveSessionIdentity
 		for _, candidate := range guards {
 			if candidate != nil {
@@ -2290,76 +2371,8 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 			}
 		}
 		return selected, nil
-	}
 
-	_, err = c.store.update(func(working *coremetadata.Registry) error {
-		lock.enter()
-		// Whatever the closure returns, what follows it -- normalize, validate,
-		// the durable write, the unlock -- is the store-write phase.
-		defer lock.mark(diagnostics.CreatePhaseStoreWrite)
-		if admission != nil {
-			if err := admission(working.Clone()); err != nil {
-				return err
-			}
-			if err := c.ensureRuntimeRoute(ctx); err != nil {
-				return err
-			}
-			clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
-		}
-		preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
-		if err != nil {
-			return err
-		}
-		// The first reconcile pass asks the same guards the same question about
-		// the same Registry before any write of ours: it reuses the preflight
-		// answer while no guarded write has run since. The second pass follows
-		// the create's own writes and always asks tmux again.
-		preflightWrites := c.runtime.guardedWrites
-		firstPass := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
-			if c.runtime.guardedWrites == preflightWrites {
-				return preflight, nil
-			}
-			return guard(ctx, working, mutator, operationID)
-		}
-		lock.mark(diagnostics.CreatePhaseFirstReconcile)
-		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, firstPass); err != nil {
-			return err
-		}
-		lock.mark(diagnostics.CreatePhaseOperation)
-		if err := op(ctx, working, c.store.mutator(), operationID, ledger); err != nil {
-			return err
-		}
-		lock.mark(diagnostics.CreatePhaseSecondReconcile)
-		// The lifecycle hook caused by our own tmux mutation deliberately
-		// defers while this transaction owns the registry lock. Re-run the same
-		// reconciler after all explicit mirrors are in place so the committed
-		// status and the live tmux projection agree before create returns.
-		if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard); err != nil {
-			return err
-		}
-		lock.mark(diagnostics.CreatePhaseReprove)
-		// Any identity reused inside this transaction is proved once more
-		// before commit, so a server that drifted after the first proof rolls
-		// the whole operation back instead of committing on stale evidence.
-		return c.runtime.reproveReusedRouteIdentity(ctx)
-	})
-	lock.leave()
-	if err != nil {
-		// Rollback runs after the scope is closed, so every guard of the
-		// unwind -- and of the lease clear after it -- proves identity in full.
-		c.runtime.closeRouteIdentityCache()
-		c.runtime.rollback(ctx, ledger)
-		c.runtime.clearCreateOperations(ctx, ledger)
-		return MapMetadataError(err)
 	}
-	// On success the lease clear is the transaction's last guarded write and
-	// runs inside the scope: its guards may reuse the commit re-proof (or the
-	// post-effect proof of the previous guarded write), which no write of ours
-	// has followed. Its own guarded-write seam drops that proof after the
-	// write, so the post-effect observation proves identity again.
-	c.runtime.clearCreateOperations(ctx, ledger)
-	c.runtime.closeRouteIdentityCache()
-	return nil
 }
 
 // writeResults renders a committed create through the shared output catalog.

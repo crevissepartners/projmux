@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -228,31 +227,32 @@ func (s *claudeProcessService) currentForeground(ctx context.Context, a processh
 	if err != nil {
 		return err
 	}
-	pane, ok := reg.Pane(s.binding.Pane)
-	agent, found := reg.Agent(s.binding.Agent)
-	window, windowFound := reg.Window(s.binding.Window)
-	if !ok || !found || !windowFound || pane.Status.Activation.RuntimeID != "" ||
-		pane.Status.Activation.Generation != s.binding.Generation || pane.Status.Activation.OperationID != s.binding.Operation ||
-		pane.Status.Activation.AgentUID != s.binding.Agent || pane.Metadata.OwnerUID() != s.binding.Agent ||
-		agent.Status.PaneRef != s.binding.Pane || agent.Metadata.OwnerUID() != s.binding.Window || window.Metadata.OwnerUID() != s.binding.Project ||
-		(pane.Status.Activation.Claude != nil && pane.Status.Activation.Claude.Process != child) {
+	if !s.ownershipCurrent(reg, child) {
 		return processhost.ErrStale
 	}
 	return nil
 }
 
+// ownershipCurrent is the shared exact Registry fence for registration,
+// helper input and foreground control. Child/session proofs remain separate.
+func (s *claudeProcessService) ownershipCurrent(reg coremetadata.Registry, child coremetadata.ProcessIdentity) bool {
+	pane, ok := reg.Pane(s.binding.Pane)
+	agent, found := reg.Agent(s.binding.Agent)
+	window, windowFound := reg.Window(s.binding.Window)
+	return ok && found && windowFound && pane.Status.Activation.RuntimeID == "" &&
+		pane.Status.Activation.Generation == s.binding.Generation && pane.Status.Activation.OperationID == s.binding.Operation &&
+		pane.Status.Activation.AgentUID == s.binding.Agent && pane.Metadata.OwnerUID() == s.binding.Agent &&
+		agent.Status.PaneRef == s.binding.Pane && agent.Metadata.OwnerUID() == s.binding.Window && window.Metadata.OwnerUID() == s.binding.Project &&
+		(pane.Status.Activation.Claude == nil || pane.Status.Activation.Claude.Process == child)
+}
+
 func (s *claudeProcessService) recordActivation(process coremetadata.ProcessIdentity) error {
 	_, _, err := intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
-		pane, ok := reg.Pane(s.binding.Pane)
-		agent, found := reg.Agent(s.binding.Agent)
-		window, windowFound := reg.Window(s.binding.Window)
-		if !ok || !found || !windowFound || pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Generation != s.binding.Generation || pane.Status.Activation.AgentUID != s.binding.Agent || pane.Status.Activation.OperationID != s.binding.Operation || pane.Metadata.OwnerUID() != s.binding.Agent || agent.Status.PaneRef != s.binding.Pane || agent.Metadata.OwnerUID() != s.binding.Window || window.Metadata.OwnerUID() != s.binding.Project {
+		if !s.ownershipCurrent(*reg, process) {
 			return processhost.ErrStale
 		}
+		pane, _ := reg.Pane(s.binding.Pane)
 		if pane.Status.Activation.Claude != nil {
-			if pane.Status.Activation.Claude.Process != process {
-				return processhost.ErrStale
-			}
 			return nil
 		}
 		return intmetadata.DefaultMutator().RecordClaudeProcess(reg, s.binding.Pane, s.binding.Agent, s.binding.Generation, process)
@@ -267,12 +267,15 @@ func (s *claudeProcessService) inputCurrent(request claudeProcessCheck, peer cor
 	if err != nil {
 		return false
 	}
-	pane, ok := reg.Pane(s.binding.Pane)
-	if !ok || pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Generation != s.binding.Generation || pane.Status.Activation.Claude == nil {
+	if !s.ownershipCurrent(reg, s.ownedProcess) {
+		return false
+	}
+	pane, _ := reg.Pane(s.binding.Pane)
+	if pane.Status.Activation.Claude == nil {
 		return false
 	}
 	cl := pane.Status.Activation.Claude
-	return cl.Registration != nil && cl.Registration.Ready && cl.Process == s.ownedProcess && cl.Registration.Authority.Process == s.ownedProcess && cl.Registration.Authority.SessionID == request.Session && cl.Registration.Authority.LeaseProcess == peer && cl.RegistrationGeneration == request.Input.RegistrationGeneration && cl.Registration.Authority.RegistrationGeneration == request.Input.RegistrationGeneration
+	return cl.Registration != nil && cl.Registration.Ready && cl.Registration.Authority.Process == s.ownedProcess && cl.Registration.Authority.SessionID == request.Session && cl.Registration.Authority.LeaseProcess == peer && cl.RegistrationGeneration == request.Input.RegistrationGeneration && cl.Registration.Authority.RegistrationGeneration == request.Input.RegistrationGeneration
 }
 
 func (s *claudeProcessService) input(ctx context.Context, request claudeProcessCheck, peer coremetadata.ProcessIdentity, snap processhost.Snapshot) claudeProcessCheckResult {
@@ -301,16 +304,8 @@ func (s *claudeProcessService) input(ctx context.Context, request claudeProcessC
 }
 
 func processClaudeLaunchEnv(launch processhost.Launch, registryPath, socket string) []string {
-	raw, _ := json.Marshal(launch.Binding)
-	env := make([]string, 0, len(launch.Command.Env)+5)
-	for _, value := range launch.Command.Env {
-		key, _, _ := strings.Cut(value, "=")
-		if strings.HasPrefix(key, "PMX_INTERNAL_") || key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
-			continue
-		}
-		env = append(env, value)
-	}
-	return append(env, internalClaudeProcessBindingEnv+"="+string(raw), internalClaudeProcessHostEnv+"="+socket, internalActivationPaneUIDEnv+"="+launch.Binding.Pane, internalActivationGenerationEnv+"="+launch.Binding.Generation, internalClaudeRegistryPathEnv+"="+registryPath)
+	env := processProviderLaunchEnv(launch, internalClaudeProcessBindingEnv, internalClaudeProcessHostEnv, socket)
+	return append(env, internalActivationPaneUIDEnv+"="+launch.Binding.Pane, internalActivationGenerationEnv+"="+launch.Binding.Generation, internalClaudeRegistryPathEnv+"="+registryPath)
 }
 
 func (s *claudeProcessService) initialize(ctx context.Context, host *processhost.Host, launch processhost.Launch) {
@@ -345,6 +340,22 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
+	service, err := prepareProcessClaude(ctx, launch, registryPath)
+	if err != nil {
+		return nil, err
+	}
+	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
+	launch.Completion = &processhost.Completion{Cleanup: service.close}
+	service.initialize(ctx, host, launch)
+	if service.launchErr != nil {
+		service.rollback(ctx)
+		return service.handle, service.launchErr
+	}
+	return service.handle, nil
+}
+
+// prepareProcessClaude owns only the listener and startup service lifetime.
+func prepareProcessClaude(ctx context.Context, launch processhost.Launch, registryPath string) (*claudeProcessService, error) {
 	socket := processClaudeHostSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation)
 	listener, closeLease, err := listenProcessHost(socket)
 	if err != nil {
@@ -354,14 +365,7 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	// Startup cancellation does not shorten the already owned child lifetime.
 	lifetime := context.WithoutCancel(ctx)
 	go service.serve(lifetime)
-	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, socket)
-	launch.Completion = &processhost.Completion{Cleanup: service.close}
-	service.initialize(ctx, host, launch)
-	if service.launchErr != nil {
-		service.rollback(ctx)
-		return service.handle, service.launchErr
-	}
-	return service.handle, nil
+	return service, nil
 }
 
 // The helper preserves native post/receipt semantics. The host admits its

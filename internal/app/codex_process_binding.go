@@ -2,11 +2,9 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,16 +79,8 @@ func (e *codexProcessEndpoint) route(ctx context.Context) (coremetadata.AgentRou
 }
 
 func processCodexLaunchEnv(launch processhost.Launch, socket string) []string {
-	raw, _ := json.Marshal(launch.Binding)
-	env := make([]string, 0, len(launch.Command.Env)+2)
-	for _, v := range launch.Command.Env {
-		key, _, _ := strings.Cut(v, "=")
-		if strings.HasPrefix(key, "PMX_INTERNAL_") || key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
-			continue
-		}
-		env = append(env, v)
-	}
-	return append(env, internalCodexProcessBindingEnv+"="+string(raw), internalCodexProcessHostEnv+"="+socket)
+	env := processProviderLaunchEnv(launch, internalCodexProcessBindingEnv, internalCodexProcessHostEnv, socket)
+	return env
 }
 
 // startProcessCodex remains dormant until a foreground consumer supplies its

@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -30,16 +28,7 @@ type codexProcessControl struct {
 }
 
 func processCodexControlID(b processhost.Binding, r processhost.Request) string {
-	raw, _ := json.Marshal(struct {
-		Binding             processhost.Binding
-		Connection, Request string
-	}{b, r.Connection, r.ID})
-	sum := sha256.Sum256(raw)
-	prefix := "permission-"
-	if r.Kind == "question" {
-		prefix = "question-"
-	}
-	return prefix + hex.EncodeToString(sum[:8])
+	return processControlID(b, r)
 }
 func (c *codexProcessControl) closeRecord(id string, r processhost.Request) {
 	if r.Kind == "question" {

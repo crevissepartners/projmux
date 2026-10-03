@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -30,16 +28,7 @@ type claudeProcessControl struct {
 }
 
 func processClaudeControlID(b processhost.Binding, r processhost.Request) string {
-	raw, _ := json.Marshal(struct {
-		Binding             processhost.Binding
-		Connection, Request string
-	}{b, r.Connection, r.ID})
-	sum := sha256.Sum256(raw)
-	prefix := "permission-"
-	if r.Kind == "question" {
-		prefix = "question-"
-	}
-	return prefix + hex.EncodeToString(sum[:8])
+	return processControlID(b, r)
 }
 
 // sync reconciles one bounded snapshot. All response writes go through the
