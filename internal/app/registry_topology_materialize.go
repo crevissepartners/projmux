@@ -107,35 +107,9 @@ func planRegistryTopology(
 		return plan, nil
 	}
 
-	var target *observedResourceProjectSession
-	for i := range sessions {
-		session := sessions[i]
-		claimsUID := session.uid == project.Metadata.UID
-		claimsName := session.name == plan.sessionName
-		if !claimsUID && !claimsName {
-			continue
-		}
-		if target != nil {
-			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindProject, project.Metadata.Name, "multiple live sessions claim the selected Project")
-			return plan, nil
-		}
-		if session.uid != "" && session.uid != project.Metadata.UID {
-			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindProject, project.Metadata.Name, "the expected session name carries a foreign Project uid")
-			return plan, nil
-		}
-		if session.uid == "" {
-			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindProject, project.Metadata.Name, "live session lacks the selected Project's exact uid binding")
-			return plan, nil
-		}
-		if claimsUID && session.name != plan.sessionName {
-			plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, project.Metadata.Name, "the Project uid is live under a different session name")
-			return plan, nil
-		}
-		if session.root != "" && filepath.Clean(session.root) != filepath.Clean(project.Spec.Root) {
-			plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, project.Metadata.Name, "the live session carries a foreign Project root")
-			return plan, nil
-		}
-		target = &session
+	target := plan.selectSession(sessions)
+	if plan.hasRefusal() {
+		return plan, nil
 	}
 	windows := registry.WindowsOf(project.Metadata.UID)
 	materializableWindow := slices.ContainsFunc(windows, func(window coremetadata.Window) bool {
@@ -195,150 +169,199 @@ func planRegistryTopology(
 	}
 
 	for wi, window := range windows {
-		work := registryTopologyWindowPlan{window: window}
-		for _, live := range liveWindows {
-			if live.uid == window.Metadata.UID {
-				work.liveID = live.id
-				break
-			}
+		if err := plan.planWindow(ctx, runner, registry, project, window, wi, liveWindows, launcher); err != nil {
+			return nil, err
 		}
-		anchor, ok := registry.WindowAnchor(window.Metadata.UID)
-		if !ok {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window anchorPaneRef must resolve to an exact same-Window shell or managed Agent Pane")
-			continue
-		}
-		if plan.processes.Declares(*anchor) {
-			// A process anchor cannot bootstrap a tmux Window.
-			continue
-		}
-		work.anchor = *anchor
-		defaultShell, hasDefaultShell := registry.WindowDefaultShell(window.Metadata.UID)
-		if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" && !hasDefaultShell {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window defaultShellPaneRef must resolve to a direct Window-owned shell Pane")
-			continue
-		}
-		if anchor.Spec.Role == coremetadata.PaneRoleShell && anchor.Metadata.OwnerUID() == window.Metadata.UID {
-			work.bootstrap = *anchor
-		} else if hasDefaultShell && !plan.processes.Declares(*defaultShell) {
-			work.bootstrap = *defaultShell
-		}
-		eligible := slices.DeleteFunc(registry.PanesOf(window.Metadata.UID), func(pane coremetadata.Pane) bool { return plan.processes.Declares(pane) })
-		// A stored Pane whose cwd is gone is one item of the desired topology, not
-		// a verdict on the Project. It is refused here and left out of the plan, so
-		// the tmux pass never tries to open a directory that does not exist and the
-		// Window still comes back with the Panes that can be built. A refused
-		// *bootstrap* is different: the Window is created from that Pane's
-		// cwd, so that one takes the Window with it.
-		refusedPanes := map[string]bool{}
-		for _, pane := range eligible {
-			if pane.Spec.Role != coremetadata.PaneRoleShell {
-				continue
-			}
-			if reason := validateMaterializeDirectory(materializePaneCWD(project, pane), "Pane cwd"); reason != "" {
-				plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindPane, pane.Metadata.Name, reason)
-				refusedPanes[pane.Metadata.UID] = true
-			}
-		}
-		if work.bootstrap.Metadata.UID != "" && refusedPanes[work.bootstrap.Metadata.UID] {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
-				"the Window's default bootstrap shell cwd cannot be materialized, so the Window has no cwd to be created from")
-			continue
-		}
-		if work.liveID == "" {
-			if work.bootstrap.Metadata.UID == "" {
-				work.allocateDefaultShell = true
-				plan.addDefaultShellAllocation(wi+1, window)
-			}
-			work.create = true
-			plan.addItem(wi+1, coremetadata.KindWindow, window.Metadata.Name, window.Metadata.UID, "materialize")
-			for pi, pane := range eligible {
-				if pane.Spec.Role != coremetadata.PaneRoleShell || refusedPanes[pane.Metadata.UID] {
-					continue
-				}
-				work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
-				plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
-			}
-			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID)
-			if work.anchor.Spec.Role == coremetadata.PaneRoleAgent && !slices.ContainsFunc(work.agents, func(agent registryTopologyAgentPlan) bool {
-				return agent.reusePaneUID == work.anchor.Metadata.UID
-			}) {
-				plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
-					"offline Agent anchor cannot be materialized by its exact owning Agent")
-			}
-			plan.windows = append(plan.windows, work)
-			continue
-		}
+	}
 
-		livePanes, readErr := observeTopologyPanes(ctx, runner, work.liveID)
-		if readErr != nil {
-			return nil, readErr
+	return plan, nil
+}
+
+func (plan *registryTopologyPlan) selectSession(sessions []observedResourceProjectSession) *observedResourceProjectSession {
+	project := plan.project
+	var target *observedResourceProjectSession
+	for i := range sessions {
+		session := sessions[i]
+		claimsUID := session.uid == project.Metadata.UID
+		claimsName := session.name == plan.sessionName
+		if !claimsUID && !claimsName {
+			continue
 		}
-		knownPanes := map[string]coremetadata.Pane{}
-		for _, pane := range eligible {
-			if pane.Spec.Role == coremetadata.PaneRoleShell {
-				knownPanes[pane.Metadata.UID] = pane
-			}
+		if target != nil {
+			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindProject, project.Metadata.Name, "multiple live sessions claim the selected Project")
+			return nil
 		}
-		for _, agent := range registry.AgentsOf(window.Metadata.UID) {
-			for _, pane := range registry.PanesOf(agent.Metadata.UID) {
-				knownPanes[pane.Metadata.UID] = pane // existing Agent panes are valid but never planned.
-			}
+		if session.uid != "" && session.uid != project.Metadata.UID {
+			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindProject, project.Metadata.Name, "the expected session name carries a foreign Project uid")
+			return nil
 		}
-		claims := map[string]int{}
-		var unclaimed []observedTopologyPane
-		for _, live := range livePanes {
-			if live.uid == "" {
-				unclaimed = append(unclaimed, live)
-				continue
-			}
-			claims[live.uid]++
-			if _, ok := knownPanes[live.uid]; !ok {
-				divergence := resourcegraph.DivergenceOrphanMirror
-				if _, exists := registry.Pane(live.uid); exists {
-					divergence = resourcegraph.DivergenceContaminated
-				}
-				plan.refuse(divergence, coremetadata.KindPane, live.id, "live Pane uid has the wrong owner or is absent from the selected Window graph")
-			}
+		if session.uid == "" {
+			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindProject, project.Metadata.Name, "live session lacks the selected Project's exact uid binding")
+			return nil
 		}
-		for uid, count := range claims {
-			if count > 1 {
-				plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindPane, uid, "multiple live Panes claim one Registry uid")
-			}
+		if claimsUID && session.name != plan.sessionName {
+			plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, project.Metadata.Name, "the Project uid is live under a different session name")
+			return nil
 		}
+		if session.root != "" && filepath.Clean(session.root) != filepath.Clean(project.Spec.Root) {
+			plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, project.Metadata.Name, "the live session carries a foreign Project root")
+			return nil
+		}
+		target = &session
+	}
+	return target
+}
+
+func (plan *registryTopologyPlan) planWindow(ctx context.Context, runner tmuxCommandRunner, registry coremetadata.Registry, project coremetadata.Project, window coremetadata.Window, wi int, liveWindows []observedTopologyWindow, launcher topologyAgentLauncher) error {
+	work := registryTopologyWindowPlan{window: window}
+	for _, live := range liveWindows {
+		if live.uid == window.Metadata.UID {
+			work.liveID = live.id
+			break
+		}
+	}
+	anchor, ok := registry.WindowAnchor(window.Metadata.UID)
+	if !ok {
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window anchorPaneRef must resolve to an exact same-Window shell or managed Agent Pane")
+		return nil
+	}
+	if plan.processes.Declares(*anchor) {
+		// A process anchor cannot bootstrap a tmux Window.
+		return nil
+	}
+	work.anchor = *anchor
+	defaultShell, hasDefaultShell := registry.WindowDefaultShell(window.Metadata.UID)
+	if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" && !hasDefaultShell {
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window defaultShellPaneRef must resolve to a direct Window-owned shell Pane")
+		return nil
+	}
+	if anchor.Spec.Role == coremetadata.PaneRoleShell && anchor.Metadata.OwnerUID() == window.Metadata.UID {
+		work.bootstrap = *anchor
+	} else if hasDefaultShell && !plan.processes.Declares(*defaultShell) {
+		work.bootstrap = *defaultShell
+	}
+	eligible := slices.DeleteFunc(registry.PanesOf(window.Metadata.UID), func(pane coremetadata.Pane) bool { return plan.processes.Declares(pane) })
+	// A stored Pane whose cwd is gone is one item of the desired topology, not
+	// a verdict on the Project. It is refused here and left out of the plan, so
+	// the tmux pass never tries to open a directory that does not exist and the
+	// Window still comes back with the Panes that can be built. A refused
+	// *bootstrap* is different: the Window is created from that Pane's
+	// cwd, so that one takes the Window with it.
+	refusedPanes := map[string]bool{}
+	for _, pane := range eligible {
+		if pane.Spec.Role != coremetadata.PaneRoleShell {
+			continue
+		}
+		if reason := validateMaterializeDirectory(materializePaneCWD(project, pane), "Pane cwd"); reason != "" {
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindPane, pane.Metadata.Name, reason)
+			refusedPanes[pane.Metadata.UID] = true
+		}
+	}
+	if work.bootstrap.Metadata.UID != "" && refusedPanes[work.bootstrap.Metadata.UID] {
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
+			"the Window's default bootstrap shell cwd cannot be materialized, so the Window has no cwd to be created from")
+		return nil
+	}
+	if work.liveID == "" {
+		if work.bootstrap.Metadata.UID == "" {
+			work.allocateDefaultShell = true
+			plan.addDefaultShellAllocation(wi+1, window)
+		}
+		work.create = true
+		plan.addItem(wi+1, coremetadata.KindWindow, window.Metadata.Name, window.Metadata.UID, "materialize")
 		for pi, pane := range eligible {
 			if pane.Spec.Role != coremetadata.PaneRoleShell || refusedPanes[pane.Metadata.UID] {
 				continue
 			}
-			paneWork := registryTopologyPanePlan{pane: pane}
-			for _, live := range livePanes {
-				if live.uid == pane.Metadata.UID {
-					paneWork.liveID = live.id
-					break
-				}
-			}
-			if paneWork.liveID == "" {
-				paneWork.create = true
-				plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
-			}
-			work.panes = append(work.panes, paneWork)
+			work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
+			plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
 		}
-		if len(unclaimed) != 0 {
-			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindPane, work.liveID, "pre-existing uid-less live Pane cannot be heuristically adopted")
+		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID)
+		if work.anchor.Spec.Role == coremetadata.PaneRoleAgent && !slices.ContainsFunc(work.agents, func(agent registryTopologyAgentPlan) bool {
+			return agent.reusePaneUID == work.anchor.Metadata.UID
+		}) {
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
+				"offline Agent anchor cannot be materialized by its exact owning Agent")
 		}
+		plan.windows = append(plan.windows, work)
+		return nil
+	}
+
+	return plan.planLiveWindowPanes(ctx, runner, registry, project, &work, wi, eligible, refusedPanes, launcher)
+}
+
+func (plan *registryTopologyPlan) planLiveWindowPanes(ctx context.Context, runner tmuxCommandRunner, registry coremetadata.Registry, project coremetadata.Project, work *registryTopologyWindowPlan, wi int, eligible []coremetadata.Pane, refusedPanes map[string]bool, launcher topologyAgentLauncher) error {
+	window := work.window
+	livePanes, readErr := observeTopologyPanes(ctx, runner, work.liveID)
+	if readErr != nil {
+		return readErr
+	}
+	knownPanes := map[string]coremetadata.Pane{}
+	for _, pane := range eligible {
+		if pane.Spec.Role == coremetadata.PaneRoleShell {
+			knownPanes[pane.Metadata.UID] = pane
+		}
+	}
+	for _, agent := range registry.AgentsOf(window.Metadata.UID) {
+		for _, pane := range registry.PanesOf(agent.Metadata.UID) {
+			knownPanes[pane.Metadata.UID] = pane // existing Agent panes are valid but never planned.
+		}
+	}
+	claims := map[string]int{}
+	var unclaimed []observedTopologyPane
+	for _, live := range livePanes {
+		if live.uid == "" {
+			unclaimed = append(unclaimed, live)
+			continue
+		}
+		claims[live.uid]++
+		if _, ok := knownPanes[live.uid]; !ok {
+			divergence := resourcegraph.DivergenceOrphanMirror
+			if _, exists := registry.Pane(live.uid); exists {
+				divergence = resourcegraph.DivergenceContaminated
+			}
+			plan.refuse(divergence, coremetadata.KindPane, live.id, "live Pane uid has the wrong owner or is absent from the selected Window graph")
+		}
+	}
+	for uid, count := range claims {
+		if count > 1 {
+			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindPane, uid, "multiple live Panes claim one Registry uid")
+		}
+	}
+	for pi, pane := range eligible {
+		if pane.Spec.Role != coremetadata.PaneRoleShell || refusedPanes[pane.Metadata.UID] {
+			continue
+		}
+		paneWork := registryTopologyPanePlan{pane: pane}
 		for _, live := range livePanes {
-			if live.uid == work.anchor.Metadata.UID {
-				work.anchorLiveID = live.id
+			if live.uid == pane.Metadata.UID {
+				paneWork.liveID = live.id
 				break
 			}
 		}
-		if work.anchorLiveID == "" {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
-				"stored anchor Pane has no exact live binding; refusing alternate live Pane inference")
+		if paneWork.liveID == "" {
+			paneWork.create = true
+			plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
 		}
-		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID)
-		plan.windows = append(plan.windows, work)
+		work.panes = append(work.panes, paneWork)
 	}
-	return plan, nil
+	if len(unclaimed) != 0 {
+		plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindPane, work.liveID, "pre-existing uid-less live Pane cannot be heuristically adopted")
+	}
+	for _, live := range livePanes {
+		if live.uid == work.anchor.Metadata.UID {
+			work.anchorLiveID = live.id
+			break
+		}
+	}
+	if work.anchorLiveID == "" {
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
+			"stored anchor Pane has no exact live binding; refusing alternate live Pane inference")
+	}
+	work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID)
+	plan.windows = append(plan.windows, *work)
+
+	return nil
 }
 
 func resolveMaterializeProject(registry coremetadata.Registry, raw string) (coremetadata.Project, error) {

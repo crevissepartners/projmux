@@ -4,16 +4,21 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// This opt-in qualification uses real provider authentication, no user hooks,
-// no MCP servers and no tools. CI's deterministic tests require no credentials.
+// This opt-in qualification runs the installed CLI against localhost SSE
+// in a disposable HOME. It uses no real credentials, model API or user hooks.
 func TestInstalledClaudeStream(t *testing.T) {
 	if os.Getenv("PROCESSHOST_TEST_CLAUDE") != "1" {
 		t.Skip("opt-in installed provider qualification")
@@ -22,26 +27,19 @@ func TestInstalledClaudeStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
+	home := t.TempDir()
+	t.Logf("isolated provider HOME=%s", home)
+	server := installedClaudeStub(t, os.Getenv("PROCESSHOST_TEST_PERMISSION") != "")
+	defer server.Close()
 	settings := filepath.Join(home, ".claude", "settings.json")
 	before, readErr := os.ReadFile(settings)
 	defer func() {
 		after, err := os.ReadFile(settings)
 		if (readErr == nil) != (err == nil) || sha256.Sum256(before) != sha256.Sum256(after) {
-			t.Error("user settings changed")
+			t.Error("isolated settings changed")
 		}
 	}()
-	var env []string
-	for _, value := range os.Environ() {
-		key, _, _ := strings.Cut(value, "=")
-		if key == "TMUX" || key == "TMUX_PANE" || key == "CLAUDECODE" || strings.HasPrefix(key, "CLAUDE_CODE_") || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "PMX_") || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
-			continue
-		}
-		env = append(env, value)
-	}
+	env := installedClaudeEnv(home, server.URL)
 	tools := ""
 	settingsArg := `{"hooks":{}}`
 	probe := os.Getenv("PROCESSHOST_TEST_PERMISSION")
@@ -56,6 +54,7 @@ func TestInstalledClaudeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := testHost(t, func(_ *Transactions, l *Limits) { l.Startup = 30 * time.Second; l.Grace = 3 * time.Second })
+	h.supervisor.Path = installedClaudeSupervisor(t, home)
 	p, err := h.Start(context.Background(), Launch{Binding: binding(), Command: cmd})
 	if err != nil {
 		t.Fatal(err)
@@ -147,4 +146,61 @@ func TestInstalledClaudeStream(t *testing.T) {
 		}
 		t.Logf("%s turn completed; repeated init retained exact session; pid=%d", id, s.PID)
 	}
+}
+
+// The fixture returns one tool request when asked, then bounded plain text.
+func installedClaudeStub(t *testing.T, permission bool) *httptest.Server {
+	t.Helper()
+	var calls atomic.Int32
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if json.NewDecoder(r.Body).Decode(&request) != nil {
+			return
+		}
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		emit := func(kind string, data any) {
+			raw, _ := json.Marshal(data)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", kind, raw)
+		}
+		emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": "msg_stub", "type": "message", "role": "assistant", "model": "claude-haiku-4-5", "content": []any{}, "stop_reason": nil, "usage": map[string]int{"input_tokens": 1, "output_tokens": 0}}})
+		stop := "end_turn"
+		if permission && call == 1 {
+			emit("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": "tool_stub", "name": "Bash", "input": map[string]any{}}})
+			emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"command":"printf RUNTIME_PERMISSION_PROBE"}`}})
+			stop = "tool_use"
+		} else {
+			emit("content_block_start", map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}})
+			emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": "STREAM_OK"}})
+		}
+		emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
+		emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": map[string]int{"output_tokens": 1}})
+		emit("message_stop", map[string]any{"type": "message_stop"})
+	}))
+}
+
+func installedClaudeEnv(home, url string) []string {
+	var env []string
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if key == "HOME" || strings.HasPrefix(key, "XDG_") || strings.HasPrefix(key, "ANTHROPIC_") || strings.HasPrefix(key, "AWS_") || strings.HasPrefix(key, "CLAUDE") || key == "TMUX" || key == "TMUX_PANE" || key == "CLAUDECODE" || strings.HasPrefix(key, "CLAUDE_CODE_") || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "PMX_") || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
+			continue
+		}
+		env = append(env, value)
+	}
+	env = append(env, "HOME="+home, "CLAUDE_CONFIG_DIR="+filepath.Join(home, ".claude"), "ANTHROPIC_BASE_URL="+url, "ANTHROPIC_API_KEY=isolated-dummy", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CACHE_HOME="+filepath.Join(home, "cache"))
+	return env
+}
+
+func installedClaudeSupervisor(t *testing.T, root string) string {
+	t.Helper()
+	raw, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "processhost.test")
+	if err := os.WriteFile(path, raw, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

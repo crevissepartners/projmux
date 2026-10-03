@@ -451,6 +451,12 @@ func planExactLifecycleCascade(
 		return planPreexistingDeadAgentPaneRecovery(registry, live, dead, *observed, *pane, windowUID, *window, *root, sessionName, event, mutator)
 	}
 
+	return planExactObservedPaneCascade(registry, live, dead, liveHostPanes, event, mutator, *observed, *pane, windowUID, *root, sessionName, retainedDead)
+}
+
+// Containment is proved above; this stage builds the unchanged teardown decision
+// from current sibling observations and journal evidence.
+func planExactObservedPaneCascade(registry coremetadata.Registry, live map[string]bool, dead []intmetadata.DeadPaneObservation, liveHostPanes int, event lifecycleDirtyEvent, mutator coremetadata.Mutator, observed intmetadata.DeadPaneObservation, pane coremetadata.Pane, windowUID string, root coremetadata.OwnerRef, sessionName string, retainedDead bool) (exactLifecycleCascadePlan, error) {
 	classification := coremetadata.TerminationUnknown
 	if stored := pane.Status.LastTermination; stored != nil &&
 		stored.Generation == pane.Status.Activation.Generation &&
@@ -461,35 +467,7 @@ func planExactLifecycleCascade(
 	if liveHostPanes == 0 {
 		observation = coremetadata.TeardownObservationEmpty
 	}
-	deadUIDs := lifecycleDeadPaneUIDs(dead)
-	liveSiblingPane := false
-	for i := range registry.Panes {
-		sibling := registry.Panes[i]
-		if sibling.Metadata.UID == pane.Metadata.UID || (!live[sibling.Metadata.UID] && !event.processes.Declares(sibling)) || deadUIDs[sibling.Metadata.UID] {
-			continue
-		}
-		if siblingWindow, exists := paneWindowUID(registry, sibling); exists && siblingWindow == windowUID {
-			liveSiblingPane = true
-			break
-		}
-	}
-	liveSiblingRootWindow := false
-	for _, siblingWindow := range registry.WindowsOf(root.UID) {
-		if siblingWindow.Metadata.UID == windowUID {
-			continue
-		}
-		for i := range registry.Panes {
-			candidate := registry.Panes[i]
-			if candidateWindow, exists := paneWindowUID(registry, candidate); exists &&
-				candidateWindow == siblingWindow.Metadata.UID && (live[candidate.Metadata.UID] || event.processes.Declares(candidate)) && !deadUIDs[candidate.Metadata.UID] {
-				liveSiblingRootWindow = true
-				break
-			}
-		}
-		if liveSiblingRootWindow {
-			break
-		}
-	}
+	liveSiblingPane, liveSiblingRootWindow := exactLifecycleLiveSiblings(registry, live, dead, event.processes, pane.Metadata.UID, windowUID, root.UID)
 	teardown := coremetadata.TeardownEvent{
 		Kind: event.teardownKind, Classification: classification,
 		Generation: coremetadata.TeardownGenerationCurrent, Observation: observation,
@@ -502,7 +480,7 @@ func planExactLifecycleCascade(
 		LiveSiblingPane: liveSiblingPane, LiveSiblingRootWindow: liveSiblingRootWindow,
 	}
 	decision := coremetadata.DecideTeardownEvent(teardown)
-	if decision.Action == coremetadata.TeardownDeletePaneAgent && !exactJournalReceipt(event.receipts, *pane) {
+	if decision.Action == coremetadata.TeardownDeletePaneAgent && !exactJournalReceipt(event.receipts, pane) {
 		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
 			coremetadata.TeardownReasonUnavailable, "normal teardown lacks one exact current-generation supervisor journal receipt")
 	}
@@ -515,7 +493,7 @@ func planExactLifecycleCascade(
 		plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
 		cascade := exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan, subject: subject}
 		if err == nil && plan.Changed && retainedDead {
-			target := lifecycleDeadPaneTarget(teardown, sessionName, *pane)
+			target := lifecycleDeadPaneTarget(teardown, sessionName, pane)
 			cascade.deadCleanup = &target
 		}
 		return cascade, err
@@ -523,7 +501,7 @@ func planExactLifecycleCascade(
 	pending, err := coremetadata.PlanPaneTeardownEvidence(registry, teardown, now().UTC())
 	cascade := exactLifecycleCascadePlan{Desired: pending.Desired, Changed: pending.Changed, pending: pending, subject: subject}
 	if err == nil && pending.Changed && retainedDead {
-		target := lifecycleDeadPaneTarget(teardown, sessionName, *pane)
+		target := lifecycleDeadPaneTarget(teardown, sessionName, pane)
 		cascade.deadCleanup = &target
 	}
 	return cascade, err
@@ -557,6 +535,39 @@ func narrowLifecycleDeadPaneEvent(dead []intmetadata.DeadPaneObservation, event 
 		event.paneUID = resolved
 	}
 	return event
+}
+
+func exactLifecycleLiveSiblings(registry coremetadata.Registry, live map[string]bool, dead []intmetadata.DeadPaneObservation, processes resourcegraph.ProcessInventory, paneUID, windowUID, rootUID string) (bool, bool) {
+	deadUIDs := lifecycleDeadPaneUIDs(dead)
+	liveSiblingPane := false
+	for i := range registry.Panes {
+		sibling := registry.Panes[i]
+		if sibling.Metadata.UID == paneUID || (!live[sibling.Metadata.UID] && !processes.Declares(sibling)) || deadUIDs[sibling.Metadata.UID] {
+			continue
+		}
+		if siblingWindow, exists := paneWindowUID(registry, sibling); exists && siblingWindow == windowUID {
+			liveSiblingPane = true
+			break
+		}
+	}
+	liveSiblingRootWindow := false
+	for _, siblingWindow := range registry.WindowsOf(rootUID) {
+		if siblingWindow.Metadata.UID == windowUID {
+			continue
+		}
+		for i := range registry.Panes {
+			candidate := registry.Panes[i]
+			if candidateWindow, exists := paneWindowUID(registry, candidate); exists &&
+				candidateWindow == siblingWindow.Metadata.UID && (live[candidate.Metadata.UID] || processes.Declares(candidate)) && !deadUIDs[candidate.Metadata.UID] {
+				liveSiblingRootWindow = true
+				break
+			}
+		}
+		if liveSiblingRootWindow {
+			break
+		}
+	}
+	return liveSiblingPane, liveSiblingRootWindow
 }
 
 func planExactWindowUnlinkCascade(
