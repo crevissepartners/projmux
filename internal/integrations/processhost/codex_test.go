@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -121,6 +122,10 @@ func codexFixture(mode string) {
 			if mode == "codex-turn-stall" {
 				time.Sleep(time.Hour)
 			}
+			if mode == "codex-turn-refusal" && turn == 1 {
+				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32000, "message": "turn refused"}})
+				continue
+			}
 			// Intentionally send the first notification before the turn/start reply.
 			emit("turn/started", map[string]any{"threadId": "thread", "turn": map[string]string{"id": current}})
 			reply(map[string]any{"turn": map[string]string{"id": current}})
@@ -147,6 +152,10 @@ func codexFixture(mode string) {
 				complete()
 			}
 		case "turn/interrupt":
+			if mode == "codex-interrupt-refusal" {
+				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32000, "message": "interrupt refused"}})
+				continue
+			}
 			reply(map[string]any{})
 			complete()
 		default:
@@ -484,5 +493,63 @@ func TestCodexResponseRaceExpiryAndDeny(t *testing.T) {
 	}
 	if responses != 1 {
 		t.Fatalf("wire responses=%d", responses)
+	}
+}
+
+func TestCodexTurnRefusalPreservesChildAndSession(t *testing.T) {
+	c, _, log := codexStart(t, testHost(t, nil), "codex-turn-refusal")
+	a := codexAuthority(c)
+	before, _ := c.Observe(binding())
+	err := c.Turn(context.Background(), a, "refused", "first")
+	if err == nil {
+		t.Fatal("turn refusal lost")
+	}
+	s, _ := c.Observe(binding())
+	if s.State != "ready" || s.Exit != nil || s.Turn != "" || s.Session != before.Session || s.Connection != before.Connection || syscall.Kill(s.PID, 0) != nil {
+		t.Fatalf("refusal killed child or session: %+v", s)
+	}
+	var result map[string]string
+	for _, e := range events(c.handle) {
+		if e.Kind == "turn-result" {
+			_ = json.Unmarshal(e.Raw, &result)
+		}
+	}
+	if result["status"] != "failed" || result["operation"] != "refused" {
+		t.Fatalf("refusal result=%v", result)
+	}
+	if err := c.Turn(context.Background(), a, "refused", "retry"); !errors.Is(err, ErrStale) {
+		t.Fatalf("operation replay=%v", err)
+	}
+	if err := c.Turn(context.Background(), a, "next", "complete"); err != nil {
+		t.Fatal(err)
+	}
+	s = observeUntil(t, c.handle, func(s Snapshot) bool { return s.Turn == "" })
+	if s.State != "ready" || s.Exit != nil || syscall.Kill(s.PID, 0) != nil {
+		t.Fatalf("next turn=%+v", s)
+	}
+	if countMethod(codexWire(t, log), "turn/start") != 2 {
+		t.Fatal("turn replay reached wire")
+	}
+}
+
+func TestCodexInterruptRefusalPreservesActiveTurn(t *testing.T) {
+	c, _, log := codexStart(t, testHost(t, nil), "codex-interrupt-refusal")
+	a := codexAuthority(c)
+	if err := c.Turn(context.Background(), a, "hold", "hold"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := c.Observe(binding())
+	if err := c.Interrupt(context.Background(), a, before.Turn); !codexappserver.IsResponseError(err) {
+		t.Fatalf("refusal=%v", err)
+	}
+	s, _ := c.Observe(binding())
+	if s.State != "ready" || s.Exit != nil || s.Turn != before.Turn || hasEvent(c.handle, "interrupt-ack") || syscall.Kill(s.PID, 0) != nil || !hasEvent(c.handle, "interrupt-refused") {
+		t.Fatalf("refusal=%+v", s)
+	}
+	if err := c.Interrupt(context.Background(), a, s.Turn); !errors.Is(err, ErrStale) {
+		t.Fatalf("interrupt replay=%v", err)
+	}
+	if countMethod(codexWire(t, log), "turn/interrupt") != 1 {
+		t.Fatal("interrupt replay reached wire")
 	}
 }

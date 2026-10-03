@@ -87,6 +87,14 @@ func (e *responseError) Is(target error) bool {
 	return target == e.Unwrap() || target == e.kind
 }
 
+// IsResponseError reports a well-formed JSON-RPC refusal from the server.
+// It preserves existing error classifications while distinguishing a refused
+// operation from a broken transport or malformed protocol message.
+func IsResponseError(err error) bool {
+	var response *responseError
+	return errors.As(err, &response)
+}
+
 type readWriteCloser interface {
 	io.Reader
 	io.Writer

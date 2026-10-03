@@ -197,14 +197,21 @@ func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt 
 		p.mu.Unlock()
 		return ErrBusy
 	}
-	// Consume operation before the write. Any uncertain outcome is terminal;
-	// neither a second turn nor an automatic retry is permitted.
+	// Consume operation before the write. Even a refused operation cannot be
+	// replayed; an uncertain outcome still terminates the owned connection.
 	p.usedTurns[operation] = true
 	p.mu.Unlock()
 	settings := p.launch.adapter.(CodexConfig).Settings
 	turn, err := c.client.StartTurnWithOptions(ctx, a.Session, prompt, operation, settings.Model, settings.Effort)
 	if err != nil {
-		p.protocolFailure(err)
+		if codexappserver.IsResponseError(err) {
+			p.mu.Lock()
+			raw, _ := json.Marshal(map[string]string{"status": "failed", "operation": operation, "reason": "server-refused"})
+			p.emitLocked("turn-result", raw, nil)
+			p.mu.Unlock()
+		} else {
+			p.protocolFailure(err)
+		}
 		return err
 	}
 	p.mu.Lock()
@@ -236,7 +243,13 @@ func (c *codexAdapter) interrupt(ctx context.Context, a Authority, turn string) 
 	p.interrupt = turn
 	p.mu.Unlock()
 	if _, err := codexappserver.InterruptExactTurnOn(ctx, c.client, a.Session, turn); err != nil {
-		p.protocolFailure(err)
+		if codexappserver.IsResponseError(err) {
+			p.mu.Lock()
+			p.emitLocked("interrupt-refused", nil, nil)
+			p.mu.Unlock()
+		} else {
+			p.protocolFailure(err)
+		}
 		return err
 	}
 	p.mu.Lock()

@@ -121,6 +121,14 @@ using the existing settings verifier and sends requested effort through the nati
 `config.model_reasoning_effort` override. Existing thread/start callers retain their
 wire format and policy checks.
 
+A well-formed server refusal of turn/start produces a failed `turn-result`
+with the consumed operation ID while preserving the session and owned child.
+A refused interrupt produces `interrupt-refused`, without an acknowledgement or
+an inferred turn completion. Neither refusal permits replay of the same control.
+Malformed protocol, transport loss, and uncertain request outcomes still stop
+the owned connection. The typed refusal classifier preserves existing callers'
+error classifications and request bytes.
+
 `CodexHandle` keeps the Client private. Turn operations use the typed turn request
 and consume their operation identity before any uncertain write. Interrupt uses
 an exact provider turn ID from `Snapshot.Turn`; its acknowledgement and the eventual

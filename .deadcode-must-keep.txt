@@ -98,6 +98,7 @@ Host.StartCodex	Owned processhost Codex preparation retained for dedicated stdio
 InheritedEnv	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 InstalledTestEnvReads	Test-only guard API retained: it keeps each package's provider opt-in gates closed over the variables its installed tests read.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
+IsResponseError	Typed server-refusal classifier retained for dedicated processhost control until public activation supplies an importer.
 IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
