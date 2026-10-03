@@ -24,6 +24,7 @@ import (
 // private XDG_CONFIG_HOME also isolates it from the developer machine's real
 // global projmux config (e.g. locale=ko-KR), which outranks the LANG rung below.
 func TestMain(m *testing.M) {
+	exitIfClaudeProcessFixtureChild()
 	exitIfSettingsLayerGuardChild()
 	exitIfClaudeQuestionHookChild()
 	exitIfClaudePermissionHookChild()

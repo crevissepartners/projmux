@@ -89,6 +89,7 @@ type claudeEndpointBootstrap struct {
 	Socket                      string
 	Token                       string
 	ReplyTool                   *claudeReplyToolPolicy
+	ProcessProof                *claudeProcessProof
 }
 
 func (claudeEndpointBootstrap) String() string   { return "[private Claude registration]" }
@@ -180,16 +181,42 @@ func claudeEndpointRegistrationHook(args []string, env func(string) string, stdi
 	if exactActivationRegistryPath(registryPath) != nil {
 		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationRegistryPathInvalid
 	}
+	processPath := env(internalClaudeProcessBindingEnv) != "" || env(internalClaudeProcessHostEnv) != ""
 	store := intmetadata.NewStore(registryPath)
-	reg, err := store.LoadDegradedReadOnly()
-	if err != nil {
-		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationRegistryUnreadable
+	var reg coremetadata.Registry
+	var err error
+	if !processPath {
+		reg, err = store.LoadDegradedReadOnly()
+		if err != nil {
+			return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationRegistryUnreadable
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(stdin, 64*1024+1))
 	if err != nil || len(data) > 64*1024 {
 		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHookInputUnreadable
 	}
-	bootstrap, reason := claudeRegistrationBootstrap(reg, registryPath, data, env, parentPID)
+	var hookProof *claudeProcessProof
+	if processPath {
+		var payload struct {
+			Event   string `json:"hook_event_name"`
+			Session string `json:"session_id"`
+		}
+		if json.Unmarshal(data, &payload) != nil || payload.Event != "SessionStart" {
+			return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationPayloadNotSessionStart
+		}
+		verified, ok := claudeProcessHookProof(env, payload.Session, parentPID)
+		if !ok {
+			return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationProviderProcessMismatch
+		}
+		hookProof = &verified
+	}
+	if processPath {
+		reg, err = store.LoadDegradedReadOnly()
+		if err != nil {
+			return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationRegistryUnreadable
+		}
+	}
+	bootstrap, reason := claudeRegistrationBootstrap(reg, registryPath, data, env, parentPID, hookProof)
 	subject := claudeRegistrationSubject{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID}
 	if reason != claudeRegistrationProceed {
 		return subject, reason
@@ -211,6 +238,9 @@ func claudeEndpointRegistrationHook(args []string, env func(string) string, stdi
 // and the start refusal otherwise. A start error without a reason is counted
 // as a failed start.
 func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claudeEndpointBootstrap) error) diagnostics.ClaudeRegistrationReason {
+	if bootstrap.ProcessProof != nil && !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
+		return diagnostics.ClaudeRegistrationProviderProcessMismatch
+	}
 	err := start(bootstrap)
 	if err == nil {
 		return claudeRegistrationProceed
@@ -226,7 +256,13 @@ func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claude
 // bootstrap, or the refusal. A refusal returns the zero bootstrap until the
 // pane and its agent matched the Registry, and after that one carrying only
 // their UIDs, which the hook's record names.
-func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int) (claudeEndpointBootstrap, diagnostics.ClaudeRegistrationReason) {
+func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int, verifiedHook ...*claudeProcessProof) (claudeEndpointBootstrap, diagnostics.ClaudeRegistrationReason) {
+	// The hook can pass its kernel-verified proof once. Direct callers retain
+	// the original verification path; register and helper revalidate either way.
+	var hookProof *claudeProcessProof
+	if len(verifiedHook) > 0 {
+		hookProof = verifiedHook[0]
+	}
 	var payload struct {
 		Event     string `json:"hook_event_name"`
 		SessionID string `json:"session_id"`
@@ -245,6 +281,22 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 		return claudeEndpointBootstrap{}, diagnostics.ClaudeRegistrationAgentMismatch
 	}
 	matched := claudeEndpointBootstrap{AgentUID: agent.Metadata.UID, PaneUID: paneUID}
+	var proof *claudeProcessProof
+	if env(internalClaudeProcessBindingEnv) != "" || env(internalClaudeProcessHostEnv) != "" {
+		var verified claudeProcessProof
+		ok := false
+		if hookProof != nil {
+			verified = *hookProof
+			ok = verified.Session == payload.SessionID && verified.Process.PID == parentPID
+		} else {
+			verified, ok = claudeProcessHookProof(env, payload.SessionID, parentPID)
+		}
+		if !ok || verified.Binding.Agent != agent.Metadata.UID || verified.Binding.Pane != paneUID ||
+			verified.Binding.Generation != generation {
+			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
+		}
+		proof = &verified
+	}
 	process := pane.Status.Activation.Claude.Process
 	actual, _, err := claudeadapter.Process(parentPID)
 	if err != nil || actual != process || int64(actual.OwnerUID) != int64(os.Getuid()) {
@@ -285,7 +337,7 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 		Registration:                coremetadata.ClaudeRegistration{Authority: authority},
 		PriorRegistrationGeneration: pane.Status.Activation.Claude.RegistrationGeneration,
 		HookProcess:                 hookProcess,
-		Socket:                      socket, Token: token, ReplyTool: replyTool}, claudeRegistrationProceed
+		Socket:                      socket, Token: token, ReplyTool: replyTool, ProcessProof: proof}, claudeRegistrationProceed
 }
 
 // claudeEndpointHelperRoute is the internal route word of the per-agent
@@ -659,6 +711,13 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if exactActivationRegistryPath(bootstrap.RegistryPath) != nil || bootstrap.Token == "" {
 		return diagnostics.ClaudeRegistrationBootstrapInvalid
 	}
+	resolveRoute := coremetadata.ResolveAgentRoute
+	if bootstrap.ProcessProof != nil {
+		if !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
+			return diagnostics.ClaudeRegistrationProviderProcessMismatch
+		}
+		resolveRoute = processClaudeRouteResolver(bootstrap.RegistryPath, *bootstrap.ProcessProof)
+	}
 	process, _, err := claudeadapter.Process(os.Getpid())
 	if err != nil {
 		return diagnostics.ClaudeRegistrationHelperIdentity
@@ -735,11 +794,14 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if err != nil {
 		return diagnostics.ClaudeRegistrationRegistryUnreadable
 	}
-	expectedRoute, routeReason := coremetadata.ResolveAgentRoute(initial, bootstrap.AgentUID)
+	expectedRoute, routeReason := resolveRoute(initial, bootstrap.AgentUID)
 	if routeReason != "" || !coordinationTarget.matches(expectedRoute) {
 		return diagnostics.ClaudeRegistrationRouteMismatch
 	}
 	identityCurrent := func() bool {
+		if bootstrap.ProcessProof != nil && !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
+			return false
+		}
 		if observed, err := inspectClaudeSocket(leasePath); err != nil || observed != leaseIdentity {
 			return false
 		}
@@ -761,7 +823,7 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 		if err != nil {
 			return false
 		}
-		route, reason := coremetadata.ResolveAgentRoute(reg, bootstrap.AgentUID)
+		route, reason := resolveRoute(reg, bootstrap.AgentUID)
 		authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 		return reason == "" && ok && route.Same(expectedRoute) && route.PaneUID == bootstrap.PaneUID && route.Generation == bootstrap.Generation && authority == bootstrap.Registration.Authority
 	}
@@ -774,10 +836,18 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if err != nil {
 		return diagnostics.ClaudeRegistrationDialogueBroker
 	}
-	providerPoster := &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token,
-		socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}
-	if idle.poster != nil {
-		idle.poster(providerPoster)
+	if bootstrap.ProcessProof != nil {
+		dialogueBroker.resolveRoute = resolveRoute
+	}
+	var providerPoster claudeProviderPoster
+	if bootstrap.ProcessProof != nil {
+		providerPoster = &processClaudeProviderPoster{proof: *bootstrap.ProcessProof, registrationGeneration: bootstrap.Registration.Authority.RegistrationGeneration, native: &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token, socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}, current: current}
+	} else {
+		livePoster := &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token, socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}
+		providerPoster = livePoster
+		if idle.poster != nil {
+			idle.poster(livePoster)
+		}
 	}
 	var replyTool *claudeReplyToolGate
 	if bootstrap.ReplyTool != nil {

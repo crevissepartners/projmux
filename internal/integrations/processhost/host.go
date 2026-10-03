@@ -91,41 +91,45 @@ type Launch struct {
 
 // Handle is tied to one owned supervisor/child pair and cannot adopt a PID.
 type Handle struct {
-	host           *Host
-	launch         Launch
-	mu             sync.Mutex
-	state          string
-	session        string
-	connection     string
-	turn           string
-	interrupt      string
-	interruptAck   bool
-	usedTurns      map[string]bool
-	requests       map[string]Request
-	usedRequests   map[string]bool
-	seq            uint64
-	droppedThrough uint64
-	events         []Event
-	critical       []Event
-	diagnostics    []byte
-	failure        string
-	exit           *Exit
-	pid            int
-	supervisorPID  int
-	stdin          *os.File
-	lifetime       *os.File
-	ready          chan struct{}
-	done           chan struct{}
-	statusDone     chan struct{}
-	spawnErr       error
-	stopOnce       sync.Once
-	adapter        providerAdapter
+	host                   *Host
+	launch                 Launch
+	mu                     sync.Mutex
+	state                  string
+	session                string
+	hookSession            string
+	connection             string
+	turn                   string
+	messageReservation     string
+	messageOutcomeRecorded bool
+	interrupt              string
+	interruptAck           bool
+	usedTurns              map[string]bool
+	requests               map[string]Request
+	usedRequests           map[string]bool
+	seq                    uint64
+	droppedThrough         uint64
+	events                 []Event
+	critical               []Event
+	diagnostics            []byte
+	failure                string
+	exit                   *Exit
+	pid                    int
+	supervisorPID          int
+	stdin                  *os.File
+	lifetime               *os.File
+	ready                  chan struct{}
+	done                   chan struct{}
+	statusDone             chan struct{}
+	spawnErr               error
+	stopOnce               sync.Once
+	adapter                providerAdapter
 }
 
 // Snapshot is a bounded resynchronization view. Turn results do not set Exit.
 type Snapshot struct {
 	Binding                                   Binding
 	State, Session, Connection, Turn, Failure string
+	MessageReservation                        string
 	PID, SupervisorPID                        int
 	Sequence                                  uint64
 	Pending                                   []Request
@@ -421,6 +425,7 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	p.expireLocked()
 	if actual != nil && waitErr == nil {
 		p.exit, p.state = actual, "exited"
+		p.messageReservation = ""
 		p.emitLocked("process-exited", nil, nil)
 	} else {
 		p.state = "unknown"
@@ -489,7 +494,7 @@ func (p *Handle) Observe(binding Binding) (Snapshot, error) {
 }
 
 func (p *Handle) snapshotLocked() Snapshot {
-	s := Snapshot{Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
+	s := Snapshot{Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
 	if p.exit != nil {
 		e := *p.exit
 		s.Exit = &e

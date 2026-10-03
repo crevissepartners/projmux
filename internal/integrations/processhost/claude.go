@@ -39,6 +39,50 @@ type Request struct {
 
 func cloneRequest(r Request) Request { r.Input = bytes.Clone(r.Input); return r }
 
+// BindClaudeHook fences a SessionStart observation on the host's owned child.
+// The caller must verify the hook peer's kernel parent identity before passing
+// pid. This does not promote hook data to stream readiness or commit a session:
+// the first system/init must independently agree before the binding is ready.
+func (p *Handle) BindClaudeHook(ctx context.Context, binding Binding, pid int, session string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.checkClaudeHookLocked(ctx, binding, pid, session); err != nil {
+		return err
+	}
+	p.hookSession = session
+	return nil
+}
+
+// CheckClaudeHook only revalidates an already observed SessionStart. It cannot
+// create session authority from a lease/helper payload.
+func (p *Handle) CheckClaudeHook(ctx context.Context, binding Binding, pid int, session string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.hookSession == "" || p.hookSession != session {
+		return ErrStale
+	}
+	return p.checkClaudeHookLocked(ctx, binding, pid, session)
+}
+
+func (p *Handle) checkClaudeHookLocked(ctx context.Context, binding Binding, pid int, session string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if binding != p.launch.Binding || p.adapter != nil || pid <= 0 || pid != p.pid || session == "" || len(session) > 256 ||
+		(p.session != "" && p.session != session) || (p.hookSession != "" && p.hookSession != session) {
+		return ErrStale
+	}
+	if p.state != "starting" && p.state != "ready" {
+		return ErrClosed
+	}
+	current, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
+	defer cancel()
+	if err := p.host.tx.Current(current, binding); err != nil {
+		return err
+	}
+	return current.Err()
+}
+
 // Response discriminates question answers from permission decisions. Deny is
 // the only negative response; timeouts/transport loss never synthesize Allow.
 type Response struct {
@@ -57,6 +101,14 @@ func (p *Handle) admitLocked(ctx context.Context, a Authority) error {
 	currentCtx, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
 	defer cancel()
 	return p.host.tx.Current(currentCtx, p.launch.Binding)
+}
+
+// ValidateAuthority checks current ownership before a consumer projects a
+// pending token into an answer domain. Snapshot presence alone is not admission.
+func (p *Handle) ValidateAuthority(ctx context.Context, a Authority) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.admitLocked(ctx, a)
 }
 
 func (p *Handle) writeLocked(ctx context.Context, frame any) error {
@@ -120,6 +172,63 @@ func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) err
 		go p.awaitInitialization()
 	}
 	p.emitLocked("turn-submitted", nil, nil)
+	return nil
+}
+
+// ReserveClaudeMessage admits endpoint input under the same mutex as Turn.
+// Only the host's verified helper boundary may call it. No provider write is
+// performed here; the reservation remains visible if that boundary disappears.
+func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		return err
+	}
+	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] {
+		return ErrStale
+	}
+	if p.turn != "" || len(p.usedTurns) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+		return ErrBusy
+	}
+	p.turn = turn
+	p.usedTurns[turn] = true
+	p.messageReservation = "awaiting-message-handoff"
+	p.messageOutcomeRecorded = false
+	p.emitLocked("message-reserved", nil, nil)
+	return nil
+}
+
+// FinishClaudeMessage records a proven write outcome, never provider completion.
+// A definite zero-write releases the reservation but keeps the operation ID
+// consumed. Uncertain delivery remains pending until an actual result or exit.
+func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn string, written, uncertain bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		return err
+	}
+	if !p.usedTurns[turn] || turn == "" || written && uncertain {
+		return ErrStale
+	}
+	// The stream can complete before the helper reports its write outcome.
+	if p.turn != turn || p.messageOutcomeRecorded {
+		return nil
+	}
+	if p.messageReservation == "" {
+		return ErrStale
+	}
+	p.messageOutcomeRecorded = true
+	if written {
+		p.messageReservation = ""
+		p.emitLocked("message-handed-off", nil, nil)
+	} else if uncertain {
+		p.messageReservation = "awaiting-message-handoff"
+		p.emitLocked("message-handoff-unknown", nil, nil)
+	} else {
+		p.emitLocked("message-prewrite-refused", nil, nil)
+		p.turn = ""
+		p.messageReservation = ""
+	}
 	return nil
 }
 
@@ -230,6 +339,9 @@ func (p *Handle) consume(raw []byte) error {
 	if err := json.Unmarshal(raw, &frame); err != nil {
 		return fmt.Errorf("malformed Claude frame: %w", err)
 	}
+	if frame.Type == "" {
+		return errors.New("claude frame missing type")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.state == "stopping" || p.state == "exited" || p.state == "unknown" {
@@ -244,7 +356,7 @@ func (p *Handle) consume(raw []byte) error {
 			p.emitLocked("provider-event", raw, nil)
 			return nil
 		}
-		if frame.Session == "" || p.turn == "" {
+		if frame.Session == "" || p.turn == "" || (p.hookSession != "" && p.hookSession != frame.Session) {
 			return errors.New("init without session or first input")
 		}
 		if p.session == frame.Session {
@@ -311,14 +423,15 @@ func (p *Handle) consume(raw []byte) error {
 		}
 		p.expireLocked()
 		p.emitLocked("turn-result", raw, nil)
-		p.turn, p.interrupt = "", ""
+		p.turn, p.interrupt, p.messageReservation = "", "", ""
 		p.interruptAck = false
 	case "rate_limit_event":
 		p.emitLocked("provider-event", raw, nil)
 	case "stream_event", "assistant", "user", "tool_progress", "tool_use_summary":
 		p.emitLocked("output", raw, nil)
 	default:
-		return fmt.Errorf("unsupported Claude frame type %q", frame.Type)
+		p.emitLocked("provider-event", raw, nil)
+		return nil
 	}
 	return nil
 }

@@ -68,16 +68,22 @@ Fixture.retireAfterFailure	Test-only installed qualification helper retained for
 FooterBlockLines	Default-theme entry point of FooterBlockLinesWithTheme retained as the picker footer geometry seam.
 FormatList	Locale-resolving list formatter retained as the test seam that pins payload-item preservation over the live formatter locale resolution.
 FoundationKeys	Foundation key set retained as the test seam that pins the shipped default catalog coverage of it.
+Handle.BindClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
+Handle.CheckClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 Handle.Events	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Handle.Expire	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
+Handle.FinishClaudeMessage	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 Handle.Interrupt	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Handle.Observe	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
+Handle.ReserveClaudeMessage	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 Handle.Respond	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Handle.Stop	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Handle.Turn	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
+Handle.ValidateAuthority	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 Handle.Wait	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Handle.admitLocked	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 Handle.awaitInitialization	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
+Handle.checkClaudeHookLocked	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 Handle.consume	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 Handle.emitLocked	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 Handle.expireLocked	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
@@ -193,6 +199,17 @@ boundedBuffer.Write	Test-only installed qualification helper retained for bounde
 buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
+claudeProcessControl.closeRecord	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
+claudeProcessControl.sync	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
+claudeProcessService.check	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.close	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.exchange	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.initialize	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.input	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.inputCurrent	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.recordActivation	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.rollback	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
+claudeProcessService.serve	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 cloneRequest	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 codexAdapter.attach	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexAdapter.consume	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -255,6 +272,8 @@ ownedStream.Write	Owned processhost Codex preparation retained for dedicated std
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
+processClaudeControlID	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
+processClaudeLaunchEnv	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
@@ -272,6 +291,7 @@ settingsCommand.rootEntries	Fallback-locale entry point of the settings root ent
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
+startProcessClaude	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 stopGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.

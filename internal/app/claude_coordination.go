@@ -276,6 +276,7 @@ type liveClaudeDialogueBroker struct {
 	registryPath string
 	store        *messagestore.Store
 	pushStore    *messagestore.Store
+	resolveRoute func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string)
 }
 
 func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker, error) {
@@ -306,7 +307,11 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 		routes = routes[1:]
 	}
 	for _, expected := range routes {
-		route, reason := coremetadata.ResolveAgentRoute(registry, expected.AgentUID)
+		resolve := b.resolveRoute
+		if resolve == nil {
+			resolve = coremetadata.ResolveAgentRoute
+		}
+		route, reason := resolve(registry, expected.AgentUID)
 		if reason != "" || !messageRouteAccepts(route, expected) {
 			return false
 		}

@@ -95,7 +95,9 @@ Provider cancellation is explicit: `control_cancel_request` expires only the
 matching pending request on this connection; duplicate/unknown IDs have no effect
 and no permission response is written. This shape is qualified against Claude
 2.1.287 and the [official SDK control reader](https://github.com/anthropics/claude-agent-sdk-python/blob/bfb895c6ef46e095191938b4eda798a025957c09/src/claude_agent_sdk/_internal/query.py#L389).
-Other unsupported frame types remain protocol failures. Opt-in qualification can
+Unknown nonempty frame types, including `command_lifecycle`, are bounded
+`provider-event` observations. They never imply control authority or exit.
+Malformed frames, session drift and frame-size violations remain protocol failures. Opt-in qualification can
 set `PROCESSHOST_TEST_PERMISSION=deny` or `cancel` together with
 `PROCESSHOST_TEST_CLAUDE=1`: a process-local Bash ask rule prevents automatic tool
 execution; the probe only denies or interrupts, then verifies stale response
@@ -162,3 +164,44 @@ or real model API calls. It checks two turn results on one owned thread, request
 settings, and actual exit0 after Stop. Interactive question/approval semantics
 remain deterministic-fixture evidence; this probe does not claim public CLI
 or hook acceptance.
+
+
+The internal application seam `startProcessClaude` supplies `PMX_INTERNAL_*`
+activation claims and an owned host socket to Claude. SessionStart registration
+requires the hook's kernel parent to be the exact owned child, its process birth
+identity, the live host peer/socket, the current generation and the same session
+as stream init. Claims alone never register an endpoint. The existing endpoint
+helper and dialogue receipts are reused through an injected process resolver;
+the default tmux resolver remains unchanged. A process source is discovered
+read-only from its registered process ancestry and revalidated by its own host.
+No public runtime kind, environment contract or command starts this seam yet.
+
+Process question and permission hooks are observation-only, including when the
+host is lost. `claudeProcessControl` projects stream requests into the existing
+answer stores, with IDs bound to the activation, connection and request ID.
+Only `Handle.Respond` writes decisions. Expiry and disconnect close admission
+without synthesizing allow. Interrupt does not record process termination.
+
+`TestClaudeProcess*` in `internal/app` exercises a copied fixture executable in
+isolated HOME: endpoint bootstrap, question/approval deduplication, denied/allowed
+responses, stale host/generation/PID/birth rejection and bidirectional durable
+message receipts with one provider write per message. Endpoint inputs reserve a
+MessageRef turn through the exact registered helper's kernel identity before the
+native post. Host stdin turns and endpoint reservations share one admission
+mutex; busy and duplicate inputs write nothing. Definite prewrite failure releases
+the reservation. Uncertain delivery appears as `awaiting-message-handoff` in the
+internal snapshot and remains pending until a provider result or actual exit.
+Interrupt acknowledgment alone does not infer cancellation; its result releases
+the reservation. An idle interrupt may return only an ack: that reservation
+stays pending and requires Stop with actual Wait evidence before a new generation
+can admit input. Stop resolves the owned process lifetime; it does not reopen the
+stopped generation. Existing tmux tests are
+unchanged. The processhost fixtures additionally check hook/init agreement.
+
+`PMX_TEST_REAL_CLAUDE_BIN=/absolute/path/to/claude go test ./internal/app -run
+'^TestInstalledProcessClaudeBinding$' -count=1 -v` opts into installed Claude
+qualification. It uses an isolated HOME, copied test executable, dummy credentials
+and a localhost SSE stub, with no real model API. It covers SessionStart binding,
+question and permission deny/allow, repeated init, interrupt, native endpoint
+receipt round trips with question/approval/result, duplicate rejection and a
+subsequent host turn. Real-model behavior and the future public consumer remain unqualified.

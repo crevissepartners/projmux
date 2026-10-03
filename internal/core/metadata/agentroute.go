@@ -159,6 +159,37 @@ func (a ClaudeAuthorityRef) sameAuthority(other ProviderAuthorityRef) bool {
 // ResolveAgentRoute uses only exact managed ownership. Runtime liveness remains
 // adapter evidence; a Registry snapshot alone never proves a live endpoint.
 func ResolveAgentRoute(reg Registry, agentUID string) (AgentRouteRef, string) {
+	return resolveAgentRoute(reg, agentUID, true)
+}
+
+// ClaudeProcessRouteEvidence is non-durable host evidence. The verifier must
+// prove its host instance and exact owned process birth, generation and session
+// against the live Handle. A self-asserted payload is never sufficient.
+type ClaudeProcessRouteEvidence struct {
+	HostInstance, PaneUID, Generation, SessionID string
+	Process                                      ProcessIdentity
+}
+
+// ResolveProcessClaudeRoute is an internal process-only seam. Public callers
+// keep ResolveAgentRoute's tmux requirement until foreground activation.
+func ResolveProcessClaudeRoute(reg Registry, agentUID string, evidence ClaudeProcessRouteEvidence,
+	verify func(ClaudeProcessRouteEvidence) bool) (AgentRouteRef, string) {
+	pane, ok := reg.Pane(evidence.PaneUID)
+	if !ok || evidence.HostInstance == "" || evidence.Generation == "" || evidence.SessionID == "" || !evidence.Process.Valid() ||
+		pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Generation != evidence.Generation ||
+		pane.Status.Activation.AgentUID != agentUID || pane.Status.Activation.Claude == nil ||
+		pane.Status.Activation.Claude.Process != evidence.Process || pane.Status.Activation.Claude.RegistrationSessionID != evidence.SessionID ||
+		verify == nil || !verify(evidence) {
+		return AgentRouteRef{}, "process Claude authority is unavailable"
+	}
+	route, reason := resolveAgentRoute(reg, agentUID, false)
+	if reason != "" || route.PaneUID != evidence.PaneUID || route.Generation != evidence.Generation || route.Authority().Provider() != "claude" {
+		return AgentRouteRef{}, "process Claude authority is unavailable"
+	}
+	return route, ""
+}
+
+func resolveAgentRoute(reg Registry, agentUID string, requireRuntime bool) (AgentRouteRef, string) {
 	agent, ok := reg.Agent(agentUID)
 	if !ok || agent.Status.Phase != PhaseRunning || agent.Status.PaneRef == "" {
 		return AgentRouteRef{}, "no current Running Agent activation"
@@ -170,7 +201,7 @@ func ResolveAgentRoute(reg Registry, agentUID string) (AgentRouteRef, string) {
 		return AgentRouteRef{}, "managed activation ownership mismatch"
 	}
 	activation := pane.Status.Activation
-	if activation.Generation == "" || activation.RuntimeID == "" {
+	if activation.Generation == "" || (requireRuntime && activation.RuntimeID == "") {
 		return AgentRouteRef{}, "managed activation identity is incomplete"
 	}
 	ref := AgentRouteRef{AgentUID: agentUID, PaneUID: pane.Metadata.UID, Generation: activation.Generation}
