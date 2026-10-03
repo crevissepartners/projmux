@@ -2,15 +2,19 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -40,17 +44,197 @@ type claudeProcessCheck struct {
 	Session  string
 	Register bool
 	Lookup   bool
+	Input    *claudeProcessInput
+}
+
+type claudeProcessInput struct {
+	Connection, RegistrationGeneration, Content, Phase string
+	Written, Uncertain                                 bool
 }
 
 type claudeProcessCheckResult struct {
-	Process coremetadata.ProcessIdentity
-	Valid   bool
-	Binding processhost.Binding
+	Process  coremetadata.ProcessIdentity
+	Valid    bool
+	Admitted bool
+	Binding  processhost.Binding
+}
+
+// The bounded exchange service belongs to one exact child lifetime. Published
+// fields are immutable after ready closes; each exchange is handled serially.
+type claudeProcessService struct {
+	registryPath string
+	binding      processhost.Binding
+	listener     *localipc.Listener
+	ready        chan struct{}
+	handle       *processhost.Handle
+	launchErr    error
+	ownedProcess coremetadata.ProcessIdentity
+	once         sync.Once
+}
+
+func (s *claudeProcessService) close() { s.once.Do(func() { _ = s.listener.Close() }) }
+
+func (s *claudeProcessService) serve(ctx context.Context) {
+	for {
+		conn, err := s.listener.Unix.AcceptUnix()
+		if err != nil {
+			return
+		}
+		s.exchange(ctx, conn)
+	}
+}
+
+func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn) {
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
+	select {
+	case <-s.ready:
+	case <-ctx.Done():
+		return
+	case <-time.After(localipc.Deadline):
+		return
+	}
+	var request claudeProcessCheck
+	if localipc.ReadJSON(conn, &request) != nil || s.launchErr != nil || s.handle == nil {
+		return
+	}
+	peer, parent, err := localipc.PeerProcess(conn)
+	if err != nil || int64(peer.OwnerUID) != int64(os.Getuid()) {
+		return
+	}
+	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
+	defer cancel()
+	_ = localipc.WriteJSON(conn, s.check(bounded, request, peer, parent))
+}
+
+func (s *claudeProcessService) check(ctx context.Context, request claudeProcessCheck, peer coremetadata.ProcessIdentity, parent int) claudeProcessCheckResult {
+	refused := claudeProcessCheckResult{}
+	binding := request.Binding
+	if request.Lookup && request.Input == nil && !request.Register && binding.Agent == s.binding.Agent && binding.Pane == s.binding.Pane && binding.Generation == s.binding.Generation {
+		binding = s.binding
+	}
+	snap, err := s.handle.Observe(binding)
+	if err != nil || binding != s.binding {
+		return refused
+	}
+	process, _, err := localipc.Process(snap.PID)
+	if err != nil || process != s.ownedProcess {
+		return refused
+	}
+	if request.Input != nil {
+		if request.Register || request.Lookup || s.handle.CheckClaudeHook(ctx, binding, process.PID, request.Session) != nil {
+			return refused
+		}
+		return s.input(ctx, request, peer, snap)
+	}
+	if request.Register {
+		if parent != process.PID || s.handle.BindClaudeHook(ctx, binding, process.PID, request.Session) != nil || s.recordActivation(process) != nil {
+			return refused
+		}
+	} else if s.handle.CheckClaudeHook(ctx, binding, process.PID, request.Session) != nil {
+		return refused
+	}
+	return claudeProcessCheckResult{Process: process, Valid: true, Binding: binding}
+}
+
+func (s *claudeProcessService) recordActivation(process coremetadata.ProcessIdentity) error {
+	_, _, err := intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		pane, ok := reg.Pane(s.binding.Pane)
+		agent, found := reg.Agent(s.binding.Agent)
+		window, windowFound := reg.Window(s.binding.Window)
+		if !ok || !found || !windowFound || pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Generation != s.binding.Generation || pane.Status.Activation.AgentUID != s.binding.Agent || pane.Status.Activation.OperationID != s.binding.Operation || pane.Metadata.OwnerUID() != s.binding.Agent || agent.Status.PaneRef != s.binding.Pane || agent.Metadata.OwnerUID() != s.binding.Window || window.Metadata.OwnerUID() != s.binding.Project {
+			return processhost.ErrStale
+		}
+		if pane.Status.Activation.Claude != nil {
+			if pane.Status.Activation.Claude.Process != process {
+				return processhost.ErrStale
+			}
+			return nil
+		}
+		return intmetadata.DefaultMutator().RecordClaudeProcess(reg, s.binding.Pane, s.binding.Agent, s.binding.Generation, process)
+	})
+	return err
+}
+
+// Input is a mutation, unlike a binding check. Only the currently registered
+// helper's kernel birth identity may enter it. A payload cannot claim that role.
+func (s *claudeProcessService) inputCurrent(request claudeProcessCheck, peer coremetadata.ProcessIdentity) bool {
+	reg, err := intmetadata.NewStore(s.registryPath).LoadDegradedReadOnly()
+	if err != nil {
+		return false
+	}
+	pane, ok := reg.Pane(s.binding.Pane)
+	if !ok || pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Generation != s.binding.Generation || pane.Status.Activation.Claude == nil {
+		return false
+	}
+	cl := pane.Status.Activation.Claude
+	return cl.Registration != nil && cl.Registration.Ready && cl.Process == s.ownedProcess && cl.Registration.Authority.Process == s.ownedProcess && cl.Registration.Authority.SessionID == request.Session && cl.Registration.Authority.LeaseProcess == peer && cl.RegistrationGeneration == request.Input.RegistrationGeneration && cl.Registration.Authority.RegistrationGeneration == request.Input.RegistrationGeneration
+}
+
+func (s *claudeProcessService) input(ctx context.Context, request claudeProcessCheck, peer coremetadata.ProcessIdentity, snap processhost.Snapshot) claudeProcessCheckResult {
+	result := claudeProcessCheckResult{Process: s.ownedProcess, Binding: s.binding, Valid: true}
+	if request.Input.Connection != snap.Connection || !s.inputCurrent(request, peer) {
+		return result
+	}
+	var content claudeProviderCoordinationContent
+	if json.Unmarshal([]byte(request.Input.Content), &content) != nil || content.Kind != "projmux-coordination" || content.MessageRef == "" {
+		return result
+	}
+	authority := processhost.Authority{Binding: s.binding, Connection: snap.Connection, Session: snap.Session}
+	turn := fmt.Sprintf("endpoint-%x", sha256.Sum256([]byte(content.MessageRef)))
+	switch request.Input.Phase {
+	case "reserve":
+		store := messagestore.NewStore(filepath.Dir(filepath.Dir(s.registryPath)))
+		record, found, err := store.Get(content.MessageRef)
+		if err != nil || !found || !record.Envelope.Deadline.After(time.Now()) || record.Envelope.Target.AgentUID != s.binding.Agent || record.Envelope.Target.PaneUID != s.binding.Pane || record.Envelope.Target.ActivationGeneration != s.binding.Generation {
+			return result
+		}
+		result.Admitted = s.handle.ReserveClaudeMessage(ctx, authority, turn) == nil
+	case "finish":
+		result.Admitted = s.handle.FinishClaudeMessage(ctx, authority, turn, request.Input.Written, request.Input.Uncertain) == nil
+	}
+	return result
+}
+
+func processClaudeLaunchEnv(launch processhost.Launch, registryPath, socket string) []string {
+	raw, _ := json.Marshal(launch.Binding)
+	env := make([]string, 0, len(launch.Command.Env)+5)
+	for _, value := range launch.Command.Env {
+		key, _, _ := strings.Cut(value, "=")
+		if strings.HasPrefix(key, "PMX_INTERNAL_") || key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
+			continue
+		}
+		env = append(env, value)
+	}
+	return append(env, internalClaudeProcessBindingEnv+"="+string(raw), internalClaudeProcessHostEnv+"="+socket, internalActivationPaneUIDEnv+"="+launch.Binding.Pane, internalActivationGenerationEnv+"="+launch.Binding.Generation, internalClaudeRegistryPathEnv+"="+registryPath)
+}
+
+func (s *claudeProcessService) initialize(ctx context.Context, host *processhost.Host, launch processhost.Launch) {
+	s.handle, s.launchErr = host.Start(ctx, launch)
+	if s.launchErr == nil {
+		snap, err := s.handle.Observe(s.binding)
+		if err != nil {
+			s.launchErr = err
+		} else {
+			s.ownedProcess, _, s.launchErr = localipc.Process(snap.PID)
+		}
+	}
+	close(s.ready)
+}
+
+func (s *claudeProcessService) rollback(ctx context.Context) {
+	s.close()
+	if s.handle == nil {
+		return
+	}
+	_ = s.handle.Stop(s.binding)
+	wait, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*localipc.Deadline)
+	defer cancel()
+	_, _ = s.handle.Wait(wait, s.binding)
 }
 
 // startProcessClaude is dormant until a foreground consumer supplies exact
-// ownership transactions. It does not allocate a Registry activation, choose
-// policy, or expose a runtime kind. The listener belongs to this host lifetime.
+// ownership transactions. It does not allocate an activation or choose policy.
 func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string) (*processhost.Handle, error) {
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
@@ -60,145 +244,95 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	if err != nil {
 		return nil, err
 	}
-	var once sync.Once
-	closeListener := func() { once.Do(func() { _ = listener.Close() }) }
-	initialized := make(chan struct{})
-	var handle *processhost.Handle
-	var launchErr error
-	var ownedProcess coremetadata.ProcessIdentity
-	go func() {
-		for {
-			conn, err := listener.Unix.AcceptUnix()
-			if err != nil {
-				return
-			}
-			// One bounded exchange at a time; a hook cannot create unbounded workers.
-			func() {
-				defer conn.Close()
-				_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
-				select {
-				case <-initialized:
-				case <-ctx.Done():
-					return
-				case <-time.After(localipc.Deadline):
-					return
-				}
-				var request claudeProcessCheck
-				if localipc.ReadJSON(conn, &request) != nil || launchErr != nil || handle == nil {
-					return
-				}
-				peer, parent, err := localipc.PeerProcess(conn)
-				if err != nil || int64(peer.OwnerUID) != int64(os.Getuid()) {
-					return
-				}
-				result := claudeProcessCheckResult{}
-				binding := request.Binding
-				if request.Lookup && binding.Agent == launch.Binding.Agent && binding.Pane == launch.Binding.Pane && binding.Generation == launch.Binding.Generation {
-					binding = launch.Binding
-				}
-				snap, err := handle.Observe(binding)
-				if err == nil && binding == launch.Binding {
-					process, _, inspectErr := localipc.Process(snap.PID)
-					if inspectErr == nil && process == ownedProcess && (!request.Register || parent == process.PID) {
-						bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
-						if request.Register {
-							err = handle.BindClaudeHook(bounded, binding, process.PID, request.Session)
-						} else {
-							err = handle.CheckClaudeHook(bounded, binding, process.PID, request.Session)
-						}
-						cancel()
-						if err == nil && request.Register {
-							_, _, err = intmetadata.NewStore(registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
-								pane, ok := reg.Pane(launch.Binding.Pane)
-								agent, found := reg.Agent(launch.Binding.Agent)
-								window, windowFound := reg.Window(launch.Binding.Window)
-								if !ok || !found || !windowFound || pane.Status.Activation.RuntimeID != "" ||
-									pane.Status.Activation.Generation != launch.Binding.Generation || pane.Status.Activation.AgentUID != launch.Binding.Agent ||
-									pane.Status.Activation.OperationID != launch.Binding.Operation || pane.Metadata.OwnerUID() != launch.Binding.Agent ||
-									agent.Status.PaneRef != launch.Binding.Pane || agent.Metadata.OwnerUID() != launch.Binding.Window || window.Metadata.OwnerUID() != launch.Binding.Project {
-									return processhost.ErrStale
-								}
-								if pane.Status.Activation.Claude != nil {
-									if pane.Status.Activation.Claude.Process != process {
-										return processhost.ErrStale
-									}
-									return nil
-								}
-								return intmetadata.DefaultMutator().RecordClaudeProcess(reg, launch.Binding.Pane, launch.Binding.Agent, launch.Binding.Generation, process)
-							})
-						}
-						if err == nil {
-							result = claudeProcessCheckResult{Process: process, Valid: true, Binding: launch.Binding}
-						}
-					}
-				}
-				_ = localipc.WriteJSON(conn, result)
-			}()
-		}
-	}()
-	raw, err := json.Marshal(launch.Binding)
+	service := &claudeProcessService{registryPath: registryPath, binding: launch.Binding, listener: listener, ready: make(chan struct{})}
+	// Startup cancellation does not shorten the already owned child lifetime.
+	lifetime := context.WithoutCancel(ctx)
+	go service.serve(lifetime)
+	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, socket)
+	service.initialize(ctx, host, launch)
+	if service.launchErr != nil {
+		service.rollback(ctx)
+		return service.handle, service.launchErr
+	}
+	go func(waitCtx context.Context) { _, _ = service.handle.Wait(waitCtx, launch.Binding); service.close() }(lifetime)
+	return service.handle, nil
+}
+
+// The helper preserves native post/receipt semantics. The host admits its
+// MessageRef before any write and records the outcome without inferring cancel.
+type processClaudeProviderPoster struct {
+	proof                  claudeProcessProof
+	registrationGeneration string
+	native                 claudeProviderPoster
+	current                func() bool
+}
+
+func (p *processClaudeProviderPoster) exchange(content, phase string, outcome claudeProviderPostOutcome) (bool, error) {
+	conn, err := dialProcessClaudeHost(p.proof)
 	if err != nil {
-		closeListener()
+		return false, err
+	}
+	defer conn.Close()
+	request := claudeProcessCheck{Binding: p.proof.Binding, Session: p.proof.Session, Input: &claudeProcessInput{Connection: p.proof.Binding.Operation, RegistrationGeneration: p.registrationGeneration, Content: content, Phase: phase, Written: outcome.FullFrameWritten, Uncertain: outcome.Ambiguous()}}
+	if err = localipc.WriteJSON(conn, request); err != nil {
+		return false, err
+	}
+	if err = conn.CloseWrite(); err != nil {
+		return false, err
+	}
+	var result claudeProcessCheckResult
+	if err = localipc.ReadJSON(conn, &result); err != nil {
+		return false, err
+	}
+	if !result.Valid || result.Binding != p.proof.Binding || result.Process != p.proof.Process {
+		return false, processhost.ErrStale
+	}
+	return result.Admitted, nil
+}
+
+func (p *processClaudeProviderPoster) Post(content string, fence func() bool) (claudeProviderPostOutcome, error) {
+	refused := claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}
+	if p.current == nil || !p.current() || (fence != nil && !fence()) || p.native == nil {
+		return refused, processhost.ErrStale
+	}
+	admitted, err := p.exchange(content, "reserve", claudeProviderPostOutcome{})
+	// A lost reservation reply cannot trigger a native write. The host snapshot
+	// retains the pending reservation; there is no automatic replay.
+	if err != nil || !admitted {
+		return refused, processhost.ErrBusy
+	}
+	outcome, postErr := p.native.Post(content, fence)
+	_, finishErr := p.exchange(content, "finish", outcome)
+	if finishErr != nil && postErr == nil && !outcome.FullFrameWritten {
+		postErr = finishErr
+	}
+	return outcome, postErr
+}
+
+func dialProcessClaudeHost(proof claudeProcessProof) (*net.UnixConn, error) {
+	identity, err := localipc.InspectOwnedSocket(proof.Socket)
+	if err != nil || identity != proof.HostSocket || !proof.HostProcess.Valid() || !proof.Process.Valid() {
+		return nil, processhost.ErrStale
+	}
+	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: proof.Socket, Net: "unix"})
+	if err != nil {
 		return nil, err
 	}
-	// Strip inherited private bindings and tmux anchors before injecting the
-	// creator's exact activation. Never encode a process PID as a tmux Pane.
-	env := make([]string, 0, len(launch.Command.Env)+5)
-	for _, value := range launch.Command.Env {
-		key, _, _ := strings.Cut(value, "=")
-		if strings.HasPrefix(key, "PMX_INTERNAL_") || key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" {
-			continue
-		}
-		env = append(env, value)
+	_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
+	peer, _, err := localipc.PeerProcess(conn)
+	if err != nil || peer != proof.HostProcess {
+		_ = conn.Close()
+		return nil, processhost.ErrStale
 	}
-	launch.Command.Env = append(env, internalClaudeProcessBindingEnv+"="+string(raw), internalClaudeProcessHostEnv+"="+socket,
-		internalActivationPaneUIDEnv+"="+launch.Binding.Pane, internalActivationGenerationEnv+"="+launch.Binding.Generation, internalClaudeRegistryPathEnv+"="+registryPath)
-	handle, launchErr = host.Start(ctx, launch)
-	if launchErr == nil {
-		snap, observeErr := handle.Observe(launch.Binding)
-		if observeErr != nil {
-			launchErr = observeErr
-		} else {
-			ownedProcess, _, launchErr = localipc.Process(snap.PID)
-		}
-	}
-	close(initialized)
-	if launchErr != nil {
-		closeListener()
-		if handle != nil {
-			_ = handle.Stop(launch.Binding)
-			wait, cancel := context.WithTimeout(context.Background(), 2*localipc.Deadline)
-			_, _ = handle.Wait(wait, launch.Binding)
-			cancel()
-		}
-		return handle, launchErr
-	}
-	// Launch cancellation fences startup, not the already owned process lifetime.
-	// Keep the host endpoint until independent child Wait completes after Stop
-	// or owner loss; preserve caller values without a startup deadline.
-	lifetime := context.WithoutCancel(ctx)
-	go func(waitCtx context.Context) {
-		_, _ = handle.Wait(waitCtx, launch.Binding)
-		closeListener()
-	}(lifetime)
-	return handle, nil
+	return conn, nil
 }
 
 func checkClaudeProcessHost(proof claudeProcessProof, register bool) bool {
-	identity, err := localipc.InspectOwnedSocket(proof.Socket)
-	if err != nil || identity != proof.HostSocket || !proof.HostProcess.Valid() || !proof.Process.Valid() {
-		return false
-	}
-	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: proof.Socket, Net: "unix"})
+	conn, err := dialProcessClaudeHost(proof)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
-	peer, _, err := localipc.PeerProcess(conn)
-	if err != nil || peer != proof.HostProcess {
-		return false
-	}
 	if err = localipc.WriteJSON(conn, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Register: register}); err != nil {
 		return false
 	}

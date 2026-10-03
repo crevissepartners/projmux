@@ -175,6 +175,63 @@ func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) err
 	return nil
 }
 
+// ReserveClaudeMessage admits endpoint input under the same mutex as Turn.
+// Only the host's verified helper boundary may call it. No provider write is
+// performed here; the reservation remains visible if that boundary disappears.
+func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		return err
+	}
+	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] {
+		return ErrStale
+	}
+	if p.turn != "" || len(p.usedTurns) >= p.host.limits.Events || len(p.critical) >= p.host.limits.Events {
+		return ErrBusy
+	}
+	p.turn = turn
+	p.usedTurns[turn] = true
+	p.messageReservation = "awaiting-message-handoff"
+	p.messageOutcomeRecorded = false
+	p.emitLocked("message-reserved", nil, nil)
+	return nil
+}
+
+// FinishClaudeMessage records a proven write outcome, never provider completion.
+// A definite zero-write releases the reservation but keeps the operation ID
+// consumed. Uncertain delivery remains pending until an actual result or exit.
+func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn string, written, uncertain bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		return err
+	}
+	if !p.usedTurns[turn] || turn == "" || written && uncertain {
+		return ErrStale
+	}
+	// The stream can complete before the helper reports its write outcome.
+	if p.turn != turn || p.messageOutcomeRecorded {
+		return nil
+	}
+	if p.messageReservation == "" {
+		return ErrStale
+	}
+	p.messageOutcomeRecorded = true
+	if written {
+		p.messageReservation = ""
+		p.emitLocked("message-handed-off", nil, nil)
+	} else if uncertain {
+		p.messageReservation = "awaiting-message-handoff"
+		p.emitLocked("message-handoff-unknown", nil, nil)
+	} else {
+		p.emitLocked("message-prewrite-refused", nil, nil)
+		p.turn = ""
+		p.messageReservation = ""
+	}
+	return nil
+}
+
 // Respond is the only response writer. Hook consumers can observe Request but
 // cannot obtain another writable token; duplicate/stale replies write zero bytes.
 func (p *Handle) Respond(ctx context.Context, a Authority, token Request, response Response) error {
@@ -282,6 +339,9 @@ func (p *Handle) consume(raw []byte) error {
 	if err := json.Unmarshal(raw, &frame); err != nil {
 		return fmt.Errorf("malformed Claude frame: %w", err)
 	}
+	if frame.Type == "" {
+		return errors.New("Claude frame missing type")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.state == "stopping" || p.state == "exited" || p.state == "unknown" {
@@ -363,14 +423,15 @@ func (p *Handle) consume(raw []byte) error {
 		}
 		p.expireLocked()
 		p.emitLocked("turn-result", raw, nil)
-		p.turn, p.interrupt = "", ""
+		p.turn, p.interrupt, p.messageReservation = "", "", ""
 		p.interruptAck = false
 	case "rate_limit_event":
 		p.emitLocked("provider-event", raw, nil)
 	case "stream_event", "assistant", "user", "tool_progress", "tool_use_summary":
 		p.emitLocked("output", raw, nil)
 	default:
-		return fmt.Errorf("unsupported Claude frame type %q", frame.Type)
+		p.emitLocked("provider-event", raw, nil)
+		return nil
 	}
 	return nil
 }

@@ -229,6 +229,11 @@ func fixtureProvider() {
 				_ = writer.Encode(req)
 			case "interrupt":
 				_ = writer.Encode(map[string]any{"type": "stream_event", "session_id": "session", "event": map[string]any{"delta": "partial"}})
+			case "unknown-noise":
+				for i := range 2000 {
+					_ = writer.Encode(map[string]any{"type": "command_lifecycle", "session_id": "session", "index": i})
+				}
+				result()
 			case "noise":
 				go func() { _, _ = io.CopyN(os.Stderr, strings.NewReader(strings.Repeat("e", 1<<20)), 1<<20) }()
 				for i := range 2000 {

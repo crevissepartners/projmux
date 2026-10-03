@@ -95,7 +95,9 @@ Provider cancellation is explicit: `control_cancel_request` expires only the
 matching pending request on this connection; duplicate/unknown IDs have no effect
 and no permission response is written. This shape is qualified against Claude
 2.1.287 and the [official SDK control reader](https://github.com/anthropics/claude-agent-sdk-python/blob/bfb895c6ef46e095191938b4eda798a025957c09/src/claude_agent_sdk/_internal/query.py#L389).
-Other unsupported frame types remain protocol failures. Opt-in qualification can
+Unknown nonempty frame types, including `command_lifecycle`, are bounded
+`provider-event` observations. They never imply control authority or exit.
+Malformed frames, session drift and frame-size violations remain protocol failures. Opt-in qualification can
 set `PROCESSHOST_TEST_PERMISSION=deny` or `cancel` together with
 `PROCESSHOST_TEST_CLAUDE=1`: a process-local Bash ask rule prevents automatic tool
 execution; the probe only denies or interrupts, then verifies stale response
@@ -183,12 +185,20 @@ without synthesizing allow. Interrupt does not record process termination.
 `TestClaudeProcess*` in `internal/app` exercises a copied fixture executable in
 isolated HOME: endpoint bootstrap, question/approval deduplication, denied/allowed
 responses, stale host/generation/PID/birth rejection and bidirectional durable
-message receipts with one provider write per message. Existing tmux tests are
+message receipts with one provider write per message. Endpoint inputs reserve a
+MessageRef turn through the exact registered helper's kernel identity before the
+native post. Host stdin turns and endpoint reservations share one admission
+mutex; busy and duplicate inputs write nothing. Definite prewrite failure releases
+the reservation. Uncertain delivery appears as `awaiting-message-handoff` in the
+internal snapshot and remains pending until a provider result or actual exit.
+Interrupt acknowledgment alone does not infer cancellation; its result releases
+the reservation, and Stop resolves the owned process lifetime. Existing tmux tests are
 unchanged. The processhost fixtures additionally check hook/init agreement.
 
 `PMX_TEST_REAL_CLAUDE_BIN=/absolute/path/to/claude go test ./internal/app -run
 '^TestInstalledProcessClaudeBinding$' -count=1 -v` opts into installed Claude
 qualification. It uses an isolated HOME, copied test executable, dummy credentials
 and a localhost SSE stub, with no real model API. It covers SessionStart binding,
-one question, permission deny/allow, repeated init, interrupt and a subsequent
-turn. Real-model behavior and the future public consumer remain unqualified.
+question and permission deny/allow, repeated init, interrupt, native endpoint
+receipt round trips with question/approval/result, duplicate rejection and a
+subsequent host turn. Real-model behavior and the future public consumer remain unqualified.

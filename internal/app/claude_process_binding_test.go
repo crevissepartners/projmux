@@ -71,7 +71,13 @@ hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'
 def messages():
  while True:
   c,_=s.accept();f=c.makefile('rb');a=json.loads(f.readline());m=json.loads(f.readline());assert a['token']=='fixture-token';assert f.readline()==b''
+  emit({'type':'system','subtype':'init','session_id':'process-session'})
+  emit({'type':'command_lifecycle','session_id':'process-session','phase':'observed'})
   emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()
+  inp={'questions':[{'question':'Color?','header':'Color','options':[{'label':'blue','description':'Blue'},{'label':'red','description':'Red'}],'multiSelect':False}]}
+  request={'type':'control_request','request_id':'endpoint-'+json.loads(m['message']['content'])['messageRef'],'request':{'subtype':'can_use_tool','tool_name':'AskUserQuestion','input':inp}}
+  hook('claude-question-hook',{'hook_event_name':'PreToolUse','session_id':'process-session','tool_name':'AskUserQuestion','tool_input':inp,'tool_use_id':'endpoint-tool'})
+  emit(request);emit(request)
 threading.Thread(target=messages,daemon=True).start()
 request_count=0
 for line in sys.stdin:
@@ -548,6 +554,29 @@ func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T
 			}
 			return false
 		})
+		pending := pair.receiver.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
+		if pending.Pending[0].Kind != "question" {
+			t.Fatal("endpoint control not bound", pending)
+		}
+		if err := pair.receiver.control.sync(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		questions, _ := pair.receiver.control.questions.List(pair.receiver.binding.Agent)
+		if len(questions) != 1 {
+			t.Fatalf("endpoint hook/stream questions=%d", len(questions))
+		}
+		if _, err := pair.receiver.control.questions.Answer(questions[0].ID, pair.receiver.binding.Agent, map[string]string{"Color?": "blue"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := pair.receiver.control.sync(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		completed := pair.receiver.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+		if completed.State != "ready" || completed.Exit != nil || completed.MessageReservation != "" {
+			t.Fatal("endpoint did not complete", completed)
+		}
+		pair.receiver.turn(t, "after-endpoint", "ordinary")
+		pair.receiver.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
 		record, found, err := store.Get(ref)
 		if err != nil || !found || !record.HandoffObserved || record.Delivery.State != coremessage.StateDelivered {
 			t.Fatalf("durable direction%d receipt: %+v %v", i, record, err)
@@ -577,4 +606,68 @@ func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T
 			t.Fatalf("direction%d provider writes=%d", i, writes)
 		}
 	}
+}
+
+func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
+	source := newProcessClaudeFixture(t, nil)
+	sourceProof := source.proof(t)
+	target := newProcessClaudeFixtureAt(t, nil, source.path)
+	targetProof := target.proof(t)
+	source.turn(t, "first", "ordinary")
+	source.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+	target.turn(t, "pending", "question")
+	pending := target.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
+	reg, err := source.store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceRoute, reason := processClaudeRouteResolver(source.path, sourceProof)(reg, source.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	targetRoute, reason := processClaudeRouteResolver(target.path, targetProof)(reg, target.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	envelope := dialogueForRoute("message-process-busy", targetRoute, time.Now().UTC())
+	envelope.BrokerEnvelope.Source = publicMessageRoute(sourceRoute)
+	store := messagestore.NewStore(filepath.Dir(filepath.Dir(source.path)))
+	if _, _, err := store.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
+		t.Fatal(err)
+	}
+	coordTarget, _ := claudeTargetForRoute(targetRoute)
+	request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: coordTarget, Envelope: &envelope}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	response, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
+	cancel()
+	if err != nil || response.Delivery.State == agentdelivery.StateDelivered {
+		t.Fatal("busy delivered", response, err)
+	}
+	after, _ := target.handle.Observe(target.binding)
+	if after.Turn != pending.Turn || len(after.Pending) != 1 || after.Pending[0].ID != pending.Pending[0].ID {
+		t.Fatal("busy changed existing turn", after)
+	}
+	answerProcessEndpointQuestion(t, target)
+	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+	pane, _ := reg.Pane(target.binding.Pane)
+	forged := &processClaudeProviderPoster{proof: targetProof, registrationGeneration: pane.Status.Activation.Claude.RegistrationGeneration}
+	// A correct payload from this test process is still not the registered
+	// helper's kernel PID/start identity. It must not reserve or write.
+	content, _ := json.Marshal(claudeProviderCoordinationContent{Kind: "projmux-coordination", MessageRef: envelope.MessageRef})
+	admitted, err := forged.exchange(string(content), "reserve", claudeProviderPostOutcome{})
+	if err != nil || admitted {
+		t.Fatal("forged helper admitted", admitted, err)
+	}
+	after, _ = target.handle.Observe(target.binding)
+	if after.Turn != "" || after.MessageReservation != "" {
+		t.Fatal("forged helper reserved", after)
+	}
+	events, _, _ := target.handle.Events(target.binding, 0)
+	for _, e := range events {
+		if e.Kind == "message-reserved" || bytes.Contains(e.Raw, []byte("message-process-busy")) {
+			t.Fatal("busy/forged helper wrote", e)
+		}
+	}
+	target.turn(t, "after-busy", "ordinary")
+	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
 }
