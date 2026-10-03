@@ -228,7 +228,9 @@ expired or duplicate answers write no provider response. Configured windows and
 safe decision selection retain their existing owners. Timeout or disconnect never
 automatically allows a request.
 
-The internal endpoint accepts only its owning host's exact kernel identity.
+The internal endpoint is currently a same-host loopback and accepts only its
+owning host's exact kernel identity. A separate foreground client's peer policy
+requires a decision at the later public activation step.
 Peer coordination uses the existing message store and immutable envelope, with
 both source and target revalidated before the host submits a typed turn. A receipt
 is delivered after turn/start acceptance; later completion remains a separate

@@ -23,6 +23,7 @@ type codexProcessMessages struct {
 	store     *messagestore.Store
 	endpoints map[string]*codexProcessEndpoint
 	outcomes  map[string]coremessage.Event
+	now       func() time.Time
 }
 type codexProcessReceipt struct{ Delivery coremessage.Delivery }
 
@@ -69,6 +70,9 @@ func (m *codexProcessMessages) reply(ctx context.Context, source, target, origin
 }
 func (m *codexProcessMessages) deliver(ctx context.Context, record messagestore.Record) (codexProcessReceipt, error) {
 	if record.Delivery.State.Terminal() {
+		m.mu.Lock()
+		delete(m.outcomes, record.Envelope.MessageRef)
+		m.mu.Unlock()
 		return codexProcessReceipt{Delivery: record.Delivery}, nil
 	}
 	e := m.endpoints[record.Envelope.Target.AgentUID]
@@ -97,17 +101,23 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 		return codexProcessReceipt{}, messagestore.ErrNotFound
 	}
 	if record.Delivery.State.Terminal() {
+		delete(m.outcomes, messageRef)
 		return codexProcessReceipt{Delivery: record.Delivery}, nil
 	}
 	envelope := record.Envelope
-	if envelope.AcceptedAt.After(time.Now()) {
+	now := time.Now
+	if m.now != nil {
+		now = m.now
+	}
+	observedAt := now().UTC()
+	if envelope.AcceptedAt.After(observedAt) {
 		return codexProcessReceipt{}, coremessage.EnvelopeRefusal(coremessage.ReasonQualificationInvalid, "message acceptance is in the future")
 	}
 	to, err := processCodexMessageRoute(ctx, target)
 	kind, reason, unknown := coremessage.EventDeliver, "host-turn-accepted", false
 	from, sourceErr := processCodexMessageRoute(ctx, m.endpoints[envelope.Source.AgentUID])
 	switch {
-	case !envelope.Deadline.After(time.Now()):
+	case !envelope.Deadline.After(observedAt):
 		kind, reason = coremessage.EventExpire, "deadline-expired"
 	case err != nil || sourceErr != nil || !to.Same(envelope.Target) || !from.Same(envelope.Source):
 		kind, reason = coremessage.EventStale, "stale-binding"
@@ -145,6 +155,9 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 		}
 		m.outcomes[messageRef] = coremessage.Event{Kind: kind, Reason: reason, OutcomeUnknown: unknown}
 	}
-	record, _, err = m.store.ApplyMatching(envelope, "codex-inbox", coremessage.Event{Kind: kind, MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: reason, ObservedAt: time.Now(), OutcomeUnknown: unknown})
+	record, _, err = m.store.ApplyMatching(envelope, "codex-inbox", coremessage.Event{Kind: kind, MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: reason, ObservedAt: now().UTC(), OutcomeUnknown: unknown})
+	if err == nil {
+		delete(m.outcomes, messageRef)
+	}
 	return codexProcessReceipt{Delivery: record.Delivery}, err
 }

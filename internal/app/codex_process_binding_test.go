@@ -77,6 +77,10 @@ type processCodexFixture struct {
 }
 
 func newProcessCodexFixture(t *testing.T, command func(string, string, []string) processhost.Command) *processCodexFixture {
+	return newProcessCodexFixtureWithEvents(t, command, processhost.DefaultLimits().Events)
+}
+
+func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int) *processCodexFixture {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "pcf-")
 	if err != nil {
@@ -138,6 +142,7 @@ func newProcessCodexFixture(t *testing.T, command func(string, string, []string)
 	}
 	env = append(env, "HOME="+root, "CODEX_HOME="+filepath.Join(root, ".codex"), "PMX_TEST_PROCESS_CODEX_CHILD=1")
 	limits := processhost.DefaultLimits()
+	limits.Events = events
 	limits.Grace = 200 * time.Millisecond
 	limits.Startup = 8 * time.Second
 	host, err := processhost.NewHost(b.Host, processhost.Command{Path: binary, Args: []string{"internal", "codex-process-test-supervisor"}, Env: env}, tx, limits)
@@ -481,34 +486,62 @@ func TestCodexProcessMessageBusyAndStaleReceiptsNeverWrite(t *testing.T) {
 	}
 }
 
+func processCodexOutcomeCount(m *codexProcessMessages) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.outcomes)
+}
+
 func TestCodexProcessReceiptCommitRetryNeverReplaysTurn(t *testing.T) {
 	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, nil)
-	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
+	store := messagestore.NewNonblockingStore(filepath.Join(left.root, "messages"))
+	release := filepath.Join(left.root, "release-receipt-lock")
+	released := filepath.Join(left.root, "receipt-lock-released")
+	right := newProcessCodexFixture(t, func(root, binary string, env []string) processhost.Command {
+		script := fmt.Sprintf("import fcntl,time\nreceipt_path=%q\nrelease_path=%q\nreleased_path=%q\n", store.Path()+".flock", release, released) + processCodexProviderFixture
+		script = strings.Replace(script, "  reply({'turn':{'id':current}})", "  lock=open(receipt_path,'a')\n  fcntl.flock(lock,fcntl.LOCK_EX)\n  reply({'turn':{'id':current}})", 1)
+		script = strings.Replace(script, " elif method=='turn/interrupt':", "  while not os.path.exists(release_path):time.sleep(0.002)\n  fcntl.flock(lock,fcntl.LOCK_UN);lock.close()\n  open(released_path,'w').close()\n elif method=='turn/interrupt':", 1)
+		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
+	})
+	m := &codexProcessMessages{store: store, endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 	right.endpoint.messages.Store(m)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	from, _ := processCodexMessageRoute(ctx, left.endpoint)
 	to, _ := processCodexMessageRoute(ctx, right.endpoint)
 	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-receipt-commit", ConversationRef: "conversation-commit", Source: from, Target: to, Authority: coremessage.PeerAuthority(), Payload: "hold", AcceptedAt: now, Deadline: now.Add(time.Minute)}
-	if _, _, err := m.store.PutAccepted(envelope, "codex-inbox"); err != nil {
+	if _, _, err := store.PutAccepted(envelope, "codex-inbox"); err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := os.ReadFile(m.store.Path())
-	if err != nil {
+	// The provider locks the real store after Get, before turn/start acceptance.
+	// ApplyMatching therefore actually fails; no successful receipt is rolled back.
+	if _, err := m.receive(ctx, right.endpoint, envelope.MessageRef); !errors.Is(err, messagestore.ErrBusy) {
+		t.Fatalf("receipt commit=%v", err)
+	}
+	if processCodexOutcomeCount(m) != 1 {
+		t.Fatalf("uncommitted outcomes=%d", processCodexOutcomeCount(m))
+	}
+	if err := os.WriteFile(release, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	first, err := right.endpoint.call(ctx, envelope.MessageRef)
-	if err != nil || first.Receipt == nil || first.Receipt.Delivery.State != coremessage.StateDelivered {
-		t.Fatalf("first: %+v %v", first, err)
-	}
-	// Restore the pre-receipt disk state to model a failed receipt persistence.
-	if err = os.WriteFile(m.store.Path(), accepted, 0600); err != nil {
-		t.Fatal(err)
+	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		if _, err := os.Stat(released); err == nil {
+			break
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatal("receipt lock not released")
+		case <-time.After(time.Millisecond):
+		}
 	}
 	second, err := right.endpoint.call(ctx, envelope.MessageRef)
 	if err != nil || second.Receipt == nil || second.Receipt.Delivery.State != coremessage.StateDelivered {
 		t.Fatalf("commit retry: %+v %v", second, err)
+	}
+	if processCodexOutcomeCount(m) != 0 {
+		t.Fatalf("committed outcomes=%d", processCodexOutcomeCount(m))
 	}
 	count := 0
 	for _, n := range right.wire(t) {
@@ -518,5 +551,60 @@ func TestCodexProcessReceiptCommitRetryNeverReplaysTurn(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("receipt retry wrote %d turns", count)
+	}
+}
+
+func TestCodexProcessCommittedReceiptsDoNotExhaustOutcomeCache(t *testing.T) {
+	left := newProcessCodexFixture(t, nil)
+	right := newProcessCodexFixtureWithEvents(t, func(root, binary string, env []string) processhost.Command {
+		script := strings.Replace(processCodexProviderFixture, "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':", 1)
+		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
+	}, 2048) // Test only: keep the existing host lifetime limit out of this cache test.
+	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
+	right.endpoint.messages.Store(m)
+	ctx := context.Background()
+	for i := range 258 {
+		now := time.Now().UTC()
+		receipt, err := m.send(ctx, left.endpoint.binding.Agent, right.endpoint.binding.Agent, fmt.Sprintf("message-cache-%d", i), fmt.Sprintf("conversation-cache-%d", i), "complete", now, now.Add(time.Minute))
+		if err != nil || receipt.Delivery.State != coremessage.StateDelivered {
+			t.Fatalf("message %d: %+v %v", i, receipt, err)
+		}
+		right.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+		if processCodexOutcomeCount(m) != 0 {
+			t.Fatalf("message %d retained committed outcome", i)
+		}
+	}
+	// A write can persist the terminal record but fail its final directory sync.
+	// Confirming that durable receipt also releases the corresponding cache slot.
+	record, found, err := m.store.Get("message-cache-257")
+	if err != nil || !found {
+		t.Fatalf("terminal record: %v %v", found, err)
+	}
+	m.mu.Lock()
+	m.outcomes[record.Envelope.MessageRef] = coremessage.Event{Kind: coremessage.EventDeliver}
+	m.mu.Unlock()
+	if _, err = m.deliver(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if processCodexOutcomeCount(m) != 0 {
+		t.Fatal("terminal receipt retained outcome")
+	}
+}
+
+func TestCodexProcessReceiptDeadlineUsesInjectedClock(t *testing.T) {
+	left := newProcessCodexFixture(t, nil)
+	right := newProcessCodexFixture(t, nil)
+	now := time.Now().UTC()
+	deadline := now.Add(time.Minute)
+	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}, now: func() time.Time { return deadline }}
+	right.endpoint.messages.Store(m)
+	receipt, err := m.send(context.Background(), left.endpoint.binding.Agent, right.endpoint.binding.Agent, "message-clock-expired", "conversation-clock", "complete", now, deadline)
+	if err != nil || receipt.Delivery.State != coremessage.StateExpired {
+		t.Fatalf("deadline equality: %+v %v", receipt, err)
+	}
+	for _, n := range right.wire(t) {
+		if string(n["method"]) == `"turn/start"` {
+			t.Fatal("expired message reached provider")
+		}
 	}
 }
