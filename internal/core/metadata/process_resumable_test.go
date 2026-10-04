@@ -160,10 +160,9 @@ func TestProcessSupportedResumableReserveArchivesOnlyRetiredGeneration(t *testin
 			if err := m.RecordProcessResumable(&reg, activation.Binding, &receipt); err != nil {
 				t.Fatal(err)
 			}
-			old := pane.Status.ProcessSession.Clone()
 			// Mutators commit cloned Registries, so re-read the selected record.
 			pane, _ = reg.Pane(activation.Binding.PaneUID)
-			old = pane.Status.ProcessSession.Clone()
+			old := pane.Status.ProcessSession.Clone()
 			binding := activation.Binding
 			binding.HostInstanceID, binding.Generation, binding.OperationID = "new-host", "new-generation", "new-operation"
 			if err := m.ReserveProcessResume(&reg, activation.Binding, binding); err != nil {
