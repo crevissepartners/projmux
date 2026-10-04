@@ -23,7 +23,7 @@ func TestProcessCreateFailureTypedCleanupAndUnchangedText(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				result, err := command.reserveProcessAgent(context.Background(), processAgentCreatePlan{project: project, window: window, workspace: coremetadata.AgentWorkspace{CWD: project.Spec.Root}}, opts, "op-error", "gen-error")
+				result, err := command.reserveProcessAgent(context.Background(), processAgentCreatePlan{project: project, window: window, workspace: coremetadata.AgentWorkspace{CWD: project.Spec.Root}, flags: processCreateFlags(opts)}, opts, "op-error", "gen-error")
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -652,7 +652,7 @@ func activationStateForPayload(payload []string) coremetadata.AgentActivationSta
 // also stay on that contract and are rejected by nativePrompt instead of being
 // silently reinterpreted by this decision.
 func nativeCodexFreshCreateRequired(provider string, flags resourceCreateFlags) bool {
-	return provider == aiModeCodex && !flags.interactiveOnly && len(flags.payload) > 0 &&
+	return provider == aiModeCodex && !flags.interactiveOnly && (len(flags.payload) > 0 || flags.host == "process") &&
 		strings.TrimSpace(flags.resumeConversation) == ""
 }
 

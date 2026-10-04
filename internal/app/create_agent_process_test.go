@@ -10,8 +10,35 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
+
+func TestProcessCodexLaunchAndSettingsHaveDedicatedOwnership(t *testing.T) {
+	home := t.TempDir()
+	binary := filepath.Join(home, "codex")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	command := &aiCommand{homeDir: func() (string, error) { return home, nil }, readCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte(binary), nil }}
+	workspace := coremetadata.AgentWorkspace{CWD: home, AdditionalWritableRoots: []string{home + "/extra"}}
+	launch, err := command.PlanProcessCodexCommand(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.Path != binary || launch.Dir != home || !reflect.DeepEqual(launch.Args, []string{"app-server", "--listen", "stdio://"}) {
+		t.Fatalf("dedicated launch: %+v", launch)
+	}
+	policy := codexappserver.ThreadPolicy{Sandbox: "read-only", ApprovalPolicy: "on-request"}
+	plan := processAgentCreatePlan{workspace: workspace, flags: resourceCreateFlags{model: "stub-model", effort: "low", profileLaunch: profileLaunch{codexPolicy: policy}}}
+	settings := processCodexCreateConfig(plan, "agent-owned")
+	if settings.Settings != (codexappserver.ThreadSettings{Model: "stub-model", Effort: "low", Policy: policy}) || !reflect.DeepEqual(settings.Roots, workspace.AdditionalWritableRoots) {
+		t.Fatalf("settings lost: %+v", settings)
+	}
+	if !nativeCodexFreshCreateRequired(aiModeCodex, processCreateFlags(processAgentCreateOptions{})) {
+		t.Fatal("promptless process lost native profile policy")
+	}
+}
 
 func TestProcessClaudeLaunchKeepsResolvedPolicyAndWorkspace(t *testing.T) {
 	home := t.TempDir()

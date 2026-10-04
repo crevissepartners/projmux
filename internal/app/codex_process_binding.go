@@ -112,33 +112,33 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	}
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	snap, err := endpoint.handle.Observe(launch.Binding)
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	child, _, err := localipc.Process(snap.PID)
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	hostProcess, _, err := localipc.Process(os.Getpid())
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	endpoint.evidence = coremetadata.CodexProcessRouteEvidence{HostInstance: launch.Binding.Host, PaneUID: launch.Binding.Pane, Generation: launch.Binding.Generation, ThreadID: snap.Session, Connection: snap.Connection, Process: child, HostProcess: hostProcess}
 	endpoint.socketIdentity, err = localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	// Live kernel/provider checks stay outside the Registry transaction.
 	if !endpoint.current(ctx, endpoint.evidence) {
 		rollback()
-		return nil, processhost.ErrStale
+		return endpoint, processhost.ErrStale
 	}
 	b := endpoint.binding
 	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, HostProcess: endpoint.evidence.HostProcess, Child: endpoint.evidence.Process}
@@ -150,11 +150,14 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	})
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
+	// The reservation belongs to the create/resume caller. Route rollback
+	// closes only this owned endpoint and child; the caller must persist actual
+	// Wait before discarding its Registry reservation, or retain unknown refs.
 	if _, err = endpoint.route(ctx); err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	go endpoint.serve(context.WithoutCancel(ctx))
 	return endpoint, nil
