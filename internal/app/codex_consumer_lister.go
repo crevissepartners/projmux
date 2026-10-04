@@ -50,7 +50,7 @@ func (l generationAwareLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 			}
 		}
 		if err == nil && readErr != nil {
-			err = processAttentionRegistryError{readErr}
+			err = readErr
 		}
 		return rows, err
 	}

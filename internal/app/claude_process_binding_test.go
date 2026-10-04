@@ -729,6 +729,7 @@ func TestClaudeProcessWaitBoundsDelayedHelperCleanup(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Fixture cleanup calls Wait again: a completed Wait reads the same actual exit idempotently.
 	snapshot, err := f.handle.Wait(ctx, f.binding)
 	if err != nil || snapshot.Exit == nil {
 		t.Fatalf("actual Wait: %+v %v", snapshot, err)

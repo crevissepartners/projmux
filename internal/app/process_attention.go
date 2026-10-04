@@ -267,8 +267,6 @@ func newRegistryProcessAttentionConsumer(readRegistry func() (coremetadata.Regis
 
 // Refresh the declarations for every read, including unavailable hosts. This
 // snapshot has no runtime discovery, lock creation, or generation authority.
-type processAttentionRegistryError struct{ error }
-
 func (c *processAttentionConsumer) refresh() error {
 	if c.readRegistry == nil {
 		return nil
@@ -277,7 +275,7 @@ func (c *processAttentionConsumer) refresh() error {
 	c.processOnly = false
 	reg, err := c.readRegistry()
 	if err != nil {
-		return processAttentionRegistryError{err}
+		return err
 	}
 	c.providers = map[string]string{}
 	hasProcess, hasTmux := false, false

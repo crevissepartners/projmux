@@ -466,8 +466,7 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 	return output
 }
 
-// processAttentionWindowError isolates process reads from terminal observation.
-// Joined terminal errors remain fatal rather than being mistaken for this type.
+// A process-only read error permits a status badge; joined tmux errors remain fatal.
 type processAttentionWindowError struct{ error }
 
 func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWindowRow, error) {
@@ -476,6 +475,8 @@ func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWind
 	if c != nil && c.process != nil {
 		records, err := c.process.records()
 		if err != nil {
+			// Classify every process read failure here, including damaged stores.
+			// A joined terminal error remains fatal at the direct type assertion.
 			processErr = processAttentionWindowError{err}
 		}
 		for _, r := range records {
@@ -497,7 +498,7 @@ func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWind
 		},
 	})
 	if err != nil {
-		if c.process != nil && len(c.process.bindings) > 0 && !c.process.processOnly {
+		if processErr != nil || (c.process != nil && len(c.process.bindings) > 0 && !c.process.processOnly) {
 			return processRows, errors.Join(processErr, err)
 		}
 		return processRows, processErr
