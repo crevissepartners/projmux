@@ -2046,7 +2046,10 @@ again.
 Agent on the same UID and the same provider conversation with other settings,
 all in one restart. Process Claude keeps its Pane UID as well and uses a fresh
 foreground-owned generation. Supply `-- <prompt>` for the first new user turn;
-`--dry-run` needs no prompt. The caller keeps stdin open for the Agent's lifetime.
+`--dry-run` needs no prompt. Giving a prompt explicitly restarts a Running
+process Claude Agent even when its launch settings are unchanged; use
+`agent turn start` to send a turn while keeping the current provider.
+The caller keeps stdin open for the Agent's lifetime.
 EOF, INT, or TERM stops only the new owned provider. The old child must have an
 actual durable supervisor Wait and its foreground owner must retire before the
 new child starts. Self-target and reply-only launches are refused before Stop.
@@ -2055,7 +2058,11 @@ Process Codex relaunch is still refused with `process-relaunch-unsupported`.
 Claude process launches receive the new composite instructions file together
 with `--system-prompt-snapshot off` when the instructions change. A failure
 preserves the recorded conversation and restores the previous launch settings;
-the printed recovery command includes the requested settings and first prompt.
+the printed recovery command includes the requested settings and first prompt. If
+owned-child retirement or recipe restoration is still unconfirmed, the error
+first gives an exact `describe agent` command. Relaunch remains refused until
+exact Wait evidence makes the Agent Offline; the recovery command is conditional
+on that retirement.
 
 It is the one way to change an Agent's
 [settings layers](#settings-layers):

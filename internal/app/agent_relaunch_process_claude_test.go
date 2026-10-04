@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -192,9 +194,27 @@ func TestProcessClaudeRelaunchActualCLI(t *testing.T) {
 		t.Fatal("old generation response reached new child")
 	}
 
-	second.shutdown(t)
+	// A prompt alone explicitly asks for another foreground generation.
+	third, promptOnly := startProcessRelaunchCLI(t, ctx, f, first.ref, "--yes", "--", "prompt-only task")
+	if promptOnly.Outcome != personaOutcomeRestarted || len(promptOnly.RelaunchReasons) != 0 {
+		t.Fatalf("prompt-only relaunch %+v", promptOnly)
+	}
+	last := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+		return r.Binding.Generation != current.Binding.Generation && r.TurnID == ""
+	})
+	if last.SessionID != old.SessionID || last.Binding.PaneUID != old.Binding.PaneUID {
+		t.Fatal("prompt-only relaunch changed conversation or Pane")
+	}
+	if err := second.cmd.Wait(); err != nil && (!strings.Contains(second.stderr.String(), "process control closed") || !strings.Contains(second.stderr.String(), "is retired")) {
+		t.Fatalf("replaced relaunch owner: %v %s", err, second.stderr.String())
+	}
+	if strings.Contains(second.stderr.String(), "delete agent") {
+		t.Fatal("replaced relaunch owner gave destructive cleanup advice")
+	}
+	second.done = true
+	third.shutdown(t)
 	wire, _ := os.ReadFile(f.trace)
-	if strings.Count(string(wire), "next task") != 1 || bytes.Contains(wire, []byte("unconfirmed")) {
+	if strings.Count(string(wire), "next task") != 1 || strings.Count(string(wire), "prompt-only task") != 1 || bytes.Contains(wire, []byte("unconfirmed")) {
 		t.Fatalf("wire %s", wire)
 	}
 	argv, _ := os.ReadFile(filepath.Join(f.root, "argv.jsonl"))
@@ -322,5 +342,87 @@ func TestProcessClaudeRelaunchUnknownOwnerDoesNotStartChildActualCLI(t *testing.
 	argv, _ := os.ReadFile(filepath.Join(f.root, "argv.jsonl"))
 	if len(bytes.Split(bytes.TrimSpace(argv), []byte("\n"))) != 1 {
 		t.Fatal("unknown owner started another child")
+	}
+}
+
+func TestProcessClaudeRelaunchDigestChangesActualCLI(t *testing.T) {
+	f := processResumeCLIFixture(t, aiModeClaude)
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAgentGuidance(t, paths, []byte("PROCESS_GUIDANCE_V1"))
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	before, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAgent, _ := before.Agent(strings.TrimPrefix(first.ref, "uid:"))
+	writeAgentGuidance(t, paths, []byte("PROCESS_GUIDANCE_V2"))
+	writeLinkRules(t, paths, strings.TrimPrefix(f.project, "uid:"), linkRulesAlpha)
+	preview, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", first.ref, "--dry-run", "-o", "json").CombinedOutput()
+	if err != nil {
+		t.Fatalf("preview %v %s", err, preview)
+	}
+	var dry agentRelaunchResult
+	if err := json.Unmarshal(preview, &dry); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{agentsettings.ReasonGuidanceChanged, agentsettings.ReasonLinkRulesChanged}
+	if dry.Outcome != personaOutcomeWouldRestart || !reflect.DeepEqual(dry.RelaunchReasons, want) {
+		t.Fatalf("digest preview %+v", dry)
+	}
+	afterPreview, _ := f.store.LoadReadOnly()
+	if !reflect.DeepEqual(before, afterPreview) {
+		t.Fatal("digest preview changed Registry")
+	}
+	second, result := startProcessRelaunchCLI(t, ctx, f, first.ref, "--yes", "--", "digest task")
+	current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+		return r.Binding.Generation != old.Binding.Generation && r.TurnID == ""
+	})
+	if current.SessionID != old.SessionID || !reflect.DeepEqual(result.RelaunchReasons, want) {
+		t.Fatalf("digest relaunch %+v", result)
+	}
+	_ = first.cmd.Wait()
+	first.done = true
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := reg.Agent(oldAgent.Metadata.UID)
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest] == oldAgent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest] || agent.Metadata.Annotations[coremetadata.AnnotationAgentProjectLinkRulesDigest] == "" || agent.Metadata.Annotations[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff {
+		t.Fatalf("digest recipe %+v", agent.Metadata.Annotations)
+	}
+	second.shutdown(t)
+	argv, _ := os.ReadFile(filepath.Join(f.root, "argv.jsonl"))
+	if !bytes.Contains(argv, []byte(`"--system-prompt-snapshot", "off"`)) {
+		t.Fatalf("snapshot argv %s", argv)
+	}
+}
+
+func TestProcessClaudeRelaunchFailureRecoveryRequiresOffline(t *testing.T) {
+	for _, phase := range []coremetadata.AgentPhase{coremetadata.PhasePending, coremetadata.PhaseRunning, coremetadata.PhaseOffline} {
+		t.Run(string(phase), func(t *testing.T) {
+			app := New()
+			reg, _, paneUID := processInventoryFixture(t)
+			pane, _ := reg.Pane(paneUID)
+			agent, _ := reg.Agent(pane.Metadata.OwnerUID())
+			agent.Status.Phase = phase
+			app.agent.loadRegistry = func() (coremetadata.Registry, error) { return reg, nil }
+			message := app.agent.processRelaunchFailureRecovery(reg, *agent, agentRelaunchRequest{model: "haiku", prompt: []string{"retry task"}})
+			if !strings.Contains(message, "recover with:") || !strings.Contains(message, "retry task") {
+				t.Fatal(message)
+			}
+			if phase != coremetadata.PhaseOffline {
+				if !strings.Contains(message, "inspect with: projmux describe agent uid:"+agent.Metadata.UID) || !strings.Contains(message, "only then recover with:") || !strings.Contains(message, "exact Wait") {
+					t.Fatal(message)
+				}
+			} else if strings.Contains(message, "inspect with:") {
+				t.Fatal(message)
+			}
+		})
 	}
 }

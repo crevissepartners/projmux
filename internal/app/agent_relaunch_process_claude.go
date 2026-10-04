@@ -20,12 +20,73 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-// Same-location Claude relaunch uses the recorded process conversation and the
-// resume owner's lifetime. It never opens a tmux transport or creates a session.
+const (
+	processRelaunchRetirementTimeout = 10 * time.Second
+	processRelaunchRetirementPoll    = 20 * time.Millisecond
+)
+
+type processClaudeRelaunchRecipe struct {
+	restart     *agentRestart
+	guidance    agentGuidanceLaunch
+	links       projectLinksLaunch
+	annotations map[string]string
+	workspace   coremetadata.AgentWorkspace
+}
+
+type processClaudeRelaunchLaunch struct {
+	settings agentSettingsLaunch
+	command  processhost.Command
+	config   processhost.CodexConfig
+	prompt   string
+}
+
+type processRelaunchSynchronization struct {
+	changed   func(processhost.Snapshot) error
+	controls  func(context.Context) error
+	attention func() error
+}
+
+// Same-location Claude relaunch validates the recipe before retiring the old
+// writer, then starts a new foreground generation through the resume engine.
 func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, stdout, stderr io.Writer) error {
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason))
 	}
+	if err := c.validateProcessClaudeRelaunch(reg, target, pane, request, refuse); err != nil {
+		return err
+	}
+	recipe, err := c.planProcessClaudeRelaunchRecipe(reg, target, pane, request, refuse)
+	if err != nil {
+		return err
+	}
+	result := recipe.result(target, pane, request)
+	changesLayers := recipe.restart.settings.resolution.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
+	if recipe.restart.running && request.model == "" && len(recipe.restart.settings.resolution.Reasons) == 0 && !(changesLayers && recipe.restart.settings.resolution.LayersChanged()) && len(request.prompt) == 0 {
+		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
+		result.NewPaneUID = pane.Metadata.UID
+		return writeAgentRelaunchResult(stdout, request, result)
+	}
+	if request.dryRun {
+		result.Outcome = personaOutcomeWouldResume
+		if recipe.restart.running {
+			result.Outcome = personaOutcomeWouldRestart
+		}
+		return writeAgentRelaunchResult(stdout, request, result)
+	}
+	launch, err := c.planProcessClaudeRelaunchLaunch(target, pane, request, recipe)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	candidate, err := c.stopProcessClaudeRelaunch(ctx, reg, target, pane, request, recipe.restart)
+	if err != nil {
+		return err
+	}
+	return c.startProcessClaudeRelaunch(ctx, cancel, reg, candidate, request, recipe, launch, result, stdout, stderr)
+}
+
+func (c *agentCommand) validateProcessClaudeRelaunch(reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, refuse func(string, string) error) error {
 	if c.rebind == nil || c.rebind.create == nil {
 		return refuse(relaunchReasonNoConversation, "has no configured process resume owner")
 	}
@@ -36,7 +97,7 @@ func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, targe
 		return err
 	}
 	if coremetadata.RecordsDialogueReplyOnly(target.Metadata.Annotations) {
-		return refuse("reply-only-launch-fixed", "has a fixed reply-only launch; process relaunch is unsupported")
+		return refuse(replyOnlyReasonLaunchFixed, "has a fixed reply-only launch; process relaunch is unsupported")
 	}
 	if pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Provider != aiModeClaude || pane.Status.ProcessSession.SessionID == "" {
 		return refuse(relaunchReasonNoConversation, "has no recorded process conversation")
@@ -64,19 +125,23 @@ func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, targe
 	} else if _, err := c.processResumeCandidate(processAgentResumeRequest{options: processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: target.Metadata.UID}}}); err != nil {
 		return refuse(relaunchReasonNoConversation, err.Error())
 	}
+	return nil
+}
+
+func (c *agentCommand) planProcessClaudeRelaunchRecipe(reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, refuse func(string, string) error) (processClaudeRelaunchRecipe, error) {
 	window, ok := reg.Window(target.Metadata.OwnerUID())
 	if !ok {
-		return refuse(relaunchReasonNoConversation, "has no owning Window")
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "has no owning Window")
 	}
 	project, ok := reg.Project(window.Metadata.OwnerUID())
 	if !ok {
-		return refuse(relaunchReasonNoConversation, "has no owning Project")
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "has no owning Project")
 	}
 	restart := c.newAgentRestart(agentRelaunchSpelling, reg, target, aiModeClaude, relaunchTokens, refuse)
-	restart.running, restart.paneUID = running, pane.Metadata.UID
+	restart.running, restart.paneUID = target.Status.Phase == coremetadata.PhaseRunning, pane.Metadata.UID
 	ai, ok := c.ai.(*aiCommand)
 	if !ok {
-		return refuse(relaunchReasonNoConversation, "process launcher is unavailable")
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "process launcher is unavailable")
 	}
 	guidance := ai.PlanProcessAgentGuidance()
 	guidance.recorded = target.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]
@@ -87,28 +152,28 @@ func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, targe
 	if err != nil {
 		var profileErr *relaunchProfileError
 		if errors.As(err, &profileErr) {
-			return refuse(profileErr.reason, profileErr.Error())
+			return processClaudeRelaunchRecipe{}, refuse(profileErr.reason, profileErr.Error())
 		}
-		return refuse(relaunchReasonNoConversation, err.Error())
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, err.Error())
 	}
 	if err = restart.refuseLayerChange(settingsRequest); err != nil {
-		return err
+		return processClaudeRelaunchRecipe{}, err
 	}
 	if restart.settings.instructionsErr != nil {
-		return refuse(relaunchReasonNoConversation, restart.settings.instructionsErr.Error())
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, restart.settings.instructionsErr.Error())
 	}
 	if err = ai.RequireAgentEnabled(aiModeClaude); err != nil {
-		return err
+		return processClaudeRelaunchRecipe{}, err
 	}
 	// Validate the profile and workspace before Stop, without writing a snapshot.
 	resolvedRegistry := reg.Clone()
 	if err = restart.settings.record(&resolvedRegistry, c.rebind.create.store.mutator(), target.Metadata.UID); err != nil {
-		return err
+		return processClaudeRelaunchRecipe{}, err
 	}
 	resolvedTarget, _ := resolvedRegistry.Agent(target.Metadata.UID)
 	annotations := guidance.resumeLaunchAnnotations(links.resumeLaunchAnnotations(restart.settings.launchAnnotations(resolvedTarget.Metadata.Annotations)))
 	if _, _, _, _, err = ai.resumeProfileSettings(aiModeClaude, annotations); err != nil {
-		return refuse(relaunchReasonNoConversation, err.Error())
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, err.Error())
 	}
 	resolver := c.resolveWorkspace
 	if resolver == nil {
@@ -116,77 +181,77 @@ func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, targe
 	}
 	workspace, err := resolver(agentRelaunchSpelling, reg, *project, aiModeClaude, target.Spec.Workspace.CWD, target.Spec.Workspace.AdditionalWritableRoots)
 	if err != nil {
-		return err
+		return processClaudeRelaunchRecipe{}, err
 	}
 	if ai.findAgentBinary(aiModeClaude) == "" {
-		return refuse(relaunchReasonNoConversation, ai.missingAgentRunnerMessage(aiModeClaude))
+		return processClaudeRelaunchRecipe{}, refuse(relaunchReasonNoConversation, ai.missingAgentRunnerMessage(aiModeClaude))
 	}
-	settings := restart.settings.resolution
-	result := agentRelaunchResult{Action: "relaunch", DryRun: request.dryRun, AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeClaude, Phase: target.Status.Phase, Interaction: restart.interaction, PaneUID: pane.Metadata.UID, CurrentEffort: target.Metadata.Annotations[coremetadata.AnnotationAgentEffort], CurrentModel: target.Metadata.Annotations[coremetadata.AnnotationAgentModel], NewEffort: request.effort, NewModel: request.model, Restart: running, ConfirmationRequired: restart.confirmationRequired(), CurrentSettings: settings.Current, NewSettings: settings.New, RelaunchReasons: append([]string{}, settings.Reasons...)}
-	changesLayers := settings.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
-	if running && request.model == "" && len(settings.Reasons) == 0 && !(changesLayers && settings.LayersChanged()) && len(request.prompt) == 0 {
-		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
-		result.NewPaneUID = pane.Metadata.UID
-		return writeAgentRelaunchResult(stdout, request, result)
-	}
-	if request.dryRun {
-		result.Outcome = personaOutcomeWouldResume
-		if running {
-			result.Outcome = personaOutcomeWouldRestart
-		}
-		return writeAgentRelaunchResult(stdout, request, result)
-	}
-	if restart.confirmationRequired() && !request.yes {
-		return refuse(relaunchReasonAgentBusy, fmt.Sprintf("is %s with interaction %s; restarting would cut that turn; re-run with --yes", target.Status.Phase, restart.interaction))
+	return processClaudeRelaunchRecipe{restart: restart, guidance: guidance, links: links, annotations: annotations, workspace: workspace}, nil
+}
+
+func (r processClaudeRelaunchRecipe) result(target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest) agentRelaunchResult {
+	settings := r.restart.settings.resolution
+	return agentRelaunchResult{Action: "relaunch", DryRun: request.dryRun, AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeClaude, Phase: target.Status.Phase, Interaction: r.restart.interaction, PaneUID: pane.Metadata.UID, CurrentEffort: target.Metadata.Annotations[coremetadata.AnnotationAgentEffort], CurrentModel: target.Metadata.Annotations[coremetadata.AnnotationAgentModel], NewEffort: request.effort, NewModel: request.model, Restart: r.restart.running, ConfirmationRequired: r.restart.confirmationRequired(), CurrentSettings: settings.Current, NewSettings: settings.New, RelaunchReasons: append([]string{}, settings.Reasons...)}
+}
+
+func (c *agentCommand) planProcessClaudeRelaunchLaunch(target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, r processClaudeRelaunchRecipe) (processClaudeRelaunchLaunch, error) {
+	if r.restart.confirmationRequired() && !request.yes {
+		return processClaudeRelaunchLaunch{}, r.restart.refuse(relaunchReasonAgentBusy, fmt.Sprintf("is %s with interaction %s; restarting would cut that turn; re-run with --yes", target.Status.Phase, r.restart.interaction))
 	}
 	prompt := strings.Join(request.prompt, " ")
 	if strings.TrimSpace(prompt) == "" {
-		return usageError("agent relaunch: process Claude requires -- <prompt>; nothing was changed")
+		return processClaudeRelaunchLaunch{}, usageError("agent relaunch: process Claude requires -- <prompt>; nothing was changed")
 	}
 	// Resolve all provider arguments before retiring the writer. Resume's planner
 	// reads the resolved annotation recipe; relaunch retains its own layer sources.
-	launchSettings := restart.settings.writeSnapshot()
+	launchSettings := r.restart.settings.writeSnapshot()
 	if launchSettings.snapshotErr != nil {
-		return launchSettings.snapshotErr
+		return processClaudeRelaunchLaunch{}, launchSettings.snapshotErr
 	}
 	planned := processResumeCandidate{Agent: target.Clone(), Pane: pane.Clone(), Record: *pane.Status.ProcessSession.Clone()}
-	planned.Agent.Metadata.Annotations = annotations
-	planned.Agent.Spec.Workspace = workspace
+	planned.Agent.Metadata.Annotations = r.annotations
+	planned.Agent.Spec.Workspace = r.workspace
 	plan, config, _, err := c.planProcessResume(planned, processAgentResumeOptions{})
 	if err != nil {
-		return err
+		return processClaudeRelaunchLaunch{}, err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-	if running {
+	return processClaudeRelaunchLaunch{settings: launchSettings, command: plan, config: config, prompt: prompt}, nil
+}
+
+func (c *agentCommand) stopProcessClaudeRelaunch(ctx context.Context, reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, restart *agentRestart) (processResumeCandidate, error) {
+	if restart.running {
 		// Re-read recipe, ownership and interaction immediately before admission.
 		latest, e := c.loadRegistry()
 		if e != nil {
-			return e
+			return processResumeCandidate{}, e
 		}
 		current, found := latest.Agent(target.Metadata.UID)
 		currentPane, present := latest.Pane(pane.Metadata.UID)
 		if !found || !present || !reflect.DeepEqual(current.Spec, target.Spec) || !reflect.DeepEqual(current.Metadata.Annotations, target.Metadata.Annotations) || !reflect.DeepEqual(currentPane.Status.Activation, pane.Status.Activation) {
-			return refuse(relaunchReasonNoConversation, "changed since planning; retry the command")
+			return processResumeCandidate{}, restart.refuse(relaunchReasonNoConversation, "changed since planning; retry the command")
 		}
 		if !request.yes {
 			restart.interaction = current.EffectiveInteraction(c.clock()).Kind
 			if restart.confirmationRequired() {
-				return refuse(relaunchReasonAgentBusy, "started work since planning; re-run with --yes")
+				return processResumeCandidate{}, restart.refuse(relaunchReasonAgentBusy, "started work since planning; re-run with --yes")
 			}
 		}
-		_, err = c.callProcessClaudeTurn(latest, *current, "stop", "")
+		_, err := c.callProcessClaudeTurn(latest, *current, "stop", "")
 		if err != nil {
-			return fmt.Errorf("agent relaunch: old host Stop failed; previous settings preserved; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
+			return processResumeCandidate{}, fmt.Errorf("agent relaunch: old host Stop failed; previous settings preserved; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
 		}
 	}
-	candidate, err := c.awaitProcessRelaunchRetirement(ctx, target, pane, running)
+	candidate, err := c.awaitProcessRelaunchRetirement(ctx, target, pane, restart.running)
 	if err != nil {
-		return fmt.Errorf("agent relaunch: old host retirement is unconfirmed; no new child started; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
+		return processResumeCandidate{}, fmt.Errorf("agent relaunch: old host retirement is unconfirmed; no new child started; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
 	}
 	if !reflect.DeepEqual(candidate.Agent.Spec, target.Spec) || !reflect.DeepEqual(candidate.Agent.Metadata.Annotations, target.Metadata.Annotations) {
-		return fmt.Errorf("agent relaunch: launch recipe changed during Stop; no new child started; recover with: %s", processRelaunchRecovery(reg, target, request))
+		return processResumeCandidate{}, fmt.Errorf("agent relaunch: launch recipe changed during Stop; no new child started; recover with: %s", processRelaunchRecovery(reg, target, request))
 	}
+	return candidate, nil
+}
+
+func (c *agentCommand) startProcessClaudeRelaunch(ctx context.Context, cancel context.CancelFunc, reg coremetadata.Registry, candidate processResumeCandidate, request agentRelaunchRequest, recipe processClaudeRelaunchRecipe, launch processClaudeRelaunchLaunch, result agentRelaunchResult, stdout, stderr io.Writer) error {
 	creator := c.rebind.create
 	operation, err := newCreateOperationID()
 	if err != nil {
@@ -202,24 +267,25 @@ func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, targe
 	if err != nil {
 		return err
 	}
-	if err = c.reserveProcessClaudeRelaunch(ctx, candidate, launchSettings, guidance, links, binding); err != nil {
+	if err = c.reserveProcessClaudeRelaunch(ctx, candidate, launch.settings, recipe.guidance, recipe.links, binding); err != nil {
 		return err
 	}
 	owned := c.processResumeResult(candidate, binding, intmetadata.PathFor(state))
 	fail := func(cause error) error {
 		cause = errors.Join(cause, c.retireFailedProcessRelaunch(&owned))
-		cause = errors.Join(cause, c.restoreProcessRelaunchSettings(candidate, binding, launchSettings, guidance, links))
-		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; recover with: %s (foreground owner remains required): %w", processRelaunchRecovery(reg, target, request), cause)
+		cause = errors.Join(cause, c.restoreProcessRelaunchSettings(candidate, binding, launch.settings, recipe.guidance, recipe.links))
+		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (foreground owner remains required): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request), cause)
 	}
-	if err = owned.startProcessResume(ctx, creator, plan, config, processResumeFirstFrame{Kind: "user", Text: prompt}); err != nil {
+	if err = owned.startProcessResume(ctx, creator, launch.command, launch.config, processResumeFirstFrame{Kind: "user", Text: launch.prompt}); err != nil {
 		return fail(err)
 	}
-	syncChanged, syncControls, syncAttention, err := owned.resumeSynchronization(creator)
+	var sync processRelaunchSynchronization
+	sync.changed, sync.controls, sync.attention, err = owned.resumeSynchronization(creator)
 	if err != nil {
 		return fail(err)
 	}
 	result.Outcome = personaOutcomeResumed
-	if running {
+	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
 	}
 	result.NewPaneUID = binding.Pane
@@ -229,23 +295,29 @@ func (c *agentCommand) runProcessClaudeRelaunch(reg coremetadata.Registry, targe
 	if _, err = fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", binding.Agent, binding.Pane); err != nil {
 		return fail(err)
 	}
+	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
+}
+
+func runProcessRelaunchOwner(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, sync processRelaunchSynchronization) error {
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
-	snapshot, waitErr := owned.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(syncChanged, func(snapshot processhost.Snapshot) error {
+	snapshot, waitErr := owned.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(sync.changed, func(snapshot processhost.Snapshot) error {
 		if len(snapshot.Pending) > 0 {
-			return syncControls(context.WithoutCancel(ctx))
+			return sync.controls(context.WithoutCancel(ctx))
 		}
 		return nil
 	}))
-	controlErr := syncControls(context.Background())
+	controlErr := sync.controls(context.Background())
 	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
 		controlErr = nil
 	}
-	if err = errors.Join(waitErr, controlErr, syncAttention()); err != nil {
+	if err := errors.Join(waitErr, controlErr, sync.attention()); err != nil {
+		if owned.owner.waitRecorded && (errors.Is(err, processhost.ErrClosed) || errors.Is(err, processhost.ErrStale)) {
+			return fmt.Errorf("agent relaunch: generation %s is retired; this caller no longer owns agent uid:%s; inspect with: projmux describe agent uid:%s: %w", owned.Binding.Generation, owned.Binding.Agent, owned.Binding.Agent, err)
+		}
 		return err
 	}
 	return processWaitExit(snapshot)
 }
-
 func processRelaunchRecovery(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest) string {
 	command := relaunchRerunCommand(reg, target, request)
 	if len(request.prompt) > 0 {
@@ -256,12 +328,26 @@ func processRelaunchRecovery(reg coremetadata.Registry, target coremetadata.Agen
 	return command
 }
 
+// A failed retirement may leave Pending ownership. Do not present relaunch as
+// immediately executable in that state, or loosen resume's ownership fence.
+func (c *agentCommand) processRelaunchFailureRecovery(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest) string {
+	command := processRelaunchRecovery(reg, target, request)
+	latest, err := c.loadRegistry()
+	if err == nil {
+		current, found := latest.Agent(target.Metadata.UID)
+		if found && current.Status.Phase == coremetadata.PhaseOffline {
+			return "recover with: " + command
+		}
+	}
+	return fmt.Sprintf("inspect with: projmux describe agent uid:%s; relaunch remains refused until the owned child has an exact Wait and the Agent is Offline; only then recover with: %s", target.Metadata.UID, command)
+}
+
 // Only the owner's exact durable supervisor Wait and process resume candidate
 // can authorize the next writer. Host disappearance alone never does.
 func (c *agentCommand) awaitProcessRelaunchRetirement(ctx context.Context, target coremetadata.Agent, pane coremetadata.Pane, running bool) (processResumeCandidate, error) {
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+	bounded, cancel := context.WithTimeout(ctx, processRelaunchRetirementTimeout)
 	defer cancel()
-	ticker := time.NewTicker(20 * time.Millisecond)
+	ticker := time.NewTicker(processRelaunchRetirementPoll)
 	defer ticker.Stop()
 	request := processAgentResumeRequest{options: processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: target.Metadata.UID}}}
 	for {

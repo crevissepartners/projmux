@@ -288,7 +288,7 @@ A Codex Agent applies the new model, effort, sandbox, and approval to its thread
 
 Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
 
-Process Claude relaunch preserves the Agent UID, Pane UID, and recorded session. It stops the old owned child, waits for its durable supervisor Wait and host retirement, then starts a fresh foreground-owned generation. Apply requires -- <prompt>; dry-run requires no prompt. Keep stdin open: EOF, INT, or TERM stops the new owned provider. A process self-target or reply-only launch is refused before Stop. Process Codex relaunch remains process-relaunch-unsupported.
+Process Claude relaunch preserves the Agent UID, Pane UID, and recorded session. It stops the old owned child, waits for its durable supervisor Wait and host retirement, then starts a fresh foreground-owned generation. Apply requires -- <prompt>; dry-run requires no prompt. A prompt explicitly restarts a Running Agent even with unchanged settings; use agent turn start to keep the current provider. Keep stdin open: EOF, INT, or TERM stops the new owned provider. A process self-target or reply-only launch is refused before Stop. Process Codex relaunch remains process-relaunch-unsupported.
 
 Output modes (`-o`): `json`
 
