@@ -43,20 +43,21 @@ func (p ProcessInventory) Declares(pane coremetadata.Pane) bool {
 }
 
 func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) {
+	generation, fromSession := processGeneration(pane)
 	var key *ProcessKey
 	for _, k := range p.Declared {
-		if !k.Valid() || k.Pane != pane.Metadata.UID || k.Generation != pane.Status.Activation.Generation {
+		if !k.Valid() || k.Pane != pane.Metadata.UID || k.Generation != generation {
 			continue
 		}
 		if key != nil {
-			return &ProcessKey{Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation}, StatusUnknown
+			return &ProcessKey{Pane: pane.Metadata.UID, Generation: generation}, StatusUnknown
 		}
 		copy := k
 		key = &copy
 	}
 	if key == nil {
 		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
-			return &ProcessKey{Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation}, StatusUnknown
+			return &ProcessKey{Pane: pane.Metadata.UID, Generation: generation}, StatusUnknown
 		}
 		return nil, StatusUnknown
 	}
@@ -73,11 +74,30 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 			return key, StatusUnknown
 		}
 		found = true
-		if observation.Status == StatusLive || observation.Status == StatusOffline {
+		switch {
+		case fromSession:
+			// Without an activation there is no live owner: the generation was
+			// either retired after its Wait or reserved and not yet spawned.
+			// Only its own exact supervisor Wait receipt can prove offline.
+			if observation.Status == StatusOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
+				status = StatusOffline
+			}
+		case observation.Status == StatusLive || observation.Status == StatusOffline:
 			status = observation.Status
 		}
 	}
 	return key, status
+}
+
+// processGeneration names the generation a declaration must match. A process
+// Pane without an activation is identified by its durable session record, and
+// the second result reports that. Such a session is either retired after its
+// recorded Wait or reserved and not yet spawned; it is never a live owner.
+func processGeneration(pane coremetadata.Pane) (string, bool) {
+	if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess && pane.Status.Activation.IsZero() && pane.Status.ProcessSession != nil {
+		return pane.Status.ProcessSession.Binding.Generation, true
+	}
+	return pane.Status.Activation.Generation, false
 }
 
 // ProcessAction is the capability boundary for Pane-only operations.

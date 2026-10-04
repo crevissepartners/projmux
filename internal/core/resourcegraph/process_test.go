@@ -154,3 +154,48 @@ func TestProcessActionRefusalTokens(t *testing.T) {
 		}
 	}
 }
+
+// After the owner records the provider's Wait, the activation is retired and
+// only the durable session names the generation. That exact receipt projects
+// offline for the Pane and its Agent; any other evidence stays unknown.
+func TestProcessInventoryRetiredGenerationProjectsOfflineOnlyWithExactWait(t *testing.T) {
+	registry := testRegistry(t)
+	pane, _ := registry.Pane("pane-alpha-agent")
+	binding := coremetadata.ProcessBinding{HostInstanceID: "host", PaneUID: pane.Metadata.UID, AgentUID: "agent-alpha-1", Generation: "retired", OperationID: "op-retired"}
+	code := 0
+	exact := coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.ClassifyProcessExit(0, ""), ObservedAt: pane.Metadata.CreatedAt.Add(1), PaneUID: binding.PaneUID, AgentUID: binding.AgentUID, Generation: binding.Generation, OperationID: binding.OperationID, ExitCode: &code}
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	pane.Status.Activation = coremetadata.PaneActivation{}
+	pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "claude", Binding: binding, ResumeState: coremetadata.ProcessResumeUnknown}
+	key := ProcessKey{Host: "host", Pane: pane.Metadata.UID, Generation: "retired"}
+	other := exact
+	other.Generation = "older"
+	for _, test := range []struct {
+		name     string
+		receipt  *coremetadata.TerminationEvidence
+		observed []ProcessObservation
+		want     Status
+	}{
+		{"exact Wait", &exact, []ProcessObservation{{Key: key, Status: StatusOffline}}, StatusOffline},
+		{"no receipt", nil, []ProcessObservation{{Key: key, Status: StatusOffline}}, StatusUnknown},
+		{"other generation receipt", &other, []ProcessObservation{{Key: key, Status: StatusOffline}}, StatusUnknown},
+		{"retired cannot be live", &exact, []ProcessObservation{{Key: key, Status: StatusLive}}, StatusUnknown},
+		{"unobserved", &exact, nil, StatusUnknown},
+	} {
+		pane.Status.LastTermination = test.receipt
+		inventory := Inventory{Processes: ProcessInventory{Declared: []ProcessKey{key}, Observed: test.observed}}
+		graph := Resolve(registry, inventory)
+		node := paneNode(t, graph, key.Pane)
+		if node.Process == nil || *node.Process != key || node.Runtime != nil || node.Status != test.want {
+			t.Fatalf("%s: pane=%+v want %s", test.name, node, test.want)
+		}
+		for _, agent := range graph.Agents {
+			if agent.Agent.Metadata.UID == binding.AgentUID && agent.Status != test.want {
+				t.Fatalf("%s: agent status %s want %s", test.name, agent.Status, test.want)
+			}
+		}
+		if _, err := inventory.Processes.AdmitProcess(*pane, ProcessTurn); err == nil {
+			t.Fatalf("%s: retired generation admitted control", test.name)
+		}
+	}
+}
