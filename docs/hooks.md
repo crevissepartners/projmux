@@ -13,9 +13,11 @@ projmux-owned internal tmux hooks such as `pane-focus-in`, `pane-focus-out`,
 | Event | When it runs | Failure behavior | Stdout behavior |
 | --- | --- | --- | --- |
 | `pre-create` | Before projmux creates a missing persistent or ephemeral session | Non-zero exit, exec error, or timeout aborts creation | Logged with `[pre-create] ` |
-| `post-create` | After projmux creates a brand-new persistent or ephemeral session | Logged and ignored; creation continues | Logged with `[post-create] ` |
+| `post-create` | After projmux creates a brand-new persistent or ephemeral session | Logged and ignored; creation continues[^process-post-create] | Logged with `[post-create] ` |
 | `post-attach` | After projmux switches the current tmux client to an existing session/target from inside tmux | Logged and ignored | Logged with `[post-attach] ` |
 | `send-noti` | After `projmux create notification` (or the in-process AI notify producer) successfully writes a queue entry | Runs after the queue entry is written; the command waits until the hook exits or is killed at its timeout, and a failure or timeout is only a warning that changes neither the queue entry nor the exit code | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
+
+[^process-post-create]: Process host post-create failures are returned to the creator as creation failures. See [Process Host Post-Create](#process-host-post-create).
 
 Deferred Phase A candidates remain future work until their behavior can be
 specified without exposing projmux's internal tmux hook machinery: pane exit,
@@ -1206,6 +1208,7 @@ the table below defines the hook contract its caller must use.
 | --- | --- | --- |
 | `PROJMUX_RUNTIME` | Not added by projmux; absence means tmux | `process` |
 | `PROJMUX_PANE` | Exact first tmux pane id | Absent, including inherited and project `[env]` values |
+| Inherited `TMUX` and `TMUX_PANE` | Preserved | Removed |
 | `PROJMUX_SESSION` | New session name | Present with an empty value |
 | `PROJMUX_SESSION_KIND` | `persistent` or `ephemeral` | Present with an empty value |
 | `PROJMUX_CWD` | Created session directory | Effective Agent workspace |
@@ -1216,6 +1219,14 @@ Process contexts cannot override `PROJMUX_RUNTIME` or supply `PROJMUX_PANE`
 through `[env]`. The default timeout remains `5s`, global hooks run before
 project hooks, and project automation retains the same trust policy. Other
 events and tmux hook environments keep their existing behavior.
+
+An empty or unset session/pane target can make tmux select its most recently
+used session. A hook that calls tmux must skip process contexts before issuing
+any tmux command, even if its target argument is quoted. Add this guard:
+
+```sh
+[ "${PROJMUX_RUNTIME:-}" = process ] && exit 0
+```
 
 ## Examples
 
@@ -1230,6 +1241,7 @@ Save this as `~/.local/bin/projmux-post-create`:
 
 ```bash
 #!/usr/bin/env bash
+[ "${PROJMUX_RUNTIME:-}" = process ] && exit 0
 echo "session=$PROJMUX_SESSION cwd=$PROJMUX_CWD kind=$PROJMUX_SESSION_KIND"
 tmux -L "$PROJMUX_SOCKET" set-option -p -t "$PROJMUX_PANE" @projmux_initialized 1
 ```
@@ -1256,6 +1268,7 @@ Save this as `~/.local/bin/projmux-gh-token`:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+[ "${PROJMUX_RUNTIME:-}" = process ] && exit 0
 
 case "$PROJMUX_CWD" in
   "$HOME"/source/repos/personal/*)  token=$GH_TOKEN_PERSONAL ;;

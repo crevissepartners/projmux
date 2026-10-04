@@ -43,6 +43,9 @@ var SupportedEvents = []Event{
 // post-create public API.
 const DefaultPostCreateTimeout = 5 * time.Second
 
+// RuntimeProcess identifies a post-create context without a tmux session.
+const RuntimeProcess = "process"
+
 // Context describes the lifecycle point and is passed to hook commands as
 // PROJMUX_* environment variables.
 type Context struct {
@@ -100,7 +103,7 @@ type Runner struct {
 type RunnerByEvent = Runner
 
 func fatalHookFailure(event Event, c Context) bool {
-	return event == EventPreCreate || (event == EventPostCreate && c.Runtime == "process")
+	return event == EventPreCreate || (event == EventPostCreate && c.Runtime == RuntimeProcess)
 }
 
 // Run executes configured lifecycle hooks for event. Pre-create and process
@@ -377,11 +380,11 @@ func DisplayEventName(event Event) string {
 
 func buildHookEnv(c Context, fallbackVersion string) []string {
 	env := append([]string{}, os.Environ()...)
-	if c.Runtime == "process" {
+	if c.Runtime == RuntimeProcess {
 		c.SessionName, c.Kind, c.PaneID = "", "", ""
 		filtered := env[:0]
 		for _, value := range env {
-			if !strings.HasPrefix(value, "PROJMUX_PANE=") && !strings.HasPrefix(value, "PROJMUX_RUNTIME=") {
+			if !strings.HasPrefix(value, "PROJMUX_PANE=") && !strings.HasPrefix(value, "PROJMUX_RUNTIME=") && !strings.HasPrefix(value, "TMUX=") && !strings.HasPrefix(value, "TMUX_PANE=") {
 				filtered = append(filtered, value)
 			}
 		}
@@ -392,13 +395,13 @@ func buildHookEnv(c Context, fallbackVersion string) []string {
 		version = fallbackVersion
 	}
 	for _, key := range sortedEnvKeys(c.Env) {
-		if c.Runtime == "process" && (key == "PROJMUX_PANE" || key == "PROJMUX_RUNTIME") {
+		if c.Runtime == RuntimeProcess && (key == "PROJMUX_PANE" || key == "PROJMUX_RUNTIME") {
 			continue
 		}
 		env = append(env, key+"="+c.Env[key])
 	}
-	if c.Runtime == "process" {
-		env = append(env, "PROJMUX_RUNTIME=process")
+	if c.Runtime == RuntimeProcess {
+		env = append(env, "PROJMUX_RUNTIME="+RuntimeProcess)
 	}
 	env = append(env,
 		"PROJMUX_SESSION="+c.SessionName,
