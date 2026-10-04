@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -83,7 +84,13 @@ func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost
 		return processhost.Snapshot{}, processhost.ErrStale
 	}
 	pane, ok := r.registry.Pane(binding.Pane)
-	if !ok || pane.Status.Activation.Process == nil {
+	if !ok {
+		return processhost.Snapshot{}, processhost.ErrStale
+	}
+	if pane.Status.Activation.IsZero() {
+		return retiredProcessObservation(r.registry, binding)
+	}
+	if pane.Status.Activation.Process == nil {
 		return processhost.Snapshot{}, processhost.ErrStale
 	}
 	activation := pane.Status.Activation.Process
@@ -125,6 +132,60 @@ func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost
 	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: view.Exit}, nil
 }
 
+// Retired session history can prove offline state, but cannot grant a host or
+// control authority. CurrentProcessActivation deliberately remains false.
+func retiredProcessObservation(reg coremetadata.Registry, binding processhost.Binding) (processhost.Snapshot, error) {
+	if err := reg.Validate(); err != nil {
+		return processhost.Snapshot{}, processhost.ErrStale
+	}
+	pane, ok := reg.Pane(binding.Pane)
+	if !ok || !pane.Status.Activation.IsZero() || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Status.ProcessSession == nil {
+		return processhost.Snapshot{}, processhost.ErrStale
+	}
+	record := pane.Status.ProcessSession
+	agent, ok := reg.Agent(binding.Agent)
+	if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != binding.Pane || record.Provider != agent.Spec.Provider || processSchemaBinding(record.Binding) != binding {
+		return processhost.Snapshot{}, processhost.ErrStale
+	}
+	receipt := pane.Status.LastTermination
+	if !retiredProcessReceiptMatches(receipt, agent.Status.LastTermination, binding) {
+		return processhost.Snapshot{}, processhost.ErrStale
+	}
+	exit := &processhost.Exit{Signal: receipt.Signal}
+	if receipt.ExitCode != nil {
+		exit.Code = *receipt.ExitCode
+	}
+	return processhost.Snapshot{Binding: binding, Provider: agent.Spec.Provider, State: "exited", Exit: exit}, nil
+}
+
+func retiredProcessReceiptMatches(pane, agent *coremetadata.TerminationEvidence, b processhost.Binding) bool {
+	if pane == nil || agent == nil || pane.Source != coremetadata.TerminationSourceSupervisor || pane.ObservedAt.IsZero() || !pane.ObservedAt.Equal(agent.ObservedAt) {
+		return false
+	}
+	if pane.PaneUID != b.Pane || pane.AgentUID != b.Agent || pane.Generation != b.Generation || pane.OperationID != b.Operation {
+		return false
+	}
+	left, right := *pane, *agent
+	left.ObservedAt, right.ObservedAt = time.Time{}, time.Time{}
+	if !reflect.DeepEqual(left, right) {
+		return false
+	}
+	return retiredProcessExitMatches(pane)
+}
+
+func retiredProcessExitMatches(pane *coremetadata.TerminationEvidence) bool {
+	code := 0
+	if pane.ExitCode != nil {
+		code = *pane.ExitCode
+		if code < 0 || code > 255 || pane.Signal != "" {
+			return false
+		}
+	} else if pane.Signal == "" {
+		return false
+	}
+	return pane.Classification == coremetadata.ClassifyProcessExit(code, pane.Signal)
+}
+
 // A read gives all probes the same short budget; probes run independently
 // with bounded concurrency, so an unresponsive host cannot consume five seconds
 // or stop another host from being observed. Failures remain unknown.
@@ -141,10 +202,17 @@ func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registr
 	defer cancel()
 	targets := []processhost.InventoryTarget{}
 	for _, pane := range registry.Panes {
-		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Status.Activation.Process == nil {
+		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
 			continue
 		}
-		binding := processSchemaBinding(pane.Status.Activation.Process.Binding)
+		var binding processhost.Binding
+		if pane.Status.Activation.Process != nil {
+			binding = processSchemaBinding(pane.Status.Activation.Process.Binding)
+		} else if pane.Status.ProcessSession != nil {
+			binding = processSchemaBinding(pane.Status.ProcessSession.Binding)
+		} else {
+			continue
+		}
 		targets = append(targets, processhost.InventoryTarget{Binding: binding, Observer: remoteProcessObserver{ctx: ctx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: binding}})
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Binding.Pane < targets[j].Binding.Pane })

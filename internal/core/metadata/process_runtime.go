@@ -5,6 +5,96 @@ import (
 	"strings"
 )
 
+// RecordProcessWait durably projects an exact supervisor Wait and retires the
+// activation in the same transaction. Session binding remains history, without
+// live authority. Callers may compose another Mutator writer before committing.
+func (m Mutator) RecordProcessWait(reg *Registry, activation ProcessActivation, receipt TerminationEvidence) error {
+	const op = "record process Wait"
+	if reg == nil || !processWaitReceiptMatches(activation.Binding, receipt) {
+		return stateErr(op, ErrInvalidRegistry, "exact supervisor Wait evidence is unavailable")
+	}
+	if err := reg.Validate(); err != nil {
+		return err
+	}
+	pane, agent, ok := reg.currentProcessReservation(activation.Binding)
+	if !ok {
+		return stateErr(op, ErrInvalidRegistry, "process Wait ownership is unavailable")
+	}
+	if pane.Status.Activation.IsZero() {
+		if retiredProcessWaitMatches(pane, agent, activation.Binding, receipt) {
+			return nil
+		}
+		return stateErr(op, ErrInvalidRegistry, "retired process Wait evidence differs")
+	}
+	current, _, ok := reg.CurrentProcessActivation(activation.Binding)
+	if !ok || current != activation {
+		return stateErr(op, ErrInvalidRegistry, "current process Wait evidence is unavailable")
+	}
+	next := reg.Clone()
+	if err := m.retireProcessWait(&next, activation.Binding, receipt); err != nil {
+		return err
+	}
+	return m.commitProcessRegistry(reg, next)
+}
+
+func retiredProcessWaitMatches(pane *Pane, agent *Agent, binding ProcessBinding, receipt TerminationEvidence) bool {
+	record := pane.Status.ProcessSession
+	return agent.Status.Phase == PhaseOffline && record != nil && record.Binding == binding && record.Provider == agent.Spec.Provider &&
+		exactProcessWaitReceipt(pane.Status.LastTermination, &receipt) && exactProcessWaitReceipt(agent.Status.LastTermination, &receipt)
+}
+
+func (m Mutator) retireProcessWait(reg *Registry, binding ProcessBinding, receipt TerminationEvidence) error {
+	const op = "record process Wait"
+	outcome, err := m.RecordTermination(reg, receipt)
+	if err != nil {
+		return err
+	}
+	pane, _ := reg.Pane(binding.PaneUID)
+	agent, _ := reg.Agent(binding.AgentUID)
+	if (!outcome.Applied && !outcome.Duplicate) || !exactProcessWaitReceipt(pane.Status.LastTermination, &receipt) || !exactProcessWaitReceipt(agent.Status.LastTermination, &receipt) {
+		return stateErr(op, ErrInvalidRegistry, "process Wait receipt was not recorded verbatim")
+	}
+	pane.Status.Activation = PaneActivation{}
+	agent.Status.Phase = PhaseOffline
+	return nil
+}
+
+func exactProcessWaitReceipt(a, b *TerminationEvidence) bool {
+	return a != nil && b != nil && sameEvidence(a, b) && a.ObservedAt.Equal(b.ObservedAt)
+}
+
+func processWaitReceiptMatches(binding ProcessBinding, receipt TerminationEvidence) bool {
+	if receipt.Source != TerminationSourceSupervisor || receipt.ObservedAt.IsZero() {
+		return false
+	}
+	if receipt.PaneUID != binding.PaneUID || receipt.AgentUID != binding.AgentUID || receipt.Generation != binding.Generation || receipt.OperationID != binding.OperationID {
+		return false
+	}
+	return validProcessWaitStatus(receipt)
+}
+
+func validProcessWaitStatus(receipt TerminationEvidence) bool {
+	code := 0
+	if receipt.ExitCode != nil {
+		code = *receipt.ExitCode
+		if code < 0 || code > 255 || receipt.Signal != "" {
+			return false
+		}
+	} else if receipt.Signal == "" {
+		return false
+	}
+	return validTerminationEvidenceShape(receipt) && receipt.Classification == ClassifyProcessExit(code, receipt.Signal)
+}
+
+func (m Mutator) commitProcessRegistry(reg *Registry, next Registry) error {
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	next.UpdatedAt = m.clock()().UTC()
+	*reg = next
+	return nil
+}
+
 // RuntimeKind is the closed Pane host vocabulary. An omitted kind means tmux.
 type RuntimeKind string
 
