@@ -36,7 +36,9 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
             directory = root / "internal/app"
             directory.mkdir(parents=True)
             for index, filename in enumerate(runner.FILES):
-                (directory / filename).write_text(f"func TestFixture{index}(t *testing.T) {{}}\n")
+                (directory / filename).write_text(
+                    'const cli = "PMX_TEST_CLI"\n'
+                    f"func TestFixture{index}(t *testing.T) {{}}\n")
             self.assertEqual(len(runner.selected_tests(root)), len(runner.FILES))
             with (directory / runner.FILES[0]).open("a") as output:
                 output.write("func TestNewFixture(\n  other *testing.T,\n) {}\n")
@@ -44,6 +46,28 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
             (directory / runner.FILES[1]).write_text("package app\n")
             with self.assertRaises(ValueError):
                 runner.selected_tests(root)
+
+    def test_new_consumer_file_or_removed_consumer_fails_inventory(self):
+        runner.check_fixture_files(ROOT)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "internal/app"
+            directory.mkdir(parents=True)
+            for filename in runner.FILES:
+                (directory / filename).write_text('const cli = "PMX_TEST_CLI"\n')
+            runner.check_fixture_files(root)
+            extra = root / "internal/newpackage/extra_test.go"
+            extra.parent.mkdir()
+            extra.write_text('const cli = "PMX_TEST_CLI"\n')
+            with self.assertRaisesRegex(ValueError, "unlisted=.*extra_test.go"):
+                runner.check_fixture_files(root)
+            extra.unlink()
+            excluded = root / next(iter(runner.EXCLUDED_FILES))
+            excluded.write_text('const cli = "PMX_TEST_CLI"\n')
+            runner.check_fixture_files(root)
+            (directory / runner.FILES[0]).write_text('const cli = "OTHER"\n')
+            with self.assertRaisesRegex(ValueError, "no longer consuming"):
+                runner.check_fixture_files(root)
 
     def test_isolation_removes_ambient_routes_and_provider_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:

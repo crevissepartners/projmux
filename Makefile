@@ -37,7 +37,7 @@ DOCS_REFERENCE ?= docs/cli.md
 
 NOTICES_BINARY ?= THIRD_PARTY_NOTICES
 
-.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs notices test test-process-host-cli smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check mod-tidy-check fix vet build install npm-pack docs notices test smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract test-integration test-install-smoke test-e2e test-e2e-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract ci-contract security-pin-contract security-pin-refresh security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -147,6 +147,7 @@ test: deadcode-contract release-contract ci-contract security-pin-contract smoke
 	$(GO) test ./...
 
 # Build this checkout and exercise the process fixtures through a copied CLI.
+.PHONY: test-process-host-cli
 test-process-host-cli:
 	GO="$(GO)" python3 scripts/test-process-host-cli.py
 

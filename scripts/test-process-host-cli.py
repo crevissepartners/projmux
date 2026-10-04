@@ -20,8 +20,24 @@ FILES = (
     "process_host_supervisor_test.go",
 )
 
+# This real-tmux test has its own unit/integration gate and opt-in variable.
+EXCLUDED_FILES = {"internal/app/cli_window_rename_display_real_tmux_test.go"}
+
+
+def check_fixture_files(root: Path) -> None:
+    discovered = {str(path.relative_to(root))
+                  for path in (root / "internal").rglob("*_test.go")
+                  if '"PMX_TEST_CLI"' in path.read_text()}
+    expected = {"internal/app/" + filename for filename in FILES}
+    actual = discovered - EXCLUDED_FILES
+    if actual != expected:
+        raise ValueError("PMX_TEST_CLI file inventory changed: "
+                         f"unlisted={sorted(actual - expected)}, "
+                         f"no longer consuming={sorted(expected - actual)}")
+
 
 def selected_tests(root: Path) -> list[str]:
+    check_fixture_files(root)
     tests = []
     for filename in FILES:
         source = (root / "internal/app" / filename).read_text()
@@ -79,16 +95,20 @@ def main() -> None:
         root = Path(temporary)
         env = isolated_env(root, go)
         built, copy = root / "built-projmux", root / "projmux"
+        build_started = time.monotonic()
         subprocess.run([go, "build", "-buildvcs=false", "-o", str(built), "./cmd/projmux"],
                        cwd=ROOT, env=env, check=True, timeout=180)
         shutil.copy2(built, copy)
+        build_seconds = time.monotonic() - build_started
         env["PMX_TEST_CLI"] = str(copy)
         print(f"copied CLI sha256={hashlib.sha256(copy.read_bytes()).hexdigest()}", flush=True)
         selector = "^(" + "|".join(expected) + ")$"
+        test_started = time.monotonic()
         result = subprocess.run([go, "test", "-json", "-count=1", "-cpu=1",
                                  "-timeout=180s", "-run", selector, "./internal/app"],
                                 cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=180)
+                                stderr=subprocess.PIPE, timeout=240)
+        test_seconds = time.monotonic() - test_started
         events = []
         for line in result.stdout.splitlines():
             event = json.loads(line)
@@ -98,6 +118,8 @@ def main() -> None:
         if result.stderr:
             print(result.stderr, end="", flush=True)
         report = check_results(events, expected, result.returncode)
+        report["build_seconds"] = round(build_seconds, 3)
+        report["test_command_seconds"] = round(test_seconds, 3)
         report["elapsed_seconds"] = round(time.monotonic() - started, 3)
         print("process CLI summary: " + json.dumps(report), flush=True)
 
