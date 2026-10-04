@@ -24,6 +24,11 @@ import (
 
 func processAttentionWiringFixture(t *testing.T) (coremetadata.Registry, *processAttentionStore, string) {
 	t.Helper()
+	return processAttentionWiringFixtureMode(t, false)
+}
+
+func processAttentionWiringFixtureMode(t *testing.T, mixed bool) (coremetadata.Registry, *processAttentionStore, string) {
+	t.Helper()
 	raw, err := os.ReadFile("../core/metadata/testdata/registry-v5-process.golden.json")
 	if err != nil {
 		t.Fatal(err)
@@ -32,13 +37,15 @@ func processAttentionWiringFixture(t *testing.T) (coremetadata.Registry, *proces
 	if err = json.Unmarshal(raw, &reg); err != nil {
 		t.Fatal(err)
 	}
-	panes := reg.Panes[:0]
-	for _, pane := range reg.Panes {
-		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
-			panes = append(panes, pane)
+	if !mixed {
+		panes := reg.Panes[:0]
+		for _, pane := range reg.Panes {
+			if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+				panes = append(panes, pane)
+			}
 		}
+		reg.Panes = panes
 	}
-	reg.Panes = panes
 	identity, _, err := localipc.Process(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
@@ -536,27 +543,16 @@ func TestProcessAttentionDamagedStoreKeepsTmuxWindow(t *testing.T) {
 }
 
 func TestProcessAttentionWindowKeepsMixedTmuxFailure(t *testing.T) {
-	for _, damaged := range []bool{false, true} {
-		t.Run(map[bool]string{false: "healthy", true: "damaged"}[damaged], func(t *testing.T) {
-			_, store, path := processAttentionWiringFixture(t)
-			raw, err := os.ReadFile("../core/metadata/testdata/registry-v5-process.golden.json")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var reg coremetadata.Registry
-			if err := json.Unmarshal(raw, &reg); err != nil {
-				t.Fatal(err)
-			}
-			identity, _, err := localipc.Process(os.Getpid())
-			if err != nil {
-				t.Fatal(err)
-			}
-			pane, _ := reg.Pane("pane-02")
-			pane.Status.Activation.Process.HostProcess.OwnerUID = identity.OwnerUID
-			pane.Status.Activation.Process.Child.OwnerUID = identity.OwnerUID
-			writeProcessAttentionRegistry(t, path, reg)
-			if damaged {
+	for _, damage := range []string{"healthy", "store", "registry"} {
+		t.Run(damage, func(t *testing.T) {
+			_, store, path := processAttentionWiringFixtureMode(t, true)
+			if damage == "store" {
 				if err := os.WriteFile(store.path, []byte("{damaged"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if damage == "registry" {
+				if err := os.WriteFile(path, []byte("{damaged"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -565,12 +561,15 @@ func TestProcessAttentionWindowKeepsMixedTmuxFailure(t *testing.T) {
 			tmuxErr := errors.New("tmux observation failed")
 			cmd.runner = &processWiringErrorRunner{err: tmuxErr}
 			var out, diagnostic bytes.Buffer
-			err = cmd.Run([]string{"window", "@1"}, &out, &diagnostic)
+			err := cmd.Run([]string{"window", "@1"}, &out, &diagnostic)
 			if !errors.Is(err, tmuxErr) || out.Len() != 0 {
 				t.Fatalf("tmux failure swallowed: error=%v output=%q", err, out.String())
 			}
-			if damaged && !strings.Contains(err.Error(), "damaged process attention store") {
+			if damage == "store" && !strings.Contains(err.Error(), "damaged process attention store") {
 				t.Fatalf("process read error lost: %v", err)
+			}
+			if damage == "registry" && !strings.Contains(err.Error(), "invalid character") {
+				t.Fatalf("Registry read error lost: %v", err)
 			}
 			if !maps.Equal(before, processWiringStateFiles(t, filepath.Dir(path))) {
 				t.Fatal("mixed failure mutated state")

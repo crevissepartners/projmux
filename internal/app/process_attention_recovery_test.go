@@ -118,6 +118,8 @@ func TestProcessAttentionRecoveryRequiresCurrentOwnedHost(t *testing.T) {
 					_, err := f.store.Update(func(r *coremetadata.Registry) error {
 						p, _ := r.Pane(b.Pane)
 						p.Status.Activation.Generation = "replaced-generation"
+						p.Status.Activation.Process.Binding.Generation = "replaced-generation"
+						p.Status.ProcessSession.Binding.Generation = "replaced-generation"
 						return nil
 					})
 					if err != nil {

@@ -23,6 +23,7 @@ var internalSubcommands = []string{
 	"key-broker",
 	"popup-wait-key",
 	"supervise",
+	"process-host-supervisor",
 	"activation-exec",
 	"codex-broker",
 	"install-residue",
@@ -67,8 +68,9 @@ type internalCommand struct {
 	// supervise is the managed process supervisor a launched Pane execs. It is
 	// the only internal route whose caller is a pane's own argv rather than a
 	// tmux command string.
-	supervise      rawArgvCommand
-	activationExec rawArgvCommand
+	supervise             rawArgvCommand
+	processHostSupervisor rawArgvCommand
+	activationExec        rawArgvCommand
 	// codexBroker is the Codex endpoint broker runtime. It is the only
 	// internal route whose process outlives the invocation that started it.
 	codexBroker rawArgvCommand
@@ -110,6 +112,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.popupWaitKey, "internal popup-wait-key", "popup-wait-key", nil, rest, stdout, stderr)
 	case "supervise":
 		return forwardRawArgv(c.supervise, "internal supervise", "supervise", nil, rest, stdout, stderr)
+	case "process-host-supervisor":
+		return forwardRawArgv(c.processHostSupervisor, "internal process-host-supervisor", "process-host-supervisor", nil, rest, stdout, stderr)
 	case "activation-exec":
 		return forwardRawArgv(c.activationExec, "internal activation-exec", "activation-exec", nil, rest, stdout, stderr)
 	case "claude-endpoint-register":
