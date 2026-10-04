@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
@@ -35,7 +36,7 @@ func deferredClaimFixture(t *testing.T) (*agentCommand, processAgentResumeOption
 	reg := processResumeQueryFixture(t)
 	uid := listResumableProcessAgents(reg, processResumeFilter{})[0].Agent.Metadata.UID
 	state := t.TempDir()
-	command := &agentCommand{loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }, messagePaths: agentMessagePaths{registryPath: filepath.Join(state, "registry", "registry.json")}, messageStore: messagestore.NewStore(state)}
+	command := &agentCommand{messageNow: time.Now, loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }, messagePaths: agentMessagePaths{registryPath: filepath.Join(state, "registry", "registry.json")}, messageStore: messagestore.NewStore(state)}
 	return command, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: uid}}
 }
 
@@ -116,5 +117,47 @@ func TestDeferredWaitCancelsWithoutProvider(t *testing.T) {
 	result, err := claim.WaitPeer(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) || result.Handle != nil {
 		t.Fatal("wait spawned provider", err)
+	}
+}
+
+func TestDeferredDeadClaimInflightIsUnknownAndNotReplayed(t *testing.T) {
+	c, opts := deferredClaimFixture(t)
+	claim, err := c.claimDeferredProcessAgent(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := c.messageStore.(*messagestore.Store)
+	now := time.Now().UTC()
+	route := deferredMessageRoute(claim.record)
+	source := route
+	source.AgentUID = "source-agent"
+	source.PaneUID = "source-pane"
+	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "inflight-peer", ConversationRef: "inflight-conversation", Source: source, Target: route, Authority: coremessage.PeerAuthority(), Payload: "peer content", AcceptedAt: now, Deadline: now.Add(time.Minute)}
+	if _, _, err = store.PutDeferred(envelope, "claude-coordination"); err != nil {
+		t.Fatal(err)
+	}
+	if err = claim.markInflight(envelope.MessageRef); err != nil {
+		t.Fatal(err)
+	}
+	dead, err := readDeferredClaim(claim.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead.Process.Start += "-dead"
+	if err = writeDeferredClaim(claim.path, dead); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := c.claimDeferredProcessAgent(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	got, found, err := store.Get(envelope.MessageRef)
+	if err != nil || !found || got.Delivery.State != coremessage.StateFailed || !got.Delivery.OutcomeUnknown {
+		t.Fatalf("inflight recovery: %+v %v", got.Delivery, err)
+	}
+	held, err := replacement.held()
+	if err != nil || len(held) != 0 {
+		t.Fatal("ambiguous frame remained replayable", err)
 	}
 }

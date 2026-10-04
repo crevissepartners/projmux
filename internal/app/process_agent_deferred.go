@@ -124,10 +124,7 @@ func (claim *deferredProcessClaim) markInflight(ref string) error {
 		return deferredClaimOwned()
 	}
 	record.Inflight = ref
-	if err = writeDeferredClaim(claim.path, record); err == nil {
-		claim.record = record
-	}
-	return err
+	return writeDeferredClaim(claim.path, record)
 }
 
 func deferredPeerText(record messagestore.Record) (string, error) {
@@ -150,12 +147,18 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 			return processAgentResumeResult{}, err
 		}
 	}
+	resumeCtx := ctx
+	cancelResume := func() {}
+	if first != nil {
+		resumeCtx, cancelResume = context.WithDeadline(ctx, first.Envelope.Deadline)
+	}
+	defer cancelResume()
 	options := claim.options
 	options.claim, options.Prompt = claim, frame
 	request, err := newProcessAgentResumeRequest(options)
 	var result processAgentResumeResult
 	if err == nil {
-		result, err = c.resumeProcessAgent(ctx, request)
+		result, err = c.resumeProcessAgent(resumeCtx, request)
 	}
 	if err != nil {
 		err = result.fail(err)
@@ -255,25 +258,25 @@ release:
 			}
 			continue
 		}
-		if claim.record.Provider == aiModeCodex {
-			for {
-				snapshot, observeErr := result.Handle.Observe(result.Binding)
-				if observeErr != nil {
-					return observeErr
+		for {
+			snapshot, observeErr := result.Handle.Observe(result.Binding)
+			if observeErr != nil {
+				return observeErr
+			}
+			if !record.Envelope.Deadline.After(c.messageClock()) {
+				_, _, err = c.messageStore.Status(record.Envelope.MessageRef, c.messageClock())
+				if err != nil {
+					return err
 				}
-				if !record.Envelope.Deadline.After(c.messageClock()) {
-					_, _, err = c.messageStore.Status(record.Envelope.MessageRef, c.messageClock())
-					if err != nil { return err }
-					continue release
-				}
-				if snapshot.Turn == "" {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(20 * time.Millisecond):
-				}
+				continue release
+			}
+			if snapshot.Turn == "" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(20 * time.Millisecond):
 			}
 		}
 		// Persist the crash witness before changing route or submitting. A dead

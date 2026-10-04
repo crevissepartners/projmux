@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -67,10 +68,15 @@ func readDeferredClaim(path string) (deferredClaimRecord, error) {
 	if path == "" {
 		return record, nil
 	}
-	data, err := os.ReadFile(path) // #nosec G304 -- private state path derived from Agent digest.
+	file, err := os.Open(path) // #nosec G304 -- private state path derived from Agent digest.
 	if errors.Is(err, os.ErrNotExist) {
 		return record, nil
 	}
+	if err != nil {
+		return record, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 8193))
+	err = errors.Join(err, file.Close())
 	if err != nil {
 		return record, err
 	}
@@ -100,7 +106,7 @@ func writeDeferredClaim(path string, record deferredClaimRecord) error {
 	if err = os.Rename(file.Name(), path); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := os.Open(filepath.Dir(path)) // #nosec G304 -- private claim parent validated by EnsurePrivateDir.
 	if err != nil {
 		return err
 	}

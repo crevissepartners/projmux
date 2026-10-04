@@ -551,7 +551,7 @@ func deferredResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		if err != nil {
 			t.Fatal(err)
 		}
-		script := strings.Replace(string(raw), "  inp={'questions'", "  continue\n  inp={'questions'", 1)
+		script := strings.Replace(string(raw), "  inp={'questions'", "  emit({'type':'result','subtype':'success','session_id':'process-session'})\n  continue\n  inp={'questions'", 1)
 		script = strings.Replace(script, "'provider.sock'", "'provider-%s.sock'%os.getpid()", 1)
 		if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 			t.Fatal(err)
@@ -630,131 +630,152 @@ func deferredCLIStatus(t *testing.T, ctx context.Context, f processCreateCLI, re
 
 func TestDeferredPeerWakeAndKilledClaimantActualCLI(t *testing.T) {
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
-		t.Run(provider, func(t *testing.T) {
-			f := deferredResumeCLIFixture(t, provider)
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			defer cancel()
-			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
-			first.shutdown(t)
-			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
-			args := f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task")
-			source := startResumeCLIInvocation(t, ctx, f, args)
-			awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
-			send := func(ref, text string) ([]byte, error) {
-				return exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--", text).CombinedOutput()
-			}
-			before, beforeErr := send("no-claim", "without claimant")
-			if beforeErr == nil {
-				t.Fatalf("unclaimed accepted: %s", before)
-			}
-			claim := startDeferredCLIClaim(t, ctx, f, first.ref)
-			for _, args := range [][]string{{"agent", "resume", first.ref, "--wait-for-peer"}, {"agent", "resume", first.ref, "--", "other user"}} {
-				out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
-				if err == nil || !bytes.Contains(out, []byte("process-resume-owned")) {
-					t.Fatalf("claim exclusion: %v %s", err, out)
+		for _, killed := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/killed=%t", provider, killed), func(t *testing.T) {
+				f := deferredResumeCLIFixture(t, provider)
+				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+				defer cancel()
+				first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+				first.shutdown(t)
+				old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+				args := f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task")
+				source := startResumeCLIInvocation(t, ctx, f, args)
+				awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
+				send := func(ref, text string) ([]byte, error) {
+					return exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--", text).CombinedOutput()
 				}
-			}
-			// SIGSTOP keeps the exact claimant alive while messages accumulate; SIGKILL
-			// then proves takeover without Close, before any frame has been dispatched.
-			if err := claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-				t.Fatal(err)
-			}
-			refs := []string{"deferred-first", "deferred-second", "deferred-third"}
-			state := filepath.Dir(filepath.Dir(f.store.Path()))
-			store := messagestore.NewStore(state)
-			var firstRecord messagestore.Record
-			for i, ref := range refs {
-				out, err := send(ref, fmt.Sprintf("peer-%d", i))
-				if err != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
-					t.Fatalf("held send %v %s", err, out)
+				before, beforeErr := send("no-claim", "without claimant")
+				for bytes.Contains(before, []byte("source Agent is not eligible")) {
+					select {
+					case <-ctx.Done():
+						t.Fatal("source route never ready")
+					case <-time.After(10 * time.Millisecond):
+					}
+					before, beforeErr = send("no-claim", "without claimant")
 				}
-				receipt := deferredCLIStatus(t, ctx, f, ref, "held")
-				if receipt["target"].(map[string]any)["activationGeneration"] != old.Binding.Generation {
-					t.Fatal("held route not retired generation")
+				if beforeErr == nil {
+					t.Fatalf("unclaimed accepted: %s", before)
 				}
-				if i == 0 {
-					var found bool
-					firstRecord, found, err = store.Get(ref)
-					if err != nil || !found {
-						t.Fatal("first record", err)
+				claim := startDeferredCLIClaim(t, ctx, f, first.ref)
+				for _, args := range [][]string{{"agent", "resume", first.ref, "--wait-for-peer"}, {"agent", "resume", first.ref, "--", "other user"}} {
+					out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+					if err == nil || !bytes.Contains(out, []byte("process-resume-owned")) {
+						t.Fatalf("claim exclusion: %v %s", err, out)
 					}
 				}
-			}
-			expected, err := deferredPeerText(firstRecord)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = claim.cmd.Process.Kill(); err != nil {
-				t.Fatal(err)
-			}
-			_ = claim.cmd.Wait()
-			claim.done = true
-			after, afterErr := send("no-claim", "without claimant")
-			if afterErr == nil || !bytes.Equal(before, after) {
-				t.Fatalf("unclaimed refusal parity before=%q after=%q", before, after)
-			}
-			started := time.Now()
-			resumed := startDeferredCLIClaim(t, ctx, f, first.ref)
-			line, err := resumed.output.ReadString('\n')
-			if err != nil || !strings.Contains(line, "foreground=owned") {
-				t.Fatalf("wake output %q %v %s", line, err, resumed.stderr.String())
-			}
-			for _, ref := range refs {
-				deferredCLIStatus(t, ctx, f, ref, "delivered")
-			}
-			latency := time.Since(started)
-			if latency > 5*time.Second {
-				t.Fatalf("wake latency=%s", latency)
-			}
-			t.Logf("provider=%s wake latency=%s", provider, latency)
-			resumed.finish(t)
-			source.shutdown(t)
-			wire, err := os.ReadFile(f.trace)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var peerFrames []string
-			for line := range bytes.SplitSeq(bytes.TrimSpace(wire), []byte("\n")) {
-				var frame map[string]any
-				if json.Unmarshal(line, &frame) != nil {
-					t.Fatal("wire JSON")
+				// SIGSTOP keeps the exact claimant alive while messages accumulate; SIGKILL
+				// then proves takeover without Close, before any frame has been dispatched.
+				if err := claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+					t.Fatal(err)
 				}
-				text := ""
-				if frame["type"] == "user" {
-					text, _ = frame["message"].(map[string]any)["content"].(string)
+				refs := []string{"deferred-first", "deferred-second", "deferred-third"}
+				state := filepath.Dir(filepath.Dir(f.store.Path()))
+				store := messagestore.NewStore(state)
+				var firstRecord messagestore.Record
+				for i, ref := range refs {
+					out, err := send(ref, fmt.Sprintf("peer-%d", i))
+					if err != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
+						t.Fatalf("held send %v %s", err, out)
+					}
+					receipt := deferredCLIStatus(t, ctx, f, ref, "held")
+					if receipt["target"].(map[string]any)["activationGeneration"] != old.Binding.Generation {
+						t.Fatal("held route not retired generation")
+					}
+					if i == 0 {
+						var found bool
+						firstRecord, found, err = store.Get(ref)
+						if err != nil || !found {
+							t.Fatal("first record", err)
+						}
+					}
 				}
-				if frame["method"] == "turn/start" {
-					inputs := frame["params"].(map[string]any)["input"].([]any)
-					text, _ = inputs[0].(map[string]any)["text"].(string)
-				}
-				if strings.Contains(text, "projmux-coordination") {
-					peerFrames = append(peerFrames, text)
-				}
-			}
-			if provider == aiModeClaude {
-				raw, err := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+				expected, err := deferredPeerText(firstRecord)
 				if err != nil {
 					t.Fatal(err)
 				}
-				for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte("\n")) {
+				if killed {
+					err = claim.cmd.Process.Kill()
+				} else {
+					err = claim.cmd.Process.Signal(syscall.SIGTERM)
+					if err == nil {
+						err = claim.cmd.Process.Signal(syscall.SIGCONT)
+					}
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				stopErr := claim.cmd.Wait()
+				if !killed && stopErr != nil {
+					t.Fatalf("claimant signal exit: %v %s", stopErr, claim.stderr.String())
+				}
+				claim.done = true
+				after, afterErr := send("no-claim", "without claimant")
+				if afterErr == nil || !bytes.Equal(before, after) {
+					t.Fatalf("unclaimed refusal parity before=%q after=%q", before, after)
+				}
+				started := time.Now()
+				resumed := startDeferredCLIClaim(t, ctx, f, first.ref)
+				line, err := resumed.output.ReadString('\n')
+				if err != nil || !strings.Contains(line, "foreground=owned") {
+					t.Fatalf("wake output %q %v %s", line, err, resumed.stderr.String())
+				}
+				for _, ref := range refs {
+					deferredCLIStatus(t, ctx, f, ref, "delivered")
+				}
+				latency := time.Since(started)
+				if latency > 5*time.Second {
+					t.Fatalf("wake latency=%s", latency)
+				}
+				t.Logf("provider=%s wake latency=%s", provider, latency)
+				resumed.finish(t)
+				source.shutdown(t)
+				wire, err := os.ReadFile(f.trace)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var peerFrames []string
+				for line := range bytes.SplitSeq(bytes.TrimSpace(wire), []byte("\n")) {
 					var frame map[string]any
 					if json.Unmarshal(line, &frame) != nil {
-						t.Fatal("push JSON")
+						t.Fatal("wire JSON")
 					}
-					peerFrames = append(peerFrames, frame["message"].(map[string]any)["content"].(string))
+					text := ""
+					if frame["type"] == "user" {
+						text, _ = frame["message"].(map[string]any)["content"].(string)
+					}
+					if frame["method"] == "turn/start" {
+						inputs := frame["params"].(map[string]any)["input"].([]any)
+						text, _ = inputs[0].(map[string]any)["text"].(string)
+					}
+					if strings.Contains(text, "projmux-coordination") {
+						peerFrames = append(peerFrames, text)
+					}
 				}
-			}
-			if len(peerFrames) != 3 || peerFrames[0] != expected {
-				t.Fatalf("first frame bytes/order/count: %q want %q", peerFrames, expected)
-			}
-			for i, text := range peerFrames {
-				var frame map[string]any
-				_ = json.Unmarshal([]byte(text), &frame)
-				if frame["messageRef"] != refs[i] || frame["authority"] != "untrusted-coordination-only" || frame["payload"] != fmt.Sprintf("peer-%d", i) {
-					t.Fatal("peer promoted or reordered", frame)
+				if provider == aiModeClaude {
+					raw, err := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte("\n")) {
+						var frame map[string]any
+						if json.Unmarshal(line, &frame) != nil {
+							t.Fatal("push JSON")
+						}
+						peerFrames = append(peerFrames, frame["message"].(map[string]any)["content"].(string))
+					}
 				}
-			}
-		})
+				if len(peerFrames) != 3 || peerFrames[0] != expected {
+					t.Fatalf("first frame bytes/order/count: %q want %q", peerFrames, expected)
+				}
+				for i, text := range peerFrames {
+					var frame map[string]any
+					_ = json.Unmarshal([]byte(text), &frame)
+					if frame["messageRef"] != refs[i] || frame["authority"] != "untrusted-coordination-only" || frame["payload"] != fmt.Sprintf("peer-%d", i) {
+						t.Fatal("peer promoted or reordered", frame)
+					}
+				}
+			})
+		}
 	}
 }
 
