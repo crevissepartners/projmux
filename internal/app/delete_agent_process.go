@@ -163,10 +163,8 @@ func stopProcessAgentOwner(_ context.Context, reg coremetadata.Registry, agent c
 	control := &agentCommand{controlPaths: config.DefaultPathsFromEnv}
 	var err error
 	switch agent.Spec.Provider {
-	case aiModeClaude:
-		_, err = control.callProcessClaudeTurn(reg, agent, "stop", "")
-	case aiModeCodex:
-		_, err = control.callProcessCodexTurn(reg, agent, "stop", "")
+	case aiModeClaude, aiModeCodex:
+		_, err = control.callProcessTurn(reg, agent, agent.Spec.Provider, "stop", "")
 	default:
 		err = processhost.ErrStale
 	}
