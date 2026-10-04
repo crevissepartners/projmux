@@ -487,10 +487,12 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		Payload: args[separator+1], AcceptedAt: now, Deadline: now.Add(ttl)}
 	// A first-frame deferred delivery keeps its retired address as receipt
 	// evidence. Replays use that stored address and never dispatch again.
-	if existing, found, getErr := c.messageStore.Get(messageRef); getErr != nil {
-		return getErr
-	} else if found && existing.Delivery.Reason == "provider-resume-first-frame" && existing.Envelope.Target.AgentUID == target.Metadata.UID && targetRoute.AcceptsIncarnation(existing.Envelope.Target.Incarnation) {
-		envelope.Target = existing.Envelope.Target
+	if pane, found := registry.Pane(target.Status.PaneRef); found && pane.Spec.Runtime.Kind == coremetadata.RuntimeProcess {
+		if existing, found, getErr := c.messageStore.Get(messageRef); getErr != nil {
+			return getErr
+		} else if found && existing.Delivery.Reason == "provider-resume-first-frame" && existing.Envelope.Target.AgentUID == target.Metadata.UID && targetRoute.AcceptsIncarnation(existing.Envelope.Target.Incarnation) {
+			envelope.Target = existing.Envelope.Target
+		}
 	}
 	if replyTo != "" {
 		original, found, getErr := c.messageStore.Get(replyTo)
