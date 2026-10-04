@@ -55,6 +55,7 @@ type attentionCommand struct {
 
 func newAttentionCommand() *attentionCommand {
 	return &attentionCommand{
+		process:              newRegistryProcessAttentionConsumer(snapshotResourceRegistry),
 		runner:               inttmux.ExecRunner{},
 		producer:             newAttentionNotifyProducer(),
 		sidebarPreviewActive: isSidebarPreviewActive,
@@ -262,7 +263,13 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 		return err
 	}
 
-	rows := c.windowAttentionRows(windowID)
+	rows, listErr := c.windowAttentionRows(windowID)
+	if listErr != nil {
+		if _, registryError := listErr.(processAttentionRegistryError); !registryError {
+			return listErr
+		}
+		fmt.Fprintf(stderr, "attention window: observe process attention: %v\n", listErr)
+	}
 	badgeKind := ""
 	for _, row := range rows {
 		badgeKind = aibadge.Aggregate(badgeKind, attentionWindowBadgeKind(row))
@@ -459,13 +466,12 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 	return output
 }
 
-func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
+func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWindowRow, error) {
 	processRows := []attentionWindowRow{}
+	var processErr error
 	if c != nil && c.process != nil {
 		records, err := c.process.records()
-		if err != nil {
-			return nil
-		}
+		processErr = err
 		for _, r := range records {
 			if r.Binding.Window == windowID {
 				processRows = append(processRows, attentionWindowRow{AIBadgeKind: r.badge()})
@@ -473,7 +479,7 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 		}
 	}
 	if c == nil || c.runner == nil {
-		return processRows
+		return processRows, processErr
 	}
 	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
 		Target: windowID,
@@ -485,10 +491,13 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 		},
 	})
 	if err != nil {
-		return processRows
+		if c.process != nil && len(c.process.bindings) > 0 && !c.process.processOnly {
+			return processRows, errors.Join(processErr, err)
+		}
+		return processRows, processErr
 	}
 	if len(rows) == 0 {
-		return append(processRows, c.legacyWindowAttentionRows(windowID)...)
+		return append(processRows, c.legacyWindowAttentionRows(windowID)...), processErr
 	}
 
 	out := make([]attentionWindowRow, 0, len(rows))
@@ -500,7 +509,7 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 			AIBadgeKind: fields[3],
 		})
 	}
-	return append(processRows, out...)
+	return append(processRows, out...), processErr
 }
 
 func (c *attentionCommand) legacyWindowAttentionRows(windowID string) []attentionWindowRow {
@@ -580,12 +589,9 @@ func tmuxAIBadgeKindFg(kind string, roles theme.RenderRoles) string {
 
 func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 	processRows, processErr := c.processPaneRows()
-	if processErr != nil {
-		return nil, processErr
-	}
 	if c == nil || c.runner == nil {
 		if c != nil && c.process != nil {
-			return processRows, nil
+			return processRows, processErr
 		}
 		return nil, errors.New("attention tmux runner is not configured")
 	}
@@ -596,7 +602,10 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 		AllowExtraFields: true,
 	})
 	if err != nil {
-		return processRows, fmt.Errorf("tmux list-panes: %w", err)
+		if c.process != nil && c.process.processOnly {
+			return processRows, processErr
+		}
+		return processRows, errors.Join(processErr, fmt.Errorf("tmux list-panes: %w", err))
 	}
 
 	out := make([]attentionPaneRow, 0, len(rows))
@@ -618,7 +627,7 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 		}
 		out = append(out, row)
 	}
-	return append(processRows, out...), nil
+	return append(processRows, out...), processErr
 }
 
 func (c *attentionCommand) processPaneRows() ([]attentionPaneRow, error) {
@@ -664,19 +673,19 @@ func newDefaultLivePaneLister() livePaneLister {
 
 func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 	processRows, processErr := l.process.liveRows()
-	if processErr != nil {
-		return nil, processErr
-	}
-	if l.runner == nil && l.process != nil {
-		return processRows, nil
+	if l.process != nil && l.runner == nil {
+		return processRows, processErr
 	}
 	rows, err := (&attentionCommand{runner: l.runner}).listAttentionPanes()
+	if err != nil && l.process != nil && l.process.processOnly {
+		err = nil
+	}
 	if err != nil {
 		if len(processRows) > 0 {
 			processRows[0].tmuxObservationError = err
-			return processRows, err
+			return processRows, errors.Join(processErr, err)
 		}
-		return nil, err
+		return nil, errors.Join(processErr, err)
 	}
 	out := make([]livePaneRow, 0, len(rows))
 	for _, row := range rows {
@@ -694,7 +703,7 @@ func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 			TitleBadge:     hasAttentionPrefix(row.Title) || intrender.HasBraillePrefix(row.Title),
 		})
 	}
-	return append(processRows, out...), nil
+	return append(processRows, out...), processErr
 }
 
 func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {

@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -132,6 +135,11 @@ func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost
 	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: view.Exit}, nil
 }
 
+// A read gives all probes the same short budget; probes run independently
+// with bounded concurrency, so an unresponsive host cannot consume five seconds
+// or stop another host from being observed. Failures remain unknown.
+const processObservationReadLimit = 250 * time.Millisecond
+
 // Declarations are collected before probing. One unavailable host cannot erase
 // another Pane or cause a tmux lookup, and the entire observation is bounded.
 func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registry) resourcegraph.ProcessInventory {
@@ -139,7 +147,7 @@ func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registr
 	if err != nil {
 		return resourcegraph.ProcessInventory{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
+	ctx, cancel := context.WithTimeout(ctx, processObservationReadLimit)
 	defer cancel()
 	targets := []processhost.InventoryTarget{}
 	for _, pane := range registry.Panes {
@@ -149,5 +157,28 @@ func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registr
 		binding := processSchemaBinding(pane.Status.Activation.Process.Binding)
 		targets = append(targets, processhost.InventoryTarget{Binding: binding, Observer: remoteProcessObserver{ctx: ctx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: binding}})
 	}
-	return processhost.ObserveInventory(targets)
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Binding.Pane < targets[j].Binding.Pane })
+	results := make([]resourcegraph.ProcessInventory, len(targets))
+	var group sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for i, target := range targets {
+		group.Go(func() {
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-ctx.Done():
+				key := resourcegraph.ProcessKey{Host: target.Binding.Host, Pane: target.Binding.Pane, Generation: target.Binding.Generation}
+				results[i] = resourcegraph.ProcessInventory{Declared: []resourcegraph.ProcessKey{key}, Observed: []resourcegraph.ProcessObservation{{Key: key, Status: resourcegraph.StatusUnknown}}}
+				return
+			}
+			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{target})
+		})
+	}
+	group.Wait()
+	var inventory resourcegraph.ProcessInventory
+	for _, result := range results {
+		inventory.Declared = append(inventory.Declared, result.Declared...)
+		inventory.Observed = append(inventory.Observed, result.Observed...)
+	}
+	return inventory
 }

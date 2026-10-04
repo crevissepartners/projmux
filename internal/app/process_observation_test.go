@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -363,4 +364,62 @@ func TestClaudeProcessObservationPublicReadsKeepMissingHostUnknown(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestProcessObservationUnresponsiveHostsShareShortReadBudget(t *testing.T) {
+	reg, _, path := processAttentionWiringFixture(t)
+	pane, _ := reg.Pane("pane-02")
+	host, _, err := localipc.Process(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane.Status.Activation.Process.HostProcess = host
+	done := make(chan struct{})
+	defer close(done)
+	for i := range 3 {
+		current := *pane
+		activation := *pane.Status.Activation.Process
+		current.Status.Activation.Process = &activation
+		current.Metadata.UID = fmt.Sprintf("slow-pane-%d", i)
+		activation.Binding.PaneUID = current.Metadata.UID
+		reg.Panes = append(reg.Panes, current)
+	}
+	reg.Panes = reg.Panes[1:]
+	for _, current := range reg.Panes {
+		binding := processSchemaBinding(current.Status.Activation.Process.Binding)
+		socket := filepath.Join(claudeActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
+		listener, closeLease, err := listenProcessHost(socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := closeLease(context.Background()); err != nil {
+				t.Error(err)
+			}
+		})
+		go func() {
+			conn, err := listener.Unix.AcceptUnix()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			<-done
+		}()
+	}
+	start := time.Now()
+	inventory := observeRegistryProcesses(context.Background(), reg)
+	elapsed := time.Since(start)
+	if len(inventory.Declared) != 3 || len(inventory.Observed) != 3 {
+		t.Fatalf("missing declarations: %+v", inventory)
+	}
+	for _, observed := range inventory.Observed {
+		if observed.Status != resourcegraph.StatusUnknown {
+			t.Fatalf("timeout invented state: %+v", observed)
+		}
+	}
+	// Scheduling allowance is separate from the production 250ms I/O budget.
+	if elapsed > time.Second {
+		t.Fatalf("read exceeded short shared budget: %s", elapsed)
+	}
+	t.Logf("three unresponsive hosts: %s; I/O budget %s", elapsed, 250*time.Millisecond)
 }

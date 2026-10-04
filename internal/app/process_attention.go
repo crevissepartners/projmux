@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -251,22 +254,100 @@ func (r processAttentionRecord) badge() string {
 // the owner, including unavailable hosts. Reads neither discover nor start a
 // runtime. The durable store binding must match the current declaration.
 type processAttentionConsumer struct {
-	store    *processAttentionStore
-	bindings []processhost.Binding
+	store        *processAttentionStore
+	bindings     []processhost.Binding
+	readRegistry func() (coremetadata.Registry, error)
+	processOnly  bool
+	providers    map[string]string
+}
+
+func newRegistryProcessAttentionConsumer(readRegistry func() (coremetadata.Registry, error)) *processAttentionConsumer {
+	return &processAttentionConsumer{readRegistry: readRegistry}
+}
+
+// Refresh the declarations for every read, including unavailable hosts. This
+// snapshot has no runtime discovery, lock creation, or generation authority.
+type processAttentionRegistryError struct{ error }
+
+func (c *processAttentionConsumer) refresh() error {
+	if c.readRegistry == nil {
+		return nil
+	}
+	c.bindings = nil
+	c.processOnly = false
+	reg, err := c.readRegistry()
+	if err != nil {
+		return processAttentionRegistryError{err}
+	}
+	c.providers = map[string]string{}
+	hasProcess, hasTmux := false, false
+	for _, pane := range reg.Panes {
+		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+			hasTmux = true
+			continue
+		}
+		hasProcess = true
+		a := pane.Status.Activation.Process
+		if a == nil {
+			agent, ok := reg.Agent(pane.Metadata.OwnerUID())
+			if !ok || agent.Status.PaneRef != pane.Metadata.UID || (agent.Spec.Provider != "claude" && agent.Spec.Provider != "codex") {
+				continue
+			}
+			window, ok := reg.Window(agent.Metadata.OwnerUID())
+			if !ok {
+				continue
+			}
+			binding := processhost.Binding{Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID}
+			c.bindings = append(c.bindings, binding)
+			c.providers[binding.Pane] = agent.Spec.Provider
+			continue
+		}
+		binding := processSchemaBinding(a.Binding)
+		agent, ok := reg.Agent(binding.Agent)
+		if !ok || !processObservationOwnership(reg, binding, processHostObservation{Binding: binding, Host: a.HostProcess, Child: a.Child, Provider: agent.Spec.Provider}) {
+			continue
+		}
+		c.bindings = append(c.bindings, binding)
+		c.providers[binding.Pane] = agent.Spec.Provider
+	}
+	sort.Slice(c.bindings, func(i, j int) bool { return c.bindings[i].Pane < c.bindings[j].Pane })
+	c.processOnly = hasProcess && !hasTmux
+	return nil
 }
 
 func (c *processAttentionConsumer) records() ([]processAttentionRecord, error) {
 	if c == nil {
 		return nil, nil
 	}
+	if c.readRegistry != nil {
+		c.bindings = nil
+		c.processOnly = false
+		paths, err := config.DefaultPathsFromEnv()
+		if err != nil {
+			return nil, err
+		}
+		c.store = newProcessAttentionStore(paths.StateDir)
+	}
 	records, err := c.store.read()
 	if err != nil {
 		return nil, err
 	}
+	// Most status refreshes have no process projection. Do not decode the
+	// Registry on that path; missing stores remain read-only and absent.
+	if c.readRegistry != nil && len(records) == 0 {
+		return nil, nil
+	}
+	if err := c.refresh(); err != nil {
+		return nil, err
+	}
 	out := make([]processAttentionRecord, 0, len(c.bindings))
 	for _, binding := range c.bindings {
-		if r, ok := records[binding.Pane]; ok && r.Binding == binding {
+		if r, ok := records[binding.Pane]; ok && r.Binding == binding && binding.Generation != "" && (c.readRegistry == nil || r.Provider == c.providers[binding.Pane]) {
 			out = append(out, r)
+		} else if c.readRegistry != nil {
+			// Retain the current declaration without exposing a stale generation's
+			// notices, even when the host or durable projection is unavailable.
+			out = append(out, processAttentionRecord{Binding: binding, Provider: c.providers[binding.Pane]})
 		}
 	}
 	return out, nil
@@ -275,6 +356,13 @@ func (c *processAttentionConsumer) records() ([]processAttentionRecord, error) {
 func (c *processAttentionConsumer) clear(pane string) (bool, error) {
 	if c == nil {
 		return false, nil
+	}
+	// Exact tmux runtime targets never need a process Registry observation.
+	if exactTmuxHandle(pane, "%") == pane && pane != "" {
+		return false, nil
+	}
+	if _, err := c.records(); err != nil {
+		return true, err
 	}
 	for _, binding := range c.bindings {
 		if binding.Pane != pane {
@@ -289,6 +377,9 @@ func (c *processAttentionConsumer) clear(pane string) (bool, error) {
 			return true, processhost.ErrStale
 		}
 		return true, c.store.clear(binding, r.Sequence)
+	}
+	if c.readRegistry != nil && strings.HasPrefix(pane, "pane-") {
+		return true, processhost.ErrStale
 	}
 	return false, nil
 }

@@ -23,11 +23,42 @@ func newGenerationAwareLivePaneLister(base livePaneLister, readRegistry func() (
 }
 
 func (l generationAwareLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
-	rows, err := l.base.ListLivePanes()
+	base := l.base
+	// Read once, lazily: empty process stores and ordinary tmux rows do not
+	// need a Registry snapshot. Generation-aware Codex rows still require it.
+	var registry coremetadata.Registry
+	var readErr error
+	read := false
+	readRegistry := func() (coremetadata.Registry, error) {
+		if !read {
+			registry, readErr = l.readRegistry()
+			read = true
+		}
+		return registry, readErr
+	}
+	if attention, ok := base.(attentionLivePaneLister); ok && l.readRegistry != nil {
+		attention.process = newRegistryProcessAttentionConsumer(readRegistry)
+		rows, err := attention.ListLivePanes()
+		for i := range rows {
+			if rows[i].processNotice == nil && strings.TrimSpace(rows[i].Agent) == aiModeCodex {
+				reg, regErr := readRegistry()
+				if regErr != nil {
+					rows[i].ReplyState = false
+				} else {
+					decorateGenerationLivePane(&rows[i], reg)
+				}
+			}
+		}
+		if err == nil && readErr != nil {
+			err = processAttentionRegistryError{readErr}
+		}
+		return rows, err
+	}
+	rows, err := base.ListLivePanes()
 	if err != nil || l.readRegistry == nil {
 		return rows, err
 	}
-	registry, readErr := l.readRegistry()
+	registry, readErr = l.readRegistry()
 	if readErr != nil {
 		// A failed Registry read cannot prove whether a Codex row still owns the
 		// generation-aware tuple it presented previously. Suppress every Codex
