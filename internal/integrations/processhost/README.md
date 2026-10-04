@@ -1,8 +1,8 @@
 # Owned process host
 
 This package supplies owned process hosts with Claude stream and Codex app-server
-adapters. `create agent --host process --provider claude` starts a public foreground
-owner without tmux; public Codex creation is a later application change. The
+adapters. `create agent --host process --provider claude` (or `--provider codex`)
+starts a public foreground owner without tmux. The
 application writes Registry bindings and exact Wait receipts. This package does
 not create tmux resources, adopt existing providers, or change user settings.
 
@@ -150,8 +150,8 @@ rejection and two subsequent turns. User settings remain untouched.
 resolved executable, environment and settings arguments. `Host.StartCodex` owns
 this app-server through the same supervisor, lifetime pipe and real child Wait
 as Claude. It never uses a daemon, default proxy, broker, or fallback endpoint.
-This remains internal preparation for process hosts used by scripts and CI
-without tmux; no public command or durable schema activates it yet.
+The public foreground create command uses this dedicated connection for scripts
+and CI without tmux.
 
 The host supplies a bounded owned stream to the existing `codexappserver.Client`.
 Initialization negotiates the experimental capability, starts exactly one thread,
@@ -285,7 +285,7 @@ needed. A foreign user, stale generation, another host or mismatched ownership
 writes no provider control. Clients independently verify the owning host's
 kernel birth and socket inode; replacement never causes rediscovery or
 automatic replay. Existing hook and message peer boundaries remain unchanged.
-These are internal seams, with no public command or flag.
+The public foreground create command consumes these authority checks.
 
 The host lease directory is exclusive. An existing directory returns an error
 matching both `ErrBusy` and the underlying existence error. A caller may retry
@@ -299,8 +299,7 @@ both source and target revalidated before the host submits a typed turn. A recei
 is delivered after turn/start acceptance; later completion remains a separate
 event. Reply correlation and terminal-once receipts reuse the existing store.
 Busy and stale routes write no provider turn, and an uncertain delivery is never
-automatically resent. Public consumers and provider-side CLI routing remain a
-later activation step.
+automatically resent. The foreground owner consumes this endpoint for typed control and coordination.
 
 App typed fixtures cover binding rejection, duplicate questions/approvals,
 response races, timeout/disconnect, unchanged termination evidence, and

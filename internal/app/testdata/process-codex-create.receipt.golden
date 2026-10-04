@@ -1,0 +1,36 @@
+{
+  "apiVersion": "OperationReceipt/v1",
+  "operation": "create.agent",
+  "target": {
+    "kind": "Agent",
+    "uid": "AGENT",
+    "name": "owned"
+  },
+  "effects": {
+    "identity": "created",
+    "address": "allocated",
+    "topology": "established",
+    "desiredState": "created",
+    "runtime": "materialized",
+    "focus": "unchanged"
+  },
+  "cardinality": {
+    "projects": 0,
+    "windows": 0,
+    "panes": 0,
+    "agents": 1
+  },
+  "selectedWindowUIDs": [
+    "WINDOW"
+  ],
+  "affectedUIDs": [
+    {
+      "kind": "Agent",
+      "uid": "AGENT",
+      "name": "owned",
+      "action": "created"
+    }
+  ],
+  "compatibilityWarnings": [],
+  "domainEffect": null
+}

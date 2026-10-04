@@ -38,13 +38,25 @@ type processAgentCreateOptions struct {
 
 type processAgentCreateRequest struct{ options processAgentCreateOptions }
 
+// Owner lifetime, actual Wait and plain user turns are shared; answer writers
+// remain private to each provider's typed control bridge.
+type processOwnedHandle interface {
+	Observe(processhost.Binding) (processhost.Snapshot, error)
+	Events(processhost.Binding, uint64) ([]processhost.Event, processhost.Snapshot, error)
+	Wait(context.Context, processhost.Binding) (processhost.Snapshot, error)
+	Stop(processhost.Binding) error
+	Turn(context.Context, processhost.Authority, string, string) error
+}
+
 type processAgentCreateResult struct {
-	Created      createResult
-	Binding      processhost.Binding
-	Handle       *processhost.Handle
-	registryPath string
-	waitReceipt  *coremetadata.TerminationEvidence
-	waitRecorded bool
+	Created       createResult
+	Binding       processhost.Binding
+	Handle        processOwnedHandle
+	Provider      string
+	codexEndpoint *codexProcessEndpoint
+	registryPath  string
+	waitReceipt   *coremetadata.TerminationEvidence
+	waitRecorded  bool
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
@@ -171,11 +183,25 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	if err != nil {
 		return result, err
 	}
-	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.command.Env}, c.processCreateTransactions(path), processhost.DefaultLimits())
+	transactions := c.processCreateTransactions(path)
+	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.command.Env}, transactions, processhost.DefaultLimits())
 	if err != nil {
 		return result, err
 	}
-	result.Handle, err = startProcessClaude(ctx, host, processhost.Launch{Binding: result.Binding, Command: plan.command}, path)
+	launch := processhost.Launch{Binding: result.Binding, Command: plan.command}
+	if result.Provider == aiModeCodex {
+		launch.Spawned = processCodexCreateSpawn(path, result.Binding)
+		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, processCodexCreateConfig(plan, result.Binding.Agent), path)
+		if result.codexEndpoint != nil && result.codexEndpoint.handle != nil {
+			result.Handle = result.codexEndpoint.handle
+		}
+	} else {
+		var handle *processhost.Handle
+		handle, err = startProcessClaude(ctx, host, launch, path)
+		if handle != nil {
+			result.Handle = handle
+		}
+	}
 	return result, err
 }
 
@@ -189,9 +215,10 @@ func (c *createCommand) planProcessAgent(opts processAgentCreateOptions) (proces
 	if err != nil {
 		return plan, err
 	}
-	if provider != aiModeClaude {
-		return plan, errors.New("process-provider-unsupported: this process creator requires Claude")
+	if provider != aiModeClaude && provider != aiModeCodex {
+		return plan, errors.New("process-provider-unsupported: this process creator requires Claude or Codex")
 	}
+	flags.provider = provider
 	if err = c.agents.RequireAgentEnabled(provider); err != nil {
 		return plan, err
 	}
@@ -223,7 +250,7 @@ func (c *createCommand) planProcessAgent(opts processAgentCreateOptions) (proces
 }
 
 func processCreateFlags(opts processAgentCreateOptions) resourceCreateFlags {
-	flags := resourceCreateFlags{name: opts.Name, provider: opts.Provider, providerSet: opts.Provider != "", model: opts.Model, effort: opts.Effort, cwd: opts.CWD, cwdSet: opts.CWD != "", addDirs: opts.AddDirs, persona: opts.Persona, profile: opts.Profile, payload: opts.Payload}
+	flags := resourceCreateFlags{host: "process", name: opts.Name, provider: opts.Provider, providerSet: opts.Provider != "", model: opts.Model, effort: opts.Effort, cwd: opts.CWD, cwdSet: opts.CWD != "", addDirs: opts.AddDirs, persona: opts.Persona, profile: opts.Profile, payload: opts.Payload}
 	if opts.Instructions != "" {
 		flags.persona = opts.Instructions
 		flags.personaOption = "instructions"
@@ -253,6 +280,9 @@ func (c *createCommand) prepareProcessCreateLaunch(plan *processAgentCreatePlan,
 	}
 	c.prepareProjectLinks(provider, plan.project, flags)
 	c.prepareProcessAgentGuidance(flags)
+	if provider == aiModeCodex {
+		return c.prepareProcessCodexLaunch(plan)
+	}
 	planner, ok := c.agents.(processClaudeCommandPlanner)
 	if !ok {
 		return errors.New("process Claude launcher is not configured")
@@ -330,7 +360,11 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 			return err
 		}
 		annotations := plan.flags.agentGuidance.withCreateAnnotation(plan.flags.projectLinks.withCreateAnnotation(withCreateSettingSources(plan.flags, plan.flags.profileLaunch.withAnnotations(withModelAnnotation(plan.flags.model, withEffortAnnotation(plan.flags.effort, plan.flags.personaLaunch.withAnnotations(creator.annotations())))))))
-		agent, err := mutator.CreateAgent(reg, window.Metadata.UID, coremetadata.CreateAgentOptions{Name: opts.Name, Provider: aiModeClaude, Labels: opts.Labels, Annotations: annotations, Workspace: plan.workspace, Activation: activationStateForPayload(opts.Payload), OperationID: operation})
+		provider := plan.flags.provider
+		if provider == "" {
+			provider = aiModeClaude
+		}
+		agent, err := mutator.CreateAgent(reg, window.Metadata.UID, coremetadata.CreateAgentOptions{Name: opts.Name, Provider: provider, Labels: opts.Labels, Annotations: annotations, Workspace: plan.workspace, Activation: activationStateForPayload(opts.Payload), OperationID: operation})
 		if err != nil {
 			return err
 		}
@@ -343,7 +377,7 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 		if err := mutator.ReserveProcessBinding(reg, metadataProcessBinding(binding)); err != nil {
 			return err
 		}
-		result = processAgentCreateResult{Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding}
+		result = processAgentCreateResult{Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding, Provider: provider}
 		return nil
 	})
 	return result, MapMetadataError(err)
@@ -477,6 +511,9 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 		return nil
 	}
 	record := coremetadata.ProcessSessionRecord{Provider: aiModeClaude, Binding: metadataProcessBinding(r.Binding), SessionID: snapshot.Session, ConnectionID: snapshot.Connection, TurnID: snapshot.Turn, ResumeState: coremetadata.ProcessResumeUnknown}
+	if r.Provider == aiModeCodex {
+		record.Provider, record.SessionID, record.ThreadID = aiModeCodex, "", snapshot.Session
+	}
 	for _, request := range snapshot.Pending {
 		record.Pending = append(record.Pending, coremetadata.ProcessRecordedControl{ID: request.ID, Kind: request.Kind, ConnectionID: request.Connection, SessionID: request.Session, TurnID: request.Turn})
 	}
@@ -524,11 +561,12 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 }
 
 func processCreateCleanupError(result processAgentCreateResult, cause error) error {
-	state := "unknown"
+	state := processCreateRuntimeUnknown
 	if result.waitRecorded {
-		state = "offline"
+		state = processCreateRuntimeOffline
 	}
-	return fmt.Errorf("runtime=%s; remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s: %w", state, result.Binding.Agent, result.Binding.Pane, result.Binding.Agent, result.Binding.Agent, cause)
+	text := fmt.Errorf("runtime=%s; remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s: %w", state, result.Binding.Agent, result.Binding.Pane, result.Binding.Agent, result.Binding.Agent, cause)
+	return newProcessCreateError(text, state, processCreateRemainingRefs(result))
 }
 
 func processCLIRequest(flags resourceCreateFlags) (processAgentCreateRequest, cli.OutputMode, error) {
@@ -574,7 +612,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err = c.runProcessPostCreate(ctx, result, stderr); err != nil {
 		return c.failProcessCreate(&result, fmt.Errorf("process-post-create-hook-failed: %w", err))
 	}
-	control, err := c.newProcessClaudeControl(result)
+	control, err := c.newProcessCreateControl(result)
 	if err != nil {
 		return c.failProcessCreate(&result, err)
 	}
@@ -603,7 +641,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
 		controlErr = nil
 	}
-	waitErr = errors.Join(waitErr, controlErr, control.attention.sync(control.handle, control.binding))
+	waitErr = errors.Join(waitErr, controlErr, control.attention.sync(result.Handle, result.Binding))
 	if waitErr != nil {
 		return processCreateCleanupError(result, waitErr)
 	}
@@ -612,12 +650,16 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 
 func (c *createCommand) failProcessCreate(result *processAgentCreateResult, cause error) error {
 	if result.Binding.Agent == "" {
-		return cause
+		return newProcessCreateError(cause, processCreateRuntimeNone, processCreateRemaining{})
 	}
 	if err := c.rollbackProcessAgent(result); err != nil {
-		return errors.Join(cause, err)
+		var cleanup *processCreateError
+		if errors.As(err, &cleanup) {
+			return newProcessCreateError(errors.Join(cause, err), cleanup.Runtime, cleanup.Remaining)
+		}
+		return newProcessCreateError(errors.Join(cause, err), processCreateRuntimeUnknown, processCreateRemainingRefs(*result))
 	}
-	return fmt.Errorf("%w; remaining: none", cause)
+	return newProcessCreateError(fmt.Errorf("%w; remaining: none", cause), processCreateRuntimeNone, processCreateRemaining{})
 }
 
 func (c *createCommand) runProcessPostCreate(ctx context.Context, result processAgentCreateResult, stderr io.Writer) error {
@@ -640,6 +682,10 @@ func (c *createCommand) runProcessPostCreate(ctx context.Context, result process
 }
 
 func (c *createCommand) newProcessClaudeControl(result processAgentCreateResult) (*claudeProcessControl, error) {
+	handle, ok := result.Handle.(*processhost.Handle)
+	if !ok {
+		return nil, errors.New("process Claude handle is unavailable")
+	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return nil, err
@@ -649,7 +695,7 @@ func (c *createCommand) newProcessClaudeControl(result processAgentCreateResult)
 	if err = attention.activate(result.Binding, aiModeClaude, ""); err != nil {
 		return nil, err
 	}
-	return &claudeProcessControl{handle: result.Handle, binding: result.Binding, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
+	return &claudeProcessControl{handle: handle, binding: result.Binding, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
 		questionWindow: time.Duration(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second, approvalWindow: time.Duration(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
 		attention: &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}, nil
 }

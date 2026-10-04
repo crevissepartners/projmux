@@ -15,6 +15,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
+func processCodexHostSocket(registryPath, pane, generation string) string {
+	return claudeActivationLeaseDir(registryPath, pane, generation) + "/codex-host.sock"
+}
+
 const internalCodexProcessBindingEnv = "PMX_INTERNAL_CODEX_PROCESS_BINDING"
 const internalCodexProcessHostEnv = "PMX_INTERNAL_CODEX_PROCESS_HOST"
 
@@ -90,7 +94,7 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
-	socket := claudeActivationLeaseDir(registryPath, launch.Binding.Pane, launch.Binding.Generation) + "/codex-host.sock"
+	socket := processCodexHostSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation)
 	listener, closeLease, err := listenProcessHost(socket)
 	if err != nil {
 		return nil, err
@@ -112,33 +116,33 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	}
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	snap, err := endpoint.handle.Observe(launch.Binding)
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	child, _, err := localipc.Process(snap.PID)
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	hostProcess, _, err := localipc.Process(os.Getpid())
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	endpoint.evidence = coremetadata.CodexProcessRouteEvidence{HostInstance: launch.Binding.Host, PaneUID: launch.Binding.Pane, Generation: launch.Binding.Generation, ThreadID: snap.Session, Connection: snap.Connection, Process: child, HostProcess: hostProcess}
 	endpoint.socketIdentity, err = localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	// Live kernel/provider checks stay outside the Registry transaction.
 	if !endpoint.current(ctx, endpoint.evidence) {
 		rollback()
-		return nil, processhost.ErrStale
+		return endpoint, processhost.ErrStale
 	}
 	b := endpoint.binding
 	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, HostProcess: endpoint.evidence.HostProcess, Child: endpoint.evidence.Process}
@@ -146,15 +150,24 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Public creation reserved a Pending Agent before spawning. Publish the
+		// exact witnessed child before recording its ready thread on that same
+		// ownership generation; neither step adopts an existing provider.
+		if err := intmetadata.DefaultMutator().RecordProcessChild(reg, activation); err != nil {
+			return err
+		}
 		return intmetadata.DefaultMutator().RecordProcessActivation(reg, activation, endpoint.evidence.ThreadID)
 	})
 	if err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
+	// The reservation belongs to the create/resume caller. Route rollback
+	// closes only this owned endpoint and child; the caller must persist actual
+	// Wait before discarding its Registry reservation, or retain unknown refs.
 	if _, err = endpoint.route(ctx); err != nil {
 		rollback()
-		return nil, err
+		return endpoint, err
 	}
 	go endpoint.serve(context.WithoutCancel(ctx))
 	return endpoint, nil
@@ -223,7 +236,25 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 			_, err := e.route(ctx)
 			return err
 		}
-		result := controlProcessForeground(bounded, peer, r, current, func() error { return applyCodexForeground(bounded, e.handle, r) })
+		var receipt *codexProcessReceipt
+		result := controlProcessForeground(bounded, peer, r, current, func() error {
+			if r.Action == "validate" {
+				return nil
+			}
+			if r.Action == "message" {
+				messages := e.messages.Load()
+				if messages == nil || r.MessageRef == "" {
+					return processhost.ErrStale
+				}
+				value, err := messages.receive(bounded, e, r.MessageRef)
+				if err == nil {
+					receipt = &value
+				}
+				return err
+			}
+			return applyCodexForeground(bounded, e.handle, r)
+		})
+		result.Receipt = receipt
 		_ = localipc.WriteJSON(conn, result)
 		return
 	}

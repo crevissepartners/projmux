@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -105,7 +104,7 @@ func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost
 	socket := processClaudeHostSocket(r.registryPath, binding.Pane, binding.Generation)
 	var request any = claudeProcessCheck{Observe: &binding}
 	if agent.Spec.Provider == "codex" {
-		socket = filepath.Join(claudeActivationLeaseDir(r.registryPath, binding.Pane, binding.Generation), "codex-host.sock")
+		socket = processCodexHostSocket(r.registryPath, binding.Pane, binding.Generation)
 		request = codexProcessExchange{Observe: &binding}
 	}
 	identity, err := localipc.InspectOwnedSocket(socket)

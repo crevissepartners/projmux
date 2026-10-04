@@ -74,7 +74,7 @@ func TestConfigAgentQuestionsSetThenShowMatchesHookLoaders(t *testing.T) {
 		t.Fatalf("agent-questions after set = %q, want %q", got, want)
 	}
 
-	if got := claudeQuestionAnsweringFromPaths(paths); got != config.AgentQuestionAnsweringProjmux {
+	if got := questionAnsweringFromPaths(paths); got != config.AgentQuestionAnsweringProjmux {
 		t.Fatalf("hook answering = %q, want projmux", got)
 	}
 	seconds, err := config.LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile())
@@ -89,7 +89,7 @@ func TestConfigAgentQuestionsSetThenShowMatchesHookLoaders(t *testing.T) {
 	if got, want := runConfigRoute(t, cmd, "agent-questions", "--answering=Claude"), "answering claude window 120\n"; got != want {
 		t.Fatalf("agent-questions --answering = %q, want %q", got, want)
 	}
-	if got := claudeQuestionAnsweringFromPaths(paths); got != config.AgentQuestionAnsweringClaude {
+	if got := questionAnsweringFromPaths(paths); got != config.AgentQuestionAnsweringClaude {
 		t.Fatalf("hook answering = %q, want claude", got)
 	}
 	if seconds, _ := config.LoadAgentQuestionWindowSecondsFile(paths.AgentQuestionWindowSecondsFile()); seconds != 120 {

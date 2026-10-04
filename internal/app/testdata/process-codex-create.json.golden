@@ -1,0 +1,37 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "kind": "AgentList",
+  "items": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "AGENT",
+        "name": "owned",
+        "annotations": {
+          "projmux.io/agent-guidance-digest": "df3fc3ce9c599425e22267c8ce5b145ce028970f0a9883b152eae178d47dbe35",
+          "projmux.io/effort": "low",
+          "projmux.io/effort-source": "flag",
+          "projmux.io/model": "stub-model",
+          "projmux.io/model-source": "flag"
+        },
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "WINDOW"
+        },
+        "createdAt": "TIME"
+      },
+      "spec": {
+        "provider": "codex",
+        "workspace": {
+          "cwd": "ROOT"
+        }
+      },
+      "status": {
+        "phase": "Running",
+        "paneRef": "PANE",
+        "lastTransitionAt": "TIME"
+      }
+    }
+  ]
+}

@@ -426,6 +426,13 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 		if len(args) != 2 {
 			return usageError("--via is available only for Claude turn interrupt")
 		}
+		if agent.Spec.Provider == aiModeCodex && processAgentAnswers(registry, agent) {
+			operation, err := c.callProcessCodexTurn(registry, agent, "interrupt", "")
+			if err == nil {
+				_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionInterruptTurn), agent.Metadata.UID, operation)
+			}
+			return err
+		}
 		binding, err := c.bindAgentControl("agent turn interrupt", registry, agent)
 		if err != nil {
 			return err
@@ -818,6 +825,13 @@ func (c *agentCommand) resolveTurnControlBinding(action, ref, text string, stdou
 	handled, err := c.startProcessClaudeTurn(reg, agent, text, stdout)
 	if handled || err != nil {
 		return exactAgentControlBinding{}, handled, err
+	}
+	if agent.Spec.Provider == aiModeCodex && processAgentAnswers(reg, agent) {
+		operation, err := c.callProcessCodexTurn(reg, agent, "turn", text)
+		if err == nil {
+			_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionSendTurn), agent.Metadata.UID, operation)
+		}
+		return exactAgentControlBinding{}, true, err
 	}
 	binding, err := c.bindAgentControl("agent turn start", reg, agent)
 	return binding, false, err

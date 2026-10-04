@@ -2202,7 +2202,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		questions: &codexQuestionChannel{
 			loadRegistry: c.loadRegistry, store: defaultAgentQuestionStore,
 			popup:     tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{runner: inttmux.ExecRunner{}, target: target.Route}, executable: rawExecutablePath, routed: true},
-			answering: claudeQuestionAnswering, window: claudeQuestionWindow,
+			answering: questionAnswering, window: claudeQuestionWindow,
 			newID: agentquestion.NewID,
 		},
 		openTimeout: codexBrokerObserverOpenTimeout,

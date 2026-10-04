@@ -98,7 +98,6 @@ func TestCodexProcessQuestionPolicyParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				f.control.questionAnswering = func() config.AgentQuestionAnswering { return central }
 				f.turn(t, "policy", "controls")
 				f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
 				if err := f.control.sync(context.Background()); err != nil {
@@ -108,26 +107,8 @@ func TestCodexProcessQuestionPolicyParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				want := 0
-				if channel || central == config.AgentQuestionAnsweringProjmux {
-					want = 1
-				}
-				if len(questions) != want {
-					t.Fatalf("questions=%d want=%d", len(questions), want)
-				}
-				if want == 0 {
-					// Enabling the channel later must capture the still-blocking request.
-					_, _, err = f.store.UpdateConvergent(func(r *coremetadata.Registry) error {
-						a, _ := r.Agent(f.endpoint.binding.Agent)
-						if a.Metadata.Annotations == nil {
-							a.Metadata.Annotations = map[string]string{}
-						}
-						a.Metadata.Annotations[coremetadata.AnnotationAgentQuestionChannel] = coremetadata.QuestionChannelOn
-						return nil
-					})
-					if err != nil {
-						t.Fatal(err)
-					}
+				if len(questions) != 1 {
+					t.Fatalf("process question missing with channel=%v policy=%s: %d", channel, central, len(questions))
 				}
 				f.answerControls(t)
 			})
@@ -174,10 +155,6 @@ func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
 	paths := config.DefaultPaths(filepath.Join(f.root, "config"), filepath.Join(f.root, "state"))
 	f.control.questions = agentquestion.NewStore(paths.StateDir)
 	f.control.approvals = agentapproval.NewStore(paths.StateDir)
-	f.control.questionAnswering = func() config.AgentQuestionAnswering {
-		v, _ := config.LoadAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile())
-		return v
-	}
 	attention := newProcessAttentionStore(paths.StateDir)
 	if err := attention.activate(e.binding, "codex", ""); err != nil {
 		t.Fatal(err)
@@ -337,8 +314,8 @@ func TestCodexProcessForegroundAndCoordinationWireRemainDistinct(t *testing.T) {
 	if text(left) != request.Prompt {
 		t.Fatal("operator turn gained an envelope")
 	}
-	var envelope coremessage.Envelope
-	if err := json.Unmarshal([]byte(text(right)), &envelope); err != nil || envelope.Authority != coremessage.PeerAuthority() || envelope.Payload != "bounded coordination" || envelope.MessageRef != "distinct-message" {
+	var envelope struct{ Authority, Payload, MessageRef string }
+	if err := json.Unmarshal([]byte(text(right)), &envelope); err != nil || envelope.Authority != "untrusted-coordination-only" || envelope.Payload != "bounded coordination" || envelope.MessageRef != "distinct-message" {
 		t.Fatal("coordination envelope lost", envelope, err)
 	}
 }

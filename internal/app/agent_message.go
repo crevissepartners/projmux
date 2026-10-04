@@ -106,6 +106,11 @@ func claudeRouteRefusalPrefix(role string, err error) string {
 }
 
 func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+	if processAgentAnswers(registry, agent) && agent.Spec.Provider == aiModeCodex {
+		ctx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
+		defer cancel()
+		return resolveLiveProcessCodexRoute(ctx, r.registryPath, registry, agent.Metadata.UID)
+	}
 	resolve := coremetadata.ResolveAgentRoute
 	if processClaudeAnswers(registry, agent) {
 		proof, ok := discoverProcessClaudeProof(r.registryPath, registry, agent.Metadata.UID)
@@ -677,6 +682,9 @@ func (c *agentCommand) resolveMessageTargetRoute(registry coremetadata.Registry,
 func (c *agentCommand) pushCoordination(record messagestore.Record, target coremetadata.Agent,
 	targetRoute coremetadata.AgentRouteRef, envelope coremessage.Envelope,
 ) (messagestore.Record, error) {
+	if _, ok := targetRoute.Authority().(coremetadata.CodexProcessRouteEvidence); ok {
+		return c.pushProcessCodexCoordination(record, targetRoute)
+	}
 	if target.Spec.Provider == string(aiprovider.Claude) {
 		private, submitErr := c.messageClaude.Submit(context.Background(), c.messagePaths.registryPath, targetRoute, envelope)
 		updated, err := c.projectClaudeDelivery(record, private, submitErr)

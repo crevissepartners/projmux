@@ -19,6 +19,7 @@ import (
 type processForegroundRequest struct {
 	Authority                       processhost.Authority
 	Action, Operation, Prompt, Turn string
+	MessageRef                      string
 	Token                           processForegroundToken
 	Response                        processhost.Response
 	Decision                        codexappserver.ApprovalDecision
@@ -42,6 +43,7 @@ type processForegroundResult struct {
 	Accepted            bool
 	Stale, Busy, Closed bool
 	Observation         *processHostObservation `json:",omitempty"`
+	Receipt             *codexProcessReceipt    `json:",omitempty"`
 }
 
 func controlProcessForeground(ctx context.Context, peer coremetadata.ProcessIdentity, request processForegroundRequest, current func(context.Context, processhost.Authority) error, apply func() error) processForegroundResult {
