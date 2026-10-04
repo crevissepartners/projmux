@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -299,18 +298,15 @@ func describeSpecRows(resource any) [][2]string {
 	}
 }
 
-// describeRuntimeRows consumes the complete content-free process schema. JSON
-// blocks keep every ownership/control identity visible without inventing live
-// liveness or querying provider state from this read-only projection.
+// describeRuntimeRows renders content-free process identities and resume
+// evidence as ordinary rows. Pending controls expose only their count.
 func describeRuntimeRows(pane coremetadata.Pane) [][2]string {
 	rows := [][2]string{{"RuntimeKind", string(pane.Spec.Runtime.EffectiveKind())}}
-	if pane.Status.Activation.Process != nil {
-		value, _ := json.Marshal(pane.Status.Activation.Process)
-		rows = append(rows, [2]string{"ProcessActivation", string(value)})
+	if a := pane.Status.Activation.Process; a != nil {
+		rows = append(rows, [2]string{"ProcessHost", a.Binding.HostInstanceID}, [2]string{"HostPID", strconv.Itoa(a.HostProcess.PID)}, [2]string{"ChildPID", strconv.Itoa(a.Child.PID)})
 	}
-	if pane.Status.ProcessSession != nil {
-		value, _ := json.Marshal(pane.Status.ProcessSession)
-		rows = append(rows, [2]string{"ProcessSession", string(value)})
+	if session := pane.Status.ProcessSession; session != nil {
+		rows = append(rows, [2]string{"ResumeState", string(session.ResumeState)}, [2]string{"PendingControls", strconv.Itoa(len(session.Pending))})
 	}
 	return rows
 }

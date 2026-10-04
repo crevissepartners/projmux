@@ -23,7 +23,24 @@ func newGenerationAwareLivePaneLister(base livePaneLister, readRegistry func() (
 }
 
 func (l generationAwareLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
-	rows, err := l.base.ListLivePanes()
+	base := l.base
+	// The tmux and process consumers share one Registry snapshot per call.
+	// Other injected listers retain their existing compatibility behavior.
+	if attention, ok := base.(attentionLivePaneLister); ok && l.readRegistry != nil {
+		registry, err := l.readRegistry()
+		if err != nil {
+			return nil, err
+		}
+		attention.process = newRegistryProcessAttentionConsumer(func() (coremetadata.Registry, error) { return registry, nil })
+		rows, err := attention.ListLivePanes()
+		for i := range rows {
+			if rows[i].processNotice == nil && strings.TrimSpace(rows[i].Agent) == aiModeCodex {
+				decorateGenerationLivePane(&rows[i], registry)
+			}
+		}
+		return rows, err
+	}
+	rows, err := base.ListLivePanes()
 	if err != nil || l.readRegistry == nil {
 		return rows, err
 	}

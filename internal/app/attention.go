@@ -55,6 +55,7 @@ type attentionCommand struct {
 
 func newAttentionCommand() *attentionCommand {
 	return &attentionCommand{
+		process:              newRegistryProcessAttentionConsumer(snapshotResourceRegistry),
 		runner:               inttmux.ExecRunner{},
 		producer:             newAttentionNotifyProducer(),
 		sidebarPreviewActive: isSidebarPreviewActive,
@@ -262,7 +263,10 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 		return err
 	}
 
-	rows := c.windowAttentionRows(windowID)
+	rows, listErr := c.windowAttentionRows(windowID)
+	if listErr != nil {
+		return listErr
+	}
 	badgeKind := ""
 	for _, row := range rows {
 		badgeKind = aibadge.Aggregate(badgeKind, attentionWindowBadgeKind(row))
@@ -459,12 +463,12 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 	return output
 }
 
-func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
+func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWindowRow, error) {
 	processRows := []attentionWindowRow{}
 	if c != nil && c.process != nil {
 		records, err := c.process.records()
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		for _, r := range records {
 			if r.Binding.Window == windowID {
@@ -472,8 +476,8 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 			}
 		}
 	}
-	if c == nil || c.runner == nil {
-		return processRows
+	if c == nil || c.runner == nil || (c.process != nil && c.process.processOnly) {
+		return processRows, nil
 	}
 	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
 		Target: windowID,
@@ -485,10 +489,13 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 		},
 	})
 	if err != nil {
-		return processRows
+		if c.process != nil && len(c.process.bindings) > 0 {
+			return processRows, err
+		}
+		return processRows, nil
 	}
 	if len(rows) == 0 {
-		return append(processRows, c.legacyWindowAttentionRows(windowID)...)
+		return append(processRows, c.legacyWindowAttentionRows(windowID)...), nil
 	}
 
 	out := make([]attentionWindowRow, 0, len(rows))
@@ -500,7 +507,7 @@ func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindo
 			AIBadgeKind: fields[3],
 		})
 	}
-	return append(processRows, out...)
+	return append(processRows, out...), nil
 }
 
 func (c *attentionCommand) legacyWindowAttentionRows(windowID string) []attentionWindowRow {
@@ -583,7 +590,7 @@ func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
 	if processErr != nil {
 		return nil, processErr
 	}
-	if c == nil || c.runner == nil {
+	if c == nil || c.runner == nil || (c.process != nil && c.process.processOnly) {
 		if c != nil && c.process != nil {
 			return processRows, nil
 		}
@@ -667,7 +674,7 @@ func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 	if processErr != nil {
 		return nil, processErr
 	}
-	if l.runner == nil && l.process != nil {
+	if l.process != nil && (l.runner == nil || l.process.processOnly) {
 		return processRows, nil
 	}
 	rows, err := (&attentionCommand{runner: l.runner}).listAttentionPanes()

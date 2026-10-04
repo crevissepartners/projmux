@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -251,12 +253,77 @@ func (r processAttentionRecord) badge() string {
 // the owner, including unavailable hosts. Reads neither discover nor start a
 // runtime. The durable store binding must match the current declaration.
 type processAttentionConsumer struct {
-	store    *processAttentionStore
-	bindings []processhost.Binding
+	store        *processAttentionStore
+	bindings     []processhost.Binding
+	readRegistry func() (coremetadata.Registry, error)
+	processOnly  bool
+	providers    map[string]string
+}
+
+func newRegistryProcessAttentionConsumer(readRegistry func() (coremetadata.Registry, error)) *processAttentionConsumer {
+	return &processAttentionConsumer{readRegistry: readRegistry}
+}
+
+// Refresh the declarations for every read, including unavailable hosts. This
+// snapshot has no runtime discovery, lock creation, or generation authority.
+func (c *processAttentionConsumer) refresh() error {
+	if c.readRegistry == nil {
+		return nil
+	}
+	reg, err := c.readRegistry()
+	if err != nil {
+		return err
+	}
+	c.bindings = nil
+	c.providers = map[string]string{}
+	hasProcess, hasTmux := false, false
+	for _, pane := range reg.Panes {
+		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+			hasTmux = true
+			continue
+		}
+		hasProcess = true
+		a := pane.Status.Activation.Process
+		if a == nil {
+			agent, ok := reg.Agent(pane.Metadata.OwnerUID())
+			if !ok || agent.Status.PaneRef != pane.Metadata.UID || (agent.Spec.Provider != "claude" && agent.Spec.Provider != "codex") {
+				continue
+			}
+			window, ok := reg.Window(agent.Metadata.OwnerUID())
+			if !ok {
+				continue
+			}
+			binding := processhost.Binding{Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID}
+			c.bindings = append(c.bindings, binding)
+			c.providers[binding.Pane] = agent.Spec.Provider
+			continue
+		}
+		binding := processSchemaBinding(a.Binding)
+		agent, ok := reg.Agent(binding.Agent)
+		if !ok || !processObservationOwnership(reg, binding, processHostObservation{Binding: binding, Host: a.HostProcess, Child: a.Child, Provider: agent.Spec.Provider}) {
+			continue
+		}
+		c.bindings = append(c.bindings, binding)
+		c.providers[binding.Pane] = agent.Spec.Provider
+	}
+	sort.Slice(c.bindings, func(i, j int) bool { return c.bindings[i].Pane < c.bindings[j].Pane })
+	c.processOnly = hasProcess && !hasTmux
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return err
+	}
+	c.store = newProcessAttentionStore(paths.StateDir)
+	return nil
 }
 
 func (c *processAttentionConsumer) records() ([]processAttentionRecord, error) {
 	if c == nil {
+		return nil, nil
+	}
+	if err := c.refresh(); err != nil {
+		return nil, err
+	}
+	if c.readRegistry != nil && len(c.bindings) == 0 {
 		return nil, nil
 	}
 	records, err := c.store.read()
@@ -265,8 +332,12 @@ func (c *processAttentionConsumer) records() ([]processAttentionRecord, error) {
 	}
 	out := make([]processAttentionRecord, 0, len(c.bindings))
 	for _, binding := range c.bindings {
-		if r, ok := records[binding.Pane]; ok && r.Binding == binding {
+		if r, ok := records[binding.Pane]; ok && r.Binding == binding && binding.Generation != "" && (c.readRegistry == nil || r.Provider == c.providers[binding.Pane]) {
 			out = append(out, r)
+		} else if c.readRegistry != nil {
+			// Retain the current declaration without exposing a stale generation's
+			// notices, even when the host or durable projection is unavailable.
+			out = append(out, processAttentionRecord{Binding: binding, Provider: c.providers[binding.Pane]})
 		}
 	}
 	return out, nil
@@ -275,6 +346,9 @@ func (c *processAttentionConsumer) records() ([]processAttentionRecord, error) {
 func (c *processAttentionConsumer) clear(pane string) (bool, error) {
 	if c == nil {
 		return false, nil
+	}
+	if err := c.refresh(); err != nil {
+		return true, err
 	}
 	for _, binding := range c.bindings {
 		if binding.Pane != pane {

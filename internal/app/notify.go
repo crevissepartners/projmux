@@ -52,6 +52,7 @@ type notifyCommand struct {
 
 func newNotifyCommand(livePanes livePaneLister) *notifyCommand {
 	cmd := &notifyCommand{
+		process:    newRegistryProcessAttentionConsumer(snapshotResourceRegistry),
 		now:        time.Now,
 		runner:     reconcileDefaultRunner(),
 		livePanes:  livePanes,

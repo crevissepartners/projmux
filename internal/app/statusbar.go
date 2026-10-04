@@ -580,7 +580,13 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	// ack here the next click would re-classify the same head entry as gone
 	// and the user would be stuck repeatedly toasting the same row. The toast
 	// remains as a UX signal that the focus side of the click was skipped.
-	display := c.classifyHeadDisplayBestEffort(head)
+	display := c.classifyHeadDisplayBestEffort(head, stderr)
+	// Process notices share the attention projection, but have no terminal
+	// destination. Explicit acknowledgement leaves required-action semantics
+	// under the same control as the notification command.
+	if strings.HasPrefix(head.ID, "ai:process:") {
+		return c.displayStatusbarMessage(opts, stderr, "process Pane has no terminal focus target; acknowledge the notification explicitly")
+	}
 	if display == notifyDisplayGone || strings.TrimSpace(target) == "" {
 		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
 			return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))
@@ -646,13 +652,16 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 // The sidebar/`--live` surfaces keep their stricter contract (empty live map
 // means "no panes are in reply state, so anything ai-prefixed *is* stale")
 // because they have richer context and are not on the click critical path.
-func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notification) notifyRowDisplayState {
+func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notification, stderr ...io.Writer) notifyRowDisplayState {
 	if c == nil || c.runner == nil {
 		return classifyNotifyRowState(head, nil, nil)
 	}
 	lister := newGenerationAwareLivePaneLister(newAttentionLivePaneLister(c.runner), snapshotResourceRegistry)
 	panes, paneSet, err := (&notifyCommand{livePanes: lister}).listNotifyLivePanesAndSet()
-	if err != nil {
+	if err != nil && len(stderr) > 0 {
+		fmt.Fprintf(stderr[0], "statusbar notify: observe attention: %v\n", err)
+	}
+	if err != nil && len(panes) == 0 {
 		return classifyNotifyRowState(head, nil, nil)
 	}
 	// Real pane-inventory GONE is honoured even when no panes are in reply
