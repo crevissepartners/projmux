@@ -289,8 +289,8 @@ func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The response write finishes before the provider records its wire log.
-	f.wait(t, func(processhost.Snapshot) bool {
-		for _, n := range f.wire(t) {
+	f.waitNamed(t, "central CLI answer never reached owned provider", func(processhost.Snapshot) bool {
+		for _, n := range f.pollWire(t) {
 			if len(n["result"]) > 0 && bytes.Contains(n["result"], []byte("red")) {
 				return true
 			}

@@ -190,6 +190,10 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 }
 func (f *processCodexFixture) wait(t *testing.T, predicate func(processhost.Snapshot) bool) processhost.Snapshot {
 	t.Helper()
+	return f.waitNamed(t, "predicate deadline", predicate)
+}
+func (f *processCodexFixture) waitNamed(t *testing.T, description string, predicate func(processhost.Snapshot) bool) processhost.Snapshot {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		s, err := f.endpoint.handle.Observe(f.endpoint.binding)
@@ -202,7 +206,7 @@ func (f *processCodexFixture) wait(t *testing.T, predicate func(processhost.Snap
 		time.Sleep(time.Millisecond)
 	}
 	s, _ := f.endpoint.handle.Observe(f.endpoint.binding)
-	t.Fatalf("predicate deadline: %+v", s)
+	t.Fatalf("%s: last snapshot=%+v; complete wire rows=%d", description, s, len(f.pollWire(t)))
 	return s
 }
 func (f *processCodexFixture) turn(t *testing.T, operation, prompt string) {
@@ -251,6 +255,59 @@ func (f *processCodexFixture) wire(t *testing.T) []map[string]json.RawMessage {
 		result = append(result, n)
 	}
 	return result
+}
+
+// Polling may observe an append before its final newline. Only that final
+// fragment is deferred; a malformed complete line still fails immediately.
+func (f *processCodexFixture) pollWire(t *testing.T) []map[string]json.RawMessage {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := processCodexCompleteWire(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+func processCodexCompleteWire(raw []byte) ([]map[string]json.RawMessage, error) {
+	var rows []map[string]json.RawMessage
+	complete := raw[:bytes.LastIndexByte(raw, '\n')+1]
+	if len(complete) == 0 {
+		return nil, nil
+	}
+	for line := range bytes.SplitSeq(bytes.TrimSuffix(complete, []byte("\n")), []byte("\n")) {
+		var row map[string]json.RawMessage
+		if err := json.Unmarshal(line, &row); err != nil {
+			return nil, fmt.Errorf("malformed complete wire line: %w", err)
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+func TestProcessCodexCompleteWireDefersOnlyPartialLastLine(t *testing.T) {
+	for _, tc := range []struct {
+		name, wire string
+		rows       int
+		invalid    bool
+	}{
+		{"empty", "", 0, false},
+		{"partial", `{"id":`, 0, false},
+		{"complete and partial", "{\"id\":1}\n{\"id\":", 1, false},
+		{"complete", "{\"id\":1}\n", 1, false},
+		{"malformed complete", "{bad}\n", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := processCodexCompleteWire([]byte(tc.wire))
+			if (err != nil) != tc.invalid || len(rows) != tc.rows {
+				t.Fatalf("rows=%d error=%v", len(rows), err)
+			}
+		})
+	}
 }
 func TestCodexProcessBindingSingleWriterAndExactTokens(t *testing.T) {
 	f := newProcessCodexFixture(t, nil)
