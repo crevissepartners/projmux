@@ -74,7 +74,7 @@ func TestProcessAdmissionRefusesBeforeTmuxOrRegistryWrites(t *testing.T) {
 	before, _ := json.Marshal(reg)
 	for _, action := range []resourcegraph.ProcessAction{resourcegraph.ProcessAttach, resourcegraph.ProcessFocus, resourcegraph.ProcessKeys, resourcegraph.ProcessCapture, resourcegraph.ProcessPopup, resourcegraph.ProcessRelaunch} {
 		_, handled, err := runtime.admit(reg, paneUID, action)
-		if !handled || err == nil || !strings.Contains(err.Error(), "process-pane-no-tmux-target") || !strings.Contains(err.Error(), "interrupt, or Stop") {
+		if !handled || err == nil || !strings.Contains(err.Error(), "process-"+string(action)+"-unsupported") || !strings.Contains(err.Error(), "interrupt, or Stop") {
 			t.Fatalf("%s: %v %v", action, handled, err)
 		}
 	}
@@ -83,12 +83,12 @@ func TestProcessAdmissionRefusesBeforeTmuxOrRegistryWrites(t *testing.T) {
 	focus.processRuntime = runtime
 	focus.loadRegistry = func() (coremetadata.Registry, error) { return reg, nil }
 	focus.runner = runner
-	if err := focus.Run([]string{"pane", "uid:" + paneUID}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-pane-no-tmux-target") {
+	if err := focus.Run([]string{"pane", "uid:" + paneUID}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-focus-unsupported") {
 		t.Fatalf("focus: %v", err)
 	}
 	pane, _ := reg.Pane(paneUID)
 	command := &agentCommand{processRuntime: runtime, loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }}
-	if err := command.runRelaunch([]string{"uid:" + pane.Metadata.OwnerUID(), "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-pane-no-tmux-target") {
+	if err := command.runRelaunch([]string{"uid:" + pane.Metadata.OwnerUID(), "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-relaunch-unsupported") {
 		t.Fatalf("relaunch: %v", err)
 	}
 	after, _ := json.Marshal(reg)
@@ -285,7 +285,7 @@ func TestProcessAdmissionTerminalConsumersRefuseBeforeSideEffects(t *testing.T) 
 	writes := 0
 	assertRefusal := func(action resourcegraph.ProcessAction, err error) {
 		t.Helper()
-		if err == nil || !strings.Contains(err.Error(), "process-pane-no-tmux-target: "+string(action)) {
+		if err == nil || !strings.Contains(err.Error(), "process-"+string(action)+"-unsupported:") {
 			t.Fatalf("%s: %v", action, err)
 		}
 	}

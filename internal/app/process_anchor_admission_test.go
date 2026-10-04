@@ -33,7 +33,7 @@ func TestProcessAdmissionCreatePaneAnchor(t *testing.T) {
 			stdout, _, err := runRoute(t, create, args...)
 			after, _ := json.Marshal(store.registry)
 			t.Logf("argv=%v error=%v tmux_calls=%d registry_writes=%d calls=%v", args, err, len(tmux.calls), store.writes, tmux.calls)
-			if err == nil || !strings.Contains(err.Error(), "process-capability-unsupported") || !strings.Contains(err.Error(), "same Window") || stdout != "" || len(tmux.calls) != 0 || store.writes != 0 || routeCalls != 0 || string(before) != string(after) {
+			if err == nil || !strings.Contains(err.Error(), "process-create-pane-unsupported") || !strings.Contains(err.Error(), "same Window") || stdout != "" || len(tmux.calls) != 0 || store.writes != 0 || routeCalls != 0 || string(before) != string(after) {
 				t.Fatal("process anchor did not refuse before tmux and Registry writes")
 			}
 		})
@@ -48,7 +48,7 @@ func TestProcessAdmissionSplitAnchor(t *testing.T) {
 	id, err := materializer.splitPane(context.Background(), "", "right", "/fixture", nil)
 	after, _ := json.Marshal(reg)
 	t.Logf("anchor=%s id=%q error=%v tmux_calls=%d registry_writes=0 calls=%v", paneUID, id, err, len(tmux.calls), tmux.calls)
-	if err == nil || !strings.Contains(err.Error(), "process-capability-unsupported") || !strings.Contains(err.Error(), "same Window") || id != "" || len(tmux.calls) != 0 || string(before) != string(after) {
+	if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || !strings.Contains(err.Error(), "same Window") || id != "" || len(tmux.calls) != 0 || string(before) != string(after) {
 		t.Fatal("process split did not refuse before tmux")
 	}
 }
@@ -116,7 +116,7 @@ func TestProcessAdmissionMixedSplitAnchor(t *testing.T) {
 		if process {
 			m.processAnchor = &processTerminalTarget{runtime: runtime, registry: store.registry.Clone(), paneUID: pane.Metadata.UID}
 			id, err := m.splitPane(context.Background(), pane.Status.Activation.RuntimeID, "right", "/srv/beta", nil)
-			if err == nil || !strings.Contains(err.Error(), "process-capability-unsupported") || id != "" || len(tmux.calls) != 0 {
+			if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || id != "" || len(tmux.calls) != 0 {
 				t.Fatalf("process split: id=%q err=%v calls=%v", id, err, tmux.calls)
 			}
 		}

@@ -126,6 +126,29 @@ func (r Registry) validProcessBinding(pane Pane, b ProcessBinding) bool {
 	return ok
 }
 
+// CurrentProcessActivation returns a copy of the current immutable activation.
+// It validates ownership and generation, not host liveness or control authority.
+// Retired session bindings remain valid history but cannot pass this read.
+func (r Registry) CurrentProcessActivation(binding ProcessBinding) (ProcessActivation, string, bool) {
+	pane, ok := r.Pane(binding.PaneUID)
+	if !ok || !r.validProcessBinding(*pane, binding) || pane.Spec.Runtime.EffectiveKind() != RuntimeProcess {
+		return ProcessActivation{}, "", false
+	}
+	agent, _ := r.Agent(binding.AgentUID)
+	if !currentProcessOwner(*pane, *agent, binding) || !currentProcessActivation(pane.Status.Activation, binding) {
+		return ProcessActivation{}, "", false
+	}
+	return *pane.Status.Activation.Process, agent.Spec.Provider, true
+}
+
+func currentProcessOwner(pane Pane, agent Agent, binding ProcessBinding) bool {
+	return pane.Metadata.OwnerRef.Kind == KindAgent && agent.Metadata.OwnerRef.Kind == KindWindow && agent.Status.PaneRef == binding.PaneUID && (agent.Spec.Provider == "claude" || agent.Spec.Provider == "codex")
+}
+
+func currentProcessActivation(a PaneActivation, binding ProcessBinding) bool {
+	return a.Kind == RuntimeProcess && a.RuntimeID == "" && a.Process != nil && a.Process.Binding == binding && a.Generation == binding.Generation && a.OperationID == binding.OperationID && a.AgentUID == binding.AgentUID && a.Process.HostProcess.Valid() && a.Process.Child.Valid()
+}
+
 func validProcessControls(controls []ProcessRecordedControl, connection, session, turn string) bool {
 	if len(controls) > 32 {
 		return false

@@ -1362,20 +1362,29 @@ func (c *createCommand) planPaneTargets(
 	return plan, nil
 }
 
-// processAnchorAdmission runs against the locked Registry before route binding,
-// reconciliation, default-shell reads, or resource allocation. Nil keeps the
-// established tmux transaction order.
+// processAnchorAdmission checks a read-only snapshot before route binding and
+// repeats against locked bytes before reconciliation or resource allocation.
+// Nil retains the legacy injectable transaction order.
 func (c *createCommand) processAnchorAdmission(scope createScope, flags resourceCreateFlags, spelling string) func(coremetadata.Registry) error {
 	if c.processRuntime == nil {
 		return nil
 	}
 	return func(registry coremetadata.Registry) error {
+		if len(processPaneUIDs(registry, c.processRuntime.inventory())) == 0 {
+			return nil
+		}
 		project, err := c.resolveProject(registry, scope)
 		if err != nil {
-			return err
+			return nil
 		}
 		_, err = c.planPaneTargets(registry, project, scope, flags, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling)
-		return err
+		var capability resourcegraph.ProcessCapabilityError
+		if errors.As(err, &capability) {
+			return err
+		}
+		// Preserve ordinary tmux validation order and its route errors. Only the
+		// process capability refusal belongs to this earlier admission stage.
+		return nil
 	}
 }
 
@@ -1714,6 +1723,16 @@ func (c *createCommand) ensureAnchorPane(
 		stored, ok := registry.WindowAnchor(window.Metadata.UID)
 		if !ok || stored.Metadata.UID != anchor.Metadata.UID {
 			return "", fmt.Errorf("create pane: window/%s stored anchor %q is dangling or cross-Window", window.Metadata.Name, target.anchorUID)
+		}
+	}
+
+	if c.processRuntime != nil {
+		c.runtime.processAnchor = nil
+		if c.processRuntime.inventory().Declares(*anchor) {
+			c.runtime.processAnchor = &processTerminalTarget{runtime: c.processRuntime, registry: registry.Clone(), paneUID: anchor.Metadata.UID}
+			if err := c.runtime.processAnchor.admitSplitAnchor(anchor.Status.Activation.RuntimeID); err != nil {
+				return "", err
+			}
 		}
 	}
 
@@ -2247,11 +2266,26 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 	// handler reaches the transaction. Bind the exact app-owned route here so
 	// malformed argv keeps its stable usage failure and no environment probe can
 	// preempt it, while reconciliation and every later write share one route.
-	if admission == nil {
-		if err := c.ensureRuntimeRoute(ctx); err != nil {
+	if admission != nil {
+		read := c.store.snapshot
+		if read == nil {
+			read = c.store.load
+		}
+		if read == nil {
+			return errCreateRoutesNotConfigured
+		}
+		registry, err := read()
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		if err := admission(registry); err != nil {
 			return err
 		}
 	}
+	if err := c.ensureRuntimeRoute(ctx); err != nil {
+		return err
+	}
+
 	operationID, err := c.newOperationID()
 	if err != nil {
 		return err
@@ -2263,13 +2297,12 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 	// scope closes before rollback, so unwinding re-proves identity in full.
 	c.runtime.openRouteIdentityCache(operationID)
 	defer c.runtime.closeRouteIdentityCache()
-	// Default-shell reads stay before the lock for tmux-only invocations.
-	// Process-aware creates defer these reads until locked anchor admission.
-	clearDefaults := func() {}
-	if admission == nil {
-		clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
-	}
-	defer func() { clearDefaults() }()
+	// The read-only admission above refuses process anchors before transport.
+	// After it passes, preserve the tmux default-read order outside the lock.
+	// Admission is repeated against locked bytes before reconciliation or writes.
+	clearDefaults := c.runtime.prefetchPaneDefaults(ctx)
+	defer clearDefaults()
+
 	guard := combineCreateGuards(guards)
 
 	_, err = c.store.update(func(working *coremetadata.Registry) error {
@@ -2281,10 +2314,6 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 			if err := admission(working.Clone()); err != nil {
 				return err
 			}
-			if err := c.ensureRuntimeRoute(ctx); err != nil {
-				return err
-			}
-			clearDefaults = c.runtime.prefetchPaneDefaults(ctx)
 		}
 		return c.reconcileCreateOperation(ctx, working, lock, operationID, ledger, guard, op)
 	})

@@ -331,6 +331,8 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// newTmuxCommand's default producer has none and refuses every Agent answer.
 	tmuxCmd.windowCreate = createCmd.createWindowFromIntent
 	agentCmd := newAgentCommand()
+	agentCmd.processRuntime = createCmd.processRuntime
+	focusCmd.processRuntime = createCmd.processRuntime
 	agentCmd.ai = ai
 	agentCmd.usage = usageCmd
 	// An accepted send from a caller outside its Claude source Agent's

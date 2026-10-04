@@ -3,6 +3,7 @@ package resourcegraph
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -137,6 +138,19 @@ func TestProcessAdmissionCapabilities(t *testing.T) {
 			if (err == nil) != (status == StatusLive) || err == nil && got != key {
 				t.Fatalf("%s %s: %+v %v", status, action, got, err)
 			}
+		}
+	}
+}
+
+func TestProcessActionRefusalTokens(t *testing.T) {
+	reg := testRegistry(t)
+	pane, _ := reg.Pane("pane-alpha-agent")
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	for _, action := range []ProcessAction{ProcessAttach, ProcessFocus, ProcessKeys, ProcessCapture, ProcessPopup, ProcessRelaunch, ProcessCreatePane, ProcessSplit} {
+		_, err := (ProcessInventory{}).AdmitProcess(*pane, action)
+		token := "process-" + string(action) + "-unsupported:"
+		if err == nil || !strings.HasPrefix(err.Error(), token) {
+			t.Fatalf("%s: %v", action, err)
 		}
 	}
 }

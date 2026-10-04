@@ -9,10 +9,24 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-// processPaneRuntime is the internal invocation seam. Its declarations survive
-// unavailable handles; nil preserves every existing tmux path. It is not a
-// discovery service or durable runtime schema.
-type processPaneRuntime struct{ targets []processhost.InventoryTarget }
+// processPaneRuntime admits exact process declarations. Production observes
+// the invocation's Registry snapshot; explicit typed targets remain injectable.
+// Missing host evidence never grants a tmux fallback or process control.
+type processPaneRuntime struct {
+	targets []processhost.InventoryTarget
+	observe func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
+}
+
+func newProcessPaneRuntime() *processPaneRuntime {
+	return &processPaneRuntime{observe: observeRegistryProcesses}
+}
+
+func (p *processPaneRuntime) inventoryFor(ctx context.Context, registry coremetadata.Registry) resourcegraph.ProcessInventory {
+	if p != nil && p.observe != nil && len(p.targets) == 0 {
+		return p.observe(ctx, registry)
+	}
+	return p.inventory()
+}
 
 // processTerminalTarget is an invocation-scoped exact process target. A nil
 // target keeps the terminal consumer's existing tmux behavior.
@@ -75,10 +89,26 @@ func processPaneUIDs(registry coremetadata.Registry, inventory resourcegraph.Pro
 
 func (p *processPaneRuntime) admit(registry coremetadata.Registry, paneUID string, action resourcegraph.ProcessAction) (resourcegraph.ProcessKey, bool, error) {
 	pane, ok := registry.Pane(paneUID)
-	inventory := p.inventory()
-	if !ok || !inventory.Declares(*pane) {
+	if !ok {
 		return resourcegraph.ProcessKey{}, false, nil
 	}
+	inventory := p.inventory()
+	if !inventory.Declares(*pane) {
+		return resourcegraph.ProcessKey{}, false, nil
+	}
+	switch action {
+	case resourcegraph.ProcessTurn, resourcegraph.ProcessInterrupt, resourcegraph.ProcessStop:
+		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+			if pane.Status.Activation.Process == nil {
+				return resourcegraph.ProcessKey{}, true, fmt.Errorf("process-host-unavailable: current process activation is absent")
+			}
+			if _, _, current := registry.CurrentProcessActivation(pane.Status.Activation.Process.Binding); !current {
+				return resourcegraph.ProcessKey{}, true, fmt.Errorf("process-host-unavailable: current process ownership is stale")
+			}
+		}
+		inventory = p.inventoryFor(context.Background(), registry)
+	}
+
 	key, err := inventory.AdmitProcess(*pane, action)
 	return key, true, err
 }
