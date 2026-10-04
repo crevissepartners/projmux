@@ -191,13 +191,13 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	launch := processhost.Launch{Binding: result.Binding, Command: plan.command}
 	if result.Provider == aiModeCodex {
 		launch.Spawned = processCodexCreateSpawn(path, result.Binding)
-		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, processCodexCreateConfig(plan, result.Binding.Agent), path)
+		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, processCodexCreateConfig(plan, result.Binding.Agent), path, nil)
 		if result.codexEndpoint != nil && result.codexEndpoint.handle != nil {
 			result.Handle = result.codexEndpoint.handle
 		}
 	} else {
 		var handle *processhost.Handle
-		handle, err = startProcessClaude(ctx, host, launch, path)
+		handle, err = startProcessClaude(ctx, host, launch, path, nil)
 		if handle != nil {
 			result.Handle = handle
 		}

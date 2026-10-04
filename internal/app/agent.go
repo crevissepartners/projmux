@@ -295,10 +295,16 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	setRouteUsage(fs)
 	flags := resourceQueryFlags{kind: coremetadata.KindAgent}
 	flags.register(fs)
+	flags.registerOutput(fs)
 	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into the isolated reply-only activation and record it, so every later resume stays reply-only; qualification required")
 	model := fs.String("model", "", "claude or codex: model name this resume runs; recorded on the Agent")
 	effort := fs.String("effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
-	refs, err := parseWithPositionals(fs, args)
+	head := args
+	var prompt []string
+	if boundary := slices.Index(args, argumentTerminator); boundary > 0 && processResumeHasReference(fs, args[:boundary]) {
+		head, prompt = args[:boundary], args[boundary+1:]
+	}
+	refs, err := parseWithPositionals(fs, head)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -326,6 +332,29 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
 	}
+	return c.resumeResolvedAgent(fs, flags, registry, agent, *model, *effort, *dialogueReplyOnly, prompt, stdout, stderr)
+}
+
+func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQueryFlags, registry coremetadata.Registry, agent *coremetadata.Agent, model, effort string, dialogueReplyOnly bool, prompt []string, stdout, stderr io.Writer) error {
+	const spelling = "agent resume"
+	if processPane, ambiguous := processResumePane(registry, agent.Metadata.UID); processPane != nil || ambiguous {
+		if dialogueReplyOnly {
+			return usageError("agent resume: process agents do not support --dialogue-reply-only")
+		}
+		return c.runProcessResumeCLI(*agent, flags, model, effort, prompt, stdout, stderr)
+	}
+	outputFlag := ""
+	fs.Visit(func(value *flag.Flag) {
+		if value.Name == "o" || value.Name == "output" {
+			outputFlag = value.Name
+		}
+	})
+	if outputFlag != "" {
+		return flagParseError(fmt.Errorf("flag provided but not defined: -%s", outputFlag))
+	}
+	if len(prompt) > 0 {
+		return usageError(fmt.Sprintf("%s accepts at most one Agent reference; got %q", spelling, prompt[0]))
+	}
 	if err := requireResumablePhase(spelling, agent); err != nil {
 		return err
 	}
@@ -333,14 +362,14 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if provider == "" && agent.Status.SessionRef != nil {
 		provider = coremetadata.NormalizeProvider(agent.Status.SessionRef.Provider)
 	}
-	if err := requireLaunchOptions(spelling, provider, *model, *effort, *dialogueReplyOnly, "nothing was changed"); err != nil {
+	if err := requireLaunchOptions(spelling, provider, model, effort, dialogueReplyOnly, "nothing was changed"); err != nil {
 		return err
 	}
-	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
+	if err := requireClaudeDialogueMode(agent.Spec.Provider, dialogueReplyOnly, nil); err != nil {
 		return err
 	}
-	if *model != "" || *effort != "" {
-		if refusal := replyOnlyRefusalOf(agent.Metadata.Annotations, agentSettingsRequest{model: *model, effort: *effort}); refusal.reason != "" {
+	if model != "" || effort != "" {
+		if refusal := replyOnlyRefusalOf(agent.Metadata.Annotations, agentSettingsRequest{model: model, effort: effort}); refusal.reason != "" {
 			return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, agent.Metadata.Name, refusal.detail(), refusal.reason))
 		}
 	}
@@ -348,8 +377,8 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	plan.dialogueReplyOnly = plan.dialogueReplyOnly || *dialogueReplyOnly
-	plan.modelOverride, plan.effortOverride = *model, *effort
+	plan.dialogueReplyOnly = plan.dialogueReplyOnly || dialogueReplyOnly
+	plan.modelOverride, plan.effortOverride = model, effort
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
 }
 

@@ -225,7 +225,7 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 		cmd = command(root, binary)
 		cmd.Env = append(cmd.Env, "PMX_TEST_PROCESS_BINARY="+binary, "PMX_TEST_PROCESS_ROOT="+root, "PMX_TEST_PROCESS_CLAUDE_CHILD=1")
 	}
-	handle, err := startProcessClaude(context.Background(), host, processhost.Launch{Binding: b, Command: cmd}, path)
+	handle, err := startProcessClaude(context.Background(), host, processhost.Launch{Binding: b, Command: cmd}, path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

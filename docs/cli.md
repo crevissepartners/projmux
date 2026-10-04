@@ -119,7 +119,7 @@ Allowed effects:
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [-o <mode>] [-- <prompt>]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
@@ -151,7 +151,7 @@ Subcommands:
 | --- | --- |
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
-| [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
+| [`projmux agent resume`](#projmux-agent-resume) | Resume one retired process Agent in the foreground, or rebind an Offline or Failed tmux Agent |
 | [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval, or list and answer Claude and Codex permission requests |
@@ -212,7 +212,7 @@ projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 
 ### `projmux agent resume`
 
-Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor
+Resume one retired process Agent in the foreground, or rebind an Offline or Failed tmux Agent
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -228,8 +228,22 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [-o <mode>] [-- <prompt>]
 ```
+
+Process resume keeps the Agent UID and Pane UID, starts a fresh owned host generation, and never creates a replacement conversation. It requires processSession.resumeState=resumable and no live owner.
+
+Process Claude requires -- <prompt>: stream-json emits init only after the first user frame. Codex can reattach without a prompt. This is a new user turn; interrupted turns are not resent.
+
+Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process foreground=owned. Other -o projections keep their format with ownership on stderr, none suppresses displays, and pane-id is refused. Exit is actual provider Wait, including 128+signal; stdin EOF, INT and TERM stop only this owned provider. The receipt operation is agent.resume: identity reused, address/topology/desired-state unchanged, runtime materialized, and focus unchanged; tmux resume keeps its existing result without a receipt.
+
+Process resume remains foreground-owned: stdin EOF terminates this owned provider, so </dev/null and ordinary CI or cron invocation can end it immediately. Keep stdin open for the intended lifetime; no daemon or detached resume is started.
+
+Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival and relaunch are unavailable.
+
+Resume refusals are process-resume-not-resumable (no resumable record or unknown), process-resume-owned (exact live owner), and process-resume-refused (invalid, ambiguous, unretired, or provider-rejected evidence). They exit nonzero without falling back to a new conversation.
+
+Tmux resume retains its existing syntax and detached behavior; process prompt and output options do not apply.
 
 A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.
 
@@ -242,6 +256,8 @@ A native Codex resume applies the model and effort it launches with, and the Pro
 Items the Agent does not override take its profile's current instructions, model, and effort; the model is passed only when it changed.
 
 The new Pane carries the name of the Agent's old Pane row; when delete pane left no such row, it is named <agent-name>-pane as create agent names it. A name that cannot be used leaves the automatic one, and a held name is disclosed in one stderr line.
+
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux agent relaunch`
 
