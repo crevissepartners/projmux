@@ -288,12 +288,15 @@ func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
 	if err := f.control.sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range f.wire(t) {
-		if len(n["result"]) > 0 && bytes.Contains(n["result"], []byte("red")) {
-			return
+	// The response write finishes before the provider records its wire log.
+	f.wait(t, func(processhost.Snapshot) bool {
+		for _, n := range f.wire(t) {
+			if len(n["result"]) > 0 && bytes.Contains(n["result"], []byte("red")) {
+				return true
+			}
 		}
-	}
-	t.Fatal("central CLI answer never reached owned provider")
+		return false
+	})
 }
 
 func TestCodexProcessForegroundAndCoordinationWireRemainDistinct(t *testing.T) {
