@@ -1224,10 +1224,10 @@ same configuration, upgrade all of them before adding this key. Configuration
 parse errors are warned about and the affected file is skipped in both tmux and
 process contexts.
 
-The hook runner supports a process host `post-create` context for scripts and CI
-without tmux. Public foreground Agent creation is not enabled by this change;
-the runner applies the opt-in above before trust prompting or execution. The
-table below defines the environment and failure handling for eligible hooks.
+`create agent --host process --provider claude` creates one foreground-owned
+Agent for scripts and CI without tmux. Omitting `--host` keeps tmux creation. The
+runner applies the opt-in above before trust prompting or execution. The table
+below defines the environment and failure handling for eligible hooks.
 
 | Contract | tmux `post-create` | process host `post-create` |
 | --- | --- | --- |
@@ -1253,6 +1253,31 @@ Add this guard:
 ```sh
 [ "${PROJMUX_RUNTIME:-}" = process ] && exit 0
 ```
+
+On a process post-create failure, creation exits nonzero with
+`process-post-create-hook-failed`. The owner stops its own provider, waits for
+actual exit, records the supervisor receipt, and deletes its reserved Agent and
+Pane. Successful rollback reports `remaining: none`. If durable Wait recording
+fails, the remaining runtime stays unknown; if only metadata deletion fails
+after a recorded Wait, it is offline. Both failures name the exact Agent/Pane
+refs and a `projmux delete agent uid:...` cleanup command on stderr. Configuration
+parse warnings are also printed on the creator's stderr; an invalid file is
+skipped without failing creation.
+
+The command stays in the foreground until provider exit or owner EOF/INT/TERM.
+A killed owner still releases its dedicated provider lifetime; without a durable
+Wait receipt, subsequent reads conservatively show unknown. Other terminals can
+use `agent turn start`, `agent turn interrupt --via cli`, `agent question`, and
+`agent approval` to operate on its exact Agent UID. Process Claude always captures
+questions and approvals because it has no provider TUI. Default Agent guidance
+explains this execution location; custom or disabled guidance adds no such text.
+
+Default stdout starts with `agent uid:<agent> pane uid:<pane> runtime=process
+foreground=owned`, followed by the usual resource result. Existing `-o`
+projections keep their stdout format and put ownership on stderr; `-o none`
+suppresses both displays and `-o pane-id` is refused before mutation. Provider
+content never reaches stdout. Exit codes come from actual Wait (a signal is
+`128 + signal number`); startup, hook, and receipt failures exit nonzero.
 
 ## Examples
 

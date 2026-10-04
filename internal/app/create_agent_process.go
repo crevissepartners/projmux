@@ -4,12 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/cli"
-	"github.com/crevissepartners/projmux/internal/core/notify"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
-	"github.com/crevissepartners/projmux/internal/integrations/hooks"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"io"
 	"maps"
 	"os"
@@ -21,8 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
@@ -290,7 +290,7 @@ func resolveProcessCreateScope(reg coremetadata.Registry, opts processAgentCreat
 		}
 		found, _ := reg.Project(matches.Matches[0].UID)
 		project = *found
-		ref, err := primaryWindowRef(reg, project, canonicalCreateAgent, "--host process")
+		ref, err := primaryWindowRef(reg, project, "create agent", "--host process")
 		if err != nil {
 			return project, coremetadata.Window{}, err
 		}

@@ -134,7 +134,7 @@ func parseClaudePaneFrame(out []byte) ([]string, error) {
 // and the audit records it as received.
 func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, via string, stdout io.Writer) error {
 	if pane, ok := registry.Pane(agent.Status.PaneRef); ok && c.processRuntime.inventory().Declares(*pane) {
-		operation, err := c.callProcessClaudeTurn(registry, agent, "interrupt", "")
+		operation, err := c.interruptProcessClaudeTurn(registry, agent)
 		if err != nil {
 			return err
 		}
@@ -277,4 +277,14 @@ func processClaudeTurnAcceptance(result processForegroundResult) error {
 	default:
 		return processhost.ErrStale
 	}
+}
+
+// Explicit typed targets retain their local authority; operational commands use
+// the exact host socket and kernel birth checks.
+func (c *agentCommand) interruptProcessClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent) (string, error) {
+	if c.processRuntime != nil && c.processRuntime.observe == nil {
+		turn := agent.Status.Progress.TurnRef
+		return turn, c.processRuntime.control(context.Background(), registry, agent.Status.PaneRef, resourcegraph.ProcessInterrupt, turn, "")
+	}
+	return c.callProcessClaudeTurn(registry, agent, "interrupt", "")
 }
