@@ -107,6 +107,8 @@ make test
 See [Testing](docs/testing.md), [Architecture](docs/architecture.md), and
 [Repo Layout](docs/repo-layout.md).
 
+Pull requests are accepted from maintainers only. Everyone else, please open an issue.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -149,7 +149,7 @@ same across PRs.
 - Force pushes and branch deletions on `main` are blocked.
 
 The merge commands, including branch cleanup from a linked worktree, are in
-[AGENTS.md — Maintainers only](../AGENTS.md#maintainers-only).
+[AGENTS.md — Commands](../AGENTS.md#commands).
 
 ## Release-please coupling
 
