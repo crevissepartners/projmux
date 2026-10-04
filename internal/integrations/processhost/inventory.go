@@ -3,10 +3,16 @@ package processhost
 import "github.com/crevissepartners/projmux/internal/core/resourcegraph"
 
 // InventoryTarget retains an exact declaration even when its host is unavailable.
-// Handle is owned by the caller; observation never discovers or starts a host.
+// Handles and observers belong to the caller; observation never discovers or
+// starts a host.
 type InventoryTarget struct {
 	Binding Binding
 	Handle  *Handle
+	// Observer also admits dedicated Codex handles and bounded remote reads.
+	// It has no process-control or runtime-discovery authority.
+	Observer interface {
+		Observe(Binding) (Snapshot, error)
+	}
 }
 
 func ObserveInventory(targets []InventoryTarget) resourcegraph.ProcessInventory {
@@ -16,11 +22,15 @@ func ObserveInventory(targets []InventoryTarget) resourcegraph.ProcessInventory 
 		key := resourcegraph.ProcessKey{Host: binding.Host, Pane: binding.Pane, Generation: binding.Generation}
 		inventory.Declared = append(inventory.Declared, key)
 		status := resourcegraph.StatusUnknown
-		if target.Handle != nil {
-			if snapshot, err := target.Handle.Observe(binding); err == nil {
-				if snapshot.Exit != nil {
+		observer := target.Observer
+		if observer == nil && target.Handle != nil {
+			observer = target.Handle
+		}
+		if observer != nil {
+			if snapshot, err := observer.Observe(binding); err == nil && snapshot.Binding == binding {
+				if snapshot.Exit != nil && snapshot.State == "exited" {
 					status = resourcegraph.StatusOffline
-				} else if snapshot.State == "ready" {
+				} else if snapshot.Exit == nil && snapshot.State == "ready" {
 					status = resourcegraph.StatusLive
 				}
 			}

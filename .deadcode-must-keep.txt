@@ -207,7 +207,6 @@ boundedBuffer.Bytes	Test-only installed qualification helper retained for bounde
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
 buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
-callProcessForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 claudeProcessControl.closeRecord	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 claudeProcessControl.sync	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.

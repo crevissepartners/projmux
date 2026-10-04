@@ -50,7 +50,8 @@ import (
 
 // runtimeDiagnosticsReader resolves one exact host into a resolved graph.
 type runtimeDiagnosticsReader struct {
-	// processes is an internal invocation declaration; public activation is staged separately.
+	// processes observes the Registry's exact declarations without discovering
+	// hosts or granting runtime mutation authority.
 	processes func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
 
 	runner    tmuxCommandRunner
@@ -69,6 +70,7 @@ func newRuntimeDiagnosticsReader(runner tmuxCommandRunner) *runtimeDiagnosticsRe
 		runner = inttmux.ExecRunner{}
 	}
 	return &runtimeDiagnosticsReader{
+		processes:    observeRegistryProcesses,
 		runner:       runner,
 		lookupEnv:    os.Getenv,
 		loadRegistry: loadResourceRegistry,

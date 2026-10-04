@@ -144,6 +144,7 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 }
 
 type codexProcessExchange struct {
+	Observe    *processhost.Binding `json:",omitempty"`
 	Binding    processhost.Binding
 	Evidence   coremetadata.CodexProcessRouteEvidence
 	MessageRef string
@@ -176,6 +177,21 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 	// control separately requires per-user credentials and current exact authority.
 	peer, _, err := localipc.PeerProcess(conn)
 	if err != nil {
+		return
+	}
+	if request.Observe != nil {
+		if int64(peer.OwnerUID) != int64(os.Getuid()) || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
+			return
+		}
+		result := processForegroundResult{Stale: true}
+		binding := *request.Observe
+		snap, readErr := e.handle.Observe(binding)
+		reg, regErr := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
+		view := processHostObservation{Binding: binding, Provider: snap.Provider, State: snap.State, Host: e.evidence.HostProcess, Child: e.evidence.Process, Exit: snap.Exit}
+		if readErr == nil && regErr == nil && binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, binding, view) {
+			result = processForegroundResult{Accepted: true, Observation: &view}
+		}
+		_ = localipc.WriteJSON(conn, result)
 		return
 	}
 	if request.Foreground != nil {

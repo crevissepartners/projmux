@@ -41,6 +41,7 @@ func (t processForegroundToken) request() processhost.Request {
 type processForegroundResult struct {
 	Accepted            bool
 	Stale, Busy, Closed bool
+	Observation         *processHostObservation `json:",omitempty"`
 }
 
 func controlProcessForeground(ctx context.Context, peer coremetadata.ProcessIdentity, request processForegroundRequest, current func(context.Context, processhost.Authority) error, apply func() error) processForegroundResult {
@@ -95,15 +96,19 @@ func callProcessForeground(ctx context.Context, socket string, socketIdentity lo
 	if err != nil || identity != socketIdentity {
 		return processForegroundResult{}, processhost.ErrStale
 	}
-	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socket, Net: "unix"})
-	if err != nil {
-		return processForegroundResult{}, err
-	}
-	defer conn.Close()
 	deadline := time.Now().Add(localipc.Deadline)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
+	bounded, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	var dialer net.Dialer
+	raw, err := dialer.DialContext(bounded, "unix", socket)
+	if err != nil {
+		return processForegroundResult{}, err
+	}
+	conn := raw.(*net.UnixConn)
+	defer conn.Close()
 	_ = conn.SetDeadline(deadline)
 	peer, _, err := localipc.PeerProcess(conn)
 	if err != nil || peer != host || ctx.Err() != nil {
