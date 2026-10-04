@@ -236,7 +236,7 @@ func (c *agentCommand) stopProcessClaudeRelaunch(ctx context.Context, reg coreme
 				return processResumeCandidate{}, restart.refuse(relaunchReasonAgentBusy, "started work since planning; re-run with --yes")
 			}
 		}
-		_, err := c.callProcessClaudeTurn(latest, *current, "stop", "")
+		_, err := c.callProcessTurn(latest, *current, aiModeClaude, "stop", "")
 		if err != nil {
 			return processResumeCandidate{}, fmt.Errorf("agent relaunch: old host Stop failed; previous settings preserved; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
 		}

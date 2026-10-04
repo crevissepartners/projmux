@@ -184,7 +184,7 @@ func TestProcessClaudeRelaunchActualCLI(t *testing.T) {
 		t.Fatal("old generation still current")
 	}
 	currentPane, _ := after.Pane(current.Binding.PaneUID)
-	socket := processClaudeHostSocket(f.store.Path(), current.Binding.PaneUID, current.Binding.Generation)
+	socket := processHostSocket(aiModeClaude, f.store.Path(), current.Binding.PaneUID, current.Binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		t.Fatal(err)
