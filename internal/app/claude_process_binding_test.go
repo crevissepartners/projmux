@@ -450,7 +450,7 @@ func TestClaudeProcessRegistrationRejectsSelfAssertionStaleHostAndBirth(t *testi
 		}
 		return ""
 	}
-	_, reason := claudeRegistrationBootstrap(reg, f.path, []byte(`{"hook_event_name":"SessionStart","session_id":"process-session","agentUID":"claimed-owner","generation":"claimed-gen"}`), env, proof.Process.PID)
+	_, reason := claudeRegistrationBootstrap(reg, f.path, []byte(`{"hook_event_name":"SessionStart","session_id":"process-session","agentUID":"claimed-owner","generation":"claimed-gen"}`), env, proof.Process.PID, nil)
 	if reason == "" {
 		t.Fatal("self-asserted SessionStart gained authority")
 	}

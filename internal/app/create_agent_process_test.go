@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -164,5 +165,50 @@ func TestProcessSnapshotUnchangedTicksDoNotOpenTransactions(t *testing.T) {
 	snapshot.Sequence++
 	if err := syncSnapshot(snapshot); err != nil || transactions != 1 {
 		t.Fatalf("changed snapshot: %v transactions=%d", err, transactions)
+	}
+}
+
+// Streaming output advances Sequence and diagnostics without changing a
+// recorded field. Only a recorded change opens a Registry transaction; a
+// missing Registry makes every attempted transaction fail visibly here.
+func TestProcessSnapshotRecordsOnlyRecordedFieldChanges(t *testing.T) {
+	result := processAgentCreateResult{Provider: aiModeClaude, Binding: processhost.Binding{Agent: "agent-a", Pane: "pane-a", Generation: "gen-1", Operation: "op-1"}, registryPath: filepath.Join(t.TempDir(), "missing", "registry.json")}
+	snapshot := processhost.Snapshot{State: "ready", Session: "session", Connection: "connection", Sequence: 1}
+	if err := result.recordProcessSnapshot(snapshot); err == nil {
+		t.Fatal("first ready snapshot did not attempt its transaction")
+	}
+	if err := result.recordProcessSnapshot(snapshot); err == nil {
+		t.Fatal("a failed transaction was remembered as recorded")
+	}
+	recorded := processRecordedFields(snapshot)
+	result.recorded = &recorded
+	for range 5 {
+		snapshot.Sequence++
+		snapshot.Diagnostic = fmt.Sprintf("line %d", snapshot.Sequence)
+		if err := result.recordProcessSnapshot(snapshot); err != nil {
+			t.Fatalf("streaming update opened a transaction: %v", err)
+		}
+	}
+	for _, change := range []func(*processhost.Snapshot){
+		func(s *processhost.Snapshot) { s.Turn = "turn" },
+		func(s *processhost.Snapshot) {
+			s.Pending = []processhost.Request{{ID: "request", Kind: "question", Connection: "connection", Session: "session", Turn: "turn"}}
+		},
+		func(s *processhost.Snapshot) { s.Connection = "reconnected" },
+		func(s *processhost.Snapshot) { s.Session = "resumed" },
+	} {
+		changed := snapshot
+		change(&changed)
+		if err := result.recordProcessSnapshot(changed); err == nil {
+			t.Fatalf("recorded change %+v did not attempt its transaction", processRecordedFields(changed))
+		}
+	}
+	if !reflect.DeepEqual(*result.recorded, recorded) {
+		t.Fatal("a failed transaction replaced the last recorded fields")
+	}
+	idle := snapshot
+	idle.State = "starting"
+	if err := result.recordProcessSnapshot(idle); err != nil {
+		t.Fatalf("non-ready snapshot opened a transaction: %v", err)
 	}
 }

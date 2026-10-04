@@ -89,29 +89,39 @@ func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost
 	if !ok {
 		return processhost.Snapshot{}, processhost.ErrStale
 	}
-	if receipt := pane.Status.LastTermination; receipt != nil && receipt.Source == coremetadata.TerminationSourceSupervisor &&
-		receipt.PaneUID == binding.Pane && receipt.AgentUID == binding.Agent && receipt.Generation == binding.Generation && receipt.OperationID == binding.Operation &&
-		!receipt.ObservedAt.IsZero() && (receipt.ExitCode != nil || receipt.Signal != "") {
-		exit := &processhost.Exit{Signal: receipt.Signal}
-		if receipt.ExitCode != nil {
-			exit.Code = *receipt.ExitCode
-		}
-		view := processHostObservation{Binding: binding, Host: activation.HostProcess, Child: activation.Child, Provider: agent.Spec.Provider, State: "exited", Exit: exit}
-		if receipt.Classification == coremetadata.ClassifyProcessExit(exit.Code, exit.Signal) && processObservationOwnership(r.registry, binding, view) {
-			return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: exit}, nil
-		}
+	if snapshot, ok := recordedProcessExit(r.registry, binding, *pane, *activation, agent.Spec.Provider); ok {
+		return snapshot, nil
 	}
-	socket := processClaudeHostSocket(r.registryPath, binding.Pane, binding.Generation)
-	var request any = claudeProcessCheck{Observe: &binding}
-	if agent.Spec.Provider == "codex" {
-		socket = processCodexHostSocket(r.registryPath, binding.Pane, binding.Generation)
-		request = codexProcessExchange{Observe: &binding}
+	return r.observeHost(binding, *activation, agent.Spec.Provider)
+}
+
+// recordedProcessExit projects a durable supervisor receipt for the exact
+// current activation. Any mismatch falls through to the live host read.
+func recordedProcessExit(reg coremetadata.Registry, binding processhost.Binding, pane coremetadata.Pane, activation coremetadata.ProcessActivation, provider string) (processhost.Snapshot, bool) {
+	receipt := pane.Status.LastTermination
+	if receipt == nil || receipt.Source != coremetadata.TerminationSourceSupervisor ||
+		receipt.PaneUID != binding.Pane || receipt.AgentUID != binding.Agent || receipt.Generation != binding.Generation || receipt.OperationID != binding.Operation ||
+		receipt.ObservedAt.IsZero() || (receipt.ExitCode == nil && receipt.Signal == "") {
+		return processhost.Snapshot{}, false
 	}
+	exit := &processhost.Exit{Signal: receipt.Signal}
+	if receipt.ExitCode != nil {
+		exit.Code = *receipt.ExitCode
+	}
+	view := processHostObservation{Binding: binding, Host: activation.HostProcess, Child: activation.Child, Provider: provider, State: "exited", Exit: exit}
+	if receipt.Classification != coremetadata.ClassifyProcessExit(exit.Code, exit.Signal) || !processObservationOwnership(reg, binding, view) {
+		return processhost.Snapshot{}, false
+	}
+	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: exit}, true
+}
+
+func (r remoteProcessObserver) observeHost(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (processhost.Snapshot, error) {
+	socket := processHostSocket(provider, r.registryPath, binding.Pane, binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		return processhost.Snapshot{}, err
 	}
-	result, err := callProcessForeground(r.ctx, socket, identity, activation.HostProcess, request)
+	result, err := callProcessForeground(r.ctx, socket, identity, activation.HostProcess, processHostRequest(provider, &binding, nil))
 	if err != nil {
 		return processhost.Snapshot{}, err
 	}
@@ -121,6 +131,23 @@ func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost
 	}
 	view := result.Observation
 	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: view.Exit}, nil
+}
+
+// processHostSocket names the owned control socket of one provider's host.
+func processHostSocket(provider, registryPath, pane, generation string) string {
+	if provider == aiModeCodex {
+		return processCodexHostSocket(registryPath, pane, generation)
+	}
+	return processClaudeHostSocket(registryPath, pane, generation)
+}
+
+// processHostRequest wraps an observation or foreground request in the
+// provider host's wire envelope.
+func processHostRequest(provider string, observe *processhost.Binding, foreground *processForegroundRequest) any {
+	if provider == aiModeCodex {
+		return codexProcessExchange{Observe: observe, Foreground: foreground}
+	}
+	return claudeProcessCheck{Observe: observe, Foreground: foreground}
 }
 
 // Retired session history can prove offline state, but cannot grant a host or

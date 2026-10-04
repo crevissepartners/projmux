@@ -1006,7 +1006,7 @@ func (c *createCommand) openWindowAgentPane(
 	flags resourceCreateFlags,
 ) (string, error) {
 	paneID, err := c.runtime.splitPane(ctx, work.initialPaneID, defaultPlacement, launch.workspace.CWD,
-		c.runtime.supervisedLaunch(ctx, agent.activation, launch.argv))
+		c.runtime.supervisedLaunch(ctx, agent.activation, launch.argv), nil)
 	if paneID != "" {
 		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, agent.pane.Metadata.UID, ledger); claimErr != nil {
 			return "", errors.Join(err, claimErr)
@@ -1161,7 +1161,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 				}
 			}
 			launch := c.runtime.supervisedLaunch(ctx, work.activation, flags.payload)
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, launchDir, launch)
+			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, launchDir, launch, nil)
 			if paneID != "" {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)

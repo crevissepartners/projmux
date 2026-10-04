@@ -112,7 +112,7 @@ func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, a
 		return resolveLiveProcessCodexRoute(ctx, r.registryPath, registry, agent.Metadata.UID)
 	}
 	resolve := coremetadata.ResolveAgentRoute
-	if processClaudeAnswers(registry, agent) {
+	if agent.Spec.Provider == aiModeClaude && processAgentAnswers(registry, agent) {
 		proof, ok := discoverProcessClaudeProof(r.registryPath, registry, agent.Metadata.UID)
 		if !ok {
 			return coremetadata.AgentRouteRef{}, errors.New("process Claude authority is unavailable")

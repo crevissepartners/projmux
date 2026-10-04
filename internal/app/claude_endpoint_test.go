@@ -165,7 +165,7 @@ func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 			return "synthetic-private-credential-for-residue-scan"
 		}
 		return ""
-	}, provider.Process.Pid)
+	}, provider.Process.Pid, nil)
 	if reason != claudeRegistrationProceed {
 		t.Fatalf("valid SessionStart refused: %s", reason)
 	}
@@ -437,7 +437,7 @@ func TestClaudeEndpointBootstrapRejectsForeignAndSecretClaims(t *testing.T) {
 			}
 			payload, _ := json.Marshal(map[string]string{"hook_event_name": "SessionStart", "session_id": test.session})
 			before := current.Clone()
-			if _, reason := claudeRegistrationBootstrap(current, f.bootstrap.RegistryPath, payload, func(key string) string { return env[key] }, test.parent); reason != test.want {
+			if _, reason := claudeRegistrationBootstrap(current, f.bootstrap.RegistryPath, payload, func(key string) string { return env[key] }, test.parent, nil); reason != test.want {
 				t.Fatalf("bootstrap reason = %q, want %q", reason, test.want)
 			}
 			if !reflect.DeepEqual(current, before) {

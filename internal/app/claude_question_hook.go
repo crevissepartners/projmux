@@ -98,11 +98,11 @@ func questionAnsweringFromPaths(paths config.Paths) config.AgentQuestionAnswerin
 	return answering
 }
 
-// claudeQuestionAnsweredByProjmux resolves which way answers a confirmed
-// projmux Claude Agent's question: the Agent's own question channel annotation
+// questionAnsweredByProjmux resolves which way answers a confirmed
+// projmux Claude or Codex Agent's question: the Agent's own question channel annotation
 // is way 2 without reading anything else; otherwise the central setting
 // decides, read once. A nil resolver is way 1.
-func claudeQuestionAnsweredByProjmux(agent coremetadata.Agent, answering func() config.AgentQuestionAnswering) bool {
+func questionAnsweredByProjmux(agent coremetadata.Agent, answering func() config.AgentQuestionAnswering) bool {
 	if coremetadata.QuestionChannelEnabled(agent) {
 		return true
 	}
@@ -305,7 +305,7 @@ func (h claudeQuestionHook) run(ctx context.Context, args []string, stdin io.Rea
 		return
 	}
 	agent, paneUID, ok := claudeQuestionAgent(registry, strings.TrimSpace(*paneRef), strings.TrimSpace(payload.SessionID))
-	if !ok || !claudeQuestionAnsweredByProjmux(agent, h.answering) {
+	if !ok || !questionAnsweredByProjmux(agent, h.answering) {
 		return
 	}
 	// The popup is placed by the Agent Pane's live tmux handle.

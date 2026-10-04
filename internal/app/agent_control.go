@@ -21,7 +21,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -372,83 +374,148 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 	}
 	switch args[0] {
 	case "start", "steer":
-		before, text, err := splitAgentTurnText(args[1:])
-		if err != nil {
-			return err
-		}
-		binding, handled, err := c.resolveTurnControlBinding(args[0], before[0], text, stdout)
-		if handled || err != nil {
-			return err
-		}
-		op := agentControlOpStart
-		label := agentActionSendTurn
-		if args[0] == "steer" {
-			op, label = agentControlOpSteer, agentActionSteerTurn
-		}
-		response, err := c.callControl(binding, agentControlRequest{Operation: op, Text: text})
-		if err != nil {
-			return err
-		}
-		if err := response.Error(); err != nil {
-			return addOpenCodexBindingRecovery(err, binding)
-		}
-		if op == agentControlOpSteer && (response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed) {
-			return addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "turn/steer response did not carry the exact provider-acceptance receipt"}, binding)
-		}
-		if op == agentControlOpStart {
-			if err := c.recordStartedCodexTurn(binding, response); err != nil {
-				return err
-			}
-		}
-		if op == agentControlOpSteer {
-			_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s acceptance=%s delivery=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID), response.Acceptance, response.Delivery)
-			return err
-		}
-		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
-		return err
+		return c.runTurnInput(args, stdout)
 	case "interrupt":
-		if len(args) != 2 && len(args) != 4 {
-			return usageError("agent turn interrupt requires <agent-ref> [--via <client>]")
-		}
-		registry, agent, err := c.resolveOneAgent("agent turn interrupt", args[1], selector.VerbReview)
-		if err != nil {
-			return err
-		}
-		if agent.Spec.Provider == aiModeClaude {
-			if len(args) != 4 || args[2] != "--via" {
-				return usageError("Claude turn interrupt requires explicit --via <client> (caller-reported source)")
-			}
-			if err := operatorclient.Validate(args[3]); err != nil {
-				return usageError(fmt.Sprintf("Claude turn interrupt --via: %v", err))
-			}
-			return c.interruptClaudeTurn(registry, agent, args[3], stdout)
-		}
-		if len(args) != 2 {
-			return usageError("--via is available only for Claude turn interrupt")
-		}
-		if agent.Spec.Provider == aiModeCodex && processAgentAnswers(registry, agent) {
-			operation, err := c.callProcessCodexTurn(registry, agent, "interrupt", "")
-			if err == nil {
-				_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionInterruptTurn), agent.Metadata.UID, operation)
-			}
-			return err
-		}
-		binding, err := c.bindAgentControl("agent turn interrupt", registry, agent)
-		if err != nil {
-			return err
-		}
-		response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpInterrupt})
-		if err != nil {
-			return err
-		}
-		if err := response.Error(); err != nil {
-			return addOpenCodexBindingRecovery(err, binding)
-		}
-		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(agentActionInterruptTurn), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
-		return err
+		return c.runTurnInterrupt(args, stdout)
 	default:
 		return usageError("agent turn requires start, steer, or interrupt")
 	}
+}
+
+func (c *agentCommand) runTurnInput(args []string, stdout io.Writer) error {
+	before, text, err := splitAgentTurnText(args[1:])
+	if err != nil {
+		return err
+	}
+	binding, handled, err := c.resolveTurnControlBinding(args[0], before[0], text, stdout)
+	if handled || err != nil {
+		return err
+	}
+	op := agentControlOpStart
+	label := agentActionSendTurn
+	if args[0] == "steer" {
+		op, label = agentControlOpSteer, agentActionSteerTurn
+	}
+	response, err := c.callControl(binding, agentControlRequest{Operation: op, Text: text})
+	if err != nil {
+		return err
+	}
+	if err := response.Error(); err != nil {
+		return addOpenCodexBindingRecovery(err, binding)
+	}
+	if op == agentControlOpSteer {
+		if response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed {
+			return addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "turn/steer response did not carry the exact provider-acceptance receipt"}, binding)
+		}
+		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s acceptance=%s delivery=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID), response.Acceptance, response.Delivery)
+		return err
+	}
+	if err := c.recordStartedCodexTurn(binding, response); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
+	return err
+}
+
+func (c *agentCommand) runTurnInterrupt(args []string, stdout io.Writer) error {
+	if len(args) != 2 && len(args) != 4 {
+		return usageError("agent turn interrupt requires <agent-ref> [--via <client>]")
+	}
+	registry, agent, err := c.resolveOneAgent("agent turn interrupt", args[1], selector.VerbReview)
+	if err != nil {
+		return err
+	}
+	if agent.Spec.Provider == aiModeClaude {
+		if len(args) != 4 || args[2] != "--via" {
+			return usageError("Claude turn interrupt requires explicit --via <client> (caller-reported source)")
+		}
+		if err := operatorclient.Validate(args[3]); err != nil {
+			return usageError(fmt.Sprintf("Claude turn interrupt --via: %v", err))
+		}
+		return c.interruptClaudeTurn(registry, agent, args[3], stdout)
+	}
+	if len(args) != 2 {
+		return usageError("--via is available only for Claude turn interrupt")
+	}
+	if agent.Spec.Provider == aiModeCodex && processAgentAnswers(registry, agent) {
+		operation, err := c.callProcessTurn(registry, agent, aiModeCodex, "interrupt", "")
+		if err != nil {
+			return err
+		}
+		return c.writeProcessTurn(stdout, agentActionInterruptTurn, agent, operation)
+	}
+	binding, err := c.bindAgentControl("agent turn interrupt", registry, agent)
+	if err != nil {
+		return err
+	}
+	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpInterrupt})
+	if err != nil {
+		return err
+	}
+	if err := response.Error(); err != nil {
+		return addOpenCodexBindingRecovery(err, binding)
+	}
+	_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(agentActionInterruptTurn), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
+	return err
+}
+
+// callProcessTurn sends one operator turn or interrupt to the exact current
+// process host. Starts enter the provider stream as plain user frames;
+// coordination messages keep their separate envelope route.
+func (c *agentCommand) callProcessTurn(reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, error) {
+	pane, found := reg.Pane(agent.Status.PaneRef)
+	if !found || pane.Status.ProcessSession == nil || agent.Spec.Provider != provider || c.controlPaths == nil {
+		return "", processhost.ErrStale
+	}
+	session := pane.Status.ProcessSession
+	activation, current, ok := reg.CurrentProcessActivation(session.Binding)
+	if !ok || current != provider {
+		return "", processhost.ErrStale
+	}
+	paths, err := c.controlPaths()
+	if err != nil {
+		return "", err
+	}
+	socket := processHostSocket(provider, intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation)
+	identity, err := localipc.InspectOwnedSocket(socket)
+	if err != nil {
+		return "", fmt.Errorf("process-host-unavailable: %w", err)
+	}
+	operation, err := newCreateOperationID()
+	if err != nil {
+		return "", err
+	}
+	sessionID := session.SessionID
+	if provider == aiModeCodex {
+		sessionID = session.ThreadID
+	}
+	authority := processhost.Authority{Binding: processSchemaBinding(session.Binding), Connection: session.Binding.OperationID, Session: sessionID}
+	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
+	defer cancel()
+	request := processHostRequest(provider, nil, &processForegroundRequest{Authority: authority, Action: action, Operation: operation, Prompt: text, Turn: session.TurnID})
+	result, err := callProcessForeground(ctx, socket, identity, activation.HostProcess, request)
+	if err != nil {
+		return "", fmt.Errorf("process-host-unavailable: %w", err)
+	}
+	return operation, processTurnAcceptance(result)
+}
+
+func processTurnAcceptance(result processForegroundResult) error {
+	switch {
+	case result.Accepted:
+		return nil
+	case result.Busy:
+		return processhost.ErrBusy
+	case result.Closed:
+		return processhost.ErrClosed
+	default:
+		return processhost.ErrStale
+	}
+}
+
+func (c *agentCommand) writeProcessTurn(stdout io.Writer, label string, agent coremetadata.Agent, operation string) error {
+	_, err := fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(label), agent.Metadata.UID, operation)
+	return err
 }
 
 // recordStartedCodexTurn commits only monotonic, content-free evidence after
@@ -827,9 +894,9 @@ func (c *agentCommand) resolveTurnControlBinding(action, ref, text string, stdou
 		return exactAgentControlBinding{}, handled, err
 	}
 	if agent.Spec.Provider == aiModeCodex && processAgentAnswers(reg, agent) {
-		operation, err := c.callProcessCodexTurn(reg, agent, "turn", text)
+		operation, err := c.callProcessTurn(reg, agent, aiModeCodex, "turn", text)
 		if err == nil {
-			_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionSendTurn), agent.Metadata.UID, operation)
+			err = c.writeProcessTurn(stdout, agentActionSendTurn, agent, operation)
 		}
 		return exactAgentControlBinding{}, true, err
 	}

@@ -2616,11 +2616,12 @@ func (t *processTerminalTarget) admitSplitAnchor(anchorPaneID string) error {
 //
 // `-d` is the whole point: tmux leaves the previously active pane active, so
 // the split is a pure structural mutation with no focus side effect.
-func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string, processAnchor ...*processTerminalTarget) (string, error) {
-	if len(processAnchor) > 0 {
-		if err := processAnchor[0].admitSplitAnchor(anchorPaneID); err != nil {
-			return "", err
-		}
+//
+// processAnchor is the invocation's exact process target, or nil for a tmux
+// anchor; a declared process anchor refuses the split before any tmux call.
+func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string, processAnchor *processTerminalTarget) (string, error) {
+	if err := processAnchor.admitSplitAnchor(anchorPaneID); err != nil {
+		return "", err
 	}
 	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
 	if beforeErr != nil {
