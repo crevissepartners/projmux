@@ -314,8 +314,8 @@ func TestCodexProcessForegroundAndCoordinationWireRemainDistinct(t *testing.T) {
 	if text(left) != request.Prompt {
 		t.Fatal("operator turn gained an envelope")
 	}
-	var envelope coremessage.Envelope
-	if err := json.Unmarshal([]byte(text(right)), &envelope); err != nil || envelope.Authority != coremessage.PeerAuthority() || envelope.Payload != "bounded coordination" || envelope.MessageRef != "distinct-message" {
+	var envelope struct{ Authority, Payload, MessageRef string }
+	if err := json.Unmarshal([]byte(text(right)), &envelope); err != nil || envelope.Authority != "untrusted-coordination-only" || envelope.Payload != "bounded coordination" || envelope.MessageRef != "distinct-message" {
 		t.Fatal("coordination envelope lost", envelope, err)
 	}
 }

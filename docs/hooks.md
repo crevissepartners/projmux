@@ -1224,7 +1224,7 @@ same configuration, upgrade all of them before adding this key. Configuration
 parse errors are warned about and the affected file is skipped in both tmux and
 process contexts.
 
-`create agent --host process --provider claude` creates one foreground-owned
+`create agent --host process --provider claude` (or `--provider codex`) creates one foreground-owned
 Agent for scripts and CI without tmux. Omitting `--host` keeps tmux creation. The
 runner applies the opt-in above before trust prompting or execution. The table
 below defines the environment and failure handling for eligible hooks.
@@ -1283,8 +1283,8 @@ Measured isolated CLI exits follow the provider's actual Wait, not the owner's s
 
 A killed owner still releases its dedicated provider lifetime; without a durable
 Wait receipt, subsequent reads conservatively show unknown. Other terminals can
-use `agent turn start`, `agent turn interrupt --via cli`, `agent question`, and
-`agent approval` to operate on its exact Agent UID. Process Claude always captures
+use `agent turn start`, `agent turn interrupt` (Claude requires `--via cli`), `agent question`, and
+`agent approval` to operate on its exact Agent UID. Process Claude and Codex always capture
 questions and approvals because it has no provider TUI. Default Agent guidance
 explains this execution location; custom or disabled guidance adds no such text.
 

@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
@@ -61,6 +63,37 @@ type processCodexCommandPlanner interface {
 	PlanProcessCodexCommand(coremetadata.AgentWorkspace) (processhost.Command, error)
 }
 
+// Publish exact owned birth before provider initialization can fail. This lets
+// the shared creator persist actual Wait and dispose its reservation on failure.
+func processCodexCreateSpawn(path string, binding processhost.Binding) *processhost.SpawnCallback {
+	return &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
+		snapshot, err := handle.Observe(binding)
+		if err != nil {
+			return err
+		}
+		child, supervisor, err := localipc.Process(snapshot.PID)
+		if err != nil {
+			return err
+		}
+		_, hostPID, err := localipc.Process(supervisor)
+		if err != nil || hostPID != os.Getpid() {
+			return processhost.ErrStale
+		}
+		host, _, err := localipc.Process(hostPID)
+		if err != nil {
+			return err
+		}
+		activation := coremetadata.ProcessActivation{Binding: metadataProcessBinding(binding), HostProcess: host, Child: child}
+		_, _, err = intmetadata.NewStore(path).UpdateConvergent(func(reg *coremetadata.Registry) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return intmetadata.DefaultMutator().RecordProcessChild(reg, activation)
+		})
+		return err
+	}}
+}
+
 // Settings ride the typed thread/start request; no CLI conversation, daemon,
 // broker or fallback endpoint is started by this planner.
 func (c *aiCommand) PlanProcessCodexCommand(workspace coremetadata.AgentWorkspace) (processhost.Command, error) {
@@ -109,6 +142,22 @@ func (c *createCommand) newProcessCreateControl(result processAgentCreateResult)
 		return processCreateControl{}, err
 	}
 	paths.StateDir = filepath.Dir(filepath.Dir(result.registryPath))
+	endpoint := result.codexEndpoint
+	endpoint.messages.Store(&codexProcessMessages{store: messagestore.NewStore(paths.StateDir), endpoints: map[string]*codexProcessEndpoint{result.Binding.Agent: endpoint}, resolveSource: func(ctx context.Context, uid string) (coremessage.Route, error) {
+		reg, err := intmetadata.NewStore(result.registryPath).LoadDegradedReadOnly()
+		if err != nil {
+			return coremessage.Route{}, err
+		}
+		agent, found := reg.Agent(uid)
+		if !found {
+			return coremessage.Route{}, processhost.ErrStale
+		}
+		route, err := (liveAgentMessageRouteResolver{registryPath: result.registryPath}).Resolve(reg, *agent)
+		if err != nil {
+			return coremessage.Route{}, err
+		}
+		return publicMessageRoute(route), nil
+	}})
 	attention := newProcessAttentionStore(paths.StateDir)
 	if err = attention.activate(result.Binding, aiModeCodex, ""); err != nil {
 		return processCreateControl{}, err

@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -19,11 +18,12 @@ import (
 // daemon lookup or fallback to the shared broker. Delivered witnesses a typed
 // turn/start acceptance, separately from the provider's later turn result.
 type codexProcessMessages struct {
-	mu        sync.Mutex
-	store     *messagestore.Store
-	endpoints map[string]*codexProcessEndpoint
-	outcomes  map[string]coremessage.Event
-	now       func() time.Time
+	mu            sync.Mutex
+	store         *messagestore.Store
+	endpoints     map[string]*codexProcessEndpoint
+	outcomes      map[string]coremessage.Event
+	now           func() time.Time
+	resolveSource func(context.Context, string) (coremessage.Route, error)
 }
 type codexProcessReceipt struct{ Delivery coremessage.Delivery }
 
@@ -116,13 +116,16 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 	to, err := processCodexMessageRoute(ctx, target)
 	kind, reason, unknown := coremessage.EventDeliver, "host-turn-accepted", false
 	from, sourceErr := processCodexMessageRoute(ctx, m.endpoints[envelope.Source.AgentUID])
+	if sourceErr != nil && m.resolveSource != nil {
+		from, sourceErr = m.resolveSource(ctx, envelope.Source.AgentUID)
+	}
 	switch {
 	case !envelope.Deadline.After(observedAt):
 		kind, reason = coremessage.EventExpire, "deadline-expired"
 	case err != nil || sourceErr != nil || !to.Same(envelope.Target) || !from.Same(envelope.Source):
 		kind, reason = coremessage.EventStale, "stale-binding"
 	default:
-		content, encodeErr := json.Marshal(envelope)
+		content, encodeErr := codexCoordinationContent(envelope)
 		if encodeErr != nil {
 			return codexProcessReceipt{}, encodeErr
 		}
@@ -138,7 +141,7 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 			break
 		}
 		operation := fmt.Sprintf("message-%x", sha256.Sum256([]byte(messageRef)))
-		turnErr := target.handle.Turn(ctx, target.authority(), operation, string(content))
+		turnErr := target.handle.Turn(ctx, target.authority(), operation, content)
 		switch {
 		case turnErr == nil:
 		case errors.Is(turnErr, processhost.ErrBusy):

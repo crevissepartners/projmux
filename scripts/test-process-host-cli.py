@@ -14,6 +14,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
+    "create_agent_process_codex_cli_test.go",
     "create_agent_process_cli_test.go",
     "codex_process_binding_test.go",
     "codex_process_ownership_test.go",

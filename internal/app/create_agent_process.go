@@ -184,20 +184,13 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 		return result, err
 	}
 	transactions := c.processCreateTransactions(path)
-	if result.Provider == aiModeCodex {
-		// thread/start witnesses settings before startProcessCodex can publish exact
-		// kernel birth identities. Readiness here verifies only the reservation;
-		// the endpoint commits activation and revalidates its route before exposure.
-		transactions.Commit = func(ctx context.Context, binding processhost.Binding, _ string) error {
-			return transactions.Current(ctx, binding)
-		}
-	}
 	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.command.Env}, transactions, processhost.DefaultLimits())
 	if err != nil {
 		return result, err
 	}
 	launch := processhost.Launch{Binding: result.Binding, Command: plan.command}
 	if result.Provider == aiModeCodex {
+		launch.Spawned = processCodexCreateSpawn(path, result.Binding)
 		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, processCodexCreateConfig(plan, result.Binding.Agent), path)
 		if result.codexEndpoint != nil && result.codexEndpoint.handle != nil {
 			result.Handle = result.codexEndpoint.handle

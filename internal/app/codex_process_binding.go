@@ -146,6 +146,12 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Public creation reserved a Pending Agent before spawning. Publish the
+		// exact witnessed child before recording its ready thread on that same
+		// ownership generation; neither step adopts an existing provider.
+		if err := intmetadata.DefaultMutator().RecordProcessChild(reg, activation); err != nil {
+			return err
+		}
 		return intmetadata.DefaultMutator().RecordProcessActivation(reg, activation, endpoint.evidence.ThreadID)
 	})
 	if err != nil {
@@ -226,7 +232,25 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 			_, err := e.route(ctx)
 			return err
 		}
-		result := controlProcessForeground(bounded, peer, r, current, func() error { return applyCodexForeground(bounded, e.handle, r) })
+		var receipt *codexProcessReceipt
+		result := controlProcessForeground(bounded, peer, r, current, func() error {
+			if r.Action == "validate" {
+				return nil
+			}
+			if r.Action == "message" {
+				messages := e.messages.Load()
+				if messages == nil || r.MessageRef == "" {
+					return processhost.ErrStale
+				}
+				value, err := messages.receive(bounded, e, r.MessageRef)
+				if err == nil {
+					receipt = &value
+				}
+				return err
+			}
+			return applyCodexForeground(bounded, e.handle, r)
+		})
+		result.Receipt = receipt
 		_ = localipc.WriteJSON(conn, result)
 		return
 	}
