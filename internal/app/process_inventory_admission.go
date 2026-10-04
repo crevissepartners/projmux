@@ -14,8 +14,9 @@ import (
 // the invocation's Registry snapshot; explicit typed targets remain injectable.
 // Missing host evidence never grants a tmux fallback or process control.
 type processPaneRuntime struct {
-	targets []processhost.InventoryTarget
-	observe func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
+	targets         []processhost.InventoryTarget
+	observe         func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
+	controlOverride func(context.Context, coremetadata.Registry, string, resourcegraph.ProcessAction, string, string) error
 }
 
 func newProcessPaneRuntime() *processPaneRuntime {

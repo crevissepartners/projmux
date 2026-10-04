@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -24,10 +23,6 @@ type processHostObservation struct {
 	Host, Child     coremetadata.ProcessIdentity
 	Provider, State string
 	Exit            *processhost.Exit `json:",omitempty"`
-}
-
-func processSchemaBinding(b coremetadata.ProcessBinding) processhost.Binding {
-	return processhost.Binding{Host: b.HostInstanceID, Project: b.ProjectUID, Window: b.WindowUID, Agent: b.AgentUID, Pane: b.PaneUID, Generation: b.Generation, Operation: b.OperationID}
 }
 
 // Both the responder and reader compare the complete immutable activation.
@@ -62,10 +57,7 @@ func processObservationMatches(reg coremetadata.Registry, binding processhost.Bi
 }
 
 func processObservationOwnership(reg coremetadata.Registry, binding processhost.Binding, view processHostObservation) bool {
-	current := coremetadata.ProcessBinding{
-		HostInstanceID: binding.Host, ProjectUID: binding.Project, WindowUID: binding.Window,
-		AgentUID: binding.Agent, PaneUID: binding.Pane, Generation: binding.Generation, OperationID: binding.Operation,
-	}
+	current := metadataProcessBinding(binding)
 	activation, provider, ok := reg.CurrentProcessActivation(current)
 	return ok && view.Binding == binding && provider == view.Provider &&
 		activation.HostProcess == view.Host && activation.Child == view.Child &&
@@ -148,7 +140,7 @@ func retiredProcessObservation(reg coremetadata.Registry, binding processhost.Bi
 		return processhost.Snapshot{}, processhost.ErrStale
 	}
 	receipt := pane.Status.LastTermination
-	if !retiredProcessReceiptMatches(receipt, agent.Status.LastTermination, binding) {
+	if !coremetadata.MatchesProcessWait(metadataProcessBinding(binding), receipt) || !coremetadata.SameProcessWait(receipt, agent.Status.LastTermination) {
 		return processhost.Snapshot{}, processhost.ErrStale
 	}
 	exit := &processhost.Exit{Signal: receipt.Signal}
@@ -156,34 +148,6 @@ func retiredProcessObservation(reg coremetadata.Registry, binding processhost.Bi
 		exit.Code = *receipt.ExitCode
 	}
 	return processhost.Snapshot{Binding: binding, Provider: agent.Spec.Provider, State: "exited", Exit: exit}, nil
-}
-
-func retiredProcessReceiptMatches(pane, agent *coremetadata.TerminationEvidence, b processhost.Binding) bool {
-	if pane == nil || agent == nil || pane.Source != coremetadata.TerminationSourceSupervisor || pane.ObservedAt.IsZero() || !pane.ObservedAt.Equal(agent.ObservedAt) {
-		return false
-	}
-	if pane.PaneUID != b.Pane || pane.AgentUID != b.Agent || pane.Generation != b.Generation || pane.OperationID != b.Operation {
-		return false
-	}
-	left, right := *pane, *agent
-	left.ObservedAt, right.ObservedAt = time.Time{}, time.Time{}
-	if !reflect.DeepEqual(left, right) {
-		return false
-	}
-	return retiredProcessExitMatches(pane)
-}
-
-func retiredProcessExitMatches(pane *coremetadata.TerminationEvidence) bool {
-	code := 0
-	if pane.ExitCode != nil {
-		code = *pane.ExitCode
-		if code < 0 || code > 255 || pane.Signal != "" {
-			return false
-		}
-	} else if pane.Signal == "" {
-		return false
-	}
-	return pane.Classification == coremetadata.ClassifyProcessExit(code, pane.Signal)
 }
 
 // A read gives all probes the same short budget; probes run independently

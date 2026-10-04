@@ -1558,6 +1558,16 @@ projmux create agent [--host tmux|process] [--provider <provider>] [--project <r
 
 Process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
 
+The owner stops its provider on stdin EOF: </dev/null or closed stdin (CI steps, cron, nohup, or a noninteractive shell's &) can end it immediately. Keep stdin open, for example: `d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"`.
+
+Measured isolated CLI exits (exit always follows actual provider Wait, rather than the owner's signal):
+
+| Owner/provider ending | Graceful EOF-aware stub | Provider requiring TERM |
+| --- | --- | --- |
+| Owner stdin EOF, including /dev/null | 0 | 143 |
+| Owner INT or TERM | 0 | 128 + the provider's actual signal |
+| Provider exits itself | Its exit code (tested: 9) | 143 for SIGTERM |
+
 Process post-create hooks run only with [hooks.post-create] runtime="process"; this also opts the hook into process Agents, while tmux execution stays unchanged. Questions and approvals are always captured and answered through agent question/approval commands. Default guidance explains process execution; off/custom guidance is unchanged.
 
 An explicit `--provider` wins, and a profile that names another provider is refused. Without `--provider`, the provider is the one named by the profile that `--profile <name>` or a `role` creation label selects.

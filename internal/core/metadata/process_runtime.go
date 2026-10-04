@@ -101,7 +101,7 @@ func (m Mutator) RecordProcessSession(reg *Registry, activation ProcessActivatio
 // live authority. Callers may compose another Mutator writer before committing.
 func (m Mutator) RecordProcessWait(reg *Registry, activation ProcessActivation, receipt TerminationEvidence) error {
 	const op = "record process Wait"
-	if reg == nil || !processWaitReceiptMatches(activation.Binding, receipt) {
+	if reg == nil || !MatchesProcessWait(activation.Binding, &receipt) {
 		return stateErr(op, ErrInvalidRegistry, "exact supervisor Wait evidence is unavailable")
 	}
 	if err := reg.Validate(); err != nil {
@@ -131,7 +131,7 @@ func (m Mutator) RecordProcessWait(reg *Registry, activation ProcessActivation, 
 func retiredProcessWaitMatches(pane *Pane, agent *Agent, binding ProcessBinding, receipt TerminationEvidence) bool {
 	record := pane.Status.ProcessSession
 	return agent.Status.Phase == PhaseOffline && record != nil && record.Binding == binding && record.Provider == agent.Spec.Provider &&
-		exactProcessWaitReceipt(pane.Status.LastTermination, &receipt) && exactProcessWaitReceipt(agent.Status.LastTermination, &receipt)
+		SameProcessWait(pane.Status.LastTermination, &receipt) && SameProcessWait(agent.Status.LastTermination, &receipt)
 }
 
 func (m Mutator) retireProcessWait(reg *Registry, binding ProcessBinding, receipt TerminationEvidence) error {
@@ -142,7 +142,7 @@ func (m Mutator) retireProcessWait(reg *Registry, binding ProcessBinding, receip
 	}
 	pane, _ := reg.Pane(binding.PaneUID)
 	agent, _ := reg.Agent(binding.AgentUID)
-	if (!outcome.Applied && !outcome.Duplicate) || !exactProcessWaitReceipt(pane.Status.LastTermination, &receipt) || !exactProcessWaitReceipt(agent.Status.LastTermination, &receipt) {
+	if (!outcome.Applied && !outcome.Duplicate) || !SameProcessWait(pane.Status.LastTermination, &receipt) || !SameProcessWait(agent.Status.LastTermination, &receipt) {
 		return stateErr(op, ErrInvalidRegistry, "process Wait receipt was not recorded verbatim")
 	}
 	pane.Status.Activation = PaneActivation{}
@@ -150,18 +150,20 @@ func (m Mutator) retireProcessWait(reg *Registry, binding ProcessBinding, receip
 	return nil
 }
 
-func exactProcessWaitReceipt(a, b *TerminationEvidence) bool {
+// SameProcessWait compares exact supervisor receipts, including observation time.
+func SameProcessWait(a, b *TerminationEvidence) bool {
 	return a != nil && b != nil && sameEvidence(a, b) && a.ObservedAt.Equal(b.ObservedAt)
 }
 
-func processWaitReceiptMatches(binding ProcessBinding, receipt TerminationEvidence) bool {
-	if receipt.Source != TerminationSourceSupervisor || receipt.ObservedAt.IsZero() {
+// MatchesProcessWait validates the exact binding, exit shape and classification.
+func MatchesProcessWait(binding ProcessBinding, receipt *TerminationEvidence) bool {
+	if receipt == nil || receipt.Source != TerminationSourceSupervisor || receipt.ObservedAt.IsZero() {
 		return false
 	}
 	if receipt.PaneUID != binding.PaneUID || receipt.AgentUID != binding.AgentUID || receipt.Generation != binding.Generation || receipt.OperationID != binding.OperationID {
 		return false
 	}
-	return validProcessWaitStatus(receipt)
+	return validProcessWaitStatus(*receipt)
 }
 
 func validProcessWaitStatus(receipt TerminationEvidence) bool {

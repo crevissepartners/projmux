@@ -87,6 +87,7 @@ func TestProcessAdmissionRefusesBeforeTmuxOrRegistryWrites(t *testing.T) {
 		t.Fatalf("focus: %v", err)
 	}
 	pane, _ := reg.Pane(paneUID)
+	runtime.controlOverride = runtime.control
 	command := &agentCommand{processRuntime: runtime, loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }}
 	if err := command.runRelaunch([]string{"uid:" + pane.Metadata.OwnerUID(), "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-relaunch-unsupported") {
 		t.Fatalf("relaunch: %v", err)
@@ -148,6 +149,7 @@ func TestProcessSupportedControlUsesExactOwnedHost(t *testing.T) {
 	f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "typed-turn" })
 	agent, _ := reg.Agent(f.binding.Agent)
 	agent.Status.Progress.TurnRef = "typed-turn"
+	runtime.controlOverride = runtime.control
 	command := &agentCommand{processRuntime: runtime}
 	if err := command.interruptClaudeTurn(reg, *agent, "fixture", io.Discard); err != nil {
 		t.Fatal(err)
@@ -310,6 +312,7 @@ func TestProcessAdmissionTerminalConsumersRefuseBeforeSideEffects(t *testing.T) 
 	assertRefusal(resourcegraph.ProcessKeys, err)
 	pane, _ := reg.Pane(paneUID)
 	agent, _ := reg.Agent(pane.Metadata.OwnerUID())
+	runtime.controlOverride = runtime.control
 	command := &agentCommand{processRuntime: runtime, controlPaths: func() (config.Paths, error) { writes++; return config.Paths{}, nil }}
 	if err := command.interruptClaudeTurn(reg, *agent, "fixture", io.Discard); err == nil || !strings.Contains(err.Error(), "process-host-unavailable") {
 		t.Fatalf("process interrupt fell back to terminal: %v", err)
@@ -317,5 +320,12 @@ func TestProcessAdmissionTerminalConsumersRefuseBeforeSideEffects(t *testing.T) 
 	after, _ := json.Marshal(reg)
 	if len(runner.calls) != 0 || writes != 0 || !bytes.Equal(before, after) {
 		t.Fatalf("calls=%v writes=%d Registry changed=%v", runner.calls, writes, !bytes.Equal(before, after))
+	}
+}
+
+func TestProcessRuntimeProductionConstructorHasNoControlOverride(t *testing.T) {
+	runtime := newProcessPaneRuntime()
+	if runtime.observe == nil || runtime.controlOverride != nil {
+		t.Fatal("production runtime must observe exact hosts without local control override")
 	}
 }

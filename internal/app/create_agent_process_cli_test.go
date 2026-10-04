@@ -271,6 +271,9 @@ func TestProcessCreateOwnerSignalsActualCLI(t *testing.T) {
 			if signal != syscall.SIGKILL && err != nil {
 				t.Fatalf("owned shutdown: %v %s", err, stderr.String())
 			}
+			if signal != syscall.SIGKILL {
+				t.Logf("owner %s actual CLI exit=%d", signal, cmd.ProcessState.ExitCode())
+			}
 			for {
 				current, _, probeErr := localipc.Process(birth.PID)
 				if probeErr != nil || current != birth {
@@ -502,6 +505,47 @@ func TestProcessCreateReturnsActualWaitExitCLI(t *testing.T) {
 			if !ok || status.ExitCode() != exit.code {
 				t.Fatalf("actual exit %v %s", err, out)
 			}
+		})
+	}
+}
+
+func TestProcessCreateClosedStdinExitActualCLI(t *testing.T) {
+	for _, forced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("forced=%t", forced), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			want := 0
+			if forced {
+				path := filepath.Join(f.root, "provider.py")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, append(raw, []byte("\nthreading.Event().wait()\n")...), 0600); err != nil {
+					t.Fatal(err)
+				}
+				want = 143
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args("-o", "none")...)
+			// os/exec's absent Stdin is /dev/null, as in a detached CI owner.
+			err := cmd.Run()
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != want {
+				t.Fatalf("closed stdin: %v state=%v want=%d", err, cmd.ProcessState, want)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(reg.Agents) != 1 {
+				t.Fatal("creation did not run before EOF")
+			}
+			pane, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
+			receipt := pane.Status.LastTermination
+			if receipt == nil || (want == 0 && (receipt.ExitCode == nil || *receipt.ExitCode != 0)) || (want == 143 && receipt.Signal == "") {
+				t.Fatalf("actual Wait missing: %+v", receipt)
+			}
+			t.Logf("stdin=/dev/null forced=%t actual CLI exit=%d", forced, want)
 		})
 	}
 }

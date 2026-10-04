@@ -1265,6 +1265,22 @@ parse warnings are also printed on the creator's stderr; an invalid file is
 skipped without failing creation.
 
 The command stays in the foreground until provider exit or owner EOF/INT/TERM.
+The owner stops its provider at stdin EOF. `</dev/null` or closed stdin (CI
+steps, cron, `nohup`, or a noninteractive shell's `&`) can end it immediately.
+Keep stdin open, for example:
+
+```sh
+d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"
+```
+
+Measured isolated CLI exits follow the provider's actual Wait, not the owner's signal:
+
+| Owner/provider ending | Graceful EOF-aware stub | Provider requiring TERM |
+| --- | --- | --- |
+| Owner stdin EOF, including `/dev/null` | 0 | 143 |
+| Owner INT or TERM | 0 | 128 + the provider's actual signal |
+| Provider exits itself | Its exit code (tested: 9) | 143 for SIGTERM |
+
 A killed owner still releases its dedicated provider lifetime; without a durable
 Wait receipt, subsequent reads conservatively show unknown. Other terminals can
 use `agent turn start`, `agent turn interrupt --via cli`, `agent question`, and

@@ -252,7 +252,7 @@ func (c *agentCommand) callProcessClaudeTurn(reg coremetadata.Registry, agent co
 		return "", fmt.Errorf("process-host-unavailable: %w", err)
 	}
 	binding := session.Binding
-	authority := processhost.Authority{Binding: processhost.Binding{Host: binding.HostInstanceID, Project: binding.ProjectUID, Window: binding.WindowUID, Agent: binding.AgentUID, Pane: binding.PaneUID, Generation: binding.Generation, Operation: binding.OperationID}, Connection: binding.OperationID, Session: session.SessionID}
+	authority := processhost.Authority{Binding: processSchemaBinding(binding), Connection: binding.OperationID, Session: session.SessionID}
 	operation, err := newCreateOperationID()
 	if err != nil {
 		return "", err
@@ -282,9 +282,9 @@ func processClaudeTurnAcceptance(result processForegroundResult) error {
 // Explicit typed targets retain their local authority; operational commands use
 // the exact host socket and kernel birth checks.
 func (c *agentCommand) interruptProcessClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent) (string, error) {
-	if c.processRuntime != nil && c.processRuntime.observe == nil {
+	if c.processRuntime != nil && c.processRuntime.controlOverride != nil {
 		turn := agent.Status.Progress.TurnRef
-		return turn, c.processRuntime.control(context.Background(), registry, agent.Status.PaneRef, resourcegraph.ProcessInterrupt, turn, "")
+		return turn, c.processRuntime.controlOverride(context.Background(), registry, agent.Status.PaneRef, resourcegraph.ProcessInterrupt, turn, "")
 	}
 	return c.callProcessClaudeTurn(registry, agent, "interrupt", "")
 }

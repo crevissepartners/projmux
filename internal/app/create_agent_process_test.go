@@ -10,6 +10,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 func TestProcessClaudeLaunchKeepsResolvedPolicyAndWorkspace(t *testing.T) {
@@ -114,5 +115,27 @@ func TestProcessCreateReservationHasNoTmuxOrLiveChildClaim(t *testing.T) {
 	before := store.registry.Clone()
 	if _, err := command.reserveProcessAgent(context.Background(), changed, opts, "op-foreign", "gen-foreign"); err == nil || !reflect.DeepEqual(store.registry, before) {
 		t.Fatal("changed preparation scope committed")
+	}
+}
+
+func TestProcessSnapshotUnchangedTicksDoNotOpenTransactions(t *testing.T) {
+	transactions, answers := 0, 0
+	syncSnapshot := processSnapshotSynchronizer(func(processhost.Snapshot) error { transactions++; return nil }, func(processhost.Snapshot) error { answers++; return nil })
+	snapshot := processhost.Snapshot{State: "ready", Sequence: 1}
+	if err := syncSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	transactions = 0
+	for range 20 {
+		if err := syncSnapshot(snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if transactions != 0 || answers != 20 {
+		t.Fatalf("unchanged ticks: transactions=%d answers=%d", transactions, answers)
+	}
+	snapshot.Sequence++
+	if err := syncSnapshot(snapshot); err != nil || transactions != 1 {
+		t.Fatalf("changed snapshot: %v transactions=%d", err, transactions)
 	}
 }

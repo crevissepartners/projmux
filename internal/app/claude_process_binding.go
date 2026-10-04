@@ -283,7 +283,7 @@ func currentClaudeProcessRegistrationOwner(path string, proof claudeProcessProof
 		return false
 	}
 	b := proof.Binding
-	binding := coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}
+	binding := metadataProcessBinding(b)
 	activation, provider, ok := reg.CurrentProcessActivation(binding)
 	agent, found := reg.Agent(b.Agent)
 	return ok && provider == "claude" && found && agent.Status.Phase == coremetadata.PhaseRunning && activation.Child == proof.Process && activation.HostProcess == proof.HostProcess
@@ -361,7 +361,7 @@ func (s *claudeProcessService) ownershipCurrent(reg coremetadata.Registry, child
 	if !ok || !found || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || agent.Spec.Provider != "claude" || agent.Status.Phase != coremetadata.PhaseRunning {
 		return false
 	}
-	binding := coremetadata.ProcessBinding{HostInstanceID: s.binding.Host, ProjectUID: s.binding.Project, WindowUID: s.binding.Window, AgentUID: s.binding.Agent, PaneUID: s.binding.Pane, Generation: s.binding.Generation, OperationID: s.binding.Operation}
+	binding := metadataProcessBinding(s.binding)
 	activation, provider, current := reg.CurrentProcessActivation(binding)
 	if current {
 		return provider == "claude" && activation.Child == child && activation.HostProcess == s.ownedHostProcess
@@ -377,7 +377,7 @@ func (s *claudeProcessService) recordActivation(process coremetadata.ProcessIden
 	if err != nil {
 		return err
 	}
-	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: s.binding.Host, ProjectUID: s.binding.Project, WindowUID: s.binding.Window, AgentUID: s.binding.Agent, PaneUID: s.binding.Pane, Generation: s.binding.Generation, OperationID: s.binding.Operation}, HostProcess: host, Child: process}
+	activation := coremetadata.ProcessActivation{Binding: metadataProcessBinding(s.binding), HostProcess: host, Child: process}
 	_, _, err = intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
 		if !s.ownershipCurrent(*reg, process) {
 			return processhost.ErrStale
@@ -462,24 +462,25 @@ func (s *claudeProcessService) recordChild() error {
 		return processhost.ErrStale
 	}
 	b := s.binding
-	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, HostProcess: s.ownedHostProcess, Child: child}
+	activation := coremetadata.ProcessActivation{Binding: metadataProcessBinding(b), HostProcess: s.ownedHostProcess, Child: child}
 	_, _, err = intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
 		return intmetadata.DefaultMutator().RecordProcessChild(reg, activation)
 	})
 	return err
 }
 
-func (s *claudeProcessService) rollback(ctx context.Context) {
+func (s *claudeProcessService) rollback(ctx context.Context) error {
 	cleanup, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), localipc.Deadline)
-	_ = s.close(cleanup)
+	closeErr := s.close(cleanup)
 	cancelCleanup()
 	if s.handle == nil {
-		return
+		return closeErr
 	}
-	_ = s.handle.Stop(s.binding)
+	stopErr := s.handle.Stop(s.binding)
 	wait, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*localipc.Deadline)
 	defer cancel()
-	_, _ = s.handle.Wait(wait, s.binding)
+	_, waitErr := s.handle.Wait(wait, s.binding)
+	return errors.Join(closeErr, stopErr, waitErr)
 }
 
 // startProcessClaude binds the foreground owner to exact ownership transactions.
@@ -496,8 +497,7 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
 	service.initialize(ctx, host, launch)
 	if service.launchErr != nil {
-		service.rollback(ctx)
-		return service.handle, service.launchErr
+		return service.handle, errors.Join(service.launchErr, service.rollback(ctx))
 	}
 	return service.handle, nil
 }

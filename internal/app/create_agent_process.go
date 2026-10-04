@@ -349,10 +349,6 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 	return result, MapMetadataError(err)
 }
 
-func metadataProcessBinding(b processhost.Binding) coremetadata.ProcessBinding {
-	return coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}
-}
-
 func (c *createCommand) processCreateTransactions(path string) processhost.Transactions {
 	store := intmetadata.NewStore(path)
 	current := func(ctx context.Context, b processhost.Binding) error {
@@ -386,6 +382,22 @@ func (c *createCommand) processCreateTransactions(path string) processhost.Trans
 		})
 		return err
 	}}
+}
+
+// Unchanged snapshots skip projections; pending store answers still need consumption.
+func processSnapshotSynchronizer(changed, unchanged func(processhost.Snapshot) error) func(processhost.Snapshot) error {
+	var previous processhost.Snapshot
+	seen := false
+	return func(snapshot processhost.Snapshot) error {
+		if seen && reflect.DeepEqual(previous, snapshot) {
+			return unchanged(snapshot)
+		}
+		if err := changed(snapshot); err != nil {
+			return err
+		}
+		previous, seen = snapshot, true
+		return nil
+	}
 }
 
 // waitProcessAgent owns shutdown and persists only actual supervisor Wait.
@@ -574,12 +586,18 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	}
 	// EOF is owner shutdown. Provider content never uses the owner's stdout.
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
-	snapshot, waitErr := result.waitProcessAgent(ctx, func(snapshot processhost.Snapshot) error {
+	syncSnapshot := processSnapshotSynchronizer(func(snapshot processhost.Snapshot) error {
 		if err := result.recordProcessSnapshot(snapshot); err != nil {
 			return err
 		}
 		return control.sync(context.WithoutCancel(ctx))
+	}, func(snapshot processhost.Snapshot) error {
+		if len(snapshot.Pending) > 0 {
+			return control.syncControls(context.WithoutCancel(ctx))
+		}
+		return nil
 	})
+	snapshot, waitErr := result.waitProcessAgent(ctx, syncSnapshot)
 	// A closed authority still closes answer records and projects termination.
 	controlErr := control.syncControls(context.Background())
 	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {

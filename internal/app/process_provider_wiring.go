@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
@@ -37,4 +38,13 @@ func processProviderLaunchEnv(launch processhost.Launch, bindingKey, hostKey, so
 		env = append(env, value)
 	}
 	return append(env, bindingKey+"="+string(raw), hostKey+"="+socket)
+}
+
+// Binding conversions are shared across creation, authority and observation.
+func processSchemaBinding(b coremetadata.ProcessBinding) processhost.Binding {
+	return processhost.Binding{Host: b.HostInstanceID, Project: b.ProjectUID, Window: b.WindowUID, Agent: b.AgentUID, Pane: b.PaneUID, Generation: b.Generation, Operation: b.OperationID}
+}
+
+func metadataProcessBinding(b processhost.Binding) coremetadata.ProcessBinding {
+	return coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}
 }
