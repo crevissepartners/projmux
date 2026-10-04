@@ -19,6 +19,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 func processAttentionWiringFixture(t *testing.T) (coremetadata.Registry, *processAttentionStore, string) {
@@ -295,6 +296,24 @@ func TestProcessAttentionActualCLIIsolated(t *testing.T) {
 	if after := processWiringStateFiles(t, filepath.Dir(path)); fmt.Sprint(damagedBefore) != fmt.Sprint(after) {
 		t.Fatal("damaged CLI read repaired state")
 	}
+	// A damaged process projection must not blank a valid tmux status badge.
+	windowFrame := strings.Join([]string{"worker", "reply", "", ""}, attentionListSeparator)
+	tmuxScript := "#!/bin/sh\nif [ \"$1\" = list-panes ]; then\n printf '%s\\n' '" + windowFrame + "'\nfi\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(tmuxScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+	window := exec.CommandContext(ctx, binary, "attention", "window", "@1")
+	var badge, diagnostic bytes.Buffer
+	window.Stdout, window.Stderr = &badge, &diagnostic
+	err = window.Run()
+	cancel()
+	if err != nil || strings.TrimSpace(badge.String()) == "" || !strings.Contains(diagnostic.String(), "damaged process attention store") {
+		t.Fatalf("actual CLI damaged window: badge=%q diagnostic=%q error=%v", badge.String(), diagnostic.String(), err)
+	}
+	if after := processWiringStateFiles(t, filepath.Dir(path)); fmt.Sprint(damagedBefore) != fmt.Sprint(after) {
+		t.Fatal("damaged window CLI repaired state")
+	}
 	t.Log("actual CLI: current/stale/damaged reads byte-identical, terminal focus zero")
 
 }
@@ -470,5 +489,49 @@ func TestProcessAttentionProcessRegistryKeepsUnmanagedTmux(t *testing.T) {
 	rows, err := cmd.listAttentionPanes()
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("mixed unmanaged panes=%+v error=%v", rows, err)
+	}
+}
+
+func TestProcessAttentionDamagedStoreKeepsTmuxWindow(t *testing.T) {
+	_, store, path := processAttentionWiringFixture(t)
+	if err := os.WriteFile(store.path, []byte("{damaged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := processWiringStateFiles(t, filepath.Dir(path))
+	frame := strings.Join([]string{"worker", "reply", "", ""}, attentionListSeparator) + "\n"
+	runner := &recordingAttentionRunner{outputs: map[string][]byte{"tmux list-panes -t @1 -F " + strings.Join([]string{"#{pane_title}", "#{@projmux_attention_state}", "#{@projmux_ai_state}", "#{@projmux_ai_badge_kind}"}, attentionListSeparator): []byte(frame)}}
+	cmd := newAttentionCommand()
+	cmd.runner = runner
+	var out, diagnostic bytes.Buffer
+	if err := cmd.Run([]string{"window", "@1"}, &out, &diagnostic); err != nil {
+		t.Fatalf("damaged process store suppressed tmux badge: %v", err)
+	}
+	if strings.TrimSpace(out.String()) == "" || !strings.Contains(diagnostic.String(), "damaged process attention store") {
+		t.Fatalf("badge=%q diagnostic=%q", out.String(), diagnostic.String())
+	}
+	runner.outputs["tmux list-panes -a -F "+attentionListFormat] = []byte(strings.Join([]string{"legacy", "@1", "%1", "1", "worker", "reply", "", "", "", ""}, attentionListSeparator) + "\n")
+	rows, err := cmd.listAttentionPanes()
+	if err == nil || len(rows) != 1 || rows[0].Pane != "%1" || rows[0].AttentionState != "reply" {
+		t.Fatalf("tmux rows=%+v diagnostic=%v", rows, err)
+	}
+	if after := processWiringStateFiles(t, filepath.Dir(path)); fmt.Sprint(before) != fmt.Sprint(after) {
+		t.Fatal("damaged status read mutated state")
+	}
+}
+
+func TestProcessAttentionWindowKeepsMixedTmuxFailure(t *testing.T) {
+	_, store, _ := processAttentionWiringFixture(t)
+	if err := os.WriteFile(store.path, []byte("{damaged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newAttentionCommand()
+	cmd.process.readRegistry = nil
+	cmd.process.store = store
+	cmd.process.bindings = []processhost.Binding{{Pane: "pane-02"}}
+	cmd.runner = &processWiringErrorRunner{err: errors.New("tmux observation failed")}
+	var out, diagnostic bytes.Buffer
+	err := cmd.Run([]string{"window", "@1"}, &out, &diagnostic)
+	if err == nil || !strings.Contains(err.Error(), "tmux observation failed") || out.Len() != 0 {
+		t.Fatalf("tmux failure swallowed: error=%v output=%q", err, out.String())
 	}
 }

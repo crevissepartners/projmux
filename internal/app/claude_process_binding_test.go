@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -229,9 +230,7 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 			t.Errorf("Wait: %+v %v", s, err)
 		}
 		leaseDir := filepath.Dir(processClaudeHostSocket(path, b.Pane, b.Generation))
-		if _, err := os.Lstat(leaseDir); !os.IsNotExist(err) {
-			t.Errorf("host lease remains after actual Wait: %s (%v)", leaseDir, err)
-		}
+		assertClaudeProcessLeaseAfterWait(t, leaseDir, s)
 	})
 	questions := agentquestion.NewStore(filepath.Join(root, "answers"))
 	approvals := agentapproval.NewStore(filepath.Join(root, "answers"))
@@ -673,4 +672,89 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	}
 	target.turn(t, "after-busy", "ordinary")
 	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+}
+
+// The helper's idle identity gate and one bounded host read can outlast the
+// host's one-second completion cleanup. Wait must report that timeout without
+// pretending that helper-owned entries were already removed.
+func assertClaudeProcessLeaseAfterWait(t *testing.T, dir string, snapshot processhost.Snapshot) {
+	t.Helper()
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		return
+	}
+	if !strings.Contains(snapshot.Diagnostic, "owned completion cleanup:") {
+		t.Errorf("lease survived Wait without cleanup diagnostic: %q", snapshot.Diagnostic)
+	}
+	deadline := time.Now().Add(localipc.Deadline + claudeEndpointIdleRegistryFloor + claudeEndpointPollInterval)
+	for time.Now().Before(deadline) {
+		if _, err := os.Lstat(dir); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("host lease remains beyond helper shutdown bound: %s", dir)
+}
+
+func TestClaudeProcessWaitBoundsDelayedHelperCleanup(t *testing.T) {
+	f := newProcessClaudeFixture(t, nil)
+	_ = f.proof(t)
+	reg, err := f.store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(f.binding.Pane)
+	identity := pane.Status.Activation.Claude.Registration.Authority.LeaseProcess
+	helper, err := os.FindProcess(identity.PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signal := func(sig syscall.Signal) error {
+		current, _, err := localipc.Process(identity.PID)
+		if err != nil || current != identity {
+			return fmt.Errorf("owned helper birth changed: %v", err)
+		}
+		return helper.Signal(sig)
+	}
+	if err := signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	resumed := false
+	t.Cleanup(func() {
+		if !resumed {
+			_ = signal(syscall.SIGCONT)
+		}
+	})
+	if err := f.handle.Stop(f.binding); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snapshot, err := f.handle.Wait(ctx, f.binding)
+	if err != nil || snapshot.Exit == nil {
+		t.Fatalf("actual Wait: %+v %v", snapshot, err)
+	}
+	if !strings.Contains(snapshot.Diagnostic, "owned completion cleanup:") || !strings.Contains(snapshot.Diagnostic, context.DeadlineExceeded.Error()) {
+		t.Fatalf("one-second cleanup timeout missing: %q", snapshot.Diagnostic)
+	}
+	dir := filepath.Dir(processClaudeHostSocket(f.path, f.binding.Pane, f.binding.Generation))
+	if _, err := os.Lstat(dir); err != nil {
+		t.Fatalf("paused helper lease vanished before helper exit: %v", err)
+	}
+	if err := signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	resumed = true
+	assertClaudeProcessLeaseAfterWait(t, dir, snapshot)
+	deadline := time.Now().Add(localipc.Deadline)
+	for {
+		current, _, err := localipc.Process(identity.PID)
+		if err != nil || current != identity {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("owned helper remains after lease cleanup: %+v", identity)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Logf("actual Wait exit=%+v, delayed helper cleanup diagnostic=%q, lease removed", snapshot.Exit, snapshot.Diagnostic)
 }

@@ -265,7 +265,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 
 	rows, listErr := c.windowAttentionRows(windowID)
 	if listErr != nil {
-		if _, registryError := listErr.(processAttentionRegistryError); !registryError {
+		if _, processError := listErr.(processAttentionWindowError); !processError {
 			return listErr
 		}
 		fmt.Fprintf(stderr, "attention window: observe process attention: %v\n", listErr)
@@ -466,12 +466,18 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 	return output
 }
 
+// processAttentionWindowError isolates process reads from terminal observation.
+// Joined terminal errors remain fatal rather than being mistaken for this type.
+type processAttentionWindowError struct{ error }
+
 func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWindowRow, error) {
 	processRows := []attentionWindowRow{}
 	var processErr error
 	if c != nil && c.process != nil {
 		records, err := c.process.records()
-		processErr = err
+		if err != nil {
+			processErr = processAttentionWindowError{err}
+		}
 		for _, r := range records {
 			if r.Binding.Window == windowID {
 				processRows = append(processRows, attentionWindowRow{AIBadgeKind: r.badge()})
