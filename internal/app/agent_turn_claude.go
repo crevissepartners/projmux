@@ -13,7 +13,9 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -132,7 +134,12 @@ func parseClaudePaneFrame(out []byte) ([]string, error) {
 // and the audit records it as received.
 func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, via string, stdout io.Writer) error {
 	if pane, ok := registry.Pane(agent.Status.PaneRef); ok && c.processRuntime.inventory().Declares(*pane) {
-		return c.processRuntime.control(context.Background(), registry, pane.Metadata.UID, resourcegraph.ProcessInterrupt, agent.Status.Progress.TurnRef, "")
+		operation, err := c.callProcessClaudeTurn(registry, agent, "interrupt", "")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionInterruptTurn), agent.Metadata.UID, operation)
+		return err
 	}
 	var processTarget *processTerminalTarget
 	for _, key := range c.processRuntime.inventory().Declared {
@@ -208,4 +215,66 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 	}
 	_, err = fmt.Fprintf(stdout, "%s agent=uid:%s pane=uid:%s delivery=sent (cancellation unconfirmed)\n", c.agentActionText(agentActionInterruptTurn), route.AgentUID, route.PaneUID)
 	return err
+}
+
+// Process starts enter the provider stream as plain user frames. Coordination
+// messages retain their separate native message route and envelope contract.
+func (c *agentCommand) startProcessClaudeTurn(reg coremetadata.Registry, agent coremetadata.Agent, text string, stdout io.Writer) (bool, error) {
+	pane, found := reg.Pane(agent.Status.PaneRef)
+	if agent.Spec.Provider != aiModeClaude || !found || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+		return false, nil
+	}
+	operation, err := c.callProcessClaudeTurn(reg, agent, "turn", text)
+	if err != nil {
+		return true, err
+	}
+	_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionSendTurn), agent.Metadata.UID, operation)
+	return true, err
+}
+
+func (c *agentCommand) callProcessClaudeTurn(reg coremetadata.Registry, agent coremetadata.Agent, action, text string) (string, error) {
+	pane, found := reg.Pane(agent.Status.PaneRef)
+	if !found || pane.Status.ProcessSession == nil || agent.Spec.Provider != aiModeClaude || c.controlPaths == nil {
+		return "", processhost.ErrStale
+	}
+	session := pane.Status.ProcessSession
+	activation, provider, current := reg.CurrentProcessActivation(session.Binding)
+	if !current || provider != aiModeClaude {
+		return "", processhost.ErrStale
+	}
+	paths, err := c.controlPaths()
+	if err != nil {
+		return "", err
+	}
+	socket := processClaudeHostSocket(intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation)
+	identity, err := localipc.InspectOwnedSocket(socket)
+	if err != nil {
+		return "", fmt.Errorf("process-host-unavailable: %w", err)
+	}
+	binding := session.Binding
+	authority := processhost.Authority{Binding: processhost.Binding{Host: binding.HostInstanceID, Project: binding.ProjectUID, Window: binding.WindowUID, Agent: binding.AgentUID, Pane: binding.PaneUID, Generation: binding.Generation, Operation: binding.OperationID}, Connection: binding.OperationID, Session: session.SessionID}
+	operation, err := newCreateOperationID()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
+	defer cancel()
+	result, err := callProcessForeground(ctx, socket, identity, activation.HostProcess, claudeProcessCheck{Foreground: &processForegroundRequest{Authority: authority, Action: action, Operation: operation, Prompt: text, Turn: session.TurnID}})
+	if err != nil {
+		return "", fmt.Errorf("process-host-unavailable: %w", err)
+	}
+	return operation, processClaudeTurnAcceptance(result)
+}
+
+func processClaudeTurnAcceptance(result processForegroundResult) error {
+	switch {
+	case result.Accepted:
+		return nil
+	case result.Busy:
+		return processhost.ErrBusy
+	case result.Closed:
+		return processhost.ErrClosed
+	default:
+		return processhost.ErrStale
+	}
 }

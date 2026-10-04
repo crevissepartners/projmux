@@ -94,7 +94,7 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 	default:
 		// The same resolution the hook makes: an Agent that is not opted in
 		// still takes answers while the central setting is way 2.
-		if !claudeQuestionAnsweredByProjmux(agent, c.questionAnswering) {
+		if !processClaudeAnswers(registry, agent) && !claudeQuestionAnsweredByProjmux(agent, c.questionAnswering) {
 			return refuse(questionReasonChannelOff, "is not opted in; run `projmux agent question enable` first")
 		}
 		return c.answerQuestion(request, agent, refuse, stdout)

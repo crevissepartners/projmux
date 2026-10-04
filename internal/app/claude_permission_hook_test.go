@@ -1270,3 +1270,18 @@ func TestClaudePermissionAnswerErrorNamesAnUncommittedAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessClaudeApprovalBypassKeepsRecordChecks(t *testing.T) {
+	f := newPermissionFixture(t, config.AgentApprovalAnsweringClaude)
+	_, _, err := runRoute(t, f.command, "approval", "answer", "uid:"+questionTestAgent, "missing", "--allow")
+	if err == nil || !strings.Contains(err.Error(), permissionReasonAnsweringOff) {
+		t.Fatalf("tmux opt-in changed: %v", err)
+	}
+	pane, _ := f.resources.registry.Pane(questionTestPane)
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	pane.Status.Activation = coremetadata.PaneActivation{}
+	_, _, err = runRoute(t, f.command, "approval", "answer", "uid:"+questionTestAgent, "missing", "--allow")
+	if err == nil || !strings.Contains(err.Error(), permissionReasonNotFound) {
+		t.Fatalf("process bypass skipped record validation: %v", err)
+	}
+}

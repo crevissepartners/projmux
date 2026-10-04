@@ -482,8 +482,8 @@ func (s *claudeProcessService) rollback(ctx context.Context) {
 	_, _ = s.handle.Wait(wait, s.binding)
 }
 
-// startProcessClaude is dormant until a foreground consumer supplies exact
-// ownership transactions. It does not allocate an activation or choose policy.
+// startProcessClaude binds the foreground owner to exact ownership transactions.
+// The caller allocates the reservation and chooses launch policy.
 func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string) (*processhost.Handle, error) {
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
@@ -752,7 +752,7 @@ func processClaudeRouteResolver(registryPath string, proof claudeProcessProof) f
 		evidence := coremetadata.ClaudeProcessRouteEvidence{HostInstance: current.Binding.Host, PaneUID: current.Binding.Pane, Generation: current.Binding.Generation, SessionID: current.Session, Process: current.Process, HostProcess: current.HostProcess, Registration: *registration}
 		return coremetadata.ResolveProcessClaudeRoute(reg, agentUID, evidence, func(e coremetadata.ClaudeProcessRouteEvidence) bool {
 			live, err := lookupClaudeProcessRegistration(current)
-			return err == nil && e == evidence && *live == e.Registration
+			return err == nil && *live == e.Registration
 		})
 
 	}

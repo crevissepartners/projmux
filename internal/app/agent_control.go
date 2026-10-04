@@ -376,8 +376,8 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		binding, err := c.resolveControlBinding("agent turn "+args[0], before[0])
-		if err != nil {
+		binding, handled, err := c.resolveTurnControlBinding(args[0], before[0], text, stdout)
+		if handled || err != nil {
 			return err
 		}
 		op := agentControlOpStart
@@ -802,4 +802,23 @@ func addOpenCodexRecovery(err error, registry coremetadata.Registry, agent corem
 		return err
 	}
 	return addOpenCodexBindingRecovery(err, exactAgentControlBinding{Identity: codexLifecycleIdentity{PaneUID: pane.Metadata.UID}, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID})
+}
+
+// Resolve once for start, retaining the same registry snapshot for tmux/Codex.
+// Steer keeps its existing native binding path.
+func (c *agentCommand) resolveTurnControlBinding(action, ref, text string, stdout io.Writer) (exactAgentControlBinding, bool, error) {
+	if action != "start" {
+		binding, err := c.resolveControlBinding("agent turn "+action, ref)
+		return binding, false, err
+	}
+	reg, agent, err := c.resolveOneAgent("agent turn start", ref, selector.VerbReview)
+	if err != nil {
+		return exactAgentControlBinding{}, false, err
+	}
+	handled, err := c.startProcessClaudeTurn(reg, agent, text, stdout)
+	if handled || err != nil {
+		return exactAgentControlBinding{}, handled, err
+	}
+	binding, err := c.bindAgentControl("agent turn start", reg, agent)
+	return binding, false, err
 }

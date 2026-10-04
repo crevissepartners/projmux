@@ -4,13 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"io"
 	"maps"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -30,9 +39,12 @@ type processAgentCreateOptions struct {
 type processAgentCreateRequest struct{ options processAgentCreateOptions }
 
 type processAgentCreateResult struct {
-	Created createResult
-	Binding processhost.Binding
-	Handle  *processhost.Handle
+	Created      createResult
+	Binding      processhost.Binding
+	Handle       *processhost.Handle
+	registryPath string
+	waitReceipt  *coremetadata.TerminationEvidence
+	waitRecorded bool
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
@@ -154,6 +166,7 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 		return result, err
 	}
 	path := intmetadata.PathFor(stateDir)
+	result.registryPath = path
 	executable, err := os.Executable()
 	if err != nil {
 		return result, err
@@ -373,4 +386,307 @@ func (c *createCommand) processCreateTransactions(path string) processhost.Trans
 		})
 		return err
 	}}
+}
+
+// waitProcessAgent owns shutdown and persists only actual supervisor Wait.
+// A short Wait deadline is a condition check, not a fixed sleep: child exit wins
+// immediately. Cancellation closes only this Handle's dedicated lifetime.
+func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSnapshot func(processhost.Snapshot) error) (processhost.Snapshot, error) {
+	if r.Handle == nil {
+		return processhost.Snapshot{}, errors.New("process host was not started")
+	}
+	var failure error
+	var stopDeadline time.Time
+	for {
+		if (ctx.Err() != nil || failure != nil) && stopDeadline.IsZero() {
+			failure = errors.Join(failure, r.Handle.Stop(r.Binding))
+			stopDeadline = time.Now().Add(3*processhost.DefaultLimits().Grace + 2*processhost.DefaultLimits().Write)
+		}
+		if !stopDeadline.IsZero() && !time.Now().Before(stopDeadline) {
+			return processhost.Snapshot{}, errors.Join(failure, errors.New("owned process Wait cleanup exceeded its bound"))
+		}
+		poll, cancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
+		snapshot, err := r.Handle.Wait(poll, r.Binding)
+		cancel()
+		if err == nil {
+			return snapshot, errors.Join(failure, r.persistProcessWait(snapshot))
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return snapshot, errors.Join(failure, err)
+		}
+		snapshot, err = r.Handle.Observe(r.Binding)
+		if err != nil {
+			return snapshot, errors.Join(failure, err)
+		}
+		if failure == nil && stopDeadline.IsZero() && syncSnapshot != nil {
+			failure = syncSnapshot(snapshot)
+		}
+	}
+}
+
+func (r *processAgentCreateResult) persistProcessWait(snapshot processhost.Snapshot) error {
+	if snapshot.Binding != r.Binding {
+		return processhost.ErrStale
+	}
+	if r.waitRecorded {
+		return nil
+	}
+	receipt, ok := snapshot.Termination(time.Now().UTC())
+	if !ok {
+		return errors.New("owned supervisor Wait evidence is unavailable")
+	}
+	if r.waitReceipt == nil {
+		r.waitReceipt = receipt.Clone()
+	} else {
+		receipt = *r.waitReceipt.Clone()
+	}
+	journal, err := terminationJournalForRegistryPath(r.registryPath)
+	if err != nil {
+		return err
+	}
+	// Durability precedes the Registry transaction. If the owner dies between
+	// these operations, normal receipt convergence can still see the actual Wait.
+	if err = journal.append(receipt); err != nil {
+		return err
+	}
+	_, _, err = intmetadata.NewStore(r.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(r.Binding))
+		if !current {
+			return processhost.ErrStale
+		}
+		return intmetadata.DefaultMutator().RecordProcessWait(reg, activation, receipt)
+	})
+	r.waitRecorded = err == nil
+	return err
+}
+
+func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Snapshot) error {
+	if snapshot.State != "ready" || snapshot.Session == "" {
+		return nil
+	}
+	record := coremetadata.ProcessSessionRecord{Provider: aiModeClaude, Binding: metadataProcessBinding(r.Binding), SessionID: snapshot.Session, ConnectionID: snapshot.Connection, TurnID: snapshot.Turn, ResumeState: coremetadata.ProcessResumeUnknown}
+	for _, request := range snapshot.Pending {
+		record.Pending = append(record.Pending, coremetadata.ProcessRecordedControl{ID: request.ID, Kind: request.Kind, ConnectionID: request.Connection, SessionID: request.Session, TurnID: request.Turn})
+	}
+	_, _, err := intmetadata.NewStore(r.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		activation, _, current := reg.CurrentProcessActivation(record.Binding)
+		if !current {
+			return processhost.ErrStale
+		}
+		mutator := intmetadata.DefaultMutator()
+		if err := mutator.RecordProcessSession(reg, activation, record); err != nil {
+			return err
+		}
+		agent, _ := reg.Agent(r.Binding.Agent)
+		if agent.Status.Activation.State == coremetadata.ActivationPending {
+			_, err := mutator.SetAgentActivation(reg, r.Binding.Agent, coremetadata.ActivationAcknowledged, string(coremetadata.InteractionSourceProviderControl), "")
+			return err
+		}
+		return nil
+	})
+	return err
+}
+
+func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) error {
+	if result.Handle != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := result.waitProcessAgent(ctx, nil); err != nil {
+			return processCreateCleanupError(*result, err)
+		}
+	}
+	_, err := c.store.update(func(reg *coremetadata.Registry) error {
+		pane, ok := reg.Pane(result.Binding.Pane)
+		if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(result.Binding) {
+			return processhost.ErrStale
+		}
+		if result.Handle != nil && (!pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil) {
+			return processhost.ErrStale
+		}
+		return c.store.mutator().DeleteAgent(reg, result.Binding.Agent)
+	})
+	if err != nil {
+		return processCreateCleanupError(*result, err)
+	}
+	return nil
+}
+
+func processCreateCleanupError(result processAgentCreateResult, cause error) error {
+	state := "unknown"
+	if result.waitRecorded {
+		state = "offline"
+	}
+	return fmt.Errorf("runtime=%s; remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s: %w", state, result.Binding.Agent, result.Binding.Pane, result.Binding.Agent, result.Binding.Agent, cause)
+}
+
+func processCLIRequest(flags resourceCreateFlags) (processAgentCreateRequest, cli.OutputMode, error) {
+	mode, err := resolveLifecycleProjection(canonicalCreateAgent, flags.output)
+	if err != nil {
+		return processAgentCreateRequest{}, mode, err
+	}
+	if mode == cli.OutputModePaneID || processCreateUnsupportedScope(flags) {
+		return processAgentCreateRequest{}, mode, usageError("create agent --host process requires exactly one Agent and Window; pane-id, tmux placement/anchors, fan-out, and interactive modes are unavailable")
+	}
+	labels, err := labelMap(flags.labels)
+	if err != nil {
+		return processAgentCreateRequest{}, mode, MapMetadataError(err)
+	}
+	opts := processAgentCreateOptions{Provider: flags.provider, Name: flags.name, CWD: flags.cwd, Model: flags.model, Effort: flags.effort, Instructions: flags.persona, Profile: flags.profile, Creator: flags.creator, Payload: flags.payload, AddDirs: flags.addDirs, Labels: labels}
+	if len(flags.projects) == 1 {
+		opts.Project, err = selector.ParseRef(coremetadata.KindProject, flags.projects[0])
+		if err != nil {
+			return processAgentCreateRequest{}, mode, MapMetadataError(err)
+		}
+	}
+	if len(flags.windows) == 1 {
+		opts.Window, err = selector.ParseRef(coremetadata.KindWindow, flags.windows[0])
+		if err != nil {
+			return processAgentCreateRequest{}, mode, MapMetadataError(err)
+		}
+	}
+	request, err := newProcessAgentCreateRequest(opts)
+	return request, mode, err
+}
+
+func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, stderr io.Writer) error {
+	request, mode, err := processCLIRequest(flags)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	result, err := c.startProcessAgent(ctx, request)
+	if err != nil {
+		return c.failProcessCreate(&result, err)
+	}
+	if err = c.runProcessPostCreate(ctx, result, stderr); err != nil {
+		return c.failProcessCreate(&result, fmt.Errorf("process-post-create-hook-failed: %w", err))
+	}
+	control, err := c.newProcessClaudeControl(result)
+	if err != nil {
+		return c.failProcessCreate(&result, err)
+	}
+	if err = submitProcessInitialPrompt(ctx, result, flags.payload); err != nil {
+		return c.failProcessCreate(&result, err)
+	}
+	if err = c.writeProcessCreateResult(stdout, stderr, mode, result); err != nil {
+		return c.failProcessCreate(&result, err)
+	}
+	// EOF is owner shutdown. Provider content never uses the owner's stdout.
+	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
+	snapshot, waitErr := result.waitProcessAgent(ctx, func(snapshot processhost.Snapshot) error {
+		if err := result.recordProcessSnapshot(snapshot); err != nil {
+			return err
+		}
+		return control.sync(context.WithoutCancel(ctx))
+	})
+	// A closed authority still closes answer records and projects termination.
+	controlErr := control.syncControls(context.Background())
+	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
+		controlErr = nil
+	}
+	waitErr = errors.Join(waitErr, controlErr, control.attention.sync(control.handle, control.binding))
+	if waitErr != nil {
+		return processCreateCleanupError(result, waitErr)
+	}
+	return processWaitExit(snapshot)
+}
+
+func (c *createCommand) failProcessCreate(result *processAgentCreateResult, cause error) error {
+	if result.Binding.Agent == "" {
+		return cause
+	}
+	if err := c.rollbackProcessAgent(result); err != nil {
+		return errors.Join(cause, err)
+	}
+	return fmt.Errorf("%w; remaining: none", cause)
+}
+
+func (c *createCommand) runProcessPostCreate(ctx context.Context, result processAgentCreateResult, stderr io.Writer) error {
+	runner := defaultLifecycleHookRunner()
+	if runner == nil {
+		return nil
+	}
+	runner.ProjectHookPrompt = nil
+	runner.Logger, runner.PromptWriter = stderr, stderr
+	reg, err := c.store.snapshot()
+	if err != nil {
+		return err
+	}
+	agent, ok := reg.Agent(result.Binding.Agent)
+	if !ok {
+		return processhost.ErrStale
+	}
+	_, err = runner.Run(ctx, hooks.EventPostCreate, hooks.Context{Runtime: hooks.RuntimeProcess, CWD: agent.Spec.Workspace.CWD, Socket: defaultAppSocket})
+	return err
+}
+
+func (c *createCommand) newProcessClaudeControl(result processAgentCreateResult) (*claudeProcessControl, error) {
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	paths.StateDir = filepath.Dir(filepath.Dir(result.registryPath))
+	attention := newProcessAttentionStore(paths.StateDir)
+	if err = attention.activate(result.Binding, aiModeClaude, ""); err != nil {
+		return nil, err
+	}
+	return &claudeProcessControl{handle: result.Handle, binding: result.Binding, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
+		questionWindow: time.Duration(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second, approvalWindow: time.Duration(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
+		attention: &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}, nil
+}
+
+func submitProcessInitialPrompt(ctx context.Context, result processAgentCreateResult, payload []string) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	snapshot, err := result.Handle.Observe(result.Binding)
+	if err != nil {
+		return err
+	}
+	return result.Handle.Turn(ctx, processhost.Authority{Binding: result.Binding, Connection: snapshot.Connection, Session: snapshot.Session}, result.Binding.Operation+"-initial", strings.Join(payload, " "))
+}
+
+func (c *createCommand) writeProcessCreateResult(stdout, stderr io.Writer, mode cli.OutputMode, result processAgentCreateResult) error {
+	if mode != cli.OutputModeNone {
+		ownership := stderr
+		if mode == cli.OutputModeDefault {
+			ownership = stdout
+		}
+		if _, err := fmt.Fprintf(ownership, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", result.Binding.Agent, result.Binding.Pane); err != nil {
+			return err
+		}
+	}
+	return c.writeResults(stdout, canonicalCreateAgent, mode, coremetadata.KindAgent, []createResult{result.Created})
+}
+
+func processWaitExit(snapshot processhost.Snapshot) error {
+	if snapshot.Exit == nil {
+		return errors.New("owned process has no actual Wait exit")
+	}
+	code := snapshot.Exit.Code
+	if snapshot.Exit.Signal != "" {
+		names := map[string]syscall.Signal{"HUP": syscall.SIGHUP, "INT": syscall.SIGINT, "TERM": syscall.SIGTERM, "KILL": syscall.SIGKILL}
+		sig, ok := names[snapshot.Exit.Signal]
+		if !ok {
+			for candidate := syscall.Signal(1); candidate < 128; candidate++ {
+				if candidate.String() == snapshot.Exit.Signal {
+					sig, ok = candidate, true
+					break
+				}
+			}
+		}
+		if !ok {
+			return errors.New("owned process Wait signal is invalid")
+		}
+		code = 128 + int(sig)
+	}
+	if code == 0 {
+		return nil
+	}
+	return superviseExitError{code: code}
+}
+
+func processCreateUnsupportedScope(flags resourceCreateFlags) bool {
+	return len(flags.projects) > 1 || len(flags.windows) > 1 || len(flags.panes) > 0 || len(flags.selectors) > 0 || flags.createWindow || flags.allWindows || flags.placementSet || flags.cwdFrom != "" || flags.dialogueReplyOnly || flags.interactiveOnly
 }

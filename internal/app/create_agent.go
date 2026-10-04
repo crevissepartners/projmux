@@ -146,6 +146,12 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err != nil {
 		return err
 	}
+	if flags.host != "" && flags.host != "tmux" && flags.host != "process" {
+		return usageError("create agent --host requires tmux or process")
+	}
+	if flags.host == "process" {
+		return c.runProcessAgentCLI(flags, stdout, stderr)
+	}
 	provider, err := c.resolveCreateProvider(spelling, shortcutProvider, flags)
 	if err != nil {
 		return err

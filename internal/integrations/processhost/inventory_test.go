@@ -23,6 +23,9 @@ func TestInventoryObservationsRetainUnavailableDeclarations(t *testing.T) {
 		want     resourcegraph.Status
 	}{
 		{"ready", Snapshot{Binding: b, State: "ready"}, nil, resourcegraph.StatusLive},
+		{"owned-starting", Snapshot{Binding: b, State: "starting", PID: 123}, nil, resourcegraph.StatusLive},
+		{"starting-without-child", Snapshot{Binding: b, State: "starting"}, nil, resourcegraph.StatusUnknown},
+		{"starting-with-exit", Snapshot{Binding: b, State: "starting", PID: 123, Exit: &Exit{Code: 0}}, nil, resourcegraph.StatusUnknown},
 		{"actual-Wait", Snapshot{Binding: b, State: "exited", Exit: &Exit{Code: 0}}, nil, resourcegraph.StatusOffline},
 		{"unavailable", Snapshot{}, errors.New("unavailable"), resourcegraph.StatusUnknown},
 		{"contradictory", Snapshot{Binding: b, State: "ready", Exit: &Exit{Code: 0}}, nil, resourcegraph.StatusUnknown},
