@@ -591,15 +591,28 @@ func TestPostCreateOptInRunsForProcessAndTmux(t *testing.T) {
 }
 
 func TestProcessUndeclaredHookPreservesMostRecentTmuxSession(t *testing.T) {
+	// The CI Unit Tests job explicitly opts into isolated real-tmux tests.
+	// Pure hook tests keep running without this integration dependency.
+	if os.Getenv("PROJMUX_REAL_TMUX_STRICT") != "1" {
+		t.Skip("set PROJMUX_REAL_TMUX_STRICT=1 to run the isolated real-tmux regression")
+	}
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
-		if os.Getenv("PROJMUX_REAL_TMUX_STRICT") == "1" {
-			t.Fatal("strict real tmux test requires tmux")
-		}
-		t.Skip("tmux is unavailable")
+		t.Fatal("strict real tmux test requires tmux")
 	}
 	root := t.TempDir()
-	socket := filepath.Join(root, "isolated.sock")
+	// Follow isolatedTmuxSmokeRoot's short /tmp allocation: TMPDIR may be
+	// longer than the Unix socket bound. HOME/config remain under TempDir.
+	socketRoot, err := os.MkdirTemp("/tmp", "phk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketRoot); err != nil {
+			t.Errorf("remove owned socket root: %v", err)
+		}
+	})
+	socket := filepath.Join(socketRoot, "s")
 	call := func(args ...string) string {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
