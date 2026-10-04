@@ -1417,6 +1417,13 @@ func startCodexOverflowObserverOn(
 	t *testing.T, threadID string, sink *codexOverflowFixture, topology codexOverflowTopology,
 ) codexOverflowRun {
 	t.Helper()
+	return startCodexOverflowObserverWithBindingTimeout(t, threadID, sink, topology, 100*time.Millisecond)
+}
+
+func startCodexOverflowObserverWithBindingTimeout(
+	t *testing.T, threadID string, sink *codexOverflowFixture, topology codexOverflowTopology, bindingTimeout time.Duration,
+) codexOverflowRun {
+	t.Helper()
 	discovery, endpoint := startCodexOverflowRuntime(t, threadID, topology)
 
 	if topology.sibling {
@@ -1441,7 +1448,7 @@ func startCodexOverflowObserverOn(
 	openErr := &atomic.Pointer[string]{}
 	observer := codexNativeObserver{
 		identity: identity, sink: sink,
-		delay: time.Millisecond, maxDelay: 2 * time.Millisecond, bindingTimeout: 100 * time.Millisecond,
+		delay: time.Millisecond, maxDelay: 2 * time.Millisecond, bindingTimeout: bindingTimeout,
 		open: func(ctx context.Context) (codexLifecycleConnection, error) {
 			if opens.Add(1) > 1 && topology.foldFirst {
 				waitForFoldedUpstream(t, endpoint)
@@ -1865,6 +1872,18 @@ func TestLastBindingOverflowRecordsEveryFailedReplacementOpen(t *testing.T) {
 	}
 }
 
+func TestCodexObserverBindingCadences(t *testing.T) {
+	if codexObserverBindingInterval != 250*time.Millisecond {
+		t.Fatalf("steady binding interval = %v, want 250ms", codexObserverBindingInterval)
+	}
+	if codexObserverBindingDelay != 25*time.Millisecond {
+		t.Fatalf("binding retry delay = %v, want 25ms", codexObserverBindingDelay)
+	}
+	if codexObserverBindingTimeout != 3*time.Second {
+		t.Fatalf("binding timeout = %v, want 3s", codexObserverBindingTimeout)
+	}
+}
+
 // TestLiveEpochSurvivesATransientBindingReadFailure is Phase 3 ledger 2, the
 // half Phase 1 named but left open.
 //
@@ -1878,9 +1897,9 @@ func TestLastBindingOverflowRecordsEveryFailedReplacementOpen(t *testing.T) {
 func TestLiveEpochSurvivesATransientBindingReadFailure(t *testing.T) {
 	const threadID = "thread-live-blip"
 	sink := newCodexOverflowFixture()
-	// Three unreadable samples once the epoch is ready, then the same live
+	// One unreadable sample once the epoch is ready, then the same live
 	// binding reads normally again.
-	sink.loseBindingOn(codexAuthorityControlPlane+":"+string(codexObserverReasonReady), 3, false)
+	sink.loseBindingOn(codexAuthorityControlPlane+":"+string(codexObserverReasonReady), 1, false)
 	run := startCodexOverflowObserver(t, threadID, sink)
 
 	select {
@@ -1889,7 +1908,13 @@ func TestLiveEpochSurvivesATransientBindingReadFailure(t *testing.T) {
 			err, sink.authoritySnapshot(), run.journal.snapshot())
 	case result := <-run.startups:
 		t.Fatalf("the live epoch was torn down and restarted: %+v records=%v", result, run.journal.snapshot())
-	case <-time.After(time.Second):
+	case <-time.After(3 * codexObserverBindingInterval):
+	}
+	sink.bindingMu.Lock()
+	falseLeft := sink.falseLeft
+	sink.bindingMu.Unlock()
+	if falseLeft != 0 {
+		t.Fatal("the live epoch never sampled the transient binding failure")
 	}
 
 	// The epoch is still the one that went ready, and nothing recorded a
@@ -1919,15 +1944,19 @@ func TestLiveEpochBindingLossLeavesATerminalRecord(t *testing.T) {
 	const threadID = "thread-live-gone"
 	sink := newCodexOverflowFixture()
 	sink.loseBindingOn(codexAuthorityControlPlane+":"+string(codexObserverReasonReady), 0, true)
-	run := startCodexOverflowObserver(t, threadID, sink)
+	run := startCodexOverflowObserverWithBindingTimeout(t, threadID, sink, codexOverflowWithSibling, codexObserverBindingTimeout)
+	started := time.Now()
 
 	select {
 	case err := <-run.done:
 		if err != nil {
 			t.Fatalf("the terminal stop reported an error: %v", err)
 		}
-	case <-time.After(20 * time.Second):
+	case <-time.After(codexObserverBindingInterval + codexObserverBindingTimeout + time.Second):
 		t.Fatalf("the observer neither survived nor stopped: %v", run.journal.snapshot())
+	}
+	if elapsed := time.Since(started); elapsed < codexObserverBindingTimeout {
+		t.Fatalf("binding loss skipped its read-recovery window: %v", elapsed)
 	}
 
 	// The Pane is left holding the ready projection by design - SetAuthority
