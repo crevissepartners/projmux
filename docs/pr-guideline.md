@@ -80,9 +80,8 @@ changes.
 - Out of scope (and follow-ups):
 
 ## Verification
-- [ ] Fast local gates: `make fmt` → `make fix` → `make test`
-- [ ] Long local gates: `make test-integration` → `make test-e2e`
-- [ ] Required CI checks green
+- [ ] Local checks: `make fmt` → `make fix` → `make test`
+- [ ] CI checks on the same head: required `Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, `E2E Tests`, and aggregate `Test` green
 - [ ] Manual steps (if relevant):
 - Globalization (check exactly one):
   - [ ] No user-facing string changes.
@@ -107,9 +106,12 @@ Per-section rules:
 - **Scope** — say what is deliberately left out and name the follow-ups
   (issue or PR) instead of leaving deferred work implicit.
 - **Verification** — list the gates in the order
-  [AGENTS.md](../AGENTS.md) runs them: fast local gates, then the long local
-  gates (which may still be running while CI runs on the published head), then
-  the required CI checks, then any manual steps. For any new or changed
+  [AGENTS.md](../AGENTS.md) runs them: the Local checks, then the CI checks
+  on the same published head (the five required checks, which include
+  `Integration Tests` and `E2E Tests`, and the aggregate `Test`), then any
+  manual steps. Integration and e2e are judged by those CI checks, not by local
+  runs. A rebase or any new head needs the Local checks and its own CI checks
+  again. For any new or changed
   user-facing text, check exactly one Globalization item. Normal UX copy needs
   a catalog key and test coverage. Commands, paths, config keys, env vars,
   provider payloads, locale enum values, product names, debug logs, and
@@ -146,8 +148,14 @@ same across PRs.
   team-lead session uses unless the change explicitly needs preserved history.
 - Force pushes and branch deletions on `main` are blocked.
 
-`gh pr merge <num> --squash --delete-branch` is the canonical merge command.
-Use `--auto` if you want the merge queued automatically once CI passes.
+`gh pr merge <num> --squash --delete-branch` is the canonical merge command
+from the primary checkout. Use `--auto` if you want the merge queued
+automatically once CI passes.
+
+From a linked worktree, leave out `--delete-branch`: it switches the local
+checkout to `main`, which fails while another worktree has `main` checked out.
+Merge with `gh pr merge <num> --squash`, then delete the remote branch with
+`git push origin --delete <branch>`.
 
 ## Release-please coupling
 

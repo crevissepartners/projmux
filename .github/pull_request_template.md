@@ -24,9 +24,8 @@ with `!` or add a `BREAKING CHANGE:` footer. -->
 - Out of scope (and follow-ups):
 
 ## Verification
-- [ ] Fast local gates: `make fmt` → `make fix` → `make test`
-- [ ] Long local gates: `make test-integration` → `make test-e2e`
-- [ ] Required CI checks green
+- [ ] Local checks: `make fmt` → `make fix` → `make test`
+- [ ] CI checks on the same head: required `Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, `E2E Tests`, and aggregate `Test` green
 - [ ] Manual steps (if relevant):
 - Globalization (check exactly one):
   - [ ] No user-facing string changes.

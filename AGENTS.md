@@ -13,7 +13,7 @@ git status --short
 git fetch origin main
 git merge-base --is-ancestor origin/main HEAD
 
-# fast local gates
+# Local checks
 make fmt
 make fix
 make test
@@ -24,11 +24,14 @@ git merge-base --is-ancestor origin/main HEAD
 git push -u origin <branch>            # after a rebase: git push --force-with-lease
 gh pr create --title '<type>(<scope>): <summary>' --body-file <body.md>   # body: docs/pr-guideline.md
 
-# integration and e2e: judged by the same-head CI jobs `Integration Tests` and `E2E Tests`; no local run
-# merge only when the fast local gates passed and, on the same head, the five required checks
-# (`Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, `E2E Tests`) and the aggregate `Test` check are green
+# CI checks on the same head: the five required checks (`Format`, `Unit Tests`, `NPM Packages`,
+# `Integration Tests`, `E2E Tests`) and the aggregate `Test`. Integration and e2e are judged here, not run locally.
+# merge only when the Local checks passed and the CI checks are green on the same head
 gh pr checks <num> --watch
-gh pr merge <num> --squash --delete-branch   # add --auto to queue it
+gh pr merge <num> --squash --delete-branch   # primary checkout; add --auto to queue it
+# from a linked worktree, merge without --delete-branch and delete the remote branch separately
+gh pr merge <num> --squash
+git push origin --delete <branch>
 
 # after merge only (never before the merge and pull)
 git pull --ff-only
@@ -80,11 +83,11 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - Make targets are the contract for local validation. Keep them stable and predictable.
 - If a target is missing for the area you are changing, add it or leave the gap explicit in docs and review notes.
 - Check ancestry before every first push or force-push. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so publishing that state only produces a failed CI run.
-- If `main` advanced before publishing, rebase and restart the fast local gates for the new head.
+- If `main` advanced before publishing, rebase and restart the Local checks for the new head.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and tests are separate gates.
-- Publish as soon as the fast gates pass. Integration and e2e coverage comes from the same-head CI jobs `Integration Tests` and `E2E Tests`, not from local runs.
-- If a fast local gate or a same-head CI check fails, keep the merge blocked, fix the cause, and publish a new head the same way: fast local gates, then new same-head CI.
-- Any rebase invalidates earlier gate evidence, local and CI. Rerun the fast local gates for the rebased head, publish it, and judge it by its own new same-head CI.
+- Publish as soon as the Local checks pass. Integration and e2e coverage comes from the CI checks `Integration Tests` and `E2E Tests` on the same head, not from local runs.
+- If a Local check or a CI check fails, keep the merge blocked, fix the cause, and publish a new head the same way: Local checks, then new CI checks on that head.
+- Any rebase invalidates earlier evidence from both Local checks and CI checks. Rerun the Local checks for the rebased head, publish it, and judge it by its own new CI checks.
 - `make install` atomically replaces `$(go env GOPATH)/bin/projmux` and runs `projmux config apply`.
 - Never run `make install` before the merge and `git pull --ff-only`. Pre-merge state has not cleared CI and may not match `main`.
 - In a linked worktree, `go build` stamps the enclosing checkout's `vcs.revision` (Go only treats a `.git` directory as a repository root), so `make build` there stamps no revision and says why. Prove a build's provenance with the binary's sha256 and the merge commit, not `vcs.revision`; a worktree build without `vcs.revision` is expected.
@@ -121,6 +124,7 @@ Branch protection:
 
 ## Testing
 - Unit tests cover pure naming, selection, parsing, and state logic.
+- `make test-process-host-cli` builds this checkout and runs the process-host CLI fixture tests against a copy of that binary, with an isolated HOME and protocol fixtures instead of real providers. CI runs it as `Process Host CLI Tests` behind the aggregate `Test`; it is not one of the five required checks or a required Local check. Run it manually when you change process-host or provider-process code. Details: [docs/testing.md](docs/testing.md).
 - Integration tests cover tmux command orchestration, config loading, and state file interactions.
 - End-to-end tests cover full session flows against real tmux behavior.
 - When adding a feature, decide where it belongs in that stack and add or update the test there.
