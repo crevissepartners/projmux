@@ -43,9 +43,11 @@ var SupportedEvents = []Event{
 // post-create public API.
 const DefaultPostCreateTimeout = 5 * time.Second
 
-// Context describes the tmux lifecycle point and is passed to hook commands as
+// Context describes the lifecycle point and is passed to hook commands as
 // PROJMUX_* environment variables.
 type Context struct {
+	// Runtime identifies process post-create hooks; omitted retains tmux.
+	Runtime     string
 	SessionName string
 	CWD         string
 	Kind        string
@@ -97,9 +99,12 @@ type Runner struct {
 // RunnerByEvent is the event-oriented lifecycle hook runner surface.
 type RunnerByEvent = Runner
 
-// Run executes configured lifecycle hooks for event. Hook failures are logged
-// and ignored except for EventPreCreate, where a non-zero exit, exec error, or
-// timeout aborts creation by returning an error.
+func fatalHookFailure(event Event, c Context) bool {
+	return event == EventPreCreate || (event == EventPostCreate && c.Runtime == "process")
+}
+
+// Run executes configured lifecycle hooks for event. Pre-create and process
+// post-create failures are returned. Other lifecycle failures are logged.
 func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, error) {
 	if r == nil {
 		return RunResult{}, nil
@@ -130,7 +135,7 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 	if hasGlobalCfg {
 		hookResult, err := r.runConfigHook(ctx, event, c, globalCfg, "global", timeout, hookOutputMode(event))
 		if err != nil {
-			if event == EventPreCreate {
+			if fatalHookFailure(event, c) {
 				return result, err
 			}
 			r.warnf(event, "global config hook: %v", err)
@@ -141,7 +146,7 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 	if hasProjectCfg {
 		hookResult, err := r.runConfigHook(ctx, event, c, projectCfg, "project", timeout, hookOutputMode(event))
 		if err != nil {
-			if event == EventPreCreate {
+			if fatalHookFailure(event, c) {
 				return result, err
 			}
 			r.warnf(event, "project config %q: %v", projectFile.rel, err)
@@ -372,12 +377,28 @@ func DisplayEventName(event Event) string {
 
 func buildHookEnv(c Context, fallbackVersion string) []string {
 	env := append([]string{}, os.Environ()...)
+	if c.Runtime == "process" {
+		c.SessionName, c.Kind, c.PaneID = "", "", ""
+		filtered := env[:0]
+		for _, value := range env {
+			if !strings.HasPrefix(value, "PROJMUX_PANE=") && !strings.HasPrefix(value, "PROJMUX_RUNTIME=") {
+				filtered = append(filtered, value)
+			}
+		}
+		env = filtered
+	}
 	version := c.Version
 	if version == "" {
 		version = fallbackVersion
 	}
 	for _, key := range sortedEnvKeys(c.Env) {
+		if c.Runtime == "process" && (key == "PROJMUX_PANE" || key == "PROJMUX_RUNTIME") {
+			continue
+		}
 		env = append(env, key+"="+c.Env[key])
+	}
+	if c.Runtime == "process" {
+		env = append(env, "PROJMUX_RUNTIME=process")
 	}
 	env = append(env,
 		"PROJMUX_SESSION="+c.SessionName,

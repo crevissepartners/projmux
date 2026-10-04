@@ -1,6 +1,6 @@
 # Hooks
 
-projmux runs optional user scripts at selected tmux lifecycle points. Hooks are
+projmux runs optional user scripts at selected lifecycle points. Hooks are
 the project-agnostic extension point for behavior projmux itself stays out of:
 injecting per-session env via `tmux set-environment`, selecting repository
 tokens, kicking off a background sync, or sending an initial pane command.
@@ -1195,6 +1195,27 @@ id.
 the tmux client itself adds `-L` to its commands. The `post-attach` and
 `send-noti` cells describe their existing contexts; this contract adds no pane
 context to either event.
+
+### Process Host Post-Create
+
+The hook runner supports a process host `post-create` context for scripts and CI
+without tmux. Public foreground Agent creation is not enabled by this change;
+the table below defines the hook contract its caller must use.
+
+| Contract | tmux `post-create` | process host `post-create` |
+| --- | --- | --- |
+| `PROJMUX_RUNTIME` | Not added by projmux; absence means tmux | `process` |
+| `PROJMUX_PANE` | Exact first tmux pane id | Absent, including inherited and project `[env]` values |
+| `PROJMUX_SESSION` | New session name | Present with an empty value |
+| `PROJMUX_SESSION_KIND` | `persistent` or `ephemeral` | Present with an empty value |
+| `PROJMUX_CWD` | Created session directory | Effective Agent workspace |
+| `PROJMUX_SOCKET` | App socket metadata (`projmux`) | Same app socket metadata (`projmux`) |
+| Failure, including timeout | Logged and ignored | Returned to the creator as a creation failure |
+
+Process contexts cannot override `PROJMUX_RUNTIME` or supply `PROJMUX_PANE`
+through `[env]`. The default timeout remains `5s`, global hooks run before
+project hooks, and project automation retains the same trust policy. Other
+events and tmux hook environments keep their existing behavior.
 
 ## Examples
 

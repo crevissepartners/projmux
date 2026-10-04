@@ -149,6 +149,7 @@ Hook contract:
 - Adding, removing, or renaming any `PROJMUX_*` env var needs at least a minor release input: use a `feat(hooks): ...` PR title and leave the version/manifest update to release-please.
 - `PROJMUX_SOCKET` is the app socket name (`projmux`), supplied as hook routing metadata. It does not change how the tmux client invokes commands.
 - `PROJMUX_PANE` is the exact first pane id from standard persistent/ephemeral creation for `post-create`. It is intentionally absent from `pre-create`, which runs before that pane exists.
+- Process host `post-create` contexts add `PROJMUX_RUNTIME=process`, remove `PROJMUX_PANE` even from inherited/configured environments, and supply present but empty `PROJMUX_SESSION` and `PROJMUX_SESSION_KIND`. `PROJMUX_CWD` is the effective Agent workspace; socket metadata and the 5s timeout retain their meaning. Process post-create failures are returned to the creator; tmux failures remain logged and ignored. This prepares the hook runner contract; public foreground creation is a separate change.
 - Details: [docs/hooks.md](docs/hooks.md#environment).
 
 Configuration and environment:

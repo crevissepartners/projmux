@@ -14,6 +14,48 @@ import (
 
 // --- Runner declarative behaviour -----------------------------------------
 
+func TestProcessPostCreateContractRejectsInheritedAndConfiguredPane(t *testing.T) {
+	t.Setenv("PROJMUX_PANE", "%inherited")
+	t.Setenv("PROJMUX_RUNTIME", "inherited")
+	cwd := t.TempDir()
+	global := filepath.Join(cwd, "global.toml")
+	writeFileEnsuringDir(t, global, `
+[env]
+PROJMUX_PANE = "%configured"
+PROJMUX_RUNTIME = "configured"
+[hooks.post-create]
+run = "printf \"runtime=%s pane=%s session=%s:%s kind=%s:%s cwd=%s socket=%s\\n\" \"$PROJMUX_RUNTIME\" \"${PROJMUX_PANE+x}\" \"${PROJMUX_SESSION+x}\" \"$PROJMUX_SESSION\" \"${PROJMUX_SESSION_KIND+x}\" \"$PROJMUX_SESSION_KIND\" \"$PROJMUX_CWD\" \"$PROJMUX_SOCKET\""
+`)
+	var output bytes.Buffer
+	runner := &Runner{GlobalConfigPath: global, Logger: &output}
+	_, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: "process", CWD: cwd, Socket: "projmux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "runtime=process pane= session=x: kind=x: cwd=" + cwd + " socket=projmux"
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("process hook environment: %q; want %q", output.String(), want)
+	}
+}
+
+func TestProcessPostCreateFailureIsReturnedWithoutChangingTmux(t *testing.T) {
+	t.Parallel()
+	cwd := t.TempDir()
+	global := filepath.Join(cwd, "global.toml")
+	writeFileEnsuringDir(t, global, "[hooks.post-create]\nrun = \"exit 7\"\n")
+	for _, host := range []string{"process", ""} {
+		runner := &Runner{GlobalConfigPath: global, Logger: io.Discard}
+		_, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: host, CWD: cwd})
+		if host == "process" {
+			if err == nil || !strings.Contains(err.Error(), "status 7") {
+				t.Fatalf("process hook failure: %v", err)
+			}
+		} else if err != nil {
+			t.Fatalf("tmux hook failure became fatal: %v", err)
+		}
+	}
+}
+
 func TestRunnerNoConfigIsNoOp(t *testing.T) {
 	t.Parallel()
 
