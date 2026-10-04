@@ -8,9 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
@@ -23,6 +25,7 @@ type codexProcessControl struct {
 	questions                      *agentquestion.Store
 	approvals                      *agentapproval.Store
 	questionWindow, approvalWindow time.Duration
+	questionAnswering              func() config.AgentQuestionAnswering
 	now                            func() time.Time
 	records                        map[string]processhost.Request
 }
@@ -78,11 +81,16 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 		id := processControlID(e.binding, r)
 		pending[id] = true
 		if _, known := c.records[id]; !known {
-			if err = c.create(id, r); err != nil {
-				return err
+			captured, createErr := c.create(id, r)
+			if createErr != nil {
+				return createErr
+			}
+			if !captured {
+				continue
 			}
 			c.records[id] = r
 		}
+
 		if err = c.answer(ctx, id, r); err != nil && !errors.Is(err, processhost.ErrStale) {
 			return err
 		}
@@ -95,28 +103,39 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 	}
 	return nil
 }
-func (c *codexProcessControl) create(id string, r processhost.Request) error {
+func (c *codexProcessControl) create(id string, r processhost.Request) (bool, error) {
 	var n codexappserver.Notification
 	if json.Unmarshal(r.Input, &n) != nil {
-		return errors.New("invalid codex process request")
+		return false, errors.New("invalid codex process request")
 	}
 	created := c.now().UTC()
 	e := c.endpoint
 	if r.Kind == "question" {
+		reg, err := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
+		if err != nil {
+			return false, err
+		}
+		agent, found := reg.Agent(e.binding.Agent)
+		if !found {
+			return false, processhost.ErrStale
+		}
+		if !claudeQuestionAnsweredByProjmux(*agent, c.questionAnswering) {
+			return false, nil
+		}
 		var params struct {
 			Questions json.RawMessage `json:"questions"`
 		}
 		if json.Unmarshal(n.Params, &params) != nil {
-			return errors.New("invalid codex question input")
+			return false, errors.New("invalid codex question input")
 		}
-		_, err := c.questions.Create(agentquestion.Record{ID: id, Provider: "codex", AgentUID: e.binding.Agent, PaneUID: e.binding.Pane, SessionID: r.Session, Generation: e.binding.Generation, RequestID: r.ID, Questions: params.Questions, CreatedAt: created, Deadline: created.Add(c.questionWindow)})
-		return err
+		_, err = c.questions.Create(agentquestion.Record{ID: id, Provider: "codex", AgentUID: e.binding.Agent, PaneUID: e.binding.Pane, SessionID: r.Session, Generation: e.binding.Generation, RequestID: r.ID, Questions: params.Questions, CreatedAt: created, Deadline: created.Add(c.questionWindow)})
+		return err == nil, err
 	}
 	_, err := c.approvals.Create(agentapproval.Record{ID: id, AgentUID: e.binding.Agent, PaneUID: e.binding.Pane, SessionID: r.Session, ToolName: r.Tool, ToolInput: n.Params, CreatedAt: created, Deadline: created.Add(c.approvalWindow)})
 	if errors.Is(err, agentapproval.ErrCommittedNotSynced) {
-		return nil
+		return true, nil
 	}
-	return err
+	return err == nil, err
 }
 func (c *codexProcessControl) answer(ctx context.Context, id string, r processhost.Request) error {
 	e := c.endpoint

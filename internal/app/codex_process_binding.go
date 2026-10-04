@@ -46,11 +46,11 @@ func (e *codexProcessEndpoint) current(ctx context.Context, evidence coremetadat
 		return false
 	}
 	snap, err := e.handle.Observe(e.binding)
-	if err != nil || snap.PID != e.evidence.Process.PID || snap.Session != e.evidence.ThreadID || snap.Connection != e.evidence.Connection || snap.State != "ready" {
+	if err != nil || snap.PID != e.evidence.Process.PID || (processhost.Authority{Binding: snap.Binding, Session: snap.Session, Connection: snap.Connection}) != e.authority() || snap.State != "ready" || snap.Connection != e.binding.Operation {
 		return false
 	}
 	child, parent, err := localipc.Process(snap.PID)
-	if err != nil || child != e.evidence.Process {
+	if err != nil || child != e.evidence.Process || parent != snap.SupervisorPID {
 		return false
 	}
 	_, hostPID, err := localipc.Process(parent)
@@ -83,9 +83,9 @@ func processCodexLaunchEnv(launch processhost.Launch, socket string) []string {
 	return env
 }
 
-// startProcessCodex remains dormant until a foreground consumer supplies its
-// ownership transactions and launch policy. Registration follows typed
-// readiness, never a hook's claimed session or PID.
+// startProcessCodex commits only the dedicated child's typed thread binding.
+// Thread initialization does not acknowledge an absent user turn. Hooks never
+// supply process ownership, session identity or readiness.
 func startProcessCodex(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, registryPath string) (*codexProcessEndpoint, error) {
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
@@ -131,6 +131,23 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	}
 	endpoint.evidence = coremetadata.CodexProcessRouteEvidence{HostInstance: launch.Binding.Host, PaneUID: launch.Binding.Pane, Generation: launch.Binding.Generation, ThreadID: snap.Session, Connection: snap.Connection, Process: child, HostProcess: hostProcess}
 	endpoint.socketIdentity, err = localipc.InspectOwnedSocket(socket)
+	if err != nil {
+		rollback()
+		return nil, err
+	}
+	// Live kernel/provider checks stay outside the Registry transaction.
+	if !endpoint.current(ctx, endpoint.evidence) {
+		rollback()
+		return nil, processhost.ErrStale
+	}
+	b := endpoint.binding
+	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, HostProcess: endpoint.evidence.HostProcess, Child: endpoint.evidence.Process}
+	_, _, err = intmetadata.NewStore(registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return intmetadata.DefaultMutator().RecordProcessActivation(reg, activation, endpoint.evidence.ThreadID)
+	})
 	if err != nil {
 		rollback()
 		return nil, err
