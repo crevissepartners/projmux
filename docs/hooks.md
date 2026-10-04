@@ -1202,7 +1202,7 @@ context to either event.
 
 The hook runner supports a process host `post-create` context for scripts and CI
 without tmux. Public foreground Agent creation is not enabled by this change;
-the table below defines the hook contract its caller must use.
+the table below defines the hook contract its caller must use. Which configured hooks run in a process context is decided by the caller; this section defines only their environment and failure handling.
 
 | Contract | tmux `post-create` | process host `post-create` |
 | --- | --- | --- |
