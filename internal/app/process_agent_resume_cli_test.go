@@ -470,3 +470,59 @@ func TestProcessResumePreSpawnFailureCanRetryActualCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessResumeSupervisorSpawnFailureCanRetryActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := processResumeCLIFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "task"))
+			first.shutdown(t)
+			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stat, err := os.Stat(executable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(executable, stat.Mode().Perm()) })
+			// The isolated go-test executable is the supervisor chosen by the API.
+			// Keep the separately copied public CLI executable available for retry.
+			if err := os.Chmod(executable, stat.Mode().Perm()&^0111); err != nil {
+				t.Fatal(err)
+			}
+			request, err := newProcessAgentResumeRequest(processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: old.Binding.AgentUID}, Prompt: processResumeFirstFrame{Kind: "user", Text: "retry task"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, startErr := New().agent.resumeProcessAgent(ctx, request)
+			if err := os.Chmod(executable, stat.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+			if startErr == nil || result.Handle == nil || !result.hasNoChild() {
+				t.Fatal("supervisor spawn failure did not return an unspawned handle", startErr)
+			}
+			failure := result.fail(startErr)
+			if strings.Contains(failure.Error(), "delete") || strings.Contains(failure.Error(), "Wait evidence is unavailable") {
+				t.Fatal("unspawned failure invented cleanup or Wait guidance", failure)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ := reg.Pane(old.Binding.PaneUID)
+			agent, _ := reg.Agent(old.Binding.AgentUID)
+			if !reflect.DeepEqual(pane.Status.ProcessSession, &old) || agent.Status.Phase != coremetadata.PhaseOffline {
+				t.Fatal("unspawned handle did not restore resumable conversation")
+			}
+			retry := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "retry task"})
+			if retry.ref != first.ref {
+				t.Fatal("retry replaced Agent identity")
+			}
+			retry.shutdown(t)
+		})
+	}
+}

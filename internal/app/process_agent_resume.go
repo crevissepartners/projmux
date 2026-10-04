@@ -149,7 +149,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	result = c.processResumeResult(candidate, b, path)
 	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
-		if result.Handle == nil {
+		if result.hasNoChild() {
 			err = errors.Join(err, result.restoreReservation())
 		}
 		return result, fmt.Errorf("%s: %w: %w", processResumeRefused, processhost.ErrResumeRefused, err)
@@ -238,6 +238,16 @@ func (r *processAgentResumeResult) startCodexResume(ctx context.Context, host *p
 		return err
 	}
 	return r.Handle.Turn(ctx, processhost.Authority{Binding: r.Binding, Connection: snapshot.Connection, Session: snapshot.Session}, r.Binding.Operation+"-resume", frame.Text)
+}
+
+// A failed Start can return a handle before any child exists. Only exact
+// observation with PID zero admits restoration; the writer also fences birth.
+func (r *processAgentResumeResult) hasNoChild() bool {
+	if r.Handle == nil {
+		return true
+	}
+	snapshot, err := r.Handle.Observe(r.Binding)
+	return err == nil && snapshot.PID == 0
 }
 
 func (r *processAgentResumeResult) restoreReservation() error {

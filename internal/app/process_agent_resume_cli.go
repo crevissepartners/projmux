@@ -81,14 +81,13 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 // Failed resume preserves the Agent and its recorded conversation. Cleanup
 // retires only the new owned generation; it never applies create's deletion.
 func (r *processAgentResumeResult) fail(cause error) error {
-	if r.Handle != nil {
+	if r.hasNoChild() {
+		cause = errors.Join(cause, r.restoreReservation())
+	} else if r.Handle != nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := r.owner.waitProcessAgent(ctx, nil)
 		cause = errors.Join(cause, err)
-	}
-	if r.Handle == nil {
-		cause = errors.Join(cause, r.restoreReservation())
 	}
 	if r.Binding.Agent == "" {
 		return cause
