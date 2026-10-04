@@ -4,6 +4,30 @@ This package is an internal host and Claude stream adapter, exercised through
 fixtures. No public command starts it yet. It does not write Registry records,
 create tmux resources, attach to existing providers, or change user settings.
 
+## Schema v5 authority chain
+
+The application supplies the schema v5 binding: host instance, Project, Window,
+Agent, Pane, generation, and operation. Before a route reaches control,
+`Registry.CurrentProcessActivation` verifies the Project → Window → Agent → Pane
+owner references, provider, process runtime, and exact current activation.
+Historical session records and retired generations cannot satisfy this check.
+See [Registry schema v5](../../../docs/registry.md).
+
+The host launches its dedicated supervisor through inherited descriptors. That
+helper owns the provider process group and its child Wait; the host owns protocol
+admission and stream draining. Cleanup authority comes from that live ownership,
+not from discovering a PID in the Registry. The helper preserves the unreaped
+group leader until signalling finishes, then records actual child exit.
+
+Read-only application observation compares binding, provider, and the stored
+host and child identities (PID, owner UID, and birth marker). For a live child it
+also verifies the child → supervisor → host ancestry. Missing endpoints or
+unverifiable births remain unknown; an exact supervisor receipt can project an
+already reaped child as offline. Observation cannot grant control, adopt a
+provider, or synthesize a successful exit.
+
+## Host and inventory contract
+
 `InventoryTarget` supplies an exact owned binding and an optional `Handle` for
 one invocation. `ObserveInventory` converts only `Handle.Observe` results into
 the pure resource graph inventory; it never discovers or starts a host.
