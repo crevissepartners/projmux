@@ -26,10 +26,21 @@ gh pr create --title '<type>(<scope>): <summary>' --body-file <body.md>   # body
 
 # CI checks on the same head: the five required checks (`Format`, `Unit Tests`, `NPM Packages`,
 # `Integration Tests`, `E2E Tests`) and the aggregate `Test`. Integration and e2e are judged here, not run locally.
-# merge only when the Local checks passed and the CI checks are green on the same head
 gh pr checks <num> --watch
+```
+
+Merging, branch cleanup, and post-merge install are in [Maintainers only](#maintainers-only).
+
+## Maintainers only
+
+These steps need merge permission on the repository. A PR author without it stops after the CI checks above.
+
+```sh
+# merge only when the Local checks passed and the CI checks are green on the same head
 gh pr merge <num> --squash --delete-branch   # primary checkout; add --auto to queue it
-# from a linked worktree, merge without --delete-branch and delete the remote branch separately
+
+# from a linked worktree, merge without --delete-branch (it checks out `main`, which another worktree holds)
+# and delete the remote branch separately
 gh pr merge <num> --squash
 git push origin --delete <branch>
 

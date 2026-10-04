@@ -148,14 +148,8 @@ same across PRs.
   team-lead session uses unless the change explicitly needs preserved history.
 - Force pushes and branch deletions on `main` are blocked.
 
-`gh pr merge <num> --squash --delete-branch` is the canonical merge command
-from the primary checkout. Use `--auto` if you want the merge queued
-automatically once CI passes.
-
-From a linked worktree, leave out `--delete-branch`: it switches the local
-checkout to `main`, which fails while another worktree has `main` checked out.
-Merge with `gh pr merge <num> --squash`, then delete the remote branch with
-`git push origin --delete <branch>`.
+The merge commands, including branch cleanup from a linked worktree, are in
+[AGENTS.md — Maintainers only](../AGENTS.md#maintainers-only).
 
 ## Release-please coupling
 
