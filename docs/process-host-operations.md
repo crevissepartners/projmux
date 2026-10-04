@@ -93,8 +93,9 @@ outcome is still unconfirmed after 30 seconds, the reservation expires:
   stop the provider.
 
 If the provider later finishes that turn, the Agent becomes idle again and
-accepts input. Otherwise stop the owner and start the Agent again; the stopped
-generation never reopens.
+accepts input. Otherwise stop the owner and continue in a new generation with
+[`projmux agent resume`](cli.md#projmux-agent-resume); the stopped generation
+never reopens.
 
 Process Codex Agents have no such reservation. A message becomes a Codex turn
 directly, and its receipt settles as soon as Codex accepts or refuses that
