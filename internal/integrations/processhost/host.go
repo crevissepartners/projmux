@@ -188,22 +188,41 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	if !launch.Binding.valid(h.instance) || launch.Command.Path == "" || launch.Command.Env == nil {
 		return nil, errors.New("invalid launch or implicit environment")
 	}
+	p, joined, err := h.register(ctx, launch)
+	if joined || err != nil {
+		return p, err
+	}
+	err = p.boot(ctx)
+	p.spawnErr = err
+	close(p.ready)
+	if err != nil && p.lifetime == nil {
+		p.mu.Lock()
+		p.state, p.failure = "unknown", err.Error()
+		p.mu.Unlock()
+		p.finish()
+	}
+	return p, err
+}
+
+// register admits one new operation, or joins an identical in-flight launch of
+// the same operation and reports its outcome.
+func (h *Host) register(ctx context.Context, launch Launch) (*Handle, bool, error) {
 	h.mu.Lock()
 	if old := h.operations[launch.Binding.Operation]; old != nil {
 		h.mu.Unlock()
 		if !reflect.DeepEqual(old.launch, launch) {
-			return nil, ErrStale
+			return nil, true, ErrStale
 		}
 		select {
 		case <-old.ready:
-			return old, old.spawnErr
+			return old, true, old.spawnErr
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, true, ctx.Err()
 		}
 	}
 	if h.panes[launch.Binding.Pane] != nil || len(h.operations) >= h.limits.Launches {
 		h.mu.Unlock()
-		return nil, ErrBusy
+		return nil, true, ErrBusy
 	}
 	// Clone caller-owned slices before the launch can race a caller mutation.
 	launch.Command.Args = slices.Clone(launch.Command.Args)
@@ -222,40 +241,50 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	}
 	h.operations[launch.Binding.Operation], h.panes[launch.Binding.Pane] = p, p
 	h.mu.Unlock()
+	return p, false, nil
+}
+
+// boot reserves the binding, spawns the dedicated child, and initializes its
+// provider. An initialization failure waits for the owned child to exit.
+func (p *Handle) boot(ctx context.Context) error {
+	h := p.host
 	reserveCtx, cancelReserve := context.WithTimeout(ctx, h.limits.Startup)
-	err := h.tx.Reserve(reserveCtx, launch.Binding)
+	err := h.tx.Reserve(reserveCtx, p.launch.Binding)
 	cancelReserve()
 	if err == nil {
 		err = ctx.Err()
 	}
-	if err == nil {
-		err = p.spawn(ctx)
-		if err == nil && (launch.Spawned != nil || p.adapter != nil || launch.resume != nil) {
-			if launch.Spawned != nil && launch.Spawned.Publish != nil {
-				err = launch.Spawned.Publish(ctx, p)
-			}
-			if err == nil && p.adapter != nil {
-				err = p.adapter.initialize(ctx)
-			} else if err == nil && launch.resume != nil {
-				err = p.initializeResume(ctx)
-			}
-			if err != nil {
-				p.protocolFailure(err)
-				waitCtx, cancel := context.WithTimeout(context.Background(), 5*h.limits.Grace)
-				_, _ = p.Wait(waitCtx, launch.Binding)
-				cancel()
-			}
+	if err != nil {
+		return err
+	}
+	if err = p.spawn(ctx); err != nil {
+		return err
+	}
+	if err = p.initializeProvider(ctx); err != nil {
+		p.protocolFailure(err)
+		waitCtx, cancel := context.WithTimeout(context.Background(), 5*h.limits.Grace)
+		_, _ = p.Wait(waitCtx, p.launch.Binding)
+		cancel()
+	}
+	return err
+}
+
+// initializeProvider publishes the spawned child before provider handshake or
+// recorded-session resume initialization.
+func (p *Handle) initializeProvider(ctx context.Context) error {
+	launch := p.launch
+	if launch.Spawned != nil && launch.Spawned.Publish != nil {
+		if err := launch.Spawned.Publish(ctx, p); err != nil {
+			return err
 		}
 	}
-	p.spawnErr = err
-	close(p.ready)
-	if err != nil && p.lifetime == nil {
-		p.mu.Lock()
-		p.state, p.failure = "unknown", err.Error()
-		p.mu.Unlock()
-		p.finish()
+	switch {
+	case p.adapter != nil:
+		return p.adapter.initialize(ctx)
+	case launch.resume != nil:
+		return p.initializeResume(ctx)
 	}
-	return p, err
+	return nil
 }
 
 func (p *Handle) spawn(ctx context.Context) error {

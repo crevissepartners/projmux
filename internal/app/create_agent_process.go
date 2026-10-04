@@ -57,6 +57,7 @@ type processAgentCreateResult struct {
 	registryPath  string
 	waitReceipt   *coremetadata.TerminationEvidence
 	waitRecorded  bool
+	recorded      *processRecordedSnapshot
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
@@ -434,6 +435,26 @@ func processSnapshotSynchronizer(changed, unchanged func(processhost.Snapshot) e
 	}
 }
 
+// processRecordedSnapshot is the part of a ready snapshot that
+// recordProcessSnapshot persists: session identity, current turn, and pending
+// control identities.
+type processRecordedSnapshot struct {
+	State, Session, Connection, Turn string
+	Pending                          []coremetadata.ProcessRecordedControl
+}
+
+func processRecordedFields(snapshot processhost.Snapshot) processRecordedSnapshot {
+	recorded := processRecordedSnapshot{State: snapshot.State, Session: snapshot.Session, Connection: snapshot.Connection, Turn: snapshot.Turn}
+	for _, request := range snapshot.Pending {
+		recorded.Pending = append(recorded.Pending, processRecordedControl(request))
+	}
+	return recorded
+}
+
+func processRecordedControl(request processhost.Request) coremetadata.ProcessRecordedControl {
+	return coremetadata.ProcessRecordedControl{ID: request.ID, Kind: request.Kind, ConnectionID: request.Connection, SessionID: request.Session, TurnID: request.Turn}
+}
+
 // waitProcessAgent owns shutdown and persists only actual supervisor Wait.
 // A short Wait deadline is a condition check, not a fixed sleep: child exit wins
 // immediately. Cancellation closes only this Handle's dedicated lifetime.
@@ -506,8 +527,15 @@ func (r *processAgentCreateResult) persistProcessWait(snapshot processhost.Snaps
 	return err
 }
 
+// recordProcessSnapshot persists the ready session record. It opens a Registry
+// transaction only when a recorded field differs from the last committed
+// record, so streaming Sequence and diagnostic updates never do.
 func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Snapshot) error {
 	if snapshot.State != "ready" || snapshot.Session == "" {
+		return nil
+	}
+	fields := processRecordedFields(snapshot)
+	if r.recorded != nil && reflect.DeepEqual(*r.recorded, fields) {
 		return nil
 	}
 	record := coremetadata.ProcessSessionRecord{Provider: aiModeClaude, Binding: metadataProcessBinding(r.Binding), SessionID: snapshot.Session, ConnectionID: snapshot.Connection, TurnID: snapshot.Turn, ResumeState: coremetadata.ProcessResumeUnknown}
@@ -515,7 +543,7 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 		record.Provider, record.SessionID, record.ThreadID = aiModeCodex, "", snapshot.Session
 	}
 	for _, request := range snapshot.Pending {
-		record.Pending = append(record.Pending, coremetadata.ProcessRecordedControl{ID: request.ID, Kind: request.Kind, ConnectionID: request.Connection, SessionID: request.Session, TurnID: request.Turn})
+		record.Pending = append(record.Pending, processRecordedControl(request))
 	}
 	_, _, err := intmetadata.NewStore(r.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
 		activation, _, current := reg.CurrentProcessActivation(record.Binding)
@@ -533,6 +561,9 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 		}
 		return nil
 	})
+	if err == nil {
+		r.recorded = &fields
+	}
 	return err
 }
 

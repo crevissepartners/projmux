@@ -121,7 +121,7 @@ func TestProcessAdmissionMixedSplitAnchor(t *testing.T) {
 				t.Fatalf("process split: id=%q err=%v calls=%v", id, err, tmux.calls)
 			}
 		}
-		id, err := m.splitPane(context.Background(), tmuxAnchor, "right", "/srv/beta", nil)
+		id, err := m.splitPane(context.Background(), tmuxAnchor, "right", "/srv/beta", nil, nil)
 		if err != nil || id == "" {
 			t.Fatalf("tmux sibling split: id=%q err=%v calls=%v", id, err, tmux.calls)
 		}

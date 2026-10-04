@@ -549,7 +549,7 @@ func claudeAdmissionHookBootstrap(t *testing.T, f *claudeEndpointTestFixture) cl
 			return f.bootstrap.Token
 		}
 		return ""
-	}, f.provider.Process.Pid)
+	}, f.provider.Process.Pid, nil)
 	if reason != claudeRegistrationProceed {
 		t.Fatalf("valid SessionStart refused: %s", reason)
 	}

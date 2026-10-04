@@ -1368,7 +1368,7 @@ func executeRegistryTopology(
 			}
 			paneID, splitErr := runtime.splitPane(ctx, splitAnchorID, defaultPlacement,
 				materializePaneCWD(plan.project, paneWork.pane),
-				runtime.supervisedLaunch(ctx, paneActivation, nil))
+				runtime.supervisedLaunch(ctx, paneActivation, nil), nil)
 			if paneID != "" {
 				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, paneWork.pane, ledger); adoptErr != nil {
 					return errors.Join(splitErr, adoptErr)

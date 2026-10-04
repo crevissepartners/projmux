@@ -894,7 +894,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			}
 		}
 		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir,
-			r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv))
+			r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv), nil)
 		if paneID != "" {
 			// The supervised child now runs and will want the Registry lock
 			// this transaction holds; create.outcome measures the rest of the hold.

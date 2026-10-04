@@ -115,47 +115,6 @@ func (p *processPaneRuntime) admit(registry coremetadata.Registry, paneUID strin
 	return key, true, err
 }
 
-// control carries a verified typed target all the way to its owned Handle.
-// Host methods revalidate current ownership and never fall back to tmux.
-func (p *processPaneRuntime) control(ctx context.Context, registry coremetadata.Registry, paneUID string, action resourcegraph.ProcessAction, turn, prompt string) error {
-	key, handled, err := p.admit(registry, paneUID, action)
-	if err != nil {
-		return err
-	}
-	if !handled {
-		return fmt.Errorf("process target is not declared")
-	}
-	for _, target := range p.targets {
-		binding := target.Binding
-		if key != (resourcegraph.ProcessKey{Host: binding.Host, Pane: binding.Pane, Generation: binding.Generation}) || target.Handle == nil {
-			continue
-		}
-		pane, _ := registry.Pane(paneUID)
-		agent, ok := registry.Agent(binding.Agent)
-		window, windowOK := registry.Window(binding.Window)
-		if !ok || !windowOK || window.Metadata.OwnerUID() != binding.Project || pane.Spec.Role != coremetadata.PaneRoleAgent || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerUID() != binding.Agent || pane.Status.Activation.AgentUID != binding.Agent || agent.Status.PaneRef != paneUID || agent.Metadata.OwnerUID() != binding.Window {
-			return processhost.ErrStale
-		}
-		snapshot, observeErr := target.Handle.Observe(binding)
-		if observeErr != nil {
-			return observeErr
-		}
-		authority := processhost.Authority{Binding: binding, Connection: snapshot.Connection, Session: snapshot.Session}
-		switch action {
-		case resourcegraph.ProcessTurn:
-			return target.Handle.Turn(ctx, authority, turn, prompt)
-		case resourcegraph.ProcessInterrupt:
-			return target.Handle.Interrupt(ctx, authority, turn)
-		case resourcegraph.ProcessStop:
-			if err := target.Handle.ValidateAuthority(ctx, authority); err != nil {
-				return err
-			}
-			return target.Handle.Stop(binding)
-		}
-	}
-	return processhost.ErrStale
-}
-
 // processDeclarations supplies convergence with durable declarations only.
 // Host liveness is irrelevant to topology and must never be probed under the
 // Registry transaction lock. Explicit legacy declarations remain injectable.

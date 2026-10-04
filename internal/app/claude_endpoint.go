@@ -256,13 +256,11 @@ func registerClaudeEndpoint(bootstrap claudeEndpointBootstrap, start func(claude
 // bootstrap, or the refusal. A refusal returns the zero bootstrap until the
 // pane and its agent matched the Registry, and after that one carrying only
 // their UIDs, which the hook's record names.
-func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int, verifiedHook ...*claudeProcessProof) (claudeEndpointBootstrap, diagnostics.ClaudeRegistrationReason) {
-	// The hook can pass its kernel-verified proof once. Direct callers retain
-	// the original verification path; register and helper revalidate either way.
-	var hookProof *claudeProcessProof
-	if len(verifiedHook) > 0 {
-		hookProof = verifiedHook[0]
-	}
+//
+// hookProof is the hook's kernel-verified proof, passed once, or nil. A nil
+// proof keeps the original verification path; register and helper revalidate
+// either way.
+func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string, data []byte, env func(string) string, parentPID int, hookProof *claudeProcessProof) (claudeEndpointBootstrap, diagnostics.ClaudeRegistrationReason) {
 	var payload struct {
 		Event     string `json:"hook_event_name"`
 		SessionID string `json:"session_id"`

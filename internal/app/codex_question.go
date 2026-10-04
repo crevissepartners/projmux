@@ -85,7 +85,7 @@ func (c *codexQuestionChannel) Handle(ctx context.Context, identity codexLifecyc
 		return
 	}
 	agent, ok := registry.Agent(identity.AgentUID)
-	if !ok || coremetadata.NormalizeProvider(agent.Spec.Provider) != aiModeCodex || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != identity.PaneUID || !claudeQuestionAnsweredByProjmux(*agent, c.answering) {
+	if !ok || coremetadata.NormalizeProvider(agent.Spec.Provider) != aiModeCodex || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != identity.PaneUID || !questionAnsweredByProjmux(*agent, c.answering) {
 		return
 	}
 	pane, ok := registry.Pane(identity.PaneUID)

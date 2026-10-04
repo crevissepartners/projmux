@@ -13,9 +13,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -138,16 +136,25 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionInterruptTurn), agent.Metadata.UID, operation)
-		return err
+		return c.writeProcessTurn(stdout, agentActionInterruptTurn, agent, operation)
 	}
-	var processTarget *processTerminalTarget
+	return c.interruptTmuxClaudeTurn(registry, agent, via, stdout)
+}
+
+// declaredProcessTarget returns an exact process target when the invocation
+// inventory declares the Agent's Pane, so the tmux transport guard admits or
+// refuses each tmux command against that declaration. Otherwise it is nil.
+func (c *agentCommand) declaredProcessTarget(registry coremetadata.Registry, agent coremetadata.Agent) *processTerminalTarget {
 	for _, key := range c.processRuntime.inventory().Declared {
 		if key.Pane == agent.Status.PaneRef {
-			processTarget = &processTerminalTarget{runtime: c.processRuntime, registry: registry, paneUID: agent.Status.PaneRef}
-			break
+			return &processTerminalTarget{runtime: c.processRuntime, registry: registry, paneUID: agent.Status.PaneRef}
 		}
 	}
+	return nil
+}
+
+func (c *agentCommand) interruptTmuxClaudeTurn(registry coremetadata.Registry, agent coremetadata.Agent, via string, stdout io.Writer) error {
+	processTarget := c.declaredProcessTarget(registry, agent)
 	now := time.Now
 	if c.now != nil {
 		now = c.now
@@ -187,20 +194,8 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 	}
 	// The Registry can change between initial resolution and the durable audit.
 	// Refuse an old turn or activation before addressing the tmux Pane again.
-	latest, err := c.loadRegistry()
-	if err != nil {
-		return fail(fmt.Errorf("reload exact Agent: %w", err))
-	}
-	current, ok := latest.Agent(route.AgentUID)
-	if !ok {
-		return fail(errors.New("exact Claude Agent disappeared"))
-	}
-	currentRoute, currentRuntime, err := exactClaudeTurn(latest, *current, now())
-	if err != nil || !route.Same(currentRoute) || currentRuntime != runtime ||
-		current.Status.Interaction != agent.Status.Interaction ||
-		current.Status.Progress.TurnRef != agent.Status.Progress.TurnRef ||
-		current.Status.Progress.StartedAt != agent.Status.Progress.StartedAt {
-		return fail(errors.New("exact Claude Agent turn or Pane activation changed"))
+	if err := c.claudeTurnStillCurrent(agent, route, runtime, now); err != nil {
+		return fail(err)
 	}
 	target, err := exactClaudePane(ctx, runner, route.PaneUID, runtime, processTarget)
 	if err != nil {
@@ -217,6 +212,25 @@ func (c *agentCommand) interruptClaudeTurn(registry coremetadata.Registry, agent
 	return err
 }
 
+func (c *agentCommand) claudeTurnStillCurrent(agent coremetadata.Agent, route coremetadata.AgentRouteRef, runtime string, now func() time.Time) error {
+	latest, err := c.loadRegistry()
+	if err != nil {
+		return fmt.Errorf("reload exact Agent: %w", err)
+	}
+	current, ok := latest.Agent(route.AgentUID)
+	if !ok {
+		return errors.New("exact Claude Agent disappeared")
+	}
+	currentRoute, currentRuntime, err := exactClaudeTurn(latest, *current, now())
+	if err != nil || !route.Same(currentRoute) || currentRuntime != runtime ||
+		current.Status.Interaction != agent.Status.Interaction ||
+		current.Status.Progress.TurnRef != agent.Status.Progress.TurnRef ||
+		current.Status.Progress.StartedAt != agent.Status.Progress.StartedAt {
+		return errors.New("exact Claude Agent turn or Pane activation changed")
+	}
+	return nil
+}
+
 // Process starts enter the provider stream as plain user frames. Coordination
 // messages retain their separate native message route and envelope contract.
 func (c *agentCommand) startProcessClaudeTurn(reg coremetadata.Registry, agent coremetadata.Agent, text string, stdout io.Writer) (bool, error) {
@@ -224,59 +238,11 @@ func (c *agentCommand) startProcessClaudeTurn(reg coremetadata.Registry, agent c
 	if agent.Spec.Provider != aiModeClaude || !found || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
 		return false, nil
 	}
-	operation, err := c.callProcessClaudeTurn(reg, agent, "turn", text)
+	operation, err := c.callProcessTurn(reg, agent, aiModeClaude, "turn", text)
 	if err != nil {
 		return true, err
 	}
-	_, err = fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(agentActionSendTurn), agent.Metadata.UID, operation)
-	return true, err
-}
-
-func (c *agentCommand) callProcessClaudeTurn(reg coremetadata.Registry, agent coremetadata.Agent, action, text string) (string, error) {
-	pane, found := reg.Pane(agent.Status.PaneRef)
-	if !found || pane.Status.ProcessSession == nil || agent.Spec.Provider != aiModeClaude || c.controlPaths == nil {
-		return "", processhost.ErrStale
-	}
-	session := pane.Status.ProcessSession
-	activation, provider, current := reg.CurrentProcessActivation(session.Binding)
-	if !current || provider != aiModeClaude {
-		return "", processhost.ErrStale
-	}
-	paths, err := c.controlPaths()
-	if err != nil {
-		return "", err
-	}
-	socket := processClaudeHostSocket(intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation)
-	identity, err := localipc.InspectOwnedSocket(socket)
-	if err != nil {
-		return "", fmt.Errorf("process-host-unavailable: %w", err)
-	}
-	binding := session.Binding
-	authority := processhost.Authority{Binding: processSchemaBinding(binding), Connection: binding.OperationID, Session: session.SessionID}
-	operation, err := newCreateOperationID()
-	if err != nil {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
-	defer cancel()
-	result, err := callProcessForeground(ctx, socket, identity, activation.HostProcess, claudeProcessCheck{Foreground: &processForegroundRequest{Authority: authority, Action: action, Operation: operation, Prompt: text, Turn: session.TurnID}})
-	if err != nil {
-		return "", fmt.Errorf("process-host-unavailable: %w", err)
-	}
-	return operation, processClaudeTurnAcceptance(result)
-}
-
-func processClaudeTurnAcceptance(result processForegroundResult) error {
-	switch {
-	case result.Accepted:
-		return nil
-	case result.Busy:
-		return processhost.ErrBusy
-	case result.Closed:
-		return processhost.ErrClosed
-	default:
-		return processhost.ErrStale
-	}
+	return true, c.writeProcessTurn(stdout, agentActionSendTurn, agent, operation)
 }
 
 // Explicit typed targets retain their local authority; operational commands use
@@ -286,5 +252,5 @@ func (c *agentCommand) interruptProcessClaudeTurn(registry coremetadata.Registry
 		turn := agent.Status.Progress.TurnRef
 		return turn, c.processRuntime.controlOverride(context.Background(), registry, agent.Status.PaneRef, resourcegraph.ProcessInterrupt, turn, "")
 	}
-	return c.callProcessClaudeTurn(registry, agent, "interrupt", "")
+	return c.callProcessTurn(registry, agent, aiModeClaude, "interrupt", "")
 }

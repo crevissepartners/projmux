@@ -761,7 +761,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 			return err
 		}
 		paneID, err := c.runtime.splitPane(ctx, scope.anchorPaneID, intent.placement, cwd,
-			c.runtime.supervisedLaunch(ctx, activation, nil))
+			c.runtime.supervisedLaunch(ctx, activation, nil), nil)
 		if paneID != "" {
 			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
@@ -1289,7 +1289,7 @@ func (c *createCommand) openIntentAgent(
 		}
 	}
 	paneID, err := c.runtime.splitPane(ctx, target.anchorPaneID, target.placement, workspace.CWD,
-		c.runtime.supervisedLaunch(ctx, activation, launchArgv))
+		c.runtime.supervisedLaunch(ctx, activation, launchArgv), nil)
 	if paneID != "" {
 		// The supervised child now runs and will want the Registry lock
 		// this transaction holds; create.outcome measures the rest of the hold.

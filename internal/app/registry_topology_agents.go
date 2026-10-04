@@ -539,7 +539,7 @@ func replayTopologyWindowAgents(
 			return nil, err
 		}
 		paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement, replay.cwd,
-			runtime.supervisedLaunch(ctx, activation, replay.argv))
+			runtime.supervisedLaunch(ctx, activation, replay.argv), nil)
 		if paneID != "" {
 			if adoptErr := adoptCreatedPane(ctx, runtime, paneID, sessionID, windowID, pane, ledger); adoptErr != nil {
 				return nil, errors.Join(splitErr, adoptErr)

@@ -213,65 +213,74 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 	if err != nil {
 		return
 	}
-	if request.Observe != nil {
-		if int64(peer.OwnerUID) != int64(os.Getuid()) || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
-			return
+	switch {
+	case request.Observe != nil:
+		e.exchangeObservation(conn, peer, request)
+	case request.Foreground != nil:
+		if request.MessageRef == "" {
+			e.exchangeForeground(bounded, conn, peer, *request.Foreground)
 		}
-		result := processForegroundResult{Stale: true}
-		binding := *request.Observe
-		snap, readErr := e.handle.Observe(binding)
-		reg, regErr := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
-		view := processHostObservation{Binding: binding, Provider: snap.Provider, State: snap.State, Host: e.evidence.HostProcess, Child: e.evidence.Process, Exit: snap.Exit}
-		if readErr == nil && regErr == nil && binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, binding, view) {
-			result = processForegroundResult{Accepted: true, Observation: &view}
-		}
-		_ = localipc.WriteJSON(conn, result)
+	case peer == e.evidence.HostProcess:
+		e.exchangeRoute(bounded, conn, request)
+	}
+}
+
+// exchangeObservation answers the read-only observation protocol. It carries
+// no control, message, or route fields and requires the same user.
+func (e *codexProcessEndpoint) exchangeObservation(conn *net.UnixConn, peer coremetadata.ProcessIdentity, request codexProcessExchange) {
+	if int64(peer.OwnerUID) != int64(os.Getuid()) || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
 		return
 	}
-	if request.Foreground != nil {
-		if request.MessageRef != "" {
-			return
+	result := processForegroundResult{Stale: true}
+	binding := *request.Observe
+	snap, readErr := e.handle.Observe(binding)
+	reg, regErr := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
+	view := processHostObservation{Binding: binding, Provider: snap.Provider, State: snap.State, Host: e.evidence.HostProcess, Child: e.evidence.Process, Exit: snap.Exit}
+	if readErr == nil && regErr == nil && binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, binding, view) {
+		result = processForegroundResult{Accepted: true, Observation: &view}
+	}
+	_ = localipc.WriteJSON(conn, result)
+}
+
+func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net.UnixConn, peer coremetadata.ProcessIdentity, r processForegroundRequest) {
+	current := func(ctx context.Context, a processhost.Authority) error {
+		if a != e.authority() {
+			return processhost.ErrStale
 		}
-		r := *request.Foreground
-		current := func(ctx context.Context, a processhost.Authority) error {
-			if a != e.authority() {
+		_, err := e.route(ctx)
+		return err
+	}
+	var receipt *codexProcessReceipt
+	result := controlProcessForeground(ctx, peer, r, current, func() error {
+		switch r.Action {
+		case "validate":
+			return nil
+		case "message":
+			messages := e.messages.Load()
+			if messages == nil || r.MessageRef == "" {
 				return processhost.ErrStale
 			}
-			_, err := e.route(ctx)
+			value, err := messages.receive(ctx, e, r.MessageRef)
+			if err == nil {
+				receipt = &value
+			}
 			return err
 		}
-		var receipt *codexProcessReceipt
-		result := controlProcessForeground(bounded, peer, r, current, func() error {
-			if r.Action == "validate" {
-				return nil
-			}
-			if r.Action == "message" {
-				messages := e.messages.Load()
-				if messages == nil || r.MessageRef == "" {
-					return processhost.ErrStale
-				}
-				value, err := messages.receive(bounded, e, r.MessageRef)
-				if err == nil {
-					receipt = &value
-				}
-				return err
-			}
-			return applyCodexForeground(bounded, e.handle, r)
-		})
-		result.Receipt = receipt
-		_ = localipc.WriteJSON(conn, result)
-		return
-	}
-	if peer != e.evidence.HostProcess {
-		return
-	}
+		return applyCodexForeground(ctx, e.handle, r)
+	})
+	result.Receipt = receipt
+	_ = localipc.WriteJSON(conn, result)
+}
+
+// exchangeRoute serves the owning host's route and message receipt checks.
+func (e *codexProcessEndpoint) exchangeRoute(ctx context.Context, conn *net.UnixConn, request codexProcessExchange) {
 	result := codexProcessExchangeResult{}
 	if request.Binding == e.binding && request.Evidence == e.evidence {
-		_, err = e.route(bounded)
+		_, err := e.route(ctx)
 		result.Valid = err == nil
 		messages := e.messages.Load()
 		if request.MessageRef != "" && messages != nil {
-			receipt, receiveErr := messages.receive(bounded, e, request.MessageRef)
+			receipt, receiveErr := messages.receive(ctx, e, request.MessageRef)
 			if receiveErr == nil {
 				// A stale owned endpoint may still settle a receipt; receive
 				// revalidates both routes before any provider write.

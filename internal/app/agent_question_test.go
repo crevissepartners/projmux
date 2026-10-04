@@ -770,24 +770,28 @@ func TestAgentQuestionClosedRefusalSaysWhetherTheProviderStillAsks(t *testing.T)
 	}
 }
 
-func TestProcessClaudeAnswerGateKeepsTmuxAndCodexPolicy(t *testing.T) {
+func TestProcessAgentAnswerGateKeepsTmuxPolicy(t *testing.T) {
 	f := newQuestionFixture(t, false)
 	agent, _ := f.resources.registry.Agent(questionTestAgent)
 	pane, _ := f.resources.registry.Pane(agent.Status.PaneRef)
-	if processClaudeAnswers(f.resources.registry, *agent) {
+	if processAgentAnswers(f.resources.registry, *agent) {
 		t.Fatal("tmux bypassed opt-in")
 	}
 	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
-	if !processClaudeAnswers(f.resources.registry, *agent) {
+	if !processAgentAnswers(f.resources.registry, *agent) {
 		t.Fatal("process Claude kept opt-in gate")
 	}
 	agent.Spec.Provider = aiModeCodex
-	if processClaudeAnswers(f.resources.registry, *agent) {
-		t.Fatal("Codex policy changed")
+	if !processAgentAnswers(f.resources.registry, *agent) {
+		t.Fatal("process Codex kept opt-in gate")
+	}
+	agent.Spec.Provider = "unsupported"
+	if processAgentAnswers(f.resources.registry, *agent) {
+		t.Fatal("unsupported provider bypassed policy")
 	}
 	agent.Spec.Provider = aiModeClaude
 	agent.Status.PaneRef = "missing"
-	if processClaudeAnswers(f.resources.registry, *agent) {
+	if processAgentAnswers(f.resources.registry, *agent) {
 		t.Fatal("missing current Pane bypassed policy")
 	}
 }

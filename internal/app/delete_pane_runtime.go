@@ -1003,7 +1003,7 @@ func (r *tmuxPaneDeleteRuntime) prepareReplacements(ctx context.Context, replace
 	}
 	for _, replacement := range replacements {
 		paneID, err := runtime.splitPane(ctx, replacement.Anchor.PaneID, defaultPlacement,
-			replacement.Pane.Spec.CWD, nil)
+			replacement.Pane.Spec.CWD, nil, nil)
 		if paneID != "" {
 			if claimErr := adoptCreatedPane(ctx, runtime, paneID, replacement.Anchor.SessionID,
 				replacement.Anchor.WindowID, replacement.Pane, ledger); claimErr != nil {

@@ -21,44 +21,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
-func processAgentAnswers(registry coremetadata.Registry, agent coremetadata.Agent) bool {
-	pane, found := registry.Pane(agent.Status.PaneRef)
-	return (agent.Spec.Provider == aiModeClaude || agent.Spec.Provider == aiModeCodex) && found && pane.Metadata.OwnerUID() == agent.Metadata.UID && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess
-}
-
-func (c *agentCommand) callProcessCodexTurn(reg coremetadata.Registry, agent coremetadata.Agent, action, text string) (string, error) {
-	pane, found := reg.Pane(agent.Status.PaneRef)
-	if !found || pane.Status.ProcessSession == nil || agent.Spec.Provider != aiModeCodex || c.controlPaths == nil {
-		return "", processhost.ErrStale
-	}
-	session := pane.Status.ProcessSession
-	activation, provider, current := reg.CurrentProcessActivation(session.Binding)
-	if !current || provider != aiModeCodex {
-		return "", processhost.ErrStale
-	}
-	paths, err := c.controlPaths()
-	if err != nil {
-		return "", err
-	}
-	socket := processCodexHostSocket(intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation)
-	identity, err := localipc.InspectOwnedSocket(socket)
-	if err != nil {
-		return "", fmt.Errorf("process-host-unavailable: %w", err)
-	}
-	operation, err := newCreateOperationID()
-	if err != nil {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
-	defer cancel()
-	authority := processhost.Authority{Binding: processSchemaBinding(session.Binding), Connection: session.Binding.OperationID, Session: session.ThreadID}
-	result, err := callProcessForeground(ctx, socket, identity, activation.HostProcess, codexProcessExchange{Foreground: &processForegroundRequest{Authority: authority, Action: action, Operation: operation, Prompt: text, Turn: session.TurnID}})
-	if err != nil {
-		return "", fmt.Errorf("process-host-unavailable: %w", err)
-	}
-	return operation, processClaudeTurnAcceptance(result)
-}
-
 type processCodexCommandPlanner interface {
 	PlanProcessCodexCommand(coremetadata.AgentWorkspace) (processhost.Command, error)
 }
