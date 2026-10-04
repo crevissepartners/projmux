@@ -43,7 +43,7 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
 	result, err := claim.WaitPeer(ctx)
 	if err != nil {
-		if result.Handle == nil && errors.Is(err, context.Canceled) {
+		if result.Handle == nil && err == context.Canceled {
 			return nil
 		}
 		return err

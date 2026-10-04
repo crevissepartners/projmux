@@ -136,6 +136,9 @@ func deferredPeerText(record messagestore.Record) (string, error) {
 }
 
 func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResumeFirstFrame, first *messagestore.Record) (processAgentResumeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return processAgentResumeResult{}, err
+	}
 	c := claim.command
 	if first != nil {
 		text, err := deferredPeerText(*first)
@@ -161,7 +164,19 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 		result, err = c.resumeProcessAgent(resumeCtx, request)
 	}
 	if err != nil {
+		noChild := result.hasNoChild()
 		err = result.fail(err)
+		// Cancellation before any child exists is a released wait, not a
+		// failed delivery. Keep the undispatched envelope for the next claim.
+		if noChild && ctx.Err() != nil && result.previousRecord == nil {
+			if first != nil {
+				if clearErr := claim.markInflight(""); clearErr != nil {
+					return result, clearErr
+				}
+			}
+			result.Handle = nil
+			return result, ctx.Err()
+		}
 		if first != nil {
 			_, applyErr := c.terminalCoordination(*first, coremessage.EventFail, processResumeRefused, false, nil)
 			err = errors.Join(err, applyErr)

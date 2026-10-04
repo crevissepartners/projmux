@@ -161,3 +161,46 @@ func TestDeferredDeadClaimInflightIsUnknownAndNotReplayed(t *testing.T) {
 		t.Fatal("ambiguous frame remained replayable", err)
 	}
 }
+
+func TestDeferredCancelledResumePreservesUndispatchedPeer(t *testing.T) {
+	c, opts := deferredClaimFixture(t)
+	claim, err := c.claimDeferredProcessAgent(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	store := c.messageStore.(*messagestore.Store)
+	now := time.Now().UTC()
+	route := deferredMessageRoute(claim.record)
+	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "cancelled-peer", ConversationRef: "cancelled-conversation", Source: route, Target: route, Authority: coremessage.PeerAuthority(), Payload: "peer", AcceptedAt: now, Deadline: now.Add(time.Minute)}
+	record, _, err := store.PutDeferred(envelope, "claude-coordination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := deferredPeerText(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := claim.Resume(ctx, processResumeFirstFrame{Kind: "peer", Text: text})
+	if err != context.Canceled || result.Handle != nil {
+		t.Fatal("cancelled resume started a provider", err)
+	}
+	held, err := claim.held()
+	if err != nil || len(held) != 1 || held[0].Delivery.State != coremessage.StateHeld {
+		t.Fatal("undispatched peer was lost", err)
+	}
+	if err = claim.Close(); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := c.claimDeferredProcessAgent(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	held, err = replacement.held()
+	if err != nil || len(held) != 1 {
+		t.Fatal("closed claim lost peer", err)
+	}
+}
