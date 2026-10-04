@@ -57,7 +57,7 @@ for a process Pane. They never include provider content.
 | `ProcessHost` | Identifier of the owner that runs this generation |
 | `HostPID` | PID of the owner command |
 | `ChildPID` | PID of the provider process |
-| `ResumeState` | `resumable` once a conversation and connection were recorded; otherwise `unknown` |
+| `ResumeState` | `resumable` after the owner recorded the provider's exit for an established conversation; `unknown` while it runs or when no exit was recorded |
 | `PendingControls` | Number of unanswered questions and approvals |
 
 `HostPID` and `ChildPID` appear until the owner records the provider's exit.
@@ -96,11 +96,18 @@ If the provider later finishes that turn, the Agent becomes idle again and
 accepts input. Otherwise stop the owner and start the Agent again; the stopped
 generation never reopens.
 
+Process Codex Agents have no such reservation. A message becomes a Codex turn
+directly, and its receipt settles as soon as Codex accepts or refuses that
+turn; a message to a Codex Agent that is still busy is refused with the reason
+`host-busy`.
+
 ## Damaged attention store
 
 Process attention state lives in
 `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/process-attention.json`. Commands
-that only read it report a damaged file as an error and leave it unchanged. The
+that only read it report a damaged file as an error and leave it unchanged; the
+status bar keeps showing tmux attention and reports only the process read
+error. The
 next owner that writes attention state first copies the damaged bytes to
 `process-attention.json.damaged-<random>` in the same directory, then starts a
 new empty store; each running owner restores its own entry on its next update.
