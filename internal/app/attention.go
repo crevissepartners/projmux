@@ -265,7 +265,7 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 
 	rows, listErr := c.windowAttentionRows(windowID)
 	if listErr != nil {
-		if _, registryError := listErr.(processAttentionRegistryError); !registryError {
+		if _, processError := listErr.(processAttentionWindowError); !processError {
 			return listErr
 		}
 		fmt.Fprintf(stderr, "attention window: observe process attention: %v\n", listErr)
@@ -466,12 +466,19 @@ func (c *attentionCommand) paneOption(paneID, option string) string {
 	return output
 }
 
+// A process-only read error permits a status badge; joined tmux errors remain fatal.
+type processAttentionWindowError struct{ error }
+
 func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWindowRow, error) {
 	processRows := []attentionWindowRow{}
 	var processErr error
 	if c != nil && c.process != nil {
 		records, err := c.process.records()
-		processErr = err
+		if err != nil {
+			// Classify every process read failure here, including damaged stores.
+			// A joined terminal error remains fatal at the direct type assertion.
+			processErr = processAttentionWindowError{err}
+		}
 		for _, r := range records {
 			if r.Binding.Window == windowID {
 				processRows = append(processRows, attentionWindowRow{AIBadgeKind: r.badge()})
@@ -491,7 +498,7 @@ func (c *attentionCommand) windowAttentionRows(windowID string) ([]attentionWind
 		},
 	})
 	if err != nil {
-		if c.process != nil && len(c.process.bindings) > 0 && !c.process.processOnly {
+		if processErr != nil || (c.process != nil && len(c.process.bindings) > 0 && !c.process.processOnly) {
 			return processRows, errors.Join(processErr, err)
 		}
 		return processRows, processErr
