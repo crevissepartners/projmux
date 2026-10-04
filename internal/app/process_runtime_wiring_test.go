@@ -3,11 +3,19 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"io"
+	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -63,12 +71,12 @@ func TestProcessRuntimeOperationalSplitAnchorRefuses(t *testing.T) {
 	create.processRuntime = newCreateCommandOn(tmux, func(string) string { return "" }).processRuntime
 	project, _ := store.registry.Project("prj-beta")
 	_, err := create.ensureAnchorPane(context.Background(), &store.registry, store.mutator(), nil, *project, "beta", "operation", paneTarget{windowUID: "win-beta-main", anchorUID: pane.Metadata.UID})
-	if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || create.runtime.processAnchor == nil || len(tmux.calls) != 0 || store.writes != 0 {
+	if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || len(tmux.calls) != 0 || store.writes != 0 {
 		t.Fatalf("err=%v calls=%v writes=%d", err, tmux.calls, store.writes)
 	}
 }
 
-func TestProcessRuntimeControllerObservationUsesSameSnapshot(t *testing.T) {
+func TestProcessRuntimeControllerDeclarationsUseSameSnapshot(t *testing.T) {
 	_, store, _, runner, root := newReconcileFixture(t, "-L", "primary")
 	project, _ := store.registry.ProjectByRoot(root)
 	window := store.registry.WindowsOf(project.Metadata.UID)[0]
@@ -81,20 +89,12 @@ func TestProcessRuntimeControllerObservationUsesSameSnapshot(t *testing.T) {
 	target := tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}
 	planner := resourceReconcilePlanner{reader: explicitTmuxRunner{runner: runner, target: target}, store: store.store(), newReconciler: reconcileFixtureReconciler(root, "alpha"), materializeProject: "uid:" + project.Metadata.UID, exactTarget: target}
 	kernel := newResourceControllerKernel(runner, store.store(), planner, target)
-	calls := 0
-	kernel.observeProcesses = func(_ context.Context, got coremetadata.Registry) resourcegraph.ProcessInventory {
-		calls++
-		if !reflect.DeepEqual(got, store.registry) {
-			t.Fatal("observer received another Registry snapshot")
-		}
-		return process
-	}
 	kernel.observe = func(ctx context.Context) resourcegraph.Inventory {
 		return intmetadata.NewInventoryObserver(runner, target.ExplicitProjection()).Observe(ctx)
 	}
 	pass, err := kernel.plan(context.Background(), store.registry)
-	if err != nil || calls != 1 {
-		t.Fatalf("plan: %v observer calls=%d", err, calls)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
 	}
 	found := false
 	for _, node := range pass.graph.Panes {
@@ -110,8 +110,8 @@ func TestProcessRuntimeControllerObservationUsesSameSnapshot(t *testing.T) {
 		inventory.Processes = process
 		return inventory
 	}
-	if _, err := kernel.plan(context.Background(), store.registry); err != nil || calls != 1 {
-		t.Fatalf("fixture override replaced: %v calls=%d", err, calls)
+	if _, err := kernel.plan(context.Background(), store.registry); err != nil {
+		t.Fatalf("fixture override replaced: %v", err)
 	}
 }
 
@@ -163,5 +163,75 @@ func TestProcessRuntimeLockedAdmissionRejectsReplacedAnchor(t *testing.T) {
 		if len(call) > 0 && (call[0] == "split-window" || call[0] == "new-window" || call[0] == "new-session" || call[0] == "set-option" || call[0] == "set-environment") {
 			t.Fatalf("replaced process anchor mutated tmux: %v", call)
 		}
+	}
+}
+
+func TestProcessRuntimeReconcileLockNeverDialsHost(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "pl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, _, uid := processInventoryFixture(t)
+	pane, _ := reg.Pane(uid)
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	identity, _, err := localipc.Process(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane.Status.Activation.Process = &coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: "host", PaneUID: uid, AgentUID: pane.Metadata.OwnerUID(), Generation: pane.Status.Activation.Generation}, HostProcess: identity, Child: identity}
+	socket := processClaudeHostSocket(intmetadata.PathFor(paths.StateDir), uid, pane.Status.Activation.Generation)
+	if err := os.MkdirAll(filepath.Dir(socket), 0700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.Chmod(socket, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localipc.InspectOwnedSocket(socket); err != nil {
+		t.Fatal(err)
+	}
+	var dials atomic.Int32
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			dials.Add(1)
+			go func() { defer conn.Close(); <-done }()
+		}
+	}()
+	runner := newFakeTmux()
+	reconciler := newRegistryReconciler(runner, inttmux.NewClient(runner))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	// observeRuntime executes in the Registry transaction's locked callback.
+	start := time.Now()
+	abort := errors.New("observation-only lock probe")
+	store := intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
+	_, err = store.Update(func(*coremetadata.Registry) error {
+		reconciler.observeRuntime(ctx, &reg, coremetadata.Mutator{}, nil)
+		return abort
+	})
+	if !errors.Is(err, abort) {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+	t.Logf("locked reconciliation elapsed=%s host dials=%d", elapsed, dials.Load())
+	if dials.Load() != 0 {
+		t.Fatal("reconciliation dialed an unresponsive host inside the Registry lock")
 	}
 }

@@ -1727,10 +1727,9 @@ func (c *createCommand) ensureAnchorPane(
 	}
 
 	if c.processRuntime != nil {
-		c.runtime.processAnchor = nil
 		if c.processRuntime.inventory().Declares(*anchor) {
-			c.runtime.processAnchor = &processTerminalTarget{runtime: c.processRuntime, registry: registry.Clone(), paneUID: anchor.Metadata.UID}
-			if err := c.runtime.processAnchor.admitSplitAnchor(anchor.Status.Activation.RuntimeID); err != nil {
+			processAnchor := &processTerminalTarget{runtime: c.processRuntime, registry: registry.Clone(), paneUID: anchor.Metadata.UID}
+			if err := processAnchor.admitSplitAnchor(anchor.Status.Activation.RuntimeID); err != nil {
 				return "", err
 			}
 		}

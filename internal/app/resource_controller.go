@@ -70,8 +70,7 @@ type resourceControllerKernel struct {
 	approvedOrphanImport bool
 	// observe takes one bounded inventory of the exact server. It is injectable
 	// so a test can state a machine state instead of scripting tmux output.
-	observe          func(ctx context.Context) resourcegraph.Inventory
-	observeProcesses func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
+	observe func(ctx context.Context) resourcegraph.Inventory
 	// socketPath reads the server's own `#{socket_path}`, which is the socket
 	// guard. A server that is not running has no path and no writes to guard.
 	socketPath func(ctx context.Context) (string, bool)
@@ -95,8 +94,7 @@ var controllerGuardFields = controller.GuardFields{
 func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore, planner resourceReconcilePlanner, target tmuxTransport) *resourceControllerKernel {
 	kernel := &resourceControllerKernel{
 		target: target, runner: runner, store: store, planner: planner,
-		observeProcesses: observeRegistryProcesses,
-		trigger:          controller.RecoveryExplicit, lookupEnv: os.Getenv,
+		trigger: controller.RecoveryExplicit, lookupEnv: os.Getenv,
 	}
 	kernel.observe = func(ctx context.Context) resourcegraph.Inventory {
 		// A fresh observer per call is deliberate. The memoization inside one
@@ -175,9 +173,7 @@ func (k *resourceControllerKernel) plan(ctx context.Context, registry coremetada
 		}
 	}
 	inventory := k.observe(ctx)
-	if k.observeProcesses != nil && len(inventory.Processes.Declared) == 0 && len(inventory.Processes.Observed) == 0 {
-		inventory.Processes = k.observeProcesses(ctx, registry)
-	}
+	inventory.Processes = processDeclarations(registry, inventory.Processes)
 	graph := resourcegraph.Resolve(registry, inventory)
 	approvedImport, err := k.authorizeApprovedOrphanImport(graph)
 	if err != nil {

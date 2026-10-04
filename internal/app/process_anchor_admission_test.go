@@ -43,9 +43,10 @@ func TestProcessAdmissionCreatePaneAnchor(t *testing.T) {
 func TestProcessAdmissionSplitAnchor(t *testing.T) {
 	reg, runtime, paneUID := processInventoryFixture(t)
 	tmux := newFakeTmux()
-	materializer := &materializer{runner: tmux, processAnchor: &processTerminalTarget{runtime: runtime, registry: reg, paneUID: paneUID}}
+	materializer := &materializer{runner: tmux}
+	target := &processTerminalTarget{runtime: runtime, registry: reg, paneUID: paneUID}
 	before, _ := json.Marshal(reg)
-	id, err := materializer.splitPane(context.Background(), "", "right", "/fixture", nil)
+	id, err := materializer.splitPane(context.Background(), "", "right", "/fixture", nil, target)
 	after, _ := json.Marshal(reg)
 	t.Logf("anchor=%s id=%q error=%v tmux_calls=%d registry_writes=0 calls=%v", paneUID, id, err, len(tmux.calls), tmux.calls)
 	if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || !strings.Contains(err.Error(), "same Window") || id != "" || len(tmux.calls) != 0 || string(before) != string(after) {
@@ -114,8 +115,8 @@ func TestProcessAdmissionMixedSplitAnchor(t *testing.T) {
 		m.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}
 		before, _ := json.Marshal(store.registry)
 		if process {
-			m.processAnchor = &processTerminalTarget{runtime: runtime, registry: store.registry.Clone(), paneUID: pane.Metadata.UID}
-			id, err := m.splitPane(context.Background(), pane.Status.Activation.RuntimeID, "right", "/srv/beta", nil)
+			target := &processTerminalTarget{runtime: runtime, registry: store.registry.Clone(), paneUID: pane.Metadata.UID}
+			id, err := m.splitPane(context.Background(), pane.Status.Activation.RuntimeID, "right", "/srv/beta", nil, target)
 			if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || id != "" || len(tmux.calls) != 0 {
 				t.Fatalf("process split: id=%q err=%v calls=%v", id, err, tmux.calls)
 			}

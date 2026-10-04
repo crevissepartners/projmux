@@ -52,8 +52,7 @@ import (
 // steps 1 and 4 may mint a new object, but no existing uid is ever changed,
 // merged, or reassigned, and nothing is ever deleted or pruned.
 type registryReconciler struct {
-	processes        resourcegraph.ProcessInventory
-	observeProcesses func(context.Context, coremetadata.Registry) resourcegraph.ProcessInventory
+	processes resourcegraph.ProcessInventory
 
 	// discoverRoots returns the selectable workdirs, already absolute.
 	discoverRoots func() ([]string, error)
@@ -142,7 +141,6 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 	home, err := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
 	reconciler := &registryReconciler{
-		observeProcesses: observeRegistryProcesses,
 		discoverRoots: func() ([]string, error) {
 			if err != nil {
 				return nil, err
@@ -493,10 +491,7 @@ func (r *registryReconciler) reconcileGuarded(
 // inventories: re-reading them would repeat the same server-wide queries with
 // no write in between.
 func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, unwritten *intmetadata.ServerSnapshot) {
-	processes := r.processes
-	if r.observeProcesses != nil && len(processes.Declared) == 0 && len(processes.Observed) == 0 {
-		processes = r.observeProcesses(ctx, *working)
-	}
+	processes := processDeclarations(*working, r.processes)
 	var inventory liveRuntimeInventory = r.mirror
 	if unwritten != nil {
 		inventory = unwritten
