@@ -62,8 +62,9 @@ for a process Pane. They never include provider content.
 
 `HostPID` and `ChildPID` appear until the owner records the provider's exit.
 
-`Status` in `describe` and `get` is `live` while the owner answers. When the
-owner cannot be reached and no exit was recorded, for example after the owner
+`Status` in `describe` and `get` is `live` while the owner answers and
+`offline` after the owner recorded the provider's exit. When the owner cannot
+be reached and no exit was recorded, for example after the owner
 was killed with `SIGKILL`, the status is `unknown`: projmux does not guess that
 the provider stopped.
 
