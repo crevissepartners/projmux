@@ -98,7 +98,7 @@ func TestProcessSupportedResumableProviderShutdownFixture(t *testing.T) {
 				pane.Status.LastTermination = receipt.Clone()
 				agent.Status.Phase = coremetadata.PhaseOffline
 				agent.Status.LastTermination = receipt.Clone()
-				return intmetadata.DefaultMutator().RecordProcessResumable(reg, activation, &receipt)
+				return intmetadata.DefaultMutator().RecordProcessResumable(reg, activation.Binding, &receipt)
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -219,7 +219,7 @@ func TestProcessSupportedResumableOwnerKillRemainsUnknownFixture(t *testing.T) {
 				t.Fatal("owner death fabricated resumability")
 			}
 			before := reg.Clone()
-			if err := (coremetadata.Mutator{}).RecordProcessResumable(&reg, ready.Activation, nil); !errors.Is(err, coremetadata.ErrInvalidRegistry) || !reflect.DeepEqual(reg, before) {
+			if err := (coremetadata.Mutator{}).RecordProcessResumable(&reg, ready.Activation.Binding, nil); !errors.Is(err, coremetadata.ErrInvalidRegistry) || !reflect.DeepEqual(reg, before) {
 				t.Fatal("missing Wait promoted unknown", err)
 			}
 			for _, identity := range []coremetadata.ProcessIdentity{ready.Activation.Child, supervisor} {

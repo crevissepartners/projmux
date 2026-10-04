@@ -45,7 +45,7 @@ func listResumableProcessAgents(registry coremetadata.Registry, filter processRe
 		if processResumeCandidateToken(registry, agent.Metadata.UID) != "" || !processResumeMatches(registry, agent, filter) {
 			continue
 		}
-		pane := processResumePane(registry, agent.Metadata.UID)
+		pane, _ := processResumePane(registry, agent.Metadata.UID)
 		record := pane.Status.ProcessSession.Clone()
 		out = append(out, processResumeCandidate{Agent: agent.Clone(), Pane: pane.Clone(), Record: *record, Previous: processResumePrevious{InterruptedTurn: record.TurnID, Expired: slices.Clone(record.Pending)}})
 	}
@@ -77,7 +77,10 @@ func processResumeRefusal(registry coremetadata.Registry, agentUID string, owner
 
 func processResumeCandidateToken(registry coremetadata.Registry, agentUID string) string {
 	agent, found := registry.Agent(agentUID)
-	pane := processResumePane(registry, agentUID)
+	pane, ambiguous := processResumePane(registry, agentUID)
+	if ambiguous {
+		return processResumeRefused
+	}
 	if !found || pane == nil || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable {
 		return processResumeNotResumable
 	}
@@ -87,18 +90,18 @@ func processResumeCandidateToken(registry coremetadata.Registry, agentUID string
 	return ""
 }
 
-func processResumePane(registry coremetadata.Registry, agentUID string) *coremetadata.Pane {
+func processResumePane(registry coremetadata.Registry, agentUID string) (*coremetadata.Pane, bool) {
 	var found *coremetadata.Pane
 	for i := range registry.Panes {
 		pane := &registry.Panes[i]
 		if pane.Metadata.OwnerUID() == agentUID && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
 			if found != nil {
-				return nil // Ambiguous retired generations cannot select authority.
+				return nil, true // Ambiguous retired generations cannot select authority.
 			}
 			found = pane
 		}
 	}
-	return found
+	return found, false
 }
 
 func processResumeMatches(registry coremetadata.Registry, agent coremetadata.Agent, filter processResumeFilter) bool {

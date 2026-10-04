@@ -62,20 +62,20 @@ func TestProcessSupportedResumableRefusalTokens(t *testing.T) {
 		change      func(*coremetadata.Registry)
 	}{
 		{name: "eligible"},
-		{name: "live owner", token: processResumeOwned, alive: true},
-		{name: "unknown", token: processResumeNotResumable, change: func(r *coremetadata.Registry) {
+		{name: "live owner", token: "process-resume-owned", alive: true},
+		{name: "unknown", token: "process-resume-not-resumable", change: func(r *coremetadata.Registry) {
 			for i := range r.Panes {
 				if s := r.Panes[i].Status.ProcessSession; s != nil {
 					s.ResumeState = coremetadata.ProcessResumeUnknown
 				}
 			}
 		}},
-		{name: "running", token: processResumeRefused, change: func(r *coremetadata.Registry) {
+		{name: "running", token: "process-resume-refused", change: func(r *coremetadata.Registry) {
 			for i := range r.Agents {
 				r.Agents[i].Status.Phase = coremetadata.PhaseRunning
 			}
 		}},
-		{name: "invalid", token: processResumeRefused, change: func(r *coremetadata.Registry) { r.SchemaVersion = -1 }},
+		{name: "invalid", token: "process-resume-refused", change: func(r *coremetadata.Registry) { r.SchemaVersion = -1 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := processResumeQueryFixture(t)
@@ -96,5 +96,33 @@ func TestProcessSupportedResumableRefusalTokens(t *testing.T) {
 				t.Fatal("predicate wrote registry")
 			}
 		})
+	}
+}
+
+func TestProcessSupportedResumableAmbiguousPaneRefusal(t *testing.T) {
+	reg := processResumeQueryFixture(t)
+	candidate := listResumableProcessAgents(reg, processResumeFilter{})[0]
+	duplicate := candidate.Pane.Clone()
+	duplicate.Metadata.UID += "-other"
+	duplicate.Metadata.Name += "-other"
+	duplicate.Status.ProcessSession.Binding.PaneUID = duplicate.Metadata.UID
+	reg.Panes = append(reg.Panes, duplicate)
+	for _, reservation := range reg.NameReservations {
+		if reservation.Kind == coremetadata.KindPane && reservation.UID == candidate.Pane.Metadata.UID {
+			reservation.UID, reservation.Name = duplicate.Metadata.UID, duplicate.Metadata.Name
+			reg.NameReservations = append(reg.NameReservations, reservation)
+			break
+		}
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatal("fixture must be structurally valid", err)
+	}
+	before := reg.Clone()
+	err := processResumeRefusal(reg, candidate.Agent.Metadata.UID, false)
+	if !errors.Is(err, processhost.ErrResumeRefused) || !strings.HasPrefix(err.Error(), "process-resume-refused:") {
+		t.Fatalf("ambiguous process Pane: %v", err)
+	}
+	if len(listResumableProcessAgents(reg, processResumeFilter{})) != 0 || !reflect.DeepEqual(reg, before) {
+		t.Fatal("ambiguous selection granted authority or wrote registry")
 	}
 }

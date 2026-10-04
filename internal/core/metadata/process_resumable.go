@@ -4,9 +4,11 @@ package metadata
 // durably recorded this exact child Wait and retired its activation. The caller
 // obtains Wait outside the Registry lock and may call this after its termination
 // writer in the same transaction. This writer never retires a host itself.
+// The retired generation and operation identify the child in the Wait receipt;
+// there is no current activation against which to compare process birth data.
 // TurnID and Pending remain identities of interrupted work in this generation;
 // the resume consumer moves them to history when it reserves a new generation.
-func (m Mutator) RecordProcessResumable(reg *Registry, activation ProcessActivation, receipt *TerminationEvidence) error {
+func (m Mutator) RecordProcessResumable(reg *Registry, b ProcessBinding, receipt *TerminationEvidence) error {
 	const op = "record resumable process"
 	if reg == nil {
 		return stateErr(op, ErrInvalidRegistry, "process registry is unavailable")
@@ -14,9 +16,8 @@ func (m Mutator) RecordProcessResumable(reg *Registry, activation ProcessActivat
 	if err := reg.Validate(); err != nil {
 		return err
 	}
-	b := activation.Binding
 	pane, ok := reg.Pane(b.PaneUID)
-	if !ok || !reg.validProcessBinding(*pane, b) || pane.Spec.Runtime.EffectiveKind() != RuntimeProcess || !activation.HostProcess.Valid() || !activation.Child.Valid() {
+	if !ok || !reg.validProcessBinding(*pane, b) || pane.Spec.Runtime.EffectiveKind() != RuntimeProcess {
 		return stateErr(op, ErrInvalidRegistry, "exact process binding is unavailable")
 	}
 	agent, _ := reg.Agent(b.AgentUID)

@@ -41,7 +41,7 @@ func TestProcessSupportedResumableWriterPreservesInterruptedGeneration(t *testin
 			pane.Status.ProcessSession.Provider = provider
 			before := reg.Clone()
 			m := Mutator{Now: func() time.Time { return time.Unix(200, 0) }}
-			if err := m.RecordProcessResumable(&reg, activation, &receipt); err != nil {
+			if err := m.RecordProcessResumable(&reg, activation.Binding, &receipt); err != nil {
 				t.Fatal(err)
 			}
 			if err := reg.Validate(); err != nil {
@@ -55,7 +55,7 @@ func TestProcessSupportedResumableWriterPreservesInterruptedGeneration(t *testin
 				t.Fatal("writer changed termination, phase, activation or interrupted evidence")
 			}
 			retry := mustJSON(t, reg)
-			if err := m.RecordProcessResumable(&reg, activation, &receipt); err != nil || mustJSON(t, reg) != retry {
+			if err := m.RecordProcessResumable(&reg, activation.Binding, &receipt); err != nil || mustJSON(t, reg) != retry {
 				t.Fatal("retry changed registry", err)
 			}
 		})
@@ -71,7 +71,7 @@ func TestProcessSupportedResumableWriterRefusesWithoutMutation(t *testing.T) {
 		"wrong operation":         func(_ *Registry, _ *ProcessActivation, r **TerminationEvidence) { (*r).OperationID = "other" },
 		"wrong agent":             func(_ *Registry, _ *ProcessActivation, r **TerminationEvidence) { (*r).AgentUID = "other" },
 		"wrong pane":              func(_ *Registry, _ *ProcessActivation, r **TerminationEvidence) { (*r).PaneUID = "other" },
-		"invalid child":           func(_ *Registry, a *ProcessActivation, _ **TerminationEvidence) { a.Child.PID = 0 },
+		"wrong host instance":     func(_ *Registry, a *ProcessActivation, _ **TerminationEvidence) { a.Binding.HostInstanceID = "other" },
 		"live activation": func(r *Registry, a *ProcessActivation, _ **TerminationEvidence) {
 			p, _ := r.Pane(a.Binding.PaneUID)
 			p.Status.Activation = PaneActivation{Kind: RuntimeProcess, Process: a, Generation: a.Binding.Generation, AgentUID: a.Binding.AgentUID, OperationID: a.Binding.OperationID}
@@ -106,7 +106,7 @@ func TestProcessSupportedResumableWriterRefusesWithoutMutation(t *testing.T) {
 			ptr := &receipt
 			change(&reg, &activation, &ptr)
 			before := reg.Clone()
-			if err := (Mutator{}).RecordProcessResumable(&reg, activation, ptr); !errors.Is(err, ErrInvalidRegistry) {
+			if err := (Mutator{}).RecordProcessResumable(&reg, activation.Binding, ptr); !errors.Is(err, ErrInvalidRegistry) {
 				t.Fatalf("got %v, want ErrInvalidRegistry", err)
 			}
 			if !reflect.DeepEqual(reg, before) {
