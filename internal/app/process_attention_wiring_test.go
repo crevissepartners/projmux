@@ -298,7 +298,7 @@ func TestProcessAttentionActualCLIIsolated(t *testing.T) {
 	}
 	// A damaged process projection must not blank a valid tmux status badge.
 	windowFrame := strings.Join([]string{"worker", "reply", "", ""}, attentionListSeparator)
-	tmuxScript := "#!/bin/sh\nif [ \"$1\" = list-panes ]; then\n printf '%s\\n' '" + windowFrame + "'\nfi\n"
+	tmuxScript := "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n case \"$1\" in\n -u) shift ;;\n -L|-S|-f) shift 2 ;;\n *) break ;;\n esac\ndone\nif [ \"$1\" = list-panes ]; then\n printf '%s\n' '" + windowFrame + "'\nfi\n"
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(tmuxScript), 0700); err != nil {
 		t.Fatal(err)
 	}
