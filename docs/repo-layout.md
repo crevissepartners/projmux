@@ -30,10 +30,12 @@ projmux/
     i18n/
     integrations/
       agents/
+        codexappserver/
       hooks/
       metadata/
       mux/
       procfsresources/
+      processhost/
       tmux/
       tmuxexec/
       tmuxopts/
@@ -78,6 +80,13 @@ projmux/
   binary. `make docs` runs it to regenerate `docs/cli.md` from the command manifest.
 - `internal/tools/gennotices` is a build-time `main` package too. `make notices` runs it
   to regenerate `THIRD_PARTY_NOTICES` from the modules `./cmd/projmux` links.
+- `internal/integrations/processhost` owns provider process lifetime, dedicated
+  supervisors, bounded streams, and exact-binding control; see its
+  [contract](../internal/integrations/processhost/README.md).
+- `internal/integrations/agents/codexappserver` owns Codex JSON-RPC framing,
+  handshake, sessions, and turns for the process host and compatibility probes.
+- `internal/core/metadata` owns schema v5 process bindings and current activation
+  validation; see [Registry schema v5](registry.md).
 - `internal/integrations/tmux` should be the only place that knows tmux command strings and output formats.
 - `internal/ui/picker` and `internal/ui/projmuxpicker` own native picker behavior.
 - `internal/ui/pickercompat` is an internal compatibility option/result shape for older app call sites. It is not a runtime backend; product code should route through the native picker.

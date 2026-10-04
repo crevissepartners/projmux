@@ -61,24 +61,14 @@ func processObservationMatches(reg coremetadata.Registry, binding processhost.Bi
 }
 
 func processObservationOwnership(reg coremetadata.Registry, binding processhost.Binding, view processHostObservation) bool {
-	pane, ok := reg.Pane(binding.Pane)
-	agent, agentOK := reg.Agent(binding.Agent)
-	window, windowOK := reg.Window(binding.Window)
-	_, projectOK := reg.Project(binding.Project)
-	if !ok || !agentOK || !windowOK || !projectOK || view.Binding != binding ||
-		pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Spec.Role != coremetadata.PaneRoleAgent ||
-		pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerUID() != binding.Agent ||
-		agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow || agent.Metadata.OwnerUID() != binding.Window || agent.Status.PaneRef != binding.Pane ||
-		window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject || window.Metadata.OwnerUID() != binding.Project ||
-		agent.Spec.Provider != view.Provider || (view.Provider != "claude" && view.Provider != "codex") {
-		return false
+	current := coremetadata.ProcessBinding{
+		HostInstanceID: binding.Host, ProjectUID: binding.Project, WindowUID: binding.Window,
+		AgentUID: binding.Agent, PaneUID: binding.Pane, Generation: binding.Generation, OperationID: binding.Operation,
 	}
-	a := pane.Status.Activation
-	if a.Kind != coremetadata.RuntimeProcess || a.Process == nil || a.RuntimeID != "" || a.Generation != binding.Generation || a.OperationID != binding.Operation || a.AgentUID != binding.Agent ||
-		processSchemaBinding(a.Process.Binding) != binding || a.Process.HostProcess != view.Host || a.Process.Child != view.Child || !view.Host.Valid() || !view.Child.Valid() || int64(view.Host.OwnerUID) != int64(os.Getuid()) || int64(view.Child.OwnerUID) != int64(os.Getuid()) {
-		return false
-	}
-	return true
+	activation, provider, ok := reg.CurrentProcessActivation(current)
+	return ok && view.Binding == binding && provider == view.Provider &&
+		activation.HostProcess == view.Host && activation.Child == view.Child &&
+		int64(view.Host.OwnerUID) == int64(os.Getuid()) && int64(view.Child.OwnerUID) == int64(os.Getuid())
 }
 
 type remoteProcessObserver struct {

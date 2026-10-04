@@ -53,6 +53,8 @@ make install
 | `internal/core` | Product rules and state that are testable without tmux. |
 | `internal/config` | Config files and saved settings. |
 | `internal/integrations` | Adapters: tmux, AI agents, hooks, metadata, session state. |
+| `internal/integrations/processhost` | Owned provider process lifetime, supervisors, bounded streams, and control admission. |
+| `internal/integrations/agents/codexappserver` | Codex JSON-RPC framing, handshake, sessions, and turns. |
 | `internal/ui` | Native picker and rendering. |
 | `internal/state` | Simple file-backed state helpers. |
 | `internal/i18n`, `internal/theme` | Message catalog and locales; built-in palette and theme resolution. |
@@ -69,7 +71,7 @@ make install
 | `npm/` | npm launcher and per-platform packages. |
 | `docs/` | User and contributor docs. |
 
-See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/repo-layout.md), [docs/testing.md](docs/testing.md), and [docs/cli.md](docs/cli.md).
+See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/repo-layout.md), [docs/testing.md](docs/testing.md), [docs/registry.md](docs/registry.md), and [docs/cli.md](docs/cli.md).
 
 ## Workflow
 - Use one branch per task, named `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `refactor/<topic>`, or `chore/<topic>`.

@@ -93,6 +93,28 @@ well formed. It knows no particular client.
 
 ### Integrations detail
 
+#### Owned process runtime
+
+`internal/integrations/processhost` owns one provider launch per immutable
+binding, the dedicated supervisor, bounded stream adapters, and control
+admission. It supports Claude streams and Codex app-server sessions without a
+tmux Pane. This lets scripts and CI observe an owned process without running a
+tmux server. Provider protocols stay inside integration adapters;
+`internal/integrations/agents/codexappserver` supplies Codex JSON-RPC framing,
+handshake, session, and turn handling.
+
+`internal/app` binds these adapters to schema v5 Registry records and checks
+routes before control. `Registry.CurrentProcessActivation` in
+`internal/core/metadata` validates the current Project → Window → Agent → Pane
+ownership chain and immutable activation. Observation additionally compares the
+same-UID host and child birth identities; unavailable evidence remains unknown,
+and offline requires an exact supervisor termination receipt. A stored PID or
+provider session never grants control over a replacement process.
+
+See [Registry schema v5](registry.md) and the
+[process host contract](../internal/integrations/processhost/README.md) for the
+supervisor and authority boundaries.
+
 #### Codex app-server compatibility and lifecycle bridge
 `internal/integrations/agents/codexappserver` is a Codex-only vertical slice.
 It owns the headerless JSON-RPC request, response, and notification wire types,

@@ -1,0 +1,201 @@
+package app
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+)
+
+// Run the same ownership fences for both providers. State projection remains
+// the observer's responsibility: unknown and reaped exit retain ownership.
+func TestClaudeProcessObservationOwnershipPredicateParity(t *testing.T) {
+	data, err := os.ReadFile("../core/metadata/testdata/registry-v5-process.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(*coremetadata.Registry, *processhost.Binding, *processHostObservation)
+		want   bool
+	}{
+		{name: "current", want: true},
+		{name: "unknown", want: true, mutate: func(_ *coremetadata.Registry, _ *processhost.Binding, v *processHostObservation) { v.State = "unknown" }},
+		{name: "reaped", want: true, mutate: func(_ *coremetadata.Registry, _ *processhost.Binding, v *processHostObservation) {
+			v.State = "exited"
+			v.Exit = &processhost.Exit{Code: 1}
+		}},
+		{name: "missing pane", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes = r.Panes[:1]
+		}},
+		{name: "missing agent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { r.Agents = nil }},
+		{name: "missing window", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { r.Windows = nil }},
+		{name: "missing project", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { r.Projects = nil }},
+		{name: "pane owner absent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Metadata.OwnerRef = nil
+		}},
+		{name: "pane owner kind", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Metadata.OwnerRef.Kind = coremetadata.KindWindow
+		}},
+		{name: "pane owner UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Metadata.OwnerRef.UID = "other"
+		}},
+		{name: "agent owner absent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Agents[0].Metadata.OwnerRef = nil
+		}},
+		{name: "agent owner kind", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Agents[0].Metadata.OwnerRef.Kind = coremetadata.KindProject
+		}},
+		{name: "agent owner UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Agents[0].Metadata.OwnerRef.UID = "other"
+		}},
+		{name: "agent pane", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Agents[0].Status.PaneRef = "other"
+		}},
+		{name: "window owner absent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Windows[0].Metadata.OwnerRef = nil
+		}},
+		{name: "window owner kind", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Windows[0].Metadata.OwnerRef.Kind = coremetadata.KindAgent
+		}},
+		{name: "window owner UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Windows[0].Metadata.OwnerRef.UID = "other"
+		}},
+		{name: "pane runtime", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Spec.Runtime.Kind = coremetadata.RuntimeTmux
+		}},
+		{name: "pane role", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Spec.Role = coremetadata.PaneRoleShell
+		}},
+		{name: "provider drift", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Provider = "other"
+		}},
+		{name: "unsupported provider", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Provider = "other"
+			r.Agents[0].Spec.Provider = "other"
+		}},
+		{name: "activation kind", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Kind = coremetadata.RuntimeTmux
+		}},
+		{name: "activation absent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process = nil
+		}},
+		{name: "tmux handle", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.RuntimeID = "%1"
+		}},
+		{name: "activation generation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Generation = "other"
+		}},
+		{name: "activation operation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.OperationID = "other"
+		}},
+		{name: "activation agent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.AgentUID = "other"
+		}},
+		{name: "host PID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { v.Host.PID++ }},
+		{name: "host birth", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Host.Start = "other"
+		}},
+		{name: "host UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { v.Host.OwnerUID++ }},
+		{name: "child PID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { v.Child.PID++ }},
+		{name: "child birth", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Child.Start = "other"
+		}},
+		{name: "child UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { v.Child.OwnerUID++ }},
+		{name: "host invalid", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Host.PID = 0
+			r.Panes[1].Status.Activation.Process.HostProcess = v.Host
+		}},
+		{name: "child invalid", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Child.Start = ""
+			r.Panes[1].Status.Activation.Process.Child = v.Child
+		}},
+		{name: "foreign host UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Host.OwnerUID++
+			r.Panes[1].Status.Activation.Process.HostProcess = v.Host
+		}},
+		{name: "foreign child UID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Child.OwnerUID++
+			r.Panes[1].Status.Activation.Process.Child = v.Child
+		}},
+		{name: "requested Host", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { b.Host = "other" }},
+		{name: "observed Host", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Host = "other"
+		}},
+		{name: "requested Project", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { b.Project = "other" }},
+		{name: "observed Project", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Project = "other"
+		}},
+		{name: "requested Window", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { b.Window = "other" }},
+		{name: "observed Window", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Window = "other"
+		}},
+		{name: "requested Agent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { b.Agent = "other" }},
+		{name: "observed Agent", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Agent = "other"
+		}},
+		{name: "requested Pane", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) { b.Pane = "other" }},
+		{name: "observed Pane", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Pane = "other"
+		}},
+		{name: "requested Generation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			b.Generation = "other"
+		}},
+		{name: "observed Generation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Generation = "other"
+		}},
+		{name: "requested Operation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			b.Operation = "other"
+		}},
+		{name: "observed Operation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			v.Binding.Operation = "other"
+		}},
+		{name: "activation binding HostInstanceID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.HostInstanceID = "other"
+		}},
+		{name: "activation binding ProjectUID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.ProjectUID = "other"
+		}},
+		{name: "activation binding WindowUID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.WindowUID = "other"
+		}},
+		{name: "activation binding AgentUID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.AgentUID = "other"
+		}},
+		{name: "activation binding PaneUID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.PaneUID = "other"
+		}},
+		{name: "activation binding Generation", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.Generation = "other"
+		}},
+		{name: "activation binding OperationID", mutate: func(r *coremetadata.Registry, b *processhost.Binding, v *processHostObservation) {
+			r.Panes[1].Status.Activation.Process.Binding.OperationID = "other"
+		}},
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					var reg coremetadata.Registry
+					if err := json.Unmarshal(data, &reg); err != nil {
+						t.Fatal(err)
+					}
+					reg.Agents[0].Spec.Provider = provider
+					activation := reg.Panes[1].Status.Activation.Process
+					activation.HostProcess.OwnerUID = uint32(os.Getuid())
+					activation.Child.OwnerUID = uint32(os.Getuid())
+					binding := processSchemaBinding(activation.Binding)
+					view := processHostObservation{Binding: binding, Host: activation.HostProcess, Child: activation.Child, Provider: provider, State: "ready"}
+					if tc.mutate != nil {
+						tc.mutate(&reg, &binding, &view)
+					}
+					if got := processObservationOwnership(reg, binding, view); got != tc.want {
+						t.Fatalf("ownership = %v, want %v", got, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
