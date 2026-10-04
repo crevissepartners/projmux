@@ -34,6 +34,9 @@ func (p ProcessInventory) Clone() ProcessInventory {
 // Declares checks current generation only; ambiguous hosts still protect the
 // child from tmux convergence but authorize no process control.
 func (p ProcessInventory) Declares(pane coremetadata.Pane) bool {
+	if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+		return true
+	}
 	return slices.ContainsFunc(p.Declared, func(k ProcessKey) bool {
 		return k.Valid() && k.Pane == pane.Metadata.UID && k.Generation == pane.Status.Activation.Generation
 	})
@@ -52,6 +55,9 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 		key = &copy
 	}
 	if key == nil {
+		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+			return &ProcessKey{Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation}, StatusUnknown
+		}
 		return nil, StatusUnknown
 	}
 	if pane.Status.Activation.RuntimeID != "" {
