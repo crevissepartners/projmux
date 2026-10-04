@@ -74,6 +74,7 @@ type agentRelaunchResult struct {
 // agentRelaunchRequest is one parsed `agent relaunch` argv.
 type agentRelaunchRequest struct {
 	agentRef string
+	prompt   []string
 	model    string
 	effort   string
 	// profile and instructions are nil when not given; a pointer to "" is
@@ -158,8 +159,14 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
 	}
 	target := agent.Clone()
+	if pane, ambiguous := processResumePane(registry, target.Metadata.UID); pane != nil && !ambiguous && target.Spec.Provider == aiModeClaude {
+		return c.runProcessClaudeRelaunch(registry, target, *pane, request, stdout, stderr)
+	}
 	if _, handled, err := c.processRuntime.admit(registry, target.Status.PaneRef, resourcegraph.ProcessRelaunch); handled {
 		return err
+	}
+	if len(request.prompt) > 0 {
+		return usageError("agent relaunch: a first prompt applies only to process Claude agents; nothing was changed")
 	}
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, target.Metadata.Name, detail, reason))
@@ -333,6 +340,13 @@ func parseAgentRelaunchArgs(args []string, stderr io.Writer) (agentRelaunchReque
 	var output string
 	fs.StringVar(&output, "output", "", "result projection: json")
 	fs.StringVar(&output, "o", "", "result projection: json (alias of --output)")
+	for i, arg := range args {
+		if arg == "--" && processResumeHasReference(fs, args[:i]) {
+			request.prompt = slices.Clone(args[i+1:])
+			args = args[:i]
+			break
+		}
+	}
 	positionals, err := parseWithPositionals(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {

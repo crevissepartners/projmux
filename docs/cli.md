@@ -120,7 +120,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [-o <mode>] [-- <prompt>]
-projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
 projmux agent approval review <agent-ref> [--request <normalized-id>]
@@ -239,7 +239,7 @@ Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process for
 
 Process resume remains foreground-owned: stdin EOF terminates this owned provider, so </dev/null and ordinary CI or cron invocation can end it immediately. Keep stdin open for the intended lifetime; no daemon or detached resume is started.
 
-Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival and relaunch are unavailable.
+Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival is unavailable. Process Claude can change its launch configuration through agent relaunch; process Codex relaunch remains unsupported.
 
 Resume refusals are process-resume-not-resumable (no resumable record or unknown), process-resume-owned (exact live owner), and process-resume-refused (invalid, ambiguous, unretired, or provider-rejected evidence). They exit nonzero without falling back to a new conversation.
 
@@ -277,7 +277,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 ```
 
 The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.
@@ -287,6 +287,8 @@ The model and effort are recorded on the Agent (projmux.io/model, projmux.io/eff
 A Codex Agent applies the new model, effort, sandbox, and approval to its thread's later turns. It refuses a change of its instructions (codex-instructions-immutable), a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept), and, while Running, a restart whose Codex app server does not take thread/settings/update (relaunch-codex-settings-unsupported).
 
 Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
+
+Process Claude relaunch preserves the Agent UID, Pane UID, and recorded session. It stops the old owned child, waits for its durable supervisor Wait and host retirement, then starts a fresh foreground-owned generation. Apply requires -- <prompt>; dry-run requires no prompt. Keep stdin open: EOF, INT, or TERM stops the new owned provider. A process self-target or reply-only launch is refused before Stop. Process Codex relaunch remains process-relaunch-unsupported.
 
 Output modes (`-o`): `json`
 

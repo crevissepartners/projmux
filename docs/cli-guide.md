@@ -2044,7 +2044,20 @@ again.
 [--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
 --socket-path <absolute>] [-o json]` restarts one existing Claude or Codex
 Agent on the same UID and the same provider conversation with other settings,
-all in one restart. It is the one way to change an Agent's
+all in one restart. Process Claude keeps its Pane UID as well and uses a fresh
+foreground-owned generation. Supply `-- <prompt>` for the first new user turn;
+`--dry-run` needs no prompt. The caller keeps stdin open for the Agent's lifetime.
+EOF, INT, or TERM stops only the new owned provider. The old child must have an
+actual durable supervisor Wait and its foreground owner must retire before the
+new child starts. Self-target and reply-only launches are refused before Stop.
+Process Codex relaunch is still refused with `process-relaunch-unsupported`.
+
+Claude process launches receive the new composite instructions file together
+with `--system-prompt-snapshot off` when the instructions change. A failure
+preserves the recorded conversation and restores the previous launch settings;
+the printed recovery command includes the requested settings and first prompt.
+
+It is the one way to change an Agent's
 [settings layers](#settings-layers):
 
 - `--profile <name>` switches the Agent to that profile (`none`: to no
