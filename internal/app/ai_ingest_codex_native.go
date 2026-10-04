@@ -81,6 +81,10 @@ const (
 	codexObserverBindingTimeout    = 3 * time.Second
 	codexObserverStartupTimeout    = 3 * time.Second
 	codexObserverStartupSettle     = 75 * time.Millisecond
+
+	// Steady binding checks load the Registry and query tmux. Keep their
+	// cadence separate from the short polling window for an unreadable binding.
+	codexObserverBindingInterval = 250 * time.Millisecond
 	// Recommit a live turn or wait well before its durable observation decays.
 	codexObserverInteractionRefreshInterval = coremetadata.AgentInteractionFreshFor / 3
 
@@ -644,7 +648,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		// would both say "unrecorded" instead of impersonating a disconnect.
 		exit := codexObserverExit{reason: codexObserverReasonUnrecorded}
 		invalidated := false
-		bindingTicker := time.NewTicker(codexObserverBindingDelay)
+		bindingTicker := time.NewTicker(codexObserverBindingInterval)
 		progressTicker := time.NewTicker(25 * time.Millisecond)
 		notifications := client.Notifications()
 		questionCtx, cancelQuestions := context.WithCancel(ctx)
