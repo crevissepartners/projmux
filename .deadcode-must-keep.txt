@@ -20,7 +20,6 @@ Catalog.Keys	Whole-catalog key enumeration retained as the test seam that pins t
 Catalog.LocaleKeys	Per-locale key enumeration retained as the test seam that pins the shipped catalog per-locale coverage.
 Catalog.MissingFallbackKeys	Fallback-locale projection of MissingLocaleKeys retained as the test seam that pins required-key coverage of the shipped catalog.
 ClassifySchemaVersion	Ambient-environment entry point of ClassifySchemaVersionWith retained as the test seam that pins fail-closed registry schema classification.
-ClaudeCommand	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -41,7 +40,6 @@ CurrentProtocol	The build's local IPC version window accessor is retained as the
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
 DecideTeardownEvent	The pure teardown decision API is called by the product path and retained for lifecycle authority proofs.
 DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
-DefaultLimits	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 DefaultOpener	The original default stdio-proxy broker opener remains a compatibility seam while bounded lifecycle routing uses direct witnessed Unix attachment.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
 DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
@@ -132,7 +130,6 @@ MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironmen
 Mutator.RecordProcessResumable	Durable Wait-guarded resumability writer retained for the Task 5d2 explicit process resume consumer; never performs foreground termination.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
-NewHost	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
@@ -202,27 +199,12 @@ WithFileReader	File-reader injection option retained as the only seam that pins 
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
-applyClaudeForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 applyCodexForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
 buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
-claudeProcessControl.closeRecord	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
-claudeProcessControl.sync	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
-claudeProcessControl.syncControls	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
-claudeProcessService.check	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.close	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.currentForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
-claudeProcessService.exchange	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.initialize	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.input	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.inputCurrent	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.ownershipCurrent	Shared exact process Claude Registry ownership fence; retain until the foreground consumer activates this dormant seam.
-claudeProcessService.recordActivation	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.rollback	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
-claudeProcessService.serve	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 cloneRequest	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 codexAdapter.attach	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 codexAdapter.consume	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -255,7 +237,6 @@ codexProcessMessages.send	Internal dedicated Codex process binding/control/recei
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
-controlProcessForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 createCommand.recordOperatorCreator	In-process operator creator seam for an operator client layered on projmux that runs creates on the operator's behalf; argv has no spelling of it by design (TestNoArgvPathBuildsAnOperatorCreator), so main reaches it only from tests.
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
@@ -277,7 +258,6 @@ isolatedEnvironment	Test-only installed qualification helper retained for CODEX_
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 listResumableProcessAgents	Read-only durable process candidate projection retained for the Task 5d2 explicit process resume consumer.
-listenProcessHost	Internal exact process activation endpoint cleanup; remove this retention row when the foreground consumer wires process-hosted lifetimes.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).
@@ -306,23 +286,11 @@ ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdi
 ownedStream.Write	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
-prepareProcessClaude	Process Claude listener and startup lifetime setup; retain until the foreground consumer activates this dormant seam.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
-processAttentionFailed	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
-processAttentionProjection.push	Internal process attention enqueue/compaction seam retained for fixture proof before foreground activation; remove this entry when that caller ships.
-processAttentionProjection.sync	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
-processAttentionRecord.applyEvent	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
-processAttentionRecord.reconcilePending	Internal process attention state transition helper retained for fixture proof before foreground activation; remove this entry when that caller ships.
-processAttentionRestore	Internal process attention exact-binding reconstruction retained while its projection is dormant; remove this entry when the foreground activation caller ships.
-processAttentionStore.activate	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
-processClaudeLaunchEnv	Internal exact Claude process message reservation/lifecycle fixture seam; remove this retention row when the Task 5 public consumer wires it.
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexMessageRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
-processControlID	Shared turn-scoped process provider store identity; retain until the foreground consumer activates this dormant seam.
-processForegroundToken.request	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 processPaneRuntime.control	Internal typed process control admission seam, retained while invocation defaults remain dormant ahead of foreground activation.
-processProviderLaunchEnv	Shared exact process provider launch environment; retain until the foreground consumer activates this dormant seam.
 processResumableConversation	Conversation identity guard retained behind the Task 5d2 durable resumability writer.
 processResumableWait	Exact durable child Wait guard retained behind the Task 5d2 resumability writer.
 processResumeCandidateToken	Durable process eligibility guard retained behind the Task 5d2 resume query and refusal consumer.
@@ -346,7 +314,6 @@ settingsCommand.rootEntries	Fallback-locale entry point of the settings root ent
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
-startProcessClaude	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 startProcessCodex	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 stopGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.

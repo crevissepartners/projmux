@@ -1,8 +1,10 @@
-# Owned process host (internal preparation)
+# Owned process host
 
-This package is an internal host and Claude stream adapter, exercised through
-fixtures. No public command starts it yet. It does not write Registry records,
-create tmux resources, attach to existing providers, or change user settings.
+This package supplies owned process hosts with Claude stream and Codex app-server
+adapters. `create agent --host process --provider claude` starts a public foreground
+owner without tmux; public Codex creation is a later application change. The
+application writes Registry bindings and exact Wait receipts. This package does
+not create tmux resources, adopt existing providers, or change user settings.
 
 ## Schema v5 authority chain
 

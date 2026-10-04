@@ -393,3 +393,10 @@ func requireResumablePhase(spelling string, agent *coremetadata.Agent) error {
 	return usageError(fmt.Sprintf("%s: agent/%s is %s; resume only rebinds an %s or %s Agent",
 		spelling, agent.Metadata.Name, agent.Status.Phase, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
 }
+
+// Process Claude has no provider TUI; its existing answer stores remain the
+// only response surface, independently of tmux's question/approval opt-in.
+func processClaudeAnswers(registry coremetadata.Registry, agent coremetadata.Agent) bool {
+	pane, found := registry.Pane(agent.Status.PaneRef)
+	return agent.Spec.Provider == aiModeClaude && found && pane.Metadata.OwnerUID() == agent.Metadata.UID && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess
+}

@@ -106,7 +106,15 @@ func claudeRouteRefusalPrefix(role string, err error) string {
 }
 
 func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
-	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
+	resolve := coremetadata.ResolveAgentRoute
+	if processClaudeAnswers(registry, agent) {
+		proof, ok := discoverProcessClaudeProof(r.registryPath, registry, agent.Metadata.UID)
+		if !ok {
+			return coremetadata.AgentRouteRef{}, errors.New("process Claude authority is unavailable")
+		}
+		resolve = processClaudeRouteResolver(r.registryPath, proof)
+	}
+	route, reason := resolve(registry, agent.Metadata.UID)
 	if reason != "" {
 		// A missing Claude registration has three causes with three different
 		// next actions. The reason keeps its exact bytes and the shape is

@@ -1742,6 +1742,9 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			out := resourceCreateFlags{}
 			fs.Var(&out.projects, "project", "")
 			fs.String("provider", "", "")
+			if node == "agent" {
+				fs.String("host", "tmux", "")
+			}
 			fs.Var(&out.windows, "window", "")
 			fs.Var(&out.panes, "pane", "")
 			fs.Var(&out.selectors, "selector", "")

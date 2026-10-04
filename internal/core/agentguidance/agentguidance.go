@@ -183,6 +183,19 @@ func (s Store) Load() (Guidance, error) {
 	return Guidance{Text: content, Source: SourceFile, Digest: Digest(content)}, nil
 }
 
+// LoadProcess adds execution context to the built-in guidance. User guidance
+// remains verbatim and an explicit off remains off.
+func (s Store) LoadProcess() (Guidance, error) {
+	g, err := s.Load()
+	if err != nil || g.Source != SourceDefault {
+		return g, err
+	}
+	g.Text = append(g.Text, []byte("\n# Process host\n\n"+
+		"This agent runs in a foreground process host without a tmux pane. Use `projmux agent turn`, `projmux agent message send`, and `projmux describe` to control and inspect it. Your identity comes from the process binding; a process ID is not a pane ID.\n")...)
+	g.Digest = Digest(g.Text)
+	return g, nil
+}
+
 func defaultGuidance() Guidance {
 	text := Default()
 	return Guidance{Text: text, Source: SourceDefault, Digest: Digest(text)}

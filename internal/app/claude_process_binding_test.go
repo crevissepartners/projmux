@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -824,5 +825,16 @@ func TestClaudeProcessLiveRegistrationReplacementPreservesV5Registry(t *testing.
 	}
 	if identity, _, err := localipc.Process(oldAuthority.LeaseProcess.PID); err == nil && identity == oldAuthority.LeaseProcess {
 		t.Fatal("retired exact helper remained")
+	}
+}
+
+func TestClaudeProcessRollbackPreservesBoundedCleanupErrors(t *testing.T) {
+	f := newProcessClaudeFixture(t, nil)
+	binding := f.binding
+	binding.Generation = "stale-generation"
+	closeErr := errors.New("fixture cleanup failed")
+	service := &claudeProcessService{handle: f.handle, binding: binding, closeLease: func(context.Context) error { return closeErr }}
+	if err := service.rollback(context.Background()); !errors.Is(err, closeErr) || !errors.Is(err, processhost.ErrStale) {
+		t.Fatalf("cleanup/Stop/Wait failure lost: %v", err)
 	}
 }

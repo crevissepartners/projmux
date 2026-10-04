@@ -769,3 +769,25 @@ func TestAgentQuestionClosedRefusalSaysWhetherTheProviderStillAsks(t *testing.T)
 		t.Errorf("expired refusal = %s %q", reason, detail)
 	}
 }
+
+func TestProcessClaudeAnswerGateKeepsTmuxAndCodexPolicy(t *testing.T) {
+	f := newQuestionFixture(t, false)
+	agent, _ := f.resources.registry.Agent(questionTestAgent)
+	pane, _ := f.resources.registry.Pane(agent.Status.PaneRef)
+	if processClaudeAnswers(f.resources.registry, *agent) {
+		t.Fatal("tmux bypassed opt-in")
+	}
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	if !processClaudeAnswers(f.resources.registry, *agent) {
+		t.Fatal("process Claude kept opt-in gate")
+	}
+	agent.Spec.Provider = aiModeCodex
+	if processClaudeAnswers(f.resources.registry, *agent) {
+		t.Fatal("Codex policy changed")
+	}
+	agent.Spec.Provider = aiModeClaude
+	agent.Status.PaneRef = "missing"
+	if processClaudeAnswers(f.resources.registry, *agent) {
+		t.Fatal("missing current Pane bypassed policy")
+	}
+}

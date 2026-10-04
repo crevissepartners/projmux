@@ -1,0 +1,551 @@
+package app
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+)
+
+func TestProcessCreateActualCLIIsolated(t *testing.T) {
+	for _, prompt := range []bool{false, true} {
+		t.Run(fmt.Sprint(prompt), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			root, binary, trace, store, project, window := f.root, f.binary, f.trace, f.store, f.project, f.window
+			_ = root
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			args := []string{"create", "agent", "--host", "process", "--project", "uid:" + project, "--window", "uid:" + window, "--provider", "claude", "--name", "owned"}
+			if prompt {
+				args = append(args, "--", "initial task")
+			}
+			cmd := exec.CommandContext(ctx, binary, args...)
+			input, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err = cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := false
+			defer func() {
+				_ = input.Close()
+				if !waited {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			}()
+			reader := bufio.NewReader(output)
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("ownership: %v %s", err, stderr.String())
+			}
+			if !strings.Contains(line, "runtime=process foreground=owned") {
+				t.Fatalf("ownership %q", line)
+			}
+			fields := strings.Fields(line)
+			agentRef := fields[1]
+			if !prompt {
+				reg, err := store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				observed := observeRegistryProcesses(ctx, reg)
+				if len(observed.Observed) != 1 || observed.Observed[0].Status != resourcegraph.StatusLive {
+					t.Fatalf("owned starting was unknown: %+v", observed)
+				}
+				out, err := exec.CommandContext(ctx, binary, "agent", "turn", "start", agentRef, "--", "plain user task").CombinedOutput()
+				if err != nil {
+					t.Fatalf("remote turn: %v %s", err, out)
+				}
+			}
+			for {
+				raw, _ := os.ReadFile(trace)
+				if bytes.Contains(raw, []byte("initial task")) || bytes.Contains(raw, []byte("plain user task")) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatalf("user frame absent: %s", stderr.String())
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			_ = input.Close()
+			err = cmd.Wait()
+			waited = true
+			if err != nil {
+				t.Fatalf("Wait: %v %s", err, stderr.String())
+			}
+			reg, err := store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, _ := reg.Agent(strings.TrimPrefix(agentRef, "uid:"))
+			pane, _ := reg.Pane(agent.Status.PaneRef)
+			if agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil {
+				t.Fatal("EOF lost actual Wait retirement")
+			}
+			raw, _ := os.ReadFile(trace)
+			var frame map[string]any
+			if err = json.Unmarshal(bytes.Split(raw, []byte("\n"))[0], &frame); err != nil || frame["type"] != "user" || bytes.Contains(raw, []byte("projmux-coordination")) {
+				t.Fatalf("turn was enveloped: %s %v", raw, err)
+			}
+		})
+	}
+}
+
+type processCreateCLI struct {
+	root, binary, trace, project, window string
+	store                                *intmetadata.Store
+}
+
+func newProcessCreateCLI(t *testing.T) processCreateCLI {
+	t.Helper()
+	product := os.Getenv("PMX_TEST_CLI")
+	if product == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	root, err := os.MkdirTemp("/tmp", "pmx-create-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	for _, key := range []string{"TMUX", "TMUX_PANE"} {
+		t.Setenv(key, "")
+	}
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_") {
+			t.Setenv(key, "")
+		}
+	}
+	for key, dir := range map[string]string{"HOME": root, "XDG_STATE_HOME": root + "/state", "XDG_CONFIG_HOME": root + "/config", "XDG_CACHE_HOME": root + "/cache"} {
+		t.Setenv(key, dir)
+	}
+	binary := filepath.Join(root, "projmux")
+	raw, err := os.ReadFile(product)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(binary, raw, 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "provider.py")
+	trace := filepath.Join(root, "wire.jsonl")
+	provider := strings.Replace(processClaudeProviderFixture, " frame=json.loads(line)", " open("+fmt.Sprintf("%q", trace)+",'a').write(line)\n frame=json.loads(line)", 1)
+	provider = strings.Replace(provider, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'messages.jsonl'),'a').write(json.dumps(m)+'\\n');emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", 1)
+	provider = strings.Replace(provider, "elif prompt=='register-again':", "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})\n   b=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])\n   subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)\n  elif prompt=='register-again':", 1)
+	if err = os.WriteFile(script, []byte(provider), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "claude"), []byte("#!/bin/sh\nexec python3 -u "+fmt.Sprintf("%q", script)+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PMX_TEST_PROCESS_ROOT", root)
+	t.Setenv("PMX_TEST_PROCESS_BINARY", binary)
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
+	var project, window string
+	_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+		p, err := intmetadata.DefaultMutator().RegisterProject(reg, coremetadata.RegisterProjectOptions{Root: root, DefaultShell: "/bin/sh", OperationID: "fixture-create"})
+		if err == nil {
+			project, window = p.Project.Metadata.UID, p.Windows[0].Metadata.UID
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return processCreateCLI{root, binary, trace, project, window, store}
+}
+func (f processCreateCLI) args(extra ...string) []string {
+	return append([]string{"create", "agent", "--host", "process", "--project", "uid:" + f.project, "--window", "uid:" + f.window, "--provider", "claude", "--name", "owned"}, extra...)
+}
+func (f processCreateCLI) config(t *testing.T, text string) {
+	t.Helper()
+	path := filepath.Join(f.root, "config", "projmux", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestProcessCreateHookRollbackActualCLI(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(fmt.Sprint(broken), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			run := "exit 7"
+			if broken {
+				run = "mkdir -p " + filepath.Join(f.root, "state", "projmux", terminationJournalFile) + "; exit 7"
+			}
+			f.config(t, "[hooks.post-create]\nruntime = \"process\"\nrun = "+fmt.Sprintf("%q", run)+"\n")
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, f.binary, f.args()...).CombinedOutput()
+			if err == nil || !bytes.Contains(out, []byte("process-post-create-hook-failed")) {
+				t.Fatalf("hook failure %v %s", err, out)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !broken {
+				if len(reg.Agents) != 0 || bytes.Contains(out, []byte("runtime=process foreground=owned")) || !bytes.Contains(out, []byte("remaining: none")) {
+					t.Fatalf("rollback remnants %s %+v", out, reg.Agents)
+				}
+			} else {
+				if len(reg.Agents) != 1 || !bytes.Contains(out, []byte("runtime=unknown")) || !bytes.Contains(out, []byte("cleanup: projmux delete agent uid:"+reg.Agents[0].Metadata.UID)) {
+					t.Fatalf("failed rollback lost exact ref: %s", out)
+				}
+			}
+		})
+	}
+}
+func TestProcessCreateOwnerSignalsActualCLI(t *testing.T) {
+	for _, signal := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL} {
+		t.Run(signal.String(), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+			input, _ := cmd.StdinPipe()
+			output, _ := cmd.StdoutPipe()
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := false
+			defer func() {
+				_ = input.Close()
+				if !waited {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			}()
+			line, err := bufio.NewReader(output).ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := strings.TrimPrefix(strings.Fields(line)[1], "uid:")
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, _ := reg.Agent(ref)
+			pane, _ := reg.Pane(agent.Status.PaneRef)
+			birth := pane.Status.Activation.Process.Child
+			if err = cmd.Process.Signal(signal); err != nil {
+				t.Fatal(err)
+			}
+			err = cmd.Wait()
+			waited = true
+			if signal != syscall.SIGKILL && err != nil {
+				t.Fatalf("owned shutdown: %v %s", err, stderr.String())
+			}
+			if signal != syscall.SIGKILL {
+				t.Logf("owner %s actual CLI exit=%d", signal, cmd.ProcessState.ExitCode())
+			}
+			for {
+				current, _, probeErr := localipc.Process(birth.PID)
+				if probeErr != nil || current != birth {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("owned child survived owner death")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			reg, err = f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ = reg.Pane(agent.Status.PaneRef)
+			if signal != syscall.SIGKILL && (!pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil) {
+				t.Fatal("signal lost actual Wait")
+			}
+			if signal == syscall.SIGKILL {
+				got := observeRegistryProcesses(ctx, reg)
+				if len(got.Observed) != 1 || got.Observed[0].Status != resourcegraph.StatusUnknown {
+					t.Fatalf("missing Wait invented exit: %+v", got)
+				}
+			}
+		})
+	}
+}
+func TestProcessCreateProjectionAndRefusalsActualCLI(t *testing.T) {
+	for _, mode := range []string{"uid", "name", "ref", "metadata", "json", "receipt", "none", "pane-id"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args("-o", mode)...)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			reg, readErr := f.store.LoadReadOnly()
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if mode == "pane-id" {
+				if err == nil || len(reg.Agents) != 0 {
+					t.Fatal("pane-id mutated")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("projection %v %s", err, stderr.String())
+			}
+			if bytes.Contains(stdout.Bytes(), []byte("runtime=process foreground=owned")) || bytes.Contains(stdout.Bytes(), []byte("session_id")) {
+				t.Fatal("projection leaked ownership/provider")
+			}
+			if mode == "none" {
+				if stdout.Len() != 0 || stderr.Len() != 0 {
+					t.Fatalf("none output: %s %s", stdout.String(), stderr.String())
+				}
+				return
+			}
+			if !bytes.Contains(stderr.Bytes(), []byte("runtime=process foreground=owned")) {
+				t.Fatal("ownership stderr absent")
+			}
+			if mode == "uid" && strings.TrimSpace(stdout.String()) != reg.Agents[0].Metadata.UID {
+				t.Fatalf("UID projection %q", stdout.String())
+			}
+			if mode == "name" && strings.TrimSpace(stdout.String()) != "owned" {
+				t.Fatalf("name projection %q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestProcessCreateAnswerAndMessageActualCLI(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	defer func() {
+		if t.Failed() {
+			raw, _ := os.ReadFile(f.trace)
+			receipt, _ := os.ReadFile(filepath.Join(f.root, "message-receipt"))
+			t.Logf("wire=%s message=%s owner=%s", raw, receipt, stderr.String())
+		}
+	}()
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := strings.Fields(line)[1]
+	uid := strings.TrimPrefix(ref, "uid:")
+	paths, _ := config.DefaultPathsFromEnv()
+	questions := agentquestion.NewStore(paths.StateDir)
+	approvals := agentapproval.NewStore(paths.StateDir)
+	run := func(args ...string) {
+		t.Helper()
+		t.Logf("CLI %v", args)
+		out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("CLI %v: %v %s", args, err, out)
+		}
+	}
+	// Both central settings are absent (Claude) and the question annotation is off.
+	run("agent", "turn", "start", ref, "--", "question")
+	processCLIUntil(t, ctx, func() bool {
+		records, _ := questions.List(uid)
+		return len(records) == 1 && records[0].State == agentquestion.StateWaiting
+	})
+	records, _ := questions.List(uid)
+	run("agent", "question", "answer", ref, records[0].ID, "--option", "1=blue")
+	processCLIUntil(t, ctx, func() bool { raw, _ := os.ReadFile(f.trace); return bytes.Contains(raw, []byte("control_response")) })
+	processCLIUntil(t, ctx, func() bool {
+		reg, _ := f.store.LoadReadOnly()
+		p, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
+		return p.Status.ProcessSession != nil && len(p.Status.ProcessSession.Pending) == 0
+	})
+	run("agent", "turn", "start", ref, "--", "permission")
+	processCLIUntil(t, ctx, func() bool {
+		records, _ := approvals.List(uid)
+		return len(records) == 1 && records[0].State == agentapproval.StateWaiting
+	})
+	requests, _ := approvals.List(uid)
+	run("agent", "approval", "answer", ref, requests[0].ID, "--allow")
+	processCLIUntil(t, ctx, func() bool { raw, _ := os.ReadFile(f.trace); return bytes.Count(raw, []byte("control_response")) >= 2 })
+	processCLIUntil(t, ctx, func() bool {
+		reg, _ := f.store.LoadReadOnly()
+		p, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
+		return p.Status.ProcessSession != nil && len(p.Status.ProcessSession.Pending) == 0
+	})
+	run("agent", "turn", "start", ref, "--", "interrupt")
+	processCLIUntil(t, ctx, func() bool {
+		reg, _ := f.store.LoadReadOnly()
+		p, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
+		return p.Status.ProcessSession != nil && p.Status.ProcessSession.TurnID != ""
+	})
+	run("agent", "turn", "interrupt", ref, "--via", "cli")
+	processCLIUntil(t, ctx, func() bool {
+		raw, _ := os.ReadFile(f.trace)
+		return bytes.Contains(raw, []byte("interrupt")) && bytes.Contains(raw, []byte("control_request"))
+	})
+	run("agent", "turn", "start", ref, "--", "send-message")
+	processCLIUntil(t, ctx, func() bool {
+		raw, _ := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+		return bytes.Contains(raw, []byte("projmux-coordination")) && bytes.Contains(raw, []byte("peer payload"))
+	})
+	_ = input.Close()
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("answer owner Wait: %v %s", err, stderr.String())
+	}
+}
+func processCLIUntil(t *testing.T, ctx context.Context, condition func() bool) {
+	t.Helper()
+	for !condition() {
+		select {
+		case <-ctx.Done():
+			t.Fatal("isolated CLI condition exceeded bound")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestProcessCreateHookEligibilityActualCLI(t *testing.T) {
+	for _, mode := range []string{"undeclared", "declared", "invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			text := "[hooks.post-create]\nrun = \"exit 7\"\n"
+			if mode == "declared" {
+				text = "[hooks.post-create]\nruntime = \"process\"\nrun = \"printf '%s:%s:%s' \\\"$PROJMUX_RUNTIME\\\" \\\"${PROJMUX_PANE-absent}\\\" \\\"${TMUX-absent}\\\"\"\n"
+			}
+			if mode == "invalid" {
+				text = "[hooks.post-create]\nruntime = \"typo\"\nrun = \"exit 7\"\n"
+			}
+			f.config(t, text)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("hook eligibility %v %s", err, stderr.String())
+			}
+			if mode == "declared" && !strings.Contains(stderr.String(), "process:absent:absent") {
+				t.Fatalf("hook env %s", stderr.String())
+			}
+			if mode == "invalid" && !strings.Contains(stderr.String(), "runtime") {
+				t.Fatal("parse warning hidden")
+			}
+		})
+	}
+}
+func TestProcessCreateReturnsActualWaitExitCLI(t *testing.T) {
+	for _, exit := range []struct {
+		body string
+		code int
+	}{{"sys.exit(9)", 9}, {"import signal;os.kill(os.getpid(),signal.SIGTERM)", 143}} {
+		t.Run(fmt.Sprint(exit.code), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			path := filepath.Join(f.root, "provider.py")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, append(raw, []byte("\n"+exit.body+"\n")...), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, f.binary, f.args()...).CombinedOutput()
+			status, ok := err.(*exec.ExitError)
+			if !ok || status.ExitCode() != exit.code {
+				t.Fatalf("actual exit %v %s", err, out)
+			}
+		})
+	}
+}
+
+func TestProcessCreateClosedStdinExitActualCLI(t *testing.T) {
+	for _, forced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("forced=%t", forced), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			want := 0
+			if forced {
+				path := filepath.Join(f.root, "provider.py")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, append(raw, []byte("\nthreading.Event().wait()\n")...), 0600); err != nil {
+					t.Fatal(err)
+				}
+				want = 143
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args("-o", "none")...)
+			// os/exec's absent Stdin is /dev/null, as in a detached CI owner.
+			err := cmd.Run()
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != want {
+				t.Fatalf("closed stdin: %v state=%v want=%d", err, cmd.ProcessState, want)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(reg.Agents) != 1 {
+				t.Fatal("creation did not run before EOF")
+			}
+			pane, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
+			receipt := pane.Status.LastTermination
+			if receipt == nil || (want == 0 && (receipt.ExitCode == nil || *receipt.ExitCode != 0)) || (want == 143 && receipt.Signal == "") {
+				t.Fatalf("actual Wait missing: %+v", receipt)
+			}
+			t.Logf("stdin=/dev/null forced=%t actual CLI exit=%d", forced, want)
+		})
+	}
+}

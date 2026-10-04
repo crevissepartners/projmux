@@ -25,7 +25,7 @@ func (m Mutator) RecordProcessResumable(reg *Registry, b ProcessBinding, receipt
 	if agent.Status.Phase != PhaseOffline || !pane.Status.Activation.IsZero() || (agent.Status.PaneRef != "" && agent.Status.PaneRef != b.PaneUID) || s == nil || s.Binding != b || s.ConnectionID != b.OperationID || !processResumableConversation(s) {
 		return stateErr(op, ErrInvalidRegistry, "process conversation has not been retired")
 	}
-	if !processResumableWait(b, receipt) || !sameEvidence(pane.Status.LastTermination, receipt) || !sameEvidence(agent.Status.LastTermination, receipt) {
+	if !MatchesProcessWait(b, receipt) || !SameProcessWait(pane.Status.LastTermination, receipt) || !SameProcessWait(agent.Status.LastTermination, receipt) {
 		return stateErr(op, ErrInvalidRegistry, "matching durable child Wait is unavailable")
 	}
 	if s.ResumeState == ProcessResumable {
@@ -44,20 +44,4 @@ func (m Mutator) RecordProcessResumable(reg *Registry, b ProcessBinding, receipt
 
 func processResumableConversation(s *ProcessSessionRecord) bool {
 	return (s.Provider == "claude" && processIdentityToken(s.SessionID)) || (s.Provider == "codex" && processIdentityToken(s.ThreadID))
-}
-
-func processResumableWait(b ProcessBinding, receipt *TerminationEvidence) bool {
-	if receipt == nil || receipt.Source != TerminationSourceSupervisor || receipt.PaneUID != b.PaneUID || receipt.AgentUID != b.AgentUID || receipt.Generation != b.Generation || receipt.OperationID != b.OperationID {
-		return false
-	}
-	code := 0
-	if receipt.ExitCode != nil {
-		code = *receipt.ExitCode
-		if code < 0 || code > 255 || receipt.Signal != "" {
-			return false
-		}
-	} else if !processIdentityToken(receipt.Signal) {
-		return false
-	}
-	return receipt.Classification == ClassifyProcessExit(code, receipt.Signal)
 }

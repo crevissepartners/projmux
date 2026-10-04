@@ -107,7 +107,7 @@ func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Wr
 	if request.action == "list" {
 		return c.listPermissionRequests(request, agent, answering, stdout)
 	}
-	if answering != config.AgentApprovalAnsweringProjmux {
+	if !processClaudeAnswers(registry, agent) && answering != config.AgentApprovalAnsweringProjmux {
 		return refuse(permissionReasonAnsweringOff, "has no captured permission requests while agent-approval-answering is claude; run `projmux config agent-approvals --answering projmux` first")
 	}
 	return c.answerPermissionRequest(request, agent, refuse, stdout, stderr)

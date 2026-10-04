@@ -1431,7 +1431,7 @@ Allowed effects:
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create agent [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent [--host tmux|process] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
@@ -1551,8 +1551,24 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create agent [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent [--host tmux|process] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
+
+--host defaults to tmux and keeps existing behavior. --host process owns one foreground Claude Agent without tmux; Codex and Antigravity are currently refused as process-provider-unsupported. It requires an exact Project or Window, and refuses fan-out, new Windows, Pane anchors, placement, interactive modes, and -o pane-id before creation.
+
+Process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
+
+The owner stops its provider on stdin EOF: </dev/null or closed stdin (CI steps, cron, nohup, or a noninteractive shell's &) can end it immediately. Keep stdin open, for example: `d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"`.
+
+Measured isolated CLI exits (exit always follows actual provider Wait, rather than the owner's signal):
+
+| Owner/provider ending | Graceful EOF-aware stub | Provider requiring TERM |
+| --- | --- | --- |
+| Owner stdin EOF, including /dev/null | 0 | 143 |
+| Owner INT or TERM | 0 | 128 + the provider's actual signal |
+| Provider exits itself | Its exit code (tested: 9) | 143 for SIGTERM |
+
+Process post-create hooks run only with [hooks.post-create] runtime="process"; this also opts the hook into process Agents, while tmux execution stays unchanged. Questions and approvals are always captured and answered through agent question/approval commands. Default guidance explains process execution; off/custom guidance is unchanged.
 
 An explicit `--provider` wins, and a profile that names another provider is refused. Without `--provider`, the provider is the one named by the profile that `--profile <name>` or a `role` creation label selects.
 

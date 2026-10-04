@@ -75,6 +75,7 @@ const (
 // already a flagSetNameExceptions row reuses that row's routes. It is closed:
 // a row no site uses is stale.
 var publicReasonExceptions = map[string]publicReasonException{
+	`internal/app/create_resource.go primaryWindowRef spelling`: {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	// Dynamic spellings: the canonical `<verb> <kind|provider>` spelling the
 	// dispatch built, handed to a shared helper.
 	`internal/app/agent_profile.go (*createCommand).prepareProfileSettings spelling`:              {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},

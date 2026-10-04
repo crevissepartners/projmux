@@ -1,9 +1,192 @@
 package metadata
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 )
+
+// ReserveProcessBinding records an exact new foreground generation before
+// spawning. It does not claim a live child, conversation, or stream readiness.
+func (m Mutator) ReserveProcessBinding(reg *Registry, binding ProcessBinding) error {
+	const op = "reserve process binding"
+	pane, ok := reg.Pane(binding.PaneUID)
+	if !ok || !reg.validProcessBinding(*pane, binding) {
+		return stateErr(op, ErrInvalidRegistry, "exact managed process ownership is unavailable")
+	}
+	agent, _ := reg.Agent(binding.AgentUID)
+	if agent.Status.PaneRef != binding.PaneUID || (agent.Spec.Provider != "claude" && agent.Spec.Provider != "codex") {
+		return stateErr(op, ErrInvalidRegistry, "process provider or current Pane ownership is unavailable")
+	}
+	if pane.Status.ProcessSession != nil {
+		if pane.Spec.Runtime.EffectiveKind() == RuntimeProcess && processReservationCurrent(pane, agent, binding) {
+			return nil
+		}
+		return stateErr(op, ErrInvalidRegistry, "process generation is already reserved")
+	}
+	if (agent.Status.Phase != PhasePending && agent.Status.Phase != PhaseRunning) || !pane.Status.Activation.IsZero() {
+		return stateErr(op, ErrInvalidRegistry, "process creation requires an unstarted managed Pane")
+	}
+	next := reg.Clone()
+	target, _ := next.Pane(binding.PaneUID)
+	target.Spec.Runtime.Kind = RuntimeProcess
+	target.Status.ProcessSession = &ProcessSessionRecord{Provider: agent.Spec.Provider, Binding: binding, ResumeState: ProcessResumeUnknown}
+	owner, _ := next.Agent(binding.AgentUID)
+	// AttachAgentPane establishes the ownership relation as Running. A
+	// foreground reservation remains Pending until its child actually exists.
+	owner.Status.Phase = PhasePending
+	return m.commitProcessRegistry(reg, next)
+}
+
+// RecordProcessChild publishes kernel-verified birth evidence before the first
+// provider hook can arrive. A prompt-free child still has an unknown session.
+func (m Mutator) RecordProcessChild(reg *Registry, activation ProcessActivation) error {
+	const op = "record process child"
+	binding := activation.Binding
+	pane, agent, ok := reg.currentProcessReservation(binding)
+	if !ok || !activation.Child.Valid() || !activation.HostProcess.Valid() {
+		return stateErr(op, ErrInvalidRegistry, "exact process child evidence is unavailable")
+	}
+	if !processReservationCurrent(pane, agent, binding) {
+		return stateErr(op, ErrInvalidRegistry, "current process reservation is unavailable")
+	}
+	if !pane.Status.Activation.IsZero() {
+		if currentProcessActivation(pane.Status.Activation, binding) && *pane.Status.Activation.Process == activation {
+			return nil
+		}
+		return stateErr(op, ErrInvalidRegistry, "process activation already belongs to another child")
+	}
+	next := reg.Clone()
+	target, _ := next.Pane(binding.PaneUID)
+	target.Status.Activation = PaneActivation{Kind: RuntimeProcess, AgentUID: binding.AgentUID, Generation: binding.Generation, OperationID: binding.OperationID, Process: &activation}
+	owner, _ := next.Agent(binding.AgentUID)
+	owner.Status.Phase = PhaseRunning
+	return m.commitProcessRegistry(reg, next)
+}
+
+func processReservationCurrent(pane *Pane, agent *Agent, binding ProcessBinding) bool {
+	record := pane.Status.ProcessSession
+	return record != nil && record.Binding == binding && record.Provider == agent.Spec.Provider &&
+		(agent.Status.Phase == PhasePending || agent.Status.Phase == PhaseRunning) &&
+		(pane.Status.Activation.IsZero() || currentProcessActivation(pane.Status.Activation, binding))
+}
+
+// RecordProcessSession stores only identities from the current child's
+// snapshot. It cannot replace a conversation or retarget a retired generation.
+func (m Mutator) RecordProcessSession(reg *Registry, activation ProcessActivation, record ProcessSessionRecord) error {
+	const op = "record process session"
+	current, provider, ok := reg.CurrentProcessActivation(activation.Binding)
+	if !ok || current != activation || record.Binding != activation.Binding || record.Provider != provider {
+		return stateErr(op, ErrInvalidRegistry, "current process snapshot ownership is unavailable")
+	}
+	pane, _ := reg.Pane(record.Binding.PaneUID)
+	stored := pane.Status.ProcessSession
+	if stored == nil || stored.Binding != record.Binding || stored.Provider != provider {
+		return stateErr(op, ErrInvalidRegistry, "current process session reservation is unavailable")
+	}
+	if (stored.SessionID != "" && stored.SessionID != record.SessionID) || (stored.ThreadID != "" && stored.ThreadID != record.ThreadID) || (stored.ConnectionID != "" && stored.ConnectionID != record.ConnectionID) {
+		return stateErr(op, ErrInvalidRegistry, "process snapshot cannot replace its conversation or connection")
+	}
+	if reflect.DeepEqual(stored, &record) {
+		return nil
+	}
+	next := reg.Clone()
+	target, _ := next.Pane(record.Binding.PaneUID)
+	target.Status.ProcessSession = record.Clone()
+	return m.commitProcessRegistry(reg, next)
+}
+
+// RecordProcessWait durably projects an exact supervisor Wait and retires the
+// activation in the same transaction. Session binding remains history, without
+// live authority. Callers may compose another Mutator writer before committing.
+func (m Mutator) RecordProcessWait(reg *Registry, activation ProcessActivation, receipt TerminationEvidence) error {
+	const op = "record process Wait"
+	if reg == nil || !MatchesProcessWait(activation.Binding, &receipt) {
+		return stateErr(op, ErrInvalidRegistry, "exact supervisor Wait evidence is unavailable")
+	}
+	if err := reg.Validate(); err != nil {
+		return err
+	}
+	pane, agent, ok := reg.currentProcessReservation(activation.Binding)
+	if !ok {
+		return stateErr(op, ErrInvalidRegistry, "process Wait ownership is unavailable")
+	}
+	if pane.Status.Activation.IsZero() {
+		if retiredProcessWaitMatches(pane, agent, activation.Binding, receipt) {
+			return nil
+		}
+		return stateErr(op, ErrInvalidRegistry, "retired process Wait evidence differs")
+	}
+	current, _, ok := reg.CurrentProcessActivation(activation.Binding)
+	if !ok || current != activation {
+		return stateErr(op, ErrInvalidRegistry, "current process Wait evidence is unavailable")
+	}
+	next := reg.Clone()
+	if err := m.retireProcessWait(&next, activation.Binding, receipt); err != nil {
+		return err
+	}
+	return m.commitProcessRegistry(reg, next)
+}
+
+func retiredProcessWaitMatches(pane *Pane, agent *Agent, binding ProcessBinding, receipt TerminationEvidence) bool {
+	record := pane.Status.ProcessSession
+	return agent.Status.Phase == PhaseOffline && record != nil && record.Binding == binding && record.Provider == agent.Spec.Provider &&
+		SameProcessWait(pane.Status.LastTermination, &receipt) && SameProcessWait(agent.Status.LastTermination, &receipt)
+}
+
+func (m Mutator) retireProcessWait(reg *Registry, binding ProcessBinding, receipt TerminationEvidence) error {
+	const op = "record process Wait"
+	outcome, err := m.RecordTermination(reg, receipt)
+	if err != nil {
+		return err
+	}
+	pane, _ := reg.Pane(binding.PaneUID)
+	agent, _ := reg.Agent(binding.AgentUID)
+	if (!outcome.Applied && !outcome.Duplicate) || !SameProcessWait(pane.Status.LastTermination, &receipt) || !SameProcessWait(agent.Status.LastTermination, &receipt) {
+		return stateErr(op, ErrInvalidRegistry, "process Wait receipt was not recorded verbatim")
+	}
+	pane.Status.Activation = PaneActivation{}
+	agent.Status.Phase = PhaseOffline
+	return nil
+}
+
+// SameProcessWait compares exact supervisor receipts, including observation time.
+func SameProcessWait(a, b *TerminationEvidence) bool {
+	return a != nil && b != nil && sameEvidence(a, b) && a.ObservedAt.Equal(b.ObservedAt)
+}
+
+// MatchesProcessWait validates the exact binding, exit shape and classification.
+func MatchesProcessWait(binding ProcessBinding, receipt *TerminationEvidence) bool {
+	if receipt == nil || receipt.Source != TerminationSourceSupervisor || receipt.ObservedAt.IsZero() {
+		return false
+	}
+	if receipt.PaneUID != binding.PaneUID || receipt.AgentUID != binding.AgentUID || receipt.Generation != binding.Generation || receipt.OperationID != binding.OperationID {
+		return false
+	}
+	return validProcessWaitStatus(*receipt)
+}
+
+func validProcessWaitStatus(receipt TerminationEvidence) bool {
+	code := 0
+	if receipt.ExitCode != nil {
+		code = *receipt.ExitCode
+		if code < 0 || code > 255 || receipt.Signal != "" {
+			return false
+		}
+	} else if receipt.Signal == "" {
+		return false
+	}
+	return validTerminationEvidenceShape(receipt) && receipt.Classification == ClassifyProcessExit(code, receipt.Signal)
+}
+
+func (m Mutator) commitProcessRegistry(reg *Registry, next Registry) error {
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	next.UpdatedAt = m.clock()().UTC()
+	*reg = next
+	return nil
+}
 
 // RuntimeKind is the closed Pane host vocabulary. An omitted kind means tmux.
 type RuntimeKind string

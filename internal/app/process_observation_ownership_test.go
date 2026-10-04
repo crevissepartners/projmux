@@ -1,9 +1,12 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"os"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -193,6 +196,75 @@ func TestClaudeProcessObservationOwnershipPredicateParity(t *testing.T) {
 					}
 					if got := processObservationOwnership(reg, binding, view); got != tc.want {
 						t.Fatalf("ownership = %v, want %v", got, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestProcessObservationRetiredWaitRemainsOfflineWithoutAuthority(t *testing.T) {
+	data, err := os.ReadFile("../core/metadata/testdata/registry-v5-process.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			var reg coremetadata.Registry
+			if err := json.Unmarshal(data, &reg); err != nil {
+				t.Fatal(err)
+			}
+			pane := &reg.Panes[1]
+			activation := *pane.Status.Activation.Process
+			reg.Agents[0].Spec.Provider = provider
+			// No invented conversation is needed for termination evidence.
+			pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: provider, Binding: activation.Binding, ResumeState: coremetadata.ProcessResumeUnknown}
+			code := 0
+			receipt := coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.TerminationNormal, ObservedAt: time.Unix(100, 0).UTC(), PaneUID: activation.Binding.PaneUID, AgentUID: activation.Binding.AgentUID, Generation: activation.Binding.Generation, OperationID: activation.Binding.OperationID, ExitCode: &code}
+			if err := (coremetadata.Mutator{}).RecordProcessWait(&reg, activation, receipt); err != nil {
+				t.Fatal(err)
+			}
+			binding := processSchemaBinding(activation.Binding)
+			cases := []struct {
+				name   string
+				change func(*coremetadata.Registry)
+				want   resourcegraph.Status
+			}{
+				{name: "exact receipt", want: resourcegraph.StatusOffline},
+				{name: "missing pane receipt", change: func(r *coremetadata.Registry) { r.Panes[1].Status.LastTermination = nil }},
+				{name: "missing agent receipt", change: func(r *coremetadata.Registry) { r.Agents[0].Status.LastTermination = nil }},
+				{name: "different agent receipt", change: func(r *coremetadata.Registry) {
+					r.Agents[0].Status.LastTermination.ObservedAt = time.Unix(101, 0).UTC()
+				}},
+				{name: "generation", change: func(r *coremetadata.Registry) { r.Panes[1].Status.LastTermination.Generation = "old" }},
+				{name: "operation", change: func(r *coremetadata.Registry) { r.Panes[1].Status.LastTermination.OperationID = "old" }},
+				{name: "wrong source", change: func(r *coremetadata.Registry) {
+					r.Panes[1].Status.LastTermination.Source = coremetadata.TerminationSourceControlAction
+				}},
+				{name: "absent Wait", change: func(r *coremetadata.Registry) { r.Panes[1].Status.LastTermination.ExitCode = nil }},
+				{name: "running agent", change: func(r *coremetadata.Registry) { r.Agents[0].Status.Phase = coremetadata.PhaseRunning }},
+				{name: "session binding", change: func(r *coremetadata.Registry) { r.Panes[1].Status.ProcessSession.Binding.OperationID = "old" }},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					probe := reg.Clone()
+					if tc.change != nil {
+						tc.change(&probe)
+					}
+					if _, _, current := probe.CurrentProcessActivation(activation.Binding); current {
+						t.Fatal("retired session granted activation authority")
+					}
+					view := processHostObservation{Binding: binding, Provider: provider, Host: activation.HostProcess, Child: activation.Child, State: "exited", Exit: &processhost.Exit{Code: 0}}
+					if processObservationOwnership(probe, binding, view) {
+						t.Fatal("retired session granted host ownership")
+					}
+					inventory := observeRegistryProcesses(context.Background(), probe)
+					want := tc.want
+					if want == "" {
+						want = resourcegraph.StatusUnknown
+					}
+					if len(inventory.Declared) != 1 || len(inventory.Observed) != 1 || inventory.Observed[0].Status != want {
+						t.Fatalf("inventory=%+v want %s", inventory, want)
 					}
 				})
 			}

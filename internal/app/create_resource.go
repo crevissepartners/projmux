@@ -59,14 +59,16 @@ func (r createResult) receiptAction() cli.ReceiptAction {
 
 // resourceCreateFlags is the parsed argv of a resource-backed create route.
 type resourceCreateFlags struct {
-	projects    repeatedFlag
-	windows     repeatedFlag
-	panes       repeatedFlag
-	selectors   repeatedFlag
-	labels      repeatedFlag
-	name        string
-	provider    string
-	providerSet bool
+	projects     repeatedFlag
+	windows      repeatedFlag
+	panes        repeatedFlag
+	selectors    repeatedFlag
+	labels       repeatedFlag
+	name         string
+	host         string
+	placementSet bool
+	provider     string
+	providerSet  bool
 	// creator is the bare Agent UID --creator declared, or empty.
 	creator string
 	cwd     string
@@ -149,6 +151,8 @@ type resourceCreateFlags struct {
 // route that creates an Agent needs the provider. Keeping them grouped is what
 // stops `create window` from silently accepting `--placement`.
 type resourceCreateShape struct {
+	// host is registered only by canonical Agent creation.
+	host bool
 	// split registers the Window fan-out and split-anchor surface:
 	// --window, --pane, --selector, --create-window, --placement.
 	split bool
@@ -456,6 +460,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.StringVar(&out.provider, "provider", "",
 			"surface the Window's first Pane opens with: shell|"+strings.Join(cli.AgentProviders(), "|")+"; omitted means shell")
 	}
+	if shape.host {
+		fs.StringVar(&out.host, "host", "tmux", "tmux (unchanged default) or process (owned foreground; hooks require runtime opt-in)")
+	}
 	if shape.provider {
 		fs.BoolVar(&out.dialogueReplyOnly, claudeDialogueReplyOnlyFlag, false, "claude only: a headless activation with an isolated explicit reply tool, recorded so every resume of the Agent stays reply-only; qualification required")
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
@@ -523,6 +530,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		switch f.Name {
 		case "profile":
 			profileSet = true
+		case "placement":
+			out.placementSet = true
 		case "provider":
 			out.providerSet = true
 		case "cwd":

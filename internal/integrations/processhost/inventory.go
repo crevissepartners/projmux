@@ -30,7 +30,7 @@ func ObserveInventory(targets []InventoryTarget) resourcegraph.ProcessInventory 
 			if snapshot, err := observer.Observe(binding); err == nil && snapshot.Binding == binding {
 				if snapshot.Exit != nil && snapshot.State == "exited" {
 					status = resourcegraph.StatusOffline
-				} else if snapshot.Exit == nil && snapshot.State == "ready" {
+				} else if snapshot.Exit == nil && (snapshot.State == "ready" || (snapshot.State == "starting" && snapshot.PID > 0)) {
 					status = resourcegraph.StatusLive
 				}
 			}
