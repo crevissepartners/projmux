@@ -173,6 +173,7 @@ func (k *resourceControllerKernel) plan(ctx context.Context, registry coremetada
 		}
 	}
 	inventory := k.observe(ctx)
+	inventory.Processes = processDeclarations(registry, inventory.Processes)
 	graph := resourcegraph.Resolve(registry, inventory)
 	approvedImport, err := k.authorizeApprovedOrphanImport(graph)
 	if err != nil {

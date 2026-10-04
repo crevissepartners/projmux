@@ -491,19 +491,20 @@ func (r *registryReconciler) reconcileGuarded(
 // inventories: re-reading them would repeat the same server-wide queries with
 // no write in between.
 func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, unwritten *intmetadata.ServerSnapshot) {
+	processes := processDeclarations(*working, r.processes)
 	var inventory liveRuntimeInventory = r.mirror
 	if unwritten != nil {
 		inventory = unwritten
 	}
 	panes, paneErr := inventory.LivePaneUIDs(ctx)
 	if paneErr == nil {
-		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{processes: r.processes}))
+		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{processes: processes}))
 	}
 	windows, windowErr := inventory.LiveWindowUIDs(ctx)
 	if paneErr != nil || windowErr != nil {
 		return
 	}
-	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes, ProcessPanes: processPaneUIDs(*working, r.processes)})
+	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes, ProcessPanes: processPaneUIDs(*working, processes)})
 }
 
 // observedSession is one live tmux session the import step read but could not

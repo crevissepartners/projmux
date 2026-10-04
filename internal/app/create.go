@@ -217,8 +217,9 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 	home, _ := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
 	command := &createCommand{
-		store:      newResourceStore(),
-		reconciler: newRegistryReconciler(routed, client),
+		store:          newResourceStore(),
+		processRuntime: newProcessPaneRuntime(),
+		reconciler:     newRegistryReconciler(routed, client),
 		runtime: &materializer{
 			runner:     routed,
 			mirror:     intmetadata.NewMirror(routed),

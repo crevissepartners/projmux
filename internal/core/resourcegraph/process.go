@@ -97,6 +97,20 @@ const (
 	ProcessStop       ProcessAction = "stop"
 )
 
+// ProcessCapabilityError identifies an unsupported process action before
+// transports or mutations run. Its stable token is also the CLI error prefix.
+type ProcessCapabilityError struct {
+	Action ProcessAction
+	Anchor bool
+}
+
+func (e ProcessCapabilityError) Error() string {
+	if e.Anchor {
+		return fmt.Sprintf("process-%s-unsupported: %s has no tmux target for this process Pane; use a tmux Pane or Window anchor in the same Window", e.Action, e.Action)
+	}
+	return fmt.Sprintf("process-%s-unsupported: %s is unavailable for this process Pane; use host turn, interrupt, or Stop", e.Action, e.Action)
+}
+
 // AdmitProcess rejects terminal operations before any transport or Registry
 // write. Supported controls still require an exact current live host.
 func (p ProcessInventory) AdmitProcess(pane coremetadata.Pane, action ProcessAction) (ProcessKey, error) {
@@ -106,9 +120,9 @@ func (p ProcessInventory) AdmitProcess(pane coremetadata.Pane, action ProcessAct
 	}
 	switch action {
 	case ProcessAttach, ProcessFocus, ProcessKeys, ProcessCapture, ProcessPopup, ProcessRelaunch:
-		return ProcessKey{}, fmt.Errorf("process-pane-no-tmux-target: %s is unavailable for this process Pane; use host turn, interrupt, or Stop", action)
+		return ProcessKey{}, ProcessCapabilityError{Action: action}
 	case ProcessCreatePane, ProcessSplit:
-		return ProcessKey{}, fmt.Errorf("process-capability-unsupported: %s has no tmux target for this process Pane; use a tmux Pane or Window anchor in the same Window", action)
+		return ProcessKey{}, ProcessCapabilityError{Action: action, Anchor: true}
 	case ProcessTurn, ProcessInterrupt, ProcessStop:
 		if status == StatusLive {
 			return *key, nil

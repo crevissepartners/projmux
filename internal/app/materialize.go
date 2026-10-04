@@ -233,11 +233,9 @@ func (o runtimeObject) ownershipOption() string {
 // client or pane is focused, so the operator's view is byte-identical before
 // and after a create.
 type materializer struct {
-	// processAnchor is an invocation-scoped exact split target; nil keeps tmux.
-	processAnchor *processTerminalTarget
-	runner        tmuxCommandRunner
-	mirror        intmetadata.Mirror
-	sessions      sessionMaterializer
+	runner   tmuxCommandRunner
+	mirror   intmetadata.Mirror
+	sessions sessionMaterializer
 	// target is the immutable logical route shared by runner, mirror, and
 	// sessions. Every printable action carries it and every write reobserves
 	// the server's #{socket_path} through that same route first.
@@ -2618,9 +2616,11 @@ func (t *processTerminalTarget) admitSplitAnchor(anchorPaneID string) error {
 //
 // `-d` is the whole point: tmux leaves the previously active pane active, so
 // the split is a pure structural mutation with no focus side effect.
-func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string) (string, error) {
-	if err := m.processAnchor.admitSplitAnchor(anchorPaneID); err != nil {
-		return "", err
+func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string, processAnchor ...*processTerminalTarget) (string, error) {
+	if len(processAnchor) > 0 {
+		if err := processAnchor[0].admitSplitAnchor(anchorPaneID); err != nil {
+			return "", err
+		}
 	}
 	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
 	if beforeErr != nil {
