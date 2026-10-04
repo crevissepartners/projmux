@@ -63,7 +63,7 @@ func loadCentralAgentQuestionAnswering(homeDir func() (string, error), lookupEnv
 	if err != nil {
 		return config.AgentQuestionAnsweringClaude
 	}
-	return claudeQuestionAnsweringFromPaths(paths)
+	return questionAnsweringFromPaths(paths)
 }
 
 func loadCentralAgentQuestionWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string) int {

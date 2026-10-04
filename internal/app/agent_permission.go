@@ -99,7 +99,9 @@ func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Wr
 	switch provider := coremetadata.NormalizeProvider(agent.Spec.Provider); provider {
 	case aiModeClaude:
 	case aiModeCodex:
-		return c.codexPermissionApproval(request, registry, agent, refuse, stdout)
+		if !processAgentAnswers(registry, agent) {
+			return c.codexPermissionApproval(request, registry, agent, refuse, stdout)
+		}
 	default:
 		return refuse(permissionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; permission requests apply only to --provider %s or %s", agent.Spec.Provider, aiModeClaude, aiModeCodex))
 	}
@@ -107,7 +109,7 @@ func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Wr
 	if request.action == "list" {
 		return c.listPermissionRequests(request, agent, answering, stdout)
 	}
-	if !processClaudeAnswers(registry, agent) && answering != config.AgentApprovalAnsweringProjmux {
+	if !processAgentAnswers(registry, agent) && answering != config.AgentApprovalAnsweringProjmux {
 		return refuse(permissionReasonAnsweringOff, "has no captured permission requests while agent-approval-answering is claude; run `projmux config agent-approvals --answering projmux` first")
 	}
 	return c.answerPermissionRequest(request, agent, refuse, stdout, stderr)

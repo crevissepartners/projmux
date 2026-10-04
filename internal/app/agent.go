@@ -172,7 +172,7 @@ func newAgentCommand() *agentCommand {
 		questionStore:  defaultAgentQuestionStore,
 		// Resolved only by `agent question answer` for an Agent that is not
 		// opted in.
-		questionAnswering: claudeQuestionAnswering,
+		questionAnswering: questionAnswering,
 		approvalStore:     defaultAgentApprovalStore,
 		approvalAnswering: claudePermissionAnswering,
 	}

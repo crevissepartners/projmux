@@ -321,7 +321,7 @@ func TestClaudeQuestionHookResolutionOrder(t *testing.T) {
 			hook := fixture.hook(time.Minute)
 			hook.answering = func() config.AgentQuestionAnswering {
 				fixture.answeringCalls++
-				return claudeQuestionAnsweringFromPaths(paths)
+				return questionAnsweringFromPaths(paths)
 			}
 			pane := test.pane
 			if pane == "" {

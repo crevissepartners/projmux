@@ -80,20 +80,20 @@ func claudeQuestionWindowFromPaths(paths config.Paths) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// claudeQuestionAnswering is the central agent-question-answering setting:
+// questionAnswering is the central agent-question-answering setting:
 // way 1 (Claude Code's own prompt) unless the file names way 2. A config
 // directory that cannot be resolved, like any unreadable or unknown value,
 // reads as way 1.
-func claudeQuestionAnswering() config.AgentQuestionAnswering {
+func questionAnswering() config.AgentQuestionAnswering {
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		return config.AgentQuestionAnsweringClaude
 	}
-	return claudeQuestionAnsweringFromPaths(paths)
+	return questionAnsweringFromPaths(paths)
 }
 
-// claudeQuestionAnsweringFromPaths reads the answering way under paths.
-func claudeQuestionAnsweringFromPaths(paths config.Paths) config.AgentQuestionAnswering {
+// questionAnsweringFromPaths reads the answering way under paths.
+func questionAnsweringFromPaths(paths config.Paths) config.AgentQuestionAnswering {
 	answering, _ := config.LoadAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile())
 	return answering
 }
@@ -183,7 +183,7 @@ func defaultClaudeQuestionHook() claudeQuestionHook {
 			return intmetadata.NewDefaultStore(paths).LoadReadOnly()
 		},
 		store:      defaultAgentQuestionStore,
-		answering:  claudeQuestionAnswering,
+		answering:  questionAnswering,
 		window:     claudeQuestionWindow,
 		popup:      defaultClaudeQuestionPopup(),
 		poll:       claudeQuestionPoll,
