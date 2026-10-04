@@ -93,10 +93,18 @@ type Launch struct {
 	Binding                  Binding
 	Command                  Command
 	Completion               *Completion
+	Spawned                  *SpawnCallback
 	provider                 string
 	adapter                  adapterConfig
 	resume                   *SessionRecord
 	resumeTurn, resumePrompt string
+}
+
+// SpawnCallback publishes exact child birth before provider initialization.
+// The pointer is launch identity; retries retain it and never publish twice.
+// Publish runs outside Host/Handle locks and must honor the startup context.
+type SpawnCallback struct {
+	Publish func(context.Context, *Handle) error
 }
 
 // Completion binds owned cleanup to a launch before any child can exit. Its
@@ -222,10 +230,13 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	}
 	if err == nil {
 		err = p.spawn(ctx)
-		if err == nil && (p.adapter != nil || launch.resume != nil) {
-			if p.adapter != nil {
+		if err == nil && (launch.Spawned != nil || p.adapter != nil || launch.resume != nil) {
+			if launch.Spawned != nil && launch.Spawned.Publish != nil {
+				err = launch.Spawned.Publish(ctx, p)
+			}
+			if err == nil && p.adapter != nil {
 				err = p.adapter.initialize(ctx)
-			} else {
+			} else if err == nil && launch.resume != nil {
 				err = p.initializeResume(ctx)
 			}
 			if err != nil {
