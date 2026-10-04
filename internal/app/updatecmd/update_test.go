@@ -173,6 +173,10 @@ func testUpdateCommand(t *testing.T, now time.Time) (*Command, string) {
 		// Every pre-existing apply test describes an ordinary landed upgrade, so
 		// the default probe reports a higher version after publication.
 		ProbeVersion: stubUpdateVersionProbe("0.13.0", "0.13.1"),
+		ProbeMetadata: func(string) (CandidateMetadata, error) {
+			return CandidateMetadata{Version: "0.13.1", Commit: "fixture", SchemaVersion: 5}, nil
+		},
+		resolveGoVersion: func() (string, error) { return "v0.13.1", nil },
 		LookPath: func(name string) (string, error) {
 			if name != "projmux" {
 				return "", fmt.Errorf("unexpected executable lookup %q", name)
@@ -464,7 +468,7 @@ func TestUpdateApplyRunsGoUpgradeNoApply(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []string{
-		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+		"go install github.com/crevissepartners/projmux/cmd/projmux@v0.13.1",
 		target + " config apply --no-reload",
 	}
 	if !slices.Equal(*ran, want) {
@@ -482,8 +486,8 @@ func TestUpdateApplyRunsGoUpgradeInPublicationOrder(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []string{
+		"go install github.com/crevissepartners/projmux/cmd/projmux@v0.13.1",
 		target + " config apply --bin " + target + " --socket projmux",
-		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		target + " config apply",
 	}
 	if !slices.Equal(*ran, want) {
@@ -572,7 +576,7 @@ func TestUpdateApplyGoPublishesIntoAScratchGobinBesideTheTarget(t *testing.T) {
 	if filepath.Dir(gobin) != filepath.Dir(target) {
 		t.Fatalf("GOBIN = %q, want a scratch directory beside %q", gobin, target)
 	}
-	if !slices.Contains(*ran, "go install github.com/crevissepartners/projmux/cmd/projmux@latest") {
+	if !slices.Contains(*ran, "go install github.com/crevissepartners/projmux/cmd/projmux@v0.13.1") {
 		t.Fatalf("ran = %#v, want the go publication", *ran)
 	}
 }
@@ -1598,9 +1602,9 @@ func TestUpdateApplyFailsWhenTheInstalledVersionDidNotChange(t *testing.T) {
 			after:     "0.13.1",
 			wantParts: []string{
 				"installed version did not change",
-				"expected version v0.13.2",
+				"expected version v0.13.1",
 				"install channel go",
-				"GOBIN that PATH does not resolve first",
+				"already holds the expected version",
 			},
 		},
 		{
@@ -1844,8 +1848,8 @@ func TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux(t *testi
 
 // TestUpdateApplyStageOrderIsUnchangedByVersionVerification is the change-nothing
 // half of Phase 0: verification is a reading, so the published command sequence
-// -- including the `config apply` stage and its position -- is byte-identical to
-// what it was before.
+// -- remains unchanged for npm. Binary paths prepare and guard the pinned
+// candidate before running config apply.
 func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
 	t.Parallel()
 
@@ -1884,8 +1888,8 @@ func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
 			args:      []string{"apply"},
 			want: func(target string) []string {
 				return []string{
+					"go install github.com/crevissepartners/projmux/cmd/projmux@v0.13.1",
 					target + " config apply --bin " + target + " --socket projmux",
-					"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 					target + " config apply",
 				}
 			},
@@ -1896,7 +1900,7 @@ func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
 			args:      []string{"apply", "--no-apply"},
 			want: func(target string) []string {
 				return []string{
-					"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+					"go install github.com/crevissepartners/projmux/cmd/projmux@v0.13.1",
 					target + " config apply --no-reload",
 				}
 			},
@@ -3173,5 +3177,224 @@ func TestPostUpdateApplyArgsAlwaysReachTheNewBinary(t *testing.T) {
 	// --no-apply must still reach the binary; it only suppresses the reload.
 	if got := postUpdateApplyArgs(true); !slices.Equal(got, []string{"config", "apply", "--no-reload"}) {
 		t.Fatalf("no-apply args = %v, want [config apply --no-reload]", got)
+	}
+}
+
+// B1 acceptance 1: version strings alone cannot judge schema compatibility.
+func TestUpdateCandidateSameVersionDifferentSchema(t *testing.T) {
+	current := CandidateMetadata{Version: "0.16.1", Commit: "old", SchemaVersion: 4}
+	next := CandidateMetadata{Version: "0.16.1", Commit: "new", SchemaVersion: 5}
+	if got := schemaChange(current, next); got != "bump" {
+		t.Fatalf("change=%s", got)
+	}
+	next.SchemaVersion = 3
+	if got := schemaChange(current, next); got != "downgrade" {
+		t.Fatalf("change=%s", got)
+	}
+}
+
+// B1 acceptance 2: every binary path rejects before the first config command.
+func TestUpdateCandidateSchemaRefusalBeforeAnyConfigOrPublication(t *testing.T) {
+	for _, channel := range []string{"go", "github-release", "from"} {
+		for _, change := range []string{"bump", "downgrade", "unknown"} {
+			t.Run(channel+"/"+change, func(t *testing.T) {
+				cmd, _, ran := updateApplyVerificationCommand(t, channel)
+				target := mustExecutable(t, cmd)
+				state := filepath.Join(t.TempDir(), "registry.json")
+				if err := os.WriteFile(state, []byte(`{"schemaVersion":5}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				before, _ := candidateDigest(state)
+				cmd.ProbeMetadata = func(path string) (CandidateMetadata, error) {
+					schema := 5
+					if path != target {
+						switch change {
+						case "bump":
+							schema = 6
+						case "downgrade":
+							schema = 4
+						case "unknown":
+							return CandidateMetadata{}, errors.New("old candidate has no JSON metadata")
+						}
+					}
+					return CandidateMetadata{Version: "0.16.1", Commit: "fixture", SchemaVersion: schema}, nil
+				}
+				cmd.ProbeVersion = func(string) (string, error) {
+					t.Fatal("refused candidate probed current binary in live environment")
+					return "", nil
+				}
+				args := []string{"apply", "--no-apply"}
+				if channel == "from" {
+					from := filepath.Join(t.TempDir(), "candidate")
+					if err := os.WriteFile(from, []byte("new\n"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					args = append(args, "--from", from)
+				}
+				if channel == "github-release" {
+					archive := testReleaseArchive(t, "new\n")
+					assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.16.1/projmux_0.16.1_linux_amd64.tar.gz"
+					cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+						var body io.Reader
+						if req.URL.String() == assetURL {
+							body = bytes.NewReader(archive)
+						} else {
+							body = strings.NewReader(`{"tag_name":"v0.16.1","assets":[{"name":"projmux_0.16.1_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + testReleaseDigest(archive) + `"}]}`)
+						}
+						return &http.Response{StatusCode: 200, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+					})}
+				}
+				var output bytes.Buffer
+				err := cmd.Run(args, &output, &bytes.Buffer{})
+				if err == nil || !strings.Contains(err.Error(), "update-schema-"+change) || !strings.Contains(err.Error(), "docs/registry.md") {
+					t.Fatalf("err=%v\n%s", err, output.String())
+				}
+				for _, command := range *ran {
+					if !strings.HasPrefix(command, "go install ") {
+						t.Fatalf("ran config/publication: %v", *ran)
+					}
+				}
+				assertUpdateTargetUntouched(t, target)
+				after, _ := candidateDigest(state)
+				if before != after {
+					t.Fatal("state changed")
+				}
+				assertNoUpdateScratchLeft(t, target)
+			})
+		}
+	}
+}
+
+// B1 acceptance 3: latest must not change between pinning and publication.
+func TestUpdateGoCandidateLatestChangedAfterPin(t *testing.T) {
+	cmd, _, ran := updateApplyVerificationCommand(t, "go")
+	target := mustExecutable(t, cmd)
+	reads := 0
+	cmd.resolveGoVersion = func() (string, error) {
+		reads++
+		if reads == 1 {
+			return "v0.13.1", nil
+		}
+		return "v0.13.2", nil
+	}
+	err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "update-candidate-changed") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(*ran) != 1 || (*ran)[0] != "go install github.com/crevissepartners/projmux/cmd/projmux@v0.13.1" {
+		t.Fatalf("commands=%v", *ran)
+	}
+	assertUpdateTargetUntouched(t, target)
+}
+func TestUpdateReleaseCandidateLatestChangedAfterPin(t *testing.T) {
+	cmd, _, ran := updateApplyVerificationCommand(t, "github-release")
+	target := mustExecutable(t, cmd)
+	archive := testReleaseArchive(t, "new\n")
+	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.13.1/projmux_0.13.1_linux_amd64.tar.gz"
+	reads := 0
+	cmd.Client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() == assetURL {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
+		}
+		reads++
+		digest := testReleaseDigest(archive)
+		if reads > 1 {
+			digest = "sha256:" + strings.Repeat("0", 64)
+		}
+		body := `{"tag_name":"v0.13.1","assets":[{"name":"projmux_0.13.1_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + digest + `"}]}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "update-candidate-changed") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("commands=%v", *ran)
+	}
+	assertUpdateTargetUntouched(t, target)
+}
+
+// B1 acceptance 4 and 5, including the --from / --target public surface.
+func TestUpdateFromDryRunPlanPinsDigestAndShowsPATHMismatch(t *testing.T) {
+	cmd, _, ran := updateApplyVerificationCommand(t, "source")
+	target := mustExecutable(t, cmd)
+	from := filepath.Join(t.TempDir(), "candidate")
+	if err := os.WriteFile(from, []byte("new\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd.ProbeMetadata = func(path string) (CandidateMetadata, error) {
+		schema := 5
+		if path != target {
+			schema = 6
+		}
+		return CandidateMetadata{Version: "0.16.1", Commit: "fixture", SchemaVersion: schema}, nil
+	}
+	digest, _ := candidateDigest(from)
+	var output bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--from", from, "--target", target, "--dry-run"}, &output, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{from, target, digest, "schema: bump", "(different)", "stop → backup → install → resume", "not automated yet"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %q: %s", want, output.String())
+		}
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("commands=%v", *ran)
+	}
+	assertUpdateTargetUntouched(t, target)
+}
+func TestUpdateChannelDryRunMarksUnpreparedCandidateUnknown(t *testing.T) {
+	for _, channel := range []string{"go", "github-release"} {
+		t.Run(channel, func(t *testing.T) {
+			cmd, _, ran := updateApplyVerificationCommand(t, channel)
+			var output bytes.Buffer
+			if err := cmd.Run([]string{"apply", "--dry-run"}, &output, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"candidate:", "digest: unknown", "schema: unknown", "stop → backup → install → resume"} {
+				if !strings.Contains(output.String(), want) {
+					t.Fatalf("missing %q: %s", want, output.String())
+				}
+			}
+			if len(*ran) != 0 {
+				t.Fatalf("commands=%v", *ran)
+			}
+		})
+	}
+}
+
+// B1 acceptance 6: npm keeps its pre/install/post sequence with a limitation label.
+func TestUpdateNPMMarksSchemaJudgmentUnavailable(t *testing.T) {
+	cmd, _, ran := updateApplyVerificationCommand(t, "npm")
+	var output bytes.Buffer
+	if err := cmd.Run([]string{"apply"}, &output, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "npm: cannot judge before publication") || len(*ran) != 3 {
+		t.Fatalf("output=%s commands=%v", output.String(), *ran)
+	}
+}
+func TestUpdateCandidateMetadataProbeIsIsolatedAndRejectsStateWrites(t *testing.T) {
+	for _, writes := range []bool{false, true} {
+		t.Run(fmt.Sprint(writes), func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "candidate")
+			script := "#!/bin/sh\n"
+			if writes {
+				script += "printf dirty > \"$XDG_STATE_HOME.dirty\"\n"
+			}
+			script += "printf '%s' '{\"version\":\"0.16.1\",\"commit\":\"fixture\",\"schema_version\":5}'\n"
+			if err := os.WriteFile(source, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			metadata, err := probeCandidateMetadata(source)
+			if writes {
+				if err == nil || !strings.Contains(err.Error(), "wrote state") {
+					t.Fatalf("err=%v", err)
+				}
+			} else if err != nil || metadata.SchemaVersion != 5 {
+				t.Fatalf("metadata=%v err=%v", metadata, err)
+			}
+		})
 	}
 }

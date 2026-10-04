@@ -378,7 +378,7 @@ func TestRenderRouteHelpProjectsManifestMetadata(t *testing.T) {
 		{
 			name:  "canonical route omits a redundant canonical block",
 			args:  []string{"version", "--help"},
-			wants: []string{"projmux version\n", "Print the current version"},
+			wants: []string{"projmux version [-o json]\n", "Print the current version"},
 			nots:  []string{"Canonical route:"},
 		},
 		{name: "hidden internal helper remains documented internally", args: []string{"internal", "popup-wait-key", "--help"}, wants: []string{"projmux internal popup-wait-key\n", "Read a single key"}},
