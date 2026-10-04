@@ -341,6 +341,21 @@ def assert_darwin_native_compiles_every_test_package(workflow: str) -> None:
 
 
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_process_cli_job_runs_the_make_target_and_gates_test(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        job = workflow_job(workflow, "process-host-cli")
+        self.assertIn("    name: Process Host CLI Tests", job)
+        self.assertIn("    runs-on: ubuntu-latest", job)
+        self.assertIn("    timeout-minutes: 10", job)
+        self.assertIn("go-version-file: go.mod", job)
+        self.assertNotIn("continue-on-error:", job)
+        self.assertNotRegex(job, r"(?m)^\s+if:")
+        command = step_script(workflow_step(job, "Exercise process fixtures through the built CLI"))
+        self.assertEqual(command, "make test-process-host-cli")
+        aggregate = workflow_job(workflow, "test")
+        self.assertIn("      - process-host-cli\n", aggregate)
+        self.assertIn("--required process-host-cli ", aggregate)
+
     def test_required_unit_job_runs_pinned_deadcode_without_bypass(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         assert_unit_job_runs_real_tmux_strict(workflow_job(workflow, "unit"))

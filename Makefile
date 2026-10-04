@@ -146,6 +146,11 @@ vet:
 test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards
 	$(GO) test ./...
 
+# Build this checkout and exercise the process fixtures through a copied CLI.
+.PHONY: test-process-host-cli
+test-process-host-cli:
+	GO="$(GO)" python3 scripts/test-process-host-cli.py
+
 smoke-assert-contract:
 	bash test/smoke-assert-contract.sh
 
@@ -163,6 +168,7 @@ release-contract:
 
 ci-contract:
 	python3 -m unittest discover -s test -p 'ci_workflow_contract_test.py'
+	python3 -m unittest discover -s test -p 'process_host_cli_runner_test.py'
 	python3 -m unittest discover -s test -p 'agent_dialogue*_test.py'
 
 # The reviewed security baselines have one pin. This keeps a second copy from

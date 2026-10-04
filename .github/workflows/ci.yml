@@ -247,6 +247,24 @@ jobs:
       - name: Vet
         run: make vet
 
+  process-host-cli:
+    name: Process Host CLI Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Exercise process fixtures through the built CLI
+        run: make test-process-host-cli
+
   # `make test` runs without the detector so the ordinary unit gate stays fast.
   # Keep the detector on the packages whose contracts actually create
   # contention, with the broker and its app-server transport isolated from the
@@ -615,6 +633,7 @@ jobs:
       - security-contract
       - fmt
       - unit
+      - process-host-cli
       - race
       - darwin-native
       - npm-pack
@@ -639,6 +658,7 @@ jobs:
             --required security-contract \
             --required fmt \
             --required unit \
+            --required process-host-cli \
             --required race \
             --required darwin-native \
             --required npm-pack \
