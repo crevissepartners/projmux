@@ -1202,6 +1202,8 @@ type codexOverflowFixture struct {
 	armed       bool
 	falseLeft   int
 	falseAlways bool
+	recovered   bool
+	readyAt     time.Time
 }
 
 func newCodexOverflowFixture() *codexOverflowFixture {
@@ -1229,6 +1231,7 @@ func (f *codexOverflowFixture) releaseApply() { close(f.resume) }
 func (f *codexOverflowFixture) loseBindingOn(authority string, samples int, always bool) {
 	f.bindingMu.Lock()
 	f.armOn, f.falseLeft, f.falseAlways = authority, samples, always
+	f.recovered = false
 	f.bindingMu.Unlock()
 }
 
@@ -1247,6 +1250,9 @@ func (f *codexOverflowFixture) Apply(identity codexLifecycleIdentity, projection
 func (f *codexOverflowFixture) SetAuthority(identity codexLifecycleIdentity, source, epoch, reason string) error {
 	err := f.recordingCodexLifecycleSink.SetAuthority(identity, source, epoch, reason)
 	f.bindingMu.Lock()
+	if err == nil && source == codexAuthorityControlPlane && reason == string(codexObserverReasonReady) {
+		f.readyAt = time.Now()
+	}
 	if f.armOn != "" && f.armOn == source+":"+reason {
 		f.armOn, f.armed = "", true
 	}
@@ -1266,6 +1272,7 @@ func (f *codexOverflowFixture) BindingCurrent(identity codexLifecycleIdentity) b
 			f.bindingMu.Unlock()
 			return false
 		}
+		f.recovered = true
 	}
 	f.bindingMu.Unlock()
 	return f.recordingCodexLifecycleSink.BindingCurrent(identity)
@@ -1895,38 +1902,52 @@ func TestCodexObserverBindingCadences(t *testing.T) {
 // recovery scheduler both wait that window out; this path now makes the same
 // bounded wait.
 func TestLiveEpochSurvivesATransientBindingReadFailure(t *testing.T) {
-	const threadID = "thread-live-blip"
-	sink := newCodexOverflowFixture()
-	// One unreadable sample once the epoch is ready, then the same live
-	// binding reads normally again.
-	sink.loseBindingOn(codexAuthorityControlPlane+":"+string(codexObserverReasonReady), 1, false)
-	run := startCodexOverflowObserver(t, threadID, sink)
-
-	select {
-	case err := <-run.done:
-		t.Fatalf("a transient binding read failure retired a live epoch: err=%v authorities=%v records=%v",
-			err, sink.authoritySnapshot(), run.journal.snapshot())
-	case result := <-run.startups:
-		t.Fatalf("the live epoch was torn down and restarted: %+v records=%v", result, run.journal.snapshot())
-	case <-time.After(3 * codexObserverBindingInterval):
+	for _, samples := range []int{1, 3} {
+		t.Run(fmt.Sprintf("false-samples-%d", samples), func(t *testing.T) {
+			const threadID = "thread-live-blip"
+			sink := newCodexOverflowFixture()
+			// Cover both one unreadable tick and consecutive failures in the retry window.
+			sink.loseBindingOn(codexAuthorityControlPlane+":"+string(codexObserverReasonReady), samples, false)
+			run := startCodexOverflowObserver(t, threadID, sink)
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
+			poll := time.NewTicker(10 * time.Millisecond)
+			defer poll.Stop()
+		waiting:
+			for {
+				select {
+				case err := <-run.done:
+					t.Fatalf("a transient binding read failure retired a live epoch: err=%v authorities=%v records=%v", err, sink.authoritySnapshot(), run.journal.snapshot())
+				case result := <-run.startups:
+					t.Fatalf("the live epoch was torn down and restarted: %+v records=%v", result, run.journal.snapshot())
+				case <-deadline.C:
+					t.Fatal("the live epoch never recovered its binding predicate")
+				case <-poll.C:
+					sink.bindingMu.Lock()
+					recovered := sink.recovered
+					sink.bindingMu.Unlock()
+					if recovered {
+						break waiting
+					}
+				}
+			}
+			// Once the retry read recovered, the original epoch must still own the stream.
+			select {
+			case err := <-run.done:
+				t.Fatalf("the recovered live epoch stopped: %v", err)
+			case result := <-run.startups:
+				t.Fatalf("the recovered live epoch restarted: %+v", result)
+			default:
+			}
+			for _, entry := range run.journal.snapshot() {
+				if entry.Event != string(codexObserverTransitionConnected) {
+					t.Fatalf("a transient read failure moved the live epoch: %+v", entry)
+				}
+			}
+			run.cancel()
+			<-run.done
+		})
 	}
-	sink.bindingMu.Lock()
-	falseLeft := sink.falseLeft
-	sink.bindingMu.Unlock()
-	if falseLeft != 0 {
-		t.Fatal("the live epoch never sampled the transient binding failure")
-	}
-
-	// The epoch is still the one that went ready, and nothing recorded a
-	// disconnect or a stop for it.
-	entries := run.journal.snapshot()
-	for _, entry := range entries {
-		if entry.Event != string(codexObserverTransitionConnected) {
-			t.Fatalf("a transient read failure moved the live epoch: %+v (all: %+v)", entry, entries)
-		}
-	}
-	run.cancel()
-	<-run.done
 }
 
 // TestLiveEpochBindingLossLeavesATerminalRecord is the Failure.Detection half
@@ -1945,18 +1966,27 @@ func TestLiveEpochBindingLossLeavesATerminalRecord(t *testing.T) {
 	sink := newCodexOverflowFixture()
 	sink.loseBindingOn(codexAuthorityControlPlane+":"+string(codexObserverReasonReady), 0, true)
 	run := startCodexOverflowObserverWithBindingTimeout(t, threadID, sink, codexOverflowWithSibling, codexObserverBindingTimeout)
-	started := time.Now()
+	sink.bindingMu.Lock()
+	readyAt := sink.readyAt
+	sink.bindingMu.Unlock()
+	if readyAt.IsZero() {
+		t.Fatal("fixture did not record ready authority")
+	}
 
 	select {
 	case err := <-run.done:
 		if err != nil {
 			t.Fatalf("the terminal stop reported an error: %v", err)
 		}
-	case <-time.After(codexObserverBindingInterval + codexObserverBindingTimeout + time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatalf("the observer neither survived nor stopped: %v", run.journal.snapshot())
 	}
-	if elapsed := time.Since(started); elapsed < codexObserverBindingTimeout {
+	elapsed := time.Since(readyAt)
+	if elapsed < codexObserverBindingTimeout {
 		t.Fatalf("binding loss skipped its read-recovery window: %v", elapsed)
+	}
+	if limit := codexObserverBindingInterval + codexObserverBindingTimeout + 3*time.Second; elapsed > limit {
+		t.Fatalf("binding loss took %v after ready authority, want at most %v", elapsed, limit)
 	}
 
 	// The Pane is left holding the ready projection by design - SetAuthority
