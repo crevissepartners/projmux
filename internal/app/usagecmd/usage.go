@@ -130,6 +130,8 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	cli.SetRouteUsage(fs)
 	model := fs.String("model", "all", "filter by model: "+strings.Join(aiprovider.UsageTargets(), " | "))
 	window := fs.String("window", "all", "filter by window: 5h | weekly | context | quota | all")
+	history := fs.Bool("history", false, "read recorded metric history without collecting")
+	metric := fs.String("metric", "", "filter history by metric name")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
 	// --force / -f bypasses the per-adapter throttle floor AND clears
 	// any active backoff before invoking adapters. Useful when bound
@@ -149,6 +151,45 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")
 		fmt.Fprintln(stderr, "                Useful when bound to a tmux key as a manual 'refresh now' gesture.")
 		return &coremetadata.InputError{Detail: "agent usage does not accept positional arguments"}
+	}
+	if *history {
+		if *force {
+			return &coremetadata.InputError{Detail: "agent usage --history cannot be combined with --force"}
+		}
+		stateDir, err := c.resolveStateDir()
+		if err != nil {
+			return err
+		}
+		filter := usage.HistoryFilter{Metric: *metric, Now: c.now()}
+		if *model != "all" {
+			filter.Provider = *model
+		}
+		if *window != "all" {
+			filter.Window = *window
+		}
+		points, err := usage.NewStore(stateDir).ReadHistory(filter)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			if points == nil {
+				points = []usage.MetricPoint{}
+			}
+			return json.NewEncoder(stdout).Encode(points)
+		}
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "OBSERVED_AT\tMETRIC\tVALUE\tPROVIDER\tWINDOW\tBUCKET\tRESETS_AT")
+		for _, p := range points {
+			reset := ""
+			if p.ResetsAt != nil {
+				reset = p.ResetsAt.Format(time.RFC3339)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%g\t%s\t%s\t%s\t%s\n", p.ObservedAt.Format(time.RFC3339), p.Name, p.Value, p.Provider, p.Window, p.Bucket, reset)
+		}
+		return w.Flush()
+	}
+	if *metric != "" {
+		return &coremetadata.InputError{Detail: "agent usage --metric requires --history"}
 	}
 
 	modelScope, explicitModel := c.modelScope(*model)

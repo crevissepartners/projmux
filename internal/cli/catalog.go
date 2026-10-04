@@ -1048,7 +1048,7 @@ var routes = []Route{
 				Name:       "usage",
 				Invocation: InvocationFanOut,
 				Summary:    "Read provider account usage quota snapshots",
-				Usage:      []string{"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]"},
+				Usage:      []string{"projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]", "projmux agent usage --history [--json] [--model <provider>] [--window <name>] [--metric <name>]"},
 				Canonical:  []string{"agent usage"},
 			},
 			{

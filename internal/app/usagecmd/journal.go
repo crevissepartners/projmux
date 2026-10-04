@@ -35,6 +35,7 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 	}
 	adapterErrs := usage.AdapterErrors(collectErr)
 	lockTimeout := errors.Is(collectErr, usage.ErrStateLockTimeout)
+	historyFailure := errors.Is(collectErr, usage.ErrHistoryWrite)
 	hasFallback := false
 	for _, snapshot := range snapshots {
 		if snapshot.FallbackReason != "" {
@@ -42,7 +43,7 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 			break
 		}
 	}
-	if len(adapterErrs) == 0 && !hasFallback && !lockTimeout {
+	if len(adapterErrs) == 0 && !hasFallback && !lockTimeout && !historyFailure {
 		return
 	}
 	journal := c.usageJournal()
@@ -51,6 +52,9 @@ func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.S
 	}
 	if lockTimeout {
 		journal.RecordCollectOutcome(diagnostics.ProviderProjmux, "", diagnostics.UsageFailureStateLockTimeout, started)
+	}
+	if historyFailure {
+		journal.RecordCollectOutcome(diagnostics.ProviderProjmux, "", diagnostics.UsageFailureHistoryWrite, started)
 	}
 	for _, adapterErr := range adapterErrs {
 		provider := usageDiagnosticsProvider(adapterErr.Model)

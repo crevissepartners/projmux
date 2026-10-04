@@ -560,6 +560,7 @@ Allowed effects:
 
 ```
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
+projmux agent usage --history [--json] [--model <provider>] [--window <name>] [--metric <name>]
 ```
 
 ### `projmux agent capabilities`

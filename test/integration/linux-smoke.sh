@@ -1024,6 +1024,20 @@ printf 'off\n' >"$claude_weekly_visibility"
 
 explicit_usage="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" agent usage --model claude --json)"
 [[ "$explicit_usage" == *'"window": "5h"'* && "$explicit_usage" == *'"window": "weekly"'* ]] || { echo "explicit usage lost hidden windows: $explicit_usage" >&2; exit 1; }
+# The history CLI reads an isolated file fixture without starting collection.
+# A force request must fail before any adapter can be reached.
+mkdir -p "$usage_leaf_state/history"
+history_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+history_day="${history_at%%T*}"
+printf '{"name":"usage.percent","value":42,"observed_at":"%s","provider":"claude","window":"5h"}\n' "$history_at" >"$usage_leaf_state/history/$history_day.jsonl"
+history_json="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" agent usage --history --json --model claude --window 5h --metric usage.percent)"
+[[ "$history_json" == *'"name":"usage.percent"'* && "$history_json" == *'"provider":"claude"'* && "$history_json" != *'"provider":"codex"'* ]] || { echo "history fixture filter failed: $history_json" >&2; exit 1; }
+if PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" agent usage --history --force >"$PROJMUX_SMOKE_WORKDIR/history-force.out" 2>"$PROJMUX_SMOKE_WORKDIR/history-force.err"; then
+  echo "history --force unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ ! -s "$PROJMUX_SMOKE_WORKDIR/history-force.out" ]] || { echo "history --force wrote stdout" >&2; exit 1; }
+grep -F 'cannot be combined with --force' "$PROJMUX_SMOKE_WORKDIR/history-force.err" >/dev/null || { echo "history --force rejection missing" >&2; exit 1; }
 printf 'claude,codex,antigravity\n' >"$XDG_CONFIG_HOME/projmux/ai-enabled-agents"
 printf 'on\n' >"$claude_provider_visibility"
 printf 'on\n' >"$claude_5h_visibility"

@@ -158,6 +158,55 @@ error, which the operations journal records as `failure=state-lock-timeout`
 so repeated rows point at a stuck lock holder. The lock does not coordinate
 machines that share a synced directory.
 
+## Metric history
+
+Fresh observations are appended to daily `usage/history/YYYY-MM-DD.jsonl` segments in the same state
+directory as `snapshots.json`. The snapshot file keeps its version 2 shape and
+continues to hold only the latest values. History starts when this version is
+installed; there is no backfill or interpolation.
+
+Each JSON line has `name`, numeric `value`, and UTC `observed_at`, plus optional
+`provider`, `window`, `bucket`, and `resets_at`. Names and units are:
+
+| Name | Unit | Labels | Source |
+| --- | --- | --- | --- |
+| `usage.percent` | percent | provider, window, optional bucket | Fresh Claude/Codex quota result |
+| `system.cpu.percent` | percent | none | Existing live-resources CPU delta sampler; warm-up/unsupported samples are omitted |
+| `system.memory.percent` | percent | none | Existing live-resources memory sampler |
+| `system.fs.available_bytes` | bytes | none | Filesystem containing the state directory, using available blocks |
+| `agent.live.count` | agents | provider | Existing all-Project resource observation, counting only `StatusLive` Agent rows; unknown observations are omitted |
+
+Live Agent counts are recorded only when an explicit `reconcile resources`
+command already resolves the all-Project graph. They can therefore be sparse;
+missing intervals are not zero and are not interpolated. This history does not
+start a new runtime observation on `status resources`, `get`, or `describe`.
+
+Example:
+
+```json
+{"name":"usage.percent","value":42,"observed_at":"2026-10-05T00:00:00Z","provider":"codex","window":"weekly","resets_at":"2026-10-12T00:00:00Z"}
+```
+
+`Store.ReadHistory(HistoryFilter)` is the CORE reader. `projmux agent usage
+--history [--json] [--model <provider>] [--window <name>] [--metric <name>]`
+reads only this local dataset. JSON is an array of the line schema, sorted by
+`observed_at`. `--model` filters the `provider` label; metrics without that
+label appear only with `--model all`. History combined with `--force` is a
+usage error before collection. The ordinary `agent usage` output is unchanged.
+
+One series (`name` plus all three labels) records at most once per minute;
+unchanged values from a new observation can be recorded again after that
+interval. Reads hide values older than 30 days. The next write or prune
+physically removes them. A separate bounded `.history.lock` protects readers,
+concurrent writers, pruning, and the small `.history.index.json` limiter cache.
+Malformed rows and IO/lock failures return errors rather than empty series.
+An uncommitted `.history.tmp-*` file left by an interrupted prune is ignored;
+the committed daily segment remains authoritative. The next write removes
+abandoned temporary files.
+If history writing fails after a fresh usage collection, the latest snapshot
+remains saved and the failure is returned and recorded as
+`history-write-failed` in diagnostics. The next existing collection retries.
+
 Adapter failures merge over the prior slice rather than replacing it,
 so a 429 keeps the last known good rows visible. A *partial* collect — some
 rows dropped, some kept — still counts as a successful refresh for the models
