@@ -32,12 +32,16 @@ import (
 // accepted everywhere; anything else -- a bare false, errors.New, a raw err --
 // is an untagged refusal.
 var claudeRegistrationChain = map[string][]string{
-	"claudeEndpointRegistrationHook":      {"reason"},
-	"claudeRegistrationBootstrap":         {"claudeRegistrationProceed"},
-	"registerClaudeEndpoint":              {"claudeRegistrationProceed", "refusal.reason"},
-	"startClaudeEndpointHelper":           {"nil"},
-	"claudeEndpointHelper":                {"reason"},
-	"serveClaudeRegistration":             nil,
+	"claudeEndpointRegistrationHook": {"reason"},
+	"claudeRegistrationBootstrap":    {"claudeRegistrationProceed"},
+	"registerClaudeEndpoint":         {"claudeRegistrationProceed", "refusal.reason"},
+	"startClaudeEndpointHelper":      {"nil"},
+	"claudeEndpointHelper":           {"reason"},
+	"serveClaudeRegistration":        {"reason"},
+	"claudeRegistrationRoute":        {"claudeRegistrationProceed"},
+	// The claim wrapper forwards transaction errors to the serving function's
+	// reason classifier; its callback must still carry a tagged refusal.
+	"registerClaudeEndpointBootstrap":     {"err", `registerClaudeProcessHelper(bootstrap, "register")`},
 	"admitClaudeRegistration":             {"nil"},
 	"claudeRegistrationClaimRefusal":      nil,
 	"claudeRegistrationTransactionReason": {"refusal.reason"},
@@ -162,7 +166,7 @@ func claudeRegistrationSweep(t *testing.T, src []byte, constants map[string]stri
 		if returns == 0 {
 			failures = append(failures, fn.Name.Name+": no return swept")
 		}
-		if want := fn.Name.Name == "serveClaudeRegistration"; want != (callbacks == 1) {
+		if want := fn.Name.Name == "registerClaudeEndpointBootstrap"; want != (callbacks == 1) {
 			failures = append(failures, fmt.Sprintf("%s: %d claim transaction callbacks", fn.Name.Name, callbacks))
 		}
 	}
@@ -205,6 +209,7 @@ func TestClaudeRegistrationSweepTagsEveryRefusal(t *testing.T) {
 		"start raw error": {"return refuseClaudeRegistration(diagnostics.ClaudeRegistrationHelperAckPipe)",
 			`return errors.New("claude helper acknowledgement unavailable")`},
 		"serve untagged": {"return diagnostics.ClaudeRegistrationStaleBeforeAck", "return claudeRegistrationProceed"},
+		"route untagged": {"return coremetadata.ResolveAgentRoute, claudeRegistrationProceed", `return coremetadata.ResolveAgentRoute, "ready"`},
 		"claim raw error": {"return refuseClaudeRegistration(diagnostics.ClaudeRegistrationProviderProcessGone)",
 			`return errors.New("claude provider process is unavailable")`},
 		"transaction callback": {"return admitClaudeRegistration(reg, bootstrap, mutator)", "return err"},

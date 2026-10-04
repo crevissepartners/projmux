@@ -7,12 +7,69 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
 // --- Runner declarative behaviour -----------------------------------------
+
+func TestProcessPostCreateContractRejectsInheritedAndConfiguredPane(t *testing.T) {
+	t.Setenv("PROJMUX_PANE", "%inherited")
+	t.Setenv("PROJMUX_RUNTIME", "inherited")
+	t.Setenv("TMUX", "/tmp/inherited-server,42,1")
+	t.Setenv("TMUX_PANE", "%inherited-tmux")
+	cwd := t.TempDir()
+	global := filepath.Join(cwd, "global.toml")
+	writeFileEnsuringDir(t, global, `
+[env]
+PROJMUX_PANE = "%configured"
+PROJMUX_RUNTIME = "configured"
+[hooks.post-create]
+run = "printf \"runtime=%s pane=%s session=%s:%s kind=%s:%s cwd=%s socket=%s tmux=%s tmux-pane=%s\\n\" \"$PROJMUX_RUNTIME\" \"${PROJMUX_PANE+x}\" \"${PROJMUX_SESSION+x}\" \"$PROJMUX_SESSION\" \"${PROJMUX_SESSION_KIND+x}\" \"$PROJMUX_SESSION_KIND\" \"$PROJMUX_CWD\" \"$PROJMUX_SOCKET\" \"${TMUX+x}\" \"${TMUX_PANE+x}\""
+`)
+	var output bytes.Buffer
+	runner := &Runner{GlobalConfigPath: global, Logger: &output}
+	_, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: RuntimeProcess, CWD: cwd, Socket: "projmux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "runtime=process pane= session=x: kind=x: cwd=" + cwd + " socket=projmux tmux= tmux-pane="
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("process hook environment: %q; want %q", output.String(), want)
+	}
+}
+
+func TestTmuxHookPreservesInheritedRoutingEnvironment(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/inherited-server,42,1")
+	t.Setenv("TMUX_PANE", "%inherited-tmux")
+	env := buildHookEnv(Context{SessionName: "created", Kind: "persistent", PaneID: "%created"}, "test")
+	for _, want := range []string{"TMUX=/tmp/inherited-server,42,1", "TMUX_PANE=%inherited-tmux", "PROJMUX_SESSION=created", "PROJMUX_SESSION_KIND=persistent", "PROJMUX_PANE=%created"} {
+		found := slices.Contains(env, want)
+		if !found {
+			t.Fatalf("tmux hook lost %q", want)
+		}
+	}
+}
+
+func TestProcessPostCreateFailureIsReturnedWithoutChangingTmux(t *testing.T) {
+	t.Parallel()
+	cwd := t.TempDir()
+	global := filepath.Join(cwd, "global.toml")
+	writeFileEnsuringDir(t, global, "[hooks.post-create]\nrun = \"exit 7\"\n")
+	for _, host := range []string{RuntimeProcess, ""} {
+		runner := &Runner{GlobalConfigPath: global, Logger: io.Discard}
+		_, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: host, CWD: cwd})
+		if host == RuntimeProcess {
+			if err == nil || !strings.Contains(err.Error(), "status 7") {
+				t.Fatalf("process hook failure: %v", err)
+			}
+		} else if err != nil {
+			t.Fatalf("tmux hook failure became fatal: %v", err)
+		}
+	}
+}
 
 func TestRunnerNoConfigIsNoOp(t *testing.T) {
 	t.Parallel()
