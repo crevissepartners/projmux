@@ -107,6 +107,8 @@ make test
 자세한 내용은 [테스트](docs/testing.md), [구조](docs/architecture.md),
 [저장소 구성](docs/repo-layout.md)에 있습니다.
 
+Pull request는 maintainer만 받습니다. 다른 분은 issue로 알려 주세요.
+
 ## 라이선스
 
 MIT. [LICENSE](LICENSE)를 보세요.
