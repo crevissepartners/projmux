@@ -73,6 +73,9 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 	}
 	waitErr = errors.Join(waitErr, controlErr, syncAttention())
 	if waitErr != nil {
+		if ended, ok := processOwnerEnded(result.owner.registryPath, result.Binding, result.owner.waitRecorded, snapshot, waitErr, stderr); ok {
+			return ended
+		}
 		return processResumeFailure(result.Binding, waitErr)
 	}
 	return processWaitExit(snapshot)

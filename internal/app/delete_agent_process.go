@@ -127,19 +127,24 @@ type processAgentDeleter struct {
 	stop  func(context.Context, coremetadata.Registry, coremetadata.Agent) error
 	// waitLimit bounds Stop -> Wait the same way create rollback bounds it.
 	waitLimit time.Duration
-	poll      time.Duration
-	via       deletionVia
+	// stopAdmission bounds retries of a Stop the live host refused as stale:
+	// its session authority can briefly trail the Registry while a Claude
+	// session starts.
+	stopAdmission time.Duration
+	poll          time.Duration
+	via           deletionVia
 }
 
 func newProcessAgentDeleter() *processAgentDeleter {
 	limits := processhost.DefaultLimits()
 	return &processAgentDeleter{
-		store:     newResourceStore(),
-		alive:     processBirthAlive,
-		stop:      stopProcessAgentOwner,
-		waitLimit: 3*limits.Grace + 2*limits.Write,
-		poll:      25 * time.Millisecond,
-		via:       deletionViaCLI,
+		store:         newResourceStore(),
+		alive:         processBirthAlive,
+		stop:          stopProcessAgentOwner,
+		waitLimit:     3*limits.Grace + 2*limits.Write,
+		stopAdmission: 2 * time.Second,
+		poll:          25 * time.Millisecond,
+		via:           deletionViaCLI,
 	}
 }
 
@@ -402,17 +407,29 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 // stopAndWait asks the owner to Stop and waits, by condition, for the exact
 // Wait receipt of the same binding and the retired activation.
 func (d *processAgentDeleter) stopAndWait(ctx context.Context, target processDeleteTarget) error {
-	registry, err := d.store.load()
-	if err != nil {
-		return MapMetadataError(err)
-	}
-	agent, ok := registry.Agent(target.Agent)
-	if !ok {
-		return processDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning, "registry Agent uid %q disappeared before Stop; nothing was changed", target.Agent)
-	}
 	ctx, cancel := context.WithTimeout(ctx, d.waitLimit)
 	defer cancel()
-	if err := d.stop(ctx, registry, *agent); err != nil {
+	admission := time.Now().Add(d.stopAdmission)
+	var err error
+	for {
+		registry, loadErr := d.store.load()
+		if loadErr != nil {
+			return MapMetadataError(loadErr)
+		}
+		agent, ok := registry.Agent(target.Agent)
+		if !ok {
+			return processDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning, "registry Agent uid %q disappeared before Stop; nothing was changed", target.Agent)
+		}
+		err = d.stop(ctx, registry, *agent)
+		if err == nil || !errors.Is(err, processhost.ErrStale) || !time.Now().Before(admission) || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(d.poll):
+		}
+	}
+	if err != nil {
 		if strings.HasPrefix(err.Error(), processDeleteHostUnavailableToken+":") {
 			return &processDeleteError{Token: processDeleteHostUnavailableToken, Runtime: processDeleteRuntimeRunning, cause: err}
 		}

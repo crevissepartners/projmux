@@ -234,6 +234,7 @@ func TestProcessDeleteRunningAgentActualCLI(t *testing.T) {
 
 func testProcessDeleteRunningAgent(t *testing.T, provider string) {
 	f := newProcessDeleteCLI(t, provider)
+	f.ownerArgs = append(f.ownerArgs, "--", "initial task")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	owner := f.startOwner(t, ctx)
@@ -256,11 +257,58 @@ func testProcessDeleteRunningAgent(t *testing.T, provider string) {
 	if !strings.Contains(stdout, "receipt operation=delete.agent identity=removed address=released topology=removed desired-state=removed runtime=stopped focus=unchanged") {
 		t.Fatalf("receipt runtime: %q", stdout)
 	}
-	if err := owner.wait(); err != nil {
+	if err := owner.wait(); err != nil || strings.Contains(owner.stderr.String(), "delete agent") {
 		t.Fatalf("owner after Stop: %v %s", err, owner.stderr.String())
 	}
-	t.Logf("owner exit after Stop=%d", owner.cmd.ProcessState.ExitCode())
+	if !strings.Contains(owner.stderr.String(), "was deleted by another process; nothing to clean up") &&
+		!strings.Contains(owner.stderr.String(), "was stopped by another process") && owner.stderr.Len() != 0 {
+		t.Fatalf("owner notice: %q", owner.stderr.String())
+	}
 	f.requireDeleted(t, owner)
+}
+
+// An owner whose generation another process stopped ends with its Wait exit,
+// never a delete command, and leaves the Agent offline with its Wait.
+func TestProcessOwnerStoppedElsewhereActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := newProcessDeleteCLI(t, provider)
+			f.ownerArgs = append(f.ownerArgs, "--", "initial task")
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			owner := f.startOwner(t, ctx)
+			// The owner syncs its snapshot only once the provider session is
+			// recorded; a Stop after that is what leaves it a closed host.
+			var reg coremetadata.Registry
+			processCLIUntil(t, ctx, func() bool {
+				reg = f.registry(t)
+				pane, _ := reg.Pane(owner.pane)
+				session := pane.Status.ProcessSession
+				return session != nil && (session.SessionID != "" || session.ThreadID != "")
+			})
+			agent, _ := reg.Agent(owner.agent)
+			before, _ := reg.Pane(owner.pane)
+			generation := before.Status.ProcessSession.Binding.Generation
+			// The same bounded stale retry the delete route uses.
+			stopper := newProcessAgentDeleter()
+			stopper.store = &resourceStore{load: func() (coremetadata.Registry, error) { return f.store.LoadReadOnly() }}
+			if err := stopper.stopAndWait(ctx, processDeleteTarget{Agent: agent.Metadata.UID, Pane: owner.pane, binding: before.Status.ProcessSession.Binding}); err != nil {
+				t.Fatalf("external Stop: %v", err)
+			}
+			if err := owner.wait(); err != nil || strings.Contains(owner.stderr.String(), "delete agent") {
+				t.Fatalf("stopped owner: %v %q", err, owner.stderr.String())
+			}
+			t.Logf("stopped owner stderr=%q", owner.stderr.String())
+
+			after := f.registry(t)
+			kept, _ := after.Agent(owner.agent)
+			pane, _ := after.Pane(owner.pane)
+			if kept == nil || kept.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() ||
+				pane.Status.ProcessSession.Binding.Generation != generation || pane.Status.LastTermination == nil {
+				t.Fatal("stopped generation was not kept offline with its Wait")
+			}
+		})
+	}
 }
 
 // The cleanup command process creation prints on a failed rollback runs as

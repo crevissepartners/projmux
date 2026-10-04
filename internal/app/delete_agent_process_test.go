@@ -14,6 +14,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 // processDeleteFixture turns the session harness Agent into a live process
@@ -91,9 +92,10 @@ func (p *processDeleteProbe) deleter(reg *coremetadata.Registry) *processAgentDe
 			}
 			return nil
 		},
-		waitLimit: 200 * time.Millisecond,
-		poll:      time.Millisecond,
-		via:       deletionViaCLI,
+		waitLimit:     200 * time.Millisecond,
+		stopAdmission: 20 * time.Millisecond,
+		poll:          time.Millisecond,
+		via:           deletionViaCLI,
 	}
 }
 
@@ -173,6 +175,10 @@ func TestProcessDeleteRunningStopsThroughOwnerThenDeletes(t *testing.T) {
 			reg, agent, pane := processDeleteFixture(t, provider)
 			probe := &processDeleteProbe{host: true, child: true}
 			probe.onStop = func() error {
+				if probe.stops == 1 {
+					// A just-started session can briefly refuse as stale.
+					return processhost.ErrStale
+				}
 				recordFixtureWait(t, reg, pane)
 				probe.host, probe.child = false, false
 				return nil
@@ -183,7 +189,7 @@ func TestProcessDeleteRunningStopsThroughOwnerThenDeletes(t *testing.T) {
 				t.Fatalf("dry-run out=%q err=%v stops=%d", out, err, probe.stops)
 			}
 			out, err = runProcessDelete(reg, deleter, "uid:"+agent, "--yes")
-			if err != nil || probe.stops != 1 || !strings.Contains(out, "runtime=stopped evidence=wait:normal exit=0") || !strings.Contains(out, " runtime=stopped focus=") {
+			if err != nil || probe.stops != 2 || !strings.Contains(out, "runtime=stopped evidence=wait:normal exit=0") || !strings.Contains(out, " runtime=stopped focus=") {
 				t.Fatalf("delete out=%q err=%v stops=%d", out, err, probe.stops)
 			}
 			if _, ok := reg.Agent(agent); ok {
@@ -203,6 +209,9 @@ func TestProcessDeleteRefusalsLeaveRegistryUnchanged(t *testing.T) {
 		"stop unconfirmed":    {probe: processDeleteProbe{host: true, child: true}, token: processDeleteStopUnconfirmedToken},
 		"host unreachable": {probe: processDeleteProbe{host: true, child: true, onStop: func() error {
 			return errors.New("process-host-unavailable: dial unix: connection refused")
+		}}, token: processDeleteHostUnavailableToken},
+		"host stays stale past admission": {probe: processDeleteProbe{host: true, child: true, onStop: func() error {
+			return processhost.ErrStale
 		}}, token: processDeleteHostUnavailableToken},
 		"host refused stop": {probe: processDeleteProbe{host: true, child: true, onStop: func() error {
 			return errors.New("stale")
