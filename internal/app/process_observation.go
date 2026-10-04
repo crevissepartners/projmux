@@ -72,7 +72,7 @@ func processObservationOwnership(reg coremetadata.Registry, binding processhost.
 	}
 	a := pane.Status.Activation
 	if a.Kind != coremetadata.RuntimeProcess || a.Process == nil || a.RuntimeID != "" || a.Generation != binding.Generation || a.OperationID != binding.Operation || a.AgentUID != binding.Agent ||
-		processSchemaBinding(a.Process.Binding) != binding || a.Process.HostProcess != view.Host || a.Process.Child != view.Child || !view.Host.Valid() || !view.Child.Valid() || view.Host.OwnerUID != uint32(os.Getuid()) || view.Child.OwnerUID != uint32(os.Getuid()) {
+		processSchemaBinding(a.Process.Binding) != binding || a.Process.HostProcess != view.Host || a.Process.Child != view.Child || !view.Host.Valid() || !view.Child.Valid() || int64(view.Host.OwnerUID) != int64(os.Getuid()) || int64(view.Child.OwnerUID) != int64(os.Getuid()) {
 		return false
 	}
 	return true
