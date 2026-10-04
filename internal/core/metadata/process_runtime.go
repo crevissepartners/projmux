@@ -249,19 +249,23 @@ func (m Mutator) RecordProcessActivation(reg *Registry, activation ProcessActiva
 		return stateErr(op, ErrInvalidRegistry, "exact managed process reservation is unavailable")
 	}
 	record := pane.Status.ProcessSession
-	if !processClaudeSessionMatches(record, binding, session, true) || agent.Spec.Provider != "claude" {
+	if !processActivationSessionMatches(record, binding, agent.Spec.Provider, session, true) {
 		return stateErr(op, ErrInvalidRegistry, "current process session reservation is unavailable")
 	}
 	if !pane.Status.Activation.IsZero() && (!currentProcessActivation(pane.Status.Activation, binding) || *pane.Status.Activation.Process != activation) {
 		return stateErr(op, ErrInvalidRegistry, "process activation already belongs to another child")
 	}
-	if currentProcessActivation(pane.Status.Activation, binding) && record.SessionID == session && record.ConnectionID == binding.OperationID {
+	if currentProcessActivation(pane.Status.Activation, binding) && processActivationSessionMatches(record, binding, agent.Spec.Provider, session, false) && record.ConnectionID == binding.OperationID {
 		return nil
 	}
 	next := reg.Clone()
 	target, _ := next.Pane(binding.PaneUID)
 	target.Status.Activation = PaneActivation{Kind: RuntimeProcess, AgentUID: binding.AgentUID, Generation: binding.Generation, OperationID: binding.OperationID, Process: &activation}
-	target.Status.ProcessSession.SessionID = session
+	if agent.Spec.Provider == "codex" {
+		target.Status.ProcessSession.ThreadID = session
+	} else {
+		target.Status.ProcessSession.SessionID = session
+	}
 	target.Status.ProcessSession.ConnectionID = binding.OperationID
 	if err := next.Validate(); err != nil {
 		return err
@@ -269,4 +273,16 @@ func (m Mutator) RecordProcessActivation(reg *Registry, activation ProcessActiva
 	next.UpdatedAt = m.clock()().UTC()
 	*reg = next
 	return nil
+}
+
+// Process conversation evidence is provider-specific. An empty conversation or
+// connection may only be filled in the exact current startup reservation.
+func processActivationSessionMatches(record *ProcessSessionRecord, binding ProcessBinding, provider, session string, allowReserved bool) bool {
+	if provider == "claude" {
+		return processClaudeSessionMatches(record, binding, session, allowReserved)
+	}
+	if record == nil || provider != "codex" || record.Provider != provider || record.Binding != binding || record.SessionID != "" {
+		return false
+	}
+	return (record.ThreadID == session || (allowReserved && record.ThreadID == "")) && (record.ConnectionID == binding.OperationID || (allowReserved && record.ConnectionID == ""))
 }

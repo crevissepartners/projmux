@@ -234,19 +234,20 @@ func (e CodexProcessRouteEvidence) sameAuthority(other ProviderAuthorityRef) boo
 // live exact Handle proof are both required; the public resolver stays tmux-only.
 func ResolveProcessCodexRoute(reg Registry, agentUID string, e CodexProcessRouteEvidence, verify func(CodexProcessRouteEvidence) bool) (AgentRouteRef, string) {
 	refused := func() (AgentRouteRef, string) { return AgentRouteRef{}, "process Codex authority is unavailable" }
-	agent, ok := reg.Agent(agentUID)
-	pane, found := reg.Pane(e.PaneUID)
-	if !ok || !found || !e.Valid() || agent.Spec.Provider != "codex" || agent.Status.Phase != PhaseRunning || agent.Status.PaneRef != e.PaneUID || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != KindWindow || pane.Spec.Role != PaneRoleAgent || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindAgent || pane.Metadata.OwnerUID() != agentUID {
+	pane, ok := reg.Pane(e.PaneUID)
+	if !ok || pane.Status.Activation.Process == nil || !e.Valid() {
 		return refused()
 	}
-	a := pane.Status.Activation
-	window, wok := reg.Window(agent.Metadata.OwnerUID())
-	if !wok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != KindProject || a.RuntimeID != "" || a.AgentUID != agentUID || a.Generation != e.Generation || verify == nil || !verify(e) {
+	binding := pane.Status.Activation.Process.Binding
+	activation, provider, current := reg.CurrentProcessActivation(binding)
+	agent, found := reg.Agent(agentUID)
+	expected := CodexProcessRouteEvidence{HostInstance: binding.HostInstanceID, PaneUID: binding.PaneUID, Generation: binding.Generation, ThreadID: e.ThreadID, Connection: binding.OperationID, Process: activation.Child, HostProcess: activation.HostProcess}
+	if !current || !found || provider != "codex" || agent.Status.Phase != PhaseRunning || binding.AgentUID != agentUID ||
+		expected != e ||
+		!processActivationSessionMatches(pane.Status.ProcessSession, binding, "codex", e.ThreadID, false) || verify == nil || !verify(e) {
 		return refused()
 	}
-	if _, ok := reg.Project(window.Metadata.OwnerUID()); !ok {
-		return refused()
-	}
+
 	return AgentRouteRef{AgentUID: agentUID, PaneUID: e.PaneUID, Generation: e.Generation, authority: e}, ""
 }
 

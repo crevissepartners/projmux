@@ -219,7 +219,7 @@ func TestCodexProcessForegroundExactPeerControls(t *testing.T) {
 						return processhost.ErrStale
 					}
 					p.Status.Activation.Generation = value
-					if provider == "claude" {
+					if provider == "claude" || provider == "codex" {
 						p.Status.Activation.Process.Binding.Generation = value
 						p.Status.ProcessSession.Binding.Generation = value
 					}

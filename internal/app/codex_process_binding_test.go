@@ -59,8 +59,8 @@ for line in sys.stdin:
   reply({'turn':{'id':current}})
   prompt=n['params']['input'][0]['text']
   if prompt=='controls' or prompt.startswith('{'):
-   a={'id':1,'method':'item/commandExecution/requestApproval','params':{'threadId':'process-thread','turnId':current,'itemId':'command','startedAtMs':1,'command':'echo fixture','cwd':'/fixture','availableDecisions':['accept','decline','cancel']}}
-   q={'id':'1','method':'item/tool/requestUserInput','params':{'threadId':'process-thread','turnId':current,'itemId':'question','isBlocking':True,'questions':[{'id':'q','question':'Color?','options':[{'label':'blue'},{'label':'red'}]}]}}
+   a={'id':turn,'method':'item/commandExecution/requestApproval','params':{'threadId':'process-thread','turnId':current,'itemId':'command','startedAtMs':1,'command':'echo fixture','cwd':'/fixture','availableDecisions':['accept','decline','cancel']}}
+   q={'id':str(turn),'method':'item/tool/requestUserInput','params':{'threadId':'process-thread','turnId':current,'itemId':'question','isBlocking':True,'questions':[{'id':'q','question':'Color?','options':[{'label':'blue'},{'label':'red'}]}]}}
    emit(a);emit(q);emit(a);emit(q)
   elif prompt!='hold':complete()
  elif method=='turn/interrupt':reply({});complete()
@@ -108,7 +108,16 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	window, _ := h.registry.Window(agent.Metadata.OwnerUID())
 	pane.Status.Activation.RuntimeID = ""
 	b := processhost.Binding{Host: "host-" + suffix, Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agentUID, Pane: paneUID, Generation: pane.Status.Activation.Generation, Operation: pane.Status.Activation.OperationID}
-	path := intmetadata.PathFor(filepath.Join(root, "state"))
+
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	pane.Status.Activation = coremetadata.PaneActivation{}
+	agent.Status.Activation = coremetadata.AgentActivation{}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	agent.Metadata.Annotations[coremetadata.AnnotationAgentQuestionChannel] = coremetadata.QuestionChannelOn
+	pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "codex", Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, ResumeState: coremetadata.ProcessResumeUnknown}
+	path := intmetadata.PathFor(filepath.Join(root, "state", "projmux"))
 	store := intmetadata.NewStore(path)
 	if _, err = store.Update(func(r *coremetadata.Registry) error { *r = h.registry.Clone(); return nil }); err != nil {
 		t.Fatal(err)
@@ -125,7 +134,7 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 			return err
 		}
 		p, ok := r.Pane(b.Pane)
-		if !ok || p.Status.Activation.Generation != b.Generation || p.Status.Activation.OperationID != b.Operation {
+		if !ok || p.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || p.Status.ProcessSession == nil || processSchemaBinding(p.Status.ProcessSession.Binding) != b {
 			return processhost.ErrStale
 		}
 		return nil
@@ -144,7 +153,12 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	limits.Events = events
 	limits.Grace = 200 * time.Millisecond
 	limits.Startup = 8 * time.Second
-	host, err := processhost.NewHost(b.Host, processhost.Command{Path: binary, Args: []string{"internal", "codex-process-test-supervisor"}, Env: env}, tx, limits)
+	supervisor := processhost.Command{Path: binary, Args: []string{"internal", "codex-process-test-supervisor"}, Env: env}
+	if product := os.Getenv("PMX_TEST_CLI"); product != "" {
+		supervisor.Path = product
+		supervisor.Args = []string{"internal", "process-host-supervisor"}
+	}
+	host, err := processhost.NewHost(b.Host, supervisor, tx, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,6 +350,8 @@ func TestCodexProcessTimeoutDisconnectAndGenerationNeverAutoAllow(t *testing.T) 
 				_, _, err := f.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 					p, _ := reg.Pane(e.binding.Pane)
 					p.Status.Activation.Generation = "replaced-generation"
+					p.Status.Activation.Process.Binding.Generation = "replaced-generation"
+					p.Status.ProcessSession.Binding.Generation = "replaced-generation"
 					return nil
 				})
 				if err != nil {
@@ -417,6 +433,8 @@ func TestCodexProcessBidirectionalEndpointReceiptsAndReplayWireZero(t *testing.T
 	reg, _ := right.store.LoadDegradedReadOnly()
 	p, _ := reg.Pane(right.endpoint.binding.Pane)
 	p.Status.Activation.Generation = "old-generation"
+	p.Status.Activation.Process.Binding.Generation = "old-generation"
+	p.Status.ProcessSession.Binding.Generation = "old-generation"
 	_, _, err = right.store.UpdateConvergent(func(r *coremetadata.Registry) error { *r = reg; return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -469,6 +487,8 @@ func TestCodexProcessMessageBusyAndStaleReceiptsNeverWrite(t *testing.T) {
 	_, _, err = left.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		p, _ := reg.Pane(left.endpoint.binding.Pane)
 		p.Status.Activation.Generation = "new-generation"
+		p.Status.Activation.Process.Binding.Generation = "new-generation"
+		p.Status.ProcessSession.Binding.Generation = "new-generation"
 		return nil
 	})
 	if err != nil {
