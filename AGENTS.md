@@ -24,11 +24,9 @@ git merge-base --is-ancestor origin/main HEAD
 git push -u origin <branch>            # after a rebase: git push --force-with-lease
 gh pr create --title '<type>(<scope>): <summary>' --body-file <body.md>   # body: docs/pr-guideline.md
 
-# long local gates, while CI runs on that head
-make test-integration
-make test-e2e
-
-# merge only when the full local sequence, the required checks, and the aggregate `Test` check are green
+# integration and e2e: judged by the same-head CI jobs `Integration Tests` and `E2E Tests`; no local run
+# merge only when the fast local gates passed and, on the same head, the five required checks
+# (`Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, `E2E Tests`) and the aggregate `Test` check are green
 gh pr checks <num> --watch
 gh pr merge <num> --squash --delete-branch   # add --auto to queue it
 
@@ -84,9 +82,9 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - Check ancestry before every first push or force-push. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so publishing that state only produces a failed CI run.
 - If `main` advanced before publishing, rebase and restart the fast local gates for the new head.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and tests are separate gates.
-- Publish as soon as the fast gates pass. Do not serialize remote CI behind the long local gates.
-- If a local or remote gate fails, keep the merge blocked, fix the cause, and publish a new validated head the same way.
-- Any rebase invalidates earlier local gate evidence. Rerun the full local sequence for the rebased head, and start its CI after the fast gates.
+- Publish as soon as the fast gates pass. Integration and e2e coverage comes from the same-head CI jobs `Integration Tests` and `E2E Tests`, not from local runs.
+- If a fast local gate or a same-head CI check fails, keep the merge blocked, fix the cause, and publish a new head the same way: fast local gates, then new same-head CI.
+- Any rebase invalidates earlier gate evidence, local and CI. Rerun the fast local gates for the rebased head, publish it, and judge it by its own new same-head CI.
 - `make install` atomically replaces `$(go env GOPATH)/bin/projmux` and runs `projmux config apply`.
 - Never run `make install` before the merge and `git pull --ff-only`. Pre-merge state has not cleared CI and may not match `main`.
 - In a linked worktree, `go build` stamps the enclosing checkout's `vcs.revision` (Go only treats a `.git` directory as a repository root), so `make build` there stamps no revision and says why. Prove a build's provenance with the binary's sha256 and the merge commit, not `vcs.revision`; a worktree build without `vcs.revision` is expected.
