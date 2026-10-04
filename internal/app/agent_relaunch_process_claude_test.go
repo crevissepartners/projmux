@@ -34,6 +34,42 @@ func TestProcessRelaunchPromptGrammar(t *testing.T) {
 	}
 }
 
+// Early refusals must not reach the Registry writer or either runtime.
+func TestProcessClaudeRelaunchEarlyRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		flags     []string
+		replyOnly bool
+		want      string
+	}{
+		{name: "reply-only", flags: []string{"--model", "haiku", "--yes", "--", "task"}, replyOnly: true, want: replyOnlyReasonLaunchFixed},
+		{name: "named socket", flags: []string{"--socket", "isolated", "--dry-run"}, want: "process agents do not use a tmux socket"},
+		{name: "socket path", flags: []string{"--socket-path", "/tmp/process-relaunch-test.sock", "--dry-run"}, want: "process agents do not use a tmux socket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := New()
+			reg, _, paneUID := processInventoryFixture(t)
+			pane, _ := reg.Pane(paneUID)
+			pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+			pane.Status.Activation = coremetadata.PaneActivation{}
+			agent, _ := reg.Agent(pane.Metadata.OwnerUID())
+			if tc.replyOnly {
+				if agent.Metadata.Annotations == nil {
+					agent.Metadata.Annotations = make(map[string]string)
+				}
+				agent.Metadata.Annotations[coremetadata.AnnotationAgentDialogueReplyOnly] = coremetadata.DialogueReplyOnlyOn
+			}
+			before := reg.Clone()
+			app.agent.loadRegistry = func() (coremetadata.Registry, error) { return reg, nil }
+			var stdout, stderr bytes.Buffer
+			err := app.agent.runRelaunch(append([]string{"uid:" + agent.Metadata.UID}, tc.flags...), &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || stdout.Len() != 0 || !reflect.DeepEqual(reg, before) {
+				t.Fatalf("err=%v stdout=%q Registry unchanged=%v", err, stdout.String(), reflect.DeepEqual(reg, before))
+			}
+		})
+	}
+}
+
 func startProcessRelaunchCLI(t *testing.T, ctx context.Context, f processCreateCLI, ref string, flags ...string) (*processResumeCLIInvocation, agentRelaunchResult) {
 	t.Helper()
 	args := append([]string{"agent", "relaunch", ref, "-o", "json"}, flags...)
