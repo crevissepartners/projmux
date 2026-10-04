@@ -609,7 +609,7 @@ func (c *deleteCommand) runProcessAgentDelete(spelling string, plan deletePlan, 
 	if err != nil {
 		return err
 	}
-	if err := writeProcessDeletePlan(stdout, spelling, plan, []processDeleteTarget{result.target}, dryRun); err != nil {
+	if err := writeProcessDeletePlan(stdout, spelling, plan, result.target, dryRun); err != nil {
 		return err
 	}
 	if dryRun {
@@ -625,7 +625,7 @@ func (c *deleteCommand) runProcessAgentDelete(spelling string, plan deletePlan, 
 	return flushDeleteResult(stdout)
 }
 
-func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, targets []processDeleteTarget, dryRun bool) error {
+func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, classified processDeleteTarget, dryRun bool) error {
 	var b strings.Builder
 	verb := "deleting"
 	if dryRun {
@@ -633,7 +633,7 @@ func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, 
 	}
 	fmt.Fprintf(&b, "%s: %s %d %s and %d descendant resource%s\n",
 		spelling, verb, len(plan.Targets), "agent"+plural(len(plan.Targets)), plan.Cascades(), plural(plan.Cascades()))
-	for i, target := range plan.Targets {
+	for _, target := range plan.Targets {
 		fmt.Fprintf(&b, "%s uid=%s", resourceRef(target.Match), target.Match.UID)
 		if owner := target.Match.Owner.String(); owner != "" {
 			fmt.Fprintf(&b, " owner=%s", owner)
@@ -642,10 +642,9 @@ func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, 
 		for _, descendant := range target.Descendants {
 			fmt.Fprintf(&b, "  cascade %s/%s uid=%s\n", strings.ToLower(string(descendant.Kind)), descendant.Name, descendant.UID)
 		}
-		if i >= len(targets) {
+		if target.Match.UID != classified.Agent {
 			continue
 		}
-		classified := targets[i]
 		action := "deleted"
 		if dryRun {
 			action = "would delete"
