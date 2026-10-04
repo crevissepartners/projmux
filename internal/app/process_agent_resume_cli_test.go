@@ -939,3 +939,46 @@ func TestDeferredSupervisorSpawnFailureActualCLI(t *testing.T) {
 	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 	source.shutdown(t)
 }
+
+func TestDeferredPeerWakeLatencyActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			target := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "target task"))
+			target.shutdown(t)
+			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
+			// Probe the unclaimed target until the source's live route is ready.
+			for {
+				out, _ := exec.CommandContext(ctx, f.binary, "agent", "message", "send", target.ref, "--source", source.ref, "--", "route probe").CombinedOutput()
+				if bytes.Contains(out, []byte("target Agent is not eligible")) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("source route never ready")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			claim := startDeferredCLIClaim(t, ctx, f, target.ref)
+			started := time.Now()
+			out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", target.ref, "--source", source.ref, "--message-ref", "natural-wake", "--", "natural peer wake").CombinedOutput()
+			if err != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
+				t.Fatalf("send %v %s", err, out)
+			}
+			line, err := claim.output.ReadString('\n')
+			if err != nil || !strings.Contains(line, "foreground=owned") {
+				t.Fatalf("wake %v %s %s", err, line, claim.stderr.String())
+			}
+			deferredCLIStatus(t, ctx, f, "natural-wake", "delivered")
+			latency := time.Since(started)
+			if latency > 5*time.Second {
+				t.Fatalf("send-to-delivered latency %s", latency)
+			}
+			t.Logf("provider=%s natural send-to-delivered wake latency=%s", provider, latency)
+			claim.finish(t)
+			source.shutdown(t)
+		})
+	}
+}
