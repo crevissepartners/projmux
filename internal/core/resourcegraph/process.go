@@ -43,20 +43,21 @@ func (p ProcessInventory) Declares(pane coremetadata.Pane) bool {
 }
 
 func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) {
+	generation, retired := processGeneration(pane)
 	var key *ProcessKey
 	for _, k := range p.Declared {
-		if !k.Valid() || k.Pane != pane.Metadata.UID || k.Generation != pane.Status.Activation.Generation {
+		if !k.Valid() || k.Pane != pane.Metadata.UID || k.Generation != generation {
 			continue
 		}
 		if key != nil {
-			return &ProcessKey{Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation}, StatusUnknown
+			return &ProcessKey{Pane: pane.Metadata.UID, Generation: generation}, StatusUnknown
 		}
 		copy := k
 		key = &copy
 	}
 	if key == nil {
 		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
-			return &ProcessKey{Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation}, StatusUnknown
+			return &ProcessKey{Pane: pane.Metadata.UID, Generation: generation}, StatusUnknown
 		}
 		return nil, StatusUnknown
 	}
@@ -73,11 +74,28 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 			return key, StatusUnknown
 		}
 		found = true
-		if observation.Status == StatusLive || observation.Status == StatusOffline {
+		switch {
+		case retired:
+			// A retired generation has no live owner. Only its own exact
+			// supervisor Wait receipt can prove offline.
+			if observation.Status == StatusOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
+				status = StatusOffline
+			}
+		case observation.Status == StatusLive || observation.Status == StatusOffline:
 			status = observation.Status
 		}
 	}
 	return key, status
+}
+
+// processGeneration names the generation a declaration must match. A process
+// Pane whose activation was retired after its recorded Wait is still
+// identified by the generation of its durable session record.
+func processGeneration(pane coremetadata.Pane) (string, bool) {
+	if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess && pane.Status.Activation.IsZero() && pane.Status.ProcessSession != nil {
+		return pane.Status.ProcessSession.Binding.Generation, true
+	}
+	return pane.Status.Activation.Generation, false
 }
 
 // ProcessAction is the capability boundary for Pane-only operations.

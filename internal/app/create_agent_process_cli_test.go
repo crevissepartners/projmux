@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -106,6 +107,10 @@ func TestProcessCreateActualCLIIsolated(t *testing.T) {
 			pane, _ := reg.Pane(agent.Status.PaneRef)
 			if agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil {
 				t.Fatal("EOF lost actual Wait retirement")
+			}
+			// The recorded Wait projects the retired Agent offline, not unknown.
+			if described, err := exec.CommandContext(ctx, binary, "describe", "agent", agentRef).CombinedOutput(); err != nil || !regexp.MustCompile(`(?m)^Status: +offline$`).Match(described) {
+				t.Fatalf("retired Agent status: %v\n%s", err, described)
 			}
 			raw, _ := os.ReadFile(trace)
 			var frame map[string]any
