@@ -43,7 +43,7 @@ func (p ProcessInventory) Declares(pane coremetadata.Pane) bool {
 }
 
 func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) {
-	generation, retired := processGeneration(pane)
+	generation, fromSession := processGeneration(pane)
 	var key *ProcessKey
 	for _, k := range p.Declared {
 		if !k.Valid() || k.Pane != pane.Metadata.UID || k.Generation != generation {
@@ -75,9 +75,10 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 		}
 		found = true
 		switch {
-		case retired:
-			// A retired generation has no live owner. Only its own exact
-			// supervisor Wait receipt can prove offline.
+		case fromSession:
+			// Without an activation there is no live owner: the generation was
+			// either retired after its Wait or reserved and not yet spawned.
+			// Only its own exact supervisor Wait receipt can prove offline.
 			if observation.Status == StatusOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
 				status = StatusOffline
 			}
@@ -89,8 +90,9 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 }
 
 // processGeneration names the generation a declaration must match. A process
-// Pane whose activation was retired after its recorded Wait is still
-// identified by the generation of its durable session record.
+// Pane without an activation is identified by its durable session record, and
+// the second result reports that. Such a session is either retired after its
+// recorded Wait or reserved and not yet spawned; it is never a live owner.
 func processGeneration(pane coremetadata.Pane) (string, bool) {
 	if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess && pane.Status.Activation.IsZero() && pane.Status.ProcessSession != nil {
 		return pane.Status.ProcessSession.Binding.Generation, true
