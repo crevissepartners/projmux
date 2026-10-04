@@ -8,6 +8,24 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
+func TestProcessSpecificationRequiresHostEvidence(t *testing.T) {
+	reg := testRegistry(t)
+	pane, _ := reg.Pane("pane-alpha-agent")
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	pane.Status.Activation = coremetadata.PaneActivation{}
+	graph := Resolve(reg, Inventory{})
+	node := paneNode(t, graph, pane.Metadata.UID)
+	if node.Process == nil || node.Runtime != nil || node.Status != StatusUnknown {
+		t.Fatalf("process declaration lost without host evidence: %+v", node)
+	}
+	if !(ProcessInventory{}).Declares(*pane) {
+		t.Fatal("process specification lost convergence protection")
+	}
+	if _, err := (ProcessInventory{}).AdmitProcess(*pane, ProcessTurn); err == nil {
+		t.Fatal("missing activation authorized a process turn")
+	}
+}
+
 func TestProcessInventoryMixedMissingRootAndUnavailable(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		for _, live := range []bool{false, true} {

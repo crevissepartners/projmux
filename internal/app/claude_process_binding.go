@@ -40,6 +40,7 @@ func (claudeProcessProof) String() string   { return "[private process binding]"
 func (claudeProcessProof) GoString() string { return "[private process binding]" }
 
 type claudeProcessCheck struct {
+	Observe    *processhost.Binding `json:",omitempty"`
 	Binding    processhost.Binding
 	Session    string
 	Register   bool
@@ -163,6 +164,22 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	}
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
+	if request.Observe != nil {
+		if request.Foreground != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
+			return
+		}
+		result := processForegroundResult{Stale: true}
+		binding := *request.Observe
+		snap, readErr := s.handle.Observe(binding)
+		host, _, hostErr := localipc.Process(os.Getpid())
+		reg, regErr := intmetadata.NewStore(s.registryPath).LoadDegradedReadOnly()
+		view := processHostObservation{Binding: binding, Provider: snap.Provider, State: snap.State, Host: host, Child: s.ownedProcess, Exit: snap.Exit}
+		if readErr == nil && hostErr == nil && regErr == nil && binding == s.binding && snap.PID == s.ownedProcess.PID && processObservationMatches(reg, binding, view) {
+			result = processForegroundResult{Accepted: true, Observation: &view}
+		}
+		_ = localipc.WriteJSON(conn, result)
+		return
+	}
 	if request.Foreground != nil {
 		if request.Input != nil || request.Register || request.Lookup {
 			return
