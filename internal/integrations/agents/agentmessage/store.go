@@ -178,6 +178,15 @@ func (s *Store) Get(messageRef string) (Record, bool, error) {
 // message ref returns the existing record only when the caller-controlled
 // immutable envelope and original TTL match.
 func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Record, bool, error) {
+	return s.putAccepted(envelope, adapter, "")
+}
+
+// PutDeferred atomically accepts and holds a peer for a live claimant.
+func (s *Store) PutDeferred(envelope coremessage.Envelope, adapter string) (Record, bool, error) {
+	return s.putAccepted(envelope, adapter, "target-awaiting-resume")
+}
+
+func (s *Store) putAccepted(envelope coremessage.Envelope, adapter, hold string) (Record, bool, error) {
 	if err := envelope.Validate(); err != nil {
 		return Record{}, false, err
 	}
@@ -218,6 +227,9 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 		if !changed {
 			return coremessage.EnvelopeRefusal(coremessage.ReasonQualificationInvalid,
 				"the accept event is not admissible for this envelope")
+		}
+		if hold != "" {
+			delivery, _ = coremessage.Reduce(delivery, envelope, coremessage.Event{Kind: coremessage.EventHold, MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: hold, ObservedAt: envelope.AcceptedAt})
 		}
 		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapter}
 		state.Records = append(state.Records, out)

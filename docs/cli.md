@@ -119,7 +119,7 @@ Allowed effects:
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [-o <mode>] [-- <prompt>]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
@@ -228,16 +228,22 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [-o <mode>] [-- <prompt>]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
 ```
 
 Process resume keeps the Agent UID and Pane UID, starts a fresh owned host generation, and never creates a replacement conversation. It requires processSession.resumeState=resumable and no live owner.
 
-Process Claude requires -- <prompt>: stream-json emits init only after the first user frame. Codex can reattach without a prompt. This is a new user turn; interrupted turns are not resent.
+Without --wait-for-peer, process Claude requires -- <prompt>: stream-json emits init only after the first user frame. Codex can reattach without a prompt. This is a new user turn; interrupted turns are not resent.
 
 Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process foreground=owned. Other -o projections keep their format with ownership on stderr, none suppresses displays, and pane-id is refused. Exit is actual provider Wait, including 128+signal; stdin EOF, INT and TERM stop only this owned provider. The receipt operation is agent.resume: identity reused, address/topology/desired-state unchanged, runtime materialized, and focus unchanged; tmux resume keeps its existing result without a receipt.
 
 Process resume remains foreground-owned: stdin EOF terminates this owned provider, so </dev/null and ordinary CI or cron invocation can end it immediately. Keep stdin open for the intended lifetime; no daemon or detached resume is started.
+
+--wait-for-peer claims one Offline, resumable process Agent without starting its provider. It cannot be combined with a prompt, --dialogue-reply-only or a tmux Agent. The first peer message resumes the recorded conversation as untrusted coordination; the remaining held messages follow in acceptance order.
+
+A waiting claim prints agent uid:<agent> pane uid:<pane> runtime=process foreground=claimed, followed by the usual foreground=owned result after resume. Other -o modes put ownership on stderr; none suppresses output. EOF, INT or TERM before provider startup release the claim and exit 0; after startup exit is actual provider Wait. Keep stdin open: </dev/null and ordinary cron invocation end the claim immediately.
+
+Only one exact live claimant can own a deferred Agent. A second claim or ordinary resume is refused with process-resume-owned. A killed claimant is replaced on the next claim attempt, preserving undispatched messages until their deadlines; a potentially dispatched frame is failed with outcomeUnknown and never automatically resent.
 
 Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival is unavailable. Process Claude and Codex can change their launch configuration through agent relaunch.
 

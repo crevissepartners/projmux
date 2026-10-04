@@ -454,6 +454,9 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		}
 		return fmt.Errorf("%s: %s: %w", spelling, claudeRouteRefusalPrefix("source", err), err)
 	}
+	if handled, deferredErr := c.sendDeferredPeer(registry, source, target, sourceRoute, messageRef, replyTo, args[separator+1], ttl, stdout, stderr); handled {
+		return deferredErr
+	}
 	targetRoute, err := c.resolveMessageTargetRoute(registry, target)
 	if err != nil {
 		if replyTo != "" {
@@ -482,6 +485,13 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		ConversationRef: conversationRef, ReplyTo: replyTo,
 		Source: publicMessageRoute(sourceRoute), Target: publicMessageRoute(targetRoute), Authority: coremessage.PeerAuthority(),
 		Payload: args[separator+1], AcceptedAt: now, Deadline: now.Add(ttl)}
+	// A first-frame deferred delivery keeps its retired address as receipt
+	// evidence. Replays use that stored address and never dispatch again.
+	if existing, found, getErr := c.messageStore.Get(messageRef); getErr != nil {
+		return getErr
+	} else if found && existing.Delivery.Reason == "provider-resume-first-frame" && existing.Envelope.Target.AgentUID == target.Metadata.UID && targetRoute.AcceptsIncarnation(existing.Envelope.Target.Incarnation) {
+		envelope.Target = existing.Envelope.Target
+	}
 	if replyTo != "" {
 		original, found, getErr := c.messageStore.Get(replyTo)
 		if getErr != nil || !found {
@@ -917,6 +927,11 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-removed"))
 		} else if capabilityErr := requireAgentMessageCapability("message.status", *target); capabilityErr != nil {
 			return capabilityErr
+		} else if record.Delivery.State == coremessage.StateHeld && record.Delivery.Reason == deferredHoldReason {
+			record, found, err = c.messageStore.Status(refs[0], c.messageClock())
+			if err == nil && !found {
+				err = messagestore.ErrNotFound
+			}
 		} else if route, routeErr := c.resolveMessageRoute(registry, *target); routeErr != nil || !messageRouteAccepts(route, record.Envelope.Target) {
 			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-activation-stale"))
 		} else if record.Delivery.State == coremessage.StateHeld {
@@ -1188,7 +1203,7 @@ func writeAgentMessageReceiptText(stdout io.Writer, receipt agentMessageReceipt,
 	}
 	if receipt.Delivery.State == coremessage.StateHeld {
 		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State,
-			receipt.Delivery.Reason, agentMessageHeldAction(receipt.MessageRef), source)
+			receipt.Delivery.Reason, agentMessageHeldReceiptAction(receipt), source)
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, "%s\t%s%s\n", receipt.MessageRef, receipt.Delivery.State, source)

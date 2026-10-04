@@ -28,15 +28,17 @@ type processAgentResumeOptions struct {
 	Scope         processResumeScope
 	Prompt        processResumeFirstFrame
 	Model, Effort string
+	claim         *deferredProcessClaim
 }
 type processAgentResumeRequest struct{ options processAgentResumeOptions }
 type processAgentResumeResult struct {
-	Binding         processhost.Binding
-	Handle          processOwnedHandle
-	Previous        processResumePrevious
-	owner           processAgentCreateResult
-	previousBinding processhost.Binding
-	previousRecord  *coremetadata.ProcessSessionRecord
+	Binding                 processhost.Binding
+	Handle                  processOwnedHandle
+	Previous                processResumePrevious
+	owner                   processAgentCreateResult
+	previousBinding         processhost.Binding
+	previousRecord          *coremetadata.ProcessSessionRecord
+	deferredSynchronization *processResumeSynchronization
 }
 
 func newProcessAgentResumeRequest(opts processAgentResumeOptions) (processAgentResumeRequest, error) {
@@ -92,6 +94,9 @@ func (c *agentCommand) processResumeCandidate(request processAgentResumeRequest)
 		return processResumeCandidate{}, MapMetadataError(err)
 	}
 	uid := resolution.Matches[0].UID
+	if err := c.checkDeferredClaim(uid, opts.claim); err != nil {
+		return processResumeCandidate{}, err
+	}
 	pane, _ := processResumePane(reg, uid)
 	alive := false
 	if pane != nil && pane.Status.Activation.Process != nil {
@@ -144,7 +149,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	b := processSchemaBinding(candidate.Record.Binding)
 	b.Host, b.Generation, b.Operation = operation, generation, operation
-	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b); err != nil {
+	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b, request.options.claim); err != nil {
 		return result, err
 	}
 	result = c.processResumeResult(candidate, b, path)
@@ -157,7 +162,15 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	return result, nil
 }
 
-func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding) error {
+func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding, claim *deferredProcessClaim) error {
+	unlock, lockErr := lockDeferredClaim(c.deferredClaimPath(binding.Agent))
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
+	if err := c.checkDeferredClaim(binding.Agent, claim); err != nil {
+		return err
+	}
 	state, err := c.rebind.create.store.stateDir()
 	if err != nil {
 		return err
