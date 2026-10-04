@@ -282,34 +282,18 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 	}
 	matched := claudeEndpointBootstrap{AgentUID: agent.Metadata.UID, PaneUID: paneUID}
 	var proof *claudeProcessProof
+	var process coremetadata.ProcessIdentity
+	priorGeneration := ""
 	if env(internalClaudeProcessBindingEnv) != "" || env(internalClaudeProcessHostEnv) != "" {
-		var verified claudeProcessProof
-		ok := false
-		if hookProof != nil {
-			verified = *hookProof
-			ok = verified.Session == payload.SessionID && verified.Process.PID == parentPID
-		} else {
-			verified, ok = claudeProcessHookProof(env, payload.SessionID, parentPID)
+		verified, valid := processClaudeBootstrapProof(claudeRegistrationSubject{AgentUID: agent.Metadata.UID, PaneUID: paneUID}, generation, payload.SessionID, parentPID, env, hookProof)
+		if !valid {
+			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
 		}
-		if !ok || verified.Binding.Agent != agent.Metadata.UID || verified.Binding.Pane != paneUID ||
-			verified.Binding.Generation != generation {
+		process, priorGeneration, valid = processClaudeBootstrapCurrent(reg, pane, verified, payload.SessionID)
+		if !valid {
 			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
 		}
 		proof = &verified
-	}
-	var process coremetadata.ProcessIdentity
-	priorGeneration := ""
-	if proof != nil {
-		activation, provider, current := reg.CurrentProcessActivation(coremetadata.ProcessBinding{HostInstanceID: proof.Binding.Host, ProjectUID: proof.Binding.Project, WindowUID: proof.Binding.Window, AgentUID: proof.Binding.Agent, PaneUID: proof.Binding.Pane, Generation: proof.Binding.Generation, OperationID: proof.Binding.Operation})
-		if !current || provider != "claude" || activation.Child != proof.Process || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.SessionID != payload.SessionID {
-			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
-		}
-		process = activation.Child
-		result, err := exchangeClaudeProcessHost(*proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Lookup: true})
-		if err != nil {
-			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
-		}
-		priorGeneration = result.RegistrationGeneration
 	} else {
 		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeTmux || pane.Status.Activation.Claude == nil {
 			return matched, diagnostics.ClaudeRegistrationPaneBindingMismatch
@@ -357,6 +341,29 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 		PriorRegistrationGeneration: priorGeneration,
 		HookProcess:                 hookProcess,
 		Socket:                      socket, Token: token, ReplyTool: replyTool, ProcessProof: proof}, claudeRegistrationProceed
+}
+
+// The process hook proves its own kernel ancestry before the helper starts.
+func processClaudeBootstrapProof(subject claudeRegistrationSubject, generation, session string, parentPID int, env func(string) string, hookProof *claudeProcessProof) (claudeProcessProof, bool) {
+	var proof claudeProcessProof
+	valid := false
+	if hookProof != nil {
+		proof = *hookProof
+		valid = proof.Session == session && proof.Process.PID == parentPID
+	} else {
+		proof, valid = claudeProcessHookProof(env, session, parentPID)
+	}
+	return proof, valid && proof.Binding.Agent == subject.AgentUID && proof.Binding.Pane == subject.PaneUID && proof.Binding.Generation == generation
+}
+
+func processClaudeBootstrapCurrent(reg coremetadata.Registry, pane *coremetadata.Pane, proof claudeProcessProof, session string) (coremetadata.ProcessIdentity, string, bool) {
+	b := proof.Binding
+	activation, provider, current := reg.CurrentProcessActivation(coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation})
+	if !current || provider != "claude" || activation.Child != proof.Process || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.SessionID != session {
+		return coremetadata.ProcessIdentity{}, "", false
+	}
+	result, err := exchangeClaudeProcessHost(proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Lookup: true})
+	return activation.Child, result.RegistrationGeneration, err == nil
 }
 
 // claudeEndpointHelperRoute is the internal route word of the per-agent
@@ -723,6 +730,39 @@ func (g *claudeEndpointIdleRegistryGate) current(identity, registry func() bool)
 	return registry()
 }
 
+func claudeRegistrationRoute(bootstrap claudeEndpointBootstrap) (func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string), diagnostics.ClaudeRegistrationReason) {
+	if bootstrap.ProcessProof == nil {
+		return coremetadata.ResolveAgentRoute, claudeRegistrationProceed
+	}
+	if !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
+		return nil, diagnostics.ClaudeRegistrationProviderProcessMismatch
+	}
+	return processClaudeRouteResolver(bootstrap.RegistryPath, *bootstrap.ProcessProof), claudeRegistrationProceed
+}
+
+func registerClaudeEndpointBootstrap(bootstrap claudeEndpointBootstrap, store *intmetadata.Store, mutator coremetadata.Mutator) (bool, error) {
+	if bootstrap.ProcessProof != nil {
+		return true, registerClaudeProcessHelper(bootstrap, "register")
+	}
+	entered := false
+	_, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+		entered = true
+		return admitClaudeRegistration(reg, bootstrap, mutator)
+	})
+	return entered, err
+}
+
+func clearClaudeEndpointBootstrap(bootstrap claudeEndpointBootstrap, store *intmetadata.Store, mutator coremetadata.Mutator) {
+	if bootstrap.ProcessProof != nil {
+		_ = registerClaudeProcessHelper(bootstrap, "clear")
+		return
+	}
+	_, _, _ = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+		mutator.ClearClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
+		return nil
+	})
+}
+
 // serveClaudeRegistration claims, records, and serves one registration, and
 // returns the reason it stopped: a refusal before Ready, or an ended-* reason
 // after it.
@@ -730,12 +770,9 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if exactActivationRegistryPath(bootstrap.RegistryPath) != nil || bootstrap.Token == "" {
 		return diagnostics.ClaudeRegistrationBootstrapInvalid
 	}
-	resolveRoute := coremetadata.ResolveAgentRoute
-	if bootstrap.ProcessProof != nil {
-		if !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
-			return diagnostics.ClaudeRegistrationProviderProcessMismatch
-		}
-		resolveRoute = processClaudeRouteResolver(bootstrap.RegistryPath, *bootstrap.ProcessProof)
+	resolveRoute, reason := claudeRegistrationRoute(bootstrap)
+	if reason != claudeRegistrationProceed {
+		return reason
 	}
 	process, _, err := claudeadapter.Process(os.Getpid())
 	if err != nil {
@@ -795,29 +832,11 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	defer os.Remove(leasePath + ".json")
 	store := intmetadata.NewStore(bootstrap.RegistryPath)
 	mutator := intmetadata.DefaultMutator()
-	entered := false
-	if bootstrap.ProcessProof != nil {
-		entered = true
-		err = registerClaudeProcessHelper(bootstrap, "register")
-	} else {
-		_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
-			entered = true
-			return admitClaudeRegistration(reg, bootstrap, mutator)
-		})
-	}
+	entered, err := registerClaudeEndpointBootstrap(bootstrap, store, mutator)
 	if err != nil {
 		return claudeRegistrationTransactionReason(err, entered)
 	}
-	defer func() {
-		if bootstrap.ProcessProof != nil {
-			_ = registerClaudeProcessHelper(bootstrap, "clear")
-			return
-		}
-		_, _, _ = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
-			mutator.ClearClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
-			return nil
-		})
-	}()
+	defer clearClaudeEndpointBootstrap(bootstrap, store, mutator)
 	initial, err := store.LoadDegradedReadOnly()
 	if err != nil {
 		return diagnostics.ClaudeRegistrationRegistryUnreadable

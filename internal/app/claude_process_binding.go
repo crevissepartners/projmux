@@ -730,7 +730,10 @@ func processClaudeRouteResolver(registryPath string, proof claudeProcessProof) f
 			return coremetadata.AgentRouteRef{}, "process Claude authority is unavailable"
 		}
 		evidence := coremetadata.ClaudeProcessRouteEvidence{HostInstance: current.Binding.Host, PaneUID: current.Binding.Pane, Generation: current.Binding.Generation, SessionID: current.Session, Process: current.Process, HostProcess: current.HostProcess, Registration: *registration}
-		return coremetadata.ResolveProcessClaudeRoute(reg, agentUID, evidence, func(e coremetadata.ClaudeProcessRouteEvidence) bool { return e == evidence })
+		return coremetadata.ResolveProcessClaudeRoute(reg, agentUID, evidence, func(e coremetadata.ClaudeProcessRouteEvidence) bool {
+			live, err := lookupClaudeProcessRegistration(current)
+			return err == nil && e == evidence && *live == e.Registration
+		})
 
 	}
 }
