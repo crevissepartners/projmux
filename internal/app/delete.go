@@ -74,6 +74,8 @@ type deleteCommand struct {
 	// the actor unjudged.
 	processAncestors func() ([]int, error)
 	actorRunner      tmuxCommandRunner
+	// processDeleter is the process runtime Agent route; nil uses production.
+	processDeleter *processAgentDeleter
 }
 
 func newDeleteCommand() *deleteCommand {
@@ -348,6 +350,11 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		// unproven rather than a refusal.
 		actorRoute := lenientDeletionRoute(deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
 		return c.runProjectUnregister(verb, spelling, plan, resolution, actorRoute, *dryRun, *yes, stdout, stderr)
+	}
+
+	// Process runtime Agents have no tmux half, so their route needs no server.
+	if isProcessAgentPlan(registry, plan) {
+		return c.runProcessAgentDelete(spelling, plan, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, *dryRun, *yes, stdout, stderr)
 	}
 
 	target, err := resolveDeleteTarget(spelling, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
