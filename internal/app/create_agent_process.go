@@ -524,11 +524,12 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 }
 
 func processCreateCleanupError(result processAgentCreateResult, cause error) error {
-	state := "unknown"
+	state := processCreateRuntimeUnknown
 	if result.waitRecorded {
-		state = "offline"
+		state = processCreateRuntimeOffline
 	}
-	return fmt.Errorf("runtime=%s; remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s: %w", state, result.Binding.Agent, result.Binding.Pane, result.Binding.Agent, result.Binding.Agent, cause)
+	text := fmt.Errorf("runtime=%s; remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s: %w", state, result.Binding.Agent, result.Binding.Pane, result.Binding.Agent, result.Binding.Agent, cause)
+	return newProcessCreateError(text, state, processCreateRemainingRefs(result))
 }
 
 func processCLIRequest(flags resourceCreateFlags) (processAgentCreateRequest, cli.OutputMode, error) {
@@ -612,12 +613,16 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 
 func (c *createCommand) failProcessCreate(result *processAgentCreateResult, cause error) error {
 	if result.Binding.Agent == "" {
-		return cause
+		return newProcessCreateError(cause, processCreateRuntimeNone, processCreateRemaining{})
 	}
 	if err := c.rollbackProcessAgent(result); err != nil {
-		return errors.Join(cause, err)
+		var cleanup *processCreateError
+		if errors.As(err, &cleanup) {
+			return newProcessCreateError(errors.Join(cause, err), cleanup.Runtime, cleanup.Remaining)
+		}
+		return newProcessCreateError(errors.Join(cause, err), processCreateRuntimeUnknown, processCreateRemainingRefs(*result))
 	}
-	return fmt.Errorf("%w; remaining: none", cause)
+	return newProcessCreateError(fmt.Errorf("%w; remaining: none", cause), processCreateRuntimeNone, processCreateRemaining{})
 }
 
 func (c *createCommand) runProcessPostCreate(ctx context.Context, result processAgentCreateResult, stderr io.Writer) error {
