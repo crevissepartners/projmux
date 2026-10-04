@@ -40,7 +40,7 @@ func (c *agentCommand) callProcessCodexTurn(reg coremetadata.Registry, agent cor
 	if err != nil {
 		return "", err
 	}
-	socket := claudeActivationLeaseDir(intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation) + "/codex-host.sock"
+	socket := processCodexHostSocket(intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		return "", fmt.Errorf("process-host-unavailable: %w", err)

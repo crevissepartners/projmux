@@ -40,7 +40,7 @@ func resolveLiveProcessCodexRoute(ctx context.Context, path string, reg coremeta
 }
 
 func callLiveProcessCodex(ctx context.Context, path string, evidence coremetadata.CodexProcessRouteEvidence, request processForegroundRequest) (processForegroundResult, error) {
-	socket := claudeActivationLeaseDir(path, evidence.PaneUID, evidence.Generation) + "/codex-host.sock"
+	socket := processCodexHostSocket(path, evidence.PaneUID, evidence.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		return processForegroundResult{}, err

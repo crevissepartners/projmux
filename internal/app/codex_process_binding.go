@@ -15,6 +15,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
+func processCodexHostSocket(registryPath, pane, generation string) string {
+	return claudeActivationLeaseDir(registryPath, pane, generation) + "/codex-host.sock"
+}
+
 const internalCodexProcessBindingEnv = "PMX_INTERNAL_CODEX_PROCESS_BINDING"
 const internalCodexProcessHostEnv = "PMX_INTERNAL_CODEX_PROCESS_HOST"
 
@@ -90,7 +94,7 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
-	socket := claudeActivationLeaseDir(registryPath, launch.Binding.Pane, launch.Binding.Generation) + "/codex-host.sock"
+	socket := processCodexHostSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation)
 	listener, closeLease, err := listenProcessHost(socket)
 	if err != nil {
 		return nil, err

@@ -403,3 +403,29 @@ func TestProcessCodexCreateActualWaitSignalsCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessCodexCreateUnsupportedProviderActualCLI(t *testing.T) {
+	f := newProcessCodexCreateCLI(t)
+	args := f.args()
+	for i := range args {
+		if args[i] == "--provider" {
+			args[i+1] = "antigravity"
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+		t.Fatalf("unsupported provider exit: %v, stderr=%q", err, stderr.String())
+	}
+	golden, err := os.ReadFile(filepath.Join("testdata", "process-codex-create.unsupported.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout.Len() != 0 || !bytes.Equal(stderr.Bytes(), golden) {
+		t.Fatalf("unsupported output: stdout=%q stderr=%q want=%q", stdout.String(), stderr.String(), golden)
+	}
+}
