@@ -167,7 +167,7 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	if command != nil {
 		cmd = command(root, binary, env)
 	}
-	endpoint, err := startProcessCodex(context.Background(), host, processhost.Launch{Binding: b, Command: cmd}, cfg, path)
+	endpoint, err := startProcessCodex(context.Background(), host, processhost.Launch{Binding: b, Command: cmd}, cfg, path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

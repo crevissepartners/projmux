@@ -500,7 +500,7 @@ type processClaudeResumeLaunch struct {
 
 // startProcessClaude binds the foreground owner to exact ownership transactions.
 // The caller allocates the reservation and chooses launch policy.
-func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string, resume ...processClaudeResumeLaunch) (*processhost.Handle, error) {
+func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string, resume *processClaudeResumeLaunch) (*processhost.Handle, error) {
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
@@ -510,12 +510,12 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	}
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
-	if len(resume) > 0 {
+	if resume != nil {
 		launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 			service.publishChild(handle)
 			return service.launchErr
 		}}
-		initial := resume[0]
+		initial := *resume
 		handle, startErr := host.ResumeClaude(ctx, launch, initial.Record, initial.Turn, initial.Prompt)
 		service.readyOnce.Do(func() { service.handle, service.launchErr = handle, startErr; close(service.ready) })
 		if startErr != nil {

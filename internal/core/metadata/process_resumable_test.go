@@ -198,3 +198,75 @@ func TestProcessSupportedResumableReserveArchivesOnlyRetiredGeneration(t *testin
 		})
 	}
 }
+
+func TestProcessSupportedResumeRestoreUnspawnedReservation(t *testing.T) {
+	reg, activation, receipt := resumableWriterFixture(t)
+	m := Mutator{}
+	if err := m.RecordProcessResumable(&reg, activation.Binding, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(activation.Binding.PaneUID)
+	previous := pane.Status.ProcessSession.Clone()
+	binding := previous.Binding
+	binding.HostInstanceID, binding.Generation, binding.OperationID = "retry-host", "retry-generation", "retry-operation"
+	if err := m.ReserveProcessResume(&reg, previous.Binding, binding); err != nil {
+		t.Fatal(err)
+	}
+	reserved := reg.Clone()
+	wrong := binding
+	wrong.Generation = "other-generation"
+	if err := m.RestoreProcessResume(&reg, wrong, *previous); err == nil || !reflect.DeepEqual(reg, reserved) {
+		t.Fatal("stale rollback changed reservation")
+	}
+	if err := m.RestoreProcessResume(&reg, binding, *previous); err != nil {
+		t.Fatal(err)
+	}
+	pane, _ = reg.Pane(binding.PaneUID)
+	agent, _ := reg.Agent(binding.AgentUID)
+	if !reflect.DeepEqual(pane.Status.ProcessSession, previous) || agent.Status.Phase != PhaseOffline || !pane.Status.Activation.IsZero() {
+		t.Fatal("unspawned rollback lost retired conversation")
+	}
+	if err := m.ReserveProcessResume(&reg, previous.Binding, binding); err != nil {
+		t.Fatal("restored conversation could not retry", err)
+	}
+	child := ProcessActivation{Binding: binding, HostProcess: activation.HostProcess, Child: activation.Child}
+	if err := m.RecordProcessChild(&reg, child); err != nil {
+		t.Fatal(err)
+	}
+	before := reg.Clone()
+	if err := m.RestoreProcessResume(&reg, binding, *previous); err == nil || !reflect.DeepEqual(reg, before) {
+		t.Fatal("rollback admitted a spawned generation")
+	}
+}
+
+func TestProcessSupportedResumeEmptyGenerationPreservesInterruptedHistory(t *testing.T) {
+	reg, activation, receipt := resumableWriterFixture(t)
+	m := Mutator{}
+	if err := m.RecordProcessResumable(&reg, activation.Binding, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	binding := activation.Binding
+	binding.HostInstanceID, binding.Generation, binding.OperationID = "empty-host", "empty-generation", "empty-operation"
+	if err := m.ReserveProcessResume(&reg, activation.Binding, binding); err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(binding.PaneUID)
+	history := pane.Status.ProcessSession.Clone().History
+	child := ProcessActivation{Binding: binding, HostProcess: activation.HostProcess, Child: activation.Child}
+	if err := m.RecordProcessChild(&reg, child); err != nil {
+		t.Fatal(err)
+	}
+	receipt.Generation, receipt.OperationID = binding.Generation, binding.OperationID
+	if err := m.RecordProcessWait(&reg, child, receipt); err != nil {
+		t.Fatal(err)
+	}
+	next := binding
+	next.HostInstanceID, next.Generation, next.OperationID = "next-host", "next-generation", "next-operation"
+	if err := m.ReserveProcessResume(&reg, binding, next); err != nil {
+		t.Fatal(err)
+	}
+	pane, _ = reg.Pane(next.PaneUID)
+	if !reflect.DeepEqual(pane.Status.ProcessSession.History, history) {
+		t.Fatal("empty reattachment erased interrupted turn and expired controls")
+	}
+}

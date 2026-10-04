@@ -1,5 +1,7 @@
 package metadata
 
+import "reflect"
+
 // RecordProcessResumable promotes a conversation only after the owner has
 // durably recorded this exact child Wait and retired its activation. The caller
 // obtains Wait outside the Registry lock and may call this after its termination
@@ -80,15 +82,46 @@ func (m Mutator) ReserveProcessResume(reg *Registry, previous ProcessBinding, bi
 	}
 	next := reg.Clone()
 	target, _ := next.Pane(binding.PaneUID)
-	current := record.Clone()
-	session := current.SessionID
-	if current.Provider == "codex" {
-		session = current.ThreadID
-	}
-	current.History = &ProcessResumeHistory{Binding: previous, SessionID: session, InterruptedTurnID: current.TurnID, Expired: current.Pending}
-	current.Binding, current.ConnectionID, current.TurnID, current.Pending, current.ResumeState = binding, binding.OperationID, "", nil, ProcessResumeUnknown
+	current := processResumeReservation(record, binding)
 	target.Status.ProcessSession = current
 	owner, _ := next.Agent(binding.AgentUID)
 	owner.Status.Phase = PhasePending
 	return m.commitProcessRegistry(reg, next)
+}
+
+// RestoreProcessResume releases only an unchanged, unspawned reservation. It
+// restores the durable conversation and history without inventing child Wait.
+func (m Mutator) RestoreProcessResume(reg *Registry, binding ProcessBinding, previous ProcessSessionRecord) error {
+	const op = "restore process resume"
+	if reg == nil {
+		return stateErr(op, ErrInvalidRegistry, "process registry is unavailable")
+	}
+	if err := reg.Validate(); err != nil {
+		return err
+	}
+	pane, agent, ok := reg.currentProcessReservation(binding)
+	if !ok || agent.Status.Phase != PhasePending || !pane.Status.Activation.IsZero() || previous.ResumeState != ProcessResumable ||
+		!reg.validProcessBinding(*pane, previous.Binding) || previous.Binding == binding ||
+		!reflect.DeepEqual(pane.Status.ProcessSession, processResumeReservation(&previous, binding)) {
+		return stateErr(op, ErrInvalidRegistry, "unspawned resume reservation changed")
+	}
+	next := reg.Clone()
+	target, _ := next.Pane(binding.PaneUID)
+	target.Status.ProcessSession = previous.Clone()
+	owner, _ := next.Agent(binding.AgentUID)
+	owner.Status.Phase = PhaseOffline
+	return m.commitProcessRegistry(reg, next)
+}
+
+func processResumeReservation(previous *ProcessSessionRecord, binding ProcessBinding) *ProcessSessionRecord {
+	current := previous.Clone()
+	if current.History == nil || current.TurnID != "" || len(current.Pending) > 0 {
+		session := current.SessionID
+		if current.Provider == "codex" {
+			session = current.ThreadID
+		}
+		current.History = &ProcessResumeHistory{Binding: previous.Binding, SessionID: session, InterruptedTurnID: current.TurnID, Expired: current.Pending}
+	}
+	current.Binding, current.ConnectionID, current.TurnID, current.Pending, current.ResumeState = binding, binding.OperationID, "", nil, ProcessResumeUnknown
+	return current
 }

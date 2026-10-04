@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -409,5 +411,62 @@ func TestProcessResumeOutputModesAndCodexEmptyReattachActualCLI(t *testing.T) {
 	}
 	if strings.Count(string(wire), `"method":"thread/start"`) > 1 || strings.Count(string(wire), "thread/start") != 1 || strings.Count(string(wire), "turn/start") != 1 {
 		t.Fatalf("empty reattach created a thread or synthetic task: %s", wire)
+	}
+}
+
+func TestProcessResumePreSpawnFailureCanRetryActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := processResumeCLIFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			prompt := "question"
+			if provider == aiModeCodex {
+				prompt = "controls"
+			}
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", prompt))
+			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.TurnID != "" && len(r.Pending) > 0 })
+			first.shutdown(t)
+			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			command := New().agent
+			const generation = "test-unspawned-resume"
+			command.rebind.create.newGeneration = func() (string, error) { return generation, nil }
+			lease := claudeActivationLeaseDir(f.store.Path(), old.Binding.PaneUID, generation)
+			file, err := os.OpenFile(lease, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = file.Close()
+			t.Cleanup(func() { _ = os.Remove(lease) })
+			request, err := newProcessAgentResumeRequest(processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: old.Binding.AgentUID}, Prompt: processResumeFirstFrame{Kind: "user", Text: "retry task"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := command.resumeProcessAgent(ctx, request)
+			if err == nil || result.Handle != nil {
+				t.Fatal("occupied lease did not refuse before spawn", err)
+			}
+			failure := result.fail(err)
+			if strings.Contains(failure.Error(), "delete") || !strings.Contains(failure.Error(), "conversation preserved") || !strings.Contains(failure.Error(), "retry: projmux agent resume") {
+				t.Fatal("resume failure lost conversation guidance", failure)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ := reg.Pane(old.Binding.PaneUID)
+			agent, _ := reg.Agent(old.Binding.AgentUID)
+			if !reflect.DeepEqual(pane.Status.ProcessSession, &old) || agent.Status.Phase != coremetadata.PhaseOffline {
+				t.Fatal("failed startup did not restore resumable record")
+			}
+			if err := os.Remove(lease); err != nil {
+				t.Fatal(err)
+			}
+			retry := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "retry task"})
+			if retry.ref != first.ref {
+				t.Fatal("retry replaced Agent identity")
+			}
+			retry.shutdown(t)
+		})
 	}
 }

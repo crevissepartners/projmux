@@ -36,6 +36,7 @@ type processAgentResumeResult struct {
 	Previous        processResumePrevious
 	owner           processAgentCreateResult
 	previousBinding processhost.Binding
+	previousRecord  *coremetadata.ProcessSessionRecord
 }
 
 func newProcessAgentResumeRequest(opts processAgentResumeOptions) (processAgentResumeRequest, error) {
@@ -143,77 +144,113 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	b := processSchemaBinding(candidate.Record.Binding)
 	b.Host, b.Generation, b.Operation = operation, generation, operation
-	_, err = creator.store.update(func(reg *coremetadata.Registry) error {
+	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b); err != nil {
+		return result, err
+	}
+	result = c.processResumeResult(candidate, b, path)
+	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
+		if result.Handle == nil {
+			err = errors.Join(err, result.restoreReservation())
+		}
+		return result, fmt.Errorf("%s: %w: %w", processResumeRefused, processhost.ErrResumeRefused, err)
+	}
+	return result, nil
+}
+
+func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding) error {
+	_, err := c.rebind.create.store.update(func(reg *coremetadata.Registry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := processResumeRefusal(*reg, b.Agent, false); err != nil {
+		if err := processResumeRefusal(*reg, binding.Agent, false); err != nil {
 			return err
 		}
-		pane, _ := processResumePane(*reg, b.Agent)
+		pane, _ := processResumePane(*reg, binding.Agent)
 		if !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) {
 			return fmt.Errorf("%s: %w: recorded generation changed", processResumeRefused, processhost.ErrResumeRefused)
 		}
-		agent, _ := reg.Agent(b.Agent)
+		agent, _ := reg.Agent(binding.Agent)
 		if !reflect.DeepEqual(agent.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, candidate.Agent.Metadata.Annotations) {
 			return fmt.Errorf("%s: %w: resume recipe changed", processResumeRefused, processhost.ErrResumeRefused)
 		}
-		mutator := creator.store.mutator()
-		if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(b)); err != nil {
+		mutator := c.rebind.create.store.mutator()
+		if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(binding)); err != nil {
 			return err
 		}
-		return settingsPlan.record(reg, mutator, b.Agent)
+		return settings.record(reg, mutator, binding.Agent)
 	})
-	if err != nil {
-		return result, err
-	}
-	owner := processAgentCreateResult{Binding: b, Provider: candidate.Record.Provider, registryPath: path, Created: createResult{kind: coremetadata.KindAgent, uid: b.Agent, name: candidate.Agent.Metadata.Name, windowUID: b.Window}}
-	if reg, e := creator.store.snapshot(); e == nil {
-		if project, ok := reg.Project(b.Project); ok {
+	return err
+}
+
+func (c *agentCommand) processResumeResult(candidate processResumeCandidate, binding processhost.Binding, path string) processAgentResumeResult {
+	owner := processAgentCreateResult{Binding: binding, Provider: candidate.Record.Provider, registryPath: path, Created: createResult{kind: coremetadata.KindAgent, uid: binding.Agent, name: candidate.Agent.Metadata.Name, windowUID: binding.Window}}
+	if reg, err := c.rebind.create.store.snapshot(); err == nil {
+		if project, ok := reg.Project(binding.Project); ok {
 			owner.Created.projectName = project.Metadata.Name
 		}
-		if window, ok := reg.Window(b.Window); ok {
+		if window, ok := reg.Window(binding.Window); ok {
 			owner.Created.windowName = window.Metadata.Name
 		}
 	}
-	result = processAgentResumeResult{Binding: b, Previous: candidate.Previous, owner: owner, previousBinding: processSchemaBinding(candidate.Record.Binding)}
+	return processAgentResumeResult{Binding: binding, Previous: candidate.Previous, owner: owner, previousBinding: processSchemaBinding(candidate.Record.Binding), previousRecord: candidate.Record.Clone()}
+}
+
+func (r *processAgentResumeResult) startProcessResume(ctx context.Context, creator *createCommand, plan processhost.Command, config processhost.CodexConfig, frame processResumeFirstFrame) error {
 	executable, err := os.Executable()
 	if err != nil {
-		return result, err
+		return err
 	}
-	host, err := processhost.NewHost(b.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.Env}, creator.processCreateTransactions(path), processhost.DefaultLimits())
+	host, err := processhost.NewHost(r.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.Env}, creator.processCreateTransactions(r.owner.registryPath), processhost.DefaultLimits())
 	if err != nil {
-		return result, err
+		return err
 	}
-	launch := processhost.Launch{Binding: b, Command: plan}
-	old := processResumeSessionRecord(candidate.Record)
-	if candidate.Record.Provider == aiModeClaude {
-		handle, startErr := startProcessClaude(ctx, host, launch, path, processClaudeResumeLaunch{Record: old, Turn: operation + "-resume", Prompt: request.options.Prompt.Text})
-		err = startErr
-		if handle != nil {
-			result.Handle = handle
-		}
+	launch := processhost.Launch{Binding: r.Binding, Command: plan}
+	old := processResumeSessionRecord(*r.previousRecord)
+	if r.owner.Provider == aiModeClaude {
+		err = r.startClaudeResume(ctx, host, launch, old, frame)
 	} else {
-		launch.Spawned = processCodexCreateSpawn(path, b)
-		var endpoint *codexProcessEndpoint
-		endpoint, err = startProcessCodex(ctx, host, launch, config, path, old)
-		result.owner.codexEndpoint = endpoint
-		if endpoint != nil {
-			result.Handle = endpoint.handle
-		}
+		err = r.startCodexResume(ctx, host, launch, config, old, frame)
 	}
-	result.owner.Handle = result.Handle
+	r.owner.Handle = r.Handle
+	return err
+}
+
+func (r *processAgentResumeResult) startClaudeResume(ctx context.Context, host *processhost.Host, launch processhost.Launch, old processhost.SessionRecord, frame processResumeFirstFrame) error {
+	handle, err := startProcessClaude(ctx, host, launch, r.owner.registryPath, &processClaudeResumeLaunch{Record: old, Turn: r.Binding.Operation + "-resume", Prompt: frame.Text})
+	if handle != nil {
+		r.Handle = handle
+	}
+	return err
+}
+
+func (r *processAgentResumeResult) startCodexResume(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, old processhost.SessionRecord, frame processResumeFirstFrame) error {
+	launch.Spawned = processCodexCreateSpawn(r.owner.registryPath, r.Binding)
+	endpoint, err := startProcessCodex(ctx, host, launch, config, r.owner.registryPath, &old)
+	r.owner.codexEndpoint = endpoint
+	if endpoint != nil && endpoint.handle != nil {
+		r.Handle = endpoint.handle
+	}
+	if err != nil || frame.Kind == "" {
+		return err
+	}
+	snapshot, err := r.Handle.Observe(r.Binding)
 	if err != nil {
-		return result, fmt.Errorf("%s: %w: %w", processResumeRefused, processhost.ErrResumeRefused, err)
+		return err
 	}
-	if candidate.Record.Provider == aiModeCodex && request.options.Prompt.Kind != "" {
-		snapshot, e := result.Handle.Observe(b)
-		if e != nil {
-			return result, e
-		}
-		err = result.Handle.Turn(ctx, processhost.Authority{Binding: b, Connection: snapshot.Connection, Session: snapshot.Session}, operation+"-resume", request.options.Prompt.Text)
+	return r.Handle.Turn(ctx, processhost.Authority{Binding: r.Binding, Connection: snapshot.Connection, Session: snapshot.Session}, r.Binding.Operation+"-resume", frame.Text)
+}
+
+func (r *processAgentResumeResult) restoreReservation() error {
+	if r.previousRecord == nil {
+		return nil
 	}
-	return result, err
+	_, _, err := intmetadata.NewStore(r.owner.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		return intmetadata.DefaultMutator().RestoreProcessResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord)
+	})
+	if err == nil {
+		r.previousRecord = nil
+	}
+	return err
 }
 
 func processResumeSessionRecord(record coremetadata.ProcessSessionRecord) processhost.SessionRecord {

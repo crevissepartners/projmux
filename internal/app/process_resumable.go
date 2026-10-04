@@ -47,7 +47,11 @@ func listResumableProcessAgents(registry coremetadata.Registry, filter processRe
 		}
 		pane, _ := processResumePane(registry, agent.Metadata.UID)
 		record := pane.Status.ProcessSession.Clone()
-		out = append(out, processResumeCandidate{Agent: agent.Clone(), Pane: pane.Clone(), Record: *record, Previous: processResumePrevious{InterruptedTurn: record.TurnID, Expired: slices.Clone(record.Pending)}})
+		previous := processResumePrevious{InterruptedTurn: record.TurnID, Expired: slices.Clone(record.Pending)}
+		if previous.InterruptedTurn == "" && len(previous.Expired) == 0 && record.History != nil {
+			previous = processResumePrevious{InterruptedTurn: record.History.InterruptedTurnID, Expired: slices.Clone(record.History.Expired)}
+		}
+		out = append(out, processResumeCandidate{Agent: agent.Clone(), Pane: pane.Clone(), Record: *record, Previous: previous})
 	}
 	slices.SortFunc(out, func(a, b processResumeCandidate) int {
 		return strings.Compare(a.Agent.Metadata.UID, b.Agent.Metadata.UID)

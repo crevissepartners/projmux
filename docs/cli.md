@@ -237,6 +237,8 @@ Process Claude requires -- <prompt>: stream-json emits init only after the first
 
 Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process foreground=owned. Other -o projections keep their format with ownership on stderr, none suppresses displays, and pane-id is refused. Exit is actual provider Wait, including 128+signal; stdin EOF, INT and TERM stop only this owned provider. The receipt operation is agent.resume: identity reused, address/topology/desired-state unchanged, runtime materialized, and focus unchanged; tmux resume keeps its existing result without a receipt.
 
+Process resume remains foreground-owned: stdin EOF terminates this owned provider, so </dev/null and ordinary CI or cron invocation can end it immediately. Keep stdin open for the intended lifetime; no daemon or detached resume is started.
+
 Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival and relaunch are unavailable.
 
 Resume refusals are process-resume-not-resumable (no resumable record or unknown), process-resume-owned (exact live owner), and process-resume-refused (invalid, ambiguous, unretired, or provider-rejected evidence). They exit nonzero without falling back to a new conversation.

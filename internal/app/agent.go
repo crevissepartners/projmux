@@ -332,11 +332,16 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
 	}
+	return c.resumeResolvedAgent(fs, flags, registry, agent, *model, *effort, *dialogueReplyOnly, prompt, stdout, stderr)
+}
+
+func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQueryFlags, registry coremetadata.Registry, agent *coremetadata.Agent, model, effort string, dialogueReplyOnly bool, prompt []string, stdout, stderr io.Writer) error {
+	const spelling = "agent resume"
 	if processPane, ambiguous := processResumePane(registry, agent.Metadata.UID); processPane != nil || ambiguous {
-		if *dialogueReplyOnly {
+		if dialogueReplyOnly {
 			return usageError("agent resume: process agents do not support --dialogue-reply-only")
 		}
-		return c.runProcessResumeCLI(*agent, flags, *model, *effort, prompt, stdout, stderr)
+		return c.runProcessResumeCLI(*agent, flags, model, effort, prompt, stdout, stderr)
 	}
 	outputFlag := ""
 	fs.Visit(func(value *flag.Flag) {
@@ -357,14 +362,14 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if provider == "" && agent.Status.SessionRef != nil {
 		provider = coremetadata.NormalizeProvider(agent.Status.SessionRef.Provider)
 	}
-	if err := requireLaunchOptions(spelling, provider, *model, *effort, *dialogueReplyOnly, "nothing was changed"); err != nil {
+	if err := requireLaunchOptions(spelling, provider, model, effort, dialogueReplyOnly, "nothing was changed"); err != nil {
 		return err
 	}
-	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
+	if err := requireClaudeDialogueMode(agent.Spec.Provider, dialogueReplyOnly, nil); err != nil {
 		return err
 	}
-	if *model != "" || *effort != "" {
-		if refusal := replyOnlyRefusalOf(agent.Metadata.Annotations, agentSettingsRequest{model: *model, effort: *effort}); refusal.reason != "" {
+	if model != "" || effort != "" {
+		if refusal := replyOnlyRefusalOf(agent.Metadata.Annotations, agentSettingsRequest{model: model, effort: effort}); refusal.reason != "" {
 			return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, agent.Metadata.Name, refusal.detail(), refusal.reason))
 		}
 	}
@@ -372,8 +377,8 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	plan.dialogueReplyOnly = plan.dialogueReplyOnly || *dialogueReplyOnly
-	plan.modelOverride, plan.effortOverride = *model, *effort
+	plan.dialogueReplyOnly = plan.dialogueReplyOnly || dialogueReplyOnly
+	plan.modelOverride, plan.effortOverride = model, effort
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
 }
 

@@ -73,7 +73,7 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 	}
 	waitErr = errors.Join(waitErr, controlErr, syncAttention())
 	if waitErr != nil {
-		return processCreateCleanupError(result.owner, waitErr)
+		return processResumeFailure(result.Binding, waitErr)
 	}
 	return processWaitExit(snapshot)
 }
@@ -87,10 +87,13 @@ func (r *processAgentResumeResult) fail(cause error) error {
 		_, err := r.owner.waitProcessAgent(ctx, nil)
 		cause = errors.Join(cause, err)
 	}
+	if r.Handle == nil {
+		cause = errors.Join(cause, r.restoreReservation())
+	}
 	if r.Binding.Agent == "" {
 		return cause
 	}
-	return processCreateCleanupError(r.owner, cause)
+	return processResumeFailure(r.Binding, cause)
 }
 
 func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand) (func(processhost.Snapshot) error, func(context.Context) error, func() error, error) {
@@ -166,4 +169,8 @@ func processResumeHasReference(fs *flag.FlagSet, args []string) bool {
 		}
 	}
 	return false
+}
+
+func processResumeFailure(binding processhost.Binding, cause error) error {
+	return fmt.Errorf("agent resume: recorded conversation preserved for agent uid:%s pane uid:%s; after this owned generation is retired, retry: projmux agent resume uid:%s -- <prompt>: %w", binding.Agent, binding.Pane, binding.Agent, cause)
 }
