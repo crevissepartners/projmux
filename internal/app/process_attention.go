@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
@@ -266,15 +267,18 @@ func newRegistryProcessAttentionConsumer(readRegistry func() (coremetadata.Regis
 
 // Refresh the declarations for every read, including unavailable hosts. This
 // snapshot has no runtime discovery, lock creation, or generation authority.
+type processAttentionRegistryError struct{ error }
+
 func (c *processAttentionConsumer) refresh() error {
 	if c.readRegistry == nil {
 		return nil
 	}
+	c.bindings = nil
+	c.processOnly = false
 	reg, err := c.readRegistry()
 	if err != nil {
-		return err
+		return processAttentionRegistryError{err}
 	}
-	c.bindings = nil
 	c.providers = map[string]string{}
 	hasProcess, hasTmux := false, false
 	for _, pane := range reg.Panes {
@@ -308,11 +312,6 @@ func (c *processAttentionConsumer) refresh() error {
 	}
 	sort.Slice(c.bindings, func(i, j int) bool { return c.bindings[i].Pane < c.bindings[j].Pane })
 	c.processOnly = hasProcess && !hasTmux
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil {
-		return err
-	}
-	c.store = newProcessAttentionStore(paths.StateDir)
 	return nil
 }
 
@@ -320,14 +319,25 @@ func (c *processAttentionConsumer) records() ([]processAttentionRecord, error) {
 	if c == nil {
 		return nil, nil
 	}
-	if err := c.refresh(); err != nil {
-		return nil, err
-	}
-	if c.readRegistry != nil && len(c.bindings) == 0 {
-		return nil, nil
+	if c.readRegistry != nil {
+		c.bindings = nil
+		c.processOnly = false
+		paths, err := config.DefaultPathsFromEnv()
+		if err != nil {
+			return nil, err
+		}
+		c.store = newProcessAttentionStore(paths.StateDir)
 	}
 	records, err := c.store.read()
 	if err != nil {
+		return nil, err
+	}
+	// Most status refreshes have no process projection. Do not decode the
+	// Registry on that path; missing stores remain read-only and absent.
+	if c.readRegistry != nil && len(records) == 0 {
+		return nil, nil
+	}
+	if err := c.refresh(); err != nil {
 		return nil, err
 	}
 	out := make([]processAttentionRecord, 0, len(c.bindings))
@@ -347,7 +357,11 @@ func (c *processAttentionConsumer) clear(pane string) (bool, error) {
 	if c == nil {
 		return false, nil
 	}
-	if err := c.refresh(); err != nil {
+	// Exact tmux runtime targets never need a process Registry observation.
+	if exactTmuxHandle(pane, "%") == pane && pane != "" {
+		return false, nil
+	}
+	if _, err := c.records(); err != nil {
 		return true, err
 	}
 	for _, binding := range c.bindings {
@@ -363,6 +377,9 @@ func (c *processAttentionConsumer) clear(pane string) (bool, error) {
 			return true, processhost.ErrStale
 		}
 		return true, c.store.clear(binding, r.Sequence)
+	}
+	if c.readRegistry != nil && strings.HasPrefix(pane, "pane-") {
+		return true, processhost.ErrStale
 	}
 	return false, nil
 }

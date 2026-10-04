@@ -234,7 +234,7 @@ func TestProcessAttentionActualCLIIsolated(t *testing.T) {
 		t.Fatal("CLI reads wrote state")
 	}
 	data, _ := os.ReadFile(trace)
-	if !strings.Contains(string(data), "process Pane") || strings.Contains(string(data), "select-pane") || strings.Contains(string(data), "list-panes") {
+	if !strings.Contains(string(data), "process Pane") || strings.Contains(string(data), "select-pane") {
 		t.Fatalf("statusbar process routing: %s", data)
 	}
 	pane, _ := reg.Pane("pane-02")
@@ -264,6 +264,24 @@ func TestProcessAttentionActualCLIIsolated(t *testing.T) {
 	if after := processWiringStateFiles(t, filepath.Dir(path)); fmt.Sprint(staleBefore) != fmt.Sprint(after) {
 		t.Fatal("stale CLI read wrote state")
 	}
+	// Registry damage suppresses process inventory while status surfaces
+	// retain their successful command contract and report the failed read.
+	if err := os.WriteFile(path, []byte("{damaged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	registryDamagedBefore := processWiringStateFiles(t, filepath.Dir(path))
+	for _, args := range [][]string{{"attention", "window", "@1"}, {"internal", "statusbar", "click", "notify"}} {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		data, err := exec.CommandContext(ctx, binary, args...).CombinedOutput()
+		cancel()
+		if err != nil || !bytes.Contains(data, []byte("resource registry")) {
+			t.Fatalf("damaged registry status CLI %v: %s %v", args, data, err)
+		}
+	}
+	if after := processWiringStateFiles(t, filepath.Dir(path)); fmt.Sprint(registryDamagedBefore) != fmt.Sprint(after) {
+		t.Fatal("Registry error status path wrote state")
+	}
+	writeProcessAttentionRegistry(t, path, reg)
 	if err := os.WriteFile(store.path, []byte("{damaged"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -352,14 +370,14 @@ func TestProcessAttentionStatusbarUsesExactProjectionAndReportsReadError(t *test
 	command := newStatusbarCommand()
 	runner := &statusbarFakeRunner{}
 	command.runner = runner
-	if got := command.classifyHeadDisplayBestEffort(head); got != notifyDisplayLive {
+	if got := command.classifyHeadDisplayBestEffort(head, &bytes.Buffer{}); got != notifyDisplayLive {
 		t.Fatalf("statusbar live projection: %v", got)
 	}
 	pane, _ := reg.Pane("pane-02")
 	pane.Status.Activation.Generation = "replacement"
 	pane.Status.Activation.Process.Binding.Generation = "replacement"
 	writeProcessAttentionRegistry(t, path, reg)
-	if got := command.classifyHeadDisplayBestEffort(head); got != notifyDisplayStale {
+	if got := command.classifyHeadDisplayBestEffort(head, &bytes.Buffer{}); got != notifyDisplayStale {
 		t.Fatalf("statusbar stale projection: %v", got)
 	}
 	if err = os.WriteFile(store.path, []byte("{damaged"), 0600); err != nil {
@@ -373,8 +391,84 @@ func TestProcessAttentionStatusbarUsesExactProjectionAndReportsReadError(t *test
 		t.Fatalf("statusbar suppressed read error: %s", &stderr)
 	}
 	for _, call := range runner.calls {
-		if call.name != "tmux" || len(call.args) == 0 || call.args[0] != "display-message" {
+		if call.name != "tmux" || len(call.args) == 0 || (call.args[0] != "display-message" && call.args[0] != "list-panes") {
 			t.Fatalf("process statusbar attempted terminal focus: %+v", call)
 		}
+	}
+}
+
+func TestProcessAttentionEmptyStoreSkipsRegistry(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprint(missing), func(t *testing.T) {
+			_, store, _ := processAttentionWiringFixture(t)
+			if missing {
+				if err := os.Remove(store.path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.WriteFile(store.path, []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reads := 0
+			consumer := newRegistryProcessAttentionConsumer(func() (coremetadata.Registry, error) {
+				reads++
+				return coremetadata.Registry{}, errors.New("registry unavailable")
+			})
+			cmd := &attentionCommand{process: consumer, runner: &recordingAttentionRunner{}}
+			var out, diagnostic bytes.Buffer
+			for _, args := range [][]string{{"window", "@1"}, {"list", "--json"}, {"clear", "%1"}} {
+				if err := cmd.Run(args, &out, &diagnostic); err != nil {
+					t.Errorf("%v: %v", args, err)
+				}
+			}
+			_, err := newGenerationAwareLivePaneLister(newAttentionLivePaneLister(&recordingAttentionRunner{}), consumer.readRegistry).ListLivePanes()
+			if err != nil {
+				t.Errorf("notify: %v", err)
+			}
+			if reads != 0 {
+				t.Fatalf("Registry reads=%d, want 0", reads)
+			}
+		})
+	}
+}
+
+func TestProcessAttentionRegistryErrorKeepsTmuxWindow(t *testing.T) {
+	_, _, path := processAttentionWiringFixture(t)
+	if err := os.WriteFile(path, []byte("{damaged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingAttentionRunner{outputs: map[string][]byte{"tmux list-panes -t @1 -F " + strings.Join([]string{"#{pane_title}", "#{@projmux_attention_state}", "#{@projmux_ai_state}", "#{@projmux_ai_badge_kind}"}, attentionListSeparator): []byte(strings.Join([]string{"worker", "reply", "", ""}, attentionListSeparator) + "\n")}}
+	cmd := newAttentionCommand()
+	cmd.runner = runner
+	var out, diagnostic bytes.Buffer
+	if err := cmd.Run([]string{"window", "@1"}, &out, &diagnostic); err != nil {
+		t.Fatalf("status window failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) == "" || diagnostic.Len() == 0 {
+		t.Fatalf("badge=%q diagnostic=%q", out.String(), diagnostic.String())
+	}
+	if err := cmd.Run([]string{"clear", "%1"}, &out, &diagnostic); err != nil {
+		t.Fatalf("tmux clear failed: %v", err)
+	}
+	runner.outputs["tmux list-panes -a -F "+attentionListFormat] = []byte(strings.Join([]string{"legacy", "@1", "%1", "1", "worker", "reply", "", "", "", ""}, attentionListSeparator) + "\n")
+	rows, err := cmd.listAttentionPanes()
+	if err == nil || len(rows) != 1 || rows[0].Pane != "%1" {
+		t.Fatalf("attention rows=%+v diagnostic=%v", rows, err)
+	}
+	live, err := newGenerationAwareLivePaneLister(newAttentionLivePaneLister(runner), snapshotResourceRegistry).ListLivePanes()
+	if err == nil || len(live) != 1 || live[0].Pane != "%1" || !live[0].ReplyState {
+		t.Fatalf("notify rows=%+v diagnostic=%v", live, err)
+	}
+}
+
+func TestProcessAttentionProcessRegistryKeepsUnmanagedTmux(t *testing.T) {
+	processAttentionWiringFixture(t)
+	runner := &recordingAttentionRunner{outputs: map[string][]byte{"tmux list-panes -a -F " + attentionListFormat: []byte(strings.Join([]string{"legacy", "@1", "%1", "1", "worker", "reply", "", "", "", ""}, attentionListSeparator) + "\n")}}
+	cmd := newAttentionCommand()
+	cmd.runner = runner
+	rows, err := cmd.listAttentionPanes()
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("mixed unmanaged panes=%+v error=%v", rows, err)
 	}
 }

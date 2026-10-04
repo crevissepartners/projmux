@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -556,7 +557,7 @@ func TestStatusbarClickNotifyStaleHeadWithoutInventoryFallsBackToFocusOutcome(t 
 			store := &stubNotifyStore{listEntries: []notify.Notification{head}}
 			cmd := newStatusbarTestCommand(runner, store)
 
-			if got := cmd.classifyHeadDisplayBestEffort(head); got != notifyDisplayStale {
+			if got := cmd.classifyHeadDisplayBestEffort(head, io.Discard); got != notifyDisplayStale {
 				t.Fatalf("classifyHeadDisplayBestEffort = %v, want stale premise", got)
 			}
 			if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {

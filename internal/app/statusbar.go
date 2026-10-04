@@ -652,14 +652,14 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 // The sidebar/`--live` surfaces keep their stricter contract (empty live map
 // means "no panes are in reply state, so anything ai-prefixed *is* stale")
 // because they have richer context and are not on the click critical path.
-func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notification, stderr ...io.Writer) notifyRowDisplayState {
+func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notification, stderr io.Writer) notifyRowDisplayState {
 	if c == nil || c.runner == nil {
 		return classifyNotifyRowState(head, nil, nil)
 	}
 	lister := newGenerationAwareLivePaneLister(newAttentionLivePaneLister(c.runner), snapshotResourceRegistry)
 	panes, paneSet, err := (&notifyCommand{livePanes: lister}).listNotifyLivePanesAndSet()
-	if err != nil && len(stderr) > 0 {
-		fmt.Fprintf(stderr[0], "statusbar notify: observe attention: %v\n", err)
+	if err != nil && stderr != nil {
+		fmt.Fprintf(stderr, "statusbar notify: observe attention: %v\n", err)
 	}
 	if err != nil && len(panes) == 0 {
 		return classifyNotifyRowState(head, nil, nil)

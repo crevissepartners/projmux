@@ -167,6 +167,9 @@ func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registr
 			case slots <- struct{}{}:
 				defer func() { <-slots }()
 			case <-ctx.Done():
+				key := resourcegraph.ProcessKey{Host: target.Binding.Host, Pane: target.Binding.Pane, Generation: target.Binding.Generation}
+				results[i] = resourcegraph.ProcessInventory{Declared: []resourcegraph.ProcessKey{key}, Observed: []resourcegraph.ProcessObservation{{Key: key, Status: resourcegraph.StatusUnknown}}}
+				return
 			}
 			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{target})
 		})
