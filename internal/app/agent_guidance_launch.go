@@ -96,6 +96,14 @@ func (c *aiCommand) PlanCodexAgentGuidance() agentGuidanceLaunch {
 // loadAgentGuidance is the active launch of the current guidance: its text,
 // digest and content-addressed snapshot, or why it could not be read.
 func (c *aiCommand) loadAgentGuidance() agentGuidanceLaunch {
+	return c.loadAgentGuidanceWith(agentguidance.Store.Load)
+}
+
+func (c *aiCommand) PlanProcessAgentGuidance() agentGuidanceLaunch {
+	return c.loadAgentGuidanceWith(agentguidance.Store.LoadProcess)
+}
+
+func (c *aiCommand) loadAgentGuidanceWith(load func(agentguidance.Store) (agentguidance.Guidance, error)) agentGuidanceLaunch {
 	launch := agentGuidanceLaunch{active: true}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
@@ -103,7 +111,7 @@ func (c *aiCommand) loadAgentGuidance() agentGuidanceLaunch {
 		return launch
 	}
 	launch.store = agentguidance.NewDefaultStore(paths)
-	guidance, err := launch.store.Load()
+	guidance, err := load(launch.store)
 	if err != nil {
 		launch.unavailable = err
 		return launch
@@ -349,6 +357,20 @@ func (c *createCommand) prepareAgentGuidance(provider string, flags *resourceCre
 		guidance = guidance.withCreateFile(base)
 	}
 	flags.agentGuidance = guidance
+}
+
+func (c *createCommand) prepareProcessAgentGuidance(flags *resourceCreateFlags) {
+	planner, ok := c.agents.(interface{ PlanProcessAgentGuidance() agentGuidanceLaunch })
+	if !ok {
+		flags.agentGuidance = agentGuidanceLaunch{}
+		return
+	}
+	guidance := planner.PlanProcessAgentGuidance()
+	base := flags.projectLinks.systemPromptFile
+	if base == "" && flags.personaLaunch.name != "" {
+		base = flags.personaLaunch.snapshot.Path
+	}
+	flags.agentGuidance = guidance.withCreateFile(base)
 }
 
 // resumeGuidanceSystemPromptFile is the one --append-system-prompt-file a

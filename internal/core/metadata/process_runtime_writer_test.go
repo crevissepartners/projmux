@@ -143,3 +143,85 @@ func TestProcessWaitDifferentExitReceiptIsRejectedAfterRetirement(t *testing.T) 
 		t.Fatal("different exit receipt changed retired state", err)
 	}
 }
+
+func TestProcessCreationRecordsBirthBeforeConversation(t *testing.T) {
+	reg := processSchemaFixture(t)
+	pane := &reg.Panes[1]
+	activation := *pane.Status.Activation.Process
+	agent, _ := reg.Agent(activation.Binding.AgentUID)
+	agent.Spec.Provider = "claude"
+	agent.Status.Phase = PhasePending
+	pane.Spec.Runtime.Kind = RuntimeTmux
+	pane.Status.Activation = PaneActivation{}
+	pane.Status.ProcessSession = nil
+	mutator := Mutator{}
+	if err := mutator.ReserveProcessBinding(&reg, activation.Binding); err != nil {
+		t.Fatal(err)
+	}
+	agent, _ = reg.Agent(activation.Binding.AgentUID)
+	if agent.Status.Phase != PhasePending {
+		t.Fatal("reservation claimed a running child")
+	}
+	if _, _, current := reg.CurrentProcessActivation(activation.Binding); current {
+		t.Fatal("reservation claimed child evidence")
+	}
+	before := reg.Clone()
+	if err := mutator.ReserveProcessBinding(&reg, activation.Binding); err != nil || !reflect.DeepEqual(reg, before) {
+		t.Fatalf("reservation retry rewrote state: %v", err)
+	}
+	if err := mutator.RecordProcessChild(&reg, activation); err != nil {
+		t.Fatal(err)
+	}
+	current, provider, ok := reg.CurrentProcessActivation(activation.Binding)
+	pane, _ = reg.Pane(activation.Binding.PaneUID)
+	if !ok || provider != "claude" || current != activation || pane.Status.ProcessSession.SessionID != "" || pane.Status.ProcessSession.ResumeState != ProcessResumeUnknown {
+		t.Fatal("initial child lacks exact birth evidence or invented readiness")
+	}
+	before = reg.Clone()
+	if err := mutator.RecordProcessChild(&reg, activation); err != nil || !reflect.DeepEqual(reg, before) {
+		t.Fatalf("child retry rewrote state: %v", err)
+	}
+	retired := reg.Clone()
+	retiredPane, _ := retired.Pane(activation.Binding.PaneUID)
+	retiredPane.Status.Activation.Generation = "replacement"
+	retiredPane.Status.Activation.Process.Binding.Generation = "replacement"
+	if err := retired.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	retiredBefore := retired.Clone()
+	if err := mutator.ReserveProcessBinding(&retired, activation.Binding); err == nil || !reflect.DeepEqual(retired, retiredBefore) {
+		t.Fatal("historical session granted a retired reservation")
+	}
+	wrong := activation
+	wrong.Child.Start = "different-child"
+	if err := mutator.RecordProcessChild(&reg, wrong); err == nil || !reflect.DeepEqual(reg, before) {
+		t.Fatal("replacement child accepted or mutated state")
+	}
+	if err := mutator.RecordProcessActivation(&reg, activation, "session-one"); err != nil {
+		t.Fatal(err)
+	}
+	record := ProcessSessionRecord{Provider: "claude", Binding: activation.Binding, SessionID: "session-one", ConnectionID: activation.Binding.OperationID, TurnID: "turn-one", ResumeState: ProcessResumable,
+		Pending: []ProcessRecordedControl{{ID: "question-one", Kind: "question", ConnectionID: activation.Binding.OperationID, SessionID: "session-one", TurnID: "turn-one"}}}
+	if err := mutator.RecordProcessSession(&reg, activation, record); err != nil {
+		t.Fatal(err)
+	}
+	before = reg.Clone()
+	if err := mutator.RecordProcessSession(&reg, activation, record); err != nil || !reflect.DeepEqual(reg, before) {
+		t.Fatalf("snapshot retry rewrote state: %v", err)
+	}
+	for name, change := range map[string]func(*ProcessSessionRecord){
+		"generation":   func(r *ProcessSessionRecord) { r.Binding.Generation = "replacement" },
+		"session":      func(r *ProcessSessionRecord) { r.SessionID = "replacement" },
+		"connection":   func(r *ProcessSessionRecord) { r.ConnectionID = "replacement" },
+		"provider":     func(r *ProcessSessionRecord) { r.Provider = "codex" },
+		"pending turn": func(r *ProcessSessionRecord) { r.Pending[0].TurnID = "replacement" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			wrong := *record.Clone()
+			change(&wrong)
+			if err := mutator.RecordProcessSession(&reg, activation, wrong); err == nil || !reflect.DeepEqual(reg, before) {
+				t.Fatal("foreign snapshot accepted or mutated state")
+			}
+		})
+	}
+}

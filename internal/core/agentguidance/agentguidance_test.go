@@ -17,6 +17,35 @@ func newTestStore(t *testing.T) Store {
 	return NewStore(filepath.Join(root, "config"), filepath.Join(root, "state"))
 }
 
+func TestProcessGuidancePreservesTmuxCustomAndOff(t *testing.T) {
+	store := newTestStore(t)
+	before, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	process, err := store.LoadProcess()
+	if err != nil || !strings.Contains(string(process.Text), "without a tmux pane") || process.Digest == before.Digest {
+		t.Fatalf("process guidance: %v %+v", err, process)
+	}
+	after, err := store.Load()
+	if err != nil || !bytes.Equal(after.Text, before.Text) || after.Digest != before.Digest {
+		t.Fatal("process launch changed tmux guidance")
+	}
+	for _, content := range []string{"custom guidance\n", " \n"} {
+		if err := store.Save([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		plain, err := store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.LoadProcess()
+		if err != nil || !bytes.Equal(got.Text, plain.Text) || got.Digest != plain.Digest || got.Source != plain.Source {
+			t.Fatalf("process changed custom/off guidance: %v %+v", err, got)
+		}
+	}
+}
+
 // TestDefaultGuidanceNamesTheProjmuxCommandsAndNothingMachineLocal pins that
 // the built-in text points at the two projmux commands and carries nothing
 // that belongs to one machine: no absolute or home path, no uid, no host and

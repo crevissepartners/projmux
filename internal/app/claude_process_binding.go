@@ -446,7 +446,27 @@ func (s *claudeProcessService) initialize(ctx context.Context, host *processhost
 	if s.launchErr == nil {
 		s.ownedHostProcess, _, s.launchErr = localipc.Process(os.Getpid())
 	}
+	if s.launchErr == nil {
+		s.launchErr = s.recordChild()
+	}
 	close(s.ready)
+}
+
+func (s *claudeProcessService) recordChild() error {
+	child, parent, err := localipc.Process(s.ownedProcess.PID)
+	if err != nil || child != s.ownedProcess {
+		return processhost.ErrStale
+	}
+	_, hostPID, err := localipc.Process(parent)
+	if err != nil || hostPID != s.ownedHostProcess.PID {
+		return processhost.ErrStale
+	}
+	b := s.binding
+	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, HostProcess: s.ownedHostProcess, Child: child}
+	_, _, err = intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		return intmetadata.DefaultMutator().RecordProcessChild(reg, activation)
+	})
+	return err
 }
 
 func (s *claudeProcessService) rollback(ctx context.Context) {
