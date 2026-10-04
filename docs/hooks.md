@@ -1200,9 +1200,27 @@ context to either event.
 
 ### Process Host Post-Create
 
+Process-hosted Agents run a configured `post-create` hook only when that hook
+explicitly opts in:
+
+```toml
+[hooks.post-create]
+run = "./after-create.sh"
+runtime = "process"
+```
+
+`runtime = "process"` means **run also for process-hosted Agents**. Tmux creation
+continues to run the hook regardless of this key; it does not make the hook
+process-only. Omit the key to keep an existing hook out of process creation.
+Other values and declarations under other hook events are configuration errors.
+The opt-in applies independently to global and project hooks. Skipped project
+hooks do not prompt for trust. Declared hooks keep the existing trust policy and
+5-second timeout.
+
 The hook runner supports a process host `post-create` context for scripts and CI
 without tmux. Public foreground Agent creation is not enabled by this change;
-the table below defines the hook contract its caller must use. Which configured hooks run in a process context is decided by the caller; this section defines only their environment and failure handling.
+the runner applies the opt-in above before trust prompting or execution. The
+table below defines the environment and failure handling for eligible hooks.
 
 | Contract | tmux `post-create` | process host `post-create` |
 | --- | --- | --- |
@@ -1220,9 +1238,10 @@ through `[env]`. The default timeout remains `5s`, global hooks run before
 project hooks, and project automation retains the same trust policy. Other
 events and tmux hook environments keep their existing behavior.
 
-An empty or unset session/pane target can make tmux select its most recently
-used session. A hook that calls tmux must skip process contexts before issuing
-any tmux command, even if its target argument is quoted. Add this guard:
+As defense in depth, a hook that opts into process creation and calls tmux
+must still guard its tmux commands. An empty or unset session/pane target can
+make tmux select its most recently used session, even if the argument is quoted.
+Add this guard:
 
 ```sh
 [ "${PROJMUX_RUNTIME:-}" = process ] && exit 0

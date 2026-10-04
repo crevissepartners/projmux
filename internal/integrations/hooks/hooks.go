@@ -117,9 +117,9 @@ func (r *Runner) Run(ctx context.Context, event Event, c Context) (RunResult, er
 		return RunResult{}, nil
 	}
 
-	globalCfg, hasGlobalCfg := r.globalConfigForEvent(event)
+	globalCfg, hasGlobalCfg := r.globalConfigForEvent(event, c.Runtime)
 	projectFile := r.discoverProjectConfigFile(event, c.CWD)
-	projectCfg, hasProjectCfg := r.projectConfigForEvent(event, projectFile)
+	projectCfg, hasProjectCfg := r.projectConfigForEvent(event, projectFile, c.Runtime)
 	if hasGlobalCfg {
 		c.Env = mergeConfigEnv(c.Env, globalCfg.SessionEnv())
 	}
@@ -267,13 +267,13 @@ func mergeResult(event Event, current, next RunResult) RunResult {
 	return current
 }
 
-func (r *Runner) globalConfigForEvent(event Event) (ProjectConfig, bool) {
+func (r *Runner) globalConfigForEvent(event Event, runtime string) (ProjectConfig, bool) {
 	cfg, err := LoadGlobalConfig(r.GlobalConfigPath)
 	if err != nil {
 		r.warnf(event, "global config %q could not be parsed: %v", r.GlobalConfigPath, err)
 		return ProjectConfig{}, false
 	}
-	if !cfg.hasEventSurface(event) {
+	if !cfg.relevantForEvent(event, runtime) {
 		return ProjectConfig{}, false
 	}
 	return cfg, true
@@ -286,7 +286,7 @@ func (r *Runner) discoverProjectConfigFile(event Event, cwd string) projectConfi
 	return discoverProjectConfig(cwd)
 }
 
-func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile) (ProjectConfig, bool) {
+func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile, runtime string) (ProjectConfig, bool) {
 	if configFile.path == "" {
 		return ProjectConfig{}, false
 	}
@@ -295,7 +295,7 @@ func (r *Runner) projectConfigForEvent(event Event, configFile projectConfigFile
 		r.warnf(event, "project config %q could not be parsed: %v", configFile.rel, err)
 		return ProjectConfig{}, false
 	}
-	if !cfg.relevantForEvent(event) {
+	if !cfg.relevantForEvent(event, runtime) {
 		return ProjectConfig{}, false
 	}
 	if !r.authorizeProjectConfig(event, configFile) {

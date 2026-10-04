@@ -23,11 +23,14 @@ var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 type ProjectConfig struct {
 	StartupRun string
 	Hooks      map[Event]string
-	Env        map[string]string
-	Theme      theme.ThemeConfig
-	UI         UIConfig
-	AI         AIConfig
-	Update     UpdateConfig
+	// HookRuntimes opts post-create hooks into process Agents as well.
+	// Tmux execution remains independent of this declaration.
+	HookRuntimes map[Event]string
+	Env          map[string]string
+	Theme        theme.ThemeConfig
+	UI           UIConfig
+	AI           AIConfig
+	Update       UpdateConfig
 }
 
 const LegacyKubeConfigDiagnostic = "legacy [kube] support was removed; manually move context to [env] KUBE_CONTEXT and namespace to [env] KUBE_NAMESPACE, then remove [kube]; original config was not changed"
@@ -136,8 +139,15 @@ func (c ProjectConfig) hasSessionEnv() bool {
 	return len(c.SessionEnv()) > 0
 }
 
-func (c ProjectConfig) relevantForEvent(event Event) bool {
-	return c.hasEventSurface(event)
+func (c ProjectConfig) relevantForEvent(event Event, runtime string) bool {
+	return c.hasEventSurface(event) && (runtime != RuntimeProcess || c.HookRuntimes[event] == RuntimeProcess)
+}
+
+func validateHookRuntime(event Event, value string) error {
+	if event != EventPostCreate || value != RuntimeProcess {
+		return fmt.Errorf("runtime declaration requires [hooks.post-create] runtime = %q: run also for process-hosted Agents; tmux behavior is unchanged", RuntimeProcess)
+	}
+	return nil
 }
 
 func ParseProjectConfig(content string) (ProjectConfig, error) {
@@ -316,14 +326,24 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		}
 	default:
 		eventName, ok := strings.CutPrefix(section, "hooks.")
-		if !ok || key != "run" {
+		if !ok || (key != "run" && key != "runtime") {
 			return fmt.Errorf("line %d: unsupported key %q in section %q", lineNo, key, section)
 		}
 		event := normalizeEvent(Event(eventName))
 		if event == "" {
 			return fmt.Errorf("line %d: unsupported hook event %q", lineNo, eventName)
 		}
-		cfg.Hooks[event] = value
+		if key == "runtime" {
+			if err := validateHookRuntime(event, value); err != nil {
+				return err
+			}
+			if cfg.HookRuntimes == nil {
+				cfg.HookRuntimes = map[Event]string{}
+			}
+			cfg.HookRuntimes[event] = value
+		} else {
+			cfg.Hooks[event] = value
+		}
 	}
 	return nil
 }
@@ -465,6 +485,11 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
+	for event, value := range cfg.HookRuntimes {
+		if err := validateHookRuntime(event, value); err != nil {
+			return err
+		}
+	}
 	for key := range cfg.Env {
 		if err := ValidateProjectEnvKey(key); err != nil {
 			return err
@@ -642,10 +667,14 @@ func renderProjectConfig(cfg ProjectConfig) string {
 		if cfg.Hooks != nil {
 			run = strings.TrimSpace(cfg.Hooks[event])
 		}
-		if run == "" {
+		if run == "" && cfg.HookRuntimes[event] == "" {
 			continue
 		}
-		sections = append(sections, fmt.Sprintf("[hooks.%s]\nrun = %s\n", event, strconv.Quote(run)))
+		section := fmt.Sprintf("[hooks.%s]\nrun = %s\n", event, strconv.Quote(run))
+		if runtime := cfg.HookRuntimes[event]; runtime != "" {
+			section += "runtime = " + strconv.Quote(runtime) + "\n"
+		}
+		sections = append(sections, section)
 	}
 	if strings.TrimSpace(cfg.StartupRun) != "" {
 		sections = append(sections, fmt.Sprintf("[startup]\nrun = %s\n", strconv.Quote(strings.TrimSpace(cfg.StartupRun))))

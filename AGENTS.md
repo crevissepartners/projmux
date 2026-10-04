@@ -147,6 +147,7 @@ Platforms:
 - WSL is not a separate target. It runs the Linux build under the Linux contract, and WSL-specific behavior such as `PROJMUX_WSL_TOAST_ICON_DIR` stays inside that build.
 
 Hook contract:
+- Process-hosted Agents execute only post-create hooks declaring `runtime = "process"`. This opts the hook into process creation as well; tmux execution remains unchanged. Other values or events are configuration errors.
 - The post-create hook contract (`[hooks.post-create]`, `PROJMUX_*` env vars, 5s timeout) is public API.
 - Adding, removing, or renaming any `PROJMUX_*` env var needs at least a minor release input: use a `feat(hooks): ...` PR title and leave the version/manifest update to release-please.
 - `PROJMUX_SOCKET` is the app socket name (`projmux`), supplied as hook routing metadata. It does not change how the tmux client invokes commands.
