@@ -17,9 +17,11 @@ consume migrated data without saving it. A successful mutation saves v5.
 
 `get pane -o json` and `get panes -o json` expose the stored model. The same
 Pane model is included in resource graph output. `describe pane` displays
-`RuntimeKind`, `ProcessActivation`, and `ProcessSession`; `describe agent`
-also displays those rows from its current process Pane. JSON Agent resources
-continue to reference the Pane through `status.paneRef`.
+`RuntimeKind` and, for a process Pane, the readable rows `ProcessHost`,
+`HostPID`, `ChildPID`, `ResumeState`, and `PendingControls`; `describe agent`
+also displays those rows from its current process Pane. They are explained in
+[Operating Process-Hosted Agents](process-host-operations.md#reading-its-state).
+JSON Agent resources continue to reference the Pane through `status.paneRef`.
 
 | Field | Type and omission rule |
 | --- | --- |

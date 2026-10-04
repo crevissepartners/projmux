@@ -554,3 +554,58 @@ func TestProcessCreateClosedStdinExitActualCLI(t *testing.T) {
 		})
 	}
 }
+
+// processGuidanceLocation is the default guidance sentence that tells a
+// process-hosted model where it runs and how it is controlled.
+const processGuidanceLocation = "This agent runs in a foreground process host without a tmux pane."
+
+// The launched Claude receives the process execution-location guidance
+// through its instructions file, not only in unit-rendered text.
+func TestProcessCreateGuidanceActualCLI(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	argv := filepath.Join(f.root, "argv")
+	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$@\" >" + fmt.Sprintf("%q", argv) + "\nexec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + "\n"
+	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(wrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	if _, err := bufio.NewReader(output).ReadString('\n'); err != nil {
+		t.Fatalf("ownership: %v %s", err, stderr.String())
+	}
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for arg := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+		if text, readErr := os.ReadFile(arg); readErr == nil && bytes.Contains(text, []byte(processGuidanceLocation)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("process guidance absent from the launched instructions; argv:\n%s", raw)
+	}
+	_ = input.Close()
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("Wait: %v %s", err, stderr.String())
+	}
+}

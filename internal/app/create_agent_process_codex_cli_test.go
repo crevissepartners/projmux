@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -427,5 +428,57 @@ func TestProcessCodexCreateUnsupportedProviderActualCLI(t *testing.T) {
 	}
 	if stdout.Len() != 0 || !bytes.Equal(stderr.Bytes(), golden) {
 		t.Fatalf("unsupported output: stdout=%q stderr=%q want=%q", stdout.String(), stderr.String(), golden)
+	}
+}
+
+// The launched Codex thread receives the process execution-location guidance
+// in its developer instructions.
+func TestProcessCodexCreateGuidanceActualCLI(t *testing.T) {
+	f := newProcessCodexCreateCLI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	if _, err := bufio.NewReader(output).ReadString('\n'); err != nil {
+		t.Fatalf("ownership: %v %s", err, stderr.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for line := range bytes.SplitSeq(raw, []byte("\n")) {
+		var request struct {
+			Method string `json:"method"`
+			Params struct {
+				DeveloperInstructions string `json:"developerInstructions"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(line, &request) == nil && request.Method == "thread/start" && strings.Contains(request.Params.DeveloperInstructions, processGuidanceLocation) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("process guidance absent from thread/start:\n%s", raw)
+	}
+	_ = input.Close()
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("Wait: %v %s", err, stderr.String())
 	}
 }

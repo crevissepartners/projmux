@@ -1228,6 +1228,8 @@ process contexts.
 Agent for scripts and CI without tmux. Omitting `--host` keeps tmux creation. The
 runner applies the opt-in above before trust prompting or execution. The table
 below defines the environment and failure handling for eligible hooks.
+Driving, inspecting, and stopping a running process Agent is covered in
+[Operating Process-Hosted Agents](process-host-operations.md).
 
 | Contract | tmux `post-create` | process host `post-create` |
 | --- | --- | --- |
