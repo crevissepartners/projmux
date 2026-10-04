@@ -272,7 +272,7 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 	}
 	paneUID, generation := env(internalActivationPaneUIDEnv), env(internalActivationGenerationEnv)
 	pane, ok := reg.Pane(paneUID)
-	if !ok || pane.Status.Activation.Generation != generation || generation == "" || pane.Status.Activation.Claude == nil {
+	if !ok || pane.Status.Activation.Generation != generation || generation == "" || (pane.Status.Activation.Claude == nil && pane.Status.Activation.Process == nil) {
 		return claudeEndpointBootstrap{}, diagnostics.ClaudeRegistrationPaneBindingMismatch
 	}
 	agent, ok := reg.Agent(pane.Status.Activation.AgentUID)
@@ -297,7 +297,26 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 		}
 		proof = &verified
 	}
-	process := pane.Status.Activation.Claude.Process
+	var process coremetadata.ProcessIdentity
+	priorGeneration := ""
+	if proof != nil {
+		activation, provider, current := reg.CurrentProcessActivation(coremetadata.ProcessBinding{HostInstanceID: proof.Binding.Host, ProjectUID: proof.Binding.Project, WindowUID: proof.Binding.Window, AgentUID: proof.Binding.Agent, PaneUID: proof.Binding.Pane, Generation: proof.Binding.Generation, OperationID: proof.Binding.Operation})
+		if !current || provider != "claude" || activation.Child != proof.Process || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.SessionID != payload.SessionID {
+			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
+		}
+		process = activation.Child
+		result, err := exchangeClaudeProcessHost(*proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Lookup: true})
+		if err != nil {
+			return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
+		}
+		priorGeneration = result.RegistrationGeneration
+	} else {
+		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeTmux || pane.Status.Activation.Claude == nil {
+			return matched, diagnostics.ClaudeRegistrationPaneBindingMismatch
+		}
+		process = pane.Status.Activation.Claude.Process
+		priorGeneration = pane.Status.Activation.Claude.RegistrationGeneration
+	}
 	actual, _, err := claudeadapter.Process(parentPID)
 	if err != nil || actual != process || int64(actual.OwnerUID) != int64(os.Getuid()) {
 		return matched, diagnostics.ClaudeRegistrationProviderProcessMismatch
@@ -335,7 +354,7 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 	}
 	return claudeEndpointBootstrap{RegistryPath: registryPath, AgentUID: agent.Metadata.UID, PaneUID: paneUID, Generation: generation,
 		Registration:                coremetadata.ClaudeRegistration{Authority: authority},
-		PriorRegistrationGeneration: pane.Status.Activation.Claude.RegistrationGeneration,
+		PriorRegistrationGeneration: priorGeneration,
 		HookProcess:                 hookProcess,
 		Socket:                      socket, Token: token, ReplyTool: replyTool, ProcessProof: proof}, claudeRegistrationProceed
 }
@@ -777,14 +796,23 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	store := intmetadata.NewStore(bootstrap.RegistryPath)
 	mutator := intmetadata.DefaultMutator()
 	entered := false
-	_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+	if bootstrap.ProcessProof != nil {
 		entered = true
-		return admitClaudeRegistration(reg, bootstrap, mutator)
-	})
+		err = registerClaudeProcessHelper(bootstrap, "register")
+	} else {
+		_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+			entered = true
+			return admitClaudeRegistration(reg, bootstrap, mutator)
+		})
+	}
 	if err != nil {
 		return claudeRegistrationTransactionReason(err, entered)
 	}
 	defer func() {
+		if bootstrap.ProcessProof != nil {
+			_ = registerClaudeProcessHelper(bootstrap, "clear")
+			return
+		}
 		_, _, _ = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 			mutator.ClearClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
 			return nil

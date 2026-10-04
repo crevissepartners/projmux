@@ -77,7 +77,11 @@ func TestCodexProcessForegroundExactPeerControls(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				s := &claudeProcessService{handle: f.handle, binding: f.binding, ownedProcess: child, registryPath: f.path, listener: listener, ready: make(chan struct{})}
+				ownedHost, _, err := localipc.Process(os.Getpid())
+				if err != nil {
+					t.Fatal(err)
+				}
+				s := &claudeProcessService{handle: f.handle, binding: f.binding, ownedProcess: child, ownedHostProcess: ownedHost, registryPath: f.path, listener: listener, ready: make(chan struct{})}
 				close(s.ready)
 				t.Cleanup(func() {
 					if err := closeLease(context.Background()); err != nil {
@@ -215,6 +219,10 @@ func TestCodexProcessForegroundExactPeerControls(t *testing.T) {
 						return processhost.ErrStale
 					}
 					p.Status.Activation.Generation = value
+					if provider == "claude" {
+						p.Status.Activation.Process.Binding.Generation = value
+						p.Status.ProcessSession.Binding.Generation = value
+					}
 					return nil
 				})
 				if err != nil {

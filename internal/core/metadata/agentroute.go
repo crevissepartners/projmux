@@ -177,26 +177,40 @@ func ResolveAgentRoute(reg Registry, agentUID string) (AgentRouteRef, string) {
 // against the live Handle. A self-asserted payload is never sufficient.
 type ClaudeProcessRouteEvidence struct {
 	HostInstance, PaneUID, Generation, SessionID string
-	Process                                      ProcessIdentity
+	Process, HostProcess                         ProcessIdentity
+	Registration                                 ClaudeRegistration
 }
 
 // ResolveProcessClaudeRoute is an internal process-only seam. Public callers
 // keep ResolveAgentRoute's tmux requirement until foreground activation.
 func ResolveProcessClaudeRoute(reg Registry, agentUID string, evidence ClaudeProcessRouteEvidence,
 	verify func(ClaudeProcessRouteEvidence) bool) (AgentRouteRef, string) {
+	refused := func() (AgentRouteRef, string) { return AgentRouteRef{}, "process Claude authority is unavailable" }
 	pane, ok := reg.Pane(evidence.PaneUID)
-	if !ok || evidence.HostInstance == "" || evidence.Generation == "" || evidence.SessionID == "" || !evidence.Process.Valid() ||
-		pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Generation != evidence.Generation ||
-		pane.Status.Activation.AgentUID != agentUID || pane.Status.Activation.Claude == nil ||
-		pane.Status.Activation.Claude.Process != evidence.Process || pane.Status.Activation.Claude.RegistrationSessionID != evidence.SessionID ||
+	if !ok || pane.Status.Activation.Process == nil {
+		return refused()
+	}
+	binding := pane.Status.Activation.Process.Binding
+	activation, provider, current := reg.CurrentProcessActivation(binding)
+	agent, _ := reg.Agent(agentUID)
+	authority := evidence.Registration.Authority
+	if !current || provider != "claude" || agent == nil || agent.Status.Phase != PhaseRunning || binding.AgentUID != agentUID ||
+		!processClaudeEvidenceMatches(binding, activation, evidence) || !processClaudeSessionMatches(pane.Status.ProcessSession, binding, evidence.SessionID, false) ||
 		verify == nil || !verify(evidence) {
-		return AgentRouteRef{}, "process Claude authority is unavailable"
+		return refused()
 	}
-	route, reason := resolveAgentRoute(reg, agentUID, false)
-	if reason != "" || route.PaneUID != evidence.PaneUID || route.Generation != evidence.Generation || route.Authority().Provider() != "claude" {
-		return AgentRouteRef{}, "process Claude authority is unavailable"
-	}
-	return route, ""
+	return AgentRouteRef{AgentUID: agentUID, PaneUID: evidence.PaneUID, Generation: evidence.Generation, authority: authority}, ""
+
+}
+
+func processClaudeEvidenceMatches(binding ProcessBinding, activation ProcessActivation, e ClaudeProcessRouteEvidence) bool {
+	a := e.Registration.Authority
+	return e.HostInstance == binding.HostInstanceID && e.Generation == binding.Generation && e.Process == activation.Child && e.HostProcess == activation.HostProcess &&
+		e.Registration.Ready && a.Valid() && a.Process == e.Process && a.SessionID == e.SessionID
+}
+
+func processClaudeSessionMatches(session *ProcessSessionRecord, binding ProcessBinding, sessionID string, allowReserved bool) bool {
+	return session != nil && session.Provider == "claude" && session.Binding == binding && (session.SessionID == sessionID || (allowReserved && session.SessionID == ""))
 }
 
 // CodexProcessRouteEvidence is a non-durable authority for one dedicated

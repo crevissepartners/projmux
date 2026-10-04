@@ -46,7 +46,16 @@ type claudeProcessCheck struct {
 	Register   bool
 	Lookup     bool
 	Input      *claudeProcessInput
+	Helper     *claudeProcessRegistration
 	Foreground *processForegroundRequest
+}
+
+// Helper registration authority is live host state, never a durable Registry
+// member. Its claim is admitted only from the hook's kernel-verified child.
+type claudeProcessRegistration struct {
+	Phase, PriorGeneration string
+	Hook                   coremetadata.ProcessIdentity
+	Registration           coremetadata.ClaudeRegistration
 }
 
 type claudeProcessInput struct {
@@ -55,25 +64,30 @@ type claudeProcessInput struct {
 }
 
 type claudeProcessCheckResult struct {
-	Process  coremetadata.ProcessIdentity
-	Valid    bool
-	Admitted bool
-	Binding  processhost.Binding
+	Process                coremetadata.ProcessIdentity
+	Valid                  bool
+	Admitted               bool
+	Binding                processhost.Binding
+	Registration           *coremetadata.ClaudeRegistration
+	RegistrationGeneration string
 }
 
 // The bounded exchange service belongs to one exact child lifetime. Published
 // fields are immutable after ready closes; each exchange is handled serially.
 type claudeProcessService struct {
-	registryPath string
-	binding      processhost.Binding
-	listener     *localipc.Listener
-	ready        chan struct{}
-	handle       *processhost.Handle
-	launchErr    error
-	ownedProcess coremetadata.ProcessIdentity
-	once         sync.Once
-	closeLease   func(context.Context) error
-	closeErr     error
+	registryPath           string
+	binding                processhost.Binding
+	listener               *localipc.Listener
+	ready                  chan struct{}
+	handle                 *processhost.Handle
+	launchErr              error
+	ownedProcess           coremetadata.ProcessIdentity
+	ownedHostProcess       coremetadata.ProcessIdentity
+	once                   sync.Once
+	closeLease             func(context.Context) error
+	closeErr               error
+	registration           *coremetadata.ClaudeRegistration
+	registrationGeneration string
 }
 
 func (s *claudeProcessService) close(ctx context.Context) error {
@@ -165,7 +179,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
 	if request.Observe != nil {
-		if request.Foreground != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
+		if request.Foreground != nil || request.Helper != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
 			return
 		}
 		result := processForegroundResult{Stale: true}
@@ -181,7 +195,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		return
 	}
 	if request.Foreground != nil {
-		if request.Input != nil || request.Register || request.Lookup {
+		if request.Helper != nil || request.Input != nil || request.Register || request.Lookup {
 			return
 		}
 		r := *request.Foreground
@@ -192,12 +206,34 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	_ = localipc.WriteJSON(conn, s.check(bounded, request, peer, parent))
 }
 
+// claudeProcessOperation rejects mixed requests on both sides of the socket.
+func claudeProcessOperation(r claudeProcessCheck) (string, bool) {
+	if r.Observe != nil || r.Foreground != nil {
+		return "", false
+	}
+	operation := "check"
+	for _, candidate := range []struct {
+		name    string
+		present bool
+	}{{"input", r.Input != nil}, {"register", r.Register}, {"lookup", r.Lookup}, {"helper", r.Helper != nil}} {
+		if !candidate.present {
+			continue
+		}
+		if operation != "check" {
+			return "", false
+		}
+		operation = candidate.name
+	}
+	return operation, true
+}
+
 func (s *claudeProcessService) check(ctx context.Context, request claudeProcessCheck, peer coremetadata.ProcessIdentity, parent int) claudeProcessCheckResult {
 	refused := claudeProcessCheckResult{}
-	binding := request.Binding
-	if request.Lookup && request.Input == nil && !request.Register && binding.Agent == s.binding.Agent && binding.Pane == s.binding.Pane && binding.Generation == s.binding.Generation {
-		binding = s.binding
+	operation, valid := claudeProcessOperation(request)
+	if !valid {
+		return refused
 	}
+	binding := request.Binding
 	snap, err := s.handle.Observe(binding)
 	if err != nil || binding != s.binding {
 		return refused
@@ -206,20 +242,87 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 	if err != nil || process != s.ownedProcess {
 		return refused
 	}
-	if request.Input != nil {
-		if request.Register || request.Lookup || s.handle.CheckClaudeHook(ctx, binding, process.PID, request.Session) != nil {
-			return refused
-		}
-		return s.input(ctx, request, peer, snap)
-	}
-	if request.Register {
-		if parent != process.PID || s.handle.BindClaudeHook(ctx, binding, process.PID, request.Session) != nil || s.recordActivation(process) != nil {
+	if operation == "register" {
+		if parent != process.PID || s.handle.BindClaudeHook(ctx, binding, process.PID, request.Session) != nil || s.recordActivation(process, request.Session) != nil {
 			return refused
 		}
 	} else if s.handle.CheckClaudeHook(ctx, binding, process.PID, request.Session) != nil {
 		return refused
 	}
-	return claudeProcessCheckResult{Process: process, Valid: true, Binding: binding}
+	switch operation {
+	case "input":
+		return s.input(ctx, request, peer, snap)
+	case "helper":
+		proof := claudeProcessProof{Binding: binding, Process: process, HostProcess: s.ownedHostProcess, Session: request.Session}
+		next, generation, err := admitClaudeProcessRegistration(s.registryPath, proof, *request.Helper, peer, parent, s.registration, s.registrationGeneration)
+		if err != nil {
+			return refused
+		}
+		s.registration, s.registrationGeneration = next, generation
+	}
+	result := claudeProcessCheckResult{Process: process, Valid: true, Binding: binding, RegistrationGeneration: s.registrationGeneration}
+	if s.registration != nil {
+		copy := *s.registration
+		result.Registration = &copy
+	}
+	return result
+}
+
+// The client preflight and host admission use the same ownership and birth
+// checks; the host remains the sole writer of live registration state.
+func admitClaudeProcessRegistration(path string, proof claudeProcessProof, claim claudeProcessRegistration, peer coremetadata.ProcessIdentity, parent int, current *coremetadata.ClaudeRegistration, generation string) (*coremetadata.ClaudeRegistration, string, error) {
+	if !currentClaudeProcessRegistrationOwner(path, proof) || !validClaudeProcessHelperPeer(proof, claim, peer, parent) {
+		return nil, "", processhost.ErrStale
+	}
+	return nextClaudeProcessRegistration(current, generation, claim)
+}
+
+func currentClaudeProcessRegistrationOwner(path string, proof claudeProcessProof) bool {
+	reg, err := intmetadata.NewStore(path).LoadDegradedReadOnly()
+	if err != nil {
+		return false
+	}
+	b := proof.Binding
+	binding := coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}
+	activation, provider, ok := reg.CurrentProcessActivation(binding)
+	agent, found := reg.Agent(b.Agent)
+	return ok && provider == "claude" && found && agent.Status.Phase == coremetadata.PhaseRunning && activation.Child == proof.Process && activation.HostProcess == proof.HostProcess
+}
+
+func validClaudeProcessHelperPeer(proof claudeProcessProof, claim claudeProcessRegistration, peer coremetadata.ProcessIdentity, parent int) bool {
+	a := claim.Registration.Authority
+	if !a.Valid() || a.Process != proof.Process || a.SessionID != proof.Session || a.LeaseProcess != peer {
+		return false
+	}
+	if claim.Phase == "clear" {
+		return true
+	}
+	hook, provider, err := localipc.Process(parent)
+	return err == nil && hook == claim.Hook && provider == proof.Process.PID
+}
+
+func nextClaudeProcessRegistration(current *coremetadata.ClaudeRegistration, generation string, claim claudeProcessRegistration) (*coremetadata.ClaudeRegistration, string, error) {
+	authority := claim.Registration.Authority
+	switch claim.Phase {
+	case "clear":
+		if current == nil || current.Authority != authority {
+			return nil, "", processhost.ErrStale
+		}
+		return nil, generation, nil
+	case "register":
+		switch generation {
+		case authority.RegistrationGeneration:
+			if current == nil || current.Authority != authority {
+				return nil, "", processhost.ErrStale
+			}
+			return current, generation, nil
+		case claim.PriorGeneration:
+			registration := claim.Registration
+			registration.Ready = true
+			return &registration, authority.RegistrationGeneration, nil
+		}
+	}
+	return nil, "", processhost.ErrStale
 }
 
 // Foreground control revalidates the same immutable owned child and Registry
@@ -255,26 +358,34 @@ func (s *claudeProcessService) currentForeground(ctx context.Context, a processh
 func (s *claudeProcessService) ownershipCurrent(reg coremetadata.Registry, child coremetadata.ProcessIdentity) bool {
 	pane, ok := reg.Pane(s.binding.Pane)
 	agent, found := reg.Agent(s.binding.Agent)
-	window, windowFound := reg.Window(s.binding.Window)
-	return ok && found && windowFound && pane.Status.Activation.RuntimeID == "" &&
-		pane.Status.Activation.Generation == s.binding.Generation && pane.Status.Activation.OperationID == s.binding.Operation &&
-		pane.Status.Activation.AgentUID == s.binding.Agent && pane.Metadata.OwnerUID() == s.binding.Agent &&
-		agent.Status.PaneRef == s.binding.Pane && agent.Metadata.OwnerUID() == s.binding.Window && window.Metadata.OwnerUID() == s.binding.Project &&
-		(pane.Status.Activation.Claude == nil || pane.Status.Activation.Claude.Process == child)
+	if !ok || !found || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || agent.Spec.Provider != "claude" || agent.Status.Phase != coremetadata.PhaseRunning {
+		return false
+	}
+	binding := coremetadata.ProcessBinding{HostInstanceID: s.binding.Host, ProjectUID: s.binding.Project, WindowUID: s.binding.Window, AgentUID: s.binding.Agent, PaneUID: s.binding.Pane, Generation: s.binding.Generation, OperationID: s.binding.Operation}
+	activation, provider, current := reg.CurrentProcessActivation(binding)
+	if current {
+		return provider == "claude" && activation.Child == child && activation.HostProcess == s.ownedHostProcess
+	}
+	// Before SessionStart, the reserved durable session identifies the generation.
+	// A partial activation is never written to schema v5.
+	return pane.Status.Activation.IsZero() && pane.Status.ProcessSession != nil && pane.Status.ProcessSession.Provider == "claude" && pane.Status.ProcessSession.Binding == binding && pane.Metadata.OwnerUID() == s.binding.Agent && agent.Status.PaneRef == s.binding.Pane && agent.Metadata.OwnerUID() == s.binding.Window
+
 }
 
-func (s *claudeProcessService) recordActivation(process coremetadata.ProcessIdentity) error {
-	_, _, err := intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+func (s *claudeProcessService) recordActivation(process coremetadata.ProcessIdentity, session string) error {
+	host, _, err := localipc.Process(os.Getpid())
+	if err != nil {
+		return err
+	}
+	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: s.binding.Host, ProjectUID: s.binding.Project, WindowUID: s.binding.Window, AgentUID: s.binding.Agent, PaneUID: s.binding.Pane, Generation: s.binding.Generation, OperationID: s.binding.Operation}, HostProcess: host, Child: process}
+	_, _, err = intmetadata.NewStore(s.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
 		if !s.ownershipCurrent(*reg, process) {
 			return processhost.ErrStale
 		}
-		pane, _ := reg.Pane(s.binding.Pane)
-		if pane.Status.Activation.Claude != nil {
-			return nil
-		}
-		return intmetadata.DefaultMutator().RecordClaudeProcess(reg, s.binding.Pane, s.binding.Agent, s.binding.Generation, process)
+		return intmetadata.DefaultMutator().RecordProcessActivation(reg, activation, session)
 	})
 	return err
+
 }
 
 // Input is a mutation, unlike a binding check. Only the currently registered
@@ -287,12 +398,9 @@ func (s *claudeProcessService) inputCurrent(request claudeProcessCheck, peer cor
 	if !s.ownershipCurrent(reg, s.ownedProcess) {
 		return false
 	}
-	pane, _ := reg.Pane(s.binding.Pane)
-	if pane.Status.Activation.Claude == nil {
-		return false
-	}
-	cl := pane.Status.Activation.Claude
-	return cl.Registration != nil && cl.Registration.Ready && cl.Registration.Authority.Process == s.ownedProcess && cl.Registration.Authority.SessionID == request.Session && cl.Registration.Authority.LeaseProcess == peer && cl.RegistrationGeneration == request.Input.RegistrationGeneration && cl.Registration.Authority.RegistrationGeneration == request.Input.RegistrationGeneration
+	registration := s.registration
+	return registration != nil && registration.Ready && registration.Authority.Process == s.ownedProcess && registration.Authority.SessionID == request.Session && registration.Authority.LeaseProcess == peer && registration.Authority.RegistrationGeneration == request.Input.RegistrationGeneration
+
 }
 
 func (s *claudeProcessService) input(ctx context.Context, request claudeProcessCheck, peer coremetadata.ProcessIdentity, snap processhost.Snapshot) claudeProcessCheckResult {
@@ -334,6 +442,9 @@ func (s *claudeProcessService) initialize(ctx context.Context, host *processhost
 		} else {
 			s.ownedProcess, _, s.launchErr = localipc.Process(snap.PID)
 		}
+	}
+	if s.launchErr == nil {
+		s.ownedHostProcess, _, s.launchErr = localipc.Process(os.Getpid())
 	}
 	close(s.ready)
 }
@@ -454,23 +565,55 @@ func dialProcessClaudeHost(proof claudeProcessProof) (*net.UnixConn, error) {
 	return conn, nil
 }
 
-func checkClaudeProcessHost(proof claudeProcessProof, register bool) bool {
+func exchangeClaudeProcessHost(proof claudeProcessProof, request claudeProcessCheck) (claudeProcessCheckResult, error) {
+	if _, valid := claudeProcessOperation(request); !valid {
+		return claudeProcessCheckResult{}, processhost.ErrStale
+	}
 	conn, err := dialProcessClaudeHost(proof)
 	if err != nil {
-		return false
+		return claudeProcessCheckResult{}, err
 	}
 	defer conn.Close()
-	if err = localipc.WriteJSON(conn, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Register: register}); err != nil {
-		return false
+	if err = localipc.WriteJSON(conn, request); err != nil {
+		return claudeProcessCheckResult{}, err
 	}
-	if conn.CloseWrite() != nil {
-		return false
+	if err = conn.CloseWrite(); err != nil {
+		return claudeProcessCheckResult{}, err
 	}
 	var result claudeProcessCheckResult
-	if localipc.ReadJSON(conn, &result) != nil || !result.Valid || !result.Process.Valid() {
-		return false
+	if err = localipc.ReadJSON(conn, &result); err != nil {
+		return result, err
 	}
-	return result.Process == proof.Process && result.Binding == proof.Binding
+	if !result.Valid || result.Process != proof.Process || result.Binding != proof.Binding {
+		return result, processhost.ErrStale
+	}
+	return result, nil
+}
+
+func checkClaudeProcessHost(proof claudeProcessProof, register bool) bool {
+	_, err := exchangeClaudeProcessHost(proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Register: register})
+	return err == nil
+}
+
+func registerClaudeProcessHelper(bootstrap claudeEndpointBootstrap, phase string) error {
+	if bootstrap.ProcessProof == nil {
+		return processhost.ErrStale
+	}
+	proof := *bootstrap.ProcessProof
+	claim := claudeProcessRegistration{Phase: phase, PriorGeneration: bootstrap.PriorRegistrationGeneration, Hook: bootstrap.HookProcess, Registration: bootstrap.Registration}
+	current, err := exchangeClaudeProcessHost(proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Lookup: true})
+	if err != nil {
+		return err
+	}
+	peer, parent, err := localipc.Process(os.Getpid())
+	if err != nil {
+		return err
+	}
+	if _, _, err = admitClaudeProcessRegistration(bootstrap.RegistryPath, proof, claim, peer, parent, current.Registration, current.RegistrationGeneration); err != nil {
+		return err
+	}
+	_, err = exchangeClaudeProcessHost(proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Helper: &claim})
+	return err
 }
 
 func claudeProcessHookProof(env func(string) string, session string, parentPID int) (claudeProcessProof, bool) {
@@ -523,12 +666,20 @@ func discoverProcessClaudeProof(registryPath string, reg coremetadata.Registry, 
 		return claudeProcessProof{}, false
 	}
 	pane, ok := reg.Pane(agent.Status.PaneRef)
-	if !ok || pane.Status.Activation.RuntimeID != "" || pane.Status.Activation.Claude == nil || pane.Status.Activation.Claude.Registration == nil {
+	if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
 		return claudeProcessProof{}, false
 	}
-	activation := pane.Status.Activation
-	process, supervisor, err := localipc.Process(activation.Claude.Process.PID)
-	if err != nil || process != activation.Claude.Process {
+	activation := pane.Status.Activation.Process
+	if activation == nil || pane.Status.ProcessSession == nil {
+		return claudeProcessProof{}, false
+	}
+	binding := activation.Binding
+	current, provider, valid := reg.CurrentProcessActivation(binding)
+	if !valid || provider != "claude" {
+		return claudeProcessProof{}, false
+	}
+	process, supervisor, err := localipc.Process(current.Child.PID)
+	if err != nil || process != current.Child {
 		return claudeProcessProof{}, false
 	}
 	_, hostPID, err := localipc.Process(supervisor)
@@ -536,34 +687,29 @@ func discoverProcessClaudeProof(registryPath string, reg coremetadata.Registry, 
 		return claudeProcessProof{}, false
 	}
 	hostProcess, _, err := localipc.Process(hostPID)
-	if err != nil {
+	if err != nil || hostProcess != current.HostProcess {
 		return claudeProcessProof{}, false
 	}
-	socket := processClaudeHostSocket(registryPath, pane.Metadata.UID, activation.Generation)
+	socket := processClaudeHostSocket(registryPath, pane.Metadata.UID, binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
 		return claudeProcessProof{}, false
 	}
-	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socket, Net: "unix"})
+	proof := claudeProcessProof{Binding: processSchemaBinding(binding), Process: process, Session: pane.Status.ProcessSession.SessionID, Socket: socket, HostProcess: hostProcess, HostSocket: identity}
+	_, err = lookupClaudeProcessRegistration(proof)
+	return proof, err == nil
+
+}
+
+func lookupClaudeProcessRegistration(proof claudeProcessProof) (*coremetadata.ClaudeRegistration, error) {
+	result, err := exchangeClaudeProcessHost(proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Lookup: true})
 	if err != nil {
-		return claudeProcessProof{}, false
+		return nil, err
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
-	peer, _, err := localipc.PeerProcess(conn)
-	if err != nil || peer != hostProcess {
-		return claudeProcessProof{}, false
+	if result.Registration == nil || !result.Registration.Ready {
+		return nil, processhost.ErrStale
 	}
-	session := activation.Claude.RegistrationSessionID
-	request := claudeProcessCheck{Binding: processhost.Binding{Agent: agentUID, Pane: pane.Metadata.UID, Generation: activation.Generation}, Session: session, Lookup: true}
-	if localipc.WriteJSON(conn, request) != nil || conn.CloseWrite() != nil {
-		return claudeProcessProof{}, false
-	}
-	var result claudeProcessCheckResult
-	if localipc.ReadJSON(conn, &result) != nil || !result.Valid || result.Process != process || result.Binding.Agent != agentUID || result.Binding.Pane != pane.Metadata.UID || result.Binding.Generation != activation.Generation || result.Binding.Host == "" {
-		return claudeProcessProof{}, false
-	}
-	return claudeProcessProof{Binding: result.Binding, Process: process, Session: session, Socket: socket, HostProcess: hostProcess, HostSocket: identity}, true
+	return result.Registration, nil
 }
 
 func processClaudeRouteResolver(registryPath string, proof claudeProcessProof) func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string) {
@@ -579,9 +725,12 @@ func processClaudeRouteResolver(registryPath string, proof claudeProcessProof) f
 				return coremetadata.AgentRouteRef{}, "process Claude authority is unavailable"
 			}
 		}
-		evidence := coremetadata.ClaudeProcessRouteEvidence{HostInstance: current.Binding.Host, PaneUID: current.Binding.Pane, Generation: current.Binding.Generation, SessionID: current.Session, Process: current.Process}
-		return coremetadata.ResolveProcessClaudeRoute(reg, agentUID, evidence, func(e coremetadata.ClaudeProcessRouteEvidence) bool {
-			return e == evidence && checkClaudeProcessHost(current, false)
-		})
+		registration, err := lookupClaudeProcessRegistration(current)
+		if err != nil {
+			return coremetadata.AgentRouteRef{}, "process Claude authority is unavailable"
+		}
+		evidence := coremetadata.ClaudeProcessRouteEvidence{HostInstance: current.Binding.Host, PaneUID: current.Binding.Pane, Generation: current.Binding.Generation, SessionID: current.Session, Process: current.Process, HostProcess: current.HostProcess, Registration: *registration}
+		return coremetadata.ResolveProcessClaudeRoute(reg, agentUID, evidence, func(e coremetadata.ClaudeProcessRouteEvidence) bool { return e == evidence })
+
 	}
 }

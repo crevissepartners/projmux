@@ -33,6 +33,8 @@ func exitIfClaudeProcessFixtureChild() {
 	}
 	var err error
 	switch os.Args[2] {
+	case "process-host-owner-fixture":
+		err = runProcessSupervisorOwnerFixture()
 	case "processhost-test-supervisor":
 		err = processhost.ServeSupervisor(os.NewFile(3, "lifetime"), os.NewFile(4, "spec"), os.NewFile(5, "status"))
 	case "claude-endpoint-register":
@@ -96,6 +98,8 @@ for line in sys.stdin:
    request_count+=1
    request={'type':'control_request','request_id':prompt+'-'+str(request_count),'request':{'subtype':'can_use_tool','tool_name':tool,'input':inp}}
    emit(request);emit(request)
+  elif prompt=='register-again':
+   hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'});emit({'type':'result','subtype':'success','session_id':'process-session'})
   elif prompt=='interrupt':emit({'type':'assistant','session_id':'process-session','content':'waiting'})
   else:emit({'type':'result','subtype':'success','session_id':'process-session'})
  elif frame['type']=='control_response':
@@ -166,6 +170,9 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 		b.Operation = "fixture-operation"
 		pane.Status.Activation.OperationID = b.Operation
 	}
+	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+	pane.Status.Activation = coremetadata.PaneActivation{}
+	pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "claude", Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, ResumeState: coremetadata.ProcessResumeUnknown}
 	path := intmetadata.PathFor(filepath.Join(root, "state"))
 	if sharedPath != "" {
 		path = sharedPath
@@ -198,7 +205,7 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 			return err
 		}
 		p, ok := reg.Pane(binding.Pane)
-		if !ok || binding != b || p.Status.Activation.Generation != binding.Generation || p.Metadata.OwnerUID() != binding.Agent {
+		if !ok || binding != b || (p.Status.ProcessSession == nil || p.Status.ProcessSession.Binding.Generation != binding.Generation) || p.Metadata.OwnerUID() != binding.Agent {
 			return processhost.ErrStale
 		}
 		return nil
@@ -271,7 +278,11 @@ func (f *processClaudeFixture) proof(t *testing.T) claudeProcessProof {
 	s := f.wait(t, func(s processhost.Snapshot) bool {
 		reg, _ := f.store.LoadDegradedReadOnly()
 		p, _ := reg.Pane(f.binding.Pane)
-		return p != nil && p.Status.Activation.Claude != nil && p.Status.Activation.Claude.Registration != nil
+		if p == nil || p.Status.ProcessSession == nil {
+			return false
+		}
+		_, ok := discoverProcessClaudeProof(f.path, reg, f.binding.Agent)
+		return ok
 	})
 	process, _, err := localipc.Process(s.PID)
 	if err != nil {
@@ -288,7 +299,7 @@ func (f *processClaudeFixture) proof(t *testing.T) claudeProcessProof {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return claudeProcessProof{Binding: f.binding, Socket: socket, Process: process, HostProcess: hostProcess, HostSocket: identity, Session: pane.Status.Activation.Claude.RegistrationSessionID}
+	return claudeProcessProof{Binding: f.binding, Socket: socket, Process: process, HostProcess: hostProcess, HostSocket: identity, Session: pane.Status.ProcessSession.SessionID}
 }
 
 func TestClaudeProcessBindingRegistrationAndSingleControlWriter(t *testing.T) {
@@ -651,8 +662,8 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	}
 	answerProcessEndpointQuestion(t, target)
 	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
-	pane, _ := reg.Pane(target.binding.Pane)
-	forged := &processClaudeProviderPoster{proof: targetProof, registrationGeneration: pane.Status.Activation.Claude.RegistrationGeneration}
+	authority := targetRoute.Authority().(coremetadata.ClaudeAuthorityRef)
+	forged := &processClaudeProviderPoster{proof: targetProof, registrationGeneration: authority.RegistrationGeneration}
 	// A correct payload from this test process is still not the registered
 	// helper's kernel PID/start identity. It must not reserve or write.
 	content, _ := json.Marshal(claudeProviderCoordinationContent{Kind: "projmux-coordination", MessageRef: envelope.MessageRef})
@@ -702,8 +713,11 @@ func TestClaudeProcessWaitBoundsDelayedHelperCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pane, _ := reg.Pane(f.binding.Pane)
-	identity := pane.Status.Activation.Claude.Registration.Authority.LeaseProcess
+	route, reason := processClaudeRouteResolver(f.path, f.proof(t))(reg, f.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	identity := route.Authority().(coremetadata.ClaudeAuthorityRef).LeaseProcess
 	helper, err := os.FindProcess(identity.PID)
 	if err != nil {
 		t.Fatal(err)
@@ -758,4 +772,57 @@ func TestClaudeProcessWaitBoundsDelayedHelperCleanup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Logf("actual Wait exit=%+v, delayed helper cleanup diagnostic=%q, lease removed", snapshot.Exit, snapshot.Diagnostic)
+}
+
+func TestClaudeProcessLiveRegistrationReplacementPreservesV5Registry(t *testing.T) {
+	f := newProcessClaudeFixture(t, nil)
+	proof := f.proof(t)
+	reg, err := f.store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRoute, reason := processClaudeRouteResolver(f.path, proof)(reg, f.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	oldAuthority := oldRoute.Authority().(coremetadata.ClaudeAuthorityRef)
+	before, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.turn(t, "registration-replacement", "register-again")
+	f.wait(t, func(snapshot processhost.Snapshot) bool {
+		current, err := f.store.LoadDegradedReadOnly()
+		if err != nil {
+			return false
+		}
+		route, reason := processClaudeRouteResolver(f.path, proof)(current, f.binding.Agent)
+		return reason == "" && !route.Same(oldRoute) && snapshot.Turn == ""
+	})
+	after, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("live registration wrote durable fields or updatedAt")
+	}
+	if probeClaudeRegistrationLease(f.path, oldRoute) {
+		t.Fatal("retired helper lease remained authoritative")
+	}
+	// The old helper's clear cannot remove the replacement's registration.
+	deadline := time.Now().Add(localipc.Deadline)
+	for time.Now().Before(deadline) {
+		identity, _, err := localipc.Process(oldAuthority.LeaseProcess.PID)
+		if err != nil || identity != oldAuthority.LeaseProcess {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	route, reason := processClaudeRouteResolver(f.path, proof)(reg, f.binding.Agent)
+	if reason != "" || route.Same(oldRoute) || !probeClaudeRegistrationLease(f.path, route) {
+		t.Fatalf("replacement cleared by retired helper: %+v %s", route, reason)
+	}
+	if identity, _, err := localipc.Process(oldAuthority.LeaseProcess.PID); err == nil && identity == oldAuthority.LeaseProcess {
+		t.Fatal("retired exact helper remained")
+	}
 }

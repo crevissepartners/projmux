@@ -130,15 +130,24 @@ func (r Registry) validProcessBinding(pane Pane, b ProcessBinding) bool {
 // It validates ownership and generation, not host liveness or control authority.
 // Retired session bindings remain valid history but cannot pass this read.
 func (r Registry) CurrentProcessActivation(binding ProcessBinding) (ProcessActivation, string, bool) {
-	pane, ok := r.Pane(binding.PaneUID)
-	if !ok || !r.validProcessBinding(*pane, binding) || pane.Spec.Runtime.EffectiveKind() != RuntimeProcess {
-		return ProcessActivation{}, "", false
-	}
-	agent, _ := r.Agent(binding.AgentUID)
-	if !currentProcessOwner(*pane, *agent, binding) || !currentProcessActivation(pane.Status.Activation, binding) {
+	pane, agent, ok := r.currentProcessReservation(binding)
+	if !ok || !currentProcessActivation(pane.Status.Activation, binding) {
 		return ProcessActivation{}, "", false
 	}
 	return *pane.Status.Activation.Process, agent.Spec.Provider, true
+}
+
+// currentProcessReservation checks current ownership without probing the host.
+func (r Registry) currentProcessReservation(binding ProcessBinding) (*Pane, *Agent, bool) {
+	pane, ok := r.Pane(binding.PaneUID)
+	if !ok || !r.validProcessBinding(*pane, binding) || pane.Spec.Runtime.EffectiveKind() != RuntimeProcess {
+		return nil, nil, false
+	}
+	agent, found := r.Agent(binding.AgentUID)
+	if !found || !currentProcessOwner(*pane, *agent, binding) {
+		return nil, nil, false
+	}
+	return pane, agent, true
 }
 
 func currentProcessOwner(pane Pane, agent Agent, binding ProcessBinding) bool {
@@ -226,5 +235,38 @@ func (r Registry) validateProcessSession(pane Pane) error {
 			return stateErr(op, ErrInvalidRegistry, "process-session-invalid: inconsistent expired control identities")
 		}
 	}
+	return nil
+}
+
+// RecordProcessActivation commits kernel-verified child evidence for a reserved
+// process binding. The caller proves liveness outside the Registry lock; this
+// transaction checks only immutable ownership, operation and generation.
+func (m Mutator) RecordProcessActivation(reg *Registry, activation ProcessActivation, session string) error {
+	const op = "record process activation"
+	binding := activation.Binding
+	pane, agent, ok := reg.currentProcessReservation(binding)
+	if !ok || agent.Status.Phase != PhaseRunning || !activation.HostProcess.Valid() || !activation.Child.Valid() || !processIdentityToken(session) {
+		return stateErr(op, ErrInvalidRegistry, "exact managed process reservation is unavailable")
+	}
+	record := pane.Status.ProcessSession
+	if !processClaudeSessionMatches(record, binding, session, true) || agent.Spec.Provider != "claude" {
+		return stateErr(op, ErrInvalidRegistry, "current process session reservation is unavailable")
+	}
+	if !pane.Status.Activation.IsZero() && (!currentProcessActivation(pane.Status.Activation, binding) || *pane.Status.Activation.Process != activation) {
+		return stateErr(op, ErrInvalidRegistry, "process activation already belongs to another child")
+	}
+	if currentProcessActivation(pane.Status.Activation, binding) && record.SessionID == session && record.ConnectionID == binding.OperationID {
+		return nil
+	}
+	next := reg.Clone()
+	target, _ := next.Pane(binding.PaneUID)
+	target.Status.Activation = PaneActivation{Kind: RuntimeProcess, AgentUID: binding.AgentUID, Generation: binding.Generation, OperationID: binding.OperationID, Process: &activation}
+	target.Status.ProcessSession.SessionID = session
+	target.Status.ProcessSession.ConnectionID = binding.OperationID
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	next.UpdatedAt = m.clock()().UTC()
+	*reg = next
 	return nil
 }
