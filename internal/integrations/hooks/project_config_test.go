@@ -1237,8 +1237,8 @@ func TestPostCreateRuntimeOptInRoundTripAndRejectsOtherDeclarations(t *testing.T
 	}
 	for _, declaration := range []string{"[hooks.post-create]\nruntime = \"tmux\"", "[hooks.post-create]\nruntime = \"unknown\"", "[hooks.pre-create]\nruntime = \"process\""} {
 		_, err := ParseProjectConfig(declaration)
-		if err == nil || !strings.Contains(err.Error(), "tmux") {
-			t.Fatalf("declaration error must explain unchanged tmux path: %q %v", declaration, err)
+		if err == nil || !strings.HasPrefix(err.Error(), "line 2:") || !strings.Contains(err.Error(), "tmux") {
+			t.Fatalf("declaration error must identify line 2 and explain unchanged tmux path: %q %v", declaration, err)
 		}
 	}
 }

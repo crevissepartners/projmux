@@ -325,25 +325,30 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 			return fmt.Errorf("line %d: unsupported update key %q", lineNo, key)
 		}
 	default:
-		eventName, ok := strings.CutPrefix(section, "hooks.")
-		if !ok || (key != "run" && key != "runtime") {
-			return fmt.Errorf("line %d: unsupported key %q in section %q", lineNo, key, section)
+		return applyProjectHookConfigValue(cfg, section, key, value, lineNo)
+	}
+	return nil
+}
+
+func applyProjectHookConfigValue(cfg *ProjectConfig, section, key, value string, lineNo int) error {
+	eventName, ok := strings.CutPrefix(section, "hooks.")
+	if !ok || (key != "run" && key != "runtime") {
+		return fmt.Errorf("line %d: unsupported key %q in section %q", lineNo, key, section)
+	}
+	event := normalizeEvent(Event(eventName))
+	if event == "" {
+		return fmt.Errorf("line %d: unsupported hook event %q", lineNo, eventName)
+	}
+	if key == "runtime" {
+		if err := validateHookRuntime(event, value); err != nil {
+			return fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		event := normalizeEvent(Event(eventName))
-		if event == "" {
-			return fmt.Errorf("line %d: unsupported hook event %q", lineNo, eventName)
+		if cfg.HookRuntimes == nil {
+			cfg.HookRuntimes = map[Event]string{}
 		}
-		if key == "runtime" {
-			if err := validateHookRuntime(event, value); err != nil {
-				return err
-			}
-			if cfg.HookRuntimes == nil {
-				cfg.HookRuntimes = map[Event]string{}
-			}
-			cfg.HookRuntimes[event] = value
-		} else {
-			cfg.Hooks[event] = value
-		}
+		cfg.HookRuntimes[event] = value
+	} else {
+		cfg.Hooks[event] = value
 	}
 	return nil
 }

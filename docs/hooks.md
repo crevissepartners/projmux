@@ -1217,6 +1217,13 @@ The opt-in applies independently to global and project hooks. Skipped project
 hooks do not prompt for trust. Declared hooks keep the existing trust policy and
 5-second timeout.
 
+The `runtime` key is understood only by this release or later. Older projmux
+versions reject the entire configuration file with one warning and do not run
+that file's hooks or apply its environment values. If multiple versions read the
+same configuration, upgrade all of them before adding this key. Configuration
+parse errors are warned about and the affected file is skipped in both tmux and
+process contexts.
+
 The hook runner supports a process host `post-create` context for scripts and CI
 without tmux. Public foreground Agent creation is not enabled by this change;
 the runner applies the opt-in above before trust prompting or execution. The
