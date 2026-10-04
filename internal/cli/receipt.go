@@ -29,6 +29,7 @@ const (
 	OperationCreateWindow  Operation = "create.window"
 	OperationCreatePane    Operation = "create.pane"
 	OperationCreateAgent   Operation = "create.agent"
+	OperationResumeAgent   Operation = "agent.resume"
 
 	OperationRenameProject Operation = "rename.project"
 	OperationRenameWindow  Operation = "rename.window"
@@ -60,6 +61,7 @@ var operationRoutes = map[Operation]string{
 	OperationCreateWindow:      "create window",
 	OperationCreatePane:        "create pane",
 	OperationCreateAgent:       "create agent",
+	OperationResumeAgent:       "agent resume",
 	OperationRenameProject:     "rename project",
 	OperationRenameWindow:      "rename window",
 	OperationRenamePane:        "rename pane",
@@ -78,7 +80,7 @@ var operationRoutes = map[Operation]string{
 
 // operations is the closed set in contract order.
 var operations = []Operation{
-	OperationCreateProject, OperationCreateWindow, OperationCreatePane, OperationCreateAgent,
+	OperationCreateProject, OperationCreateWindow, OperationCreatePane, OperationCreateAgent, OperationResumeAgent,
 	OperationRenameProject, OperationRenameWindow, OperationRenamePane, OperationRenameAgent,
 	OperationDeleteWindow, OperationDeletePane, OperationDeleteAgent,
 	OperationStartProject, OperationOpenProject, OperationAttachProject, OperationFocusProject,

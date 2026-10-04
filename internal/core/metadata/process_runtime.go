@@ -87,6 +87,12 @@ func (m Mutator) RecordProcessSession(reg *Registry, activation ProcessActivatio
 	if (stored.SessionID != "" && stored.SessionID != record.SessionID) || (stored.ThreadID != "" && stored.ThreadID != record.ThreadID) || (stored.ConnectionID != "" && stored.ConnectionID != record.ConnectionID) {
 		return stateErr(op, ErrInvalidRegistry, "process snapshot cannot replace its conversation or connection")
 	}
+	// Resume history belongs to the retired generation, not the new snapshot.
+	if record.History == nil {
+		record.History = stored.Clone().History
+	} else if !reflect.DeepEqual(stored.History, record.History) {
+		return stateErr(op, ErrInvalidRegistry, "process snapshot cannot replace retired history")
+	}
 	if reflect.DeepEqual(stored, &record) {
 		return nil
 	}
@@ -113,7 +119,7 @@ func (m Mutator) RecordProcessWait(reg *Registry, activation ProcessActivation, 
 	}
 	if pane.Status.Activation.IsZero() {
 		if retiredProcessWaitMatches(pane, agent, activation.Binding, receipt) {
-			return nil
+			return m.promoteProcessWaitResume(reg, activation.Binding, receipt)
 		}
 		return stateErr(op, ErrInvalidRegistry, "retired process Wait evidence differs")
 	}
@@ -123,6 +129,9 @@ func (m Mutator) RecordProcessWait(reg *Registry, activation ProcessActivation, 
 	}
 	next := reg.Clone()
 	if err := m.retireProcessWait(&next, activation.Binding, receipt); err != nil {
+		return err
+	}
+	if err := m.promoteProcessWaitResume(&next, activation.Binding, receipt); err != nil {
 		return err
 	}
 	return m.commitProcessRegistry(reg, next)

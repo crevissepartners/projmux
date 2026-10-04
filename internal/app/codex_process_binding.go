@@ -90,7 +90,7 @@ func processCodexLaunchEnv(launch processhost.Launch, socket string) []string {
 // startProcessCodex commits only the dedicated child's typed thread binding.
 // Thread initialization does not acknowledge an absent user turn. Hooks never
 // supply process ownership, session identity or readiness.
-func startProcessCodex(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, registryPath string) (*codexProcessEndpoint, error) {
+func startProcessCodex(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, registryPath string, resume ...processhost.SessionRecord) (*codexProcessEndpoint, error) {
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
@@ -102,7 +102,11 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	endpoint := &codexProcessEndpoint{binding: launch.Binding, socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
 	launch.Command.Env = processCodexLaunchEnv(launch, socket)
 	launch.Completion = &processhost.Completion{Cleanup: endpoint.close}
-	endpoint.handle, err = host.StartCodex(ctx, launch, config)
+	if len(resume) > 0 {
+		endpoint.handle, err = host.ResumeCodex(ctx, launch, config, resume[0])
+	} else {
+		endpoint.handle, err = host.StartCodex(ctx, launch, config)
+	}
 	rollback := func() {
 		cleanup, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), localipc.Deadline)
 		_ = endpoint.close(cleanup)

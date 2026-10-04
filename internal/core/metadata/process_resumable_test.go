@@ -115,3 +115,87 @@ func TestProcessSupportedResumableWriterRefusesWithoutMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessSupportedResumableWaitPromotesInRetirementTransaction(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			reg, activation, receipt := resumableWriterFixture(t)
+			pane, _ := reg.Pane(activation.Binding.PaneUID)
+			agent, _ := reg.Agent(activation.Binding.AgentUID)
+			agent.Spec.Provider = provider
+			pane.Status.ProcessSession.Provider = provider
+			if provider == "claude" {
+				pane.Status.ProcessSession.SessionID, pane.Status.ProcessSession.ThreadID = pane.Status.ProcessSession.ThreadID, ""
+			}
+			interrupted := pane.Status.ProcessSession.Clone()
+			pane.Status.Activation = PaneActivation{Kind: RuntimeProcess, AgentUID: activation.Binding.AgentUID, Generation: activation.Binding.Generation, OperationID: activation.Binding.OperationID, Process: &activation}
+			pane.Status.LastTermination = nil
+			agent.Status.Phase, agent.Status.LastTermination = PhaseRunning, nil
+			if err := (Mutator{}).RecordProcessWait(&reg, activation, receipt); err != nil {
+				t.Fatal(err)
+			}
+			pane, _ = reg.Pane(activation.Binding.PaneUID)
+			if !pane.Status.Activation.IsZero() || pane.Status.ProcessSession.ResumeState != ProcessResumable || pane.Status.ProcessSession.TurnID != interrupted.TurnID || !reflect.DeepEqual(pane.Status.ProcessSession.Pending, interrupted.Pending) {
+				t.Fatal("Wait did not retire and preserve a resumable interrupted conversation atomically")
+			}
+			before := reg.Clone()
+			if err := (Mutator{}).RecordProcessWait(&reg, activation, receipt); err != nil || !reflect.DeepEqual(before, reg) {
+				t.Fatal("duplicate Wait changed resumable record", err)
+			}
+		})
+	}
+}
+
+func TestProcessSupportedResumableReserveArchivesOnlyRetiredGeneration(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			reg, activation, receipt := resumableWriterFixture(t)
+			pane, _ := reg.Pane(activation.Binding.PaneUID)
+			agent, _ := reg.Agent(activation.Binding.AgentUID)
+			agent.Spec.Provider, pane.Status.ProcessSession.Provider = provider, provider
+			if provider == "claude" {
+				pane.Status.ProcessSession.SessionID, pane.Status.ProcessSession.ThreadID = pane.Status.ProcessSession.ThreadID, ""
+			}
+			m := Mutator{}
+			if err := m.RecordProcessResumable(&reg, activation.Binding, &receipt); err != nil {
+				t.Fatal(err)
+			}
+			old := pane.Status.ProcessSession.Clone()
+			// Mutators commit cloned Registries, so re-read the selected record.
+			pane, _ = reg.Pane(activation.Binding.PaneUID)
+			old = pane.Status.ProcessSession.Clone()
+			binding := activation.Binding
+			binding.HostInstanceID, binding.Generation, binding.OperationID = "new-host", "new-generation", "new-operation"
+			if err := m.ReserveProcessResume(&reg, activation.Binding, binding); err != nil {
+				t.Fatal(err)
+			}
+			pane, _ = reg.Pane(binding.PaneUID)
+			current := pane.Status.ProcessSession
+			if current.Binding != binding || current.TurnID != "" || len(current.Pending) != 0 || current.ResumeState != ProcessResumeUnknown || current.History == nil || current.History.Binding != old.Binding || current.History.InterruptedTurnID != old.TurnID || !reflect.DeepEqual(current.History.Expired, old.Pending) {
+				t.Fatal("resume lost retired work or carried it into current authority")
+			}
+			if _, _, ok := reg.CurrentProcessActivation(activation.Binding); ok {
+				t.Fatal("old generation retained control authority")
+			}
+			before := reg.Clone()
+			if err := m.ReserveProcessResume(&reg, activation.Binding, binding); err == nil || !reflect.DeepEqual(reg, before) {
+				t.Fatal("stale resume reservation mutated state")
+			}
+			next := activation
+			next.Binding = binding
+			if err := m.RecordProcessChild(&reg, next); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := *current.Clone()
+			snapshot.History = nil
+			snapshot.TurnID = "new-turn"
+			if err := m.RecordProcessSession(&reg, next, snapshot); err != nil {
+				t.Fatal(err)
+			}
+			pane, _ = reg.Pane(binding.PaneUID)
+			if !reflect.DeepEqual(pane.Status.ProcessSession.History, current.History) {
+				t.Fatal("new snapshot erased retired history")
+			}
+		})
+	}
+}

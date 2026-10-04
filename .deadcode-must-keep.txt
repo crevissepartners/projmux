@@ -127,7 +127,6 @@ MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tes
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironment retained as the registry schema migration seam.
-Mutator.RecordProcessResumable	Durable Wait-guarded resumability writer retained for the Task 5d2 explicit process resume consumer; never performs foreground termination.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
@@ -245,7 +244,6 @@ guardSweepHelperRoots	Test-only guard helper retained behind the shared guard AP
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
-listResumableProcessAgents	Read-only durable process candidate projection retained for the Task 5d2 explicit process resume consumer.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).
@@ -278,12 +276,6 @@ prepareReaper	Internal processhost implementation retained for owned-process and
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processPaneRuntime.control	Internal typed process control admission seam, retained while invocation defaults remain dormant ahead of foreground activation.
-processResumableConversation	Conversation identity guard retained behind the Task 5d2 durable resumability writer.
-processResumableWait	Exact durable child Wait guard retained behind the Task 5d2 resumability writer.
-processResumeCandidateToken	Durable process eligibility guard retained behind the Task 5d2 resume query and refusal consumer.
-processResumeMatches	Scope and label filter retained behind the Task 5d2 process resume candidate consumer.
-processResumePane	Durable process Pane selection retained behind the Task 5d2 resume query and refusal consumer.
-processResumeRefusal	Process resume preflight refusal retained for the Task 5d2 explicit process resume consumer.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.

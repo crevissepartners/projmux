@@ -345,7 +345,7 @@ Mixed inventory failures preserve the tmux error diagnostic and treat unobserved
 tmux targets as unknown while still projecting process rows. The seam is dormant
 until explicitly injected; public activation remains a later step.
 
-## Explicit recorded-session resume preparation
+## Explicit recorded-session resume
 
 `SessionRecord` is an internal persistence value containing the provider session,
 old ownership binding, connection, turn and pending control identities. It stores
@@ -371,8 +371,24 @@ launch operation returns the same handle without writing another prompt.
 The new snapshot's `ResumeHistory` retains the old binding, an interrupted turn
 and expired control identities. These are historical records, never current
 pending requests. All control admission still requires the new binding and
-connection, even when the provider session is unchanged. No public command,
-route, schema, automatic restart or relaunch consumer activates this seam yet.
+connection, even when the provider session is unchanged.
+
+`agent resume <agent> -- <prompt>` explicitly resumes an offline process Agent
+under the same Agent and Pane UIDs with a new owned generation. Claude requires
+a nonempty first frame because stream-json emits init only after input; Codex can
+reattach without a prompt. The typed first frame distinguishes user text from
+an existing untrusted peer coordination envelope. Previous turns are never
+replayed and expired controls appear only in history. This does not change
+message delivery to offline Agents.
+
+The foreground owner persists actual Wait and marks a recorded conversation
+resumable in the same Registry transaction. Killing the owner before its Wait
+receipt leaves resume state unknown, so resume returns
+`process-resume-not-resumable`. A live owner returns `process-resume-owned`;
+ambiguous ownership or provider rejection returns `process-resume-refused`.
+No automatic restart or relaunch follows an exit. Output and exit match process
+creation: the ownership line identifies both UIDs, projected results use the
+selected output mode, and the exit status comes from actual provider Wait.
 
 `TestResume*` covers content-free record round trips, interrupted/expired history,
 new-generation control, stale response/ack wire zero, idempotent launch and

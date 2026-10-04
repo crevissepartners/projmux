@@ -79,6 +79,7 @@ type claudeProcessService struct {
 	binding                processhost.Binding
 	listener               *localipc.Listener
 	ready                  chan struct{}
+	readyOnce              sync.Once
 	handle                 *processhost.Handle
 	launchErr              error
 	ownedProcess           coremetadata.ProcessIdentity
@@ -434,7 +435,16 @@ func processClaudeLaunchEnv(launch processhost.Launch, registryPath, socket stri
 }
 
 func (s *claudeProcessService) initialize(ctx context.Context, host *processhost.Host, launch processhost.Launch) {
-	s.handle, s.launchErr = host.Start(ctx, launch)
+	handle, err := host.Start(ctx, launch)
+	if err != nil {
+		s.readyOnce.Do(func() { s.handle, s.launchErr = handle, err; close(s.ready) })
+		return
+	}
+	s.publishChild(handle)
+}
+
+func (s *claudeProcessService) publishChild(handle *processhost.Handle) {
+	s.handle = handle
 	if s.launchErr == nil {
 		snap, err := s.handle.Observe(s.binding)
 		if err != nil {
@@ -449,7 +459,7 @@ func (s *claudeProcessService) initialize(ctx context.Context, host *processhost
 	if s.launchErr == nil {
 		s.launchErr = s.recordChild()
 	}
-	close(s.ready)
+	s.readyOnce.Do(func() { close(s.ready) })
 }
 
 func (s *claudeProcessService) recordChild() error {
@@ -483,9 +493,14 @@ func (s *claudeProcessService) rollback(ctx context.Context) error {
 	return errors.Join(closeErr, stopErr, waitErr)
 }
 
+type processClaudeResumeLaunch struct {
+	Record       processhost.SessionRecord
+	Turn, Prompt string
+}
+
 // startProcessClaude binds the foreground owner to exact ownership transactions.
 // The caller allocates the reservation and chooses launch policy.
-func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string) (*processhost.Handle, error) {
+func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string, resume ...processClaudeResumeLaunch) (*processhost.Handle, error) {
 	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
@@ -495,7 +510,20 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	}
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
-	service.initialize(ctx, host, launch)
+	if len(resume) > 0 {
+		launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
+			service.publishChild(handle)
+			return service.launchErr
+		}}
+		initial := resume[0]
+		handle, startErr := host.ResumeClaude(ctx, launch, initial.Record, initial.Turn, initial.Prompt)
+		service.readyOnce.Do(func() { service.handle, service.launchErr = handle, startErr; close(service.ready) })
+		if startErr != nil {
+			return handle, errors.Join(startErr, service.rollback(ctx))
+		}
+	} else {
+		service.initialize(ctx, host, launch)
+	}
 	if service.launchErr != nil {
 		return service.handle, errors.Join(service.launchErr, service.rollback(ctx))
 	}
