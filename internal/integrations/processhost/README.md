@@ -5,6 +5,8 @@ adapters. `create agent --host process --provider claude` (or `--provider codex`
 starts a public foreground owner without tmux. The
 application writes Registry bindings and exact Wait receipts. This package does
 not create tmux resources, adopt existing providers, or change user settings.
+Operator-facing behavior is documented in
+[Operating Process-Hosted Agents](../../../docs/process-host-operations.md).
 
 ## Schema v5 authority chain
 
