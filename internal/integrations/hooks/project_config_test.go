@@ -1219,3 +1219,26 @@ func TestProjectUpdateConfigOmitsAnUnsetReleaseChannel(t *testing.T) {
 		t.Fatal("expected unsupported update key to error")
 	}
 }
+
+func TestPostCreateRuntimeOptInRoundTripAndRejectsOtherDeclarations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	source := "[hooks.post-create]\nrun = \"echo opted\"\nruntime = \"process\"\n"
+	writeFileEnsuringDir(t, path, source)
+	cfg, err := UpdateProjectConfig(path, func(c *ProjectConfig) error { c.Env["UPDATED"] = "yes"; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "runtime = \"process\"") || cfg.Hooks[EventPostCreate] != "echo opted" {
+		t.Fatalf("opt-in lost on update: %s", body)
+	}
+	for _, declaration := range []string{"[hooks.post-create]\nruntime = \"tmux\"", "[hooks.post-create]\nruntime = \"unknown\"", "[hooks.pre-create]\nruntime = \"process\""} {
+		_, err := ParseProjectConfig(declaration)
+		if err == nil || !strings.HasPrefix(err.Error(), "line 2:") || !strings.Contains(err.Error(), "tmux") {
+			t.Fatalf("declaration error must identify line 2 and explain unchanged tmux path: %q %v", declaration, err)
+		}
+	}
+}

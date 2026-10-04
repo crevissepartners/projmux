@@ -3,11 +3,14 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +30,7 @@ func TestProcessPostCreateContractRejectsInheritedAndConfiguredPane(t *testing.T
 PROJMUX_PANE = "%configured"
 PROJMUX_RUNTIME = "configured"
 [hooks.post-create]
+runtime = "process"
 run = "printf \"runtime=%s pane=%s session=%s:%s kind=%s:%s cwd=%s socket=%s tmux=%s tmux-pane=%s\\n\" \"$PROJMUX_RUNTIME\" \"${PROJMUX_PANE+x}\" \"${PROJMUX_SESSION+x}\" \"$PROJMUX_SESSION\" \"${PROJMUX_SESSION_KIND+x}\" \"$PROJMUX_SESSION_KIND\" \"$PROJMUX_CWD\" \"$PROJMUX_SOCKET\" \"${TMUX+x}\" \"${TMUX_PANE+x}\""
 `)
 	var output bytes.Buffer
@@ -57,7 +61,7 @@ func TestProcessPostCreateFailureIsReturnedWithoutChangingTmux(t *testing.T) {
 	t.Parallel()
 	cwd := t.TempDir()
 	global := filepath.Join(cwd, "global.toml")
-	writeFileEnsuringDir(t, global, "[hooks.post-create]\nrun = \"exit 7\"\n")
+	writeFileEnsuringDir(t, global, "[hooks.post-create]\nruntime = \"process\"\nrun = \"exit 7\"\n")
 	for _, host := range []string{RuntimeProcess, ""} {
 		runner := &Runner{GlobalConfigPath: global, Logger: io.Discard}
 		_, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: host, CWD: cwd})
@@ -542,3 +546,137 @@ func testTrustStorePath(t *testing.T) string {
 
 // Silence unused warning when running selective tests.
 var _ = io.Discard
+
+func TestProcessPostCreateRequiresOptInBeforeTrustOrExecution(t *testing.T) {
+	cwd := t.TempDir()
+	global := filepath.Join(cwd, "global.toml")
+	command := "printf ran"
+	writeFileEnsuringDir(t, global, "[hooks.post-create]\nrun = "+strconv.Quote(command)+"\n")
+	writeFileEnsuringDir(t, filepath.Join(cwd, ".projmux", "config.toml"), "[hooks.post-create]\nrun = "+strconv.Quote(command)+"\n")
+	var output bytes.Buffer
+	prompts := 0
+	runner := &Runner{GlobalConfigPath: global, DiscoverProjectHooks: true, Logger: &output, ProjectHookPrompt: func(ProjectHookPromptRequest) ProjectHookDecision { prompts++; return ProjectHookDeny }}
+	if _, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: RuntimeProcess, CWD: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if prompts != 0 || strings.Contains(output.String(), "ran") {
+		t.Fatalf("undeclared hook prompted/executed: prompts=%d output=%q", prompts, output.String())
+	}
+	output.Reset()
+	runner.DiscoverProjectHooks = false
+	if _, err := runner.Run(context.Background(), EventPostCreate, Context{CWD: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "ran") {
+		t.Fatal("legacy tmux hook did not run")
+	}
+}
+
+func TestPostCreateOptInRunsForProcessAndTmux(t *testing.T) {
+	for _, host := range []string{RuntimeProcess, ""} {
+		t.Run("host="+host, func(t *testing.T) {
+			cwd := t.TempDir()
+			global := filepath.Join(cwd, "global.toml")
+			writeFileEnsuringDir(t, global, "[hooks.post-create]\nruntime = \"process\"\nrun = \"printf opted\"\n")
+			var output bytes.Buffer
+			r := &Runner{GlobalConfigPath: global, Logger: &output}
+			if _, err := r.Run(context.Background(), EventPostCreate, Context{Runtime: host, CWD: cwd}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), "opted") {
+				t.Fatalf("opt-in must preserve tmux and allow process: %s", output.String())
+			}
+		})
+	}
+}
+
+func TestProcessUndeclaredHookPreservesMostRecentTmuxSession(t *testing.T) {
+	// The CI Unit Tests job explicitly opts into isolated real-tmux tests.
+	// Pure hook tests keep running without this integration dependency.
+	if os.Getenv("PROJMUX_REAL_TMUX_STRICT") != "1" {
+		t.Skip("set PROJMUX_REAL_TMUX_STRICT=1 to run the isolated real-tmux regression")
+	}
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal("strict real tmux test requires tmux")
+	}
+	root := t.TempDir()
+	// Follow isolatedTmuxSmokeRoot's short /tmp allocation: TMPDIR may be
+	// longer than the Unix socket bound. HOME/config remain under TempDir.
+	socketRoot, err := os.MkdirTemp("/tmp", "phk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketRoot); err != nil {
+			t.Errorf("remove owned socket root: %v", err)
+		}
+	})
+	socket := filepath.Join(socketRoot, "s")
+	call := func(args ...string) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binary, append([]string{"-S", socket, "-f", "/dev/null"}, args...)...)
+		cmd.Env = []string{"HOME=" + root, "PATH=/usr/bin:/bin", "TERM=dumb"}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("isolated tmux %v: %v %s", args, err, out)
+		}
+		return string(out)
+	}
+	call("new-session", "-d", "-s", "recent", "exec sleep 60")
+	t.Cleanup(func() { call("kill-server") })
+	call("set-environment", "-t", "recent", "probe", "original")
+	global := filepath.Join(root, "config.toml")
+	command := `"$PROBE_TMUX" -S "$PROBE_SOCKET" set-environment -t "$PROJMUX_SESSION" probe changed`
+	writeFileEnsuringDir(t, global, "[hooks.post-create]\nrun = "+strconv.Quote(command)+"\n")
+	runner := &Runner{GlobalConfigPath: global, Logger: io.Discard}
+	env := map[string]string{"PROBE_TMUX": binary, "PROBE_SOCKET": socket}
+	// The legacy unguarded hook really mutates the recent session when its
+	// target is empty. This control prevents a nonworking hook masking failure.
+	if _, err := runner.Run(context.Background(), EventPostCreate, Context{CWD: root, Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	if got := call("show-environment", "-t", "recent", "probe"); got != "probe=changed\n" {
+		t.Fatalf("negative control did not reach recent session: %q", got)
+	}
+	call("set-environment", "-t", "recent", "probe", "original")
+	if _, err := runner.Run(context.Background(), EventPostCreate, Context{Runtime: RuntimeProcess, CWD: root, Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	if got := call("show-environment", "-t", "recent", "probe"); got != "probe=original\n" {
+		t.Fatalf("process hook mutated recent session: %q", got)
+	}
+}
+
+func TestProcessPostCreateOptInIsIndependentByConfigTier(t *testing.T) {
+	for _, tier := range []string{"global", "project"} {
+		t.Run(tier, func(t *testing.T) {
+			root := t.TempDir()
+			global := filepath.Join(root, "global.toml")
+			project := filepath.Join(root, ".projmux", "config.toml")
+			declared := "[hooks.post-create]\nruntime = \"process\"\nrun = \"printf opted-%s\"\n"
+			legacy := "[hooks.post-create]\nrun = \"printf legacy-%s\"\n"
+			g, p := legacy, declared
+			if tier == "global" {
+				g, p = declared, legacy
+			}
+			writeFileEnsuringDir(t, global, fmt.Sprintf(g, "global"))
+			writeFileEnsuringDir(t, project, fmt.Sprintf(p, "project"))
+			var output bytes.Buffer
+			prompts := 0
+			r := &Runner{GlobalConfigPath: global, DiscoverProjectHooks: true, Logger: &output, ProjectHookPrompt: func(ProjectHookPromptRequest) ProjectHookDecision { prompts++; return ProjectHookAllowOnce }}
+			if _, err := r.Run(context.Background(), EventPostCreate, Context{Runtime: RuntimeProcess, CWD: root}); err != nil {
+				t.Fatal(err)
+			}
+			wantPrompts := 0
+			if tier == "project" {
+				wantPrompts = 1
+			}
+			if prompts != wantPrompts || strings.Contains(output.String(), "legacy-") || !strings.Contains(output.String(), "opted-"+tier) {
+				t.Fatalf("tier filter: prompts=%d output=%q", prompts, output.String())
+			}
+		})
+	}
+}
