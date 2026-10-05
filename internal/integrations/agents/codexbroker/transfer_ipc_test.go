@@ -36,7 +36,6 @@ func TestTransferIPCOrphanPinsIdleHostAndExactRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := transfer.Receipt()
 	if _, err = conn.Bind(t.Context(), "foreign", "", nil); RefusalOf(err) != RefusalRequestUnknown {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestTransferIPCOrphanPinsIdleHostAndExactRecovery(t *testing.T) {
 	if err = transfer.Retire(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	receipt = transfer.Receipt()
+	receipt := transfer.Receipt()
 	_ = transfer.Close()
 	waitUntil(t, "orphaned transfer", func() bool {
 		b.mu.Lock()

@@ -2035,10 +2035,10 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 	} else {
 		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
 	}
-	// #nosec G204 -- executable is an absolute, existing, regular executable validated above; argv is a fixed internal route plus bounded identity values and never enters a shell.
 	if target.TransferGrant != nil {
 		args = append(args, "--transfer-grant", "stdin")
 	}
+	// #nosec G204 -- executable is an absolute, existing, regular executable validated above; argv is a fixed internal route plus bounded identity values and never enters a shell.
 	cmd := exec.Command(executable, args...)
 	if target.TransferGrant != nil {
 		raw, err := json.Marshal(target.TransferGrant)
