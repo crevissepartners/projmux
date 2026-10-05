@@ -285,7 +285,28 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	if err != nil {
 		return err
 	}
-	if err = c.reserveProcessRelaunch(ctx, candidate, launch.settings, recipe.guidance, recipe.links, binding); err != nil {
+	var prepared *deferredLaunchRecord
+	if recipe.restart.provider == aiModeClaude {
+		previous, readErr := c.readDeferredLaunch(binding.Agent)
+		if readErr != nil {
+			return readErr
+		}
+		if previous != nil {
+			fresh, prior, prepareErr := c.prepareDeferredLaunchMode(ctx, candidate, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: binding.Agent}}, true)
+			if prepareErr != nil {
+				return prepareErr
+			}
+			if !processResumeRecordEqual(&fresh.Record, &candidate.Record) || !reflect.DeepEqual(fresh.Agent.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(fresh.Agent.Metadata.Annotations, candidate.Agent.Metadata.Annotations) {
+				return processhost.ErrStale
+			}
+			prepared, err = c.planDeferredRelaunchRecord(candidate, recipe, launch, false)
+			if err != nil {
+				return err
+			}
+			prepared.Previous = prior
+		}
+	}
+	if err = c.reserveProcessRelaunch(ctx, candidate, launch.settings, recipe.guidance, recipe.links, binding, prepared); err != nil {
 		return err
 	}
 	owned := c.processResumeResult(candidate, binding, intmetadata.PathFor(state))
@@ -299,6 +320,9 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		}
 		cause = errors.Join(cause, c.retireFailedProcessRelaunch(&owned))
 		cause = errors.Join(cause, c.restoreProcessRelaunchSettings(candidate, binding, launch.settings, recipe.guidance, recipe.links))
+		if prepared != nil {
+			cause = errors.Join(cause, c.restorePromptRelaunch(prepared))
+		}
 		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (foreground owner remains required): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request), cause)
 	}
 	if err = owned.startProcessResume(ctx, creator, launch.command, launch.config, processRelaunchFirstFrame(launch.prompt)); err != nil {
@@ -309,6 +333,7 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	if err != nil {
 		return fail(err)
 	}
+
 	result.Outcome = personaOutcomeResumed
 	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
@@ -319,6 +344,11 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	}
 	if _, err = fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", binding.Agent, binding.Pane); err != nil {
 		return fail(err)
+	}
+	if prepared != nil {
+		if err = c.finishDeferredLaunch(prepared, owned, true); err != nil {
+			return fail(err)
+		}
 	}
 	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
 }
@@ -434,7 +464,7 @@ func (c *agentCommand) restoreProcessRelaunchSettings(previous processResumeCand
 
 // Reservation commits the recipe and prompt digests together with the fresh
 // generation, after revalidating the retired record and unchanged old recipe.
-func (c *agentCommand) reserveProcessRelaunch(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, guidance agentGuidanceLaunch, links projectLinksLaunch, binding processhost.Binding) error {
+func (c *agentCommand) reserveProcessRelaunch(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, guidance agentGuidanceLaunch, links projectLinksLaunch, binding processhost.Binding, prepared ...*deferredLaunchRecord) error {
 	unlock, lockErr := lockDeferredClaim(c.deferredClaimPath(binding.Agent))
 	if lockErr != nil {
 		return lockErr
@@ -442,6 +472,14 @@ func (c *agentCommand) reserveProcessRelaunch(ctx context.Context, candidate pro
 	defer unlock()
 	if err := c.checkDeferredClaim(binding.Agent, nil); err != nil {
 		return err
+	}
+	if len(prepared) > 0 && prepared[0] != nil {
+		if err := c.prepareDeferredAttempt(candidate, binding, prepared[0]); err != nil {
+			return err
+		}
+		if err := c.reclaimDeferredInput(deferredClaimRecord{Agent: binding.Agent}); err != nil {
+			return err
+		}
 	}
 	_, err := c.rebind.create.store.update(func(reg *coremetadata.Registry) error {
 		if err := ctx.Err(); err != nil {

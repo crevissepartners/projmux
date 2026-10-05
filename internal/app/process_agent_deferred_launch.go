@@ -31,6 +31,7 @@ type deferredLaunchRecord struct {
 	Files                          map[string]string
 	Model, Effort                  string
 	Attempt                        *deferredLaunchAttempt
+	Previous                       *deferredLaunchRecord
 }
 
 type deferredLaunchAttempt struct {
@@ -138,6 +139,9 @@ func (c *agentCommand) readDeferredLaunch(uid string) (*deferredLaunchRecord, er
 	if record.Version != 1 || record.Agent != uid || record.Retired.Provider != aiModeClaude || record.Retired.SessionID == "" || record.Retired.Binding.AgentUID != uid || record.Command.Env != nil || record.Command.Path == "" || record.Command.Dir == "" {
 		return nil, deferredRefused("damaged deferred launch")
 	}
+	if record.Previous != nil && (record.Previous.Previous != nil || record.Previous.Agent != uid || record.Previous.Version != 1 || record.Previous.Retired.Provider != aiModeClaude || record.Previous.Retired.Binding.AgentUID != uid || record.Previous.Retired.SessionID == "" || record.Previous.Command.Env != nil || record.Previous.Command.Path == "" || record.Previous.Command.Dir == "" || record.Attempt == nil) {
+		return nil, deferredRefused("damaged relaunch intent")
+	}
 	return &record, nil
 }
 
@@ -218,6 +222,9 @@ func (c *agentCommand) reconcileDeferredLaunch(ctx context.Context, record *defe
 	if record == nil {
 		return nil
 	}
+	if record.Previous != nil {
+		return c.reconcilePromptRelaunch(record)
+	}
 	if err := c.reconcileDeferredAttempt(record); err != nil {
 		return err
 	}
@@ -248,7 +255,11 @@ func (c *agentCommand) prepareDeferredAttempt(candidate processResumeCandidate, 
 	if err != nil {
 		return err
 	}
-	if deferredLaunchDigest(current) != deferredLaunchDigest(record) {
+	sourceRecipe := record
+	if record.Previous != nil {
+		sourceRecipe = record.Previous
+	}
+	if deferredLaunchDigest(current) != deferredLaunchDigest(sourceRecipe) {
 		return deferredRefused("launch changed before reservation")
 	}
 	reg, err := c.loadRegistry()
@@ -257,7 +268,7 @@ func (c *agentCommand) prepareDeferredAttempt(candidate processResumeCandidate, 
 	}
 	agent, found := reg.Agent(record.Agent)
 	pane, ambiguous := processResumePane(reg, record.Agent)
-	if !found || ambiguous || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || !coremetadata.MatchesProcessWait(candidate.Record.Binding, pane.Status.LastTermination) || !coremetadata.MatchesProcessWait(candidate.Record.Binding, agent.Status.LastTermination) || !record.matches(candidate) || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, record.NewSpec) || !reflect.DeepEqual(agent.Metadata.Annotations, record.NewAnnotations) {
+	if !found || ambiguous || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || !coremetadata.MatchesProcessWait(candidate.Record.Binding, pane.Status.LastTermination) || !coremetadata.MatchesProcessWait(candidate.Record.Binding, agent.Status.LastTermination) || !sourceRecipe.matches(candidate) || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, sourceRecipe.NewSpec) || !reflect.DeepEqual(agent.Metadata.Annotations, sourceRecipe.NewAnnotations) {
 		return deferredRefused("attempt source changed")
 	}
 	target, source := metadataProcessBinding(binding), candidate.Record.Binding
@@ -320,12 +331,19 @@ func (c *agentCommand) reconcileDeferredAttempt(record *deferredLaunchRecord) er
 // Digest reads are outside the lock. The lock then checks the exact sidecar,
 // claim authority and recipe CAS again before the resume planner can use it.
 func (c *agentCommand) prepareDeferredLaunch(ctx context.Context, candidate processResumeCandidate, opts processAgentResumeOptions) (processResumeCandidate, *deferredLaunchRecord, error) {
+	return c.prepareDeferredLaunchMode(ctx, candidate, opts, false)
+}
+
+// Explicit replacement validates its new planner files, never reuses old Args.
+func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate processResumeCandidate, opts processAgentResumeOptions, replacement bool) (processResumeCandidate, *deferredLaunchRecord, error) {
 	record, err := c.readDeferredLaunch(candidate.Agent.Metadata.UID)
 	if err != nil || record == nil {
 		return candidate, record, err
 	}
-	if err = record.validateFiles(); err != nil {
-		return candidate, nil, err
+	if !replacement {
+		if err = record.validateFiles(); err != nil {
+			return candidate, nil, err
+		}
 	}
 	if opts.Model != "" && opts.Model != record.Model || opts.Effort != "" && opts.Effort != record.Effort {
 		return candidate, nil, deferredRefused("pending relaunch configuration is fixed; use agent relaunch to change it")
@@ -334,7 +352,7 @@ func (c *agentCommand) prepareDeferredLaunch(ctx context.Context, candidate proc
 	if err != nil {
 		return candidate, nil, err
 	}
-	defer unlock()
+	defer func() { unlock() }()
 	if err = c.checkDeferredClaim(record.Agent, opts.claim); err != nil {
 		return candidate, nil, err
 	}
@@ -351,6 +369,35 @@ func (c *agentCommand) prepareDeferredLaunch(ctx context.Context, candidate proc
 	request, err := newProcessAgentResumeRequest(opts)
 	if err != nil {
 		return candidate, nil, err
+	}
+	record, err = c.readDeferredLaunch(record.Agent)
+	if err != nil {
+		return candidate, nil, err
+	}
+	unlock()
+	unlock = func() {}
+	if !replacement {
+		if err = record.validateFiles(); err != nil {
+			return candidate, nil, err
+		}
+	}
+	if opts.Model != "" && opts.Model != record.Model || opts.Effort != "" && opts.Effort != record.Effort {
+		return candidate, nil, deferredRefused("recovered launch override differs")
+	}
+	nextUnlock, lockErr := lockDeferredClaim(c.deferredClaimPath(record.Agent))
+	if lockErr != nil {
+		return candidate, nil, lockErr
+	}
+	unlock = nextUnlock
+	if err = c.checkDeferredClaim(record.Agent, opts.claim); err != nil {
+		return candidate, nil, err
+	}
+	current, err = c.readDeferredLaunch(record.Agent)
+	if err != nil {
+		return candidate, nil, err
+	}
+	if deferredLaunchDigest(current) != deferredLaunchDigest(record) {
+		return candidate, nil, deferredRefused("launch changed during snapshot validation")
 	}
 	candidate, err = c.processResumeCandidate(request)
 	if err == nil && !record.matches(candidate) {
@@ -420,4 +467,70 @@ func (c *agentCommand) finishDeferredLaunch(record *deferredLaunchRecord, result
 		return deferredRefused("failed launch has no exact Wait; inspect Agent before reclaiming")
 	}
 	return c.reconcileDeferredAttempt(record)
+}
+
+// Prompt intents never grant writer authority. Exact failed reservation proof
+// precedes configuration rollback and restoration of the immediate prior L.
+func (c *agentCommand) reconcilePromptRelaunch(record *deferredLaunchRecord) error {
+	prior := record.Previous
+	a := record.Attempt
+	if a == nil || a.Source.Provider != aiModeClaude || a.Source.Binding.AgentUID != record.Agent || a.Target.AgentUID != record.Agent || a.Target.PaneUID != a.Source.Binding.PaneUID || a.Target.ProjectUID != a.Source.Binding.ProjectUID || a.Target.WindowUID != a.Source.Binding.WindowUID || a.Target.HostInstanceID == a.Source.Binding.HostInstanceID || a.Target.Generation == a.Source.Binding.Generation || a.Target.OperationID == a.Source.Binding.OperationID {
+		return deferredRefused("prompt planned target differs")
+	}
+	reg, err := c.loadRegistry()
+	if err != nil {
+		return err
+	}
+	agent, found := reg.Agent(record.Agent)
+	pane, ambiguous := processResumePane(reg, record.Agent)
+	if !found || ambiguous || pane == nil || pane.Status.ProcessSession == nil || prior.Previous != nil || !processResumeRecordEqual(&prior.Retired, &record.Attempt.Source) || !reflect.DeepEqual(prior.NewSpec, record.OldSpec) || !reflect.DeepEqual(prior.NewAnnotations, record.OldAnnotations) {
+		return deferredRefused("prompt intent source differs")
+	}
+	old := reflect.DeepEqual(agent.Spec, record.OldSpec) && reflect.DeepEqual(agent.Metadata.Annotations, record.OldAnnotations)
+	if processResumeRecordEqual(pane.Status.ProcessSession, &record.Attempt.Source) {
+		if !old || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || !coremetadata.MatchesProcessWait(prior.Retired.Binding, pane.Status.LastTermination) || !coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
+			return deferredRefused("prompt source rollback lacks exact Wait")
+		}
+		return writeDeferredState(c.deferredStatePath("deferred-launches", record.Agent), prior)
+	} else {
+		proof := *record
+		if old {
+			proof.NewSpec, proof.NewAnnotations = record.OldSpec, record.OldAnnotations
+		}
+		// Reuse the complete owner65 History, full binding, both Wait and attention CAS.
+		if err = c.reconcileDeferredAttempt(&proof); err != nil {
+			return err
+		}
+		record.Retired = proof.Retired
+		_, err = c.rebind.create.store.update(func(current *coremetadata.Registry) error {
+			a, ok := current.Agent(record.Agent)
+			p, multiple := processResumePane(*current, record.Agent)
+			if !ok || multiple || p == nil || !processResumeRecordEqual(p.Status.ProcessSession, &proof.Retired) || !reflect.DeepEqual(a.Spec, proof.NewSpec) || !reflect.DeepEqual(a.Metadata.Annotations, proof.NewAnnotations) {
+				return deferredRefused("prompt rollback source changed")
+			}
+			a.Spec, a.Metadata.Annotations = record.OldSpec, maps.Clone(record.OldAnnotations)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	prior.Retired, prior.Attempt = record.Retired, record.Attempt
+	return writeDeferredState(c.deferredStatePath("deferred-launches", record.Agent), prior)
+}
+
+func (c *agentCommand) restorePromptRelaunch(record *deferredLaunchRecord) error {
+	unlock, err := lockDeferredClaim(c.deferredClaimPath(record.Agent))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := c.readDeferredLaunch(record.Agent)
+	if err != nil {
+		return err
+	}
+	if deferredLaunchDigest(current) != deferredLaunchDigest(record) {
+		return deferredRefused("prompt intent changed during start")
+	}
+	return c.reconcilePromptRelaunch(record)
 }

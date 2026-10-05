@@ -15,28 +15,12 @@ import (
 // Only same-location Claude relaunch calls this consumer. Host transfer keeps
 // its own prompt requirement and never enters the deferred claim path.
 func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context.CancelFunc, candidate processResumeCandidate, request agentRelaunchRequest, recipe processRelaunchRecipe, launch processRelaunchLaunch, result agentRelaunchResult, stdout, stderr io.Writer) error {
-	files, err := deferredLaunchFiles(launch.command.Args)
+	record, err := c.planDeferredRelaunchRecord(candidate, recipe, launch, true)
 	if err != nil {
 		return err
 	}
-	planned := coremetadata.Registry{Agents: []coremetadata.Agent{candidate.Agent.Clone()}}
-	mutator := c.rebind.create.store.mutator()
-	if err = launch.settings.record(&planned, mutator, candidate.Agent.Metadata.UID); err != nil {
-		return err
-	}
-	if err = recipe.guidance.record(&planned, mutator, candidate.Agent.Metadata.UID); err != nil {
-		return err
-	}
-	if err = recipe.links.record(&planned, mutator, candidate.Agent.Metadata.UID); err != nil {
-		return err
-	}
-	updated, _ := planned.Agent(candidate.Agent.Metadata.UID)
-	updated.Spec.Workspace = recipe.workspace
-	command := launch.command
-	command.Env = nil
-	record := &deferredLaunchRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Retired: *candidate.Record.Clone(), OldSpec: candidate.Agent.Spec, NewSpec: updated.Spec, OldAnnotations: candidate.Agent.Metadata.Annotations, NewAnnotations: updated.Metadata.Annotations, Command: command, Files: files, Model: recipe.restart.settings.resolution.New.Model.Value, Effort: recipe.restart.settings.resolution.New.Effort.Value}
 	// Acquire uses the same guard and identity checks as ordinary deferred resume.
-	claim, err := c.claimDeferredProcessAgent(ctx, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: record.Agent}})
+	claim, err := c.claimDeferredProcessAgent(ctx, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: record.Agent}}, true)
 	if err != nil {
 		return err
 	}
@@ -96,9 +80,44 @@ func (c *agentCommand) commitDeferredRelaunch(ctx context.Context, claim *deferr
 	if !found || ambiguous || pane == nil || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, candidate.Agent.Metadata.Annotations) {
 		return deferredRefused("relaunch source changed before configuration commit")
 	}
+	current, err := c.readDeferredLaunch(record.Agent)
+	if err != nil {
+		return err
+	}
+	if deferredLaunchDigest(current) != claim.launchDigest {
+		return deferredRefused("replacement launch changed before commit")
+	}
 	if err = writeDeferredState(c.deferredStatePath("deferred-launches", record.Agent), record); err != nil {
 		return err
 	}
 	// A crash between these writes is repaired only by the exact old/new proof.
-	return c.reconcileDeferredLaunch(ctx, record)
+	if err = c.reconcileDeferredLaunch(ctx, record); err != nil {
+		return err
+	}
+	return c.reclaimDeferredInput(claim.record)
+}
+
+func (c *agentCommand) planDeferredRelaunchRecord(candidate processResumeCandidate, recipe processRelaunchRecipe, launch processRelaunchLaunch, deferred bool) (*deferredLaunchRecord, error) {
+	files, err := deferredLaunchFiles(launch.command.Args)
+	if err != nil {
+		return nil, err
+	}
+	planned := coremetadata.Registry{Agents: []coremetadata.Agent{candidate.Agent.Clone()}}
+	mutator := c.rebind.create.store.mutator()
+	if err = launch.settings.record(&planned, mutator, candidate.Agent.Metadata.UID); err != nil {
+		return nil, err
+	}
+	if err = recipe.guidance.record(&planned, mutator, candidate.Agent.Metadata.UID); err != nil {
+		return nil, err
+	}
+	if err = recipe.links.record(&planned, mutator, candidate.Agent.Metadata.UID); err != nil {
+		return nil, err
+	}
+	updated, _ := planned.Agent(candidate.Agent.Metadata.UID)
+	if deferred {
+		updated.Spec.Workspace = recipe.workspace
+	}
+	command := launch.command
+	command.Env = nil
+	return &deferredLaunchRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Retired: *candidate.Record.Clone(), OldSpec: candidate.Agent.Spec, NewSpec: updated.Spec, OldAnnotations: candidate.Agent.Metadata.Annotations, NewAnnotations: updated.Metadata.Annotations, Command: command, Files: files, Model: recipe.restart.settings.resolution.New.Model.Value, Effort: recipe.restart.settings.resolution.New.Effort.Value}, nil
 }

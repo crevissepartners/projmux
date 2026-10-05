@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -119,8 +121,53 @@ func deferredRelaunchCLI(t *testing.T, ctx context.Context, f processCreateCLI, 
 			_ = run.cmd.Wait()
 		}
 	})
+	barrier := filepath.Join(f.root, "hold-init")
+	if _, barrierErr := os.Stat(barrier); barrierErr == nil {
+		c := deferredFixtureCommand(f)
+		uid := strings.TrimPrefix(ref, "uid:")
+		for {
+			intent, e := c.readDeferredLaunch(uid)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if intent != nil && intent.Previous != nil {
+				reg := mustRegistry(t, f)
+				agent, _ := reg.Agent(uid)
+				wire := deferredWireTexts(t, f)
+				activation, provider, current := reg.CurrentProcessActivation(intent.Attempt.Target)
+				child, _, childErr := localipc.Process(activation.Child.PID)
+				host, _, hostErr := localipc.Process(activation.HostProcess.PID)
+				if current && childErr == nil && hostErr == nil && child == activation.Child && host == activation.HostProcess && provider == aiModeClaude && agent.Status.Phase == coremetadata.PhaseRunning && len(wire) > 0 && wire[len(wire)-1] == "prompt first" {
+					before, _ := os.ReadFile(f.store.Path())
+					lbefore, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+					out, e := exec.CommandContext(ctx, f.binary, "agent", "resume", ref, "--wait-for-peer").CombinedOutput()
+					after, _ := os.ReadFile(f.store.Path())
+					lafter, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+					if e == nil || !bytes.Contains(out, []byte("process-resume-owned")) || !bytes.Equal(before, after) || !bytes.Equal(lbefore, lafter) {
+						t.Fatalf("pre-init typed refusal/state invariant mismatch: %v %s", e, out)
+					}
+					if e = writeDeferredState(filepath.Join(f.root, "captured-intent"), intent); e != nil {
+						t.Fatal(e)
+					}
+					if e = os.Remove(barrier); e != nil {
+						t.Fatal(e)
+					}
+					break
+				}
+			}
+			select {
+			case <-ctx.Done():
+				raw, _ := os.ReadFile(f.store.Path())
+				launch, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+				_ = writeDeferredState(filepath.Join(filepath.Dir(filepath.Dir(f.binary)), "init-barrier-failure.json"), map[string]any{"stage": "pre-init barrier", "registry": json.RawMessage(raw), "launch": json.RawMessage(launch), "wire": deferredWireTexts(t, f), "stderr": run.stderr.String()})
+				t.Fatal("intent barrier not ready")
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
 	line, err := run.output.ReadString('\n')
-	if err != nil || line != "agent "+ref+" pane uid:"+deferredCandidate(t, f, ref).Record.Binding.PaneUID+" runtime=process foreground=claimed\n" {
+	prompt := len(flags) > 0 && slices.Contains(flags, "--")
+	if err != nil || (!prompt && line != "agent "+ref+" pane uid:"+deferredCandidate(t, f, ref).Record.Binding.PaneUID+" runtime=process foreground=claimed\n") || (prompt && !strings.Contains(line, "relaunch")) {
 		t.Fatalf("claimed %q %v %s", line, err, run.stderr.String())
 	}
 	return run
@@ -787,4 +834,226 @@ func deferredPauseClaimant(t *testing.T, ctx context.Context, f processCreateCLI
 		}
 		return strings.HasPrefix(strings.TrimSpace(string(out)), "T")
 	})
+}
+
+func TestDeferredClaudeExplicitReplacementActualCLI(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprint("missing=", missing), func(t *testing.T) {
+			f := deferredRelaunchFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+			deferredReady(t, ctx, f, first.ref)
+			first.shutdown(t)
+			paths, err := config.DefaultPathsFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			profiles := profile.NewDefaultStore(paths)
+			writeCodexProfile(t, profiles, "previous", "model = \"old-model\"\n[permissions]\nallow = [\"Read\"]\n")
+			writeCodexProfile(t, profiles, "replacement", "model = \"next-model\"\n[permissions]\nallow = [\"Bash\"]\n")
+			run := deferredRelaunchCLI(t, ctx, f, first.ref, "--profile", "previous")
+			run.finish(t)
+			c := deferredFixtureCommand(f)
+			uid := strings.TrimPrefix(first.ref, "uid:")
+			old, err := c.readDeferredLaunch(uid)
+			if err != nil || old == nil {
+				t.Fatal(err)
+			}
+			index := slices.Index(old.Command.Args, "--settings")
+			if index < 0 {
+				t.Fatal("settings snapshot absent")
+			}
+			oldPath := old.Command.Args[index+1]
+			if missing {
+				err = os.Remove(oldPath)
+			} else {
+				err = os.WriteFile(oldPath, []byte("changed"), 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			run = deferredRelaunchCLI(t, ctx, f, first.ref, "--profile", "replacement")
+			next, err := c.readDeferredLaunch(uid)
+			if err != nil || next == nil || next.Model != "next-model" || next.validateFiles() != nil {
+				t.Fatal("replacement", err)
+			}
+			if _, reused := next.Files[oldPath]; reused {
+				t.Fatal("old settings snapshot repaired/reused")
+			}
+			if raw, e := os.ReadFile(oldPath); (!missing && (e != nil || string(raw) != "changed")) || (missing && !os.IsNotExist(e)) {
+				t.Fatal("planner repaired old snapshot")
+			}
+			// Live claim replacement remains typed owned, with every durable byte intact.
+			before, _ := os.ReadFile(f.store.Path())
+			lbefore, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+			claimbefore, _ := os.ReadFile(c.deferredClaimPath(uid))
+			out, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", first.ref, "--model", "foreign").CombinedOutput()
+			after, _ := os.ReadFile(f.store.Path())
+			lafter, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+			claimafter, _ := os.ReadFile(c.deferredClaimPath(uid))
+			if err == nil || !bytes.Contains(out, []byte("process-resume-owned")) || !bytes.Equal(before, after) || !bytes.Equal(lbefore, lafter) || !bytes.Equal(claimbefore, claimafter) {
+				t.Fatalf("live replacement changed state: %v %s", err, out)
+			}
+			run.finish(t)
+			resumed := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "new first"})
+			deferredReady(t, ctx, f, first.ref)
+			resumed.shutdown(t)
+			argv := deferredArgv(t, f)
+			want := append(append([]string{}, next.Command.Args...), "--resume", next.Retired.SessionID)
+			if !reflect.DeepEqual(argv[len(argv)-1][1:], want) {
+				t.Fatal("replacement argv")
+			}
+		})
+	}
+}
+
+func TestDeferredClaudePromptRelaunchTransitionActualCLI(t *testing.T) {
+	for _, scenario := range []struct{ failed, unknown bool }{{}, {failed: true}, {unknown: true}} {
+		failed, unknown := scenario.failed, scenario.unknown
+		t.Run(fmt.Sprint("failed=", failed, "/unknown=", unknown), func(t *testing.T) {
+			f := deferredRelaunchFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+			deferredReady(t, ctx, f, first.ref)
+			first.shutdown(t)
+			run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "frozen-model")
+			abandoned, err := readDeferredClaim(deferredFixtureCommand(f).deferredClaimPath(strings.TrimPrefix(first.ref, "uid:")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			run.finish(t)
+			c := deferredFixtureCommand(f)
+			uid := strings.TrimPrefix(first.ref, "uid:")
+			prior, err := c.readDeferredLaunch(uid)
+			if err != nil || prior == nil {
+				t.Fatal(err)
+			}
+			// Durable prompt intent before reservation CAS recovers only the exact source.
+			intent, priorCopy := *prior, *prior
+			intent.OldSpec, intent.OldAnnotations = prior.NewSpec, prior.NewAnnotations
+			target := prior.Retired.Binding
+			target.HostInstanceID += "-intent"
+			target.Generation += "-intent"
+			target.OperationID += "-intent"
+			intent.Previous, intent.Attempt = &priorCopy, &deferredLaunchAttempt{Source: *prior.Retired.Clone(), Target: target}
+			if err = writeDeferredState(c.deferredStatePath("deferred-launches", uid), &intent); err != nil {
+				t.Fatal(err)
+			}
+			recovery := startDeferredCLIClaim(t, ctx, f, first.ref)
+			recovery.finish(t)
+			restoredSource, err := c.readDeferredLaunch(uid)
+			if err != nil || deferredLaunchDigest(restoredSource) != deferredLaunchDigest(prior) {
+				t.Fatal("intent/source crash", err)
+			}
+			slot := &deferredUserInput{Version: 1, Operation: "abandoned-b1-user", Nonce: abandoned.Nonce, Binding: abandoned.Binding, Session: abandoned.Session, Process: abandoned.Process, Recipe: deferredLaunchDigest(prior), Deadline: time.Now().Add(deferredUserDeadline), Phase: "pending", Text: "never replay"}
+			if unknown {
+				slot.Phase = "inflight"
+			}
+			if err = c.writeDeferredInput(slot); err != nil {
+				t.Fatal(err)
+			}
+			script := filepath.Join(f.root, "provider.py")
+			original, err := os.ReadFile(script)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failed {
+				broken := bytes.ReplaceAll(original, []byte("emit({'type':'system','subtype':'init','session_id':'process-session'})"), []byte("emit({'type':'system','subtype':'init','session_id':'wrong-session'})"))
+				if err = os.WriteFile(script, broken, 0600); err != nil {
+					t.Fatal(err)
+				}
+				out, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", first.ref, "--model", "prompt-model", "--", "prompt first").CombinedOutput()
+				if err == nil {
+					t.Fatalf("wrong init accepted %s", out)
+				}
+				restored, err := c.readDeferredLaunch(uid)
+				if err != nil || restored == nil || restored.Previous != nil || !restored.matches(deferredCandidate(t, f, first.ref)) || !reflect.DeepEqual(restored.Command, prior.Command) {
+					t.Fatalf("prior not restored: %v %s", err, out)
+				}
+				// Recreate reserved-target/L-source crash and attention-old after exact failed Wait.
+				intent.Retired, intent.Attempt = *restored.Attempt.Source.Clone(), restored.Attempt
+				for _, projection := range []bool{false, true} {
+					if projection {
+						intent.Retired = restored.Retired
+					}
+					if err = writeDeferredState(c.deferredStatePath("deferred-launches", uid), &intent); err != nil {
+						t.Fatal(err)
+					}
+					attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path())))
+					if err = attention.update(func(rows map[string]processAttentionRecord) error {
+						b := processSchemaBinding(intent.Attempt.Source.Binding)
+						rows[b.Pane] = processAttentionRecord{Binding: b, Provider: aiModeClaude, Terminal: true, Pending: map[string]processAttentionPending{}}
+						return nil
+					}); err != nil {
+						t.Fatal(err)
+					}
+					recovery = startDeferredCLIClaim(t, ctx, f, first.ref)
+					recovery.finish(t)
+					again, err := c.readDeferredLaunch(uid)
+					if err != nil || again.Previous != nil || !again.matches(deferredCandidate(t, f, first.ref)) || !reflect.DeepEqual(again.Command, prior.Command) {
+						t.Fatal("reserved/attention crash", err)
+					}
+				}
+				if err = os.WriteFile(script, original, 0600); err != nil {
+					t.Fatal(err)
+				}
+				claim := startDeferredCLIClaim(t, ctx, f, first.ref)
+				claim.finish(t)
+			} else {
+				if unknown {
+					barrier := filepath.Join(f.root, "hold-init")
+					if err = os.WriteFile(barrier, nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+					delayed := bytes.ReplaceAll(original, []byte("  emit({'type':'system','subtype':'init','session_id':'process-session'})"), []byte("  while os.path.exists(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'hold-init')): __import__('time').sleep(.01)\n  emit({'type':'system','subtype':'init','session_id':'process-session'})"))
+					if err = os.WriteFile(script, delayed, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				run = deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "prompt-model", "--", "prompt first")
+				deferredReady(t, ctx, f, first.ref)
+				run.finish(t)
+				if retained, err := c.readDeferredLaunch(uid); err != nil || retained != nil {
+					t.Fatal("B1 intent not consumed", err)
+				}
+			}
+			settled, err := c.readDeferredInput(uid)
+			if err != nil || settled == nil || settled.Phase != "settled" || settled.Text != "" || settled.Success || settled.Unknown != unknown || slices.Contains(deferredWireTexts(t, f), "never replay") {
+				t.Fatal("B1 raw slot settlement", err)
+			}
+			if unknown {
+				var captured deferredLaunchRecord
+				if found, err := readDeferredState(filepath.Join(f.root, "captured-intent"), &captured); err != nil || !found {
+					t.Fatal("intent not captured", err)
+				}
+				if err = writeDeferredState(c.deferredStatePath("deferred-launches", uid), &captured); err != nil {
+					t.Fatal(err)
+				}
+				wire := deferredWireTexts(t, f)
+				children := len(deferredArgv(t, f))
+				recovery = startDeferredCLIClaim(t, ctx, f, first.ref)
+				recovery.finish(t)
+				if !reflect.DeepEqual(wire, deferredWireTexts(t, f)) || children != len(deferredArgv(t, f)) {
+					t.Fatal("unknown intent replayed first frame")
+				}
+				if err = os.WriteFile(script, original, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := []string{"agent", "resume", first.ref, "--", "ordinary first"}
+			if !failed && !unknown {
+				args = []string{"agent", "resume", first.ref, "--model", "ordinary-model", "--", "ordinary first"}
+			}
+			resumed := startResumeCLIInvocation(t, ctx, f, args)
+			deferredReady(t, ctx, f, first.ref)
+			resumed.shutdown(t)
+			run = deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "final-model")
+			run.finish(t)
+			if retained, err := c.readDeferredLaunch(uid); err != nil || retained == nil || retained.Model != "final-model" {
+				t.Fatal("subsequent empty relaunch", err)
+			}
+		})
+	}
 }
