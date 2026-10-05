@@ -282,6 +282,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// Public resource repair is wired beside the resource command graph rather
 	// than lifecycle/AI tmux wiring so those independent seams can rebase cleanly.
 	reconcileCmd := newResourceReconcileCommand(tmuxCmd)
+	reconcileCmd.historyAppend = appendLiveAgentHistory
 	// Explicit topology materialization replays stored Agents, so it consumes
 	// the same narrow provider-launch seam `create agent` and `agent resume`
 	// hold. There is no second launch builder anywhere in the topology engine.

@@ -51,6 +51,7 @@ const (
 	// snapshot state lock in time and walked nothing. No adapter ran, so it is
 	// always recorded for ProviderProjmux, without a source, at level=error.
 	UsageFailureStateLockTimeout UsageFailure = "state-lock-timeout"
+	UsageFailureHistoryWrite     UsageFailure = "history-write-failed"
 )
 
 // usageWholeCollectFailure reports whether failure means the adapter refreshed
@@ -143,7 +144,7 @@ func (r *UsageRecorder) RecordCollectOutcome(provider Provider, source UsageSour
 		Result: "success", DurationMS: max(now.Sub(started).Milliseconds(), 0), RunID: r.runID, Version: r.version,
 		MuxBackend: r.muxBackend, Provider: string(provider), Source: string(source), Failure: string(failure),
 	}
-	if usageWholeCollectFailure(failure) || failure == UsageFailureStateLockTimeout || source == UsageSourceLastKnownGood {
+	if usageWholeCollectFailure(failure) || failure == UsageFailureStateLockTimeout || failure == UsageFailureHistoryWrite || source == UsageSourceLastKnownGood {
 		event.Level, event.Result, event.Kind = "error", "error", "runtime"
 	}
 	if r.writer != nil {

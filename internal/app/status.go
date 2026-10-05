@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
+	"github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -330,6 +332,20 @@ func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) er
 		return nil
 	}
 	metrics := (systemstatus.Sampler{CachePath: paths.LiveResourcesSampleFile()}).Sample()
+	now := time.Now().UTC()
+	points, metricErr := systemMetricPoints(metrics, paths.StateDir, now)
+	if metricErr != nil {
+		fmt.Fprintf(stderr, "usage: history sample: %v\n", metricErr)
+	}
+	if len(points) > 0 {
+		historyDir := filepath.Join(paths.StateDir, "usage")
+		if override := c.lookupEnv(usagecmd.StateDirEnvVar); override != "" {
+			historyDir = override
+		}
+		if _, err := usage.NewStore(historyDir).TryAppendHistory(points, now); err != nil {
+			fmt.Fprintf(stderr, "usage: history write: %v\n", err)
+		}
+	}
 	_, err = fmt.Fprint(stdout, formatLiveResourcesStatus(metrics))
 	return err
 }

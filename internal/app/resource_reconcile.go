@@ -18,6 +18,7 @@ import (
 )
 
 type resourceReconcileCommand struct {
+	historyAppend   func(resourcegraph.Graph) error
 	diagnostics     *diagnostics.LifecycleRecorder
 	runner          tmuxCommandRunner
 	resources       *resourceStore
@@ -152,7 +153,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 	if opts.dryRun {
 		return c.runControllerDryRun(ctx, kernel, reportTarget, opts, stdout)
 	}
-	return c.runControllerExecute(ctx, kernel, reportTarget, opts, stdout)
+	return c.runControllerExecute(ctx, kernel, reportTarget, opts, stdout, stderr)
 }
 
 func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceReconcileOptions, error) {
@@ -287,7 +288,7 @@ func (c *resourceReconcileCommand) runControllerDryRun(ctx context.Context, kern
 // report, the retry hint, and the refused-drift exit code. Keeping the sequence
 // out of the report body is what lets a lifecycle trigger reach the same six
 // stages without reimplementing five of them and forgetting the sixth.
-func (c *resourceReconcileCommand) runControllerExecute(ctx context.Context, kernel *resourceControllerKernel, reportTarget resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
+func (c *resourceReconcileCommand) runControllerExecute(ctx context.Context, kernel *resourceControllerKernel, reportTarget resourceReconcileTarget, opts resourceReconcileOptions, stdout, stderr io.Writer) error {
 	if c.resources.updateConvergent == nil {
 		return errors.New("resource reconciliation write store is not configured")
 	}
@@ -308,6 +309,11 @@ func (c *resourceReconcileCommand) runControllerExecute(ctx context.Context, ker
 			return writeErr
 		}
 		return fmt.Errorf("reconcile resources failed at %s: %w", runErr.stage, runErr.err)
+	}
+	if c.historyAppend != nil {
+		if historyErr := c.historyAppend(run.graph); historyErr != nil {
+			fmt.Fprintf(stderr, "usage: history write: %v\n", historyErr)
+		}
 	}
 	report := reportForExecute(run.plan, reportTarget, run.completed, retryResourceReconcile(reportTarget))
 	applyControllerProjection(&report, run.authorized)

@@ -129,6 +129,9 @@ func (m *Manager) ApplySnapshots(model string, snapshots []Snapshot) ([]Snapshot
 	if err != nil {
 		return nil, err
 	}
+	if historyErr := m.store.AppendHistory(usageHistoryPoints(fresh), now); historyErr != nil {
+		return SortedSnapshots(merged), fmt.Errorf("%w: %w", ErrHistoryWrite, historyErr)
+	}
 	return SortedSnapshots(merged), nil
 }
 
@@ -265,10 +268,36 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 			merged = mergeWalk(&claimView, results, now)
 		}
 	}
+	if commitErr == nil {
+		var fresh []Snapshot
+		for _, result := range results {
+			fresh = append(fresh, result.snaps...)
+		}
+		if historyErr := m.store.AppendHistory(usageHistoryPoints(fresh), now); historyErr != nil {
+			errs = append(errs, fmt.Errorf("%w: %w", ErrHistoryWrite, historyErr))
+		}
+	}
 	if len(errs) > 0 {
 		return true, merged, errors.Join(errs...)
 	}
 	return true, merged, nil
+}
+
+func usageHistoryPoints(snaps []Snapshot) []MetricPoint {
+	points := make([]MetricPoint, 0, len(snaps))
+	for _, snap := range snaps {
+		if snap.UpdatedAt.IsZero() || snap.Window == WindowContext {
+			continue
+		}
+		p := MetricPoint{Name: "usage.percent", Value: snap.Pct, ObservedAt: snap.UpdatedAt,
+			Provider: snap.Model, Window: string(snap.Window), Bucket: snap.Bucket}
+		if !snap.ResetsAt.IsZero() {
+			reset := snap.ResetsAt
+			p.ResetsAt = &reset
+		}
+		points = append(points, p)
+	}
+	return points
 }
 
 // adapterWalk is one adapter's outcome from a collect walk, held until it is
