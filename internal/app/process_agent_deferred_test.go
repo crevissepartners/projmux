@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
@@ -202,5 +205,89 @@ func TestDeferredCancelledResumePreservesUndispatchedPeer(t *testing.T) {
 	held, err = replacement.held()
 	if err != nil || len(held) != 1 {
 		t.Fatal("closed claim lost peer", err)
+	}
+}
+
+func TestDeferredClaimFencesRelaunchReservation(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		for _, stale := range []bool{false, true} {
+			mode := "live"
+			if stale {
+				mode = "stale"
+			}
+			t.Run(provider+"/"+mode, func(t *testing.T) {
+				store, binding := sessionBindingFixture(t, provider)
+				if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+					recordFixtureWait(t, reg, binding.Pane)
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				state := filepath.Dir(filepath.Dir(store.Path()))
+				resource := &resourceStore{stateDir: func() (string, error) { return state, nil }, mutator: intmetadata.DefaultMutator, update: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+					reg, _, err := store.UpdateConvergent(fn)
+					return reg, err
+				}}
+				command := &agentCommand{loadRegistry: store.LoadReadOnly, messagePaths: agentMessagePaths{registryPath: store.Path()}, messageStore: messagestore.NewStore(state), rebind: &agentRebinder{create: &createCommand{store: resource}}}
+				options := processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: binding.Agent}}
+				candidate, err := command.processResumeCandidate(processAgentResumeRequest{options: options})
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidate, err = command.awaitProcessRelaunchRetirement(context.Background(), candidate.Agent, candidate.Pane, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Acquire after relaunch's candidate check, before its reservation CAS.
+				claim, err := command.claimDeferredProcessAgent(context.Background(), options)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = claim.Close() })
+				before, err := store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				next := binding
+				next.Host, next.Generation, next.Operation = "relaunch-host", "relaunch-generation", "relaunch-operation"
+				if stale {
+					record := claim.record
+					record.Process.Start += "-different-birth"
+					if err := writeDeferredClaim(claim.path, record); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := command.reserveProcessResume(context.Background(), candidate, agentSettingsLaunch{}, next, nil); !errors.Is(err, processhost.ErrResumeRefused) || !strings.HasPrefix(err.Error(), processResumeOwned+":") {
+						t.Fatal("ordinary resume bypassed claim", err)
+					}
+					if err := command.reserveProcessRelaunch(context.Background(), candidate, agentSettingsLaunch{}, agentGuidanceLaunch{}, projectLinksLaunch{}, next); !errors.Is(err, processhost.ErrResumeRefused) || !strings.HasPrefix(err.Error(), processResumeOwned+":") {
+						t.Fatal("relaunch bypassed claim", err)
+					}
+					after, err := store.LoadReadOnly()
+					if err != nil || !reflect.DeepEqual(before, after) {
+						t.Fatal("refused reservation changed registry", err)
+					}
+					record, err := readDeferredClaim(claim.path)
+					if err != nil || record.Nonce != claim.record.Nonce || !deferredClaimLive(record) {
+						t.Fatal("refusal changed the live claim", err)
+					}
+					if err := claim.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := command.reserveProcessRelaunch(context.Background(), candidate, agentSettingsLaunch{}, agentGuidanceLaunch{}, projectLinksLaunch{}, next); err != nil {
+					t.Fatal("released/stale claim blocked relaunch", err)
+				}
+				after, err := store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				agent, _ := after.Agent(binding.Agent)
+				pane, _ := after.Pane(binding.Pane)
+				if agent.Status.Phase != coremetadata.PhasePending || pane.Status.ProcessSession.Binding != metadataProcessBinding(next) || pane.Status.ProcessSession.SessionID != candidate.Record.SessionID || pane.Status.ProcessSession.ThreadID != candidate.Record.ThreadID {
+					t.Fatal("reservation changed identity or conversation")
+				}
+			})
+		}
 	}
 }
