@@ -205,7 +205,7 @@ image used at SessionStart: helpers started before this feature was installed
 retain the previous refusal until their Agent is relaunched. Installing the
 binary does not replace those running helpers.
 
-## Moving a Claude Agent between hosts
+## Moving an Agent between hosts
 
 `agent relaunch --host process -- <first-prompt>` moves an interactive Claude
 Agent to a foreground process owner. `agent relaunch --host tmux` moves it back
@@ -213,12 +213,41 @@ to an interactive Pane after the process owner records the old child's actual
 Wait. Both directions preserve the Agent UID and provider session, create a new
 Pane, and remove the old Pane. Omitting `--host` keeps the current host.
 
-Moving to process requires a nonempty first prompt, including dry-run. Moving
-to tmux takes no first prompt. There is no generated input or automatic new
-conversation. Keep stdin open while the process owner should run.
+Claude moves to process with a nonempty first prompt, including dry-run.
+Codex can move without a prompt:
+
+```sh
+projmux agent relaunch <agent-ref> --host process --yes
+projmux agent relaunch <agent-ref> --host tmux --yes
+```
+
+Codex keeps the same Agent, thread and rollout and creates a new Pane in either
+direction. Moving to tmux takes no first prompt. Keep stdin open while the
+process owner should run. Omitting `--host` retains the existing host.
 
 `--dry-run -o json` reports `currentHost`, `targetHost`, and the additive
 `host-changed` relaunch reason. Busy Agents require `--yes`. Reply-only Agents
-and Codex host changes are refused before mutation. If the exact old writer's
+are refused before mutation. If the exact old writer's
 retirement is unknown, no new child starts. A failed target launch retains the
 previous launch recipe and conversation; follow its exact recovery command.
+
+
+For tmux-to-process Codex moves, projmux freezes only the exact thread's broker
+admission, drains admitted work, stops its interactive Pane, and waits until
+the installed app server reports the thread absent from its complete loaded
+list. An unsubscribe acknowledgement alone does not prove retirement. Other
+threads and the shared daemon keep running. The new dedicated writer resumes
+that thread and its settings before input is admitted. Moving back waits for
+the dedicated child's actual exit before the shared endpoint resumes it.
+
+If a move or its caller fails after retirement starts, the thread remains
+fenced. Run the exact recovery command printed by the failed operation,
+using `agent relaunch <agent-ref> --host tmux --yes` with the original socket
+and without launch overrides or a prompt. Recovery first proves any target
+writer stopped and checks the current source and target recipe; it refuses
+unknown exits and changed state. It then resumes the original thread with a
+fresh native activation and completes the reservation after that writer is
+ready. Successful recovery retains the failed target's actual exit in the
+private operation record. A dry-run or refusal starts no provider and changes
+no stored recipe. The same instruction, sandbox, approval and reply-only guards
+apply to moves as to existing relaunch operations.

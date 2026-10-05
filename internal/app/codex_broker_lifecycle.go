@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -62,12 +63,14 @@ type codexBrokerEpochRecord struct {
 // exists, and there is therefore no attempt ceiling that could strand a live
 // activation in the unavailable reconnect projection.
 type codexBrokerObserverSession struct {
-	identity  codexLifecycleIdentity
-	endpoint  coremetadata.CodexEndpointRef
-	cwd       string
-	roots     []string
-	discovery codexbroker.Discovery
-	launch    codexbroker.Launcher
+	transferGrant        *codexbroker.NativeTransferGrant
+	transferInitializing atomic.Bool
+	identity             codexLifecycleIdentity
+	endpoint             coremetadata.CodexEndpointRef
+	cwd                  string
+	roots                []string
+	discovery            codexbroker.Discovery
+	launch               codexbroker.Launcher
 
 	openGate      chan struct{}
 	closeDone     chan struct{}
@@ -301,12 +304,20 @@ func (s *codexBrokerObserverSession) ensure(ctx context.Context) (*codexbroker.R
 		_ = conn.Close()
 		return nil, nil, err
 	}
-	binding, err := conn.Bind(ctx, s.identity.ThreadID, s.cwd, s.roots)
+	var binding *codexbroker.RemoteBinding
+	var err error
+	if s.transferGrant != nil {
+		s.transferInitializing.Store(true)
+		binding, err = conn.BindNativeTransfer(ctx, s.identity.ThreadID, s.cwd, s.roots, s.transferGrant)
+	} else {
+		binding, err = conn.Bind(ctx, s.identity.ThreadID, s.cwd, s.roots)
+	}
 	if err != nil {
 		recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleObserver, diagnostics.CodexBrokerOperationBind, err)
 		_ = conn.Close()
 		return nil, nil, err
 	}
+	s.transferGrant = nil
 	ready := make(chan codexBrokerEpochRecord, 1)
 	pumped := make(chan struct{})
 	s.mu.Lock()
@@ -673,6 +684,24 @@ func (e *codexBrokerLifecycleEpoch) ReadLifecycleSnapshot(ctx context.Context, t
 		return codexappserver.LifecycleSnapshot{}, errors.New("codex broker lifecycle snapshot identity is unavailable")
 	}
 	snapshot, err := e.binding.ReadLifecycleSnapshot(ctx, e.fence)
+	// An exact transfer consumer can inherit the endpoint's one-second readonly
+	// retry budget from its retired source. Keep that limit and wait boundedly;
+	// ordinary observers retain their existing fallback behavior.
+	if e.session.transferInitializing.Load() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for attempts := 0; err != nil && attempts < 12 && (codexbroker.RefusalOf(err) == codexbroker.RefusalLifecycleRetry || codexbroker.RefusalOf(err) == codexbroker.RefusalLifecycleBusy); attempts++ {
+			select {
+			case <-ctx.Done():
+				return codexappserver.LifecycleSnapshot{}, ctx.Err()
+			case <-ticker.C:
+			}
+			snapshot, err = e.binding.ReadLifecycleSnapshot(ctx, e.fence)
+		}
+		if err == nil {
+			e.session.transferInitializing.Store(false)
+		}
+	}
 	if err != nil {
 		return codexappserver.LifecycleSnapshot{}, err
 	}

@@ -24,6 +24,7 @@ type session struct {
 	id            string
 	lifecycleOnly bool
 	authorityOnly bool
+	transferOnly  bool
 
 	out        chan wireReply
 	closed     chan struct{}
@@ -47,7 +48,7 @@ func (h *Host) serveSession(conn *net.UnixConn) {
 	}
 	defer h.untrack(conn)
 	reader := bufio.NewReaderSize(conn, frameBufferBytes)
-	version, sessionID, lifecycleOnly, authorityOnly, ok := h.authenticate(conn, reader)
+	version, sessionID, lifecycleOnly, authorityOnly, transferOnly, ok := h.authenticate(conn, reader)
 	if !ok {
 		return
 	}
@@ -60,6 +61,7 @@ func (h *Host) serveSession(conn *net.UnixConn) {
 		id:            sessionID,
 		lifecycleOnly: lifecycleOnly,
 		authorityOnly: authorityOnly,
+		transferOnly:  transferOnly,
 		out:           make(chan wireReply, sessionBacklog),
 		closed:        make(chan struct{}),
 		departed:      make(chan struct{}),
@@ -83,6 +85,7 @@ func (h *Host) serveSession(conn *net.UnixConn) {
 	// disconnected has no consumer, and leaving it bound would keep the runtime
 	// alive for a client that no longer exists.
 	s.cancelAll()
+	h.broker.abandonTransfers(s.id)
 	s.releaseAll()
 	s.handlers.Wait()
 	s.pumps.Wait()
@@ -166,6 +169,10 @@ func (s *session) refuse(id uint64, reason Refusal) {
 
 // handle dispatches one client request.
 func (s *session) handle(request wireRequest) {
+	if s.transferOnly && request.Kind != requestTransfer {
+		s.refuse(request.ID, RefusalRequestUnknown)
+		return
+	}
 	if s.authorityOnly && request.Kind != requestAuthority {
 		s.refuse(request.ID, RefusalRequestUnknown)
 		return
@@ -179,6 +186,8 @@ func (s *session) handle(request wireRequest) {
 		return
 	}
 	switch request.Kind {
+	case requestTransfer:
+		s.handleTransfer(request)
 	case requestBind:
 		s.handleBind(request)
 	case requestUnbind:
@@ -312,7 +321,15 @@ func (s *session) handleBind(request wireRequest) {
 		s.refuse(request.ID, reason)
 		return
 	}
-	binding, err := s.host.broker.Bind(request.Thread, request.CWD, request.Roots)
+	var grant *NativeTransferGrant
+	if len(request.Params) > 0 {
+		grant = &NativeTransferGrant{}
+		if json.Unmarshal(request.Params, grant) != nil {
+			s.refuse(request.ID, RefusalFrameInvalid)
+			return
+		}
+	}
+	binding, err := s.host.broker.bindWithGrant(request.Thread, request.CWD, request.Roots, 0, grant)
 	if err != nil {
 		s.refuse(request.ID, RefusalOf(err))
 		return

@@ -32,6 +32,9 @@ func (c *agentCommand) runHostRelaunch(reg coremetadata.Registry, target coremet
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason))
 	}
 	provider := coremetadata.NormalizeProvider(target.Spec.Provider)
+	if provider == aiModeCodex {
+		return c.runCodexHostRelaunch(reg, target, request, stdout, stderr)
+	}
 	if provider != aiModeClaude {
 		return refuse(relaunchReasonProviderUnsupported, "execution host changes currently require Claude")
 	}
@@ -51,7 +54,7 @@ func (c *agentCommand) runHostRelaunch(reg coremetadata.Registry, target coremet
 		return refuse(relaunchReasonNoConversation, "has no configured relaunch owner")
 	}
 	if request.host == "tmux" {
-		return c.moveProcessClaudeToTmux(reg, target, request, refuse, stdout, stderr)
+		return c.moveProcessToTmux(reg, target, request, refuse, stdout, stderr)
 	}
 	return c.moveTmuxClaudeToProcess(reg, target, request, refuse, stdout, stderr)
 }
@@ -81,7 +84,7 @@ func retireProcessPaneForTmux(reg *coremetadata.Registry, mut coremetadata.Mutat
 	return mut.DeletePane(reg, pane.Metadata.UID)
 }
 
-func (c *agentCommand) moveProcessClaudeToTmux(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, refuse func(string, string) error, stdout, stderr io.Writer) error {
+func (c *agentCommand) moveProcessToTmux(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, refuse func(string, string) error, stdout, stderr io.Writer) error {
 	pane, ambiguous := processResumePane(reg, target.Metadata.UID)
 	if pane == nil || ambiguous {
 		return refuse(relaunchReasonNoConversation, "has no exact process source")

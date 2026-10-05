@@ -382,6 +382,15 @@ func (c *Conn) Close() error {
 
 // Bind opens one exact-thread binding on the shared runtime connection.
 func (c *Conn) Bind(ctx context.Context, threadID, cwd string, roots []string) (*RemoteBinding, error) {
+	return c.bindNativeGrant(ctx, threadID, cwd, roots, nil)
+}
+func (c *Conn) BindNativeTransfer(ctx context.Context, threadID, cwd string, roots []string, grant *NativeTransferGrant) (*RemoteBinding, error) {
+	if grant == nil || grant.Target.Thread != threadID {
+		return nil, refuse(RefusalLeaseIdentityMismatch, nil)
+	}
+	return c.bindNativeGrant(ctx, threadID, cwd, roots, grant)
+}
+func (c *Conn) bindNativeGrant(ctx context.Context, threadID, cwd string, roots []string, grant *NativeTransferGrant) (*RemoteBinding, error) {
 	binding := &RemoteBinding{
 		conn:     c,
 		thread:   threadID,
@@ -401,7 +410,11 @@ func (c *Conn) Bind(ctx context.Context, threadID, cwd string, roots []string) (
 	}
 	c.bindings[threadID] = binding
 	c.mu.Unlock()
-	reply, err := c.call(ctx, wireRequest{Kind: requestBind, Thread: threadID, CWD: cwd, Roots: roots})
+	var params json.RawMessage
+	if grant != nil {
+		params, _ = json.Marshal(grant)
+	}
+	reply, err := c.call(ctx, wireRequest{Kind: requestBind, Thread: threadID, CWD: cwd, Roots: roots, Params: params})
 	if err != nil {
 		c.detach(threadID, binding)
 		return nil, err

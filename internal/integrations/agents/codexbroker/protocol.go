@@ -74,6 +74,7 @@ func negotiate(client, host ProtocolRange) (int, bool) {
 type requestKind string
 
 const (
+	requestTransfer  requestKind = "thread-transfer"
 	requestBind      requestKind = "bind"
 	requestUnbind    requestKind = "unbind"
 	requestSubmit    requestKind = "submit"
@@ -120,6 +121,7 @@ type hello struct {
 
 const lifecycleSessionPurpose = "lifecycle-v1"
 const authoritySessionPurpose = "authority-check-v1"
+const transferSessionPurpose = "thread-transfer-v1"
 
 func (h hello) protocol() ProtocolRange {
 	return ProtocolRange{Preferred: h.Preferred, Minimum: h.Minimum}

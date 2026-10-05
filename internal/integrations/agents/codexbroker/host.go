@@ -327,7 +327,7 @@ func (h *Host) untrack(conn *net.UnixConn) {
 // armIdle starts or restarts the bounded idle shutdown timer. A runtime with
 // no binding is a runtime holding an upstream connection nobody asked for.
 func (h *Host) armIdle() {
-	if h.idle < 0 {
+	if h.idle < 0 || h.broker.hasTransfers() {
 		return
 	}
 	h.mu.Lock()
@@ -346,7 +346,7 @@ func (h *Host) idleFired() {
 	h.mu.Lock()
 	idle := !h.closing && h.bindings == 0 && h.drainReplies == 0
 	h.mu.Unlock()
-	if idle {
+	if idle && !h.broker.hasTransfers() {
 		go h.Close()
 	}
 }
@@ -375,7 +375,7 @@ func (h *Host) releaseBinding() {
 	draining := h.draining
 	replying := h.drainReplies > 0
 	h.mu.Unlock()
-	if !last {
+	if !last || h.broker.hasTransfers() {
 		return
 	}
 	if draining {
@@ -402,7 +402,7 @@ func (h *Host) refuseDrainSession(conn net.Conn) {
 		h.drainReplies--
 		finished := h.bindings == 0 && h.drainReplies == 0
 		h.mu.Unlock()
-		if finished {
+		if finished && !h.broker.hasTransfers() {
 			go h.Close()
 		}
 	}()
@@ -492,25 +492,25 @@ func randomToken(width int) (string, error) {
 // file sits in is what makes reading it proof of anything. Neither is a
 // substitute for the other, and a caller that fails either one is refused
 // before it can bind, submit, or answer.
-func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, string, bool, bool, bool) {
+func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, string, bool, bool, bool, bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 	frame, err := readFrame(reader)
 	if err != nil {
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	var greeting hello
 	if json.Unmarshal(frame, &greeting) != nil {
 		h.refuseSession(conn, RefusalFrameInvalid)
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	if subtle.ConstantTimeCompare([]byte(greeting.Credential), []byte(h.credential)) != 1 {
 		h.refuseSession(conn, RefusalCredentialRejected)
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	if greeting.Endpoint != h.discovery.endpoint {
 		h.refuseSession(conn, RefusalEndpointMismatch)
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	version, ok := negotiate(greeting.protocol(), h.protocol)
 	if !ok {
@@ -518,7 +518,7 @@ func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, stri
 		// the replacement can take over once the work in flight is done, and
 		// tell the caller exactly that instead of failing anonymously.
 		h.refuseDrainSession(conn)
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	// The second entry condition, and the one an install reaches. A client
 	// whose protocol this runtime speaks may still be a different binary: an
@@ -530,31 +530,39 @@ func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, stri
 	vintage := h.drainOnVintage()
 	reason := h.refusingWork()
 	if vintage || reason != RefusalNone {
-		if greeting.Purpose != authoritySessionPurpose ||
-			!(vintage || reason == RefusalDrainRequired) || !h.admitDrainAuthority() {
+		allowed := greeting.Purpose == authoritySessionPurpose && h.admitDrainAuthority()
+		if greeting.Purpose == transferSessionPurpose && h.broker.hasTransfers() {
+			h.mu.Lock()
+			allowed = !h.closing
+			if allowed {
+				h.draining = true
+			}
+			h.mu.Unlock()
+		}
+		if !(vintage || reason == RefusalDrainRequired) || !allowed {
 			if vintage {
 				h.refuseDrainSession(conn)
 			} else {
 				h.refuseSession(conn, reason)
 			}
-			return 0, "", false, false, false
+			return 0, "", false, false, false, false
 		}
 	}
-	if greeting.Purpose != "" && greeting.Purpose != lifecycleSessionPurpose && greeting.Purpose != authoritySessionPurpose {
+	if greeting.Purpose != "" && greeting.Purpose != lifecycleSessionPurpose && greeting.Purpose != authoritySessionPurpose && greeting.Purpose != transferSessionPurpose {
 		h.refuseSession(conn, RefusalFrameInvalid)
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	sessionID, err := randomToken(sessionIDBytes)
 	if err != nil {
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if writeFrame(conn, wireReply{Kind: replyWelcome, Runtime: h.runtimeID, Protocol: version,
 		Capabilities: []string{lifecycleCapability}, Session: sessionID}) != nil {
-		return 0, "", false, false, false
+		return 0, "", false, false, false, false
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
-	return version, sessionID, greeting.Purpose == lifecycleSessionPurpose, greeting.Purpose == authoritySessionPurpose, true
+	return version, sessionID, greeting.Purpose == lifecycleSessionPurpose, greeting.Purpose == authoritySessionPurpose, greeting.Purpose == transferSessionPurpose, true
 }
 
 func (h *Host) registerSession(s *session) bool {
@@ -586,4 +594,11 @@ func (h *Host) refuseSession(conn net.Conn, reason Refusal) {
 	h.countRefusal()
 	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	_ = writeFrame(conn, wireReply{Kind: replyRefused, Refusal: reason})
+}
+
+// transferReleased reevaluates lifetime without changing ordinary binding counts.
+func (h *Host) transferReleased() {
+	// A transfer reply is queued on its session writer. Keep the bounded idle
+	// interval so a draining host does not close that socket before its ACK.
+	h.armIdle()
 }

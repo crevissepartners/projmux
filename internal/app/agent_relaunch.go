@@ -166,6 +166,21 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *agentCommand) dispatchRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	// An offline source still has a tmux recipe. Its pending host-transfer
+	// journal must take precedence over the ordinary same-host relaunch route.
+	if target.Spec.Provider == aiModeCodex && c.store != nil && c.store.stateDir != nil {
+		path, err := c.codexHostTransferPath(target.Metadata.UID)
+		if err != nil {
+			return err
+		}
+		pending, err := readCodexHostTransfer(path)
+		if err != nil {
+			return err
+		}
+		if pending != nil {
+			return c.runCodexHostRelaunch(registry, target, request, stdout, stderr)
+		}
+	}
 	current := relaunchCurrentHost(registry, target)
 	if request.host != "" && request.host != current {
 		return c.runHostRelaunch(registry, target, request, stdout, stderr)

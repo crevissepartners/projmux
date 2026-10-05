@@ -92,7 +92,15 @@ func processCodexLaunchEnv(launch processhost.Launch, socket string) []string {
 // Thread initialization does not acknowledge an absent user turn. Hooks never
 // supply process ownership, session identity or readiness.
 func startProcessCodex(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, registryPath string, resume *processhost.SessionRecord) (*codexProcessEndpoint, error) {
-	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
+	return startProcessCodexConversation(ctx, host, launch, config, registryPath, resume, nil)
+}
+
+func startProcessCodexTransfer(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, registryPath string, transfer processhost.CodexTransfer) (*codexProcessEndpoint, error) {
+	return startProcessCodexConversation(ctx, host, launch, config, registryPath, nil, &transfer)
+}
+
+func startProcessCodexConversation(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, registryPath string, resume *processhost.SessionRecord, transfer *processhost.CodexTransfer) (*codexProcessEndpoint, error) {
+	if (resume != nil && transfer != nil) || host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
 		return nil, errors.New("invalid process activation registry")
 	}
 	socket := processCodexHostSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation)
@@ -103,7 +111,9 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	endpoint := &codexProcessEndpoint{binding: launch.Binding, socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
 	launch.Command.Env = processCodexLaunchEnv(launch, socket)
 	launch.Completion = &processhost.Completion{Cleanup: endpoint.close}
-	if resume != nil {
+	if transfer != nil {
+		endpoint.handle, err = host.TransferCodex(ctx, launch, config, *transfer)
+	} else if resume != nil {
 		endpoint.handle, err = host.ResumeCodex(ctx, launch, config, *resume)
 	} else {
 		endpoint.handle, err = host.StartCodex(ctx, launch, config)

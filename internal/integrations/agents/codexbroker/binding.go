@@ -62,6 +62,7 @@ type Binding struct {
 	conn     *connection
 	buffered []codexappserver.Notification
 	sequence uint64
+	inflight int
 	revoked  Refusal
 }
 
@@ -100,6 +101,9 @@ func (bd *Binding) ControlAuthority() (Fence, error) {
 	b := bd.broker
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if bd.broker.transfers[bd.threadID] != nil && !bd.broker.nativeBindingAllowedLocked(bd) {
+		return Fence{}, refuse(RefusalControlNotOpen, nil)
+	}
 	if bd.revoked != RefusalNone {
 		return Fence{}, refuse(bd.revoked, nil)
 	}
@@ -132,12 +136,19 @@ func (bd *Binding) Submit(ctx context.Context, fence Fence, mutation Mutation) (
 	b := bd.broker
 	b.mu.Lock()
 	conn, err := bd.authorityLocked(fence)
+	if b.transfers[bd.threadID] != nil {
+		err = refuse(RefusalControlNotOpen, nil)
+	}
+	if err == nil {
+		bd.inflight++
+	}
 	b.mu.Unlock()
 	if err != nil {
 		// A refused mutation never reached the wire, so it is not a write and
 		// does not enter the ledger.
 		return MutationRefused, err
 	}
+	defer bd.admittedDone()
 	requestErr := conn.endpoint.Request(ctx, mutation.Method, mutation.Params, mutation.Result)
 	outcome := b.classify(conn, requestErr)
 	b.record(WriteRecord{Fence: fence, Method: mutation.Method, Outcome: outcome, Attempts: 1})
@@ -315,6 +326,9 @@ func (bd *Binding) Answer(ctx context.Context, lease ApprovalLease, result any) 
 	b := bd.broker
 	b.mu.Lock()
 	conn, err := bd.authorityLocked(lease.Fence)
+	if b.transfers[bd.threadID] != nil {
+		err = refuse(RefusalControlNotOpen, nil)
+	}
 	if err != nil {
 		b.mu.Unlock()
 		return err
@@ -329,7 +343,9 @@ func (bd *Binding) Answer(ctx context.Context, lease ApprovalLease, result any) 
 		return refuse(RefusalResponseAlreadyAnswered, nil)
 	}
 	conn.answered[key] = struct{}{}
+	bd.inflight++
 	b.mu.Unlock()
+	defer bd.admittedDone()
 	return conn.endpoint.RespondServerRequest(ctx, lease.RawRequestID, result)
 }
 
@@ -337,6 +353,9 @@ func (bd *Binding) Answer(ctx context.Context, lease ApprovalLease, result any) 
 // Caller holds Broker.mu.
 func (bd *Binding) authorityLocked(fence Fence) (*connection, error) {
 	b := bd.broker
+	if b.transfers[bd.threadID] != nil && !b.nativeBindingAllowedLocked(bd) {
+		return nil, refuse(RefusalControlNotOpen, nil)
+	}
 	if bd.revoked != RefusalNone {
 		return nil, refuse(bd.revoked, nil)
 	}

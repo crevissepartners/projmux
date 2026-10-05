@@ -220,13 +220,27 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	}
 	var thread codexappserver.ThreadBinding
 	var err error
-	if record := c.p.launch.resume; record != nil {
+	expected := ""
+	if transfer := c.p.launch.codexTransfer; transfer != nil {
+		if c.p.launch.resume != nil {
+			return ErrResumeRefused
+		}
+		if err := transfer.Verify(ctx, transfer.Source, c.p.launch.Binding); err != nil {
+			return err
+		}
+		expected = transfer.Source.Thread
+		thread, err = c.client.ResumeThreadWithSettings(ctx, expected, c.p.launch.Command.Dir, cfg.Roots, cfg.Settings)
+	} else if record := c.p.launch.resume; record != nil {
+		expected = record.Session
 		thread, err = c.client.ResumeThreadWithSettings(ctx, record.Session, c.p.launch.Command.Dir, cfg.Roots, cfg.Settings)
 	} else {
 		thread, err = c.client.StartThreadWithSettings(ctx, c.p.launch.Command.Dir, cfg.Roots, cfg.DeveloperInstructions, cfg.Settings)
 	}
 	if err != nil {
 		return err
+	}
+	if expected != "" && thread.ThreadID != expected {
+		return fmt.Errorf("%w: returned thread differs from source", ErrResumeRefused)
 	}
 	p := c.p
 	p.mu.Lock()

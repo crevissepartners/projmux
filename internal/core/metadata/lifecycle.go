@@ -162,6 +162,11 @@ func (m Mutator) ProjectTermination(reg *Registry, in TerminationProjectionInput
 		out.Reason = "event generation " + guard + " is not pane " + paneUID + " current generation " + current
 		return out, nil
 	}
+	if nativePaneReservation(reg, *pane) {
+		out.Reason = "native target reservation has not started"
+		out.PaneRetained = true
+		return out, nil
+	}
 
 	observedAt := in.ObservedAt
 	if observedAt.IsZero() {
@@ -334,6 +339,9 @@ func releasedAgentForTerminationRefinement(reg *Registry, pane Pane) (*Agent, bo
 func NeedsTerminationProjection(reg Registry, paneUID string) bool {
 	pane, ok := reg.Pane(paneUID)
 	if !ok {
+		return false
+	}
+	if nativePaneReservation(&reg, *pane) {
 		return false
 	}
 	stored := pane.Status.LastTermination

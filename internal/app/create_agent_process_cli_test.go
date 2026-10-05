@@ -132,7 +132,7 @@ func newProcessCreateCLI(t *testing.T) processCreateCLI {
 	if product == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
 	}
-	root, err := os.MkdirTemp("/tmp", "pmx-create-")
+	root, err := os.MkdirTemp(os.TempDir(), "pc-")
 	if err != nil {
 		t.Fatal(err)
 	}
