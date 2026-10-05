@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
@@ -139,6 +140,38 @@ func deferredCandidate(t *testing.T, f processCreateCLI, ref string) processResu
 	return processResumeCandidate{}
 }
 
+// SessionStart can write a session before stream init. Require the owned host
+// to report ready and its exact endpoint to qualify before Stop or peer use.
+func deferredReady(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
+	t.Helper()
+	uid := strings.TrimPrefix(ref, "uid:")
+	for {
+		reg := mustRegistry(t, f)
+		pane, _ := processResumePane(reg, uid)
+		if pane != nil && pane.Status.ProcessSession != nil {
+			s := pane.Status.ProcessSession
+			if s.SessionID != "" && s.ConnectionID != "" && s.TurnID == "" {
+				b := processSchemaBinding(s.Binding)
+				observer := remoteProcessObserver{ctx: ctx, registry: reg, registryPath: f.store.Path(), binding: b}
+				view, err := observer.Observe(b)
+				proof, ok := discoverProcessClaudeProof(f.store.Path(), reg, uid)
+				rows, attentionErr := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path()))).read()
+				completed := rows[b.Pane]
+				if err == nil && view.State == "ready" && ok && attentionErr == nil && completed.Binding == b && completed.Provider == aiModeClaude && completed.Sequence > 0 && completed.Badge == aibadge.ResponseComplete {
+					if _, err = lookupClaudeProcessRegistration(proof); err == nil {
+						return
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("verified provider init/endpoint not ready")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func deferredFixtureCommand(f processCreateCLI) *agentCommand {
 	state := filepath.Dir(filepath.Dir(f.store.Path()))
 	return &agentCommand{loadRegistry: f.store.LoadReadOnly, messagePaths: agentMessagePaths{registryPath: f.store.Path()}, messageStore: messagestore.NewStore(state)}
@@ -205,7 +238,7 @@ func TestDeferredClaudeRelaunchWaitsWithoutChildActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
-			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+			deferredReady(t, ctx, f, first.ref)
 			run := deferredRelaunchCLI(t, ctx, f, first.ref, flags...)
 			_ = first.cmd.Wait()
 			first.done = true
@@ -267,7 +300,7 @@ func TestDeferredClaudeRelaunchChangedSnapshotRefusedActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
-	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	deferredReady(t, ctx, f, first.ref)
 	first.shutdown(t)
 	run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model")
 	uid := strings.TrimPrefix(first.ref, "uid:")
@@ -316,7 +349,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
-			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+			deferredReady(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := deferredCandidate(t, f, first.ref)
 			run := deferredRelaunchCLI(t, ctx, f, first.ref, "--profile", "delayed")
@@ -330,7 +363,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			// Changes to named profiles must not replace the committed recipe.
 			writeCodexProfileFile(t, profiles, "delayed", "model = \"changed-model\"\neffort = \"low\"\n[permissions]\nallow = [\"Bash\"]\n")
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
-			awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.TurnID == "" && r.SessionID != "" })
+			deferredReady(t, ctx, f, source.ref)
 			if err = run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
 				t.Fatal(err)
 			}
@@ -389,7 +422,7 @@ func TestDeferredClaudeRelaunchFailedInitRetainsRecipeActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
-	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	deferredReady(t, ctx, f, first.ref)
 	first.shutdown(t)
 	run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model", "--effort", "high")
 	uid := strings.TrimPrefix(first.ref, "uid:")
@@ -399,7 +432,7 @@ func TestDeferredClaudeRelaunchFailedInitRetainsRecipeActualCLI(t *testing.T) {
 		t.Fatal("recipe", err)
 	}
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
-	awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	deferredReady(t, ctx, f, source.ref)
 	script := filepath.Join(f.root, "provider.py")
 	original, err := os.ReadFile(script)
 	if err != nil {
@@ -499,7 +532,7 @@ func TestDeferredClaudeRelaunchUserUsesRawFirstFrameActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
-			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+			deferredReady(t, ctx, f, first.ref)
 			first.shutdown(t)
 			var run *deferredCLIClaim
 			if relaunch {
@@ -530,7 +563,7 @@ func TestDeferredClaudeRelaunchUserCompetitionAndCancelActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
-	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	deferredReady(t, ctx, f, first.ref)
 	first.shutdown(t)
 	run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model")
 	if err := run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
