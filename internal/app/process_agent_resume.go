@@ -198,6 +198,15 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 	if err := c.checkDeferredClaim(binding.Agent, claim); err != nil {
 		return err
 	}
+	if candidate.Record.Provider == aiModeClaude && (len(prepared) == 0 || prepared[0] == nil) {
+		current, err := c.readDeferredLaunch(binding.Agent)
+		if err != nil {
+			return err
+		}
+		if current != nil {
+			return deferredRefused("prepared launch changed")
+		}
+	}
 	if err := c.admitDeferredInput(claim); err != nil {
 		return err
 	}

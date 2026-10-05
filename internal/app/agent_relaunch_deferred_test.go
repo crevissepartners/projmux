@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1091,5 +1092,95 @@ func TestDeferredClaudePromptRelaunchTransitionActualCLI(t *testing.T) {
 				t.Fatal("subsequent empty relaunch", err)
 			}
 		})
+	}
+}
+
+func TestDeferredClaudeAbsentLaunchReservationRaceActualCLI(t *testing.T) {
+	f := deferredRelaunchFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+	deferredReady(t, ctx, f, first.ref)
+	first.shutdown(t)
+	c := deferredFixtureCommand(f)
+	uid := strings.TrimPrefix(first.ref, "uid:")
+	candidate := deferredCandidate(t, f, first.ref)
+	_, observed, err := c.prepareDeferredLaunch(ctx, candidate, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: uid}})
+	if err != nil || observed != nil {
+		t.Fatal("initial launch was not absent", err)
+	}
+	// The other empty relaunch commits the same recipe, then releases its claim.
+	run := deferredRelaunchCLI(t, ctx, f, first.ref)
+	run.finish(t)
+	current := deferredCandidate(t, f, first.ref)
+	if !processResumeRecordEqual(&current.Record, &candidate.Record) || !reflect.DeepEqual(current.Agent.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(current.Agent.Metadata.Annotations, candidate.Agent.Metadata.Annotations) {
+		t.Fatal("fixture did not retain the exact source and recipe")
+	}
+	launchPath := c.deferredStatePath("deferred-launches", uid)
+	registryBefore, err := os.ReadFile(f.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchBefore, err := os.ReadFile(launchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := c.deferredStatePath("deferred-inputs", uid)
+	if _, err = os.Stat(inputPath); !os.IsNotExist(err) {
+		t.Fatal("unexpected input before reservation", err)
+	}
+	children := len(deferredArgv(t, f))
+	state := filepath.Dir(filepath.Dir(f.store.Path()))
+	c.rebind = &agentRebinder{create: &createCommand{store: &resourceStore{stateDir: func() (string, error) { return state, nil }, mutator: intmetadata.DefaultMutator, update: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		reg, _, err := f.store.UpdateConvergent(fn)
+		return reg, err
+	}}}}
+	binding := processSchemaBinding(candidate.Record.Binding)
+	binding.Host, binding.Generation, binding.Operation = "race-host", "race-generation", "race-operation"
+	for _, resume := range []bool{false, true} {
+		for _, explicitNil := range []bool{false, true} {
+			var prepared []*deferredLaunchRecord
+			if explicitNil {
+				prepared = append(prepared, nil)
+			}
+			if resume {
+				err = c.reserveProcessResume(ctx, candidate, agentSettingsLaunch{}, binding, nil, prepared...)
+			} else {
+				err = c.reserveProcessRelaunch(ctx, candidate, agentSettingsLaunch{}, agentGuidanceLaunch{}, projectLinksLaunch{}, binding, prepared...)
+			}
+			if !errors.Is(err, processhost.ErrResumeRefused) || !strings.HasPrefix(err.Error(), processResumeRefused+":") {
+				t.Fatalf("nil launch reservation accepted resume=%t explicitNil=%t: %v", resume, explicitNil, err)
+			}
+			registryAfter, e := os.ReadFile(f.store.Path())
+			if e != nil {
+				t.Fatal(e)
+			}
+			launchAfter, e := os.ReadFile(launchPath)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if !bytes.Equal(registryBefore, registryAfter) || !bytes.Equal(launchBefore, launchAfter) || len(deferredArgv(t, f)) != children {
+				t.Fatal("nil launch refusal changed state or child count")
+			}
+			if _, e = os.Stat(inputPath); !os.IsNotExist(e) {
+				t.Fatal("refusal created an input slot", e)
+			}
+		}
+	}
+	frozen, err := c.readDeferredLaunch(uid)
+	if err != nil || frozen == nil {
+		t.Fatal("saved launch missing after refusal", err)
+	}
+	resumed := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "race recovery"})
+	deferredReady(t, ctx, f, first.ref)
+	resumed.shutdown(t)
+	if retained, err := c.readDeferredLaunch(uid); err != nil || retained != nil {
+		t.Fatal("race refusal left an unusable deferred launch", err)
+	}
+	argv := deferredArgv(t, f)
+	want := append(append([]string{}, frozen.Command.Args...), "--resume", candidate.Record.SessionID)
+	texts := deferredWireTexts(t, f)
+	if !reflect.DeepEqual(argv[len(argv)-1][1:], want) || texts[len(texts)-1] != "race recovery" {
+		t.Fatal("post-refusal frozen arguments or raw input changed")
 	}
 }
