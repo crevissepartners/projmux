@@ -118,6 +118,11 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 			return processhost.ErrStale
 		}
 	}
+	if record.Phase == "handoff-retired" {
+		if err := validateCodexHostTransferArchive(path, record); err != nil {
+			return err
+		}
+	}
 	if record.Target.Pane != "" && record.Phase != "restored" {
 		pane, present := reg.Pane(record.Target.Pane)
 		if !present || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(record.Target) || target.Status.PaneRef != record.Target.Pane || record.Expected == nil || !sameHostTransferSpec(target.Spec, record.Expected.Spec) || !reflect.DeepEqual(target.Metadata.Annotations, record.Expected.Metadata.Annotations) {

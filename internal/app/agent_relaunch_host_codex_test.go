@@ -711,11 +711,12 @@ func TestCodexHostMoveActualCLIPrepareAbortTerminal(t *testing.T) {
 
 func TestCodexHostMoveActualCLIArchiveFailure(t *testing.T) {
 	for _, persistFailure := range []bool{false, true} {
-		t.Run(fmt.Sprint(persistFailure), func(t *testing.T) { codexHostMoveArchiveFailureCLI(t, persistFailure) })
+		t.Run(fmt.Sprint(persistFailure), func(t *testing.T) { codexHostMoveArchiveFailureCLI(t, persistFailure, false) })
 	}
+	t.Run("regular-conflict", func(t *testing.T) { codexHostMoveArchiveFailureCLI(t, false, true) })
 }
 
-func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure bool) {
+func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure, archiveConflict bool) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI")
 	}
@@ -760,7 +761,20 @@ func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure bool) {
 		t.Fatal(err)
 	}
 	archive := files[0] + "." + record.Receipt.Token + ".completed.json"
-	if err = os.Mkdir(archive, 0700); err != nil {
+	var conflictBytes []byte
+	if archiveConflict {
+		conflict := *record
+		conflict.Source = record.Source.Clone()
+		conflict.Source.Metadata.Name = "conflicting-archive-source"
+		conflict.Phase = "completed"
+		if err = writeCodexHostTransfer(archive, &conflict); err != nil {
+			t.Fatal(err)
+		}
+		conflictBytes, err = os.ReadFile(archive)
+	} else {
+		err = os.Mkdir(archive, 0700)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	if persistFailure {
@@ -819,6 +833,23 @@ func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure bool) {
 	if err != nil || len(receipts) == 0 {
 		t.Fatal("actual termination journal missing", err)
 	}
+	if archiveConflict {
+		after, readErr := os.ReadFile(archive)
+		pending, pendingErr := readCodexHostTransfer(files[0])
+		if readErr != nil || !bytes.Equal(conflictBytes, after) || pendingErr != nil || pending == nil || pending.Phase != "handoff-retired" || pending.TerminatedTarget == nil || !coremetadata.SameProcessWait(pending.TerminatedTarget.Status.LastTermination, pane.Status.LastTermination) {
+			t.Fatal("conflicting archive or pending actual Wait evidence lost", readErr, pendingErr)
+		}
+		beforeRegistry, readErr := os.ReadFile(intmetadata.PathFor(paths.StateDir))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		out, refused := exec.CommandContext(ctx, f.binary, "agent", "relaunch", "uid:"+source.Metadata.UID, "--host", "tmux", "--socket-path", socket, "--yes").CombinedOutput()
+		afterRegistry, readErr := os.ReadFile(intmetadata.PathFor(paths.StateDir))
+		after, archiveErr := os.ReadFile(archive)
+		if refused == nil || !bytes.Contains(out, []byte("completed archive changed")) || readErr != nil || archiveErr != nil || !bytes.Equal(beforeRegistry, afterRegistry) || !bytes.Equal(conflictBytes, after) {
+			t.Fatalf("conflicting archive recovery admitted or mutated evidence: %v %s", refused, out)
+		}
+	}
 	stable := target.Clone()
 	for _, drift := range []string{"annotations", "full-session"} {
 		_, _, err = f.store.UpdateConvergent(func(working *coremetadata.Registry) error {
@@ -842,6 +873,12 @@ func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure bool) {
 		}
 		if _, err = os.Stat(files[0]); err != nil {
 			t.Fatal("changed target evidence removed", err)
+		}
+		if archiveConflict {
+			after, readErr := os.ReadFile(archive)
+			if readErr != nil || !bytes.Equal(conflictBytes, after) {
+				t.Fatal("changed target overwrote conflicting archive", readErr)
+			}
 		}
 		_, _, err = f.store.UpdateConvergent(func(working *coremetadata.Registry) error {
 			a, _ := working.Agent(source.Metadata.UID)

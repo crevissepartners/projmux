@@ -128,6 +128,24 @@ func completeCodexHostTransfer(path string) error {
 		return errors.New("missing Codex transfer journal")
 	}
 	record.Phase = "completed"
+	if err := publishCodexHostTransferArchive(path, record); err != nil {
+		return err
+	}
+	return removeCodexHostTransfer(path)
+}
+
+// Every archive publisher consumes the same full-record conflict rule. Only
+// phase advancement and adding the exact observed target Wait are monotonic.
+func publishCodexHostTransferArchive(path string, record *codexHostTransferRecord) error {
+	if err := validateCodexHostTransferArchive(path, record); err != nil {
+		return err
+	}
+	return writeCodexHostTransfer(path+"."+record.Receipt.Token+".completed.json", record)
+}
+
+// Validation is read-only: recovery checks conflicts before restoring Registry
+// state, without publishing an archive or granting any writer authority.
+func validateCodexHostTransferArchive(path string, record *codexHostTransferRecord) error {
 	archivePath := path + "." + record.Receipt.Token + ".completed.json"
 	if previous, readErr := readCodexHostTransfer(archivePath); readErr != nil {
 		return readErr
@@ -141,10 +159,7 @@ func completeCodexHostTransfer(path string) error {
 			return errors.New("agent relaunch: completed archive changed; evidence retained")
 		}
 	}
-	if err = writeCodexHostTransfer(archivePath, record); err != nil {
-		return err
-	}
-	return removeCodexHostTransfer(path)
+	return nil
 }
 
 // All transfer-journal readers, including raw byte CAS, share the same bound.

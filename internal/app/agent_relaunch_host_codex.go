@@ -347,15 +347,19 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 		if pane, ok := observed.Pane(binding.Pane); ok {
 			copy := pane.Clone()
 			source.journal.TerminatedTarget = &copy
-			archivePath := source.journalPath
 			if handedOff {
 				source.journal.Phase = "handoff-retired"
 				if err := writeCodexHostTransfer(source.journalPath, source.journal); err != nil {
 					return errors.Join(cause, err)
 				}
-				archivePath += "." + source.journal.Receipt.Token + ".completed.json"
 			}
-			if err := writeCodexHostTransfer(archivePath, source.journal); err != nil {
+			var publishErr error
+			if handedOff {
+				publishErr = publishCodexHostTransferArchive(source.journalPath, source.journal)
+			} else {
+				publishErr = writeCodexHostTransfer(source.journalPath, source.journal)
+			}
+			if err := publishErr; err != nil {
 				return fmt.Errorf("agent relaunch: owned target actual Wait persisted; archive failure retained; recover with: %s: %w", codexTransferRecoveryCommand(binding.Agent, source.request), errors.Join(cause, err))
 			}
 		}

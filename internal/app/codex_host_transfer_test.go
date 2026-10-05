@@ -160,3 +160,42 @@ func TestCodexCompletedJournalPartialPublicationAndConflict(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexArchivePublicationMonotonicTermination(t *testing.T) {
+	f := newRelaunchFixture(t)
+	source := f.agent(t).Clone()
+	pane, _ := f.store.registry.Pane(personaAttachPane)
+	record := &codexHostTransferRecord{Version: 1, Source: source, Pane: pane.Clone(), Receipt: codexbroker.TransferReceipt{Token: "monotonic", Source: codexbroker.TransferSource{Agent: source.Metadata.UID, Pane: pane.Metadata.UID}}, Phase: "completed"}
+	path := filepath.Join(t.TempDir(), "pending.json")
+	if err := publishCodexHostTransferArchive(path, record); err != nil {
+		t.Fatal(err)
+	}
+	terminated := pane.Clone()
+	record.TerminatedTarget = &terminated
+	record.Phase = "handoff-retired"
+	if err := publishCodexHostTransferArchive(path, record); err != nil {
+		t.Fatal("monotonic termination rejected", err)
+	}
+	archive := path + ".monotonic.completed.json"
+	before, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = publishCodexHostTransferArchive(path, record); err != nil {
+		t.Fatal("same evidence not idempotent", err)
+	}
+	changed := terminated.Clone()
+	changed.Metadata.Name = "changed-target"
+	record.TerminatedTarget = &changed
+	if err = publishCodexHostTransferArchive(path, record); err == nil {
+		t.Fatal("different observed target overwritten")
+	}
+	after, err := os.ReadFile(archive)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("previous termination evidence changed", err)
+	}
+	record.TerminatedTarget = nil
+	if err = publishCodexHostTransferArchive(path, record); err == nil {
+		t.Fatal("termination evidence removed")
+	}
+}
