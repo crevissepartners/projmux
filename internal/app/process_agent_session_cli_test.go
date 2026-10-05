@@ -292,62 +292,80 @@ func TestProcessSessionRelaunchPreservesConversationActualCLI(t *testing.T) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
 	}
-	f := processResumeCLIFixture(t, aiModeClaude)
-	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(f.root, ".claude"))
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-	defer cancel()
-	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--model", "stub-model", "--", "first task"))
-	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
-		return r.SessionID != "" && r.ConnectionID != ""
-	})
-	var ref *coremetadata.AgentSessionRef
-	waitCodexCreate(t, ctx, func() bool {
-		reg, err := f.store.LoadReadOnly()
-		if err != nil {
-			return false
-		}
-		agent, _ := reg.Agent(old.Binding.AgentUID)
-		ref = agent.Status.SessionRef.Clone()
-		return ref != nil
-	})
-	state := filepath.Dir(filepath.Dir(f.store.Path()))
-	var before []byte
-	waitCodexCreate(t, ctx, func() bool {
-		var err error
-		before, err = os.ReadFile(sessionhistory.Path(state))
-		return err == nil && bytes.Contains(before, []byte(old.SessionID))
-	})
-	second, result := startProcessRelaunchCLI(t, ctx, f, first.ref, "--model", "relaunch-model", "--yes", "--", "relaunch task")
-	if result.AgentUID != old.Binding.AgentUID || result.NewPaneUID != old.Binding.PaneUID {
-		t.Fatalf("relaunch changed resource identity: %+v", result)
-	}
-	current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
-		return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != "" && r.SessionID == old.SessionID
-	})
-	if current.History == nil || current.History.Binding != old.Binding {
-		t.Fatal("missing relaunch generation history")
-	}
-	_ = first.input.Close()
-	if err := first.cmd.Wait(); err != nil && !strings.Contains(first.stderr.String(), "process control closed") {
-		t.Fatalf("retired owner: %v %s", err, first.stderr.String())
-	}
-	first.done = true
-	reg, err := f.store.LoadReadOnly()
-	if err != nil {
-		t.Fatal(err)
-	}
-	agent, _ := reg.Agent(old.Binding.AgentUID)
-	if !reflect.DeepEqual(ref, agent.Status.SessionRef) {
-		t.Fatalf("relaunch rewrote ref: %+v => %+v", ref, agent.Status.SessionRef)
-	}
-	raw, err := exec.CommandContext(ctx, f.binary, "agent", "sessions", "list", first.ref, "-o", "json").CombinedOutput()
-	if err != nil || !bytes.Contains(raw, []byte(old.SessionID)) {
-		t.Fatalf("relaunch sessions: %v %s", err, raw)
-	}
-	second.shutdown(t)
-	after, err := os.ReadFile(sessionhistory.Path(state))
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("relaunch changed conversation history: %v %s", err, after)
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			var f processCreateCLI
+			if provider == aiModeCodex {
+				f = processCodexRelaunchFixture(t)
+			} else {
+				f = processResumeCLIFixture(t, provider)
+			}
+			t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(f.root, ".claude"))
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return (r.SessionID != "" || r.ThreadID != "") && r.ConnectionID != ""
+			})
+			conversation := old.SessionID
+			if provider == aiModeCodex {
+				conversation = old.ThreadID
+			}
+			var ref *coremetadata.AgentSessionRef
+			waitCodexCreate(t, ctx, func() bool {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					return false
+				}
+				agent, _ := reg.Agent(old.Binding.AgentUID)
+				ref = agent.Status.SessionRef.Clone()
+				return ref != nil && (provider != aiModeCodex || (ref.Codex != nil && ref.Codex.Endpoint != nil))
+			})
+			beforeRef, err := json.Marshal(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := filepath.Dir(filepath.Dir(f.store.Path()))
+			var before []byte
+			waitCodexCreate(t, ctx, func() bool {
+				var err error
+				before, err = os.ReadFile(sessionhistory.Path(state))
+				return err == nil && bytes.Contains(before, []byte(conversation))
+			})
+			second, result := startProcessRelaunchCLI(t, ctx, f, first.ref, "--model", "relaunch-model", "--yes", "--", "relaunch task")
+			if result.AgentUID != old.Binding.AgentUID || result.NewPaneUID != old.Binding.PaneUID {
+				t.Fatalf("relaunch changed resource identity: %+v", result)
+			}
+			current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != "" && r.SessionID == old.SessionID && r.ThreadID == old.ThreadID
+			})
+			if current.History == nil || current.History.Binding != old.Binding {
+				t.Fatal("missing relaunch generation history")
+			}
+			_ = first.input.Close()
+			if err := first.cmd.Wait(); err != nil && !strings.Contains(first.stderr.String(), "process control closed") {
+				t.Fatalf("retired owner: %v %s", err, first.stderr.String())
+			}
+			first.done = true
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, _ := reg.Agent(old.Binding.AgentUID)
+			afterRef, err := json.Marshal(agent.Status.SessionRef)
+			if err != nil || !bytes.Equal(beforeRef, afterRef) {
+				t.Fatalf("relaunch rewrote ref: %+v => %+v", ref, agent.Status.SessionRef)
+			}
+			raw, err := exec.CommandContext(ctx, f.binary, "agent", "sessions", "list", first.ref, "-o", "json").CombinedOutput()
+			if err != nil || !bytes.Contains(raw, []byte(conversation)) {
+				t.Fatalf("relaunch sessions: %v %s", err, raw)
+			}
+			second.shutdown(t)
+			after, err := os.ReadFile(sessionhistory.Path(state))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("relaunch changed conversation history: %v %s", err, after)
+			}
+		})
 	}
 }
 
