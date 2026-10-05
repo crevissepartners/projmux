@@ -178,7 +178,11 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 			return result, ctx.Err()
 		}
 		if first != nil {
-			_, applyErr := c.terminalCoordination(*first, coremessage.EventFail, processResumeRefused, false, nil)
+			kind, reason := coremessage.EventFail, processResumeRefused
+			if resumeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+				kind, reason = coremessage.EventExpire, "deadline-expired"
+			}
+			_, applyErr := c.terminalCoordination(*first, kind, reason, false, nil)
 			err = errors.Join(err, applyErr)
 			if applyErr == nil {
 				err = errors.Join(err, claim.markInflight(""))
@@ -202,7 +206,7 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 		return result, result.fail(syncErr)
 	}
 	result.deferredSynchronization = &processResumeSynchronization{changed, controls, attention}
-	if err = claim.drain(ctx, result); err != nil {
+	if err = claim.drain(ctx, result); err != nil && err != ctx.Err() {
 		return result, result.fail(err)
 	}
 	if err = claim.Close(); err != nil {
@@ -254,6 +258,23 @@ func (claim *deferredProcessClaim) drain(ctx context.Context, result processAgen
 	if err != nil {
 		return err
 	}
+	// Address all unsubmitted holds before waiting. If the owner ends this
+	// generation, the next claimant can match the new retired binding.
+	for i, record := range held {
+		if record.Envelope.Target != old || !record.Envelope.Deadline.After(c.messageClock()) {
+			continue
+		}
+		held[i], err = store.ReaddressDeferred(record.Envelope.MessageRef, old, next, deferredHoldReason, c.messageClock())
+		if err != nil {
+			return err
+		}
+	}
+	synchronize := processSnapshotSynchronizer(result.deferredSynchronization.changed, func(snapshot processhost.Snapshot) error {
+		if len(snapshot.Pending) > 0 {
+			return result.deferredSynchronization.controls(context.WithoutCancel(ctx))
+		}
+		return nil
+	})
 release:
 	for _, record := range held {
 		if err = ctx.Err(); err != nil {
@@ -266,7 +287,7 @@ release:
 			}
 			continue
 		}
-		if record.Envelope.Target != old {
+		if record.Envelope.Target != next {
 			_, err = c.terminalCoordination(record, coremessage.EventStale, "stale-binding", false, nil)
 			if err != nil {
 				return err
@@ -285,10 +306,8 @@ release:
 				}
 				continue release
 			}
-			if len(snapshot.Pending) > 0 {
-				if err = result.deferredSynchronization.controls(context.WithoutCancel(ctx)); err != nil {
-					return err
-				}
+			if err = synchronize(snapshot); err != nil {
+				return err
 			}
 			if snapshot.Turn == "" {
 				break
@@ -299,13 +318,9 @@ release:
 			case <-time.After(20 * time.Millisecond):
 			}
 		}
-		// Persist the crash witness before changing route or submitting. A dead
+		// Persist the crash witness before submitting. A dead
 		// claimant is never permission to resend a potentially written frame.
 		if err = claim.markInflight(record.Envelope.MessageRef); err != nil {
-			return err
-		}
-		record, err = store.ReaddressDeferred(record.Envelope.MessageRef, old, next, deferredHoldReason, c.messageClock())
-		if err != nil {
 			return err
 		}
 		record, err = c.deliverOrHoldCoordination(record, *target, route, record.Envelope)

@@ -785,7 +785,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
-			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
 			first.shutdown(t)
@@ -812,6 +812,34 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			delayed := "import sys,time\nif '--resume' in sys.argv: time.sleep(2)\n" + string(raw)
+			if provider == aiModeCodex {
+				delayed = strings.Replace(string(raw), "elif method in ('thread/start','thread/resume'):\n", "elif method in ('thread/start','thread/resume'):\n  if method=='thread/resume': __import__('time').sleep(2)\n", 1)
+			}
+			if err = os.WriteFile(path, []byte(delayed), 0600); err != nil {
+				t.Fatal(err)
+			}
+			send("deferred-bootstrap-expiry", "1s")
+			if err = claim.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+				t.Fatal(err)
+			}
+			waitErr := claim.cmd.Wait()
+			claim.done = true
+			if waitErr == nil {
+				t.Fatal("bootstrap expiry exited zero")
+			}
+			receipt := deferredCLIStatus(t, ctx, f, "deferred-bootstrap-expiry", "expired")
+			if receipt["delivery"].(map[string]any)["reason"] != "deadline-expired" {
+				t.Fatal("deadline reason", receipt)
+			}
+			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			if err = os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			claim = startDeferredCLIClaim(t, ctx, f, first.ref)
+			if err = claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+				t.Fatal(err)
+			}
 			replacement := "import sys\nif '--resume' in sys.argv: sys.exit(7)\n" + string(raw)
 			if provider == aiModeCodex {
 				replacement = strings.Replace(string(raw), "elif method in ('thread/start','thread/resume'):", "elif method=='thread/resume':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture resume refusal'}})\n elif method=='thread/start':", 1)
@@ -828,7 +856,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			if err == nil {
 				t.Fatal("provider refusal exited zero")
 			}
-			receipt := deferredCLIStatus(t, ctx, f, "deferred-refusal", "failed")
+			receipt = deferredCLIStatus(t, ctx, f, "deferred-refusal", "failed")
 			if receipt["delivery"].(map[string]any)["reason"] != processResumeRefused {
 				t.Fatal("resume failure reason", receipt)
 			}
@@ -1146,4 +1174,75 @@ func TestDeferredTailDrainKeepsControlsResponsiveActualCLI(t *testing.T) {
 	}
 	claim.finish(t)
 	source.shutdown(t)
+}
+
+func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			target := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "target task"))
+			target.shutdown(t)
+			old := awaitProcessResumeRecord(t, ctx, f, target.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
+			send := func(ref string) ([]byte, error) {
+				return exec.CommandContext(ctx, f.binary, "agent", "message", "send", target.ref, "--source", source.ref, "--message-ref", ref, "--", ref).CombinedOutput()
+			}
+			processCLIUntil(t, ctx, func() bool {
+				out, _ := send("ready-probe")
+				return bytes.Contains(out, []byte("target Agent is not eligible"))
+			})
+			path := filepath.Join(f.root, "provider.py")
+			if provider == aiModeCodex {
+				path = filepath.Join(f.root, "codex-provider.py")
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			script := strings.Replace(string(raw), "elif prompt=='interrupt':", "elif prompt=='interrupt' or 'eof-first' in prompt:", 1)
+			if provider == aiModeCodex {
+				script = strings.Replace(string(raw), "elif prompt!='hold':complete()", "elif prompt!='hold' and 'eof-first' not in prompt:complete()", 1)
+			}
+			if err = os.WriteFile(path, []byte(script), 0600); err != nil {
+				t.Fatal(err)
+			}
+			claim := startDeferredCLIClaim(t, ctx, f, target.ref)
+			if err = claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+				t.Fatal(err)
+			}
+			for _, ref := range []string{"eof-first", "eof-tail"} {
+				out, e := send(ref)
+				if e != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
+					t.Fatalf("held: %v %s", e, out)
+				}
+			}
+			if err = claim.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+				t.Fatal(err)
+			}
+			deferredCLIStatus(t, ctx, f, "eof-first", "delivered")
+			running := awaitProcessResumeRecord(t, ctx, f, target.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.Binding.Generation != old.Binding.Generation && r.TurnID != ""
+			})
+			held := deferredCLIStatus(t, ctx, f, "eof-tail", "held")
+			if held["target"].(map[string]any)["activationGeneration"] != running.Binding.Generation {
+				t.Fatal("queued peer did not follow current conversation generation")
+			}
+			claim.finish(t)
+			retired := awaitProcessResumeRecord(t, ctx, f, target.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			if retired.SessionID != old.SessionID || retired.ThreadID != old.ThreadID {
+				t.Fatal("EOF changed conversation")
+			}
+			deferredCLIStatus(t, ctx, f, "eof-tail", "held")
+			next := startDeferredCLIClaim(t, ctx, f, target.ref)
+			line, err := next.output.ReadString('\n')
+			if err != nil || !strings.Contains(line, "foreground=owned") {
+				t.Fatalf("next wake: %v %s %s", err, line, next.stderr.String())
+			}
+			deferredCLIStatus(t, ctx, f, "eof-tail", "delivered")
+			next.finish(t)
+			source.shutdown(t)
+		})
+	}
 }
