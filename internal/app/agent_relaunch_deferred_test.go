@@ -19,8 +19,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 func deferredRelaunchFixture(t *testing.T) processCreateCLI {
@@ -592,14 +594,11 @@ func TestDeferredClaudeRelaunchUserCompetitionAndCancelActualCLI(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	out, err := exec.CommandContext(ctx, f.binary, "agent", "turn", "start", first.ref, "--", "losing input").CombinedOutput()
-	if err == nil || !bytes.Contains(out, []byte("busy")) {
-		t.Fatalf("second input accepted %v %s", err, out)
-	}
-	if err = caller.Process.Signal(syscall.SIGTERM); err != nil {
+	deferredAssertBusyUnchanged(t, ctx, f, first.ref)
+	if err := caller.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if err = caller.Wait(); err == nil {
+	if err := caller.Wait(); err == nil {
 		t.Fatal("cancelled input reported success", output.String())
 	}
 	input, err := c.readDeferredInput(uid)
@@ -612,5 +611,159 @@ func TestDeferredClaudeRelaunchUserCompetitionAndCancelActualCLI(t *testing.T) {
 	run.finish(t)
 	if len(deferredArgv(t, f)) != 1 {
 		t.Fatal("cancelled or losing input started a child")
+	}
+}
+
+// A refused losing input must preserve the winner's exact durable authority.
+func deferredAssertBusyUnchanged(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
+	t.Helper()
+	c, uid := deferredFixtureCommand(f), strings.TrimPrefix(ref, "uid:")
+	paths := []string{f.store.Path(), c.deferredClaimPath(uid), c.deferredStatePath("deferred-launches", uid), c.deferredStatePath("deferred-inputs", uid), filepath.Join(f.root, "argv.jsonl")}
+	read := func() [][]byte {
+		var result [][]byte
+		for _, path := range paths {
+			raw, err := os.ReadFile(path)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			result = append(result, raw)
+		}
+		return result
+	}
+	before := read()
+	out, err := exec.CommandContext(ctx, f.binary, "agent", "turn", "start", ref, "--", "losing input").CombinedOutput()
+	if err == nil || strings.TrimSpace(string(out)) != processhost.ErrBusy.Error() {
+		t.Fatalf("losing input refusal: %v %s", err, out)
+	}
+	if !reflect.DeepEqual(before, read()) {
+		t.Fatal("busy refusal changed Registry, claim nonce, recipe, input or child")
+	}
+}
+
+func TestDeferredClaudeRelaunchPeerFirstRejectsUserActualCLI(t *testing.T) {
+	f := deferredRelaunchFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+	deferredReady(t, ctx, f, first.ref)
+	first.shutdown(t)
+	run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model")
+	source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
+	deferredReady(t, ctx, f, source.ref)
+	if err := run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	record := deferredPeer(t, ctx, f, source.ref, first.ref, "peer-first", "peer first\nexact content")
+	expected, err := deferredPeerText(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferredAssertBusyUnchanged(t, ctx, f, first.ref)
+	if err = run.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = run.output.ReadString('\n'); err != nil {
+		t.Fatal(err, run.stderr.String())
+	}
+	deferredCLIStatus(t, ctx, f, "peer-first", "delivered")
+	run.finish(t)
+	source.shutdown(t)
+	texts := deferredWireTexts(t, f)
+	if texts[len(texts)-1] != expected || len(deferredArgv(t, f)) != 3 {
+		t.Fatal("peer-first frame bytes or child count", texts)
+	}
+}
+
+func TestDeferredClaudeRelaunchGoUserWinsPendingSlotActualCLI(t *testing.T) {
+	for _, recipe := range []bool{false, true} {
+		t.Run(fmt.Sprint("recipe=", recipe), func(t *testing.T) {
+			f := deferredRelaunchFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+			deferredReady(t, ctx, f, first.ref)
+			first.shutdown(t)
+			if recipe {
+				run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model")
+				run.finish(t)
+			}
+			source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
+			deferredReady(t, ctx, f, source.ref)
+			t.Setenv("PMX_TEST_DEFERRED_INTERNAL", "1")
+			c, uid := New().agent, strings.TrimPrefix(first.ref, "uid:")
+			claim, err := c.claimDeferredProcessAgent(ctx, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: uid}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer claim.Close()
+			unlock, err := lockDeferredClaim(claim.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, handled, err := c.acceptDeferredUserTurn(uid, "pending CLI loser")
+			unlock()
+			if err != nil || !handled || pending == nil {
+				t.Fatal("pending admission", handled, err)
+			}
+			record := deferredPeer(t, ctx, f, source.ref, first.ref, "go-user-held", "queued peer")
+			expected, err := deferredPeerText(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			literal := "Go user first\nexact newline"
+			result, err := claim.Resume(ctx, processResumeFirstFrame{Kind: "user", Text: literal})
+			if err != nil {
+				t.Fatal("Go user first refused", err)
+			}
+			// Peers after the first frame use the existing messaging socket.
+			// Prove provider read and result before ending the owned process.
+			processCLIUntil(t, ctx, func() bool {
+				raw, _ := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+				var pushed struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				}
+				if json.Unmarshal(bytes.TrimSpace(raw), &pushed) != nil || pushed.Message.Content != expected {
+					return false
+				}
+				events, snapshot, err := result.Handle.Events(result.Binding, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var echo uint64
+				for _, event := range events {
+					var frame struct {
+						Echo struct {
+							Message struct {
+								Content string `json:"content"`
+							} `json:"message"`
+						} `json:"message_echo"`
+					}
+					if json.Unmarshal(event.Raw, &frame) == nil && frame.Echo.Message.Content == expected {
+						echo = event.Sequence
+					}
+					if echo > 0 && event.Sequence > echo && event.Kind == "turn-result" && snapshot.Turn == "" && snapshot.Session == claim.record.Session && snapshot.Connection != "" {
+						return true
+					}
+				}
+				return false
+			})
+			end, stop := context.WithCancel(ctx)
+			stop()
+			if _, err = result.owner.waitProcessAgent(end, nil); err != nil {
+				t.Fatal(err)
+			}
+			input, err := c.readDeferredInput(uid)
+			if err != nil || input == nil || input.Operation != pending.Operation || input.Phase != "settled" || input.Success || input.Unknown || input.Text != "" || input.Reason != "busy" {
+				t.Fatal("Go winner failed slot settlement", input, err)
+			}
+			deferredCLIStatus(t, ctx, f, "go-user-held", "delivered")
+			source.shutdown(t)
+			texts := deferredWireTexts(t, f)
+			if texts[len(texts)-1] != literal || len(deferredArgv(t, f)) != 3 {
+				t.Fatal("Go raw first/held drain bytes or child count", texts)
+			}
+		})
 	}
 }
