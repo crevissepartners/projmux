@@ -355,7 +355,7 @@ func TestARelaunchProfileDryRunJSONReportsBothSides(t *testing.T) {
 	want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"low","currentModel":"haiku","newEffort":"max","restart":true,"confirmationRequired":false,"unchanged":false,` +
 		`"currentSettings":{"profile":{"name":"role","digest":"` + f.roleDigest + `","source":"role"},"instructions":{"value":"lead","source":"profile","profileValue":"lead","override":false},"model":{"value":"haiku","source":"flag","profileValue":"opus","override":true},"effort":{"value":"low","source":"relaunch","profileValue":"high","override":true}},` +
 		`"newSettings":{"profile":{"name":"review","digest":"` + f.reviewDig + `","source":"relaunch"},"instructions":{"value":"reviewer","source":"profile","profileValue":"reviewer","override":false},"model":{"value":"sonnet","source":"profile","profileValue":"sonnet","override":false},"effort":{"value":"max","source":"relaunch","profileValue":"","override":true}},` +
-		`"relaunchReasons":["profile-changed","instructions-changed","model-changed","effort-changed"]}` + "\n"
+		`"currentHost":"tmux","targetHost":"tmux","relaunchReasons":["profile-changed","instructions-changed","model-changed","effort-changed"]}` + "\n"
 	if stdout != want {
 		t.Fatalf("dry run JSON =\n%s\nwant\n%s", stdout, want)
 	}

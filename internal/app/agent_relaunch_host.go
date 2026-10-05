@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -193,7 +194,9 @@ func (c *agentCommand) moveTmuxClaudeToProcess(reg coremetadata.Registry, target
 	if !found {
 		return errors.New("agent relaunch: retired source is unavailable")
 	}
-	if !reflect.DeepEqual(retired.Spec, target.Spec) || !reflect.DeepEqual(retired.Metadata.Annotations, target.Metadata.Annotations) || !retired.Status.SessionRef.SameConversation(target.Status.SessionRef) { return errors.New("agent relaunch: source recipe changed during Stop; no child started") }
+	if !reflect.DeepEqual(retired.Spec, target.Spec) || !reflect.DeepEqual(retired.Metadata.Annotations, target.Metadata.Annotations) || !retired.Status.SessionRef.SameConversation(target.Status.SessionRef) {
+		return errors.New("agent relaunch: source recipe changed during Stop; no child started")
+	}
 	source.retired = retired.Clone()
 	return c.startTmuxTransfer(ctx, cancel, reg, source, recipe, command, settings, result, stdout, stderr)
 }
@@ -217,9 +220,9 @@ func (c *agentCommand) planHostProcessClaudeLaunch(recipe processRelaunchRecipe)
 	if err != nil {
 		return processhost.Command{}, settings, err
 	}
-	persona, err := ai.resumePersonaSnapshot(aiModeClaude, annotations)
-	if err != nil {
-		return processhost.Command{}, settings, err
+	persona, unavailable := ai.resumePersonaSnapshot(aiModeClaude, annotations)
+	if unavailable != nil {
+		return processhost.Command{}, settings, unavailable
 	}
 	instructions, err := ai.resumeSystemPromptFile(aiModeClaude, annotations, persona)
 	if err != nil {
@@ -329,7 +332,9 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 		if err := recipe.guidance.record(working, mut, binding.Agent); err != nil {
 			return err
 		}
-		if err := recipe.links.record(working, mut, binding.Agent); err != nil { return err }
+		if err := recipe.links.record(working, mut, binding.Agent); err != nil {
+			return err
+		}
 		agent, _ = working.Agent(binding.Agent)
 		expected = agent.Clone()
 		return nil
@@ -339,7 +344,7 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 	}
 	owned := processAgentResumeResult{Binding: binding, owner: processAgentCreateResult{Binding: binding, Provider: aiModeClaude, registryPath: intmetadata.PathFor(state), Created: createResult{kind: coremetadata.KindAgent, uid: binding.Agent, name: source.retired.Metadata.Name, windowUID: binding.Window}}}
 	fail := func(cause error) error {
-		if !owned.hasNoChild() {
+		if owned.Handle != nil && !owned.hasNoChild() {
 			stopped, stopCancel := context.WithCancel(context.Background())
 			stopCancel()
 			snapshot, waitErr := owned.owner.waitProcessAgent(stopped, nil)
@@ -349,21 +354,12 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 			}
 		}
 		_, restoreErr := creator.store.update(func(working *coremetadata.Registry) error {
-			pane, ok := working.Pane(binding.Pane)
-			agent, found := working.Agent(binding.Agent)
-			if !ok || !found || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(binding) || (agent.Status.Phase != coremetadata.PhasePending && agent.Status.Phase != coremetadata.PhaseOffline) {
-				return processhost.ErrStale
-			}
-			if err := creator.store.mutator().DeletePane(working, binding.Pane); err != nil {
-				return err
-			}
-			agent, _ = working.Agent(binding.Agent)
-			agent.Metadata.Annotations = maps.Clone(source.retired.Metadata.Annotations)
-			agent.Spec = source.retired.Clone().Spec
-			agent.Status = source.retired.Clone().Status
-			return nil
+			return restoreTmuxTransferReservation(working, creator.store.mutator(), binding, expected, source.retired)
 		})
-		return fmt.Errorf("agent relaunch: transfer failed; previous recipe/conversation retained; recover with: %s: %w", processRelaunchRecovery(reg, source.retired, source.request), errors.Join(cause, restoreErr))
+		if restoreErr != nil {
+			return fmt.Errorf("agent relaunch: transfer failed; recovery fenced by changed target state; inspect agent uid:%s before retrying: %w", binding.Agent, errors.Join(cause, restoreErr))
+		}
+		return fmt.Errorf("agent relaunch: transfer failed; previous recipe/conversation retained; recover with: %s: %w", tmuxTransferRecovery(reg, source.retired, source.request), cause)
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -388,13 +384,15 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 			return err
 		}
 		agent, ok := latest.Agent(binding.Agent)
-		if !ok || !reflect.DeepEqual(agent.Spec, expected.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, expected.Metadata.Annotations) || !agent.Status.SessionRef.SameConversation(source.retired.Status.SessionRef) {
-			return processhost.ErrStale
+		if !ok || !sameHostTransferSpec(agent.Spec, expected.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, expected.Metadata.Annotations) || !agent.Status.SessionRef.SameConversation(source.retired.Status.SessionRef) {
+			return fmt.Errorf("%w: target recipe/session changed", processhost.ErrStale)
 		}
 		return nil
 	}}
-	owned.Handle, err = startProcessClaudeTransfer(ctx, host, processhost.Launch{Binding: binding, Command: command}, owned.owner.registryPath, transfer, operation+"-transfer", strings.Join(source.request.prompt, " "))
-	owned.owner.Handle = owned.Handle
+	handle, err := startProcessClaudeTransfer(ctx, host, processhost.Launch{Binding: binding, Command: command}, owned.owner.registryPath, transfer, operation+"-transfer", strings.Join(source.request.prompt, " "))
+	if handle != nil {
+		owned.Handle, owned.owner.Handle = handle, handle
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -409,4 +407,36 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 	}
 	fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", binding.Agent, binding.Pane)
 	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
+}
+
+// Registry JSON omits empty root lists; nil and empty encode the same recipe.
+func sameHostTransferSpec(a, b coremetadata.AgentSpec) bool {
+	return a.Provider == b.Provider && a.Workspace.CWD == b.Workspace.CWD && slices.Equal(a.Workspace.AdditionalWritableRoots, b.Workspace.AdditionalWritableRoots)
+}
+
+// Recreate the previous tmux recipe first; a failed target has no live tmux
+// source identity that could authorize repeating the transfer immediately.
+func tmuxTransferRecovery(reg coremetadata.Registry, agent coremetadata.Agent, request agentRelaunchRequest) string {
+	previous := request
+	previous.host, previous.model, previous.effort = "", "", ""
+	previous.profile, previous.instructions, previous.reset, previous.prompt = nil, nil, nil, nil
+	return relaunchRerunCommand(reg, agent, previous)
+}
+
+func restoreTmuxTransferReservation(reg *coremetadata.Registry, mut coremetadata.Mutator, binding processhost.Binding, expected, retired coremetadata.Agent) error {
+	pane, ok := reg.Pane(binding.Pane)
+	agent, found := reg.Agent(binding.Agent)
+	if !ok || !found || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(binding) || agent.Status.PaneRef != binding.Pane ||
+		(agent.Status.Phase != coremetadata.PhasePending && agent.Status.Phase != coremetadata.PhaseOffline) || !sameHostTransferSpec(agent.Spec, expected.Spec) ||
+		!reflect.DeepEqual(agent.Metadata.Annotations, expected.Metadata.Annotations) || !agent.Status.SessionRef.SameConversation(retired.Status.SessionRef) || !pane.Status.Activation.IsZero() {
+		return processhost.ErrStale
+	}
+	if err := mut.DeletePane(reg, binding.Pane); err != nil {
+		return err
+	}
+	agent, _ = reg.Agent(binding.Agent)
+	agent.Metadata.Annotations = maps.Clone(retired.Metadata.Annotations)
+	agent.Spec = retired.Clone().Spec
+	agent.Status = retired.Clone().Status
+	return nil
 }

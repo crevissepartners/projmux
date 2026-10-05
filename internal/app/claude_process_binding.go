@@ -543,6 +543,29 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	return service.handle, nil
 }
 
+// startProcessClaudeTransfer uses the same listener, birth publisher and cleanup as process resume.
+func startProcessClaudeTransfer(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string, transfer processhost.ClaudeTransfer, turn, prompt string) (*processhost.Handle, error) {
+	if host == nil || launch.Command.Env == nil || exactActivationRegistryPath(registryPath) != nil {
+		return nil, errors.New("invalid process activation registry")
+	}
+	service, err := prepareProcessClaude(ctx, launch, registryPath)
+	if err != nil {
+		return nil, err
+	}
+	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
+	launch.Completion = &processhost.Completion{Cleanup: service.close}
+	launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
+		service.publishChild(handle)
+		return service.launchErr
+	}}
+	handle, startErr := host.TransferClaude(ctx, launch, transfer, turn, prompt)
+	service.readyOnce.Do(func() { service.handle, service.launchErr = handle, startErr; close(service.ready) })
+	if startErr != nil {
+		return handle, errors.Join(startErr, service.rollback(ctx))
+	}
+	return handle, nil
+}
+
 // prepareProcessClaude owns only the listener and startup service lifetime.
 func prepareProcessClaude(ctx context.Context, launch processhost.Launch, registryPath string) (*claudeProcessService, error) {
 	socket := processClaudeHostSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation)
