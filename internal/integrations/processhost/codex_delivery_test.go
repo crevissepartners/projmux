@@ -311,9 +311,14 @@ func TestCodexUserDeliveryAdmissionAfterCompletionStarts(t *testing.T) {
 	result := make(chan UserTurnDelivery, 1)
 	errs := make(chan error, 1)
 	go func() { r, e := c.DeliverUserTurn(context.Background(), a, "next", "hold"); result <- r; errs <- e }()
-	if e := adapter.consume(codexappserver.Notification{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread","turn":{"id":"turn-1","status":"completed"}}`)}); e != nil {
+	// Let the owned fixture emit completion on the actual wire. Injecting it
+	// locally could overtake a turn/started frame still pending in the reader.
+	ctx, cancel := context.WithTimeout(context.Background(), c.handle.host.limits.Startup)
+	defer cancel()
+	if _, e := adapter.client.InterruptExactTurn(ctx, a.Session, "turn-1"); e != nil {
 		t.Fatal(e)
 	}
+	observeUntil(t, c.handle, func(s Snapshot) bool { return s.Turn == "" })
 	adapter.unlock()
 	r, e := <-result, <-errs
 	if e != nil || r != (UserTurnDelivery{UserTurnStart, "next", "turn-2"}) {
