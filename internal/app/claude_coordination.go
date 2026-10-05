@@ -306,12 +306,15 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 	if envelope.Operator() {
 		routes = routes[1:]
 	}
-	for _, expected := range routes {
+	for i, expected := range routes {
 		resolve := b.resolveRoute
 		if resolve == nil {
 			resolve = coremetadata.ResolveAgentRoute
 		}
 		route, reason := resolve(registry, expected.AgentUID)
+		if reason != "" && i == len(routes)-1 && !envelope.Operator() && envelope.ReplyTo != "" && deferredReplyTargetCurrent(b.registryPath, registry, expected) {
+			continue
+		}
 		if reason != "" || !messageRouteAccepts(route, expected) {
 			return false
 		}

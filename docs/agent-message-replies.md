@@ -190,3 +190,44 @@ it with the same function (`PayloadSHA256` in `internal/core/agentmessage`).
 The active log rotates to `history.jsonl.1` once it would pass 8 MiB, replacing
 any earlier `history.jsonl.1`. At most two generations exist, so the log's disk
 use is bounded even though its history is not complete.
+
+## Deferred process targets
+
+An Offline process Agent with a resumable conversation accepts peer messages
+only while a foreground claimant is alive:
+
+```sh
+projmux agent resume uid:<agent> --wait-for-peer
+```
+
+Keep its stdin open. Before a provider starts, EOF, INT or TERM releases the
+claim and exits 0. The command first reports `foreground=claimed`, then the
+usual `foreground=owned` resume result. After startup, exit follows the actual
+provider Wait. `-o none` suppresses output. A second claimant or an ordinary
+resume while the claim is live is refused with `process-resume-owned`. A dead
+claimant can be replaced using the same command and Agent UID.
+
+`agent message send` returns exit 0 and a `held` receipt with reason
+`target-awaiting-resume`. Its action names the claimant and `agent message
+status`; do not resend. The oldest accepted envelope is rendered unchanged as
+untrusted coordination and becomes the resume's first peer frame. The rest
+follow in acceptance order through the existing provider delivery adapters.
+The first receipt retains the retired target generation as delivery evidence;
+queued receipts move to the new generation when released. Only that generation
+field changes, after the claimant proves the same Agent, Pane and recorded
+provider conversation. Other immutable envelope fields retain their bytes.
+
+Provider refusal or supervisor spawn failure records `failed` with
+`process-resume-refused` and preserves the resumable conversation. Deadline
+expiry records `expired`. Undispatched holds survive claimant SIGKILL and a new
+claimant can wake them. A durable inflight witness left by a crashed claimant
+is failed with `provider-handoff-outcome-unknown` and `outcomeUnknown=true`,
+so takeover cannot write the frame twice. With no live claim, the existing
+Offline-target refusal and exit remain unchanged; messages never start an
+unclaimed provider automatically.
+
+For a Claude source's explicit reply, original delivery, correlation,
+qualification and the single-reply reservation still apply. Only a proved
+claimed target can replace the unavailable live target route. A Claude helper
+started before this behavior was installed keeps its previous refusal until
+its Agent is relaunched; installation does not replace running helpers.

@@ -299,6 +299,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into the isolated reply-only activation and record it, so every later resume stays reply-only; qualification required")
 	model := fs.String("model", "", "claude or codex: model name this resume runs; recorded on the Agent")
 	effort := fs.String("effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
+	waitForPeer := fs.Bool("wait-for-peer", false, "process only: claim and wait for a peer first frame")
 	head := args
 	var prompt []string
 	if boundary := slices.Index(args, argumentTerminator); boundary > 0 && processResumeHasReference(fs, args[:boundary]) {
@@ -331,6 +332,15 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	agent, ok := registry.Agent(match.UID)
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
+	}
+	if *waitForPeer {
+		if len(prompt) > 0 || *dialogueReplyOnly {
+			return usageError("agent resume: --wait-for-peer cannot be combined with a prompt or --dialogue-reply-only")
+		}
+		if pane, ambiguous := processResumePane(registry, agent.Metadata.UID); pane == nil || ambiguous {
+			return usageError("agent resume: --wait-for-peer requires one retired process Agent")
+		}
+		return c.runDeferredResumeCLI(*agent, flags, *model, *effort, stdout, stderr)
 	}
 	return c.resumeResolvedAgent(fs, flags, registry, agent, *model, *effort, *dialogueReplyOnly, prompt, stdout, stderr)
 }

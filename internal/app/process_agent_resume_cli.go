@@ -99,6 +99,9 @@ func (r *processAgentResumeResult) fail(cause error) error {
 }
 
 func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand) (func(processhost.Snapshot) error, func(context.Context) error, func() error, error) {
+	if sync := r.deferredSynchronization; sync != nil {
+		return sync.changed, sync.controls, sync.attention, nil
+	}
 	attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(r.owner.registryPath)))
 	records, err := attention.read()
 	if err != nil {

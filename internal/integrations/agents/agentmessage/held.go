@@ -36,7 +36,7 @@ func (s *Store) HeldFor(agentUID string) ([]Record, error) {
 			return err
 		}
 		for _, record := range state.Records {
-			if record.Adapter == "claude-coordination" && record.Delivery.State == coremessage.StateHeld &&
+			if record.Adapter == "claude-coordination" && record.Delivery.State == coremessage.StateHeld && record.Delivery.Reason != "target-awaiting-resume" &&
 				record.Envelope.Target.AgentUID == agentUID {
 				held = append(held, record)
 			}

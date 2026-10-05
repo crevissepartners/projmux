@@ -182,7 +182,7 @@ func TestProcessResumeReservationDefersLegacyBindingUntilVerifiedInit(t *testing
 			next.Host = "new-host"
 			next.Generation = "new-gen"
 			next.Operation = "new-op"
-			if err := command.reserveProcessResume(context.Background(), candidates[0], agentSettingsLaunch{}, next); err != nil {
+			if err := command.reserveProcessResume(context.Background(), candidates[0], agentSettingsLaunch{}, next, nil); err != nil {
 				t.Fatal(err)
 			}
 			reg, _ = store.LoadReadOnly()
@@ -268,7 +268,7 @@ func TestProcessLegacyHookOnlyWaitAndFailedResumeNeverBind(t *testing.T) {
 			assertUnbound()
 			next := b
 			next.Host, next.Generation, next.Operation = "resume-host", "resume-gen", "resume-op"
-			if err := command.reserveProcessResume(context.Background(), listResumableProcessAgents(reg, processResumeFilter{})[0], agentSettingsLaunch{}, next); err != nil {
+			if err := command.reserveProcessResume(context.Background(), listResumableProcessAgents(reg, processResumeFilter{})[0], agentSettingsLaunch{}, next, nil); err != nil {
 				t.Fatal(err)
 			}
 			assertUnbound()
@@ -287,7 +287,7 @@ func TestProcessLegacyHookOnlyWaitAndFailedResumeNeverBind(t *testing.T) {
 			reg, _ = store.LoadReadOnly()
 			verified := next
 			verified.Host, verified.Generation, verified.Operation = "verified-host", "verified-gen", "verified-op"
-			if err := command.reserveProcessResume(context.Background(), listResumableProcessAgents(reg, processResumeFilter{})[0], agentSettingsLaunch{}, verified); err != nil {
+			if err := command.reserveProcessResume(context.Background(), listResumableProcessAgents(reg, processResumeFilter{})[0], agentSettingsLaunch{}, verified, nil); err != nil {
 				t.Fatal(err)
 			}
 			assertUnbound()

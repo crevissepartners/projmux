@@ -429,6 +429,14 @@ func (c *agentCommand) restoreProcessRelaunchSettings(previous processResumeCand
 // Reservation commits the recipe and prompt digests together with the fresh
 // generation, after revalidating the retired record and unchanged old recipe.
 func (c *agentCommand) reserveProcessRelaunch(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, guidance agentGuidanceLaunch, links projectLinksLaunch, binding processhost.Binding) error {
+	unlock, lockErr := lockDeferredClaim(c.deferredClaimPath(binding.Agent))
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
+	if err := c.checkDeferredClaim(binding.Agent, nil); err != nil {
+		return err
+	}
 	_, err := c.rebind.create.store.update(func(reg *coremetadata.Registry) error {
 		if err := ctx.Err(); err != nil {
 			return err

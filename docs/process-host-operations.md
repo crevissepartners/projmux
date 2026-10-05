@@ -139,3 +139,48 @@ changes those instructions is refused before Stop, as is a profile switch
 that would silently keep the previous sandbox or approval policy. The new
 writer uses `thread/resume` after the old dedicated app server exits; an
 active-writer (`-32600`) refusal does not create a replacement conversation.
+
+## Waiting to resume on a peer message
+
+An Offline Agent with a recorded resumable conversation can have one foreground
+claimant, without starting a provider yet:
+
+```sh
+projmux agent resume <agent-ref> --wait-for-peer
+```
+
+This works for Claude and Codex. Keep stdin open: EOF, `SIGINT`, or `SIGTERM`
+before resume releases the claim and exits 0. With `</dev/null` or a cron stdin,
+the command ends immediately. After resume the command owns the provider and
+reports its actual exit, as ordinary `agent resume` does.
+
+Default output starts with
+`agent uid:<agent> pane uid:<pane> runtime=process foreground=claimed`;
+successful resume then prints the existing `foreground=owned` result.
+`-o none` suppresses output. The waiting flag cannot accompany a prompt,
+`--dialogue-reply-only`, or a tmux Agent.
+
+While that exact claimant process lives, peer sends are accepted with
+`held` / `target-awaiting-resume` and exit 0. Check `agent message status <ref>`;
+do not resend. The oldest unexpired message becomes the original conversation's
+first frame, retaining its untrusted coordination envelope. The remaining held
+messages follow in acceptance order after each provider turn finishes, within
+their deadlines. Successful receipts become `delivered`. The first receipt
+retains the retired target generation; subsequent receipts show the resumed
+generation with the same Agent, Pane, provider and conversation incarnation.
+
+A second claimant or ordinary resume is refused with `process-resume-owned`.
+Without a live claim, sending to an Offline Agent keeps its existing refusal.
+Claims use the exact OS process identity and a private state file; a restarted
+claimant can replace a dead claim, including after `SIGKILL`, and wake preserved
+messages. This does not automatically restart Agents. Resume failures leave the
+conversation resumable and settle the selected message as `failed` with
+`process-resume-refused`; expired messages settle as `expired`. A crash after a
+frame might have been submitted settles that message as `failed` with
+`outcomeUnknown`, without replaying it.
+
+Claude explicit replies (`agent message send --reply-to`) use this deferred
+route after the source's existing reply checks. Claude helpers run the binary
+image used at SessionStart: helpers started before this feature was installed
+retain the previous refusal until their Agent is relaunched. Installing the
+binary does not replace those running helpers.
