@@ -40,6 +40,28 @@ type CodexConfig struct {
 // expose the Client or its response writer to another consumer.
 type CodexHandle struct{ handle *Handle }
 
+// UserTurnMode is the provider operation selected at owned admission.
+type UserTurnMode string
+
+const (
+	UserTurnStart UserTurnMode = "start"
+	UserTurnSteer UserTurnMode = "steer"
+)
+
+// UserTurnDelivery witnesses provider acceptance, not model consumption.
+// Operation is the caller's deduplication ID; TurnID is the provider's turn ID.
+type UserTurnDelivery struct {
+	Mode      UserTurnMode
+	Operation string
+	TurnID    string
+}
+
+// DeliverUserTurn starts while idle or steers the exact admitted active turn.
+// A refused or uncertain steer is never retried as another turn or a start.
+func (c *CodexHandle) DeliverUserTurn(ctx context.Context, a Authority, operation, prompt string) (UserTurnDelivery, error) {
+	return c.handle.adapter.(*codexAdapter).deliver(ctx, a, operation, prompt, true)
+}
+
 // A local refusal has no provider turn ID; the consumed operation is its ID.
 // Completed provider payloads keep their full turn object and share this shape.
 type codexTurnResult struct {
@@ -153,11 +175,15 @@ type codexAdapter struct {
 	control       chan struct{}
 	awaitingReply bool                          // guarded by p.mu
 	replyQueue    []codexappserver.Notification // guarded by p.mu
+	// FIFO replay horizon: the last Events admitted deliveries, including
+	// confirmed refusals. Eviction permits reuse beyond that bounded horizon.
+	usedDeliveries map[string]bool // guarded by p.mu
+	deliveryOrder  []string        // guarded by p.mu
 }
 
 func (cfg CodexConfig) clone() adapterConfig { cfg.Roots = slices.Clone(cfg.Roots); return cfg }
 func (cfg CodexConfig) newAdapter(p *Handle) providerAdapter {
-	return &codexAdapter{p: p, control: make(chan struct{}, 1)}
+	return &codexAdapter{p: p, control: make(chan struct{}, 1), usedDeliveries: make(map[string]bool)}
 }
 
 func (c *codexAdapter) attach(stream io.ReadWriteCloser) {
@@ -216,60 +242,97 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	return nil
 }
 func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt string) error {
+	_, err := c.deliver(ctx, a, operation, prompt, false)
+	return err
+}
+
+func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prompt string, allowSteer bool) (UserTurnDelivery, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.p.host.limits.Startup)
 	defer cancel()
 	if err := c.lock(ctx); err != nil {
-		return err
+		return UserTurnDelivery{}, err
 	}
 	defer c.unlock()
 	p := c.p
 	p.mu.Lock()
 	if err := p.admitLocked(ctx, a); err != nil {
 		p.mu.Unlock()
-		return err
+		return UserTurnDelivery{}, err
 	}
-	if operation == "" || len(operation) > 256 || p.usedTurns[operation] {
+	if operation == "" || len(operation) > 256 || p.usedTurns[operation] || c.usedDeliveries[operation] {
 		p.mu.Unlock()
-		return ErrStale
+		return UserTurnDelivery{}, ErrStale
 	}
-	if p.turn != "" || p.activeCriticalLocked() >= p.host.limits.Events {
+	mode, turn := UserTurnStart, p.turn
+	if turn != "" {
+		if !allowSteer {
+			p.mu.Unlock()
+			return UserTurnDelivery{}, ErrBusy
+		}
+		mode = UserTurnSteer
+	} else if p.activeCriticalLocked() >= p.host.limits.Events {
 		p.mu.Unlock()
-		return ErrBusy
+		return UserTurnDelivery{}, ErrBusy
 	}
-	// Consume operation before the write. Even a refused operation cannot be
-	// replayed; an uncertain outcome still terminates the owned connection.
-	p.rememberTurnLocked(operation)
+	if allowSteer && strings.TrimSpace(prompt) == "" {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, ErrStale
+	}
+	// Consume before writing, independently of request-ID fencing. Starting
+	// retains the existing turn fence; steering must never clear usedRequests.
+	for len(c.deliveryOrder) >= p.host.limits.Events {
+		delete(c.usedDeliveries, c.deliveryOrder[0])
+		c.deliveryOrder = c.deliveryOrder[1:]
+	}
+	c.usedDeliveries[operation] = true
+	c.deliveryOrder = append(c.deliveryOrder, operation)
+	if mode == UserTurnStart {
+		p.rememberTurnLocked(operation)
+	}
 	c.awaitingReply = true
 	p.mu.Unlock()
-	settings := p.launch.adapter.(CodexConfig).Settings
-	turn, err := c.client.StartTurnWithOptions(ctx, a.Session, prompt, operation, settings.Model, settings.Effort)
+	var err error
+	if mode == UserTurnSteer {
+		_, err = c.client.SteerExactTurn(ctx, a.Session, turn, prompt)
+	} else {
+		settings := p.launch.adapter.(CodexConfig).Settings
+		turn, err = c.client.StartTurnWithOptions(ctx, a.Session, prompt, operation, settings.Model, settings.Effort)
+	}
 	if err != nil {
 		if codexappserver.IsResponseError(err) {
 			p.mu.Lock()
 			c.awaitingReply = false
-			c.replyQueue = nil
-			raw, _ := json.Marshal(codexTurnResult{ThreadID: a.Session, Turn: codexResultTurn{ID: operation, Status: "failed", Error: &codexResultError{Message: "server-refused"}}})
-			p.emitLocked("turn-result", raw, nil)
+			if mode == UserTurnStart {
+				raw, _ := json.Marshal(codexTurnResult{ThreadID: a.Session, Turn: codexResultTurn{ID: operation, Status: "failed", Error: &codexResultError{Message: "server-refused"}}})
+				p.emitLocked("turn-result", raw, nil)
+			}
+			queueErr := c.drainReplyLocked()
 			p.mu.Unlock()
+			if queueErr != nil {
+				p.protocolFailure(queueErr)
+			}
 		} else {
 			p.protocolFailure(err)
 		}
-		return err
+		return UserTurnDelivery{}, err
 	}
 	p.mu.Lock()
 	if p.state != "ready" {
 		p.mu.Unlock()
-		return ErrClosed
+		return UserTurnDelivery{}, ErrClosed
 	}
-	p.turn = turn
+	if mode == UserTurnStart {
+		p.turn = turn
+		p.emitLocked("turn-submitted", nil, nil)
+	}
 	c.awaitingReply = false
-	p.emitLocked("turn-submitted", nil, nil)
 	err = c.drainReplyLocked()
 	p.mu.Unlock()
 	if err != nil {
 		p.protocolFailure(err)
+		return UserTurnDelivery{}, err
 	}
-	return err
+	return UserTurnDelivery{Mode: mode, Operation: operation, TurnID: turn}, nil
 }
 
 // drainReplyLocked preserves wire order while the command semaphore still
