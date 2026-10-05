@@ -166,7 +166,8 @@ func deferredRelaunchCLI(t *testing.T, ctx context.Context, f processCreateCLI, 
 		}
 	}
 	line, err := run.output.ReadString('\n')
-	prompt := len(flags) > 0 && slices.Contains(flags, "--")
+	delimiter := slices.Index(flags, "--")
+	prompt := delimiter >= 0 && strings.TrimSpace(strings.Join(flags[delimiter+1:], " ")) != ""
 	if err != nil || (!prompt && line != "agent "+ref+" pane uid:"+deferredCandidate(t, f, ref).Record.Binding.PaneUID+" runtime=process foreground=claimed\n") || (prompt && !strings.Contains(line, "relaunch")) {
 		t.Fatalf("claimed %q %v %s", line, err, run.stderr.String())
 	}
@@ -940,6 +941,41 @@ func TestDeferredClaudePromptRelaunchTransitionActualCLI(t *testing.T) {
 			intent.Previous, intent.Attempt = &priorCopy, &deferredLaunchAttempt{Source: *prior.Retired.Clone(), Target: target}
 			if err = writeDeferredState(c.deferredStatePath("deferred-launches", uid), &intent); err != nil {
 				t.Fatal(err)
+			}
+			sourceAgent := deferredCandidate(t, f, first.ref).Agent.Clone()
+			// Unrelated source record/config cannot use a valid intent as authority.
+			for _, foreignRecord := range []bool{false, true} {
+				_, _, err = f.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+					a, _ := reg.Agent(uid)
+					pane, _ := processResumePane(*reg, uid)
+					if foreignRecord {
+						pane.Status.ProcessSession.ConnectionID += "-foreign"
+					} else {
+						a.Metadata.Annotations[coremetadata.AnnotationAgentModel] = "foreign-model"
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, _ := os.ReadFile(f.store.Path())
+				launchBefore, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+				out, e := exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref, "--wait-for-peer").CombinedOutput()
+				after, _ := os.ReadFile(f.store.Path())
+				launchAfter, _ := os.ReadFile(c.deferredStatePath("deferred-launches", uid))
+				if e == nil || !bytes.Contains(out, []byte("process-resume-refused")) || !bytes.Equal(before, after) || !bytes.Equal(launchBefore, launchAfter) || len(deferredArgv(t, f)) != 1 {
+					t.Fatalf("foreign source changed bytes: %v %s", e, out)
+				}
+				_, _, err = f.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+					a, _ := reg.Agent(uid)
+					pane, _ := processResumePane(*reg, uid)
+					a.Metadata.Annotations = sourceAgent.Clone().Metadata.Annotations
+					pane.Status.ProcessSession = prior.Retired.Clone()
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			recovery := startDeferredCLIClaim(t, ctx, f, first.ref)
 			recovery.finish(t)
