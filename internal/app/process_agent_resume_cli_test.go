@@ -1225,16 +1225,16 @@ func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
 			running := awaitProcessResumeRecord(t, ctx, f, target.ref, func(r *coremetadata.ProcessSessionRecord) bool {
 				return r.Binding.Generation != old.Binding.Generation && r.TurnID != ""
 			})
-			held := deferredCLIStatus(t, ctx, f, "eof-tail", "held")
-			if held["target"].(map[string]any)["activationGeneration"] != running.Binding.Generation {
-				t.Fatal("queued peer did not follow current conversation generation")
-			}
+			deferredCLIStatus(t, ctx, f, "eof-tail", "held")
 			claim.finish(t)
 			retired := awaitProcessResumeRecord(t, ctx, f, target.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			if retired.SessionID != old.SessionID || retired.ThreadID != old.ThreadID {
 				t.Fatal("EOF changed conversation")
 			}
-			deferredCLIStatus(t, ctx, f, "eof-tail", "held")
+			held := deferredCLIStatus(t, ctx, f, "eof-tail", "held")
+			if retired.Binding.Generation != running.Binding.Generation || held["target"].(map[string]any)["activationGeneration"] != retired.Binding.Generation {
+				t.Fatal("queued peer did not follow the recorded Wait generation")
+			}
 			next := startDeferredCLIClaim(t, ctx, f, target.ref)
 			line, err := next.output.ReadString('\n')
 			if err != nil || !strings.Contains(line, "foreground=owned") {
