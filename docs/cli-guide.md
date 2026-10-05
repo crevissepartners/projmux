@@ -2044,16 +2044,23 @@ again.
 [--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
 --socket-path <absolute>] [-o json]` restarts one existing Claude or Codex
 Agent on the same UID and the same provider conversation with other settings,
-all in one restart. Process Claude keeps its Pane UID as well and uses a fresh
-foreground-owned generation. Supply `-- <prompt>` for the first new user turn;
+all in one restart. Process Claude and Codex keep their Pane UID as well and
+use a fresh foreground-owned generation. Claude requires `-- <prompt>` for
+the first new user turn;
+Codex can reattach without a prompt and sends no synthetic turn.
 `--dry-run` needs no prompt. Giving a prompt explicitly restarts a Running
-process Claude Agent even when its launch settings are unchanged; use
+process Agent even when its launch settings are unchanged; use
 `agent turn start` to send a turn while keeping the current provider.
 The caller keeps stdin open for the Agent's lifetime.
 EOF, INT, or TERM stops only the new owned provider. The old child must have an
 actual durable supervisor Wait and its foreground owner must retire before the
 new child starts. Self-target and reply-only launches are refused before Stop.
-Process Codex relaunch is still refused with `process-relaunch-unsupported`.
+Process Codex resumes the recorded thread through a new dedicated app server.
+It sends no settings probe to the old writer. The existing resume barrier checks
+the new writer's model, effort, approval and sandbox, using
+`thread/settings/update` and another `thread/resume` when needed. If the
+provider refuses an active writer (`-32600`), the error retains that refusal and prints the exact recovery
+command. The recorded conversation and previous launch settings remain intact.
 
 Claude process launches receive the new composite instructions file together
 with `--system-prompt-snapshot off` when the instructions change. A failure
