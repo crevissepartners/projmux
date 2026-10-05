@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,6 +72,37 @@ func TestProcessClaudeLaunchKeepsResolvedPolicyAndWorkspace(t *testing.T) {
 		if strings.HasPrefix(value, "PATH=") && strings.TrimPrefix(value, "PATH=") != filepath.Dir(binary)+string(os.PathListSeparator) {
 			t.Fatalf("provider directory missing from PATH: %q", value)
 		}
+	}
+}
+
+// Only a planner given a permission mode spells one, after the resolved policy
+// and before the variadic workspace tail; an empty mode adds no argument, so
+// the resume, host move, and deferred callers keep their argv.
+func TestProcessClaudeLaunchPermissionModeOnlyWhenSet(t *testing.T) {
+	home := t.TempDir()
+	binary := filepath.Join(home, "claude")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	command := &aiCommand{homeDir: func() (string, error) { return home, nil }, readCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte(binary), nil }}
+	workspace := coremetadata.AgentWorkspace{CWD: home, AdditionalWritableRoots: []string{filepath.Join(home, "extra")}}
+	opts := processClaudeLaunchOptions{Model: "model-one", SettingsFile: filepath.Join(home, "settings.json")}
+	unset, err := command.PlanProcessClaudeCommand(workspace, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(unset.Args, "--permission-mode") {
+		t.Fatalf("empty mode spelled an argument: %q", unset.Args)
+	}
+	opts.PermissionMode = processClaudeCreatePermissionMode
+	set, err := command.PlanProcessClaudeCommand(workspace, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := append(claudeLaunchOptionArgs(opts.Model, opts.Effort, opts.InstructionsFile), claudeSettingsArgs(opts.SettingsFile)...)
+	want := append(append(policy, "--permission-mode", "auto"), unset.Args[len(policy):]...)
+	if !reflect.DeepEqual(set.Args, want) {
+		t.Fatalf("permission mode argv\ngot  %q\nwant %q", set.Args, want)
 	}
 }
 

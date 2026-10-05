@@ -113,10 +113,17 @@ func validateProcessCreateRef(ref selector.Ref, kind coremetadata.Kind) error {
 	return nil
 }
 
-type processClaudeLaunchOptions struct{ Model, Effort, InstructionsFile, SettingsFile string }
+type processClaudeLaunchOptions struct{ Model, Effort, InstructionsFile, SettingsFile, PermissionMode string }
+
+// processClaudeCreatePermissionMode is the permission mode a new process
+// Claude Agent starts in. Only fresh creation passes it, and the mode is not
+// recorded: resume and host moves replan without it, and a deferred launch
+// replays the command it stored.
+const processClaudeCreatePermissionMode = "auto"
 
 // Process launch uses the same provider grammar and resolved setting files as
 // tmux. The initial task travels over stream input, never the provider argv.
+// An empty PermissionMode adds no argument.
 func (c *aiCommand) PlanProcessClaudeCommand(workspace coremetadata.AgentWorkspace, opts processClaudeLaunchOptions) (processhost.Command, error) {
 	path := c.findAgentBinary(aiModeClaude)
 	if path == "" {
@@ -127,6 +134,9 @@ func (c *aiCommand) PlanProcessClaudeCommand(workspace coremetadata.AgentWorkspa
 		return processhost.Command{}, err
 	}
 	resolved := append(claudeLaunchOptionArgs(opts.Model, opts.Effort, opts.InstructionsFile), claudeSettingsArgs(opts.SettingsFile)...)
+	if opts.PermissionMode != "" {
+		resolved = append(resolved, "--permission-mode", opts.PermissionMode)
+	}
 	resolved = append(resolved, args...)
 	env := append([]string{}, os.Environ()...)
 	prepend := filepath.Dir(path)
@@ -295,7 +305,7 @@ func (c *createCommand) prepareProcessCreateLaunch(plan *processAgentCreatePlan,
 	if flags.agentGuidance.systemPromptFile != "" {
 		instructions = flags.agentGuidance.systemPromptFile
 	}
-	command, err := planner.PlanProcessClaudeCommand(plan.workspace, processClaudeLaunchOptions{Model: flags.model, Effort: flags.effort, InstructionsFile: instructions, SettingsFile: flags.profileLaunch.settings})
+	command, err := planner.PlanProcessClaudeCommand(plan.workspace, processClaudeLaunchOptions{Model: flags.model, Effort: flags.effort, InstructionsFile: instructions, SettingsFile: flags.profileLaunch.settings, PermissionMode: processClaudeCreatePermissionMode})
 	if err != nil {
 		return err
 	}
