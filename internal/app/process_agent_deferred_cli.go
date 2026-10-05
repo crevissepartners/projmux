@@ -67,6 +67,9 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 		controlErr = nil
 	}
 	if err = errors.Join(waitErr, controlErr, syncAttention()); err != nil {
+		if ended, ok := processOwnerEnded(result.owner.registryPath, result.Binding, result.owner.waitRecorded, snapshot, err, stderr); ok {
+			return ended
+		}
 		return processResumeFailure(result.Binding, err)
 	}
 	return processWaitExit(snapshot)
