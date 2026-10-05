@@ -97,7 +97,7 @@ func TestDeferredConcurrentClaimsHaveOneWinner(t *testing.T) {
 	for claim := range results {
 		if claim != nil {
 			winners++
-			defer claim.Close()
+			t.Cleanup(func() { _ = claim.Close() })
 		}
 	}
 	if winners != 1 {
