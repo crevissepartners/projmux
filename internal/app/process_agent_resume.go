@@ -166,7 +166,9 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 		_, err := c.rebind.create.store.update(fn)
 		return err
 	}
-	err = updateProcessAgentSession(intmetadata.PathFor(state), binding, nil, true, true, update, func(reg *coremetadata.Registry) error {
+	// Reservation has no live provider init evidence. A legacy missing ref is
+	// bound by the next verified init/snapshot/Wait, never by reserved IDs.
+	err = updateProcessAgentSession(intmetadata.PathFor(state), binding, nil, true, false, update, func(reg *coremetadata.Registry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

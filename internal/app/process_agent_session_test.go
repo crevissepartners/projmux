@@ -156,10 +156,13 @@ func TestProcessSessionBindingCannotRepairTmuxOrForeignGeneration(t *testing.T) 
 	}
 }
 
-func TestProcessResumeReservationBackfillsLegacyAgent(t *testing.T) {
+func TestProcessResumeReservationDefersLegacyBindingUntilVerifiedInit(t *testing.T) {
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			store, b := sessionBindingFixture(t, provider)
+			initial, _ := store.LoadReadOnly()
+			initialPane, _ := initial.Pane(b.Pane)
+			births := *initialPane.Status.Activation.Process
 			_, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error { recordFixtureWait(t, reg, b.Pane); return nil })
 			if err != nil {
 				t.Fatal(err)
@@ -184,12 +187,125 @@ func TestProcessResumeReservationBackfillsLegacyAgent(t *testing.T) {
 			}
 			reg, _ = store.LoadReadOnly()
 			a, _ := reg.Agent(b.Agent)
-			if a.Status.SessionRef == nil {
-				t.Fatal("resume reservation did not backfill")
+			if a.Status.SessionRef != nil {
+				t.Fatal("reservation fabricated a confirmed conversation")
 			}
 			history, err := sessionhistory.Read(state, b.Agent)
-			if err != nil || len(history.Records) != 1 {
+			if err != nil || len(history.Records) != 0 {
 				t.Fatal(history, err)
+			}
+			births.Binding = metadataProcessBinding(next)
+			_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				return intmetadata.DefaultMutator().RecordProcessChild(reg, births)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conversation := "session"
+			if provider == aiModeCodex {
+				conversation = "thread"
+			}
+			if err := (&createCommand{}).processCreateTransactions(store.Path()).Commit(context.Background(), next, conversation); err != nil {
+				t.Fatal(err)
+			}
+			reg, _ = store.LoadReadOnly()
+			a, _ = reg.Agent(b.Agent)
+			history, err = sessionhistory.Read(state, b.Agent)
+			if a.Status.SessionRef == nil || err != nil || len(history.Records) != 1 || history.Records[0].SessionID != conversation {
+				t.Fatal("verified init did not bind", a.Status.SessionRef, history, err)
+			}
+		})
+	}
+}
+
+// Reconstruct the old binary's hook-only admission and Wait writers. Neither
+// the retired reservation nor resume History proves a stream init occurred.
+func TestProcessLegacyHookOnlyWaitAndFailedResumeNeverBind(t *testing.T) {
+	for _, activationState := range []coremetadata.AgentActivationState{coremetadata.ActivationNotRequested, coremetadata.ActivationAcknowledged} {
+		t.Run(string(activationState), func(t *testing.T) {
+			store, b := sessionBindingFixture(t, aiModeClaude)
+			var births coremetadata.ProcessActivation
+			_, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				pane, _ := reg.Pane(b.Pane)
+				births = *pane.Status.Activation.Process
+				pane.Status.ProcessSession.SessionID = ""
+				pane.Status.ProcessSession.ConnectionID = ""
+				agent, _ := reg.Agent(b.Agent)
+				agent.Status.Activation.State = activationState
+				if err := intmetadata.DefaultMutator().RecordProcessActivation(reg, births, "process-session"); err != nil {
+					return err
+				}
+				// This is the pre-5c7 Wait writer, which retains the hook ID.
+				recordFixtureWait(t, reg, b.Pane)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg, _ := store.LoadReadOnly()
+			pane, _ := reg.Pane(b.Pane)
+			if pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable {
+				t.Fatal("legacy source not resumable")
+			}
+			state := filepath.Dir(filepath.Dir(store.Path()))
+			resource := &resourceStore{stateDir: func() (string, error) { return state, nil }, mutator: intmetadata.DefaultMutator, update: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+				r, _, err := store.UpdateConvergent(fn)
+				return r, err
+			}}
+			command := &agentCommand{rebind: &agentRebinder{create: &createCommand{store: resource}}}
+			assertUnbound := func() {
+				t.Helper()
+				reg, err := store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				agent, _ := reg.Agent(b.Agent)
+				history, err := sessionhistory.Read(state, b.Agent)
+				if agent.Status.SessionRef != nil || err != nil || len(history.Records) != 0 {
+					t.Fatal("hook reservation fabricated ref/history", agent.Status.SessionRef, history, err)
+				}
+			}
+			assertUnbound()
+			next := b
+			next.Host, next.Generation, next.Operation = "resume-host", "resume-gen", "resume-op"
+			if err := command.reserveProcessResume(context.Background(), listResumableProcessAgents(reg, processResumeFilter{})[0], agentSettingsLaunch{}, next); err != nil {
+				t.Fatal(err)
+			}
+			assertUnbound()
+			births.Binding = metadataProcessBinding(next)
+			_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				return intmetadata.DefaultMutator().RecordProcessChild(reg, births)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := processAgentCreateResult{Binding: next, Provider: aiModeClaude, registryPath: store.Path()}
+			if err := owner.persistProcessWait(processhost.Snapshot{Binding: next, Provider: aiModeClaude, State: "exited", Exit: &processhost.Exit{Code: 1}}); err != nil {
+				t.Fatal(err)
+			}
+			assertUnbound()
+			reg, _ = store.LoadReadOnly()
+			verified := next
+			verified.Host, verified.Generation, verified.Operation = "verified-host", "verified-gen", "verified-op"
+			if err := command.reserveProcessResume(context.Background(), listResumableProcessAgents(reg, processResumeFilter{})[0], agentSettingsLaunch{}, verified); err != nil {
+				t.Fatal(err)
+			}
+			assertUnbound()
+			births.Binding = metadataProcessBinding(verified)
+			_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				return intmetadata.DefaultMutator().RecordProcessChild(reg, births)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := (&createCommand{}).processCreateTransactions(store.Path()).Commit(context.Background(), verified, "process-session"); err != nil {
+				t.Fatal(err)
+			}
+			reg, _ = store.LoadReadOnly()
+			agent, _ := reg.Agent(b.Agent)
+			history, err := sessionhistory.Read(state, b.Agent)
+			if agent.Status.SessionRef == nil || agent.Status.SessionRef.Claude.SessionID != "process-session" || err != nil || len(history.Records) != 1 {
+				t.Fatal("verified init failed to bind", agent.Status.SessionRef, history, err)
 			}
 		})
 	}
@@ -250,6 +366,14 @@ func TestProcessInitialBindingIsAtomicWithConfirmedConversation(t *testing.T) {
 
 func TestProcessWaitBeforeResumeInitPreservesEstablishedConversation(t *testing.T) {
 	store, b := sessionBindingFixture(t, aiModeClaude)
+	if err := updateProcessAgentSession(store.Path(), b, nil, false, true, nil, func(*coremetadata.Registry) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.LoadReadOnly()
+	previous, _ := before.Agent(b.Agent)
+	ref := previous.Status.SessionRef.Clone()
+	historyPath := sessionhistory.Path(filepath.Dir(filepath.Dir(store.Path())))
+	historyBefore, _ := os.ReadFile(historyPath)
 	_, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		p, _ := reg.Pane(b.Pane)
 		old := p.Status.ProcessSession.Binding
@@ -270,6 +394,10 @@ func TestProcessWaitBeforeResumeInitPreservesEstablishedConversation(t *testing.
 	p, _ := reg.Pane(b.Pane)
 	if a.Status.SessionRef == nil || a.Status.SessionRef.Claude.SessionID != "session" || p.Status.ProcessSession.SessionID != "session" || p.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable {
 		t.Fatal("failed resume discarded established conversation", a.Status.SessionRef, p.Status.ProcessSession)
+	}
+	historyAfter, _ := os.ReadFile(historyPath)
+	if !reflect.DeepEqual(ref, a.Status.SessionRef) || !bytes.Equal(historyBefore, historyAfter) {
+		t.Fatal("failed resume changed established ref/history")
 	}
 }
 

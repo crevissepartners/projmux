@@ -37,9 +37,10 @@ func updateProcessAgentSession(path string, binding processhost.Binding, observa
 			return nil
 		}
 		record := pane.Status.ProcessSession
-		// A failed resumed generation can have no initialized stream of its
-		// own while retaining the prior, established conversation.
-		if !confirmed && record.History == nil {
+		// Only a live provider's initialized session confirms a missing ref.
+		// Legacy SessionStart reservations can also be resumable and have
+		// History; neither is evidence that a conversation was established.
+		if !confirmed {
 			return nil
 		}
 		if record.ConnectionID == "" || (record.SessionID == "" && record.ThreadID == "") {
@@ -81,6 +82,6 @@ func updateProcessAgentSession(path string, binding processhost.Binding, observa
 	}
 	stateDir := filepath.Dir(filepath.Dir(path))
 	creator := &createCommand{store: &resourceStore{stateDir: func() (string, error) { return stateDir, nil }}}
-	creator.recordCreateAgentSessionHistory(history, recordHistory, nil)
+	creator.recordCreateAgentSessionHistory(history, recordHistory, os.Stderr)
 	return nil
 }

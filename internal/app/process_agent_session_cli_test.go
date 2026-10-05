@@ -350,3 +350,51 @@ func TestProcessSessionRelaunchPreservesConversationActualCLI(t *testing.T) {
 		t.Fatalf("relaunch changed conversation history: %v %s", err, after)
 	}
 }
+
+func TestProcessSessionHistoryAppendFailureWarnsWithoutFailingActualCLI(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := processResumeCLIFixture(t, provider)
+			state := filepath.Dir(filepath.Dir(f.store.Path()))
+			historyPath := sessionhistory.Path(state)
+			// A directory at the history file forces Append to fail after the
+			// Registry commits; the owned provider must still run and retire.
+			if err := os.MkdirAll(historyPath, 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			owner := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--", "history fault task"))
+			waitCodexCreate(t, ctx, func() bool {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				agent, ok := reg.Agent(strings.TrimPrefix(owner.ref, "uid:"))
+				return ok && agent.Status.SessionRef != nil
+			})
+			owner.shutdown(t)
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, _ := reg.Agent(strings.TrimPrefix(owner.ref, "uid:"))
+			pane, _ := reg.Pane(agent.Status.PaneRef)
+			if agent.Status.SessionRef == nil || agent.Status.Phase != coremetadata.PhaseOffline || pane.Status.LastTermination == nil {
+				t.Fatal("append failure changed provider/Wait outcome", agent.Status)
+			}
+			warning := owner.stderr.String()
+			const want = "agent session history not recorded: append-failed\n"
+			if strings.Count(warning, want) != 1 || strings.Contains(warning, historyPath) {
+				t.Fatalf("append warning must be fixed, observed once, and omit raw paths: %q", warning)
+			}
+			info, err := os.Stat(historyPath)
+			if err != nil || !info.IsDir() {
+				t.Fatal("fault fixture no longer obstructs history", err)
+			}
+		})
+	}
+}

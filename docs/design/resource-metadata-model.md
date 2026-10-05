@@ -661,8 +661,10 @@ Agent session history (Claude and Codex):
   create) in `internal/app/create_agent.go`, and `updateProcessAgentSession`
   in `internal/app/process_agent_session.go` (confirmed process owner binding
   and writer backfill). Process initialization commits the existing SessionRef
-  alongside processSession; snapshot, Wait, and resume reservation writers
-  fill a missing ref from confirmed processSession. Same-conversation resume
+  alongside processSession; snapshot and Wait writers
+  fill a missing ref from a session confirmed by the live provider. Resume
+  reservation and history alone do not confirm legacy IDs; a missing ref waits
+  for verified provider initialization. Same-conversation resume
   retains the ref and appends no history. Claude process writers record the
   transcript path using the provider project-directory encoding; Codex records
   the state domain and version witnessed by its dedicated initialized wire.
@@ -674,7 +676,7 @@ Agent session history (Claude and Codex):
   Registry, that each reaches a post-commit append helper, and that no other
   code builds an `observed` row with `RecordFor`. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
-  `ai-ingest.log`, a create prints one
+  `ai-ingest.log`, a create or process writer prints one
   `agent session history not recorded: append-failed` line on stderr.
 - Each line is `{"agentUID","provider","sessionId","transcriptPath","observedAt","source"}`:
   `provider` is `claude` or `codex`, `observedAt` is the ref's RFC 3339 UTC observation
