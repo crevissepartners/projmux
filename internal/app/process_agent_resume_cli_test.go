@@ -228,6 +228,11 @@ func TestProcessResumeActualCLIRoundTrip(t *testing.T) {
 				if len(calls) != 2 {
 					t.Fatalf("Claude startup count: %s", argv)
 				}
+				// Fresh creation starts in auto mode; the resume of the same
+				// Agent is replanned without a mode and keeps its argv.
+				if permissionModes(calls[0]) != "auto" || permissionModes(calls[1]) != "" {
+					t.Fatalf("permission mode: create %q resume %q", calls[0], calls[1])
+				}
 				found := false
 				for index, arg := range calls[1] {
 					if arg == "--resume" && index+1 < len(calls[1]) && calls[1][index+1] == old.SessionID {
@@ -1233,4 +1238,15 @@ func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
 			source.shutdown(t)
 		})
 	}
+}
+
+// permissionModes joins every --permission-mode value of a recorded argv.
+func permissionModes(argv []string) string {
+	var modes []string
+	for index, arg := range argv {
+		if arg == "--permission-mode" && index+1 < len(argv) {
+			modes = append(modes, argv[index+1])
+		}
+	}
+	return strings.Join(modes, ",")
 }

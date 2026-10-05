@@ -8,6 +8,11 @@ output, exit codes, and the opt-in `post-create` hook contract are in
 [Process Host Post-Create](hooks.md#process-host-post-create). The Registry
 fields are in [Registry process evidence](registry.md#process-evidence).
 
+A new process Claude Agent starts with `--permission-mode auto`. The flag takes
+precedence over `permissions.defaultMode` in Claude settings. Resuming, moving
+between hosts, or replaying a deferred launch keeps the argv the Agent already
+had and adds no mode.
+
 ## Driving the Agent from another terminal
 
 A process Agent has no terminal of its own, so every interaction goes through
