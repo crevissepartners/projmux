@@ -674,6 +674,9 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	}
 	waitErr = errors.Join(waitErr, controlErr, control.attention.sync(result.Handle, result.Binding))
 	if waitErr != nil {
+		if ended, ok := processOwnerEnded(result.registryPath, result.Binding, result.waitRecorded, snapshot, waitErr, stderr); ok {
+			return ended
+		}
 		return processCreateCleanupError(result, waitErr)
 	}
 	return processWaitExit(snapshot)
