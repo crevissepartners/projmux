@@ -53,11 +53,20 @@ func TestProcessRuntimeDefaultApplicationRefusals(t *testing.T) {
 	if err := app.focus.Run([]string{"pane", "uid:" + paneUID}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-focus-unsupported") {
 		t.Fatalf("focus: %v", err)
 	}
-	if err := app.agent.runRelaunch([]string{"uid:" + pane.Metadata.OwnerUID(), "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-relaunch-unsupported") {
-		t.Fatalf("relaunch: %v", err)
+	if err := app.agent.runRelaunch([]string{"uid:" + pane.Metadata.OwnerUID(), "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), relaunchReasonNoConversation) {
+		t.Fatalf("Claude relaunch without conversation: %v", err)
 	}
 	if len(runner.calls) != 0 || !reflect.DeepEqual(reg, before) {
 		t.Fatal("refusal used transport or changed Registry")
+	}
+	agent, _ := reg.Agent(pane.Metadata.OwnerUID())
+	agent.Spec.Provider = "codex"
+	before = reg.Clone()
+	if err := app.agent.runRelaunch([]string{"uid:" + agent.Metadata.UID, "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-relaunch-unsupported") {
+		t.Fatalf("Codex relaunch: %v", err)
+	}
+	if len(runner.calls) != 0 || !reflect.DeepEqual(reg, before) {
+		t.Fatal("Codex refusal used transport or changed Registry")
 	}
 }
 

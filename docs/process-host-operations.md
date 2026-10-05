@@ -20,6 +20,7 @@ its exact Agent reference:
 | Answer a question | `projmux agent question list <agent-ref>`, then `projmux agent question answer <agent-ref> <question-id> --option <n>=<label>` |
 | Answer a permission request | `projmux agent approval list <agent-ref>`, then `projmux agent approval answer <agent-ref> <request-id> --allow` or `--deny` |
 | Coordinate from another Agent | `projmux agent message send <agent-ref> --source <agent-ref> -- <text>` |
+| Change a Claude launch configuration | `projmux agent relaunch <agent-ref> --model <model> -- <first-prompt>` (foreground caller; busy Agents require `--yes`) |
 | Inspect it | `projmux describe agent <agent-ref>` |
 
 `agent turn start` delivers your text as a plain user turn. `agent message send`
