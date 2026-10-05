@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -48,15 +49,10 @@ func (c *agentCommand) codexHostTransferPath(uid string) (string, error) {
 	return filepath.Join(state, "codex-host-transfers", fmt.Sprintf("%x.json", sum[:])), nil
 }
 func readCodexHostTransfer(path string) (*codexHostTransferRecord, error) {
-	file, err := os.Open(path) // #nosec G304 -- digest path under private application state.
+	data, err := readCodexHostTransferBytes(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-	err = errors.Join(err, file.Close())
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +128,38 @@ func completeCodexHostTransfer(path string) error {
 		return errors.New("missing Codex transfer journal")
 	}
 	record.Phase = "completed"
-	if err = writeCodexHostTransfer(path+"."+record.Receipt.Token+".completed.json", record); err != nil {
+	archivePath := path + "." + record.Receipt.Token + ".completed.json"
+	if previous, readErr := readCodexHostTransfer(archivePath); readErr != nil {
+		return readErr
+	} else if previous != nil {
+		old := *previous
+		old.Phase = record.Phase
+		if old.TerminatedTarget == nil {
+			old.TerminatedTarget = record.TerminatedTarget
+		}
+		if !reflect.DeepEqual(old, *record) {
+			return errors.New("agent relaunch: completed archive changed; evidence retained")
+		}
+	}
+	if err = writeCodexHostTransfer(archivePath, record); err != nil {
 		return err
 	}
 	return removeCodexHostTransfer(path)
+}
+
+// All transfer-journal readers, including raw byte CAS, share the same bound.
+func readCodexHostTransferBytes(path string) ([]byte, error) {
+	file, err := os.Open(path) // #nosec G304 -- operation digest path under private application state.
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	err = errors.Join(readErr, file.Close())
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, errors.New("agent relaunch: Codex transfer journal exceeds its bounded record size; evidence retained")
+	}
+	return data, nil
 }

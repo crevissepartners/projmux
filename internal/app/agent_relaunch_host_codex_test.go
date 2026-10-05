@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -107,8 +109,9 @@ func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent
 	// all files remain under the caller-owned TMPDIR. No product limit changes.
 	if len(filepath.Join(f.root, "state/projmux/agent-control/control-"+strings.Repeat("a", 24)+".sock")) > localipc.MaxSocketPath {
 		short := ""
-		for _, letter := range "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" {
-			candidate := filepath.Join(os.TempDir(), string(letter))
+		letters := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		for index := 0; index < len(letters)*len(letters); index++ {
+			candidate := filepath.Join(os.TempDir(), string([]byte{letters[index/len(letters)], letters[index%len(letters)]}))
 			if err := os.Mkdir(candidate, 0700); err == nil {
 				short = candidate
 				break
@@ -242,10 +245,42 @@ func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent
 			current, _, err := localipc.Process(process.PID)
 			observed, socketErr := localipc.InspectOwnedSocket(address)
 			if err == nil && current.OwnerUID == uint32(os.Getuid()) && current == process && socketErr == nil && observed == socketIdentity {
-				_ = syscall.Kill(process.PID, syscall.SIGTERM)
+				if err := syscall.Kill(process.PID, syscall.SIGTERM); err == nil {
+					waitCodexFixturePeerExit(t, process)
+				}
 			}
 		})
 	}
+	// Native observers outlive the CLI that launched them. Stop only peers
+	// authenticated through this fixture's private control sockets, before
+	// removing its state root; otherwise their final writes recreate that root.
+	t.Cleanup(func() {
+		controls, _ := filepath.Glob(filepath.Join(paths.StateDir, "agent-control", "*.sock"))
+		for _, address := range controls {
+			identity, err := localipc.InspectOwnedSocket(address)
+			if err != nil {
+				continue
+			}
+			peer, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: address, Net: "unix"})
+			if err != nil {
+				continue
+			}
+			process, _, err := localipc.PeerProcess(peer)
+			_ = peer.Close()
+			if err != nil || process.OwnerUID != uint32(os.Getuid()) {
+				continue
+			}
+			current, _, err := localipc.Process(process.PID)
+			observed, socketErr := localipc.InspectOwnedSocket(address)
+			if err != nil || current != process || socketErr != nil || observed != identity {
+				continue
+			}
+			if err = syscall.Kill(process.PID, syscall.SIGTERM); err != nil {
+				continue
+			}
+			waitCodexFixturePeerExit(t, process)
+		}
+	})
 	return f, source, source.Status.PaneRef, socket
 }
 
@@ -558,4 +593,298 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 	if err != nil || record.TerminatedTarget == nil || record.TerminatedTarget.Status.LastTermination == nil {
 		t.Fatalf("recovery lost target actual Wait: %v", err)
 	}
+}
+
+func TestCodexHostMoveActualCLIPrepareAbortTerminal(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI")
+	}
+	f, source, _, socket := codexHostMoveCLIFixture(t)
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _ := reg.Agent(source.Metadata.UID)
+	pane, _ := reg.Pane(current.Status.PaneRef)
+	authority := pane.Status.Activation.Codex.Authority
+	domain, err := codexBrokerStateDomain(os.Getenv, os.UserHomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := codexbroker.NewEndpointKey(authority.StateDomainID, authority.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := codexbroker.DialTransfer(ctx, discovery, codexbroker.DialConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	from := codexbroker.TransferSource{Project: f.project, Window: f.window, Agent: current.Metadata.UID, Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation, Operation: pane.Status.Activation.OperationID, PaneRuntimeID: pane.Status.Activation.RuntimeID, RuntimeID: authority.BrokerRuntimeID, Thread: pane.Status.Activation.Codex.ThreadID, Endpoint: key, Fence: codexbroker.Fence{Connection: codexbroker.ConnectionEpoch(authority.ConnectionEpoch), Binding: codexbroker.BindingEpoch(authority.BindingEpoch)}}
+	pending, err := codexbroker.NewTransferReceipt(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Match the product's digest path, using actual records before admission.
+	sum := sha256.Sum256([]byte(current.Metadata.UID))
+	path := filepath.Join(paths.StateDir, "codex-host-transfers", fmt.Sprintf("%x.json", sum[:]))
+	record := &codexHostTransferRecord{Version: 1, Source: current.Clone(), Pane: pane.Clone(), Receipt: pending, Phase: "preparing"}
+	if err = writeCodexHostTransfer(path, record); err != nil {
+		t.Fatal(err)
+	}
+	transfer, err := conn.PrepareTransfer(ctx, pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = transfer.Abort(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = conn.InspectPrepareNoEffect(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	for _, drift := range []string{"annotations", "full-session"} {
+		_, _, err = f.store.UpdateConvergent(func(working *coremetadata.Registry) error {
+			a, _ := working.Agent(source.Metadata.UID)
+			if drift == "annotations" {
+				if a.Metadata.Annotations == nil {
+					a.Metadata.Annotations = map[string]string{}
+				}
+				a.Metadata.Annotations["fixture-drift"] = "changed"
+			} else {
+				a.Status.SessionRef.ObservedAt = a.Status.SessionRef.ObservedAt.Add(time.Second)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, refused := exec.CommandContext(ctx, f.binary, "agent", "relaunch", "uid:"+source.Metadata.UID, "--host", "tmux", "--socket-path", socket, "--yes").CombinedOutput()
+		if refused == nil {
+			t.Fatalf("changed %s cleared journal: %s", drift, out)
+		}
+		if _, err = os.Stat(path); err != nil {
+			t.Fatal("changed source evidence removed", err)
+		}
+		_, _, err = f.store.UpdateConvergent(func(working *coremetadata.Registry) error {
+			a, _ := working.Agent(source.Metadata.UID)
+			*a = record.Source.Clone()
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadFile(intmetadata.PathFor(paths.StateDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostCLIOutput(t, f, "agent", "relaunch", "uid:"+source.Metadata.UID, "--host", "tmux", "--socket-path", socket, "--yes")
+	after, err := os.ReadFile(intmetadata.PathFor(paths.StateDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("no-effect cleanup mutated Registry")
+	}
+	if _, err = os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("preparing journal retained: %v", err)
+	}
+	final, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := final.Agent(source.Metadata.UID)
+	if !reflect.DeepEqual(*got, record.Source) {
+		t.Fatal("no-effect cleanup changed source")
+	}
+}
+
+func TestCodexHostMoveActualCLIArchiveFailure(t *testing.T) {
+	for _, persistFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint(persistFailure), func(t *testing.T) { codexHostMoveArchiveFailureCLI(t, persistFailure) })
+	}
+}
+
+func codexHostMoveArchiveFailureCLI(t *testing.T, persistFailure bool) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI")
+	}
+	f, source, _, socket := codexHostMoveCLIFixture(t)
+	provider := filepath.Join(f.root, "codex-provider.py")
+	raw, err := os.ReadFile(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := filepath.Join(f.root, "dedicated-held")
+	release := filepath.Join(f.root, "dedicated-release")
+	injection := "elif method=='thread/resume':\n  import time\n  open(" + fmt.Sprintf("%q", entered) + ",'w').write('held')\n  while not os.path.exists(" + fmt.Sprintf("%q", release) + "):time.sleep(0.01)"
+	held := bytes.Replace(raw, []byte("elif method=='thread/resume':"), []byte(injection), 1)
+	if bytes.Equal(raw, held) {
+		t.Fatal("missing dedicated hold injection")
+	}
+	if err = os.WriteFile(provider, held, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, "agent", "relaunch", "uid:"+source.Metadata.UID, "--host", "process", "--socket-path", socket, "--yes")
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	waitCodexCreate(t, ctx, func() bool { _, err := os.Stat(entered); return err == nil })
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := filepath.Glob(filepath.Join(paths.StateDir, "codex-host-transfers", "*.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatal(files, err)
+	}
+	record, err := readCodexHostTransfer(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := files[0] + "." + record.Receipt.Token + ".completed.json"
+	if err = os.Mkdir(archive, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if persistFailure {
+		terminationPath := filepath.Join(paths.StateDir, terminationJournalFile)
+		if _, existingErr := os.Stat(terminationPath); existingErr == nil {
+			if err = os.Rename(terminationPath, terminationPath+".fixture-before-fault"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = os.Mkdir(terminationPath, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.WriteFile(release, []byte("go"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if persistFailure {
+		if err == nil || !bytes.Contains(output.Bytes(), []byte("retirement unknown")) {
+			t.Fatalf("undurable Wait fault=%v %s", err, output.String())
+		}
+		reg, readErr := f.store.LoadReadOnly()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		target, _ := reg.Agent(source.Metadata.UID)
+		if target.Status.PaneRef != record.Target.Pane || coremetadata.MatchesProcessWait(metadataProcessBinding(record.Target), target.Status.LastTermination) {
+			t.Fatal("undurable Wait restored source or fabricated proof")
+		}
+		if _, readErr = os.Stat(files[0]); readErr != nil {
+			t.Fatal("undurable Wait lost transfer evidence", readErr)
+		}
+		return
+	}
+	if err == nil || !bytes.Contains(output.Bytes(), []byte("Wait persisted")) {
+		t.Fatalf("archive fault=%v %s", err, output.String())
+	}
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := reg.Agent(source.Metadata.UID)
+	pane, ok := reg.Pane(record.Target.Pane)
+	if !ok || target.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(metadataProcessBinding(record.Target), pane.Status.LastTermination) || !coremetadata.SameProcessWait(pane.Status.LastTermination, target.Status.LastTermination) {
+		t.Fatal("archive failure lost durable target Wait")
+	}
+	journal, err := terminationJournalForRegistryPath(intmetadata.PathFor(paths.StateDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := journal.read()
+	if err != nil || len(receipts) == 0 {
+		t.Fatal("actual termination journal missing", err)
+	}
+	stable := target.Clone()
+	for _, drift := range []string{"annotations", "full-session"} {
+		_, _, err = f.store.UpdateConvergent(func(working *coremetadata.Registry) error {
+			a, _ := working.Agent(source.Metadata.UID)
+			if drift == "annotations" {
+				if a.Metadata.Annotations == nil {
+					a.Metadata.Annotations = map[string]string{}
+				}
+				a.Metadata.Annotations["fixture-drift"] = "changed"
+			} else {
+				a.Status.SessionRef.ObservedAt = a.Status.SessionRef.ObservedAt.Add(time.Second)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, refused := exec.CommandContext(ctx, f.binary, "agent", "relaunch", "uid:"+source.Metadata.UID, "--host", "tmux", "--socket-path", socket, "--yes").CombinedOutput()
+		if refused == nil {
+			t.Fatalf("changed target %s resumed: %s", drift, out)
+		}
+		if _, err = os.Stat(files[0]); err != nil {
+			t.Fatal("changed target evidence removed", err)
+		}
+		_, _, err = f.store.UpdateConvergent(func(working *coremetadata.Registry) error {
+			a, _ := working.Agent(source.Metadata.UID)
+			*a = stable.Clone()
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.Remove(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(provider, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hostCLIOutput(t, f, "agent", "relaunch", "uid:"+source.Metadata.UID, "--host", "tmux", "--socket-path", socket, "--yes")
+	final, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, _ := final.Agent(source.Metadata.UID)
+	if recovered.Status.Phase != coremetadata.PhaseRunning || !recovered.Status.SessionRef.SameConversation(source.Status.SessionRef) {
+		t.Fatal("completed process recovery did not resume same thread")
+	}
+}
+
+// Cleanup observes only this fixture's authenticated PID/birth, not provider
+// retirement evidence. Zombies cannot perform late state writes; they are not
+// converted into a supervisor Wait or usable launch authority.
+func waitCodexFixturePeerExit(t *testing.T, process coremetadata.ProcessIdentity) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		current, _, err := localipc.Process(process.PID)
+		if err != nil || current != process {
+			return
+		}
+		state, _ := exec.Command("ps", "-p", strconv.Itoa(process.PID), "-o", "stat=").Output()
+		if strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("owned fixture peer cleanup still running: pid=%d birth=%v", process.PID, process)
 }

@@ -138,6 +138,10 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	}
 	reservation, err := conn.PrepareTransfer(ctx, preparedReceipt)
 	if err != nil {
+		if cleanupErr := c.cleanupNoEffectCodexTransfer(context.WithoutCancel(ctx), journalPath, journal); cleanupErr == nil {
+			_ = conn.Close()
+			return fmt.Errorf("agent relaunch: prepare confirmed no-effect; source unchanged: %w", err)
+		}
 		_ = conn.Close()
 		return fmt.Errorf("agent relaunch: prepare outcome retained; recover with: %s: %w", codexTransferRecoveryCommand(target.Metadata.UID, request), err)
 	}
@@ -332,7 +336,7 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 			stopCancel()
 			snapshot, waitErr := owned.owner.waitProcessAgent(stopped, nil)
 			cause = errors.Join(cause, waitErr)
-			if snapshot.Exit == nil {
+			if snapshot.Exit == nil || waitErr != nil {
 				return fmt.Errorf("agent relaunch: target retirement unknown; inspect agent uid:%s; no replacement writer permitted: %w", binding.Agent, cause)
 			}
 		}
@@ -345,14 +349,21 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 			source.journal.TerminatedTarget = &copy
 			archivePath := source.journalPath
 			if handedOff {
-				source.journal.Phase = "completed"
+				source.journal.Phase = "handoff-retired"
+				if err := writeCodexHostTransfer(source.journalPath, source.journal); err != nil {
+					return errors.Join(cause, err)
+				}
 				archivePath += "." + source.journal.Receipt.Token + ".completed.json"
 			}
 			if err := writeCodexHostTransfer(archivePath, source.journal); err != nil {
-				return errors.Join(cause, err)
+				return fmt.Errorf("agent relaunch: owned target actual Wait persisted; archive failure retained; recover with: %s: %w", codexTransferRecoveryCommand(binding.Agent, source.request), errors.Join(cause, err))
 			}
 		}
 		_, restoreErr := creator.store.update(func(working *coremetadata.Registry) error {
+			current, ok := working.Agent(binding.Agent)
+			if !ok || !reflect.DeepEqual(current.Status.SessionRef, expected.Status.SessionRef) {
+				return processhost.ErrStale
+			}
 			return restoreTmuxTransferReservation(working, creator.store.mutator(), binding, expected, source.retired)
 		})
 		if restoreErr != nil {
@@ -421,7 +432,7 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 	}
 	handedOff = true
 	if err = completeCodexHostTransfer(source.journalPath); err != nil {
-		return err
+		return fail(err)
 	}
 	if prompt := strings.Join(source.request.prompt, " "); prompt != "" {
 		snapshot, err := owned.Handle.Observe(binding)

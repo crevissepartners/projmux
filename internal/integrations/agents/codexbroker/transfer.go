@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -52,6 +53,10 @@ func (b *Broker) PrepareTransfer(ctx context.Context, source TransferSource, own
 		return TransferReceipt{}, refuse(RefusalFrameInvalid, nil)
 	}
 	b.mu.Lock()
+	if _, terminal := b.prepareNoEffects[token]; terminal {
+		b.mu.Unlock()
+		return TransferReceipt{}, refuse(RefusalLeaseIdentityMismatch, nil)
+	}
 	bd := b.bindings[source.Thread]
 	if bd == nil {
 		b.mu.Unlock()
@@ -179,6 +184,9 @@ func (b *Broker) finishTransfer(receipt TransferReceipt, owner string, handoff b
 			delete(b.completedTransfers, b.transferCompletions[0])
 			b.transferCompletions = b.transferCompletions[1:]
 		}
+	}
+	if !handoff && !t.attempted {
+		b.rememberPrepareNoEffectLocked(t.receipt)
 	}
 	delete(b.transfers, receipt.Source.Thread)
 	b.signal()
@@ -373,4 +381,100 @@ func NewTransferReceipt(source TransferSource) (TransferReceipt, error) {
 		return TransferReceipt{}, err
 	}
 	return TransferReceipt{Source: source, Token: hex.EncodeToString(secret[:])}, nil
+}
+
+// PrepareNoEffect is terminal request evidence, never writer or retirement authority.
+// It is emitted only by this live broker for a refusal before admission or an
+// actual pre-unsubscribe abort. Absence and eviction remain unknown.
+type PrepareNoEffect struct {
+	Token    string
+	Source   TransferSource
+	Peer     codexappserver.PeerIdentity
+	Terminal string
+}
+
+func (b *Broker) rememberPrepareNoEffectLocked(receipt TransferReceipt) {
+	if b.prepareNoEffects == nil {
+		b.prepareNoEffects = make(map[string]PrepareNoEffect)
+	}
+	if _, exists := b.prepareNoEffects[receipt.Token]; exists {
+		return
+	}
+	b.prepareNoEffects[receipt.Token] = PrepareNoEffect{Token: receipt.Token, Source: receipt.Source, Peer: receipt.Peer, Terminal: "no-effect"}
+	b.prepareTerminals = append(b.prepareTerminals, receipt.Token)
+	if len(b.prepareTerminals) > 64 {
+		delete(b.prepareNoEffects, b.prepareTerminals[0])
+		b.prepareTerminals = b.prepareTerminals[1:]
+	}
+}
+
+// RecordPrepareRefusal is called at the correlated IPC refusal boundary. It
+// cannot turn an admitted/attempted request, changed authority or unknown peer
+// into a no-effect outcome.
+func (b *Broker) RecordPrepareRefusal(receipt TransferReceipt) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	decoded, err := hex.DecodeString(receipt.Token)
+	if err != nil || len(decoded) != 32 || !receipt.Source.valid() || b.closing || b.transfers[receipt.Source.Thread] != nil {
+		return
+	}
+	if _, completed := b.completedTransfers[receipt.Token]; completed {
+		return
+	}
+	bd := b.bindings[receipt.Source.Thread]
+	if bd == nil {
+		return
+	}
+	conn, err := bd.authorityLocked(receipt.Source.Fence)
+	if err != nil || !conn.peer.Valid() {
+		return
+	}
+	receipt.Peer = conn.peer
+	b.rememberPrepareNoEffectLocked(receipt)
+}
+
+func (b *Broker) InspectPrepareNoEffect(receipt TransferReceipt) (PrepareNoEffect, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	proof, ok := b.prepareNoEffects[receipt.Token]
+	if !ok || proof.Source != receipt.Source || proof.Terminal != "no-effect" || (receipt.Peer.Valid() && receipt.Peer != proof.Peer) || b.closing || b.transfers[receipt.Source.Thread] != nil {
+		return PrepareNoEffect{}, refuse(RefusalLeaseIdentityMismatch, nil)
+	}
+	bd := b.bindings[receipt.Source.Thread]
+	if bd == nil {
+		return PrepareNoEffect{}, refuse(RefusalBindingClosed, nil)
+	}
+	conn, err := bd.authorityLocked(receipt.Source.Fence)
+	if err != nil {
+		return PrepareNoEffect{}, err
+	}
+	if conn.peer != proof.Peer {
+		return PrepareNoEffect{}, refuse(RefusalLeaseIdentityMismatch, nil)
+	}
+	return proof, nil
+}
+
+func (c *Conn) InspectPrepareNoEffect(ctx context.Context, receipt TransferReceipt) (PrepareNoEffect, error) {
+	if receipt.Source.RuntimeID != c.runtime {
+		return PrepareNoEffect{}, refuse(RefusalRuntimeReplaced, nil)
+	}
+	params, err := encodeTransferRequest("inspect-no-effect", receipt)
+	if err != nil {
+		return PrepareNoEffect{}, err
+	}
+	reply, err := c.call(ctx, wireRequest{Kind: requestTransfer, Thread: receipt.Source.Thread, Params: params})
+	if err != nil {
+		return PrepareNoEffect{}, err
+	}
+	if reply.Kind == replyRefused {
+		return PrepareNoEffect{}, refuse(reply.Refusal, nil)
+	}
+	var proof PrepareNoEffect
+	if err = json.Unmarshal(reply.Result, &proof); err != nil {
+		return proof, err
+	}
+	if proof.Token != receipt.Token || proof.Source != receipt.Source || !proof.Peer.Valid() || proof.Terminal != "no-effect" {
+		return PrepareNoEffect{}, refuse(RefusalLeaseIdentityMismatch, nil)
+	}
+	return proof, nil
 }

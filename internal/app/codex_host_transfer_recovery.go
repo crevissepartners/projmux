@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -35,6 +36,11 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 	}
 	if currentRecord == nil || !reflect.DeepEqual(currentRecord, record) {
 		return processhost.ErrStale
+	}
+	if record.Phase == "preparing" {
+		if err := c.cleanupNoEffectCodexTransfer(context.Background(), path, record); err == nil {
+			return writeAgentRelaunchResult(stdout, request, agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeResumed, CurrentHost: "tmux", TargetHost: "tmux", NewPaneUID: record.Pane.Metadata.UID})
+		}
 	}
 	if record.NativeTarget != nil {
 		status, inspectErr := c.inspectCodexHostTransfer(context.Background(), record)
@@ -74,7 +80,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		// A surviving source may only receive pre-unsubscribe abort, never a new
 		// writer. The exact original activation and recipe must still be present.
 		old, present := reg.Pane(record.Pane.Metadata.UID)
-		if !present || !reflect.DeepEqual(old.Status.Activation, record.Pane.Status.Activation) || !reflect.DeepEqual(target.Spec, record.Source.Spec) || !reflect.DeepEqual(target.Metadata.Annotations, record.Source.Metadata.Annotations) || (record.Phase != "prepared" && record.Phase != "preparing") {
+		if !present || !reflect.DeepEqual(old.Status.Activation, record.Pane.Status.Activation) || !reflect.DeepEqual(target.Status.SessionRef, record.Source.Status.SessionRef) || !reflect.DeepEqual(target.Spec, record.Source.Spec) || !reflect.DeepEqual(target.Metadata.Annotations, record.Source.Metadata.Annotations) || (record.Phase != "prepared" && record.Phase != "preparing") {
 			return fmt.Errorf("agent relaunch: source retirement remains unknown: %w", err)
 		}
 		transfer, err := c.reclaimCodexHostTransfer(ctx, record)
@@ -162,6 +168,10 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 			}
 		}
 		_, err := c.store.update(func(working *coremetadata.Registry) error {
+			current, ok := working.Agent(record.Target.Agent)
+			if !ok || !reflect.DeepEqual(current.Status.SessionRef, record.Expected.Status.SessionRef) {
+				return processhost.ErrStale
+			}
 			return restoreTmuxTransferReservation(working, c.store.mutator(), record.Target, *record.Expected, *record.Retired)
 		})
 		if err != nil {
@@ -272,3 +282,64 @@ func verifyCompletedNativeTransfer(reg coremetadata.Registry, record *codexHostT
 	}
 	return nil
 }
+
+// No-effect terminal cleanup consumes live broker proof and an unchanged source
+// under the Registry transaction. It launches nothing and restores no authority.
+func (c *agentCommand) cleanupNoEffectCodexTransfer(ctx context.Context, path string, record *codexHostTransferRecord) error {
+	if record.Phase != "preparing" || record.Retired != nil || record.Target != (processhost.Binding{}) || record.NativeTarget != nil {
+		return processhost.ErrStale
+	}
+	before, err := readCodexHostTransferBytes(path)
+	if err != nil {
+		return err
+	}
+	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	domain, err := codexBrokerStateDomain(c.lookupEnv, os.UserHomeDir)
+	if err != nil {
+		return err
+	}
+	discovery, err := codexBrokerDiscoveryForEndpoint(domain, record.Receipt.Source.Endpoint)
+	if err != nil {
+		return err
+	}
+	conn, err := codexbroker.DialTransfer(bounded, discovery, codexbroker.DialConfig{})
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err = conn.InspectPrepareNoEffect(bounded, record.Receipt); err != nil {
+		return err
+	}
+	_, err = c.store.update(func(working *coremetadata.Registry) error {
+		current, ok := working.Agent(record.Source.Metadata.UID)
+		pane, present := working.Pane(record.Pane.Metadata.UID)
+		if !ok || !present || !reflect.DeepEqual(*current, record.Source) || !reflect.DeepEqual(*pane, record.Pane) {
+			return processhost.ErrStale
+		}
+		now, readErr := readCodexHostTransferBytes(path)
+		if readErr != nil {
+			return readErr
+		}
+		if !bytes.Equal(before, now) {
+			return processhost.ErrStale
+		}
+		currentRecord, readErr := readCodexHostTransfer(path)
+		if readErr != nil {
+			return readErr
+		}
+		if !reflect.DeepEqual(currentRecord, record) {
+			return processhost.ErrStale
+		}
+		if err := removeCodexHostTransfer(path); err != nil {
+			return err
+		}
+		return errCodexNoEffectCleaned
+	})
+	if errors.Is(err, errCodexNoEffectCleaned) {
+		return nil
+	}
+	return err
+}
+
+var errCodexNoEffectCleaned = errors.New("codex preparing journal cleared without registry mutation")

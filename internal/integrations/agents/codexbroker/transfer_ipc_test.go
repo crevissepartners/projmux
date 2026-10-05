@@ -90,3 +90,98 @@ func TestTransferIPCOrphanPinsIdleHostAndExactRecovery(t *testing.T) {
 		t.Fatal("handoff left reservation")
 	}
 }
+
+func TestTransferIPCPrepareNoEffectTerminal(t *testing.T) {
+	discovery := newRuntimeDiscovery(t)
+	e := &transferEndpoint{fakeEndpoint: newFakeEndpoint(), loaded: true}
+	b, err := NewBroker(Config{Opener: func(context.Context) (Endpoint, error) { return e, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	host, err := StartHost(HostConfig{Discovery: discovery, Broker: b, IdleTimeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close() })
+	client := dialTestClient(t, discovery, ProtocolRange{})
+	_, fence := boundRemote(t, client, "thread-one")
+	conn, err := DialTransfer(t.Context(), discovery, DialConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	source := sourceFor(fence)
+	source.RuntimeID = conn.runtime
+	source.Endpoint = discovery.Endpoint()
+	pending, err := NewTransferReceipt(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.mu.Lock()
+	host.draining = true
+	host.mu.Unlock()
+	if _, err = conn.PrepareTransfer(t.Context(), pending); RefusalOf(err) != RefusalDrainRequired {
+		t.Fatal(err)
+	}
+	proof, err := conn.InspectPrepareNoEffect(t.Context(), pending)
+	if err != nil || proof.Source != source || proof.Token != pending.Token || !proof.Peer.Valid() {
+		t.Fatalf("proof=%+v err=%v", proof, err)
+	}
+	if _, err = conn.InspectTransfer(t.Context(), pending); err == nil {
+		t.Fatal("no-effect fabricated receipt")
+	}
+	host.mu.Lock()
+	host.draining = false
+	host.mu.Unlock()
+	if _, err = conn.PrepareTransfer(t.Context(), pending); err == nil {
+		t.Fatal("terminal token readmitted")
+	}
+	fresh, _ := NewTransferReceipt(source)
+	transfer, err := conn.PrepareTransfer(t.Context(), fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = conn.InspectPrepareNoEffect(t.Context(), fresh); err == nil {
+		t.Fatal("admitted treated as no-effect")
+	}
+	if err = transfer.Abort(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = conn.InspectPrepareNoEffect(t.Context(), fresh); err != nil {
+		t.Fatal(err)
+	}
+	bad := fresh
+	bad.Source.Operation = "foreign"
+	if _, err = conn.InspectPrepareNoEffect(t.Context(), bad); err == nil {
+		t.Fatal("foreign source consumed proof")
+	}
+	b.mu.Lock()
+	b.conn.peer.Start = "changed"
+	b.mu.Unlock()
+	if _, err = conn.InspectPrepareNoEffect(t.Context(), fresh); err == nil {
+		t.Fatal("changed peer consumed proof")
+	}
+}
+
+func TestPrepareNoEffectEvictionAndUnknown(t *testing.T) {
+	b, _, _, fence := transferBroker(t)
+	first, _ := NewTransferReceipt(sourceFor(fence))
+	if _, err := b.InspectPrepareNoEffect(first); err == nil {
+		t.Fatal("absence is not proof")
+	}
+	b.RecordPrepareRefusal(first)
+	for range 64 {
+		next, _ := NewTransferReceipt(sourceFor(fence))
+		b.RecordPrepareRefusal(next)
+	}
+	if _, err := b.InspectPrepareNoEffect(first); err == nil {
+		t.Fatal("eviction is not proof")
+	}
+	b.mu.Lock()
+	count := len(b.prepareNoEffects)
+	b.mu.Unlock()
+	if count != 64 {
+		t.Fatal(count)
+	}
+}

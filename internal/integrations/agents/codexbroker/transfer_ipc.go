@@ -49,10 +49,20 @@ func (s *session) handleTransfer(request wireRequest) {
 	switch input.Action {
 	case "prepare":
 		if reason := s.host.refusingWork(); reason != RefusalNone {
+			s.host.broker.RecordPrepareRefusal(input.Receipt)
 			s.refuse(request.ID, reason)
 			return
 		}
 		receipt, err = s.host.broker.PrepareTransfer(ctx, receipt.Source, s.id, receipt.Token)
+	case "inspect-no-effect":
+		proof, proofErr := s.host.broker.InspectPrepareNoEffect(receipt)
+		if proofErr != nil {
+			s.refuse(request.ID, RefusalOf(proofErr))
+			return
+		}
+		raw, _ := json.Marshal(proof)
+		s.reply(request.ID, wireReply{Kind: replyResult, Result: raw})
+		return
 	case "inspect":
 		receipt, err = s.host.broker.InspectTransfer(receipt)
 	case "reclaim":
@@ -99,6 +109,9 @@ func (s *session) handleTransfer(request wireRequest) {
 		err = refuse(RefusalRequestUnknown, nil)
 	}
 	if err != nil {
+		if input.Action == "prepare" {
+			s.host.broker.RecordPrepareRefusal(input.Receipt)
+		}
 		reason := RefusalOf(err)
 		if reason == RefusalNone {
 			reason = RefusalEndpointRefused

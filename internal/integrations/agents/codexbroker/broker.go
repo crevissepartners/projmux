@@ -82,6 +82,8 @@ type Broker struct {
 	transfers           map[string]*threadTransfer
 	completedTransfers  map[string]TransferReceipt
 	transferCompletions []string
+	prepareNoEffects    map[string]PrepareNoEffect
+	prepareTerminals    []string
 	diag                Diagnostics
 	// revocations counts involuntary binding terminations by closed reason.
 	// It is a separate map rather than a Diagnostics field so the snapshot the

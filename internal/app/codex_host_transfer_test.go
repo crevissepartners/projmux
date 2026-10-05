@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -111,5 +112,51 @@ func TestCodexCompletedNativeReceiptRequiresCurrentExactWriter(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, f.store.registry) {
 		t.Fatal("receipt inspection mutated current writer")
+	}
+}
+
+func TestCodexCompletedJournalPartialPublicationAndConflict(t *testing.T) {
+	f := newRelaunchFixture(t)
+	source := f.agent(t).Clone()
+	pane, _ := f.store.registry.Pane(personaAttachPane)
+	record := &codexHostTransferRecord{Version: 1, Source: source, Pane: pane.Clone(), Receipt: codexbroker.TransferReceipt{Token: "original", Source: codexbroker.TransferSource{Agent: source.Metadata.UID, Pane: pane.Metadata.UID}}, Phase: "ready"}
+	path := filepath.Join(t.TempDir(), "pending.json")
+	archive := path + ".original.completed.json"
+	for _, conflict := range []bool{false, true} {
+		if err := writeCodexHostTransfer(path, record); err != nil {
+			t.Fatal(err)
+		}
+		completed := *record
+		completed.Phase = "completed"
+		if conflict {
+			completed.Source.Metadata.Name = "changed"
+		}
+		if err := writeCodexHostTransfer(archive, &completed); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = completeCodexHostTransfer(path)
+		if conflict {
+			if err == nil {
+				t.Fatal("conflicting archive overwritten")
+			}
+			after, _ := os.ReadFile(archive)
+			if !bytes.Equal(before, after) {
+				t.Fatal("conflicting evidence changed")
+			}
+			if _, err = os.Stat(path); err != nil {
+				t.Fatal("pending evidence removed")
+			}
+		} else {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("partial publication not finalized")
+			}
+		}
 	}
 }
