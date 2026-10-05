@@ -95,12 +95,29 @@ func (p *Handle) admitLocked(ctx context.Context, a Authority) error {
 	if a.Binding != p.launch.Binding || a.Connection != p.connection || a.Session != p.session {
 		return ErrStale
 	}
+	return p.admitOwnershipLocked(ctx, a.Binding)
+}
+
+// Lifecycle admission depends on the owned generation, even before init has
+// established a conversation. Turns and answers still require full authority.
+func (p *Handle) admitOwnershipLocked(ctx context.Context, binding Binding) error {
+	if binding != p.launch.Binding {
+		return ErrStale
+	}
 	if p.state != "starting" && p.state != "ready" {
 		return ErrClosed
 	}
 	currentCtx, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
 	defer cancel()
 	return p.host.tx.Current(currentCtx, p.launch.Binding)
+}
+
+// ValidateOwnership validates an exact process lifetime for Stop. It grants
+// no session, turn or answer authority.
+func (p *Handle) ValidateOwnership(ctx context.Context, binding Binding) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.admitOwnershipLocked(ctx, binding)
 }
 
 // ValidateAuthority checks current ownership before a consumer projects a

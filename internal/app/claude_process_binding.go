@@ -200,7 +200,13 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 			return
 		}
 		r := *request.Foreground
-		result := controlProcessForeground(bounded, peer, r, s.currentForeground, func() error { return applyClaudeForeground(bounded, s.handle, r) })
+		current := s.currentForeground
+		if r.Action == "stop" {
+			current = func(ctx context.Context, a processhost.Authority) error {
+				return s.currentForegroundBinding(ctx, a.Binding)
+			}
+		}
+		result := controlProcessForeground(bounded, peer, r, current, func() error { return applyClaudeForeground(bounded, s.handle, r) })
 		_ = localipc.WriteJSON(conn, result)
 		return
 	}
@@ -330,6 +336,13 @@ func nextClaudeProcessRegistration(current *coremetadata.ClaudeRegistration, gen
 // chain as registration, without registering hooks or writing Registry state.
 func (s *claudeProcessService) currentForeground(ctx context.Context, a processhost.Authority) error {
 	if a.Binding != s.binding || s.handle.ValidateAuthority(ctx, a) != nil {
+		return processhost.ErrStale
+	}
+	return s.currentForegroundBinding(ctx, a.Binding)
+}
+
+func (s *claudeProcessService) currentForegroundBinding(ctx context.Context, b processhost.Binding) error {
+	if b != s.binding || s.handle.ValidateOwnership(ctx, b) != nil {
 		return processhost.ErrStale
 	}
 	snap, err := s.handle.Observe(s.binding)

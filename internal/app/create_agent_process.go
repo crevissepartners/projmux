@@ -408,7 +408,7 @@ func (c *createCommand) processCreateTransactions(path string) processhost.Trans
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		_, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+		err := updateProcessAgentSession(path, b, nil, false, true, nil, func(reg *coremetadata.Registry) error {
 			activation, _, ok := reg.CurrentProcessActivation(metadataProcessBinding(b))
 			if !ok {
 				return processhost.ErrStale
@@ -516,10 +516,18 @@ func (r *processAgentCreateResult) persistProcessWait(snapshot processhost.Snaps
 	if err = journal.append(receipt); err != nil {
 		return err
 	}
-	_, _, err = intmetadata.NewStore(r.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+	err = updateProcessAgentSession(r.registryPath, r.Binding, nil, true, snapshot.Session != "", nil, func(reg *coremetadata.Registry) error {
 		activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(r.Binding))
 		if !current {
 			return processhost.ErrStale
+		}
+		// SessionStart can reserve a Claude id before stream init. Actual Wait
+		// proves this child never initialized; do not turn that reservation into
+		// a resumable conversation or a future backfill source.
+		agent, _ := reg.Agent(r.Binding.Agent)
+		pane, _ := reg.Pane(r.Binding.Pane)
+		if r.Provider == aiModeClaude && snapshot.Session == "" && agent.Status.SessionRef == nil && pane.Status.ProcessSession.History == nil {
+			pane.Status.ProcessSession.SessionID = ""
 		}
 		return intmetadata.DefaultMutator().RecordProcessWait(reg, activation, receipt)
 	})
@@ -545,7 +553,7 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 	for _, request := range snapshot.Pending {
 		record.Pending = append(record.Pending, processRecordedControl(request))
 	}
-	_, _, err := intmetadata.NewStore(r.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+	err := updateProcessAgentSession(r.registryPath, r.Binding, nil, true, snapshot.Session != "", nil, func(reg *coremetadata.Registry) error {
 		activation, _, current := reg.CurrentProcessActivation(record.Binding)
 		if !current {
 			return processhost.ErrStale

@@ -35,6 +35,9 @@ func newProcessCodexCreateCLI(t *testing.T) processCodexCreateCLI {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_HOME", filepath.Join(f.root, ".codex"))
+	if err := os.MkdirAll(filepath.Join(f.root, ".codex"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	script := "import signal\nsignal.signal(signal.SIGTERM,lambda *_: sys.exit(0))\n"
 	// Install the handler after importing sys. No provider/API credentials or
 	// ambient daemon are used by this exact executable protocol fixture.
@@ -186,7 +189,7 @@ func TestProcessCodexCreateInitializationRollbackActualCLI(t *testing.T) {
 	before, _ := f.store.LoadReadOnly()
 	path := filepath.Join(f.root, "codex-provider.py")
 	raw, _ := os.ReadFile(path)
-	raw = bytes.Replace(raw, []byte("if method=='initialize':reply({'userAgent':'fixture/0.160.0'})"), []byte("if method=='initialize':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture init refusal'}})"), 1)
+	raw = bytes.Replace(raw, []byte("if method=='initialize':reply({'userAgent':'projmux/0.160.0'})"), []byte("if method=='initialize':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture init refusal'}})"), 1)
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +305,9 @@ func TestProcessCodexCreateHooksAndOutputActualCLI(t *testing.T) {
 			}
 			agent := reg.Agents[0]
 			normalized := strings.NewReplacer(agent.Metadata.UID, "AGENT", agent.Status.PaneRef, "PANE", f.project, "PROJECT", f.window, "WINDOW", f.root, "ROOT").Replace(stdout.String())
+			if agent.Status.SessionRef != nil && agent.Status.SessionRef.Codex != nil && agent.Status.SessionRef.Codex.Endpoint != nil {
+				normalized = strings.ReplaceAll(normalized, agent.Status.SessionRef.Codex.Endpoint.StateDomainID, "STATE_DOMAIN")
+			}
 			normalized = regexp.MustCompile(`\d{4}-\d\d-\d\dT[^" ]+Z`).ReplaceAllString(normalized, "TIME")
 			want := map[string]string{"uid": "AGENT\n", "name": "owned\n", "ref": "agent/owned\n"}[mode]
 			if want == "" {

@@ -49,7 +49,7 @@ for line in sys.stdin:
  n=json.loads(line)
  def reply(result):emit({'id':n['id'],'result':result})
  method=n.get('method','')
- if method=='initialize':reply({'userAgent':'fixture/0.160.0'})
+ if method=='initialize':reply({'userAgent':'projmux/0.160.0'})
  elif method=='initialized':pass
  elif method=='thread/start':
   p=n['params'];reply({'thread':{'id':'process-thread'},'model':p['model'],'reasoningEffort':p['config']['model_reasoning_effort'],'sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'})
@@ -147,6 +147,9 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 			continue
 		}
 		env = append(env, v)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0700); err != nil {
+		t.Fatal(err)
 	}
 	env = append(env, "HOME="+root, "CODEX_HOME="+filepath.Join(root, ".codex"), "PMX_TEST_PROCESS_CODEX_CHILD=1")
 	limits := processhost.DefaultLimits()

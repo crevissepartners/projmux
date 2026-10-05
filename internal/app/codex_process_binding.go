@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -150,7 +151,30 @@ func startProcessCodex(ctx context.Context, host *processhost.Host, launch proce
 	}
 	b := endpoint.binding
 	activation := coremetadata.ProcessActivation{Binding: coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}, HostProcess: endpoint.evidence.HostProcess, Child: endpoint.evidence.Process}
-	_, _, err = intmetadata.NewStore(registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+	obs := coremetadata.AgentSessionObservation{Provider: aiModeCodex, ThreadID: snap.Session}
+	negotiated, err := endpoint.handle.NegotiatedVersion(b)
+	if err != nil {
+		rollback()
+		return endpoint, err
+	}
+	if negotiated != "" {
+		lookup := func(key string) string {
+			for _, entry := range launch.Command.Env {
+				name, value, ok := strings.Cut(entry, "=")
+				if ok && name == key {
+					return value
+				}
+			}
+			return ""
+		}
+		domain, domainErr := defaultCodexStateDomainID(lookup, func() (string, error) { return lookup("HOME"), nil })
+		if domainErr != nil {
+			rollback()
+			return endpoint, domainErr
+		}
+		obs.Endpoint = &coremetadata.CodexEndpointRef{StateDomainID: domain, EndpointGenerationID: "codex-" + negotiated}
+	}
+	err = updateProcessAgentSession(registryPath, b, &obs, false, true, nil, func(reg *coremetadata.Registry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

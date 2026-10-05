@@ -356,6 +356,22 @@ func TestProcessClaudeRelaunchDigestChangesActualCLI(t *testing.T) {
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
 	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	// SessionStart reserves the id before stream init. Wait for the durable
+	// ref and the initialized, completed first turn before comparing a
+	// read-only preview against the whole Registry.
+	waitCodexCreate(t, ctx, func() bool {
+		reg, err := f.store.LoadReadOnly()
+		if err != nil {
+			return false
+		}
+		agent, found := reg.Agent(old.Binding.AgentUID)
+		pane, present := reg.Pane(old.Binding.PaneUID)
+		return found && present && agent.Status.SessionRef != nil &&
+			agent.Status.SessionRef.Claude != nil && agent.Status.SessionRef.Claude.SessionID == old.SessionID &&
+			agent.Status.Activation.State == coremetadata.ActivationAcknowledged &&
+			pane.Status.ProcessSession != nil && pane.Status.ProcessSession.SessionID == old.SessionID &&
+			pane.Status.ProcessSession.TurnID == ""
+	})
 	before, err := f.store.LoadReadOnly()
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +393,9 @@ func TestProcessClaudeRelaunchDigestChangesActualCLI(t *testing.T) {
 	}
 	afterPreview, _ := f.store.LoadReadOnly()
 	if !reflect.DeepEqual(before, afterPreview) {
-		t.Fatal("digest preview changed Registry")
+		beforeJSON, _ := json.Marshal(before)
+		afterJSON, _ := json.Marshal(afterPreview)
+		t.Fatalf("digest preview changed Registry: before=%s after=%s", beforeJSON, afterJSON)
 	}
 	second, result := startProcessRelaunchCLI(t, ctx, f, first.ref, "--yes", "--", "digest task")
 	current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {

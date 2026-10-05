@@ -19,7 +19,7 @@ import (
 // <state>/agent-session-history.jsonl, so the conversations it left stay
 // listable (`agent sessions list`, `agent sessions project`).
 //
-// The writers of observed rows are a closed set of four functions:
+// The writers of observed rows are a closed set of five functions:
 //
 //   - agent_session_ref.go persistAgentSessionRef (hook ingest);
 //   - agent_session_ref.go persistManagedAgentInteractionWithActivationPolicy
@@ -27,6 +27,9 @@ import (
 //   - create_intent.go openIntentAgent (resume-picker create, and native
 //     Codex create through the intent path);
 //   - create_agent.go createAgent (native Codex fresh create).
+//
+//   - process_agent_session.go updateProcessAgentSession (process owner
+//     initialization and writer backfill).
 //
 // Each follows the same two steps:
 //
@@ -41,7 +44,7 @@ import (
 //
 // TestClaudeSessionRefWritersRecordHistory pins the callers of
 // RecordAgentSessionRef, and
-// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of four
+// TestSessionHistoryObservedRowWritersCarryAffiliation pins the set of five
 // and that no other code builds an observed row with RecordFor, so a new
 // writer cannot land without the history or without its affiliation.
 //

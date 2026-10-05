@@ -201,6 +201,20 @@ func codexFixture(mode string) {
 func codexSettings() CodexConfig {
 	return CodexConfig{Version: "0.1.0", DeveloperInstructions: "fixture persona", Settings: codexappserver.ThreadSettings{Model: "fixture-model", Effort: "high", Policy: codexappserver.ThreadPolicy{Sandbox: "read-only", ApprovalPolicy: "on-request"}}}
 }
+
+func TestCodexNegotiatedVersionUsesExactOwnedWire(t *testing.T) {
+	host := testHost(t, nil)
+	handle, launch, _ := codexStart(t, host, "codex-normal")
+	got, err := handle.NegotiatedVersion(launch.Binding)
+	if err != nil || got != "0.160.0" {
+		t.Fatalf("negotiated version %q: %v", got, err)
+	}
+	foreign := launch.Binding
+	foreign.Generation = "foreign"
+	if _, err := handle.NegotiatedVersion(foreign); !errors.Is(err, ErrStale) {
+		t.Fatalf("foreign generation: %v", err)
+	}
+}
 func codexStart(t *testing.T, host *Host, mode string) (*CodexHandle, Launch, string) {
 	t.Helper()
 	log := filepath.Join(t.TempDir(), "wire.jsonl")
@@ -653,6 +667,31 @@ func TestCodexInterruptResultBeforeAckKeepsExactTurn(t *testing.T) {
 		}
 	}
 	if err := c.Turn(context.Background(), a, "next", "hold"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessLifecycleOwnershipBeforeInitKeepsSessionControlsFenced(t *testing.T) {
+	handle := start(t, testHost(t, nil), "normal")
+	a := authority(handle)
+	a.Session = "hook-reservation"
+	if err := handle.ValidateAuthority(context.Background(), a); !errors.Is(err, ErrStale) {
+		t.Fatalf("uninitialized session authority: %v", err)
+	}
+	if err := handle.ValidateOwnership(context.Background(), a.Binding); err != nil {
+		t.Fatal(err)
+	}
+	foreign := a.Binding
+	foreign.Generation = "foreign"
+	if err := handle.ValidateOwnership(context.Background(), foreign); !errors.Is(err, ErrStale) {
+		t.Fatalf("foreign lifecycle: %v", err)
+	}
+	if err := handle.Stop(a.Binding); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := handle.Wait(ctx, a.Binding); err != nil {
 		t.Fatal(err)
 	}
 }
