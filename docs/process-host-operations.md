@@ -9,9 +9,10 @@ output, exit codes, and the opt-in `post-create` hook contract are in
 fields are in [Registry process evidence](registry.md#process-evidence).
 
 A new process Claude Agent starts with `--permission-mode auto`. The flag takes
-precedence over `permissions.defaultMode` in Claude settings. Resuming, moving
-between hosts, or replaying a deferred launch keeps the argv the Agent already
-had and adds no mode.
+precedence over `permissions.defaultMode` in Claude settings. Only creation
+passes it, and projmux does not record the mode: resuming the Agent or moving it
+between hosts starts Claude without `--permission-mode`, and a deferred launch
+replays the command it stored.
 
 ## Driving the Agent from another terminal
 
