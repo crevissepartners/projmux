@@ -34,11 +34,12 @@ type deferredClaimRecord struct {
 }
 
 type deferredProcessClaim struct {
-	mu      sync.Mutex
-	command *agentCommand
-	options processAgentResumeOptions
-	record  deferredClaimRecord
-	path    string
+	mu             sync.Mutex
+	inputOperation string
+	command        *agentCommand
+	options        processAgentResumeOptions
+	record         deferredClaimRecord
+	path           string
 }
 
 func (c *agentCommand) deferredClaimPath(uid string) string {
@@ -150,6 +151,10 @@ func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options pr
 	if err != nil {
 		return nil, err
 	}
+	candidate, _, err = c.prepareDeferredLaunch(ctx, candidate, options)
+	if err != nil {
+		return nil, err
+	}
 	path := c.deferredClaimPath(candidate.Agent.Metadata.UID)
 	if path == "" {
 		return nil, errors.New("process-host-unavailable: deferred claim store unavailable")
@@ -195,6 +200,9 @@ func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options pr
 	if err = writeDeferredClaim(path, claim.record); err != nil {
 		return nil, err
 	}
+	if err = c.reclaimDeferredInput(claim.record); err != nil {
+		return nil, errors.Join(err, removeDeferredState(path))
+	}
 	return claim, nil
 }
 
@@ -214,6 +222,9 @@ func (claim *deferredProcessClaim) Close() error {
 	// Keep an unsettled write witness across claimant death/close.
 	if record.Inflight != "" {
 		return nil
+	}
+	if err = claim.command.closeDeferredInput(claim.record); err != nil {
+		return err
 	}
 	return os.Remove(claim.path)
 }

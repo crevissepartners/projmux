@@ -135,7 +135,18 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		return result, err
 	}
 	path := intmetadata.PathFor(state)
-	plan, config, settingsPlan, err := c.planProcessResume(candidate, request.options)
+	candidate, deferredLaunch, err := c.prepareDeferredLaunch(ctx, candidate, request.options)
+	if err != nil {
+		return result, err
+	}
+	var plan processhost.Command
+	var config processhost.CodexConfig
+	var settingsPlan agentSettingsLaunch
+	if deferredLaunch != nil {
+		plan, err = c.frozenDeferredCommand(candidate, deferredLaunch)
+	} else {
+		plan, config, settingsPlan, err = c.planProcessResume(candidate, request.options)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -149,7 +160,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	b := processSchemaBinding(candidate.Record.Binding)
 	b.Host, b.Generation, b.Operation = operation, generation, operation
-	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b, request.options.claim); err != nil {
+	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b, request.options.claim, deferredLaunch); err != nil {
 		return result, err
 	}
 	result = c.processResumeResult(candidate, b, path)
@@ -157,12 +168,28 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		if result.hasNoChild() {
 			err = errors.Join(err, result.restoreReservation())
 		}
+		if deferredLaunch != nil {
+			err = result.fail(err)
+			err = errors.Join(err, c.finishDeferredLaunch(deferredLaunch, result, false))
+		}
 		return result, fmt.Errorf("%s: %w: %w", processResumeRefused, processhost.ErrResumeRefused, err)
+	}
+	if deferredLaunch != nil {
+		changed, controls, attention, syncErr := result.resumeSynchronization(creator)
+		if syncErr != nil {
+			err = result.fail(syncErr)
+			return result, errors.Join(err, c.finishDeferredLaunch(deferredLaunch, result, false))
+		}
+		result.deferredSynchronization = &processResumeSynchronization{changed, controls, attention}
+		if err = c.finishDeferredLaunch(deferredLaunch, result, true); err != nil {
+			err = result.fail(err)
+			return result, errors.Join(err, c.finishDeferredLaunch(deferredLaunch, result, false))
+		}
 	}
 	return result, nil
 }
 
-func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding, claim *deferredProcessClaim) error {
+func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding, claim *deferredProcessClaim, prepared ...*deferredLaunchRecord) error {
 	unlock, lockErr := lockDeferredClaim(c.deferredClaimPath(binding.Agent))
 	if lockErr != nil {
 		return lockErr
@@ -170,6 +197,14 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 	defer unlock()
 	if err := c.checkDeferredClaim(binding.Agent, claim); err != nil {
 		return err
+	}
+	if err := c.admitDeferredInput(claim); err != nil {
+		return err
+	}
+	if len(prepared) > 0 && prepared[0] != nil {
+		if err := c.prepareDeferredAttempt(candidate, binding, prepared[0]); err != nil {
+			return err
+		}
 	}
 	state, err := c.rebind.create.store.stateDir()
 	if err != nil {

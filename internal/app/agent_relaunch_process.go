@@ -61,8 +61,9 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 		return err
 	}
 	result := recipe.result(target, pane, request)
+	deferred := recipe.restart.provider == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
 	changesLayers := recipe.restart.settings.resolution.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
-	if recipe.restart.running && request.model == "" && len(recipe.restart.settings.resolution.Reasons) == 0 && !(changesLayers && recipe.restart.settings.resolution.LayersChanged()) && len(request.prompt) == 0 {
+	if !deferred && recipe.restart.running && request.model == "" && len(recipe.restart.settings.resolution.Reasons) == 0 && !(changesLayers && recipe.restart.settings.resolution.LayersChanged()) && len(request.prompt) == 0 {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = pane.Metadata.UID
 		return writeAgentRelaunchResult(stdout, request, result)
@@ -83,6 +84,9 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 	candidate, err := c.stopProcessRelaunch(ctx, reg, target, pane, request, recipe.restart)
 	if err != nil {
 		return err
+	}
+	if deferred {
+		return c.startDeferredRelaunch(ctx, cancel, candidate, request, recipe, launch, result, stdout, stderr)
 	}
 	return c.startProcessRelaunch(ctx, cancel, reg, candidate, request, recipe, launch, result, stdout, stderr)
 }
@@ -215,9 +219,6 @@ func (c *agentCommand) planProcessRelaunchLaunch(target coremetadata.Agent, pane
 		return processRelaunchLaunch{}, r.restart.refuse(relaunchReasonAgentBusy, fmt.Sprintf("is %s with interaction %s; restarting would cut that turn; re-run with --yes", target.Status.Phase, r.restart.interaction))
 	}
 	prompt := strings.Join(request.prompt, " ")
-	if r.restart.provider == aiModeClaude && strings.TrimSpace(prompt) == "" {
-		return processRelaunchLaunch{}, usageError("agent relaunch: process Claude requires -- <prompt>; nothing was changed")
-	}
 	// Resolve all provider arguments before retiring the writer. Resume's planner
 	// reads the resolved annotation recipe; relaunch retains its own layer sources.
 	launchSettings := r.restart.settings.writeSnapshot()
@@ -322,8 +323,10 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
 }
 
-func runProcessRelaunchOwner(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, sync processRelaunchSynchronization) error {
-	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
+func runProcessRelaunchOwner(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, sync processRelaunchSynchronization, stdinWatched ...bool) error {
+	if len(stdinWatched) == 0 || !stdinWatched[0] {
+		go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
+	}
 	snapshot, waitErr := owned.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(sync.changed, func(snapshot processhost.Snapshot) error {
 		if len(snapshot.Pending) > 0 {
 			return sync.controls(context.WithoutCancel(ctx))

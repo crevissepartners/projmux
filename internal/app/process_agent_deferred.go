@@ -46,6 +46,9 @@ func (claim *deferredProcessClaim) WaitPeer(ctx context.Context) (processAgentRe
 		if err := claim.command.checkDeferredClaim(claim.record.Agent, claim); err != nil {
 			return processAgentResumeResult{}, err
 		}
+		if result, handled, err := claim.resumeDeferredInput(ctx); handled || err != nil {
+			return result, err
+		}
 		held, err := claim.held()
 		if err != nil {
 			return processAgentResumeResult{}, err
@@ -206,6 +209,9 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 		return result, result.fail(syncErr)
 	}
 	result.deferredSynchronization = &processResumeSynchronization{changed, controls, attention}
+	if err = c.settleDeferredInput(claim, true, false, result.Binding.Operation+"-resume", ""); err != nil {
+		return result, result.fail(err)
+	}
 	if err = claim.drain(ctx, result); err != nil && err != ctx.Err() {
 		return result, result.fail(err)
 	}
