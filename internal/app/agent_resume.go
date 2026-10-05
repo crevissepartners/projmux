@@ -340,6 +340,8 @@ type agentResumePlan struct {
 	// stoppedPane is the managed Pane a restart closed right before this
 	// rebind. Empty on every other rebind.
 	stoppedPane stoppedAgentPane
+	// retiredProcess is supplied only by host relaunch after exact supervisor Wait.
+	retiredProcess *processResumeCandidate
 }
 
 // settingsRequest is what this rebind asks of the Agent's layers.
@@ -721,6 +723,12 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		agent, ok := working.Agent(plan.agentUID)
 		if !ok {
 			return fmt.Errorf("%s: agent %q disappeared before the rebind ran", spelling, plan.agentUID)
+		}
+		if plan.retiredProcess != nil {
+			if err := retireProcessPaneForTmux(working, mutator, *plan.retiredProcess); err != nil {
+				return err
+			}
+			agent, _ = working.Agent(plan.agentUID)
 		}
 		// The preflight ran against a read-only snapshot and the reconciler has
 		// since run inside this transaction. Re-checking the two facts the plan

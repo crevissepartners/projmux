@@ -68,12 +68,15 @@ type agentRelaunchResult struct {
 	Unchanged            bool                              `json:"unchanged"`
 	CurrentSettings      agentsettings.Settings            `json:"currentSettings"`
 	NewSettings          agentsettings.Settings            `json:"newSettings"`
+	CurrentHost          string                            `json:"currentHost"`
+	TargetHost           string                            `json:"targetHost"`
 	RelaunchReasons      []string                          `json:"relaunchReasons"`
 }
 
 // agentRelaunchRequest is one parsed `agent relaunch` argv.
 type agentRelaunchRequest struct {
 	agentRef string
+	host     string
 	prompt   []string
 	model    string
 	effort   string
@@ -163,6 +166,10 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *agentCommand) dispatchRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	current := relaunchCurrentHost(registry, target)
+	if request.host != "" && request.host != current {
+		return c.runHostRelaunch(registry, target, request, stdout, stderr)
+	}
 	if pane, ambiguous := processResumePane(registry, target.Metadata.UID); pane != nil && !ambiguous && (target.Spec.Provider == aiModeClaude || target.Spec.Provider == aiModeCodex) {
 		return c.runProcessRelaunch(registry, target, *pane, request, stdout, stderr)
 	}
@@ -204,7 +211,7 @@ func (c *agentCommand) runTmuxRelaunch(registry coremetadata.Registry, target co
 	settings := restart.settings.resolution
 	running := restart.running
 	result := agentRelaunchResult{
-		Action: "relaunch", DryRun: request.dryRun,
+		Action: "relaunch", DryRun: request.dryRun, CurrentHost: "tmux", TargetHost: "tmux",
 		AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider,
 		Phase: target.Status.Phase, Interaction: restart.interaction, PaneUID: restart.paneUID,
 		CurrentEffort: target.Metadata.Annotations[coremetadata.AnnotationAgentEffort], CurrentModel: target.Metadata.Annotations[coremetadata.AnnotationAgentModel],
@@ -335,6 +342,13 @@ func parseAgentRelaunchArgs(args []string, stderr io.Writer) (agentRelaunchReque
 		request.instructions = &name
 		return err
 	})
+	fs.Func("host", "execution host: tmux or process; omitted keeps the current host", func(value string) error {
+		if value != "tmux" && value != "process" {
+			return fmt.Errorf("--host must be tmux or process; nothing was changed")
+		}
+		request.host = value
+		return nil
+	})
 	fs.StringVar(&request.model, "model", "", "claude or codex: model name the relaunch runs; recorded on the Agent")
 	fs.StringVar(&request.effort, "effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
 	fs.Func("reset", "remove the override of these items so they follow the profile again: "+strings.Join(agentsettings.Items(), ",")+", or all", func(value string) error {
@@ -417,6 +431,9 @@ func parseRelaunchReset(value string) ([]string, error) {
 // order the usage line declares them.
 func relaunchOverrideFlags(request agentRelaunchRequest) string {
 	var flags string
+	if request.host != "" {
+		flags += " --host " + request.host
+	}
 	if request.profile != nil {
 		flags += " --profile " + personaCommandWord(cmp.Or(*request.profile, relaunchNone))
 	}

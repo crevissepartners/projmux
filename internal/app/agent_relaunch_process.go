@@ -131,7 +131,7 @@ func (c *agentCommand) validateProcessRelaunch(reg coremetadata.Registry, target
 }
 
 func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, refuse func(string, string) error) (processRelaunchRecipe, error) {
-	provider := pane.Status.ProcessSession.Provider
+	provider := coremetadata.NormalizeProvider(target.Spec.Provider)
 	window, ok := reg.Window(target.Metadata.OwnerUID())
 	if !ok {
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "has no owning Window")
@@ -147,6 +147,9 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "process launcher is unavailable")
 	}
 	guidance := ai.PlanProcessAgentGuidance()
+	if request.host == "tmux" {
+		guidance = planAgentGuidanceWith(c.rebind.launcher, provider, target.Metadata.Annotations)
+	}
 	guidance.recorded = target.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]
 	links := planProjectLinksWith(c.rebind.launcher, provider, *project, target.Metadata.Annotations)
 	settingsRequest := request.settings().withPromptParts(guidance, links)
@@ -204,7 +207,7 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 
 func (r processRelaunchRecipe) result(target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest) agentRelaunchResult {
 	settings := r.restart.settings.resolution
-	return agentRelaunchResult{Action: "relaunch", DryRun: request.dryRun, AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: r.restart.provider, Phase: target.Status.Phase, Interaction: r.restart.interaction, PaneUID: pane.Metadata.UID, CurrentEffort: target.Metadata.Annotations[coremetadata.AnnotationAgentEffort], CurrentModel: target.Metadata.Annotations[coremetadata.AnnotationAgentModel], NewEffort: request.effort, NewModel: request.model, Restart: r.restart.running, ConfirmationRequired: r.restart.confirmationRequired(), CurrentSettings: settings.Current, NewSettings: settings.New, RelaunchReasons: append([]string{}, settings.Reasons...)}
+	return agentRelaunchResult{CurrentHost: "process", TargetHost: "process", Action: "relaunch", DryRun: request.dryRun, AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: r.restart.provider, Phase: target.Status.Phase, Interaction: r.restart.interaction, PaneUID: pane.Metadata.UID, CurrentEffort: target.Metadata.Annotations[coremetadata.AnnotationAgentEffort], CurrentModel: target.Metadata.Annotations[coremetadata.AnnotationAgentModel], NewEffort: request.effort, NewModel: request.model, Restart: r.restart.running, ConfirmationRequired: r.restart.confirmationRequired(), CurrentSettings: settings.Current, NewSettings: settings.New, RelaunchReasons: append([]string{}, settings.Reasons...)}
 }
 
 func (c *agentCommand) planProcessRelaunchLaunch(target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, r processRelaunchRecipe) (processRelaunchLaunch, error) {
@@ -343,7 +346,7 @@ func processRelaunchRecovery(reg coremetadata.Registry, target coremetadata.Agen
 	command := relaunchRerunCommand(reg, target, request)
 	if len(request.prompt) > 0 {
 		command += " -- " + personaCommandWord(strings.Join(request.prompt, " "))
-	} else if target.Spec.Provider == aiModeClaude {
+	} else if target.Spec.Provider == aiModeClaude && request.host != "tmux" {
 		command += " -- <prompt>"
 	}
 	return command

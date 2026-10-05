@@ -415,7 +415,7 @@ func (p *Handle) consume(raw []byte) error {
 		if frame.Session == "" || p.turn == "" || (p.hookSession != "" && p.hookSession != frame.Session) {
 			return errors.New("init without session or first input")
 		}
-		if p.launch.resume != nil && frame.Session != p.launch.resume.Session {
+		if session := p.launch.expectedResumeSession(); session != "" && frame.Session != session {
 			return errors.New("claude resume returned a different session")
 		}
 		if p.session == frame.Session {
