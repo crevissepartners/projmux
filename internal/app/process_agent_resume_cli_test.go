@@ -667,9 +667,7 @@ func TestDeferredPeerWakeAndKilledClaimantActualCLI(t *testing.T) {
 				}
 				// SIGSTOP keeps the exact claimant alive while messages accumulate; SIGKILL
 				// then proves takeover without Close, before any frame has been dispatched.
-				if err := claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-					t.Fatal(err)
-				}
+				deferredPauseClaimant(t, ctx, f, first.ref, claim)
 				refs := []string{"deferred-first", "deferred-second", "deferred-third"}
 				state := filepath.Dir(filepath.Dir(f.store.Path()))
 				store := messagestore.NewStore(state)
@@ -793,9 +791,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--name", "source", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "source task"))
 			awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
 			claim := startDeferredCLIClaim(t, ctx, f, first.ref)
-			if err := claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-				t.Fatal(err)
-			}
+			deferredPauseClaimant(t, ctx, f, first.ref, claim)
 			send := func(ref, ttl string) {
 				out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--ttl", ttl, "--", "deferred task").CombinedOutput()
 				if err != nil || !bytes.Contains(out, []byte("held")) {
@@ -837,9 +833,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			claim = startDeferredCLIClaim(t, ctx, f, first.ref)
-			if err = claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-				t.Fatal(err)
-			}
+			deferredPauseClaimant(t, ctx, f, first.ref, claim)
 			replacement := "import sys\nif '--resume' in sys.argv: sys.exit(7)\n" + string(raw)
 			if provider == aiModeCodex {
 				replacement = strings.Replace(string(raw), "elif method in ('thread/start','thread/resume'):", "elif method=='thread/resume':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture resume refusal'}})\n elif method=='thread/start':", 1)
@@ -940,9 +934,7 @@ func TestDeferredSupervisorSpawnFailureActualCLI(t *testing.T) {
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--", "source task"))
 	awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
 	run := startDeferredCLIClaim(t, ctx, f, first.ref)
-	if err := run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	deferredPauseClaimant(t, ctx, f, first.ref, run)
 	out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", "deferred-spawn-failure", "--", "peer task").CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte("held")) {
 		t.Fatalf("send: %v %s", err, out)
@@ -1132,9 +1124,7 @@ func TestDeferredTailDrainKeepsControlsResponsiveActualCLI(t *testing.T) {
 		return !bytes.Contains(out, []byte("source Agent is not eligible"))
 	})
 	claim := startDeferredCLIClaim(t, ctx, f, first.ref)
-	if err = claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	deferredPauseClaimant(t, ctx, f, first.ref, claim)
 	for _, ref := range []string{"controls-first", "controls-tail"} {
 		out, e := send(ref)
 		if e != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
@@ -1209,9 +1199,7 @@ func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			claim := startDeferredCLIClaim(t, ctx, f, target.ref)
-			if err = claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-				t.Fatal(err)
-			}
+			deferredPauseClaimant(t, ctx, f, target.ref, claim)
 			for _, ref := range []string{"eof-first", "eof-tail"} {
 				out, e := send(ref)
 				if e != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {

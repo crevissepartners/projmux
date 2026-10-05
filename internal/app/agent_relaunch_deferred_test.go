@@ -366,9 +366,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			writeCodexProfileFile(t, profiles, "delayed", "model = \"changed-model\"\neffort = \"low\"\n[permissions]\nallow = [\"Bash\"]\n")
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
 			deferredReady(t, ctx, f, source.ref)
-			if err = run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-				t.Fatal(err)
-			}
+			deferredPauseClaimant(t, ctx, f, first.ref, run)
 			record := deferredPeer(t, ctx, f, source.ref, first.ref, "delayed-peer", "peer exact\ncontent")
 			expected, err := deferredPeerText(record)
 			if err != nil {
@@ -568,9 +566,7 @@ func TestDeferredClaudeRelaunchUserCompetitionAndCancelActualCLI(t *testing.T) {
 	deferredReady(t, ctx, f, first.ref)
 	first.shutdown(t)
 	run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model")
-	if err := run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	deferredPauseClaimant(t, ctx, f, first.ref, run)
 	uid := strings.TrimPrefix(first.ref, "uid:")
 	c := deferredFixtureCommand(f)
 	caller := exec.CommandContext(ctx, f.binary, "agent", "turn", "start", first.ref, "--", "cancelled raw input")
@@ -650,9 +646,7 @@ func TestDeferredClaudeRelaunchPeerFirstRejectsUserActualCLI(t *testing.T) {
 	run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "new-model")
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
 	deferredReady(t, ctx, f, source.ref)
-	if err := run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	deferredPauseClaimant(t, ctx, f, first.ref, run)
 	record := deferredPeer(t, ctx, f, source.ref, first.ref, "peer-first", "peer first\nexact content")
 	expected, err := deferredPeerText(record)
 	if err != nil {
@@ -766,4 +760,31 @@ func TestDeferredClaudeRelaunchGoUserWinsPendingSlotActualCLI(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Pause only after excluding every claim critical section, and prove stopped
+// before releasing the guard so a live claimant never retains it while parked.
+func deferredPauseClaimant(t *testing.T, ctx context.Context, f processCreateCLI, ref string, run *deferredCLIClaim) {
+	t.Helper()
+	uid := strings.TrimPrefix(ref, "uid:")
+	path := deferredFixtureCommand(f).deferredClaimPath(uid)
+	unlock, err := lockDeferredClaim(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	record, err := readDeferredClaim(path)
+	if err != nil || record.Process.PID != run.cmd.Process.Pid || !deferredClaimLive(record) || !deferredClaimMatches(record, mustRegistry(t, f), uid) {
+		t.Fatal("claimant pause authority", record, err)
+	}
+	if err = run.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	processCLIUntil(t, ctx, func() bool {
+		out, err := exec.CommandContext(ctx, "/bin/ps", "-o", "state=", "-p", fmt.Sprint(record.Process.PID)).CombinedOutput()
+		if err != nil {
+			t.Fatal("owned claimant stopped proof", err, string(out))
+		}
+		return strings.HasPrefix(strings.TrimSpace(string(out)), "T")
+	})
 }
