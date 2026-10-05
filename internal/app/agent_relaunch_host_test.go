@@ -18,6 +18,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -366,4 +367,107 @@ func TestTmuxTransferRequiresBothMirrorAndProviderRetirement(t *testing.T) {
 	if err := command.verifyTmuxTransferRetirement("retired-pane", identity, request); err == nil {
 		t.Fatal("live mirror admitted transfer")
 	}
+}
+
+func TestClaudeHostMoveDeferredClaimActualCLI(t *testing.T) {
+	for _, mode := range []string{"closed", "stale"} {
+		t.Run(mode, func(t *testing.T) {
+			f, source, _, socket := hostMoveCLIFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+			defer cancel()
+			ref := "uid:" + source.Metadata.UID
+			owner, _ := startProcessRelaunchCLI(t, ctx, f, ref, "--host", "process", "--socket-path", socket, "--yes", "--", "continue")
+			owner.shutdown(t)
+			old := awaitProcessResumeRecord(t, ctx, f, ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			c := &agentCommand{loadRegistry: f.store.LoadReadOnly, messagePaths: agentMessagePaths{registryPath: f.store.Path()}}
+			options := processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: source.Metadata.UID}}
+			// Establish a candidate, then acquire a competing claim without any Registry mutation.
+			if _, err := c.processResumeCandidate(processAgentResumeRequest{options: options}); err != nil {
+				t.Fatal(err)
+			}
+			claim, err := c.claimDeferredProcessAgent(ctx, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = claim.Close() })
+			before, _ := f.store.LoadReadOnly()
+			inventory, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire, _ := os.ReadFile(f.trace)
+			args := []string{"agent", "relaunch", ref, "--host", "tmux", "--yes", "-o", "json"}
+			output, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+			if err == nil || !bytes.Contains(output, []byte(processResumeOwned)) {
+				t.Fatalf("live claim bypassed: %v %s", err, output)
+			}
+			after, _ := f.store.LoadReadOnly()
+			nextInventory, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}").Output()
+			nextWire, _ := os.ReadFile(f.trace)
+			currentClaim, readErr := readDeferredClaim(claim.path)
+			if err != nil || readErr != nil || currentClaim != claim.record || !reflect.DeepEqual(before, after) || !bytes.Equal(inventory, nextInventory) || !bytes.Equal(wire, nextWire) {
+				t.Fatal("refused host move mutated target, provider, or claim")
+			}
+			if mode == "closed" {
+				if err := claim.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				stale := claim.record
+				stale.Process.Start += "-different-birth"
+				if err := writeDeferredClaim(claim.path, stale); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var moved agentRelaunchResult
+			if err := json.Unmarshal(hostCLIOutput(t, f, args...), &moved); err != nil {
+				t.Fatal(err)
+			}
+			final, _ := f.store.LoadReadOnly()
+			agent, _ := final.Agent(source.Metadata.UID)
+			if moved.AgentUID != source.Metadata.UID || moved.NewPaneUID == old.Binding.PaneUID || agent.Status.SessionRef.ConversationID() != old.SessionID {
+				t.Fatal("released/stale claim migration lost identity")
+			}
+			if _, found := final.Pane(old.Binding.PaneUID); found {
+				t.Fatal("old process Pane retained")
+			}
+		})
+	}
+}
+
+func TestClaudeHostMoveFinalFenceAfterCandidateClaim(t *testing.T) {
+	c, options := deferredClaimFixture(t)
+	old, err := c.processResumeCandidate(processAgentResumeRequest{options: options})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The claim lands after the caller captured its retired candidate. No Registry value changes.
+	claim, err := c.claimDeferredProcessAgent(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = claim.Close() })
+	before, _ := c.loadRegistry()
+	plan := agentResumePlan{agentUID: old.Agent.Metadata.UID, retiredProcess: &old}
+	err = c.rebindRetiredProcessToTmux(plan, io.Discard, io.Discard)
+	if !errors.Is(err, processhost.ErrResumeRefused) || !strings.HasPrefix(err.Error(), processResumeOwned+":") {
+		t.Fatal("final migration fence bypassed competing claim", err)
+	}
+	after, _ := c.loadRegistry()
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("final fence changed source")
+	}
+	// Both refusal and rebind-error paths must release the sidecar lock.
+	if err := claim.Close(); err != nil {
+		t.Fatal("refusal retained sidecar lock", err)
+	}
+	err = c.rebindRetiredProcessToTmux(plan, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "materialization seam is not configured") {
+		t.Fatal("closed claim did not reach rebind", err)
+	}
+	unlock, err := lockDeferredClaim(claim.path)
+	if err != nil {
+		t.Fatal("rebind error retained sidecar lock", err)
+	}
+	unlock()
 }

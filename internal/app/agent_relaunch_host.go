@@ -127,7 +127,7 @@ func (c *agentCommand) moveProcessClaudeToTmux(reg coremetadata.Registry, target
 	if request.json {
 		forward = io.Discard
 	}
-	if err := c.rebind.rebind(agentRelaunchSpelling, plan, forward, stderr); err != nil {
+	if err := c.rebindRetiredProcessToTmux(plan, forward, stderr); err != nil {
 		return fmt.Errorf("agent relaunch: tmux launch failed; previous process recipe and conversation retained; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
 	}
 	after, err := c.loadRegistry()
@@ -143,6 +143,20 @@ func (c *agentCommand) moveProcessClaudeToTmux(reg coremetadata.Registry, target
 		result.Outcome = personaOutcomeRestarted
 	}
 	return writeAgentRelaunchResult(stdout, request, result)
+}
+
+// Claim acquisition re-reads its candidate under this same sidecar lock.
+// Keep sidecar -> Registry order, after actual Wait and only through rebind.
+func (c *agentCommand) rebindRetiredProcessToTmux(plan agentResumePlan, stdout, stderr io.Writer) error {
+	unlock, err := lockDeferredClaim(c.deferredClaimPath(plan.agentUID))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := c.checkDeferredClaim(plan.agentUID, nil); err != nil {
+		return err
+	}
+	return c.rebind.rebind(agentRelaunchSpelling, plan, stdout, stderr)
 }
 
 type tmuxRelaunchSource struct {
