@@ -34,11 +34,13 @@ type deferredClaimRecord struct {
 }
 
 type deferredProcessClaim struct {
-	mu      sync.Mutex
-	command *agentCommand
-	options processAgentResumeOptions
-	record  deferredClaimRecord
-	path    string
+	mu             sync.Mutex
+	inputOperation string
+	launchDigest   string
+	command        *agentCommand
+	options        processAgentResumeOptions
+	record         deferredClaimRecord
+	path           string
 }
 
 func (c *agentCommand) deferredClaimPath(uid string) string {
@@ -141,12 +143,17 @@ func (c *agentCommand) checkDeferredClaim(uid string, claim *deferredProcessClai
 	return nil
 }
 
-func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options processAgentResumeOptions) (*deferredProcessClaim, error) {
+func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options processAgentResumeOptions, replacement ...bool) (*deferredProcessClaim, error) {
 	request, err := newProcessAgentResumeRequest(options)
 	if err != nil {
 		return nil, err
 	}
 	candidate, err := c.processResumeCandidate(request)
+	if err != nil {
+		return nil, err
+	}
+	explicit := len(replacement) > 0 && replacement[0]
+	candidate, prepared, err := c.prepareDeferredLaunchMode(ctx, candidate, options, explicit)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +175,15 @@ func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options pr
 	}
 	if deferredClaimLive(old) {
 		return nil, deferredClaimOwned()
+	}
+	if explicit {
+		current, e := c.readDeferredLaunch(candidate.Agent.Metadata.UID)
+		if e != nil {
+			return nil, e
+		}
+		if deferredLaunchDigest(current) != deferredLaunchDigest(prepared) {
+			return nil, deferredRefused("replacement launch changed")
+		}
 	}
 	// Re-read under the guard: ordinary resume reservations take this same lock.
 	candidate, err = c.processResumeCandidate(request)
@@ -191,9 +207,12 @@ func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options pr
 	if err != nil {
 		return nil, err
 	}
-	claim := &deferredProcessClaim{command: c, options: options, path: path, record: deferredClaimRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Binding: candidate.Record.Binding, Provider: candidate.Record.Provider, Session: candidate.Record.SessionID, Thread: candidate.Record.ThreadID, Process: identity, Nonce: nonce}}
+	claim := &deferredProcessClaim{command: c, options: options, path: path, launchDigest: deferredLaunchDigest(prepared), record: deferredClaimRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Binding: candidate.Record.Binding, Provider: candidate.Record.Provider, Session: candidate.Record.SessionID, Thread: candidate.Record.ThreadID, Process: identity, Nonce: nonce}}
 	if err = writeDeferredClaim(path, claim.record); err != nil {
 		return nil, err
+	}
+	if err = c.reclaimDeferredInput(claim.record); err != nil {
+		return nil, errors.Join(err, removeDeferredState(path))
 	}
 	return claim, nil
 }
@@ -214,6 +233,9 @@ func (claim *deferredProcessClaim) Close() error {
 	// Keep an unsettled write witness across claimant death/close.
 	if record.Inflight != "" {
 		return nil
+	}
+	if err = claim.command.closeDeferredInput(claim.record); err != nil {
+		return err
 	}
 	return os.Remove(claim.path)
 }

@@ -14,6 +14,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
+    "agent_relaunch_deferred_test.go",
     "agent_relaunch_process_claude_test.go",
     "agent_relaunch_host_test.go",
     "agent_relaunch_process_codex_test.go",

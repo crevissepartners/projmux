@@ -130,9 +130,29 @@ Use [`agent relaunch`](cli.md#projmux-agent-relaunch) from an external terminal
 to change a process Claude or Codex Agent's model, effort or profile. It keeps
 the Agent, Pane and conversation, stops the old owned provider, verifies its
 actual supervisor Wait and owner retirement, then starts a new foreground
-owner. Keep stdin open for that owner's lifetime. Claude requires a first
-prompt; Codex can reattach without one. A failed launch preserves the previous
-settings and recorded conversation and prints the recovery command.
+owner. Keep stdin open for that owner's lifetime. Codex can reattach without
+one. On the same process host, an omitted or whitespace-only Claude prompt
+instead stops the old provider and waits without a child, even with unchanged
+settings. It prints `foreground=claimed`, then the usual relaunch result after
+first input. JSON puts ownership lines on stderr. The new resolved arguments,
+workspace and referenced configuration snapshots are durably frozen in private
+state; the environment and first input are not part of that launch record.
+
+The first peer message starts that configuration with its existing untrusted
+coordination envelope. An operator can instead submit `agent turn start` from
+another terminal; that text becomes the raw first user frame. Success is
+reported only after verified same-session init. Concurrent accepted input is
+refused as busy. The internal user deadline is 30 seconds: pending cancellation
+or expiry prevents submission, while an uncertain handoff is reported without
+automatic replay. Terminal input records remove the raw text.
+
+EOF, INT or TERM before input release the claim and exit 0, preserving the
+configuration. After SIGKILL, `agent resume <agent-ref> --wait-for-peer` reclaims
+it. A changed referenced snapshot or a conflicting model/effort override is
+refused without replacing the stored configuration. Failed startup retains the
+new configuration only with exact supervisor Wait and the same conversation;
+ambiguous evidence requires inspection. Prompt-bearing relaunch retains its
+existing failure recovery. Claude host transfer still requires a prompt.
 
 Codex cannot replace the instructions of an existing thread. A request that
 changes those instructions is refused before Stop, as is a profile switch

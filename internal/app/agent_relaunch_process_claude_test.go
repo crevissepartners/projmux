@@ -128,7 +128,6 @@ func TestProcessClaudeRelaunchActualCLI(t *testing.T) {
 		want  string
 	}{
 		{[]string{"--model", "new-model", "--", "unconfirmed"}, relaunchReasonAgentBusy},
-		{[]string{"--model", "new-model", "--yes"}, "requires -- <prompt>"},
 		{[]string{"--profile", "missing", "--yes", "--", "task"}, "profile-not-found"},
 	} {
 		out, err := exec.CommandContext(ctx, f.binary, append([]string{"agent", "relaunch", first.ref}, tc.flags...)...).CombinedOutput()

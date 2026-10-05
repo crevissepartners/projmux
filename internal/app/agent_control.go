@@ -889,6 +889,9 @@ func (c *agentCommand) resolveTurnControlBinding(action, ref, text string, stdou
 	if err != nil {
 		return exactAgentControlBinding{}, false, err
 	}
+	if handled, err := c.startDeferredUserTurn(reg, agent, text, stdout); handled || err != nil {
+		return exactAgentControlBinding{}, handled, err
+	}
 	handled, err := c.startProcessClaudeTurn(reg, agent, text, stdout)
 	if handled || err != nil {
 		return exactAgentControlBinding{}, handled, err
