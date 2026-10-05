@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
 // agentResumeLauncher is the provider-launch seam of `agent resume`.
@@ -297,6 +299,7 @@ func (c *aiCommand) BindResumedAgentPaneWithSourceOnRoute(
 // agentResumePlan is one preflighted rebind: everything `agent resume` fixed
 // from the read-only registry before it opened the store.
 type agentResumePlan struct {
+	codexTransfer     *codexNativeRebindTransfer
 	dialogueReplyOnly bool
 	agentUID          string
 	agentName         string
@@ -701,6 +704,16 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		return fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w",
 			spelling, plan.agentName, plan.provider, plan.conversationID, err)
 	}
+	var reservedNative *codexNativeReservedInit
+	if plan.codexTransfer != nil {
+		initCtx, cancel := prepareNativeContext(context.Background())
+		effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
+		reservedNative, err = plan.codexTransfer.initialize(initCtx, r, plan, workspace, settings, links, guidance, resumed, codexappserver.ThreadSettings{Model: settings.model(plan.modelOverride), Effort: effort, Policy: nativePolicy})
+		cancel()
+		if err != nil {
+			return nativeLaunchError(spelling, err)
+		}
+	}
 	var nativeLifecycleTargetAfterCommit codexLifecycleObserverTarget
 
 	for _, other := range plan.shared {
@@ -735,7 +748,12 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// rests on -- the Agent is still resumable, and it is still the same
 		// conversation -- is what stops a concurrent hook or transition from
 		// turning this into a rebind of something else.
-		if err := requireResumablePhase(spelling, agent); err != nil {
+		if reservedNative != nil {
+			reserved, present := working.Pane(reservedNative.Pane.Metadata.UID)
+			if !present || agent.Status.Phase != coremetadata.PhasePending || agent.Status.PaneRef != reservedNative.Pane.Metadata.UID || !sameHostTransferSpec(agent.Spec, reservedNative.Expected.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, reservedNative.Expected.Metadata.Annotations) || !reflect.DeepEqual(agent.Status.SessionRef, reservedNative.Expected.Status.SessionRef) || !reflect.DeepEqual(reserved.Status.Activation, reservedNative.Pane.Status.Activation) {
+				return errors.New(spelling + ": native transfer reservation changed before commit")
+			}
+		} else if err := requireResumablePhase(spelling, agent); err != nil {
 			return err
 		}
 		if !agent.Status.SessionRef.SameConversation(plan.ref) {
@@ -810,7 +828,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// such row and no restart, it gets the `<agent>-pane` name `create agent`
 		// gives. A name that cannot be carried is disclosed and never refuses
 		// the resume.
-		paneName, reason := r.handOffResumedPaneName(ctx, working, mutator, *agent, plan)
+		paneName, reason := "", ""
+		if reservedNative == nil {
+			paneName, reason = r.handOffResumedPaneName(ctx, working, mutator, *agent, plan)
+		}
 		nameReason = reason
 		if agent, ok = working.Agent(plan.agentUID); !ok {
 			return fmt.Errorf("%s: agent %q disappeared before the rebind ran", spelling, plan.agentUID)
@@ -821,7 +842,20 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// closed transition table. No Agent is created and no name is allocated
 		// for one, so the uid and metadata.name are structurally untouchable
 		// here.
-		pane, attachReason, err := attachAgentPaneWithName(working, mutator, plan.agentUID, contextDir, paneName, operationID)
+		var pane coremetadata.Pane
+		var attachReason string
+		if reservedNative != nil {
+			observed, present := working.Pane(reservedNative.Pane.Metadata.UID)
+			if !present {
+				return errors.New(spelling + ": native reserved Pane disappeared")
+			}
+			pane = observed.Clone()
+			if _, err = mutator.TransitionAgent(working, plan.agentUID, coremetadata.PhaseRunning, ""); err != nil {
+				return err
+			}
+		} else {
+			pane, attachReason, err = attachAgentPaneWithName(working, mutator, plan.agentUID, contextDir, paneName, operationID)
+		}
 		if err != nil {
 			return MapMetadataError(err)
 		}
@@ -846,11 +880,17 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// fresh generation. That is what makes a late receipt from the process
 		// this resume replaced recognizable as stale instead of being applied
 		// to the Pane the operator is now looking at.
-		activation, err := r.create.issuePaneActivation(working, mutator, pane.Metadata.UID, plan.agentUID, operationID)
+		var activation superviseSpec
+		if reservedNative != nil {
+			activation = reservedNative.Activation
+		} else {
+			activation, err = r.create.issuePaneActivation(working, mutator, pane.Metadata.UID, plan.agentUID, operationID)
+		}
 		if err != nil {
 			return err
 		}
 		activation.DialogueReplyOnly = plan.dialogueReplyOnly
+
 		workTitle := title
 		workLaunchArgv := launchArgv
 		usedNative := false
@@ -869,8 +909,15 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// default arm and the whole transaction rolls back.
 			model := settings.model(plan.modelOverride)
 			effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
-			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID,
-				codexappserver.ThreadSettings{Model: model, Effort: effort, Policy: nativePolicy})
+			var prepared codexappserver.ThreadBinding
+			var nativeErr error
+			nativeSettings := codexappserver.ThreadSettings{Model: model, Effort: effort, Policy: nativePolicy}
+			if plan.codexTransfer != nil {
+				prepared = reservedNative.Binding
+				nativeErr = plan.codexTransfer.check(nativeCtx)
+			} else {
+				prepared, nativeErr = r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID, nativeSettings)
+			}
 			cancel()
 			switch {
 			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):
@@ -919,11 +966,19 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			return err
 		}
 		if usedNative {
+			var transferGrant *codexbroker.NativeTransferGrant
+			if plan.codexTransfer != nil {
+				transferGrant, err = plan.codexTransfer.grant(ctx, *working, pane, activation, paneID)
+				if err != nil {
+					return err
+				}
+			}
 			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, plan.topic, nativeThreadID); err != nil {
 				return fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", spelling, paneID, err)
 			}
 			if nativeLifecycleCapable {
 				nativeLifecycleTargetAfterCommit = codexLifecycleObserverTarget{
+					TransferGrant: transferGrant,
 					Identity: codexLifecycleIdentity{
 						AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
 						Generation: activation.Generation, ThreadID: nativeThreadID,
@@ -942,7 +997,15 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		return err
 	}
 	if nativeLifecycleTargetAfterCommit.valid() {
-		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTargetAfterCommit)
+		startup := nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTargetAfterCommit)
+		if plan.codexTransfer != nil {
+			if startup.Status != codexObserverStartupReady {
+				return errors.New(spelling + ": native transfer observer is not ready; recovery remains fenced")
+			}
+			if err := plan.codexTransfer.complete(nativeLifecycleTargetAfterCommit); err != nil {
+				return err
+			}
+		}
 	}
 	if nameReason != "" {
 		// A lost disclosure must not turn a committed resume into a failure.

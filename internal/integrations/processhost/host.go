@@ -98,6 +98,7 @@ type Launch struct {
 	adapter                  adapterConfig
 	resume                   *SessionRecord
 	transfer                 *ClaudeTransfer
+	codexTransfer            *CodexTransfer
 	resumeTurn, resumePrompt string
 }
 
@@ -236,6 +237,10 @@ func (h *Host) register(ctx context.Context, launch Launch) (*Handle, bool, erro
 	if launch.transfer != nil {
 		transfer := *launch.transfer
 		launch.transfer = &transfer
+	}
+	if launch.codexTransfer != nil {
+		transfer := *launch.codexTransfer
+		launch.codexTransfer = &transfer
 	}
 	if launch.adapter != nil {
 		launch.adapter = launch.adapter.clone()

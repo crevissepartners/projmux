@@ -17,6 +17,7 @@ FILES = (
     "agent_relaunch_deferred_test.go",
     "agent_relaunch_process_claude_test.go",
     "agent_relaunch_host_test.go",
+    "agent_relaunch_host_codex_test.go",
     "agent_relaunch_process_codex_test.go",
     "process_agent_session_cli_test.go",
     "create_agent_process_codex_cli_test.go",
@@ -89,7 +90,7 @@ def isolated_env(root: Path, go: str) -> dict[str, str]:
                CLAUDE_CONFIG_DIR=str(root / "home/.claude"),
                XDG_CONFIG_HOME=str(root / "config"), XDG_STATE_HOME=str(root / "state"),
                XDG_CACHE_HOME=str(root / "cache"), TMUX_TMPDIR=str(root / "tmux"),
-               TMPDIR=str(root / "tmp"), GOTOOLCHAIN="local", GOMAXPROCS="1")
+               TMPDIR=str(root.parent), GOTOOLCHAIN="local", GOMAXPROCS="1")
     for key in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
                 "TMUX_TMPDIR", "TMPDIR", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
@@ -100,7 +101,9 @@ def main() -> None:
     started = time.monotonic()
     expected = selected_tests(ROOT)
     go = os.environ.get("GO", "go")
-    with tempfile.TemporaryDirectory(prefix="pmx-process-cli-", dir="/tmp") as temporary:
+    # Honor the caller's private temp domain. Each CLI fixture allocates its
+    # own directory there; avoid nesting TMPDIR beyond Unix socket bounds.
+    with tempfile.TemporaryDirectory(prefix="pc-") as temporary:
         root = Path(temporary)
         env = isolated_env(root, go)
         built, copy = root / "built-projmux", root / "projmux"

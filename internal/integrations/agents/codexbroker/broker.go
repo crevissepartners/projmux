@@ -73,13 +73,16 @@ type Broker struct {
 	done   chan struct{}
 	exit   chan struct{}
 
-	mu        sync.Mutex
-	closing   bool
-	conn      *connection
-	connEpoch ConnectionEpoch
-	bindEpoch BindingEpoch
-	bindings  map[string]*Binding
-	diag      Diagnostics
+	mu                  sync.Mutex
+	closing             bool
+	conn                *connection
+	connEpoch           ConnectionEpoch
+	bindEpoch           BindingEpoch
+	bindings            map[string]*Binding
+	transfers           map[string]*threadTransfer
+	completedTransfers  map[string]TransferReceipt
+	transferCompletions []string
+	diag                Diagnostics
 	// revocations counts involuntary binding terminations by closed reason.
 	// It is a separate map rather than a Diagnostics field so the snapshot the
 	// caller receives is a value copy that cannot alias live broker state.
@@ -105,19 +108,21 @@ func NewBroker(cfg Config) (*Broker, error) {
 		return nil, refuse(RefusalEndpointUnknown, nil)
 	}
 	broker := &Broker{
-		endpoint:    cfg.Endpoint,
-		opener:      cfg.Opener,
-		lifecycle:   cfg.Lifecycle,
-		clock:       cfg.Clock,
-		jitter:      cfg.Jitter,
-		backlog:     cfg.Backlog,
-		wake:        make(chan struct{}, 1),
-		done:        make(chan struct{}),
-		exit:        make(chan struct{}),
-		bindings:    make(map[string]*Binding),
-		ownedThread: make(map[string]struct{}),
-		ownedCancel: make(map[string]context.CancelFunc),
-		lastOwned:   make(map[string]time.Time),
+		endpoint:           cfg.Endpoint,
+		opener:             cfg.Opener,
+		lifecycle:          cfg.Lifecycle,
+		clock:              cfg.Clock,
+		jitter:             cfg.Jitter,
+		backlog:            cfg.Backlog,
+		wake:               make(chan struct{}, 1),
+		done:               make(chan struct{}),
+		exit:               make(chan struct{}),
+		bindings:           make(map[string]*Binding),
+		ownedThread:        make(map[string]struct{}),
+		transfers:          make(map[string]*threadTransfer),
+		completedTransfers: make(map[string]TransferReceipt),
+		ownedCancel:        make(map[string]context.CancelFunc),
+		lastOwned:          make(map[string]time.Time),
 	}
 	if broker.clock == nil {
 		broker.clock = systemClock{}
@@ -151,6 +156,9 @@ func (b *Broker) Bind(threadID, cwd string, roots []string) (*Binding, error) {
 // package-private because only an in-package broker-restart ledger may
 // preserve an epoch; ordinary callers always receive the next one.
 func (b *Broker) bindAtEpoch(threadID, cwd string, roots []string, desired BindingEpoch) (*Binding, error) {
+	return b.bindWithGrant(threadID, cwd, roots, desired, nil)
+}
+func (b *Broker) bindWithGrant(threadID, cwd string, roots []string, desired BindingEpoch, grant *NativeTransferGrant) (*Binding, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, refuse(RefusalThreadRequired, nil)
@@ -159,6 +167,15 @@ func (b *Broker) bindAtEpoch(threadID, cwd string, roots []string, desired Bindi
 	if b.closing {
 		b.mu.Unlock()
 		return nil, refuse(RefusalBrokerClosed, nil)
+	}
+	if t, exists := b.transfers[threadID]; exists {
+		if grant == nil || !grant.Target.valid() || !t.nativeReady || t.orphaned || t.nativeTarget == nil || *t.nativeTarget != grant.Target || t.receipt.Token != grant.Receipt.Token || t.receipt.Source != grant.Receipt.Source || t.receipt.Peer != grant.Receipt.Peer || t.nativeBinding != nil || t.conn != b.conn {
+			b.mu.Unlock()
+			return nil, refuse(RefusalControlNotOpen, nil)
+		}
+	} else if grant != nil {
+		b.mu.Unlock()
+		return nil, refuse(RefusalLeaseIdentityMismatch, nil)
 	}
 	if _, exists := b.bindings[threadID]; exists {
 		b.mu.Unlock()
@@ -184,6 +201,9 @@ func (b *Broker) bindAtEpoch(threadID, cwd string, roots []string, desired Bindi
 		revoked:  RefusalNone,
 	}
 	b.bindings[threadID] = binding
+	if grant != nil {
+		b.transfers[threadID].nativeBinding = binding
+	}
 	b.mu.Unlock()
 	b.signal()
 	return binding, nil
@@ -322,7 +342,8 @@ func (b *Broker) startBarriers(conn *connection) {
 	var pending []*Binding
 	if b.conn == conn {
 		for _, binding := range b.bindings {
-			if binding.stage == stageIdle {
+			if binding.stage == stageIdle && (b.transfers[binding.threadID] == nil || b.nativeBindingAllowedLocked(binding)) {
+				binding.inflight++
 				binding.stage = stageBuffering
 				binding.conn = conn
 				pending = append(pending, binding)
@@ -339,6 +360,7 @@ func (b *Broker) startBarriers(conn *connection) {
 // runBarrier takes one binding's snapshot and closes its barrier.
 func (b *Broker) runBarrier(conn *connection, binding *Binding) {
 	defer conn.barriers.Done()
+	defer binding.admittedDone()
 	snapshot, err := conn.endpoint.BootstrapThread(b.ctx, binding.threadID, binding.cwd, binding.roots)
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -537,5 +559,5 @@ func (b *Broker) stopping() bool {
 func (b *Broker) wanted() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return !b.closing && len(b.bindings) > 0
+	return !b.closing && (len(b.bindings) > 0 || len(b.transfers) > 0)
 }

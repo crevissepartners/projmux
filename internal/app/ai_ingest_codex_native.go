@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -335,9 +337,11 @@ type codexObserverStartupResult struct {
 }
 
 type codexLifecycleObserverTarget struct {
-	Identity    codexLifecycleIdentity
-	Route       tmuxTransport
-	NativeRoute codexNativeEndpointRoute
+	TransferGrant     *codexbroker.NativeTransferGrant
+	readTransferGrant bool
+	Identity          codexLifecycleIdentity
+	Route             tmuxTransport
+	NativeRoute       codexNativeEndpointRoute
 }
 
 func (t codexLifecycleObserverTarget) valid() bool {
@@ -2032,7 +2036,17 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
 	}
 	// #nosec G204 -- executable is an absolute, existing, regular executable validated above; argv is a fixed internal route plus bounded identity values and never enters a shell.
+	if target.TransferGrant != nil {
+		args = append(args, "--transfer-grant", "stdin")
+	}
 	cmd := exec.Command(executable, args...)
+	if target.TransferGrant != nil {
+		raw, err := json.Marshal(target.TransferGrant)
+		if err != nil {
+			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
+		}
+		cmd.Stdin = bytes.NewReader(raw)
+	}
 	cmd.Env = append(withoutInheritedTmuxEnvironment(os.Environ()), codexObserverStartupEnvironment+"=1")
 	configureCodexObserverProcess(cmd)
 	stdout, err := cmd.StdoutPipe()
@@ -2177,6 +2191,18 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
 	})
 	defer crashSink.Close()
+	if target.readTransferGrant {
+		grant := &codexbroker.NativeTransferGrant{}
+		if json.NewDecoder(io.LimitReader(os.Stdin, 8192)).Decode(grant) != nil {
+			return errors.New("invalid native transfer grant")
+		}
+		identity := target.Identity
+		tuple := grant.Target
+		if tuple.Agent != identity.AgentUID || tuple.Pane != identity.PaneUID || tuple.Generation != identity.Generation || tuple.RuntimeID != identity.RuntimeID || tuple.Thread != identity.ThreadID {
+			return errors.New("native transfer grant identity mismatch")
+		}
+		target.TransferGrant = grant
+	}
 	if !target.valid() {
 		return errors.New("codex native lifecycle observer requires exact identity and tmux route")
 	}
@@ -2190,6 +2216,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		observer.setSessionStartupFallback(sessionErr)
 		return nil
 	}
+	session.transferGrant = target.TransferGrant
 	defer func() { _ = session.Close() }()
 	observer := codexNativeObserver{
 		identity:        target.Identity,
@@ -2224,6 +2251,11 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 		}
 		value := strings.TrimSpace(args[1])
 		switch args[0] {
+		case "--transfer-grant":
+			if value != "stdin" {
+				return target, errors.New("invalid native transfer input")
+			}
+			target.readTransferGrant = true
 		case "--agent-uid":
 			target.Identity.AgentUID = value
 		case "--pane-uid":
