@@ -178,6 +178,13 @@ func TestHistoryDamageAndLockFailureRemainErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	started := time.Now()
+	if wrote, err := store.TryAppendHistory([]MetricPoint{p}, now); err != nil || wrote {
+		t.Fatalf("busy try append wrote=%t err=%v", wrote, err)
+	}
+	if elapsed := time.Since(started); elapsed >= HistoryLockWaitLimit/4 {
+		t.Fatalf("busy try append waited %s", elapsed)
+	}
 	if err := store.AppendHistory([]MetricPoint{p}, now); !errors.Is(err, ErrHistoryLockTimeout) {
 		t.Fatalf("lock error = %v", err)
 	}
@@ -186,6 +193,52 @@ func TestHistoryDamageAndLockFailureRemainErrors(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(store.baseDir, snapshotFileName)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHistoryIgnoresNonsegmentsButRejectsDamagedSegments(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Now().UTC()
+	point := MetricPoint{Name: "usage.percent", Value: 3, ObservedAt: now}
+	if err := store.AppendHistory([]MetricPoint{point}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"notes.txt", ".history.jsonl.swp", segmentName(now) + ".bak"} {
+		if err := os.WriteFile(filepath.Join(store.HistoryPath(), name), []byte("ignored"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if points, err := store.ReadHistory(HistoryFilter{Now: now}); err != nil || len(points) != 1 {
+		t.Fatalf("nonsegment read: %v %v", points, err)
+	}
+	if err := store.AppendHistory([]MetricPoint{point}, now); err != nil {
+		t.Fatalf("nonsegment append: %v", err)
+	}
+	badDate := filepath.Join(store.HistoryPath(), "2026-13-40.jsonl")
+	if err := os.WriteFile(badDate, []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadHistory(HistoryFilter{Now: now}); err == nil {
+		t.Fatal("invalid segment date read succeeded")
+	}
+	if err := store.AppendHistory([]MetricPoint{point}, now); err == nil {
+		t.Fatal("invalid segment date append succeeded")
+	}
+	if err := os.Remove(badDate); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.HistoryPath(), segmentName(now))
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadHistory(HistoryFilter{Now: now}); err == nil {
+		t.Fatal("nonregular segment read succeeded")
+	}
+	if err := store.AppendHistory([]MetricPoint{point}, now); err == nil {
+		t.Fatal("nonregular segment append succeeded")
 	}
 }
 

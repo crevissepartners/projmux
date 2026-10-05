@@ -28,6 +28,7 @@ const (
 
 var ErrHistoryLockTimeout = errors.New("usage: timed out waiting for history lock")
 var ErrHistoryWrite = errors.New("usage: history write failed")
+var errHistoryBusy = errors.New("usage: history lock busy")
 
 // MetricPoint is one observation. Name determines units; labels identify a series.
 type MetricPoint struct {
@@ -86,6 +87,11 @@ func listSegments(dir string) (map[string]os.FileInfo, error) {
 		// A process can die before an atomic prune rename. Such an uncommitted
 		// temporary file is never a history segment.
 		if strings.HasPrefix(entry.Name(), ".history.tmp-") {
+			continue
+		}
+		// Other names (editor swaps and backups, for example) are not part
+		// of the dataset. A malformed segment name still reports corruption.
+		if !strings.HasSuffix(entry.Name(), ".jsonl") {
 			continue
 		}
 		if _, err := segmentDate(entry.Name()); err != nil {
@@ -172,6 +178,10 @@ func validPoint(p MetricPoint) bool {
 // The persistent lock inode is never removed. Reads and writes share the lock,
 // so a reader cannot see a partially appended batch or an incomplete prune.
 func (s *Store) withHistoryLock(fn func() error) error {
+	return s.withHistoryLockPolicy(false, fn)
+}
+
+func (s *Store) withHistoryLockPolicy(nonblocking bool, fn func() error) error {
 	if err := localstate.EnsurePrivateDir(s.baseDir); err != nil {
 		return fmt.Errorf("usage: create history dir: %w", err)
 	}
@@ -190,6 +200,9 @@ func (s *Store) withHistoryLock(fn func() error) error {
 		}
 		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EINTR) {
 			return fmt.Errorf("usage: acquire history lock: %w", err)
+		}
+		if nonblocking {
+			return errHistoryBusy
 		}
 		if !time.Now().Before(deadline) {
 			return ErrHistoryLockTimeout
@@ -346,11 +359,26 @@ func (s *Store) hasNearby(p MetricPoint) (bool, error) {
 // AppendHistory serializes dedup, prune, and append under its own bounded lock.
 // Only the rolling cutoff's day is rewritten; complete expired days are deleted.
 func (s *Store) AppendHistory(points []MetricPoint, now time.Time) error {
+	return s.appendHistory(points, now, false)
+}
+
+// TryAppendHistory skips an observation when another history reader or writer
+// owns the lock. The status line uses it to avoid waiting for a history read.
+// A skipped observation is not an IO error and can be sampled on a later tick.
+func (s *Store) TryAppendHistory(points []MetricPoint, now time.Time) (bool, error) {
+	err := s.appendHistory(points, now, true)
+	if errors.Is(err, errHistoryBusy) {
+		return false, nil
+	}
+	return true, err
+}
+
+func (s *Store) appendHistory(points []MetricPoint, now time.Time, nonblocking bool) error {
 	if now.IsZero() {
 		now = time.Now()
 	}
 	now = now.UTC()
-	return s.withHistoryLock(func() error {
+	return s.withHistoryLockPolicy(nonblocking, func() error {
 		dir := s.HistoryPath()
 		if err := localstate.EnsurePrivateDir(dir); err != nil {
 			return err

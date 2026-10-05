@@ -180,6 +180,8 @@ Live Agent counts are recorded only when an explicit `reconcile resources`
 command already resolves the all-Project graph. They can therefore be sparse;
 missing intervals are not zero and are not interpolated. This history does not
 start a new runtime observation on `status resources`, `get`, or `describe`.
+When the last Agent of a provider is deleted, no zero point is recorded for
+that provider; an absent point cannot distinguish zero from unavailable.
 
 Example:
 
@@ -199,7 +201,13 @@ unchanged values from a new observation can be recorded again after that
 interval. Reads hide values older than 30 days. The next write or prune
 physically removes them. A separate bounded `.history.lock` protects readers,
 concurrent writers, pruning, and the small `.history.index.json` limiter cache.
+The status-line resources sampler skips one history observation if that lock is
+busy, without delaying the displayed CPU/memory value. In a representative
+30-day workload of six 1-minute series, 259,200 rows used 28.8 MB of JSONL
+(about 1 MB per day); actual size depends on labels and observed series.
 Malformed rows and IO/lock failures return errors rather than empty series.
+Unrelated backup or swap filenames in the history directory are ignored;
+malformed or nonregular date-named `.jsonl` segments still return an error.
 An uncommitted `.history.tmp-*` file left by an interrupted prune is ignored;
 the committed daily segment remains authoritative. The next write removes
 abandoned temporary files.

@@ -342,7 +342,7 @@ func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) er
 		if override := c.lookupEnv(usagecmd.StateDirEnvVar); override != "" {
 			historyDir = override
 		}
-		if err := usage.NewStore(historyDir).AppendHistory(points, now); err != nil {
+		if _, err := usage.NewStore(historyDir).TryAppendHistory(points, now); err != nil {
 			fmt.Fprintf(stderr, "usage: history write: %v\n", err)
 		}
 	}
