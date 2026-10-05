@@ -228,8 +228,8 @@ func TestProcessResumeActualCLIRoundTrip(t *testing.T) {
 				if len(calls) != 2 {
 					t.Fatalf("Claude startup count: %s", argv)
 				}
-				// Fresh creation starts in auto mode; the resume of the same
-				// Agent is replanned without a mode and keeps its argv.
+				// Fresh creation starts in auto mode. The mode is not recorded,
+				// so the resume of the same Agent is replanned without one.
 				if permissionModes(calls[0]) != "auto" || permissionModes(calls[1]) != "" {
 					t.Fatalf("permission mode: create %q resume %q", calls[0], calls[1])
 				}

@@ -116,8 +116,9 @@ func validateProcessCreateRef(ref selector.Ref, kind coremetadata.Kind) error {
 type processClaudeLaunchOptions struct{ Model, Effort, InstructionsFile, SettingsFile, PermissionMode string }
 
 // processClaudeCreatePermissionMode is the permission mode a new process
-// Claude Agent starts in. Only fresh creation selects it; resume, host moves,
-// and frozen deferred commands keep the argv they already had.
+// Claude Agent starts in. Only fresh creation passes it, and the mode is not
+// recorded: resume and host moves replan without it, and a deferred launch
+// replays the command it stored.
 const processClaudeCreatePermissionMode = "auto"
 
 // Process launch uses the same provider grammar and resolved setting files as
