@@ -203,7 +203,7 @@ func TestHistoryIgnoresNonsegmentsButRejectsDamagedSegments(t *testing.T) {
 	if err := store.AppendHistory([]MetricPoint{point}, now); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"notes.txt", ".history.jsonl.swp", segmentName(now) + ".bak"} {
+	for _, name := range []string{"notes.txt", "notes.jsonl", ".history.jsonl.swp", segmentName(now) + ".bak"} {
 		if err := os.WriteFile(filepath.Join(store.HistoryPath(), name), []byte("ignored"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -223,6 +223,9 @@ func TestHistoryIgnoresNonsegmentsButRejectsDamagedSegments(t *testing.T) {
 	}
 	if err := store.AppendHistory([]MetricPoint{point}, now); err == nil {
 		t.Fatal("invalid segment date append succeeded")
+	}
+	if processed, err := store.TryAppendHistory([]MetricPoint{point}, now); err == nil || processed {
+		t.Fatalf("damaged segment try append processed=%t err=%v", processed, err)
 	}
 	if err := os.Remove(badDate); err != nil {
 		t.Fatal(err)

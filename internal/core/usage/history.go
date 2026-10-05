@@ -52,6 +52,17 @@ func (s *Store) HistoryPath() string     { return filepath.Join(s.baseDir, histo
 func (s *Store) HistoryLockPath() string { return filepath.Join(s.baseDir, historyLockName) }
 
 func segmentName(at time.Time) string { return at.UTC().Format("2006-01-02") + ".jsonl" }
+func hasHistorySegmentShape(name string) bool {
+	if len(name) != len("2006-01-02.jsonl") || name[4] != '-' || name[7] != '-' || !strings.HasSuffix(name, ".jsonl") {
+		return false
+	}
+	for _, pos := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+		if name[pos] < '0' || name[pos] > '9' {
+			return false
+		}
+	}
+	return true
+}
 func segmentDate(name string) (time.Time, error) {
 	if !strings.HasSuffix(name, ".jsonl") {
 		return time.Time{}, errors.New("not a segment")
@@ -91,7 +102,7 @@ func listSegments(dir string) (map[string]os.FileInfo, error) {
 		}
 		// Other names (editor swaps and backups, for example) are not part
 		// of the dataset. A malformed segment name still reports corruption.
-		if !strings.HasSuffix(entry.Name(), ".jsonl") {
+		if !hasHistorySegmentShape(entry.Name()) {
 			continue
 		}
 		if _, err := segmentDate(entry.Name()); err != nil {
@@ -363,14 +374,18 @@ func (s *Store) AppendHistory(points []MetricPoint, now time.Time) error {
 }
 
 // TryAppendHistory skips an observation when another history reader or writer
-// owns the lock. The status line uses it to avoid waiting for a history read.
-// A skipped observation is not an IO error and can be sampled on a later tick.
+// owns the lock. The bool reports whether the batch was processed under the
+// lock, including when the one-minute limiter omitted every point. A skipped
+// observation is not an IO error and can be sampled on a later status tick.
 func (s *Store) TryAppendHistory(points []MetricPoint, now time.Time) (bool, error) {
 	err := s.appendHistory(points, now, true)
 	if errors.Is(err, errHistoryBusy) {
 		return false, nil
 	}
-	return true, err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) appendHistory(points []MetricPoint, now time.Time, nonblocking bool) error {
