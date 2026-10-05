@@ -64,7 +64,7 @@ func readDeferredState(path string, value any) (bool, error) {
 		return false, err
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if !ok || int64(stat.Uid) != int64(os.Geteuid()) || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return false, deferredRefused("unsafe deferred state")
 	}
 	file, err := os.Open(path) // #nosec G304 -- private state path derived from the Agent digest.
