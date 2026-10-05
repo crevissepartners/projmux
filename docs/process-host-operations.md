@@ -123,3 +123,19 @@ then remove them yourself:
 ls "${XDG_STATE_HOME:-$HOME/.local/state}"/projmux/process-attention.json.damaged-*
 rm "${XDG_STATE_HOME:-$HOME/.local/state}"/projmux/process-attention.json.damaged-*
 ```
+
+## Changing the launch configuration
+
+Use [`agent relaunch`](cli.md#projmux-agent-relaunch) from an external terminal
+to change a process Claude or Codex Agent's model, effort or profile. It keeps
+the Agent, Pane and conversation, stops the old owned provider, verifies its
+actual supervisor Wait and owner retirement, then starts a new foreground
+owner. Keep stdin open for that owner's lifetime. Claude requires a first
+prompt; Codex can reattach without one. A failed launch preserves the previous
+settings and recorded conversation and prints the recovery command.
+
+Codex cannot replace the instructions of an existing thread. A request that
+changes those instructions is refused before Stop, as is a profile switch
+that would silently keep the previous sandbox or approval policy. The new
+writer uses `thread/resume` after the old dedicated app server exits; an
+active-writer (`-32600`) refusal does not create a replacement conversation.

@@ -62,11 +62,21 @@ func TestProcessRuntimeDefaultApplicationRefusals(t *testing.T) {
 	agent, _ := reg.Agent(pane.Metadata.OwnerUID())
 	agent.Spec.Provider = "codex"
 	before = reg.Clone()
-	if err := app.agent.runRelaunch([]string{"uid:" + agent.Metadata.UID, "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-relaunch-unsupported") {
-		t.Fatalf("Codex relaunch: %v", err)
+	if err := app.agent.runRelaunch([]string{"uid:" + agent.Metadata.UID, "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), relaunchReasonNoConversation) {
+		t.Fatalf("Codex relaunch without conversation: %v", err)
 	}
 	if len(runner.calls) != 0 || !reflect.DeepEqual(reg, before) {
 		t.Fatal("Codex refusal used transport or changed Registry")
+	}
+	// Supporting Claude and Codex does not loosen the inventory's refusal
+	// contract for providers outside the same-location relaunch slice.
+	agent.Spec.Provider = "antigravity"
+	before = reg.Clone()
+	if err := app.agent.runRelaunch([]string{"uid:" + agent.Metadata.UID, "--yes"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "process-relaunch-unsupported") {
+		t.Fatalf("unsupported process provider: %v", err)
+	}
+	if len(runner.calls) != 0 || !reflect.DeepEqual(reg, before) {
+		t.Fatal("unsupported provider refusal used transport or changed Registry")
 	}
 }
 

@@ -159,15 +159,24 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
 	}
 	target := agent.Clone()
-	if pane, ambiguous := processResumePane(registry, target.Metadata.UID); pane != nil && !ambiguous && target.Spec.Provider == aiModeClaude {
-		return c.runProcessClaudeRelaunch(registry, target, *pane, request, stdout, stderr)
+	return c.dispatchRelaunch(registry, target, request, stdout, stderr)
+}
+
+func (c *agentCommand) dispatchRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	if pane, ambiguous := processResumePane(registry, target.Metadata.UID); pane != nil && !ambiguous && (target.Spec.Provider == aiModeClaude || target.Spec.Provider == aiModeCodex) {
+		return c.runProcessRelaunch(registry, target, *pane, request, stdout, stderr)
 	}
 	if _, handled, err := c.processRuntime.admit(registry, target.Status.PaneRef, resourcegraph.ProcessRelaunch); handled {
 		return err
 	}
 	if len(request.prompt) > 0 {
-		return usageError("agent relaunch: a first prompt applies only to process Claude agents; nothing was changed")
+		return usageError("agent relaunch: a first prompt applies only to process agents; nothing was changed")
 	}
+	return c.runTmuxRelaunch(registry, target, request, stdout, stderr)
+}
+
+func (c *agentCommand) runTmuxRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	const spelling = agentRelaunchSpelling
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, target.Metadata.Name, detail, reason))
 	}

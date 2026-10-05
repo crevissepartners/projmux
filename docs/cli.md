@@ -239,7 +239,7 @@ Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process for
 
 Process resume remains foreground-owned: stdin EOF terminates this owned provider, so </dev/null and ordinary CI or cron invocation can end it immediately. Keep stdin open for the intended lifetime; no daemon or detached resume is started.
 
-Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival is unavailable. Process Claude can change its launch configuration through agent relaunch; process Codex relaunch remains unsupported.
+Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival is unavailable. Process Claude and Codex can change their launch configuration through agent relaunch.
 
 Resume refusals are process-resume-not-resumable (no resumable record or unknown), process-resume-owned (exact live owner), and process-resume-refused (invalid, ambiguous, unretired, or provider-rejected evidence). They exit nonzero without falling back to a new conversation.
 
@@ -284,11 +284,11 @@ The model and effort are recorded on the Agent (projmux.io/model, projmux.io/eff
 
 --profile switches the Agent's profile (none: no profile) and clears every override but the ones given with it; naming the profile it has keeps its overrides. --instructions overrides the instructions (none: no instructions), and --reset removes the overrides of instructions, model, or effort (all: every one) so they follow the profile again. It is all one restart.
 
-A Codex Agent applies the new model, effort, sandbox, and approval to its thread's later turns. It refuses a change of its instructions (codex-instructions-immutable), a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept), and, while Running, a restart whose Codex app server does not take thread/settings/update (relaunch-codex-settings-unsupported).
+A Codex Agent applies the new model, effort, sandbox, and approval to its thread's later turns. It refuses a change of its instructions (codex-instructions-immutable), a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept), and, while Running in tmux, a restart whose Codex app server does not take thread/settings/update (relaunch-codex-settings-unsupported).
 
 Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
 
-Process Claude relaunch preserves the Agent UID, Pane UID, and recorded session. It stops the old owned child, waits for its durable supervisor Wait and host retirement, then starts a fresh foreground-owned generation. Apply requires -- <prompt>; dry-run requires no prompt. A prompt explicitly restarts a Running Agent even with unchanged settings; use agent turn start to keep the current provider. Keep stdin open: EOF, INT, or TERM stops the new owned provider. A process self-target or reply-only launch is refused before Stop. Process Codex relaunch remains process-relaunch-unsupported.
+Process Claude and Codex relaunch preserve the Agent UID, Pane UID, and recorded conversation. It stops the old owned child, waits for its durable supervisor Wait and host retirement, then starts a fresh foreground-owned generation. Claude apply requires -- <prompt>; Codex can reattach without a prompt; dry-run requires no prompt. A prompt explicitly restarts a Running Agent even with unchanged settings; use agent turn start to keep the current provider. Keep stdin open: EOF, INT, or TERM stops the new owned provider. A process self-target or reply-only launch is refused before Stop. Codex resumes through a new dedicated app server after the old writer has an exact Wait; no settings probe is sent to the old writer. The existing resume barrier checks the new writer and uses thread/settings/update followed by another thread/resume when requested settings differ. An active-writer (-32600) refusal retains the recorded conversation and previous settings and prints an exact recovery command.
 
 Output modes (`-o`): `json`
 
