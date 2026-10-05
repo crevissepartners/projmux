@@ -982,3 +982,97 @@ func TestDeferredPeerWakeLatencyActualCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestDeferredExplicitReplyActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, provider)
+			if provider == aiModeClaude {
+				path := filepath.Join(f.root, "provider.py")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reply := `  original=json.loads(m['message']['content'])
+  if original.get('messageRef')=='deferred-reply-original':
+   def deferred_reply(original=original):
+    root=os.environ['PMX_TEST_PROCESS_ROOT']
+    while not os.path.exists(os.path.join(root,'reply-trigger')):time.sleep(.01)
+    binding=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])
+    with open(os.path.join(root,'reply-receipt'),'w') as output:
+     p=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+original['source']['agentUID'],'--source','uid:'+binding['Agent'],'--reply-to',original['messageRef'],'--message-ref','deferred-reply','--','reply peer'],stdout=output,stderr=subprocess.STDOUT)
+    open(os.path.join(root,'reply-exit'),'w').write(str(p.returncode))
+   threading.Thread(target=deferred_reply,daemon=True).start()
+`
+				script := "import time\n" + strings.Replace(string(raw), "  continue\n  inp=", reply+"  continue\n  inp=", 1)
+				if err = os.WriteFile(path, []byte(script), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			target := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "target task"))
+			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
+			for {
+				out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", source.ref, "--source", target.ref, "--message-ref", "deferred-reply-original", "--", "original peer").CombinedOutput()
+				if err == nil {
+					break
+				}
+				if !bytes.Contains(out, []byte("Agent is not eligible")) {
+					t.Fatalf("original %v %s", err, out)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("original route never ready")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			deferredCLIStatus(t, ctx, f, "deferred-reply-original", "delivered")
+			target.shutdown(t)
+			claim := startDeferredCLIClaim(t, ctx, f, target.ref)
+			var out []byte
+			var err error
+			if provider == aiModeClaude {
+				if err = os.WriteFile(filepath.Join(f.root, "reply-trigger"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				for {
+					exit, readErr := os.ReadFile(filepath.Join(f.root, "reply-exit"))
+					if readErr == nil {
+						out, err = os.ReadFile(filepath.Join(f.root, "reply-receipt"))
+						if string(exit) != "0" {
+							t.Fatalf("provider reply exit %s: %s", exit, out)
+						}
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal("provider reply timed out")
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
+			} else {
+				out, err = exec.CommandContext(ctx, f.binary, "agent", "message", "send", target.ref, "--source", source.ref, "--reply-to", "deferred-reply-original", "--message-ref", "deferred-reply", "--", "reply peer").CombinedOutput()
+			}
+			if err != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
+				t.Fatalf("reply acceptance %v %s", err, out)
+			}
+			line, err := claim.output.ReadString('\n')
+			if err != nil || !strings.Contains(line, "foreground=owned") {
+				t.Fatalf("reply wake %v %s %s", err, line, claim.stderr.String())
+			}
+			deferredCLIStatus(t, ctx, f, "deferred-reply", "delivered")
+			store := messagestore.NewStore(filepath.Dir(filepath.Dir(f.store.Path())))
+			original, found, err := store.Get("deferred-reply-original")
+			if err != nil || !found {
+				t.Fatal(err)
+			}
+			reply, found, err := store.Get("deferred-reply")
+			if err != nil || !found || reply.Envelope.ReplyTo != original.Envelope.MessageRef || reply.Envelope.ConversationRef != original.Envelope.ConversationRef || reply.Envelope.Deadline.After(original.Envelope.Deadline) {
+				t.Fatal("reply correlation changed", err)
+			}
+			claim.finish(t)
+			source.shutdown(t)
+		})
+	}
+}

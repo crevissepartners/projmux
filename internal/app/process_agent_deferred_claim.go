@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -215,4 +216,13 @@ func (claim *deferredProcessClaim) Close() error {
 		return nil
 	}
 	return os.Remove(claim.path)
+}
+
+// Explicit reply acceptance runs under the producer's target claim guard.
+// The helper reads its private proof; source authority remains the broker's
+// ordinary live-route check and all explicit-reply gates stay in place.
+func deferredReplyTargetCurrent(registryPath string, registry coremetadata.Registry, route coremessage.Route) bool {
+	c := &agentCommand{messagePaths: agentMessagePaths{registryPath: registryPath}}
+	record, err := readDeferredClaim(c.deferredClaimPath(route.AgentUID))
+	return err == nil && deferredClaimLive(record) && processResumeCandidateToken(registry, route.AgentUID) == "" && deferredClaimMatches(record, registry, route.AgentUID) && deferredMessageRoute(record) == route
 }

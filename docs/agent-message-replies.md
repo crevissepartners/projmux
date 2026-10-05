@@ -225,3 +225,9 @@ is failed with `provider-handoff-outcome-unknown` and `outcomeUnknown=true`,
 so takeover cannot write the frame twice. With no live claim, the existing
 Offline-target refusal and exit remain unchanged; messages never start an
 unclaimed provider automatically.
+
+For a Claude source's explicit reply, original delivery, correlation,
+qualification and the single-reply reservation still apply. Only a proved
+claimed target can replace the unavailable live target route. A Claude helper
+started before this behavior was installed keeps its previous refusal until
+its Agent is relaunched; installation does not replace running helpers.
