@@ -18,7 +18,9 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -1075,4 +1077,73 @@ func TestDeferredExplicitReplyActualCLI(t *testing.T) {
 			source.shutdown(t)
 		})
 	}
+}
+
+func TestDeferredTailDrainKeepsControlsResponsiveActualCLI(t *testing.T) {
+	f := deferredResumeCLIFixture(t, aiModeCodex)
+	path := filepath.Join(f.root, "codex-provider.py")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Replace(string(raw), "if prompt=='controls':", "if prompt=='controls' or (prompt.startswith('{') and turn==1):", 1)
+	if err = os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+	first.shutdown(t)
+	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+	source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
+	send := func(ref string) ([]byte, error) {
+		return exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--", ref).CombinedOutput()
+	}
+	processCLIUntil(t, ctx, func() bool {
+		out, _ := send("ready-probe")
+		return !bytes.Contains(out, []byte("source Agent is not eligible"))
+	})
+	claim := startDeferredCLIClaim(t, ctx, f, first.ref)
+	if err = claim.cmd.Process.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"controls-first", "controls-tail"} {
+		out, e := send(ref)
+		if e != nil || !bytes.Contains(out, []byte("held\ttarget-awaiting-resume")) {
+			t.Fatalf("held: %v %s", e, out)
+		}
+	}
+	if err = claim.cmd.Process.Signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Dir(filepath.Dir(f.store.Path()))
+	qs, as := agentquestion.NewStore(state), agentapproval.NewStore(state)
+	uid := strings.TrimPrefix(first.ref, "uid:")
+	var questions []agentquestion.Record
+	var approvals []agentapproval.Record
+	controlCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+	defer stop()
+	processCLIUntil(t, controlCtx, func() bool {
+		questions, _ = qs.List(uid)
+		approvals, _ = as.List(uid)
+		return len(questions) == 1 && len(approvals) == 1
+	})
+	cli := func(args ...string) {
+		t.Helper()
+		out, e := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+		if e != nil {
+			t.Fatalf("control: %v %s", e, out)
+		}
+	}
+	cli("agent", "question", "answer", first.ref, questions[0].ID, "--option", "1=blue")
+	cli("agent", "approval", "answer", first.ref, approvals[0].ID, "--deny", "--via", "cli")
+	for _, ref := range []string{"controls-first", "controls-tail"} {
+		deferredCLIStatus(t, ctx, f, ref, "delivered")
+	}
+	line, err := claim.output.ReadString('\n')
+	if err != nil || !strings.Contains(line, "foreground=owned") {
+		t.Fatalf("owned: %v %s", err, line)
+	}
+	claim.finish(t)
+	source.shutdown(t)
 }

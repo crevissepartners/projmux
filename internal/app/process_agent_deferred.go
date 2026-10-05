@@ -285,6 +285,11 @@ release:
 				}
 				continue release
 			}
+			if len(snapshot.Pending) > 0 {
+				if err = result.deferredSynchronization.controls(context.WithoutCancel(ctx)); err != nil {
+					return err
+				}
+			}
 			if snapshot.Turn == "" {
 				break
 			}
