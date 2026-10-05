@@ -402,3 +402,16 @@ API. Both verify the preceding user turn and assistant reply in the resumed
 model request and explicit missing-session refusal without another model call.
 Codex also rejects thread/resume before the first durable turn. Native question
 and approval controls remain fixture-qualified; public activation is separate.
+
+## Owned process Codex input
+
+Internal consumers of an owned process Codex connection can use
+`CodexHandle.DeliverUserTurn(ctx, authority, operation, prompt)` to start an idle
+conversation or steer its exact active turn. The successful `UserTurnDelivery`
+reports `Mode` (`start` or `steer`), the caller's deduplication `Operation`, and
+the provider's `TurnID`. Acceptance does not guarantee model consumption.
+An admitted steer never falls back to starting another turn, including on
+provider refusal or an uncertain write. Pending questions and approvals retain
+their exact response tokens. The delivery replay fence retains the last
+`Limits.Events` admitted operations in FIFO order, including refusals; IDs may
+be reused after eviction. Existing explicit `Turn` remains idle-only.

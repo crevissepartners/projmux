@@ -174,6 +174,37 @@ func codexFixture(mode string) {
 			default:
 				complete()
 			}
+		case "turn/steer":
+			if mode == "codex-steer-overflow" {
+				for range 2048 {
+					emit("item/agentMessage/delta", map[string]any{"threadId": "thread", "turnId": current, "delta": "flood"})
+				}
+				time.Sleep(time.Hour)
+			}
+			if mode == "codex-steer-requests" || mode == "codex-steer-frame" {
+				command := "echo fixture"
+				if mode == "codex-steer-frame" {
+					command = strings.Repeat("x", 4096)
+				}
+				for _, id := range []int{2, 3} {
+					params := map[string]any{"threadId": "thread", "turnId": current, "itemId": "item", "startedAtMs": 1, "command": command, "cwd": "/fixture", "availableDecisions": []string{"accept", "decline", "cancel"}}
+					_ = out.Encode(map[string]any{"id": id, "method": "item/commandExecution/requestApproval", "params": params})
+				}
+			}
+			if mode == "codex-steer-stall" {
+				time.Sleep(time.Hour)
+			}
+			if mode == "codex-steer-queue" || mode == "codex-steer-refusal-queue" {
+				for range 96 {
+					emit("item/agentMessage/delta", map[string]any{"threadId": "thread", "turnId": current, "delta": "before steer reply"})
+				}
+				complete()
+			}
+			if strings.Contains(mode, "steer-refusal") {
+				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32000, "message": "steer refused"}})
+				continue
+			}
+			reply(map[string]any{})
 		case "turn/interrupt":
 			if mode == "codex-interrupt-before-ack" {
 				complete()

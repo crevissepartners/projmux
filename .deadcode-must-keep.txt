@@ -24,6 +24,7 @@ CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available acros
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.newAdapter	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+CodexHandle.DeliverUserTurn	Private web_process_runtime.go:webCoreProcessSession.Deliver consumes this narrow Codex capability in its subsequent integration; owned CORE admission supplies actual start/steer mode without a WEB-side fallback.
 CodexHandle.Events	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexHandle.Expire	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexHandle.Interrupt	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
