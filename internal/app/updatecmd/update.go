@@ -151,18 +151,20 @@ type Command struct {
 	// executable. It is deliberately a separate seam from RunExternal: the
 	// probe is a reading, not one of the staged apply commands, so it must
 	// never appear in the published command sequence.
-	ProbeVersion func(exe string) (string, error)
-	goos         string
-	goarch       string
-	mkdirTemp    func(dir, pattern string) (string, error)
-	removeAll    func(path string) error
-	rename       func(oldpath, newpath string) error
-	chmod        func(name string, mode os.FileMode) error
-	remove       func(name string) error
-	copyFile     func(src, dst string) error
-	buildInfo    func() (*debug.BuildInfo, bool)
-	userHomeDir  func() (string, error)
-	limits       updateArchiveLimits
+	ProbeVersion     func(exe string) (string, error)
+	ProbeMetadata    func(exe string) (CandidateMetadata, error)
+	resolveGoVersion func() (string, error)
+	goos             string
+	goarch           string
+	mkdirTemp        func(dir, pattern string) (string, error)
+	removeAll        func(path string) error
+	rename           func(oldpath, newpath string) error
+	chmod            func(name string, mode os.FileMode) error
+	remove           func(name string) error
+	copyFile         func(src, dst string) error
+	buildInfo        func() (*debug.BuildInfo, bool)
+	userHomeDir      func() (string, error)
+	limits           updateArchiveLimits
 	// AppSocket names the tmux socket the post-update `config apply` reloads.
 	AppSocket string
 }
@@ -285,6 +287,8 @@ func (c *Command) runApply(args []string, stdout, stderr io.Writer) error {
 	cli.SetRouteUsage(fs)
 	dryRun := fs.Bool("dry-run", false, "print installer-specific update command without running it")
 	noApply := fs.Bool("no-apply", false, "skip reloading tmux after 'projmux config apply'")
+	from := fs.String("from", "", "validated candidate binary at an absolute path")
+	target := fs.String("target", "", "exact installed binary at an absolute path")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -295,7 +299,26 @@ func (c *Command) runApply(args []string, stdout, stderr io.Writer) error {
 		return &coremetadata.InputError{Detail: "update apply does not accept positional arguments"}
 	}
 
+	for name, path := range map[string]string{"from": *from, "target": *target} {
+		if path != "" && !filepath.IsAbs(path) {
+			return &coremetadata.InputError{Detail: "--" + name + " requires an absolute path"}
+		}
+	}
 	installer := c.detectInstaller()
+	if *target != "" {
+		clone := *c
+		clone.Executable = func() (string, error) { return filepath.Clean(*target), nil }
+		c = &clone
+	}
+	if *from != "" {
+		return c.runFromApply(*from, *dryRun, *noApply, stdout, stderr)
+	}
+	if installer.Source == "npm" && *target != "" {
+		return &coremetadata.InputError{Detail: "--target is not supported for npm; use --from for a binary candidate"}
+	}
+	if installer.Source == "npm" {
+		fmt.Fprintln(stdout, "schema: npm: cannot judge before publication")
+	}
 	if installer.Source == "github-release" {
 		if *dryRun {
 			return c.runGitHubReleaseApplyDryRun(*noApply, stdout)
@@ -564,6 +587,10 @@ func (c *Command) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := c.unpreparedPlan(target, stdout); err != nil {
+		return err
+	}
+
 	if !noApply {
 		if _, err := fmt.Fprintf(stdout, "would run before replacement: %s %s\n",
 			target, strings.Join(preUpdateApplyArgs(target, c.AppSocket), " ")); err != nil {
@@ -615,8 +642,7 @@ func (c *Command) runGoApply(noApply bool, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	before := c.probeActiveVersion()
-	expected := c.cachedLatestVersion()
+	expected := ""
 
 	scratch, err := c.createGoScratchDir(target)
 	if err != nil {
@@ -628,6 +654,45 @@ func (c *Command) runGoApply(noApply bool, stdout, stderr io.Writer) error {
 			_ = c.removeAll(scratch)
 		}
 	}()
+
+	pinned, err := c.pinGoVersion()
+	if err != nil {
+		return err
+	}
+	expected = pinned
+	publication := goPublicationCommand()
+	publication.Args = []string{"install", "github.com/crevissepartners/projmux/cmd/projmux@" + pinned}
+	if _, err := fmt.Fprintf(stdout, ">> running: %s (GOBIN=%s)\n", publication.String(), scratch); err != nil {
+		return err
+	}
+	if err := c.envRunner()(publication.Name, publication.Args, []string{"GOBIN=" + scratch}, stdout, stderr); err != nil {
+		return c.updateApplyStageError(publication, err)
+	}
+
+	published := filepath.Join(scratch, goPublishedBinaryName)
+	if err := verifyGoPublishedBinary(published); err != nil {
+		return c.updateApplyStageError(publication, err)
+	}
+
+	again, err := c.pinGoVersion()
+	if err != nil {
+		return err
+	}
+	if again != pinned {
+		return errors.New("update-candidate-changed: Go latest changed after pinning; nothing published")
+	}
+	if err := c.candidateGate(published, target, false, stdout); err != nil {
+		return err
+	}
+	metadata, err := c.metadata(published)
+	if err != nil {
+		return err
+	}
+	if strings.TrimPrefix(metadata.Version, "v") != strings.TrimPrefix(pinned, "v") {
+		return errors.New("update-candidate-changed: built candidate version differs from pinned Go module version")
+	}
+
+	before := c.probeActiveVersion()
 
 	if !noApply {
 		preApply := updateApplyCommand{
@@ -641,19 +706,6 @@ func (c *Command) runGoApply(noApply bool, stdout, stderr io.Writer) error {
 		if err := c.externalRunner()(preApply.Name, preApply.Args, stdout, stderr); err != nil {
 			return c.updateApplyStageError(preApply, err)
 		}
-	}
-
-	publication := goPublicationCommand()
-	if _, err := fmt.Fprintf(stdout, ">> running: %s (GOBIN=%s)\n", publication.String(), scratch); err != nil {
-		return err
-	}
-	if err := c.envRunner()(publication.Name, publication.Args, []string{"GOBIN=" + scratch}, stdout, stderr); err != nil {
-		return c.updateApplyStageError(publication, err)
-	}
-
-	published := filepath.Join(scratch, goPublishedBinaryName)
-	if err := verifyGoPublishedBinary(published); err != nil {
-		return c.updateApplyStageError(publication, err)
 	}
 
 	if err := c.atomicReplaceRelease(published, target); err != nil {
@@ -751,6 +803,10 @@ func (c *Command) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writer) er
 	if err != nil {
 		return err
 	}
+	if err := c.unpreparedPlan(target, stdout); err != nil {
+		return err
+	}
+
 	goos, goarch := c.targetPlatform()
 	archive := releaseArchiveName("latest", goos, goarch)
 	if _, err := fmt.Fprintf(stdout, "would fetch: %s\n", c.releaseAPIURLForChannel()); err != nil {
@@ -792,7 +848,6 @@ func (c *Command) runGitHubReleaseApply(noApply bool, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
-	before := c.probeActiveVersion()
 	// The same authority split the judgment uses. releases/latest is defined to
 	// skip prereleases, so an opted-in install that downloaded from it would be
 	// offered an rc and then handed the stable release instead.
@@ -827,6 +882,23 @@ func (c *Command) runGitHubReleaseApply(noApply bool, stdout, stderr io.Writer) 
 	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset, extracted); err != nil {
 		return err
 	}
+	again, err := c.fetchReleaseForChannel(context.Background(), c.ReleaseChannel())
+	if err != nil {
+		return err
+	}
+	againAsset, err := findReleaseAsset(again, goos, goarch)
+	if err != nil {
+		return err
+	}
+	if again.TagName != rel.TagName || againAsset != asset {
+		return errors.New("update-candidate-changed: release changed after pinning; nothing published")
+	}
+	if err := c.candidateGate(extracted, target, false, stdout); err != nil {
+		return err
+	}
+
+	before := c.probeActiveVersion()
+
 	if !noApply {
 		preApply := updateApplyCommand{
 			Stage: updateApplyPrePublication,

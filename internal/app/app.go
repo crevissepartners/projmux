@@ -636,10 +636,11 @@ func (a *App) execute(args []string, stdout, stderr io.Writer) (err error) {
 		runLegacyHookMigrations()
 	}
 	root, buildErr := cli.NewRoot(cli.RootOptions{
-		Stdout:   stdout,
-		Stderr:   stderr,
-		Version:  version.String(),
-		Handlers: a.routeHandlers(),
+		Stdout:        stdout,
+		Stderr:        stderr,
+		Version:       version.String(),
+		SchemaVersion: coremetadata.SchemaVersion,
+		Handlers:      a.routeHandlers(),
 	})
 	if buildErr != nil {
 		return buildErr
@@ -724,8 +725,12 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	// zero mutations behind, including this one. The delegating read kind
 	// (`get notifications`) therefore skips a pre-dispatch write its current
 	// spelling still performs; its stdout, stderr, and exit code are unchanged.
-	case "doctor", "get", "describe", "reconcile":
+	case "doctor", "get", "describe", "reconcile", "version", "--version", "-version":
 		return false
+	case "update":
+		if len(args) >= 2 && args[1] == "apply" {
+			return false
+		}
 	}
 	if len(args) >= 2 && args[0] == "diagnostics" && (args[1] == "report" || args[1] == "agent-hook") {
 		return false

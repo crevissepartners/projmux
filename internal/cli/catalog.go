@@ -2450,13 +2450,19 @@ var routes = []Route{
 		Usage: []string{
 			"projmux update status [--json]",
 			"projmux update check [--json]",
-			"projmux update apply [--dry-run] [--no-apply]",
+			"projmux update apply [--dry-run] [--no-apply] [--from <absolute-binary>] [--target <absolute-path>]",
 		},
 		Canonical: []string{"update status", "update check", "update apply"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationFanOut, Summary: "Show read-only update status", Usage: []string{"projmux update status [--json]"}, Canonical: []string{"update status"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "check", Invocation: InvocationFanOut, Summary: "Check for a newer release and refresh the cache", Usage: []string{"projmux update check [--json]"}, Canonical: []string{"update check"}},
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationFanOut, Summary: "Apply an available update", Usage: []string{"projmux update apply [--dry-run] [--no-apply]"}, Canonical: []string{"update apply"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationFanOut, Summary: "Apply an available update", Usage: []string{"projmux update apply [--dry-run] [--no-apply] [--from <absolute-binary>] [--target <absolute-path>]"}, Canonical: []string{"update apply"}, Notes: []string{
+				"--from accepts an executable regular-file candidate at an absolute path and pins a private copy. --target selects an existing executable regular file at an absolute path; npm package updates do not support --target.",
+				"Binary candidates are probed with version -o json in an isolated HOME. Go resolves latest to an exact module version, and GitHub pins the release and verified asset digest; a changed channel is refused before any config apply or binary replacement.",
+				"Schema bump, downgrade, or unknown metadata is refused before publication. Follow the manual stop, backup, install, and resume procedure in docs/registry.md. Automatic fleet stop, backup, and resume are not implemented yet.",
+				"Channel --dry-run is a pure preview: candidate digest and schema stay unknown until download/build preparation. --from --dry-run probes the pinned copy and reports its digest and schema judgment. Both show the installation target and whether PATH resolves the same file.",
+				"npm cannot judge the candidate schema before publication and retains its existing installation behavior. Expected refusal errors may append the diagnostics journal; Registry, configuration, and other state remain unchanged.",
+			}},
 		},
 	},
 	{
@@ -2506,10 +2512,12 @@ var routes = []Route{
 		Summary:        "Print the current version",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux version",
-			"projmux --version",
+			"projmux version [-o json]",
+			"projmux --version [-o json]",
 		},
 		Canonical: []string{"version"},
+		Outputs:   []OutputMode{OutputModeJSON},
+		Notes:     []string{"The JSON output arguments are exactly -o json or --output json (space-separated; equals forms and other formats are not accepted). -o json emits version, commit, and schema_version without reading or writing Registry/config state. commit is unknown when the build has no VCS revision stamp. --version and -version accept the same JSON option; plain version output is unchanged."},
 	},
 	{
 		// The hidden `internal` namespace. Everything under it is plumbing

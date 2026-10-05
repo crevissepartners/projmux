@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"slices"
 	"sort"
 
@@ -50,6 +52,8 @@ type RootOptions struct {
 	Stderr io.Writer
 	// Version is the string rendered by `version`, `--version`, `-version`.
 	Version string
+	// SchemaVersion is injected by the app; CLI does not own Registry schema.
+	SchemaVersion int
 	// Handlers maps a manifest route token to its raw-argv handler. Every
 	// manifest route except `help` and `version` must be present; those two
 	// are answered by the shared root policy.
@@ -64,10 +68,11 @@ var policyOwnedRoutes = map[string]bool{"help": true, "version": true}
 // writers, silenced Cobra output, no suggestions, no injected commands, and one
 // common help boundary.
 type Root struct {
-	cmd     *cobra.Command
-	stdout  io.Writer
-	stderr  io.Writer
-	version string
+	cmd           *cobra.Command
+	stdout        io.Writer
+	stderr        io.Writer
+	version       string
+	schemaVersion int
 }
 
 // helpShieldedError hides a handler error from Cobra's own help detection.
@@ -115,7 +120,7 @@ func newRoot(opts RootOptions, nodes []Route) (*Root, error) {
 		return nil, fmt.Errorf("cli: missing handlers for routes %v", missing)
 	}
 
-	root := &Root{stdout: opts.Stdout, stderr: opts.Stderr, version: opts.Version}
+	root := &Root{stdout: opts.Stdout, stderr: opts.Stderr, version: opts.Version, schemaVersion: opts.SchemaVersion}
 	cmd := &cobra.Command{
 		Use:                "projmux",
 		Short:              "projmux",
@@ -254,11 +259,27 @@ func (r *Root) unknownCommand(token string) error {
 }
 
 // runVersion prints the version for a bare version spelling. Any other
-// argument is a usage error and nothing is written to stdout. `version --help`
+// argument except the JSON metadata option is a usage error and nothing is
+// written to stdout. `version --help`
 // never reaches here (Execute answers it first); `--version --help` does,
 // because RequestedHelp cannot resolve the root flag as a route, and it keeps
 // its historical output: the version line, exit 0.
 func (r *Root) runVersion(spelling string, args []string) error {
+	if slices.Equal(args, []string{"-o", "json"}) || slices.Equal(args, []string{"--output", "json"}) {
+		commit := "unknown"
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.revision" {
+					commit = setting.Value
+				}
+			}
+		}
+		return json.NewEncoder(r.stdout).Encode(struct {
+			Version       string `json:"version"`
+			Commit        string `json:"commit"`
+			SchemaVersion int    `json:"schema_version"`
+		}{r.version, commit, r.schemaVersion})
+	}
 	if len(args) > 0 && helpFlagIndex(args) < 0 {
 		return versionUsageError{msg: fmt.Sprintf("%s does not accept arguments; got %q", spelling, args[0])}
 	}
