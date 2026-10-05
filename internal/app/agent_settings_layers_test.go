@@ -393,7 +393,7 @@ func TestAPlainRelaunchRestartsAnAgentWhoseProfileChangedAndIsUnchangedOtherwise
 	want := `{"action":"relaunch","dryRun":true,"outcome":"would-restart","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","currentEffort":"high","restart":true,"confirmationRequired":false,"unchanged":false,` +
 		`"currentSettings":{"profile":{"name":"role","digest":"sha256:stale","source":""},"instructions":{"value":"","source":"","profileValue":"","override":false},"model":{"value":"","source":"","profileValue":"","override":false},"effort":{"value":"high","source":"profile","profileValue":"max","override":false}},` +
 		`"newSettings":{"profile":{"name":"role","digest":"` + digest + `","source":""},"instructions":{"value":"","source":"profile","profileValue":"","override":false},"model":{"value":"","source":"profile","profileValue":"","override":false},"effort":{"value":"max","source":"profile","profileValue":"max","override":false}},` +
-		`"relaunchReasons":["profile-changed","effort-changed"]}` + "\n"
+		`"currentHost":"tmux","targetHost":"tmux","relaunchReasons":["profile-changed","effort-changed"]}` + "\n"
 	if stdout != want {
 		t.Fatalf("dry run JSON =\n%s\nwant\n%s", stdout, want)
 	}

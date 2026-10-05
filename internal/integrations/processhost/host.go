@@ -97,6 +97,7 @@ type Launch struct {
 	provider                 string
 	adapter                  adapterConfig
 	resume                   *SessionRecord
+	transfer                 *ClaudeTransfer
 	resumeTurn, resumePrompt string
 }
 
@@ -232,6 +233,10 @@ func (h *Host) register(ctx context.Context, launch Launch) (*Handle, bool, erro
 		record.Pending = slices.Clone(record.Pending)
 		launch.resume = &record
 	}
+	if launch.transfer != nil {
+		transfer := *launch.transfer
+		launch.transfer = &transfer
+	}
 	if launch.adapter != nil {
 		launch.adapter = launch.adapter.clone()
 	}
@@ -281,7 +286,7 @@ func (p *Handle) initializeProvider(ctx context.Context) error {
 	switch {
 	case p.adapter != nil:
 		return p.adapter.initialize(ctx)
-	case launch.resume != nil:
+	case launch.expectedResumeSession() != "":
 		return p.initializeResume(ctx)
 	}
 	return nil

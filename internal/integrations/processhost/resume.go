@@ -129,7 +129,7 @@ func (p *Handle) initializeResume(ctx context.Context) error {
 	defer ticker.Stop()
 	for {
 		s, _ = p.Observe(b)
-		if s.State == "ready" && s.Session == p.launch.resume.Session {
+		if s.State == "ready" && s.Session == p.launch.expectedResumeSession() {
 			return nil
 		}
 		if s.State != "starting" {

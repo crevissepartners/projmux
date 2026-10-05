@@ -184,3 +184,21 @@ route after the source's existing reply checks. Claude helpers run the binary
 image used at SessionStart: helpers started before this feature was installed
 retain the previous refusal until their Agent is relaunched. Installing the
 binary does not replace those running helpers.
+
+## Moving a Claude Agent between hosts
+
+`agent relaunch --host process -- <first-prompt>` moves an interactive Claude
+Agent to a foreground process owner. `agent relaunch --host tmux` moves it back
+to an interactive Pane after the process owner records the old child's actual
+Wait. Both directions preserve the Agent UID and provider session, create a new
+Pane, and remove the old Pane. Omitting `--host` keeps the current host.
+
+Moving to process requires a nonempty first prompt, including dry-run. Moving
+to tmux takes no first prompt. There is no generated input or automatic new
+conversation. Keep stdin open while the process owner should run.
+
+`--dry-run -o json` reports `currentHost`, `targetHost`, and the additive
+`host-changed` relaunch reason. Busy Agents require `--yes`. Reply-only Agents
+and Codex host changes are refused before mutation. If the exact old writer's
+retirement is unknown, no new child starts. A failed target launch retains the
+previous launch recipe and conversation; follow its exact recovery command.

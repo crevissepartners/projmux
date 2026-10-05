@@ -98,7 +98,9 @@ func startProcessRelaunchCLI(t *testing.T, ctx context.Context, f processCreateC
 	})
 	line, err := bufio.NewReader(out).ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("relaunch result: %v %s", err, run.stderr.String())
+		waitErr := run.cmd.Wait()
+		run.done = true
+		t.Fatalf("relaunch result: %v; exit=%v stderr=%s", err, waitErr, run.stderr.String())
 	}
 	var result agentRelaunchResult
 	if err = json.Unmarshal(line, &result); err != nil {

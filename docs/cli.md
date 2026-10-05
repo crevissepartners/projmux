@@ -120,7 +120,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
-projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
 projmux agent approval review <agent-ref> [--request <normalized-id>]
@@ -283,7 +283,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
+projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 ```
 
 The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.
@@ -293,6 +293,8 @@ The model and effort are recorded on the Agent (projmux.io/model, projmux.io/eff
 A Codex Agent applies the new model, effort, sandbox, and approval to its thread's later turns. It refuses a change of its instructions (codex-instructions-immutable), a profile switch that would keep the old sandbox or approval (relaunch-codex-permissions-kept), and, while Running in tmux, a restart whose Codex app server does not take thread/settings/update (relaunch-codex-settings-unsupported).
 
 Without flags it restarts the Agent with the settings its profile and overrides resolve to now, or reports unchanged; -o json carries currentSettings, newSettings, and relaunchReasons.
+
+Claude execution host changes use --host tmux|process; omitted keeps the current host. Moving preserves Agent UID and conversation, creates a new Pane, and adds host-changed to relaunchReasons. currentHost and targetHost describe both hosts. Moving to process requires -- <prompt>, including dry-run; empty input is a usage error. The CLI owns the new process in the foreground; keep stdin open. Moving to tmux requires no first prompt and retires the process through exact supervisor Wait. Reply-only and Codex host changes are refused. Failed transfer retains the previous recipe and conversation and prints an exact --host recovery command.
 
 Process Claude and Codex relaunch preserve the Agent UID, Pane UID, and recorded conversation. It stops the old owned child, waits for its durable supervisor Wait and host retirement, then starts a fresh foreground-owned generation. Claude apply requires -- <prompt>; Codex can reattach without a prompt; dry-run requires no prompt. A prompt explicitly restarts a Running Agent even with unchanged settings; use agent turn start to keep the current provider. Keep stdin open: EOF, INT, or TERM stops the new owned provider. A process self-target or reply-only launch is refused before Stop. Codex resumes through a new dedicated app server after the old writer has an exact Wait; no settings probe is sent to the old writer. The existing resume barrier checks the new writer and uses thread/settings/update followed by another thread/resume when requested settings differ. An active-writer (-32600) refusal retains the recorded conversation and previous settings and prints an exact recovery command.
 
