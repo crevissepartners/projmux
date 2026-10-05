@@ -65,6 +65,15 @@ func (h *Host) StartCodex(ctx context.Context, launch Launch, config CodexConfig
 	return &CodexHandle{handle: p}, err
 }
 func (c *CodexHandle) Observe(b Binding) (Snapshot, error) { return c.handle.Observe(b) }
+
+// NegotiatedVersion reports only the version witnessed on this owned wire.
+// It never probes PATH, a proxy, or another generation.
+func (c *CodexHandle) NegotiatedVersion(b Binding) (string, error) {
+	if _, err := c.handle.Observe(b); err != nil {
+		return "", err
+	}
+	return c.handle.adapter.(*codexAdapter).client.NegotiatedVersion(), nil
+}
 func (c *CodexHandle) Events(b Binding, after uint64) ([]Event, Snapshot, error) {
 	return c.handle.Events(b, after)
 }

@@ -33,6 +33,7 @@ import (
 //   - internal/app/resource_controller.go restores a snapshot of the ref when
 //     it rolls a failed transaction back; that is not a new conversation.
 var claudeSessionRefWriters = []string{
+	"internal/app/process_agent_session.go:updateProcessAgentSession",
 	"internal/app/agent_session_ref.go:persistAgentSessionRef",
 	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
 	"internal/app/create_intent.go:openIntentAgent",
@@ -52,6 +53,7 @@ var sessionHistoryAppendHelpers = []string{"recordClaudeSessionHistory", "record
 // BindCodexActivation but moves the Agent to no new conversation, and
 // agent_sessions.go builds `current` rows for reads only.
 var sessionHistoryObservedRowWriters = []string{
+	"internal/app/process_agent_session.go:updateProcessAgentSession",
 	"internal/app/agent_session_ref.go:persistAgentSessionRef",
 	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
 	"internal/app/create_agent.go:createAgent",

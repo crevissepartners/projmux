@@ -30,6 +30,17 @@
       "status": {
         "phase": "Running",
         "paneRef": "PANE",
+        "sessionRef": {
+          "provider": "codex",
+          "observedAt": "TIME",
+          "codex": {
+            "threadId": "process-thread",
+            "endpoint": {
+              "stateDomainID": "STATE_DOMAIN",
+              "endpointGenerationID": "codex-0.160.0"
+            }
+          }
+        },
         "lastTransitionAt": "TIME"
       }
     }
