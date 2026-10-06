@@ -18,7 +18,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 )
 
 type processCodexCreateCLI struct{ processCreateCLI }
@@ -141,16 +140,15 @@ func TestProcessCodexCreateTurnsAndBlockingControlsActualCLI(t *testing.T) {
 				t.Fatalf("operator wire: %s", raw)
 			}
 			cli("agent", "turn", "start", ref, "--", "controls")
-			qs := agentquestion.NewStore(paths.StateDir)
 			as := agentapproval.NewStore(paths.StateDir)
-			var questions []agentquestion.Record
+			var questions []ExactProcessQuestion
 			var approvals []agentapproval.Record
 			waitCodexCreate(t, ctx, func() bool {
-				questions, _ = qs.List(uid)
+				questions, _ = ReadExactProcessQuestions(ctx, uid)
 				approvals, _ = as.List(uid)
 				return len(questions) == 1 && len(approvals) == 1
 			})
-			if out := cli("agent", "question", "list", ref, "-o", "json"); !bytes.Contains(out, []byte(questions[0].ID)) {
+			if out := cli("agent", "question", "list", ref, "-o", "json"); !bytes.Contains(out, []byte(questions[0].QuestionID)) {
 				t.Fatalf("question list: %s", out)
 			}
 			if out := cli("agent", "approval", "list", ref, "-o", "json"); !bytes.Contains(out, []byte(approvals[0].ID)) {
@@ -162,7 +160,7 @@ func TestProcessCodexCreateTurnsAndBlockingControlsActualCLI(t *testing.T) {
 			if out := cli("get", "notifications", "--live", "--json"); !bytes.Contains(out, []byte("Input required")) || !bytes.Contains(out, []byte("Approval required")) {
 				t.Fatalf("notifications: %s", out)
 			}
-			cli("agent", "question", "answer", ref, questions[0].ID, "--option", "1=blue")
+			cli("agent", "question", "answer", ref, questions[0].QuestionID, "--option", "1=blue")
 			cli("agent", "approval", "answer", ref, approvals[0].ID, "--deny", "--via", "cli")
 			waitCodexCreate(t, ctx, func() bool { raw, _ := os.ReadFile(f.trace); return bytes.Count(raw, []byte(`"result"`)) == 2 })
 			_ = input.Close()

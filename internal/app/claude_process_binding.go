@@ -47,6 +47,7 @@ type claudeProcessCheck struct {
 	Lookup     bool
 	Input      *claudeProcessInput
 	Helper     *claudeProcessRegistration
+	Questions  *processQuestionRequest
 	Foreground *processForegroundRequest
 }
 
@@ -92,7 +93,7 @@ type claudeProcessService struct {
 }
 
 func (s *claudeProcessService) close(ctx context.Context) error {
-	s.once.Do(func() { s.closeErr = s.closeLease(ctx) })
+	s.once.Do(func() { processQuestionCallbacks.Delete(s.binding); s.closeErr = s.closeLease(ctx) })
 	return s.closeErr
 }
 
@@ -179,6 +180,23 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	}
 	bounded, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
+	if request.Questions != nil {
+		if request.Observe != nil || request.Foreground != nil || request.Helper != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
+			return
+		}
+		result := applyExactProcessQuestions(bounded, peer, *request.Questions, func(ctx context.Context, b processhost.Binding) error {
+			if err := s.currentForegroundBinding(ctx, b); err != nil {
+				return err
+			}
+			snap, err := s.handle.Observe(b)
+			if err != nil {
+				return err
+			}
+			return currentExactQuestionSession(s.registryPath, b, snap)
+		})
+		_ = localipc.WriteJSON(conn, result)
+		return
+	}
 	if request.Observe != nil {
 		if request.Foreground != nil || request.Helper != nil || request.Input != nil || request.Register || request.Lookup || request.Session != "" || request.Binding != (processhost.Binding{}) {
 			return
@@ -215,7 +233,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 
 // claudeProcessOperation rejects mixed requests on both sides of the socket.
 func claudeProcessOperation(r claudeProcessCheck) (string, bool) {
-	if r.Observe != nil || r.Foreground != nil {
+	if r.Questions != nil || r.Observe != nil || r.Foreground != nil {
 		return "", false
 	}
 	operation := "check"

@@ -258,6 +258,7 @@ func TestStoreCloseRecordsEachReasonAndSaysWhetherTheProviderStillAsks(t *testin
 
 	stillAsks := map[CloseReason]bool{
 		CloseReasonAnsweredElsewhere: false,
+		CloseReasonAnsweredDirect:    false,
 		CloseReasonChannelOff:        true,
 		CloseReasonHookCanceled:      false,
 		CloseReasonHookFailed:        true,
@@ -563,5 +564,21 @@ func TestCloseReasonDocsTableMatchesTheStore(t *testing.T) {
 	}
 	if !maps.Equal(documented, closeReasonsStillAsked) {
 		t.Fatalf("docs close reasons = %v, store = %v", documented, closeReasonsStillAsked)
+	}
+}
+
+func TestAnsweredDirectStoresOnlyTerminalMetadata(t *testing.T) {
+	store := NewStore(t.TempDir())
+	now := time.Now().UTC()
+	record, err := store.Create(Record{ID: testID(99), AgentUID: "agent", PaneUID: "pane", SessionID: "session", Generation: "generation", RequestID: "request", Provider: "codex", Questions: json.RawMessage(`[{"id":"secret","question":"Secret?","isSecret":true,"options":[]}]`), CreatedAt: now, Deadline: now.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = store.Close(record.ID, CloseReasonAnsweredDirect)
+	if err != nil || record.State != StateClosed || record.Disposition != "answered-direct" || len(record.Answers) != 0 {
+		t.Fatal(record, err)
+	}
+	if asks, known := ProviderStillAsks(record.Disposition); asks || !known {
+		t.Fatal("direct answer still asks")
 	}
 }

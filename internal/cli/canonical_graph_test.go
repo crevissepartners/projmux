@@ -112,8 +112,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Version now advertises the state-free JSON metadata projection.
-	const want = "1b277c28d147eb3a1190d97292741ec7ea4e785f31b50e6a112e29ebb69ddea2"
+	// Question help now describes global policy and deprecated no-effect controls.
+	const want = "d83aae8f3bf8dc1597cd6e5ccdf47f78f43a73eca1059b7c07200f8a4ab43b7f"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

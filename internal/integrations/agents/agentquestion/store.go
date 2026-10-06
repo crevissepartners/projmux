@@ -88,6 +88,9 @@ const (
 	CloseReasonWatchStopped CloseReason = "watch-stopped"
 	// CloseReasonAnsweredElsewhere: Codex's own input surface answered first.
 	CloseReasonAnsweredElsewhere CloseReason = "answered-elsewhere"
+	// CloseReasonAnsweredDirect: the owning host accepted an exact typed answer.
+	// Only redacted terminal metadata is persisted.
+	CloseReasonAnsweredDirect CloseReason = "answered-direct"
 )
 
 // closeReasonsStillAsked maps every reason this release writes to whether
@@ -101,6 +104,7 @@ var closeReasonsStillAsked = map[CloseReason]bool{
 	CloseReasonTurnEnded:         false,
 	CloseReasonWatchStopped:      true,
 	CloseReasonAnsweredElsewhere: false,
+	CloseReasonAnsweredDirect:    false,
 }
 
 // ProviderStillAsks reports whether the provider still asks a question that

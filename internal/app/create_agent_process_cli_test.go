@@ -397,7 +397,10 @@ func TestProcessCreateAnswerAndMessageActualCLI(t *testing.T) {
 			t.Fatalf("CLI %v: %v %s", args, err, out)
 		}
 	}
-	// Both central settings are absent (Claude) and the question annotation is off.
+	// Global projmux holds questions even with no per-Agent annotation.
+	if err := config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), config.AgentQuestionAnsweringProjmux); err != nil {
+		t.Fatal(err)
+	}
 	run("agent", "turn", "start", ref, "--", "question")
 	processCLIUntil(t, ctx, func() bool {
 		records, _ := questions.List(uid)

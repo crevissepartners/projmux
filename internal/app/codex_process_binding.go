@@ -40,7 +40,7 @@ type codexProcessEndpoint struct {
 }
 
 func (e *codexProcessEndpoint) close(ctx context.Context) error {
-	e.once.Do(func() { e.closeErr = e.closeLease(ctx) })
+	e.once.Do(func() { processQuestionCallbacks.Delete(e.binding); e.closeErr = e.closeLease(ctx) })
 	return e.closeErr
 }
 func (e *codexProcessEndpoint) authority() processhost.Authority {
@@ -216,6 +216,7 @@ type codexProcessExchange struct {
 	Binding    processhost.Binding
 	Evidence   coremetadata.CodexProcessRouteEvidence
 	MessageRef string
+	Questions  *processQuestionRequest
 	Foreground *processForegroundRequest
 }
 type codexProcessExchangeResult struct {
@@ -248,6 +249,24 @@ func (e *codexProcessEndpoint) exchange(ctx context.Context, conn *net.UnixConn)
 		return
 	}
 	switch {
+	case request.Questions != nil:
+		if request.Observe != nil || request.Foreground != nil || request.MessageRef != "" || request.Binding != (processhost.Binding{}) || request.Evidence != (coremetadata.CodexProcessRouteEvidence{}) {
+			return
+		}
+		result := applyExactProcessQuestions(bounded, peer, *request.Questions, func(ctx context.Context, b processhost.Binding) error {
+			if b != e.binding {
+				return processhost.ErrStale
+			}
+			if _, err := e.route(ctx); err != nil {
+				return err
+			}
+			snap, err := e.handle.Observe(b)
+			if err != nil {
+				return err
+			}
+			return currentExactQuestionSession(e.registryPath, b, snap)
+		})
+		_ = localipc.WriteJSON(conn, result)
 	case request.Observe != nil:
 		e.exchangeObservation(conn, peer, request)
 	case request.Foreground != nil:

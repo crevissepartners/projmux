@@ -26,6 +26,14 @@ type processForegroundRequest struct {
 	Selections                      map[int]agentquestion.Selection
 }
 
+// processQuestionRequest is a question-only private operation. The opaque ID
+// selects the host's pending token; client selections never become argv or logs.
+type processQuestionRequest struct {
+	Binding    processhost.Binding
+	QuestionID string
+	Selections map[int]agentquestion.Selection
+}
+
 // Preserve the exact provider input bytes across JSON transport. RawMessage
 // encoding compacts whitespace, which would invalidate the host's exact token.
 type processForegroundToken struct {
@@ -41,6 +49,8 @@ func (t processForegroundToken) request() processhost.Request {
 
 type processForegroundResult struct {
 	Accepted            bool
+	InvalidAnswer       bool
+	Questions           []ExactProcessQuestion `json:",omitempty"`
 	Stale, Busy, Closed bool
 	Observation         *processHostObservation `json:",omitempty"`
 	Receipt             *codexProcessReceipt    `json:",omitempty"`
