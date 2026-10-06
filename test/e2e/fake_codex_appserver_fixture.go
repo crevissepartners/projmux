@@ -239,10 +239,10 @@ func writeDaemonVersion(writer io.Writer) error {
 		"status":              "running",
 		"backend":             "pid",
 		"managedCodexPath":    "/discarded/fake-managed-codex",
-		"managedCodexVersion": "0.149.0",
+		"managedCodexVersion": "0.160.1",
 		"socketPath":          "/discarded/fake-control.sock",
-		"cliVersion":          "0.149.0",
-		"appServerVersion":    "0.149.0",
+		"cliVersion":          "0.160.1",
+		"appServerVersion":    "0.160.1",
 	})
 }
 
@@ -363,6 +363,7 @@ func serveProxy() error {
 
 func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureControlHub) error {
 	observerProxy := false
+	observerEpoch := 0
 	activeThread := ""
 	defer func() {
 		if observerProxy {
@@ -400,8 +401,11 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 			return errors.New("invalid JSON request")
 		}
 		var params struct {
-			ThreadID     string `json:"threadId"`
-			IncludeTurns bool   `json:"includeTurns"`
+			ThreadID      string `json:"threadId"`
+			IncludeTurns  bool   `json:"includeTurns"`
+			Limit         int    `json:"limit"`
+			SortDirection string `json:"sortDirection"`
+			ItemsView     string `json:"itemsView"`
 		}
 		if len(message.Params) > 0 && json.Unmarshal(message.Params, &params) != nil {
 			return errors.New("invalid JSON request params")
@@ -417,7 +421,7 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 		}
 		switch message.Method {
 		case "initialize":
-			if err := peer.writeResult(message.ID, map[string]any{"userAgent": "codex-cli/0.149.0", "platformFamily": "linux", "platformOs": "linux"}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"userAgent": "codex-cli/0.160.1", "platformFamily": "linux", "platformOs": "linux"}); err != nil {
 				return err
 			}
 		case "initialized":
@@ -463,11 +467,14 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 			if err := peer.writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID}}); err != nil {
 				return err
 			}
-		case "thread/read":
+		case "thread/read", "thread/turns/list":
+			if message.Method == "thread/turns/list" && (params.Limit != 1 || params.SortDirection != "desc" || params.ItemsView != "notLoaded") {
+				return errors.New("invalid bodyless latest-turn request")
+			}
 			if err := validateFixtureThread(params.ThreadID); err != nil {
 				return err
 			}
-			if !params.IncludeTurns {
+			if message.Method == "thread/read" && !params.IncludeTurns && activeThread != "" {
 				hub.setShared(peer)
 				// The broker's pre-turn bootstrap snapshot. It carries no turn,
 				// so it is not the lifecycle epoch the scripted scenario steps.
@@ -479,26 +486,18 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 				}
 				continue
 			}
+			// A short-lived owned connection reads metadata and the latest page
+			// twice. All four requests belong to one scripted observer epoch.
+			firstRead := observerEpoch == 0
+			if firstRead {
+				var err error
+				observerEpoch, err = nextObserverEpoch(params.ThreadID)
+				if err != nil {
+					return err
+				}
+			}
 			observerProxy = true
-			epoch, err := nextObserverEpoch(params.ThreadID)
-			if err != nil {
-				return err
-			}
-			if params.ThreadID == "thread-phase3" && epoch > 1 {
-				requestID := append(json.RawMessage(nil), message.ID...)
-				go func() {
-					if err := waitForGate("allow-reconnect"); err != nil {
-						_ = recordFixtureFailure(err)
-						return
-					}
-					if err := peer.writeResult(requestID, map[string]any{"thread": map[string]any{
-						"id": "thread-phase3", "status": map[string]any{"type": "idle", "activeFlags": []string{}}, "turns": []map[string]any{},
-					}}); err != nil {
-						_ = recordFixtureFailure(err)
-					}
-				}()
-				continue
-			}
+			epoch := observerEpoch
 			status := map[string]any{"type": "idle", "activeFlags": []string{}}
 			turns := []map[string]any{}
 			if params.ThreadID == "thread-phase3" && epoch == 1 {
@@ -508,10 +507,37 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 				status = map[string]any{"type": "active", "activeFlags": []string{}}
 				turns = []map[string]any{{"id": "turn-sibling", "status": "inProgress"}}
 			}
-			if err := peer.writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID, "status": status, "turns": turns}}); err != nil {
+			var result map[string]any
+			if message.Method == "thread/turns/list" {
+				for _, turn := range turns {
+					turn["itemsView"] = "notLoaded"
+					turn["items"] = []any{}
+				}
+				result = map[string]any{"data": turns, "nextCursor": nil}
+			} else {
+				thread := map[string]any{"id": params.ThreadID, "status": status, "turns": []map[string]any{}}
+				if params.IncludeTurns {
+					thread["turns"] = turns
+				}
+				result = map[string]any{"thread": thread}
+			}
+			if params.ThreadID == "thread-phase3" && epoch > 1 && firstRead {
+				requestID := append(json.RawMessage(nil), message.ID...)
+				go func() {
+					if err := waitForGate("allow-reconnect"); err != nil {
+						_ = recordFixtureFailure(err)
+						return
+					}
+					if err := peer.writeResult(requestID, result); err != nil {
+						_ = recordFixtureFailure(err)
+					}
+				}()
+				continue
+			}
+			if err := peer.writeResult(message.ID, result); err != nil {
 				return err
 			}
-			if params.ThreadID == "thread-phase3" && epoch == 1 {
+			if params.ThreadID == "thread-phase3" && epoch == 1 && firstRead {
 				eventPeer := hub.eventPeer(peer)
 				if eventPeer == nil {
 					return errors.New("owned lifecycle read has no shared event authority")

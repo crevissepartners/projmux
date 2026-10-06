@@ -1138,7 +1138,7 @@ func (p *boundedProductionProvider) count(method string) int {
 
 func newBoundedProductionWire(t *testing.T, state, failure string) (*boundedProductionWire, *boundedProductionProvider) {
 	t.Helper()
-	root, err := os.MkdirTemp("", "cl-")
+	root, err := os.MkdirTemp("/tmp", "cl-")
 	if err != nil {
 		t.Fatal(err)
 	}
