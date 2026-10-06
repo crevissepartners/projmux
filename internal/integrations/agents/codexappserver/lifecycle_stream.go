@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 	"unsafe"
+
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -101,7 +103,7 @@ const (
 )
 
 // LifecycleEndpoint is one owned, initialized transport whose only provider
-// operation is a complete thread/read projected before generic frame
+// operations are bounded metadata and bodyless latest-turn reads before generic frame
 // materialization. It has no notification or approval-response surface.
 type LifecycleEndpoint interface {
 	ReadLifecycleSnapshot(context.Context, string) (LifecycleSnapshot, error)
@@ -113,13 +115,14 @@ type LifecycleEndpoint interface {
 // is never shared: cancellation and every limit failure abort only this
 // transport, while the broker's event/control connection remains untouched.
 type LifecycleClient struct {
-	stream readWriteCloser
-	peer   PeerIdentity
-	reader *bufio.Reader
-	budget lifecycleBudget
-	mu     sync.Mutex
-	closed bool
-	nextID int64
+	stream            readWriteCloser
+	peer              PeerIdentity
+	reader            *bufio.Reader
+	budget            lifecycleBudget
+	mu                sync.Mutex
+	closed            bool
+	bodylessAvailable bool
+	nextID            int64
 }
 
 type lifecycleBudget struct {
@@ -147,7 +150,7 @@ func (b *lifecycleBudget) addJSON(count int) error {
 
 func (b *lifecycleBudget) addFrame() error {
 	if b.frames >= lifecycleFrames {
-		return fmt.Errorf("%w: lifecycle frame limit", ErrProtocol)
+		return fmt.Errorf("%w: lifecycle frame limit", ErrPayloadTooLarge)
 	}
 	b.frames++
 	return nil
@@ -155,7 +158,7 @@ func (b *lifecycleBudget) addFrame() error {
 
 func (b *lifecycleBudget) addControl(count int) error {
 	if count < 0 || b.controlBytes > lifecycleControlBytes-count {
-		return fmt.Errorf("%w: lifecycle control limit", ErrProtocol)
+		return fmt.Errorf("%w: lifecycle control limit", ErrPayloadTooLarge)
 	}
 	b.controlBytes += count
 	return nil
@@ -233,22 +236,57 @@ func (c *LifecycleClient) initialize(ctx context.Context, version string, experi
 	if json.Unmarshal(envelope.Result, &result) != nil {
 		return fmt.Errorf("%w: invalid initialize result", ErrProtocol)
 	}
+	c.bodylessAvailable = experimental && bodylessLifecycleAvailable(result.UserAgent)
 	if err := c.write(ctx, wireNotification{Method: methodInitialized, Params: struct{}{}}); err != nil {
 		return err
 	}
-	// The 16 MiB JSON budget belongs to the complete thread/read response.
-	// Initialize bytes remain in the cumulative wire/frame/control totals, but
-	// do not reduce that independent response allowance.
+	// Initialize has its own small JSON allowance. Subsequent metadata/page
+	// responses share one cumulative JSON budget; wire/frame/control totals
+	// include the handshake and all four observations.
 	c.budget.jsonBytes = 0
 	return nil
 }
 
-// ReadLifecycleSnapshot writes exactly one complete read and incrementally
-// projects its response. The operation is not reusable after return: Close is
-// part of success, so no notification or late response can escape the owned
-// authority boundary.
-func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID string) (snapshot LifecycleSnapshot, err error) {
-	defer func() { err = withRequestFailure(methodThreadRead, err) }()
+// ReadLifecycleSnapshot uses one owned connection and cumulative operation budgets.
+// Two observations refuse a metadata/turn race without retrying or falling back
+// to a cached idle state. Publication still belongs to the broker's exact fence.
+func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID string) (LifecycleSnapshot, error) {
+	if !c.bodylessAvailable {
+		return LifecycleSnapshot{}, fmt.Errorf("%w: bounded lifecycle unavailable", ErrUnsupported)
+	}
+	read := func() (LifecycleSnapshot, error) {
+		metadata, err := c.readProjected(ctx, threadID, methodThreadRead,
+			lifecycleThreadReadParams{ThreadID: threadID, IncludeTurns: false}, lifecycleMetadata)
+		if err != nil {
+			return LifecycleSnapshot{}, err
+		}
+		latest, err := c.readProjected(ctx, threadID, methodThreadTurnsList,
+			lifecycleThreadTurnsListParams{ThreadID: threadID, Limit: 1, SortDirection: "desc", ItemsView: "notLoaded"}, lifecycleLatest)
+		if err != nil {
+			return LifecycleSnapshot{}, err
+		}
+		latest.ThreadState = metadata.ThreadState
+		if !consistentLifecycle(latest) {
+			return LifecycleSnapshot{}, fmt.Errorf("%w: inconsistent lifecycle observations", ErrProtocol)
+		}
+		return latest, nil
+	}
+	first, err := read()
+	if err != nil {
+		return LifecycleSnapshot{}, err
+	}
+	second, err := read()
+	if err != nil {
+		return LifecycleSnapshot{}, err
+	}
+	if first != second {
+		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle changed during read", ErrProtocol)
+	}
+	return second, nil
+}
+
+func (c *LifecycleClient) readProjected(ctx context.Context, threadID, method string, params any, projection lifecycleProjection) (snapshot LifecycleSnapshot, err error) {
+	defer func() { err = withRequestFailure(method, err) }()
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle snapshot thread is empty", ErrProtocol)
@@ -256,8 +294,7 @@ func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID st
 	id := c.nextID
 	c.nextID++
 	if err := c.write(ctx, wireRequest{
-		Method: methodThreadRead, ID: id,
-		Params: lifecycleThreadReadParams{ThreadID: threadID, IncludeTurns: true},
+		Method: method, ID: id, Params: params,
 	}); err != nil {
 		return LifecycleSnapshot{}, err
 	}
@@ -272,7 +309,7 @@ func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID st
 			// Each input is one frame by construction, so a skipped
 			// notification needs a fresh input rather than a rewind.
 			input := c.nextInput()
-			projector := lifecycleProjector{input: input, requestID: id, threadID: threadID}
+			projector := lifecycleProjector{input: input, requestID: id, threadID: threadID, projection: projection}
 			snapshot, err := projector.run(ctx)
 			if err != nil && errors.Is(err, errLifecycleNotificationSkip) && skipped < lifecycleNotificationSkipLimit {
 				continue
@@ -292,7 +329,7 @@ func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID st
 		case <-done:
 			return LifecycleSnapshot{}, ctx.Err()
 		case <-timer.C:
-			return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle cleanup timeout", ErrDisconnected)
+			return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle cleanup timeout", errors.Join(ctx.Err(), ErrDisconnected))
 		}
 	}
 }
@@ -315,7 +352,7 @@ func (c *LifecycleClient) readSmall(ctx context.Context, limit int) ([]byte, err
 		var frame []byte
 		for {
 			chunk, err := input.next()
-			if errors.Is(err, io.EOF) {
+			if err == io.EOF {
 				done <- result{frame: frame}
 				return
 			}
@@ -324,7 +361,7 @@ func (c *LifecycleClient) readSmall(ctx context.Context, limit int) ([]byte, err
 				return
 			}
 			if len(frame) > limit-len(chunk) {
-				done <- result{err: fmt.Errorf("%w: lifecycle control message too large", ErrProtocol)}
+				done <- result{err: fmt.Errorf("%w: lifecycle control message too large", ErrPayloadTooLarge)}
 				return
 			}
 			frame = append(frame, chunk...)
@@ -341,7 +378,7 @@ func (c *LifecycleClient) readSmall(ctx context.Context, limit int) ([]byte, err
 		case <-done:
 			return nil, ctx.Err()
 		case <-timer.C:
-			return nil, fmt.Errorf("%w: lifecycle cleanup timeout", ErrDisconnected)
+			return nil, fmt.Errorf("%w: lifecycle cleanup timeout", errors.Join(ctx.Err(), ErrDisconnected))
 		}
 	}
 }
@@ -360,7 +397,7 @@ func (c *LifecycleClient) write(ctx context.Context, value any) error {
 	select {
 	case err := <-done:
 		if err != nil {
-			return ErrDisconnected
+			return errors.Join(ErrDisconnected, err)
 		}
 		return nil
 	case <-ctx.Done():
@@ -371,7 +408,7 @@ func (c *LifecycleClient) write(ctx context.Context, value any) error {
 		case <-done:
 			return ctx.Err()
 		case <-timer.C:
-			return fmt.Errorf("%w: lifecycle cleanup timeout", ErrDisconnected)
+			return fmt.Errorf("%w: lifecycle cleanup timeout", errors.Join(ctx.Err(), ErrDisconnected))
 		}
 	}
 }
@@ -431,7 +468,10 @@ func (in *jsonLineLifecycleInput) next() ([]byte, error) {
 		return chunk, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: unterminated lifecycle JSONL frame", ErrProtocol)
+		if err == io.EOF {
+			return nil, fmt.Errorf("%w: unterminated lifecycle JSONL frame", ErrProtocol)
+		}
+		return nil, err
 	}
 	return chunk, nil
 }
@@ -456,7 +496,7 @@ func (in *websocketLifecycleInput) next() ([]byte, error) {
 		if in.frameRemain > 0 {
 			count := min(uint64(len(in.buffer)), in.frameRemain)
 			if _, err := io.ReadFull(in.stream.reader, in.buffer[:count]); err != nil {
-				return nil, err
+				return nil, errors.Join(ErrDisconnected, err)
 			}
 			in.frameRemain -= count
 			if err := in.budget.addWire(int(count)); err != nil {
@@ -493,7 +533,7 @@ func (in *websocketLifecycleInput) next() ([]byte, error) {
 			}
 			payload := make([]byte, length)
 			if _, err := io.ReadFull(in.stream.reader, payload); err != nil {
-				return nil, err
+				return nil, errors.Join(ErrDisconnected, err)
 			}
 			if err := in.budget.addWire(int(length)); err != nil {
 				return nil, err
@@ -503,7 +543,7 @@ func (in *websocketLifecycleInput) next() ([]byte, error) {
 			}
 			switch opcode {
 			case 0x8:
-				return nil, io.EOF
+				return nil, errors.Join(ErrDisconnected, io.EOF)
 			case 0x9:
 				if err := in.stream.writeFrame(0xA, payload); err != nil {
 					return nil, err
@@ -539,7 +579,7 @@ func (in *websocketLifecycleInput) next() ([]byte, error) {
 func (in *websocketLifecycleInput) readHeader() (bool, byte, uint64, int, error) {
 	var header [2]byte
 	if _, err := io.ReadFull(in.stream.reader, header[:]); err != nil {
-		return false, 0, 0, 0, err
+		return false, 0, 0, 0, errors.Join(ErrDisconnected, err)
 	}
 	fin, opcode := header[0]&0x80 != 0, header[0]&0x0f
 	if header[0]&0x70 != 0 || header[1]&0x80 != 0 {
@@ -551,13 +591,13 @@ func (in *websocketLifecycleInput) readHeader() (bool, byte, uint64, int, error)
 	case 126:
 		var extended [2]byte
 		if _, err := io.ReadFull(in.stream.reader, extended[:]); err != nil {
-			return false, 0, 0, 0, err
+			return false, 0, 0, 0, errors.Join(ErrDisconnected, err)
 		}
 		length, headerBytes = uint64(binary.BigEndian.Uint16(extended[:])), 4
 	case 127:
 		var extended [8]byte
 		if _, err := io.ReadFull(in.stream.reader, extended[:]); err != nil {
-			return false, 0, 0, 0, err
+			return false, 0, 0, 0, errors.Join(ErrDisconnected, err)
 		}
 		length, headerBytes = binary.BigEndian.Uint64(extended[:]), 10
 	}
@@ -578,18 +618,28 @@ const (
 	modeScalar
 	modeError
 	modeRPCCode
+	modeEmptyItems
+)
+
+type lifecycleProjection uint8
+
+const (
+	lifecycleFull lifecycleProjection = iota // legacy parser/conformance only
+	lifecycleMetadata
+	lifecycleLatest
 )
 
 type lifecycleProjector struct {
-	input     lifecycleChunkInput
-	requestID int64
-	threadID  string
-	ctx       context.Context
-	buffer    []byte
-	scalarBuf [lifecycleScalarBytes*6 + 2]byte
-	pos       int
-	values    int
-	retained  int
+	projection lifecycleProjection
+	input      lifecycleChunkInput
+	requestID  int64
+	threadID   string
+	ctx        context.Context
+	buffer     []byte
+	scalarBuf  [lifecycleScalarBytes*6 + 2]byte
+	pos        int
+	values     int
+	retained   int
 }
 
 type projectedTurn struct {
@@ -624,10 +674,14 @@ func (p *lifecycleProjector) run(ctx context.Context) (LifecycleSnapshot, error)
 	if err != nil {
 		return LifecycleSnapshot{}, err
 	}
-	if err := p.space(); err != nil && !errors.Is(err, io.EOF) {
+	if err := p.space(); err != nil && err != io.EOF {
 		return LifecycleSnapshot{}, err
 	}
-	if next, err := p.peek(); err == nil || !errors.Is(err, io.EOF) || next != 0 {
+	if next, err := p.peek(); err != io.EOF {
+		if err != nil {
+			return LifecycleSnapshot{}, err
+		}
+		_ = next
 		return LifecycleSnapshot{}, fmt.Errorf("%w: trailing lifecycle JSON", ErrProtocol)
 	}
 	snapshot, ok := value.(LifecycleSnapshot)
@@ -636,7 +690,7 @@ func (p *lifecycleProjector) run(ctx context.Context) (LifecycleSnapshot, error)
 	}
 	payload, err := json.Marshal(snapshot)
 	if err != nil || len(payload) > lifecycleSummaryBytes {
-		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle summary limit", ErrProtocol)
+		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle summary limit", ErrPayloadTooLarge)
 	}
 	if err := ctx.Err(); err != nil {
 		return LifecycleSnapshot{}, err
@@ -649,14 +703,14 @@ func (p *lifecycleProjector) check() error {
 		return err
 	}
 	if p.retained > lifecycleRetainedBytes-lifecycleRetainedReserve {
-		return fmt.Errorf("%w: lifecycle retained-state limit", ErrProtocol)
+		return fmt.Errorf("%w: lifecycle retained-state limit", ErrPayloadTooLarge)
 	}
 	return nil
 }
 
 func (p *lifecycleProjector) retain(count int) error {
 	if count < 0 || p.retained > lifecycleRetainedBytes-lifecycleRetainedReserve-count {
-		return fmt.Errorf("%w: lifecycle retained-state limit", ErrProtocol)
+		return fmt.Errorf("%w: lifecycle retained-state limit", ErrPayloadTooLarge)
 	}
 	p.retained += count
 	return nil
@@ -698,7 +752,10 @@ func (p *lifecycleProjector) take() (byte, error) {
 
 func (p *lifecycleProjector) expect(want byte) error {
 	got, err := p.take()
-	if err != nil || got != want {
+	if err != nil {
+		return lifecycleTokenError(err, "JSON")
+	}
+	if got != want {
 		return fmt.Errorf("%w: malformed lifecycle JSON", ErrProtocol)
 	}
 	return nil
@@ -723,24 +780,24 @@ func (p *lifecycleProjector) value(mode lifecycleMode, depth int) (any, error) {
 	}
 	p.values++
 	if p.values > lifecycleValues {
-		return nil, fmt.Errorf("%w: lifecycle value limit", ErrProtocol)
+		return nil, fmt.Errorf("%w: lifecycle value limit", ErrPayloadTooLarge)
 	}
 	if depth > lifecycleDepth {
-		return nil, fmt.Errorf("%w: lifecycle depth limit", ErrProtocol)
+		return nil, fmt.Errorf("%w: lifecycle depth limit", ErrPayloadTooLarge)
 	}
 	if err := p.space(); err != nil {
 		return nil, err
 	}
 	first, err := p.peek()
 	if err != nil {
-		return nil, fmt.Errorf("%w: malformed lifecycle JSON", ErrProtocol)
+		return nil, lifecycleTokenError(err, "JSON")
 	}
 	if mode == modeRoot || mode == modeResult || mode == modeThread || mode == modeStatus || mode == modeTurn || mode == modeError {
 		if first != '{' {
 			return nil, fmt.Errorf("%w: lifecycle metadata shape", ErrProtocol)
 		}
 	}
-	if mode == modeTurns || mode == modeFlags {
+	if mode == modeTurns || mode == modeFlags || mode == modeEmptyItems {
 		if first != '[' {
 			return nil, fmt.Errorf("%w: lifecycle metadata shape", ErrProtocol)
 		}
@@ -789,7 +846,7 @@ func (p *lifecycleProjector) object(mode lifecycleMode, depth int) (any, error) 
 				return nil, fmt.Errorf("%w: duplicate lifecycle JSON key", ErrProtocol)
 			}
 			if len(keys) >= lifecycleObjectFields {
-				return nil, fmt.Errorf("%w: lifecycle object limit", ErrProtocol)
+				return nil, fmt.Errorf("%w: lifecycle object limit", ErrPayloadTooLarge)
 			}
 			if err := p.retain(len(key)); err != nil {
 				return nil, err
@@ -803,11 +860,14 @@ func (p *lifecycleProjector) object(mode lifecycleMode, depth int) (any, error) 
 				return nil, err
 			}
 			wanted := wantedLifecycleMode(mode, key)
+			if p.projection == lifecycleLatest && mode == modeTurn && key == "items" {
+				wanted = modeEmptyItems
+			}
 			value, err := p.value(wanted, depth+1)
 			if err != nil {
 				return nil, err
 			}
-			if wanted != modeIgnored {
+			if wanted != modeIgnored && wanted != modeEmptyItems {
 				index := lifecycleProjectionFieldIndex(mode, key)
 				if index < 0 {
 					return nil, fmt.Errorf("%w: lifecycle projection field", ErrProtocol)
@@ -851,8 +911,13 @@ func lifecycleProjectionFieldIndex(mode lifecycleMode, key string) int {
 			return 3
 		}
 	case modeResult:
-		if key == "thread" {
+		switch key {
+		case "thread":
 			return 0
+		case "data":
+			return 1
+		case "nextCursor":
+			return 2
 		}
 	case modeThread:
 		switch key {
@@ -872,6 +937,8 @@ func lifecycleProjectionFieldIndex(mode lifecycleMode, key string) int {
 		}
 	case modeTurn:
 		switch key {
+		case "itemsView":
+			return 3
 		case "id":
 			return 0
 		case "status":
@@ -902,8 +969,13 @@ func wantedLifecycleMode(mode lifecycleMode, key string) lifecycleMode {
 			return modeError
 		}
 	case modeResult:
-		if key == "thread" {
+		switch key {
+		case "thread":
 			return modeThread
+		case "data":
+			return modeTurns
+		case "nextCursor":
+			return modeScalar
 		}
 	case modeThread:
 		switch key {
@@ -922,6 +994,9 @@ func wantedLifecycleMode(mode lifecycleMode, key string) lifecycleMode {
 			return modeFlags
 		}
 	case modeTurn:
+		if key == "itemsView" {
+			return modeScalar
+		}
 		if key == "id" || key == "status" || key == "startedAt" {
 			return modeScalar
 		}
@@ -971,6 +1046,32 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys []string, fi
 		}
 		return thread, nil
 	case modeResult:
+		if p.projection == lifecycleLatest {
+			if !hasLifecycleKey(keys, "data") || hasLifecycleKey(keys, "thread") {
+				return nil, fmt.Errorf("%w: lifecycle page shape", ErrProtocol)
+			}
+			turns, ok := fields[1].(struct {
+				count  int
+				latest *projectedTurn
+			})
+			if !ok || turns.count > 1 {
+				return nil, fmt.Errorf("%w: lifecycle latest page size", ErrProtocol)
+			}
+			snapshot, err := p.projectObject(modeThread, []string{"id", "status", "turns"}, lifecycleProjectionFields{p.threadID, ThreadStateIdle, fields[1]})
+			if err != nil {
+				return nil, err
+			}
+			got := snapshot.(LifecycleSnapshot)
+			if fields[2] != nil {
+				cursor, ok := fields[2].(string)
+				if !ok || cursor == "" || turns.count == 0 {
+					return nil, fmt.Errorf("%w: lifecycle page cursor", ErrProtocol)
+				}
+				got.TurnCount = -1
+			}
+			got.ThreadState = ThreadStateUnknown
+			return projectedResult{thread: got}, nil
+		}
 		thread := fields[0]
 		if !hasLifecycleKey(keys, "thread") {
 			return nil, fmt.Errorf("%w: lifecycle result thread", ErrProtocol)
@@ -989,8 +1090,14 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys []string, fi
 			count  int
 			latest *projectedTurn
 		})
+		if !ok && p.projection == lifecycleMetadata && !hasLifecycleKey(keys, "turns") {
+			ok = true
+		}
 		if !ok {
 			return nil, fmt.Errorf("%w: lifecycle turns unobserved", ErrProtocol)
+		}
+		if p.projection == lifecycleMetadata && turns.count != 0 {
+			return nil, fmt.Errorf("%w: metadata returned turn history", ErrProtocol)
 		}
 		snapshot := LifecycleSnapshot{ThreadID: id, ThreadState: state, TurnCount: turns.count}
 		if turns.latest != nil {
@@ -1027,6 +1134,11 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys []string, fi
 		}
 		return normalizeThreadState(status), nil
 	case modeTurn:
+		if p.projection == lifecycleLatest {
+			if fields[3] != "notLoaded" || !hasLifecycleKey(keys, "items") {
+				return nil, fmt.Errorf("%w: lifecycle turn items view", ErrProtocol)
+			}
+		}
 		return projectedTurn{id: fields[0], status: fields[1], startedAt: fields[2], present: hasLifecycleKey(keys, "startedAt")}, nil
 	case modeError:
 		return projectedRPCError{code: fields[0], message: fields[1]}, nil
@@ -1075,13 +1187,16 @@ func (p *lifecycleProjector) array(mode lifecycleMode, depth int) (any, error) {
 		return nil, err
 	}
 	if first != ']' {
+		if mode == modeEmptyItems {
+			return nil, fmt.Errorf("%w: bodyless lifecycle returned items", ErrProtocol)
+		}
 		for {
 			count++
 			if mode == modeTurns && count > lifecycleTurns {
-				return nil, fmt.Errorf("%w: lifecycle turn limit", ErrProtocol)
+				return nil, fmt.Errorf("%w: lifecycle turn limit", ErrPayloadTooLarge)
 			}
 			if mode == modeFlags && count > lifecycleObjectFields {
-				return nil, fmt.Errorf("%w: lifecycle flag limit", ErrProtocol)
+				return nil, fmt.Errorf("%w: lifecycle flag limit", ErrPayloadTooLarge)
 			}
 			itemMode := modeIgnored
 			if mode == modeTurns {
@@ -1147,7 +1262,7 @@ func (p *lifecycleProjector) scalar(capture, exactRPCCode bool) (any, error) {
 	var token []byte
 	for {
 		value, err := p.peek()
-		if errors.Is(err, io.EOF) {
+		if err == io.EOF {
 			break
 		}
 		if err != nil {
@@ -1157,7 +1272,7 @@ func (p *lifecycleProjector) scalar(capture, exactRPCCode bool) (any, error) {
 			break
 		}
 		if len(token) >= lifecycleScalarBytes {
-			return nil, fmt.Errorf("%w: lifecycle scalar limit", ErrProtocol)
+			return nil, fmt.Errorf("%w: lifecycle scalar limit", ErrPayloadTooLarge)
 		}
 		token = append(token, value)
 		p.pos++
@@ -1215,7 +1330,7 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 	}
 	appendRaw := func(value byte) error {
 		if len(raw) >= cap(raw) {
-			return fmt.Errorf("%w: lifecycle scalar limit", ErrProtocol)
+			return fmt.Errorf("%w: lifecycle scalar limit", ErrPayloadTooLarge)
 		}
 		raw = append(raw, value)
 		return nil
@@ -1245,7 +1360,7 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 		}
 		value, err := p.take()
 		if err != nil {
-			return "", fmt.Errorf("%w: malformed lifecycle string", ErrProtocol)
+			return "", lifecycleTokenError(err, "string")
 		}
 		switch {
 		case value == '"':
@@ -1256,13 +1371,19 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 				return "", err
 			}
 			var decoded string
-			if json.Unmarshal(raw, &decoded) != nil || len(decoded) > lifecycleScalarBytes {
+			if json.Unmarshal(raw, &decoded) != nil {
 				return "", fmt.Errorf("%w: malformed lifecycle string", ErrProtocol)
+			}
+			if len(decoded) > lifecycleScalarBytes {
+				return "", fmt.Errorf("%w: lifecycle scalar limit", ErrPayloadTooLarge)
 			}
 			return decoded, nil
 		case value == '\\':
 			escape, err := p.take()
-			if err != nil || !bytes.ContainsRune([]byte(`"\\/bfnrtu`), rune(escape)) {
+			if err != nil {
+				return "", lifecycleTokenError(err, "escape")
+			}
+			if !bytes.ContainsRune([]byte(`"\\/bfnrtu`), rune(escape)) {
 				return "", fmt.Errorf("%w: malformed lifecycle escape", ErrProtocol)
 			}
 			if capture {
@@ -1276,7 +1397,10 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 			if escape == 'u' {
 				for range 4 {
 					digit, err := p.take()
-					if err != nil || !isHex(digit) {
+					if err != nil {
+						return "", lifecycleTokenError(err, "unicode escape")
+					}
+					if !isHex(digit) {
 						return "", fmt.Errorf("%w: malformed lifecycle unicode escape", ErrProtocol)
 					}
 					if capture {
@@ -1303,7 +1427,7 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 			for index := 1; index < width; index++ {
 				next, err := p.take()
 				if err != nil {
-					return "", fmt.Errorf("%w: malformed lifecycle UTF-8", ErrProtocol)
+					return "", lifecycleTokenError(err, "UTF-8")
 				}
 				sequence[index] = next
 			}
@@ -1321,7 +1445,7 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 		// A JSON escape can use six wire bytes for one retained byte. Bound the
 		// temporary encoded scalar as well as the decoded scalar checked above.
 		if capture && len(raw) > lifecycleScalarBytes*6+1 {
-			return "", fmt.Errorf("%w: lifecycle scalar limit", ErrProtocol)
+			return "", fmt.Errorf("%w: lifecycle scalar limit", ErrPayloadTooLarge)
 		}
 		if err := p.check(); err != nil {
 			return "", err
@@ -1348,4 +1472,21 @@ func isHex(value byte) bool {
 
 func validLifecycleIdentity(value string) bool {
 	return value != "" && value == strings.TrimSpace(value) && len([]byte(value)) <= lifecycleIdentityBytes
+}
+
+// Only exhausted JSON is malformed. Limits, cancellation and transport errors
+// remain their original typed causes at every string/escape boundary.
+func lifecycleTokenError(err error, token string) error {
+	if err == io.EOF {
+		return fmt.Errorf("%w: malformed lifecycle %s", ErrProtocol, token)
+	}
+	return err
+}
+
+// 0.160.1 is the first qualified schema/source/wire tuple for this read path.
+// Method refusal on a newer server also fails closed; no history fallback.
+func bodylessLifecycleAvailable(userAgent string) bool {
+	version := safeVersion(userAgent)
+	match := versionPattern.FindStringSubmatch(version)
+	return len(match) == 2 && semver.IsValid("v"+match[1]) && semver.Compare("v"+match[1], "v0.160.1") >= 0
 }

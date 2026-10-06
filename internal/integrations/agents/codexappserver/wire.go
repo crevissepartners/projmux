@@ -13,6 +13,7 @@ const (
 	methodThreadList              = "thread/list"
 	methodThreadLoadedList        = "thread/loaded/list"
 	methodThreadRead              = "thread/read"
+	methodThreadTurnsList         = "thread/turns/list"
 	methodThreadStart             = "thread/start"
 	methodThreadResume            = "thread/resume"
 	methodThreadSettingsUpdate    = "thread/settings/update"

@@ -22,7 +22,7 @@ type FailureDiagnostic struct {
 func safeDiagnosticMethod(method string) string {
 	switch method {
 	case methodInitialize, methodInitialized, methodModelList, methodReviewStart,
-		methodThreadList, methodThreadLoadedList, methodThreadRead, methodThreadStart,
+		methodThreadList, methodThreadLoadedList, methodThreadRead, methodThreadTurnsList, methodThreadStart,
 		methodThreadResume, methodThreadSettingsUpdate, methodTurnStart, methodTurnSteer, methodTurnInterrupt,
 		methodRemoteControlStatusRead:
 		return method

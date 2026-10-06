@@ -18,6 +18,28 @@ type lifecycleThreadReadParams struct {
 	IncludeTurns bool   `json:"includeTurns"`
 }
 
+type lifecycleThreadTurnsListParams struct {
+	ThreadID      string `json:"threadId"`
+	Limit         int    `json:"limit"`
+	SortDirection string `json:"sortDirection"`
+	ItemsView     string `json:"itemsView"`
+}
+
+// consistentLifecycle retains the admission meaning of a fresh full read.
+func consistentLifecycle(s LifecycleSnapshot) bool {
+	switch s.ThreadState {
+	case ThreadStateActive, ThreadStateWaitingOnApproval, ThreadStateWaitingOnUserInput:
+		return s.TurnID != "" && s.TurnState == TurnStateInProgress
+	case ThreadStateIdle, ThreadStateSystemError:
+		if s.TurnID == "" {
+			return s.TurnCount == 0 && s.TurnState == ""
+		}
+		return s.TurnState == TurnStateCompleted || s.TurnState == TurnStateFailed || s.TurnState == TurnStateInterrupted
+	default:
+		return false
+	}
+}
+
 type lifecycleThreadStatus struct {
 	Type        string   `json:"type"`
 	ActiveFlags []string `json:"activeFlags"`
@@ -99,7 +121,9 @@ type LifecycleEvent struct {
 type LifecycleSnapshot struct {
 	ThreadID    string
 	ThreadState ThreadState
-	// TurnCount is the content-free cardinality returned by thread/read. It lets
+	// TurnCount is the full cardinality when known, or -1 when a bounded latest
+	// page has older turns. It never represents page size as total history.
+	// Legacy conformance reads retain the complete thread/read cardinality. It lets
 	// conformance distinguish the exact first real input from TUI liveness or an
 	// unrelated later event without retaining any turn item content.
 	TurnCount int

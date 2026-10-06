@@ -603,3 +603,52 @@ func TestClassifyCodexTurnPushCountsADrainAsRefusedNotUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionPeerMessageUsesBoundedLifecycleAndKnownLimitRefusal(t *testing.T) {
+	for _, test := range []struct {
+		name, state, failure string
+		wantWrite            int
+	}{
+		{"idle", "idle", "", 1}, {"active", "active", "", 1}, {"approval-wait", "approval", "", 1}, {"input-wait", "input", "", 1}, {"limit", "idle", "limit", 0}, {"unknown", "idle", "unknown", 0}, {"wrongthread", "idle", "wrong-thread", 0}, {"changedbinding", "idle", "changed", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCodexPushFixture(t)
+			wire, provider := newBoundedProductionWire(t, test.state, test.failure)
+			epoch := newCodexControlEpoch(wire, phase6CLIIdentity(), "epoch-1", codexappserver.LifecycleSnapshot{}, func(codexLifecycleIdentity) bool {
+				return test.failure != "changed" || provider.count("thread/read") == 0
+			})
+			calls := 0
+			fixture.cmd.controlCall = func(ctx context.Context, _ string, _ coremetadata.CodexEndpointRef, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+				calls++
+				return epoch.Handle(ctx, request), nil
+			}
+			ref := "message-bounded-" + test.name
+			stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex", "--message-ref", ref, "--", "peer coordination payload")
+			stored := persistedDelivery(t, fixture.store, ref)
+			writes := provider.count("turn/start") + provider.count("turn/steer")
+			if calls != 1 || writes != test.wantWrite || provider.count("full-history") != 0 {
+				t.Fatalf("calls=%d writes=%d full=%d", calls, writes, provider.count("full-history"))
+			}
+			if test.wantWrite == 1 {
+				if err != nil || stored.Delivery.State != coremessage.StateDelivered {
+					t.Fatalf("delivery=%+v err=%v", stored.Delivery, err)
+				}
+			} else if err == nil || stored.Delivery.Reason != codexPushRefusedReason || stored.Delivery.OutcomeUnknown {
+				t.Fatalf("no-write receipt=%+v err=%v", stored.Delivery, err)
+			}
+			if test.wantWrite == 1 {
+				assertSendExitFollowsReceipt(t, stdout, err, ref, stored.Delivery)
+			} else if !strings.Contains(stdout, ref+"\tfailed\t"+codexPushRefusedReason) || (test.failure == "limit" && !strings.Contains(err.Error(), "payload-too-large")) {
+				t.Fatalf("sender limit/refusal receipt lost")
+			}
+		})
+	}
+	// Both exact legacy operations also classify lifecycle payload refusal as
+	// known pre-write, while post-write stale-turn stays unknown for steer.
+	for _, operation := range []string{agentControlOpStart, agentControlOpSteer, agentControlOpDeliver} {
+		outcome := classifyCodexTurnPush(operation, refusedControl("payload-too-large", "body-free limit"), nil)
+		if outcome.unknown || outcome.delivered || outcome.steer || outcome.reason != codexPushRefusedReason {
+			t.Fatalf("operation=%s outcome=%+v", operation, outcome)
+		}
+	}
+}
