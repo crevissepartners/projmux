@@ -90,6 +90,11 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
                     if command[1] == "build":
                         Path(command[command.index("-o") + 1]).write_bytes(b"fixture-binary")
                         return subprocess.CompletedProcess(command, 0)
+                    if "-c" in command:
+                        self.assertEqual(kwargs["timeout"], 120)
+                        self.assertTrue(kwargs["check"])
+                        Path(command[command.index("-o") + 1]).write_bytes(b"fixture-test-binary")
+                        return subprocess.CompletedProcess(command, 0)
                     self.assertEqual(kwargs["timeout"], 240)
                     self.assertIn("-timeout=180s", command)
                     raise expired
@@ -106,6 +111,7 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
                 self.assertEqual(len(report["events"]), 0 if captured is None else 16)
                 self.assertTrue(all(row == {"test": "TestFixture", "action": "run"} for row in report["events"]))
                 self.assertGreaterEqual(report["elapsed_seconds"], report["test_command_seconds"])
+                self.assertGreaterEqual(report["elapsed_seconds"], report["precompile_seconds"])
 
     def test_isolation_removes_ambient_routes_and_provider_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:

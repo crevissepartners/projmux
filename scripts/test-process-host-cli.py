@@ -115,6 +115,16 @@ def main() -> None:
         build_seconds = time.monotonic() - build_started
         env["PMX_TEST_CLI"] = str(copy)
         print(f"copied CLI sha256={hashlib.sha256(copy.read_bytes()).hexdigest()}", flush=True)
+        test_binary = root / "app.test"
+        compile_started = time.monotonic()
+        print("process CLI precompile started", flush=True)
+        subprocess.run([go, "test", "-c", "-o", str(test_binary), "./internal/app"],
+                       cwd=ROOT, env=env, check=True, stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, timeout=120)
+        compile_seconds = time.monotonic() - compile_started
+        print("process CLI precompile: " + json.dumps({
+            "seconds": round(compile_seconds, 3),
+            "test_binary_sha256": hashlib.sha256(test_binary.read_bytes()).hexdigest()}), flush=True)
         selector = "^(" + "|".join(expected) + ")$"
         test_started = time.monotonic()
         try:
@@ -144,6 +154,7 @@ def main() -> None:
                     observed = observed[-16:]
             print("process CLI timeout evidence: " + json.dumps({
                 "build_seconds": round(build_seconds, 3),
+                "precompile_seconds": round(compile_seconds, 3),
                 "test_command_seconds": round(time.monotonic() - test_started, 3),
                 "elapsed_seconds": round(time.monotonic() - started, 3),
                 "events": observed}), flush=True)
@@ -159,6 +170,7 @@ def main() -> None:
             print(result.stderr, end="", flush=True)
         report = check_results(events, expected, result.returncode)
         report["build_seconds"] = round(build_seconds, 3)
+        report["precompile_seconds"] = round(compile_seconds, 3)
         report["test_command_seconds"] = round(test_seconds, 3)
         report["elapsed_seconds"] = round(time.monotonic() - started, 3)
         print("process CLI summary: " + json.dumps(report), flush=True)
