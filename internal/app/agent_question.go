@@ -33,8 +33,6 @@ const (
 	questionReasonAnsweredElsewhere = "question-answered-elsewhere"
 	// questionReasonInvalidAnswer: the answer does not fit the question set.
 	questionReasonInvalidAnswer = "question-invalid-answer"
-	// questionReasonChannelOff: the Agent is not opted in.
-	questionReasonChannelOff = "question-channel-off"
 	// questionReasonProviderUnsupported: the Agent is not a supported Agent.
 	questionReasonProviderUnsupported = "question-provider-unsupported"
 	// questionReasonSecretNativeOnly: a secret answer cannot travel in argv.
