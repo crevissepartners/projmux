@@ -82,7 +82,7 @@ func TestLifecycleDiscardedASCIIChecksCancellationWithinBoundedBufferedRun(t *te
 	}
 
 	projector = lifecycleProjector{ctx: t.Context(), buffer: buffer, retained: lifecycleRetainedBytes - lifecycleRetainedReserve + 1}
-	if _, err := projector.string(false); !errors.Is(err, ErrProtocol) {
+	if _, err := projector.string(false); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("retained budget=%v", err)
 	}
 	if projector.pos > 1 {

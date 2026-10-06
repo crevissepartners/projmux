@@ -21,12 +21,12 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
-// TestLifecycleSnapshotFivePointTwoMegabytesCrossesClientBrokerIPCBodyFree is
-// the acceptance path: a real Unix/WebSocket Client owns the shared route, a
-// second witnessed transport scans a 5.2MB complete response, and a real
-// runtime IPC client receives only the literal metadata projection.
-func TestLifecycleSnapshotFivePointTwoMegabytesCrossesClientBrokerIPCBodyFree(t *testing.T) {
-	provider := startLifecycleWebSocketProvider(t, 5_200_000)
+// TestLifecycleSnapshotLargeHistoryCrossesClientBrokerIPCBodyFree is
+// the acceptance path: a real Unix/WebSocket Client owns the shared route,
+// witnessed metadata/latest reads avoid a >16MiB history frame entirely,
+// and runtime IPC carries only the literal body-free projection.
+func TestLifecycleSnapshotLargeHistoryCrossesClientBrokerIPCBodyFree(t *testing.T) {
+	provider := startLifecycleWebSocketProvider(t, 20<<20)
 	broker, err := NewBroker(Config{
 		Opener: func(ctx context.Context) (Endpoint, error) {
 			return codexappserver.OpenPrivateUnix(ctx, provider.path, 750*time.Millisecond, "test", true)
@@ -74,8 +74,8 @@ func TestLifecycleSnapshotFivePointTwoMegabytesCrossesClientBrokerIPCBodyFree(t 
 		t.Fatalf("read lifecycle snapshot: %v", err)
 	}
 	want := codexappserver.LifecycleSnapshot{
-		ThreadID: "thread-large", ThreadState: codexappserver.ThreadStateActive, TurnCount: 2,
-		TurnID: "turn-last", TurnState: codexappserver.TurnStateCompleted,
+		ThreadID: "thread-large", ThreadState: codexappserver.ThreadStateActive, TurnCount: -1,
+		TurnID: "turn-last", TurnState: codexappserver.TurnStateInProgress,
 		StartedAt: time.Unix(1_700_000_000, 0).UTC(),
 	}
 	if snapshot != want {
@@ -87,9 +87,9 @@ func TestLifecycleSnapshotFivePointTwoMegabytesCrossesClientBrokerIPCBodyFree(t 
 	// This request uses the original shared session after the owned app-server
 	// and IPC connections have both been reaped.
 	if outcome, err := binding.Submit(ctx, fence, Mutation{Method: "history/ping"}); err != nil || outcome != MutationApplied {
-		t.Fatalf("sibling shared request after 5.2MB read: outcome=%s err=%v", outcome, err)
+		t.Fatalf("sibling shared request after bounded read: outcome=%s err=%v", outcome, err)
 	}
-	if provider.methodCount("thread/read:complete") != 1 || provider.methodCount("history/ping") != 1 {
+	if provider.methodCount("thread/read:complete") != 0 || provider.methodCount("thread/turns/list") != 2 || provider.methodCount("history/ping") != 1 {
 		t.Fatalf("provider methods = %#v", provider.methodsSnapshot())
 	}
 }
@@ -110,11 +110,8 @@ func startLifecycleWebSocketProvider(t *testing.T, bodyBytes int) *lifecycleWebS
 	if err != nil {
 		t.Fatalf("listen provider: %v", err)
 	}
-	// LifecycleClient uses request id 1 for initialize and id 2 for its sole
-	// complete read. Build the deliberately oversized provider frame before
-	// that fixed 750 ms operation begins. The actual 5.2 MB still crosses the
-	// real Unix/WebSocket connection; only fixture allocation/copy work moves
-	// out of the measured request.
+	// Prepare a forbidden full-history response before the measured operation.
+	// The real Unix/WebSocket path must never request this oversized frame.
 	body := strings.Repeat("x", bodyBytes)
 	response := fmt.Sprintf(`{"jsonrpc":"2.0","result":{"thread":{"id":"thread-large","status":{"type":"active"},"turns":[{"id":"turn-old","status":"future","items":[{"type":"agentMessage","text":"%s"}]},{"id":"turn-last","status":"completed","startedAt":1700000000}]}},"id":2}`, body)
 	provider := &lifecycleWebSocketProvider{
@@ -152,11 +149,9 @@ func (p *lifecycleWebSocketProvider) serve(conn *net.UnixConn) {
 			return
 		}
 		var message struct {
-			Method string          `json:"method"`
-			ID     json.RawMessage `json:"id"`
-			Params struct {
-				IncludeTurns bool `json:"includeTurns"`
-			} `json:"params"`
+			Method    string          `json:"method"`
+			ID        json.RawMessage `json:"id"`
+			ParamsRaw json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal(payload, &message) != nil {
 			return
@@ -164,14 +159,18 @@ func (p *lifecycleWebSocketProvider) serve(conn *net.UnixConn) {
 		switch message.Method {
 		case "initialize":
 			p.note("initialize")
-			p.write(conn, fmt.Sprintf(`{"id":%s,"result":{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}}`, message.ID))
+			p.write(conn, fmt.Sprintf(`{"id":%s,"result":{"userAgent":"codex-cli/0.160.1","platformFamily":"unix","platformOs":"linux"}}`, message.ID))
 		case "initialized":
 			p.note("initialized")
 		case "thread/resume":
 			p.note("thread/resume")
 			p.write(conn, fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-large"}}}`, message.ID))
 		case "thread/read":
-			if !message.Params.IncludeTurns {
+			var readParams struct {
+				IncludeTurns bool `json:"includeTurns"`
+			}
+			_ = json.Unmarshal(message.ParamsRaw, &readParams)
+			if !readParams.IncludeTurns {
 				p.note("thread/read:catalog")
 				p.write(conn, fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-large","cwd":"/work","createdAt":1,"updatedAt":2,"status":{"type":"active"}}}}`, message.ID))
 				continue
@@ -182,6 +181,19 @@ func (p *lifecycleWebSocketProvider) serve(conn *net.UnixConn) {
 				return
 			}
 			_, _ = conn.Write(p.largeFrame)
+		case "thread/turns/list":
+			p.note("thread/turns/list")
+			var params struct {
+				ThreadID      string `json:"threadId"`
+				Limit         int    `json:"limit"`
+				SortDirection string `json:"sortDirection"`
+				ItemsView     string `json:"itemsView"`
+			}
+			if json.Unmarshal(message.ParamsRaw, &params) != nil || params.ThreadID != "thread-large" || params.Limit != 1 || params.SortDirection != "desc" || params.ItemsView != "notLoaded" {
+				p.note("nonbounded")
+				return
+			}
+			p.write(conn, fmt.Sprintf(`{"id":%s,"result":{"data":[{"id":"turn-last","status":"inProgress","startedAt":1700000000,"items":[],"itemsView":"notLoaded"}],"nextCursor":"older"}}`, message.ID))
 		case "history/ping":
 			p.note("history/ping")
 			p.write(conn, fmt.Sprintf(`{"id":%s,"result":{}}`, message.ID))

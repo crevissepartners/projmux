@@ -161,6 +161,9 @@ const (
 // admission refusals and a drain are told apart here rather than at the three
 // call sites, so neither can drift into the other's wording.
 func lifecycleReadRefusal(err error) (string, string, bool) {
+	if errors.Is(err, codexappserver.ErrPayloadTooLarge) || codexbroker.RefusalOf(err) == codexbroker.RefusalPayloadTooLarge {
+		return string(codexbroker.RefusalPayloadTooLarge), "fresh exact lifecycle response exceeded its bounded payload budget", true
+	}
 	switch codexbroker.RefusalOf(err) {
 	case codexbroker.RefusalLifecycleRetry:
 		return string(codexbroker.RefusalLifecycleRetry), lifecycleReadRefusedReason, true

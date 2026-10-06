@@ -45,10 +45,10 @@ func TestWriteDaemonVersionReturnsManagedCurrentFixture(t *testing.T) {
 		"status":              "running",
 		"backend":             "pid",
 		"managedCodexPath":    "/discarded/fake-managed-codex",
-		"managedCodexVersion": "0.149.0",
+		"managedCodexVersion": "0.160.1",
 		"socketPath":          "/discarded/fake-control.sock",
-		"cliVersion":          "0.149.0",
-		"appServerVersion":    "0.149.0",
+		"cliVersion":          "0.160.1",
+		"appServerVersion":    "0.160.1",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("daemon version = %#v, want %#v", got, want)

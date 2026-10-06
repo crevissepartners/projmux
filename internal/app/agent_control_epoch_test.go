@@ -1,10 +1,17 @@
 package app
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha1" // #nosec G505 -- RFC 6455 test handshake.
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -1093,6 +1101,258 @@ func TestExactAgentControlKeepsTheFenceWhileAnInstallDrains(t *testing.T) {
 							site.operation, response, wire.writes(), test.wantOK, writes)
 					}
 				})
+			}
+		})
+	}
+}
+
+// boundedProductionWire uses the real request-owned parser and real provider
+// mutation encoding; only the remote server is a fixture.
+type boundedProductionWire struct {
+	*codexappserver.Client
+	socket string
+}
+
+func (w *boundedProductionWire) ReadLifecycleSnapshot(ctx context.Context, thread string) (codexappserver.LifecycleSnapshot, error) {
+	owned, err := codexappserver.OpenPrivateUnixLifecycle(ctx, w.socket, "test", true, w.PeerIdentity())
+	if err != nil {
+		return codexappserver.LifecycleSnapshot{}, err
+	}
+	defer owned.Close()
+	snapshot, readErr := owned.ReadLifecycleSnapshot(ctx, thread)
+	return snapshot, readErr
+}
+
+type boundedProductionProvider struct {
+	mu           sync.Mutex
+	methods      map[string]int
+	expectedTurn string
+	history      string
+}
+
+func (p *boundedProductionProvider) count(method string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.methods[method]
+}
+
+func newBoundedProductionWire(t *testing.T, state, failure string) (*boundedProductionWire, *boundedProductionProvider) {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "cl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socket := filepath.Join(root, "p.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &boundedProductionProvider{methods: map[string]int{}, history: strings.Repeat("x", 17<<20)}
+	server := &http.Server{ReadHeaderTimeout: time.Second}
+	server.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, rw, err := writer.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		sum := sha1.Sum([]byte(request.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")) // #nosec G401 -- RFC 6455 fixture handshake checksum.
+		_, _ = fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", base64.StdEncoding.EncodeToString(sum[:]))
+		_ = rw.Flush()
+		for {
+			raw, err := boundedClientFrame(rw.Reader)
+			if err != nil {
+				return
+			}
+			var msg struct {
+				ID     json.RawMessage
+				Method string
+				Params json.RawMessage
+			}
+			if json.Unmarshal(raw, &msg) != nil {
+				t.Logf("fixture invalid request bytes=%d", len(raw))
+				return
+			}
+			provider.mu.Lock()
+			provider.methods[msg.Method]++
+			provider.mu.Unlock()
+			var result string
+			switch msg.Method {
+			case "initialize":
+				result = `{"userAgent":"projmux/0.160.1"}`
+			case "initialized":
+				continue
+			case "thread/read":
+				var params struct {
+					ThreadID     string `json:"threadId"`
+					IncludeTurns bool   `json:"includeTurns"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.IncludeTurns {
+					provider.mu.Lock()
+					provider.methods["full-history"]++
+					provider.mu.Unlock()
+					return
+				}
+				thread := "thread-1"
+				if failure == "wrong-thread" {
+					thread = "wrong"
+				}
+				kind := state
+				if failure == "unknown" {
+					kind = "future"
+				}
+				status := fmt.Sprintf(`{"type":%q}`, kind)
+				if state == "approval" {
+					status = `{"type":"active","activeFlags":["waitingOnApproval"]}`
+				}
+				if state == "input" {
+					status = `{"type":"active","activeFlags":["waitingOnUserInput"]}`
+				}
+				result = fmt.Sprintf(`{"thread":{"id":%q,"status":%s,"turns":[]}}`, thread, status)
+			case "thread/turns/list":
+				var params struct {
+					Limit         int
+					SortDirection string
+					ItemsView     string
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.Limit != 1 || params.SortDirection != "desc" || params.ItemsView != "notLoaded" {
+					t.Logf("page request expected options match=false limit=%d sort=%q view=%q", params.Limit, params.SortDirection, params.ItemsView)
+					return
+				}
+				status := "inProgress"
+				if state == "idle" {
+					status = "completed"
+				}
+				result = fmt.Sprintf(`{"data":[{"id":"turn-1","status":%q,"itemsView":"notLoaded","items":[]}],"nextCursor":"older"}`, status)
+				if failure == "limit" {
+					result = `{"data":[],"body":"` + provider.history + `"}`
+				}
+			case "turn/start":
+				result = `{"turn":{"id":"turn-new"}}`
+			case "turn/steer":
+				var params struct {
+					ExpectedTurnID string `json:"expectedTurnId"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				provider.mu.Lock()
+				provider.expectedTurn = params.ExpectedTurnID
+				provider.mu.Unlock()
+				result = `{}`
+			default:
+				t.Logf("unexpected fixture method=%q", msg.Method)
+				return
+			}
+			response := fmt.Sprintf(`{"id":%s,"result":%s}`, msg.ID, result)
+			if _, err := conn.Write(boundedServerFrame([]byte(response))); err != nil {
+				return
+			}
+		}
+	})
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	client, err := codexappserver.OpenPrivateUnix(t.Context(), socket, time.Second, "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return &boundedProductionWire{Client: client, socket: socket}, provider
+}
+func boundedClientFrame(reader *bufio.Reader) ([]byte, error) {
+	var h [2]byte
+	if _, err := io.ReadFull(reader, h[:]); err != nil {
+		return nil, err
+	}
+	if h[1]&128 == 0 {
+		return nil, errors.New("unmasked fixture client")
+	}
+	n := uint64(h[1] & 127)
+	if n == 126 {
+		var b [2]byte
+		if _, err := io.ReadFull(reader, b[:]); err != nil {
+			return nil, err
+		}
+		n = uint64(binary.BigEndian.Uint16(b[:]))
+	}
+	if h[1]&127 == 127 {
+		var b [8]byte
+		if _, err := io.ReadFull(reader, b[:]); err != nil {
+			return nil, err
+		}
+		n = binary.BigEndian.Uint64(b[:])
+	}
+	if n > 64<<10 {
+		return nil, errors.New("fixture request too large")
+	}
+	var mask [4]byte
+	if _, err := io.ReadFull(reader, mask[:]); err != nil {
+		return nil, err
+	}
+	raw := make([]byte, int(n))
+	if _, err := io.ReadFull(reader, raw); err != nil {
+		return nil, err
+	}
+	for i := range raw {
+		raw[i] ^= mask[i%4]
+	}
+	return raw, nil
+}
+func boundedServerFrame(raw []byte) []byte {
+	h := []byte{0x81}
+	n := len(raw)
+	if n <= 125 {
+		h = append(h, byte(n))
+	} else if n <= 65535 {
+		h = append(h, 126, 0, 0)
+		binary.BigEndian.PutUint16(h[2:], uint16(n))
+	} else {
+		h = append(h, 127, 0, 0, 0, 0, 0, 0, 0, 0)
+		binary.BigEndian.PutUint64(h[2:], uint64(n))
+	}
+	return append(h, raw...)
+}
+
+func TestProductionDeliverUsesBoundedLifecycleAndRefusesBeforeWire(t *testing.T) {
+	for _, test := range []struct {
+		name, state, failure string
+		changed              bool
+		wantWrites           int
+		wantCode             string
+	}{
+		{"idle starts", "idle", "", false, 1, ""}, {"active exact steers", "active", "", false, 1, ""},
+		{"approval wait exact", "approval", "", false, 1, ""}, {"input wait exact", "input", "", false, 1, ""},
+		{"limit", "idle", "limit", false, 0, "payload-too-large"}, {"unknown", "idle", "unknown", false, 0, "turn-state-unavailable"},
+		{"wrong thread", "idle", "wrong-thread", false, 0, "turn-state-unavailable"}, {"changed binding", "idle", "", true, 0, "stale-binding"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wire, provider := newBoundedProductionWire(t, test.state, test.failure)
+			identity := phase6Identity()
+			epoch := newCodexControlEpoch(wire, identity, "epoch-1", codexappserver.LifecycleSnapshot{}, func(codexLifecycleIdentity) bool { return !test.changed || provider.count("thread/read") == 0 })
+			ctx, cancel := context.WithTimeout(t.Context(), 750*time.Millisecond)
+			defer cancel()
+			response := epoch.Handle(ctx, agentControlRequest{Operation: agentControlOpDeliver, Identity: identity, Epoch: "epoch-1", Text: "input"})
+			writes := provider.count("turn/start") + provider.count("turn/steer")
+			if writes != test.wantWrites || response.OK != (test.wantWrites == 1) || response.Code != test.wantCode {
+				t.Fatalf("response=%+v writes=%d", response, writes)
+			}
+			if provider.count("full-history") != 0 {
+				t.Fatal("production requested history body")
+			}
+			if test.state != "idle" && response.OK {
+				provider.mu.Lock()
+				exact := provider.expectedTurn == "turn-1"
+				provider.mu.Unlock()
+				if !exact {
+					t.Fatal("wrong exact turn steered")
+				}
+			}
+			if test.failure == "limit" && !strings.Contains(response.Message, "bounded payload budget") {
+				t.Fatalf("limit reason=%s", response.Message)
 			}
 		})
 	}

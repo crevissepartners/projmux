@@ -163,7 +163,11 @@ func TestLifecycleProjectorRejectsMalformedUTF8AndDeclaredBounds(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := projectLifecycleJSON(t.Context(), []byte(test.raw), 1, "thread-1", lifecycleChunkBytes); !errors.Is(err, ErrProtocol) {
+			want := ErrPayloadTooLarge
+			if test.name == "identity" {
+				want = ErrProtocol
+			}
+			if _, err := projectLifecycleJSON(t.Context(), []byte(test.raw), 1, "thread-1", lifecycleChunkBytes); !errors.Is(err, want) {
 				t.Fatalf("error = %v, want protocol refusal", err)
 			}
 		})
@@ -224,7 +228,7 @@ func TestJSONLLifecycleTransportProjectsFivePointTwoMegabytesWithoutBodyRetentio
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	snapshot, err := client.ReadLifecycleSnapshot(ctx, "thread-large")
+	snapshot, err := client.readProjected(ctx, "thread-large", methodThreadRead, lifecycleThreadReadParams{ThreadID: "thread-large", IncludeTurns: true}, lifecycleFull)
 	if err != nil {
 		t.Fatalf("read 5.2MB lifecycle response: %v", err)
 	}
@@ -265,7 +269,7 @@ func TestWebSocketLifecycleTransportProjectsFragmentedUTF8AcrossControlFrames(t 
 		stream: stream, peer: PeerIdentity{PID: 8, OwnerUID: 1000, Start: "test:ws-peer"},
 		reader: bufio.NewReaderSize(stream, lifecycleChunkBytes), nextID: 1,
 	}
-	snapshot, err := client.ReadLifecycleSnapshot(t.Context(), "thread-ws")
+	snapshot, err := client.readProjected(t.Context(), "thread-ws", methodThreadRead, lifecycleThreadReadParams{ThreadID: "thread-ws", IncludeTurns: true}, lifecycleFull)
 	if err != nil {
 		t.Fatalf("fragmented websocket lifecycle response: %v", err)
 	}
@@ -308,14 +312,14 @@ func TestLifecycleBudgetsAcceptBoundaryAndRejectOnePast(t *testing.T) {
 			t.Fatalf("frame boundary: %v", err)
 		}
 	}
-	if err := budget.addFrame(); !errors.Is(err, ErrProtocol) {
+	if err := budget.addFrame(); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("frame overflow = %v", err)
 	}
 	budget = lifecycleBudget{}
 	if err := budget.addControl(lifecycleControlBytes); err != nil {
 		t.Fatalf("control boundary: %v", err)
 	}
-	if err := budget.addControl(1); !errors.Is(err, ErrProtocol) {
+	if err := budget.addControl(1); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("control overflow = %v", err)
 	}
 	projector := lifecycleProjector{ctx: t.Context(), retained: lifecycleRetainedBytes - lifecycleRetainedReserve}
@@ -323,7 +327,7 @@ func TestLifecycleBudgetsAcceptBoundaryAndRejectOnePast(t *testing.T) {
 		t.Fatalf("retained boundary: %v", err)
 	}
 	projector.retained++
-	if err := projector.check(); !errors.Is(err, ErrProtocol) {
+	if err := projector.check(); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("retained overflow = %v", err)
 	}
 	if lifecycleChunkBytes != 4<<10 || lifecycleDepth != 32 || lifecycleValues != 100_000 ||
@@ -366,7 +370,7 @@ func TestLifecycleJSONLTransportEnforcesJSONAndDepthBoundaries(t *testing.T) {
 				}
 				return
 			}
-			if !errors.Is(err, ErrProtocol) {
+			if !errors.Is(err, ErrPayloadTooLarge) {
 				t.Fatalf("depth one-past error=%v", err)
 			}
 		})
@@ -435,7 +439,7 @@ func TestInitializedLifecycleClientKeepsFullJSONResponseBudgetAndCumulativeWire(
 			if client.budget.jsonBytes != 0 || client.budget.wireBytes != lifecycleInitializeLimit+1 || client.budget.frames != 1 {
 				t.Fatalf("post-initialize budget=%+v", client.budget)
 			}
-			snapshot, err := client.ReadLifecycleSnapshot(ctx, "thread-initialized")
+			snapshot, err := client.readProjected(ctx, "thread-initialized", methodThreadRead, lifecycleThreadReadParams{ThreadID: "thread-initialized", IncludeTurns: true}, lifecycleFull)
 			<-requestsReady
 			if test.wantOverflow {
 				if !errors.Is(err, ErrPayloadTooLarge) {
@@ -498,7 +502,7 @@ func TestLifecycleJSONLTransportAcceptsMetadataCardinalityBoundaries(t *testing.
 		if err != nil || snapshot.ThreadID != "thread-values" {
 			t.Fatalf("value boundary snapshot=%+v err=%v", snapshot, err)
 		}
-		if _, _, err := projectLifecycleJSONL(t.Context(), makeResponse(bodyValues+1), 1, "thread-values"); !errors.Is(err, ErrProtocol) {
+		if _, _, err := projectLifecycleJSONL(t.Context(), makeResponse(bodyValues+1), 1, "thread-values"); !errors.Is(err, ErrPayloadTooLarge) {
 			t.Fatalf("value one-past error=%v", err)
 		}
 	})
@@ -523,7 +527,7 @@ func TestLifecycleWebSocketTransportEnforcesFrameAndControlBoundaries(t *testing
 			overflow.Write(serverWebSocketFrame(true, 0xA, nil))
 		}
 		overflow.Write(serverWebSocketFrame(true, 0x1, response))
-		if _, _, err := projectLifecycleWebSocket(t.Context(), overflow.Bytes(), 1, "thread-ws-budget"); !errors.Is(err, ErrProtocol) {
+		if _, _, err := projectLifecycleWebSocket(t.Context(), overflow.Bytes(), 1, "thread-ws-budget"); !errors.Is(err, ErrPayloadTooLarge) {
 			t.Fatalf("frame one-past error=%v", err)
 		}
 	})
@@ -540,7 +544,7 @@ func TestLifecycleWebSocketTransportEnforcesFrameAndControlBoundaries(t *testing
 		var overflow bytes.Buffer
 		writeLifecycleControlBytes(&overflow, lifecycleControlBytes+1)
 		overflow.Write(serverWebSocketFrame(true, 0x1, response))
-		if _, _, err := projectLifecycleWebSocket(t.Context(), overflow.Bytes(), 1, "thread-ws-budget"); !errors.Is(err, ErrProtocol) {
+		if _, _, err := projectLifecycleWebSocket(t.Context(), overflow.Bytes(), 1, "thread-ws-budget"); !errors.Is(err, ErrPayloadTooLarge) {
 			t.Fatalf("control one-past error=%v", err)
 		}
 	})
@@ -566,7 +570,7 @@ func TestLifecycleTransportEnforcesRetainedAndProvesWireSummaryDominance(t *test
 		t.Fatalf("retained boundary snapshot=%+v budget=%+v err=%v", snapshot, budget, err)
 	}
 	overRetained := lifecycleRetainedResponse("thread-retained", keyBudget+1)
-	if _, _, err := projectLifecycleJSONL(t.Context(), []byte(overRetained), 1, "thread-retained"); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+	if _, _, err := projectLifecycleJSONL(t.Context(), []byte(overRetained), 1, "thread-retained"); !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "retained-state limit") {
 		t.Fatalf("retained one-past refusal=%v", err)
 	}
 
@@ -656,7 +660,7 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 			}
 
 			onePast := []byte(lifecycleSimultaneousRetainedResponse(want.ThreadID, fullStateKeyBoundary+1))
-			if _, err := transport.project(onePast); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+			if _, err := transport.project(onePast); !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "retained-state limit") {
 				t.Fatalf("full-state one-past refusal=%v", err)
 			}
 
@@ -666,7 +670,7 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 			// admits it. The whole-state oracle exceeds the corrected admission
 			// boundary without relying on allocator, stack, whole-heap, or RSS costs.
 			ownerBoundaryVariant := []byte(lifecycleSimultaneousRetainedResponse(want.ThreadID, oldKeyOnlyBoundary))
-			if _, err := transport.project(ownerBoundaryVariant); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+			if _, err := transport.project(ownerBoundaryVariant); !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "retained-state limit") {
 				t.Fatalf("old key-only boundary was not refused: %v", err)
 			}
 		})
@@ -817,12 +821,12 @@ func TestLifecycleTransportReservesEscapedScalarBeforeValidation(t *testing.T) {
 	} {
 		t.Run(transport.name, func(t *testing.T) {
 			boundary := []byte(lifecycleEscapedScalarReserveResponse(admittedKeyBodyBoundary))
-			if err := transport.project(boundary); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "malformed lifecycle string") {
+			if err := transport.project(boundary); !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "scalar limit") {
 				t.Fatalf("escaped-scalar boundary error=%v", err)
 			}
 
 			onePast := []byte(lifecycleEscapedScalarReserveResponse(admittedKeyBodyBoundary + 1))
-			if err := transport.project(onePast); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+			if err := transport.project(onePast); !errors.Is(err, ErrPayloadTooLarge) || !strings.Contains(err.Error(), "retained-state limit") {
 				t.Fatalf("escaped-scalar one-past error=%v", err)
 			}
 		})
@@ -1107,7 +1111,7 @@ func TestLifecycleTransportBlockedReadAndWriteRespectCallerPlusCleanup(t *testin
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 			defer cancel()
 			started := time.Now()
-			_, err := client.ReadLifecycleSnapshot(ctx, "thread-blocked")
+			_, err := client.readProjected(ctx, "thread-blocked", methodThreadRead, lifecycleThreadReadParams{ThreadID: "thread-blocked", IncludeTurns: true}, lifecycleFull)
 			if err == nil {
 				t.Fatal("blocked transport returned success")
 			}
@@ -1138,4 +1142,206 @@ func serverWebSocketFrame(fin bool, opcode byte, payload []byte) []byte {
 		binary.BigEndian.PutUint64(header[len(header)-8:], uint64(len(payload)))
 	}
 	return append(header, payload...)
+}
+
+// Admission states share the exact bounded request contract. Actual growing
+// provider history is qualified separately by the installed opt-in test.
+func TestBoundedLifecycleExactLatestAcrossAdmissionStates(t *testing.T) {
+	for _, state := range []string{"idle", "active", "approval", "input"} {
+		t.Run(state, func(t *testing.T) {
+			conn, server := net.Pipe()
+			client := newJSONLLifecycleClient(conn, PeerIdentity{})
+			client.bodylessAvailable = true
+			done := make(chan error, 1)
+			status, turnStatus := `{"type":"active"}`, "inProgress"
+			wantState := ThreadStateActive
+			switch state {
+			case "idle":
+				status, turnStatus, wantState = `{"type":"idle"}`, "completed", ThreadStateIdle
+			case "approval":
+				status, wantState = `{"type":"active","activeFlags":["waitingOnApproval"]}`, ThreadStateWaitingOnApproval
+			case "input":
+				status, wantState = `{"type":"active","activeFlags":["waitingOnUserInput"]}`, ThreadStateWaitingOnUserInput
+			}
+			go func() {
+				defer server.Close()
+				reader := bufio.NewReader(server)
+				for i := range 4 {
+					raw, err := reader.ReadBytes('\n')
+					if err != nil {
+						done <- err
+						return
+					}
+					var request struct {
+						Method string
+						ID     int
+						Params json.RawMessage
+					}
+					if json.Unmarshal(raw, &request) != nil {
+						done <- errors.New("invalid request")
+						return
+					}
+					var response string
+					if i%2 == 0 {
+						var params lifecycleThreadReadParams
+						if json.Unmarshal(request.Params, &params) != nil || params.IncludeTurns || params.ThreadID != "thread-large" || request.Method != methodThreadRead {
+							done <- errors.New("history body requested")
+							return
+						}
+						response = fmt.Sprintf(`{"id":%d,"result":{"thread":{"id":"thread-large","status":%s,"turns":[]}}}`, request.ID, status)
+					} else {
+						var params lifecycleThreadTurnsListParams
+						if json.Unmarshal(request.Params, &params) != nil || params.ThreadID != "thread-large" || params.Limit != 1 || params.SortDirection != "desc" || params.ItemsView != "notLoaded" || request.Method != methodThreadTurnsList {
+							done <- errors.New("non-bounded latest request")
+							return
+						}
+						response = fmt.Sprintf(`{"id":%d,"result":{"data":[{"id":"turn-exact","status":%q,"items":[],"itemsView":"notLoaded"}],"nextCursor":"older"}}`, request.ID, turnStatus)
+					}
+					if _, err := fmt.Fprintln(server, response); err != nil {
+						done <- err
+						return
+					}
+				}
+				done <- nil
+			}()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			started := time.Now()
+			snapshot, err := client.ReadLifecycleSnapshot(ctx, "thread-large")
+			cancel()
+			_ = client.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.ThreadID != "thread-large" || snapshot.ThreadState != wantState || snapshot.TurnID != "turn-exact" || snapshot.TurnCount != -1 || snapshot.TurnState != normalizeTurnState(turnStatus) {
+				t.Fatalf("snapshot=%+v", snapshot)
+			}
+			if client.budget.jsonBytes > 2048 || client.budget.frames != 4 || time.Since(started) > time.Second {
+				t.Fatalf("budget=%+v elapsed=%s", client.budget, time.Since(started))
+			}
+		})
+	}
+}
+
+func TestBoundedLifecycleRaceUnsupportedAndPageShapes(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		metadata string
+		page     string
+		second   string
+		want     error
+	}{
+		{"empty", `{"id":"thread-1","status":{"type":"idle"},"turns":[]}`, `{"data":[],"nextCursor":null}`, "", nil},
+		{"one", `{"id":"thread-1","status":{"type":"idle"},"turns":[]}`, `{"data":[{"id":"turn-1","status":"completed","items":[],"itemsView":"notLoaded"}]}`, "", nil},
+		{"wrong thread", `{"id":"wrong","status":{"type":"idle"},"turns":[]}`, `{"data":[]}`, "", ErrProtocol},
+		{"active absent", `{"id":"thread-1","status":{"type":"active"},"turns":[]}`, `{"data":[]}`, "", ErrProtocol},
+		{"history returned", `{"id":"thread-1","status":{"type":"idle"},"turns":[{}]}`, `{"data":[]}`, "", ErrProtocol},
+		{"items returned", `{"id":"thread-1","status":{"type":"idle"},"turns":[]}`, `{"data":[{"id":"turn-1","status":"completed","items":[{}],"itemsView":"notLoaded"}]}`, "", ErrProtocol},
+		{"page unknown", `{"id":"thread-1","status":{"type":"idle"},"turns":[]}`, `{"data":[{"id":"turn-1","status":"future","items":[],"itemsView":"notLoaded"}]}`, "", ErrProtocol},
+		{"metadata race", `{"id":"thread-1","status":{"type":"idle"},"turns":[]}`, `{"data":[]}`, `{"id":"thread-1","status":{"type":"active"},"turns":[]}`, ErrProtocol},
+		{"unsupported", `{"id":"thread-1","status":{"type":"idle"},"turns":[]}`, `{"unsupported":true}`, "", ErrUnsupported},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conn, server := net.Pipe()
+			client := newJSONLLifecycleClient(conn, PeerIdentity{})
+			client.bodylessAvailable = true
+			defer client.Close()
+			go func() {
+				defer server.Close()
+				reader := bufio.NewReader(server)
+				for i := range 4 {
+					raw, err := reader.ReadBytes('\n')
+					if err != nil {
+						return
+					}
+					var request struct{ ID int }
+					_ = json.Unmarshal(raw, &request)
+					response := fmt.Sprintf(`{"id":%d,"result":{"thread":%s}}`, request.ID, test.metadata)
+					if i == 2 && test.second != "" {
+						response = fmt.Sprintf(`{"id":%d,"result":{"thread":%s}}`, request.ID, test.second)
+					}
+					if i%2 == 1 {
+						response = fmt.Sprintf(`{"id":%d,"result":%s}`, request.ID, test.page)
+						if test.name == "unsupported" {
+							response = fmt.Sprintf(`{"id":%d,"error":{"code":-32601,"message":"unsupported"}}`, request.ID)
+						}
+					}
+					if _, err = fmt.Fprintln(server, response); err != nil {
+						return
+					}
+				}
+			}()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			got, err := client.ReadLifecycleSnapshot(ctx, "thread-1")
+			if test.want == nil {
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := 0
+				if test.name == "one" {
+					want = 1
+				}
+				if got.TurnCount != want {
+					t.Fatalf("count=%d", got.TurnCount)
+				}
+			} else if !errors.Is(err, test.want) {
+				t.Fatalf("error=%v want=%v", err, test.want)
+			}
+			if test.name == "unsupported" {
+				d := Diagnostic(err)
+				if d.Method != methodThreadTurnsList || d.Cause != "unsupported" || len(d.String()) > MaxFailureDiagnosticBytes {
+					t.Fatalf("page diagnostic=%s", d.String())
+				}
+			}
+		})
+	}
+	for _, version := range []string{"", "codex-cli/0.159.9", "projmux/0.160.0", "/tmp/0.160.1"} {
+		if bodylessLifecycleAvailable(version) {
+			t.Fatalf("unqualified version accepted")
+		}
+	}
+	if !bodylessLifecycleAvailable("projmux/0.160.1 (linux)") {
+		t.Fatal("qualified version refused")
+	}
+}
+
+// Supply an original transport failure at every lexical boundary. Fragmented
+// input makes each case reach that boundary rather than fail earlier.
+type lifecycleFaultInput struct {
+	raw  []byte
+	err  error
+	sent bool
+}
+
+func (in *lifecycleFaultInput) next() ([]byte, error) {
+	if !in.sent {
+		in.sent = true
+		return in.raw, nil
+	}
+	return nil, in.err
+}
+func TestLifecycleLexicalFailuresPreserveTypedCause(t *testing.T) {
+	for _, tail := range []string{`"plain`, `"escape\`, `"unicode\u1`, "\"utf8\xe2\x82", `123`} {
+		for _, cause := range []error{ErrPayloadTooLarge, context.Canceled, context.DeadlineExceeded, io.ErrClosedPipe, io.ErrUnexpectedEOF, errors.Join(ErrDisconnected, io.EOF)} {
+			raw := []byte(`{"id":1,"result":{"thread":{"id":"thread-1","status":{"type":"idle"},"turns":[]}},"body":` + tail)
+			_, err := (&lifecycleProjector{input: &lifecycleFaultInput{raw: raw, err: cause}, requestID: 1, threadID: "thread-1"}).run(t.Context())
+			if !errors.Is(err, cause) || errors.Is(err, ErrProtocol) {
+				t.Fatalf("tail category bytes=%d cause=%v result=%v", len(tail), cause, err)
+			}
+		}
+	}
+}
+
+func TestLifecycleSocketEOFIsTransportFailure(t *testing.T) {
+	for _, frame := range [][]byte{nil, {0x81}, {0x81, 10, '{'}, {0x88, 0}} {
+		budget := lifecycleBudget{}
+		in := &websocketLifecycleInput{stream: &websocketStream{reader: bufio.NewReader(bytes.NewReader(frame))}, budget: &budget}
+		_, err := in.next()
+		if !errors.Is(err, ErrDisconnected) || errors.Is(err, ErrProtocol) {
+			t.Fatalf("socket EOF was not preserved: %v", err)
+		}
+	}
 }

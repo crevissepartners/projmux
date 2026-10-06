@@ -31,9 +31,9 @@ import os,sys,json,socket,threading,struct,hashlib,base64,select,time
 path=sys.argv[2] if len(sys.argv)>2 else ''
 args=sys.argv[1:]
 if args==['--version']:
- print('codex-cli 0.160.0');sys.exit(0)
+ print('codex-cli 0.160.1');sys.exit(0)
 if args==['app-server','daemon','version']:
- print(json.dumps({'status':'running','cliVersion':'0.160.0','appServerVersion':'0.160.0'}));sys.exit(0)
+ print(json.dumps({'status':'running','cliVersion':'0.160.1','appServerVersion':'0.160.1'}));sys.exit(0)
 if args==['app-server','proxy']:
  s=socket.socket(socket.AF_UNIX);s.connect(os.path.join(os.environ['CODEX_HOME'],'app-server-control','app-server-control.sock'))
  while True:
@@ -78,16 +78,21 @@ def session(c):
     if method=='thread/resume' and os.path.exists(os.path.join(os.environ['HOME'],'hold-shared-init')):
      open(os.path.join(os.environ['HOME'],'shared-init-entered'),'w').write('entered')
      while os.path.exists(os.path.join(os.environ['HOME'],'hold-shared-init')):time.sleep(.01)
-    if (method=='thread/resume' and os.path.exists(os.path.join(os.environ['HOME'],'fail-shared-init'))) or (method=='thread/read' and p.get('includeTurns') and os.path.exists(os.path.join(os.environ['HOME'],'fail-shared-observer'))):
+    if (method=='thread/resume' and os.path.exists(os.path.join(os.environ['HOME'],'fail-shared-init'))) or (method=='thread/read' and os.path.exists(os.path.join(os.environ['HOME'],'fail-shared-observer'))):
      data=json.dumps({'id':frame['id'],'error':{'code':-32600,'message':'injected native consumer refusal'}}).encode();h=bytes([129,len(data)]) if len(data)<126 else bytes([129,126])+struct.pack('!H',len(data));c.sendall(h+data);continue
-    if method=='initialize':r={'userAgent':'projmux/0.160.0'}
+    if method=='initialize':r={'userAgent':'projmux/0.160.1'}
     elif method in ('thread/start','thread/resume'):
      id=p.get('threadId','process-thread' if started==0 else 'sibling-thread')
      if method=='thread/start':started+=1
      loaded.add(id)
      r={'thread':thread(id),'model':model,'reasoningEffort':effort,'sandbox':sandbox,'approvalPolicy':approval}
     elif method=='turn/start':r={'turn':{'id':'source-turn'}}
-    elif method=='thread/read':r={'thread':thread(p['threadId'])}
+    elif method=='thread/read':
+     r={'thread':thread(p['threadId'])}
+     if not p.get('includeTurns'):r['thread']['turns']=[]
+    elif method=='thread/turns/list':
+     if p.get('limit')!=1 or p.get('sortDirection')!='desc' or p.get('itemsView')!='notLoaded':raise RuntimeError('unbounded lifecycle request')
+     r={'data':[],'nextCursor':None}
     elif method=='thread/list':r={'data':[thread('process-thread'),thread('sibling-thread')],'nextCursor':None}
     elif method=='thread/loaded/list':r={'data':sorted(loaded),'nextCursor':None}
     elif method=='thread/unsubscribe':loaded.discard(p['threadId']);r={'status':'unsubscribed'}

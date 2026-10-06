@@ -751,13 +751,13 @@ func classifyCodexTurnPush(operation string, response agentControlResponse, call
 			case "turn-in-progress":
 				return codexTurnPushOutcome{steer: true, reason: codexPushRefusedReason, err: err}
 			case "stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable",
-				"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation":
+				"lifecycle-retry", "lifecycle-busy", "drain-required", "payload-too-large", "invalid-operation":
 				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
 			}
 		case agentControlOpDeliver, agentControlOpSteer:
 			switch response.Code {
 			case "stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable",
-				"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation":
+				"lifecycle-retry", "lifecycle-busy", "drain-required", "payload-too-large", "invalid-operation":
 				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
 			}
 			// Unlike start's pre-write stale-turn, deliver and steer can return
