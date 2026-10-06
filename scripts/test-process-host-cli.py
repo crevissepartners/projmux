@@ -18,6 +18,7 @@ FILES = (
     "agent_relaunch_deferred_test.go",
     "agent_relaunch_process_claude_test.go",
     "agent_relaunch_host_test.go",
+    "agent_relaunch_owned_test.go",
     "agent_relaunch_host_codex_test.go",
     "agent_relaunch_process_codex_test.go",
     "process_agent_session_cli_test.go",

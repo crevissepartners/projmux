@@ -357,6 +357,11 @@ func runProcessRelaunchOwner(ctx context.Context, cancel context.CancelFunc, own
 	if len(stdinWatched) == 0 || !stdinWatched[0] {
 		go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
 	}
+	return (&agentHostTransferLifetime{Context: ctx, Cancel: cancel, Target: owned, synchronization: sync}).Wait(ctx)
+}
+
+// Shared by the CLI foreground adapter and the typed host-transfer consumer.
+func waitOwnedProcessRelaunch(ctx context.Context, owned *processAgentResumeResult, sync processRelaunchSynchronization) error {
 	snapshot, waitErr := owned.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(sync.changed, func(snapshot processhost.Snapshot) error {
 		if len(snapshot.Pending) > 0 {
 			return sync.controls(context.WithoutCancel(ctx))

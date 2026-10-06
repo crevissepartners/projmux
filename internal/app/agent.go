@@ -49,6 +49,10 @@ var resumableAgentPhases = []coremetadata.AgentPhase{
 // `resume` is the one route with logic of its own, because it is the only way
 // an existing Agent is ever reused: `create agent` always mints a new uid.
 type agentCommand struct {
+	// Set only on a per-call copy by the private typed host-transfer adapter.
+	hostTransferContext context.Context
+	hostTransferResult  *agentHostTransferResult
+
 	processRuntime *processPaneRuntime
 
 	ai               rawArgvCommand

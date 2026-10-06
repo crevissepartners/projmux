@@ -7,7 +7,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/signal"
 	"reflect"
 	"slices"
 	"strings"
@@ -28,6 +27,11 @@ func relaunchCurrentHost(reg coremetadata.Registry, agent coremetadata.Agent) st
 }
 
 func (c *agentCommand) runHostRelaunch(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	_, err := c.runOwnedHostRelaunch(context.Background(), reg, target, request, stdout, stderr)
+	return err
+}
+
+func (c *agentCommand) dispatchHostTransfer(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason))
 	}
@@ -114,13 +118,13 @@ func (c *agentCommand) moveProcessToTmux(reg coremetadata.Registry, target corem
 	plan.layerChanges = request.settings()
 	result := hostRelaunchResult(recipe, target, *pane, request, "process")
 	if request.dryRun {
-		return writeAgentRelaunchResult(stdout, request, result)
+		return c.publishHostTransferResult(stdout, request, result)
 	}
 	if recipe.restart.confirmationRequired() && !request.yes {
 		return refuse(relaunchReasonAgentBusy, "would interrupt work; re-run with --yes")
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx, _, release := c.hostTransferLifetime()
+	defer release()
 	old, err := c.stopProcessRelaunch(ctx, reg, target, *pane, request, recipe.restart)
 	if err != nil {
 		return err
@@ -145,7 +149,7 @@ func (c *agentCommand) moveProcessToTmux(reg coremetadata.Registry, target corem
 	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
 	}
-	return writeAgentRelaunchResult(stdout, request, result)
+	return c.publishHostTransferResult(stdout, request, result)
 }
 
 // Claim acquisition re-reads its candidate under this same sidecar lock.
@@ -189,7 +193,7 @@ func (c *agentCommand) moveTmuxClaudeToProcess(reg coremetadata.Registry, target
 	source.conversation = processhost.TmuxConversationSource{Project: recipe.restart.registryWindowProject(), Window: target.Metadata.OwnerUID(), Agent: target.Metadata.UID, Pane: pane.Metadata.UID, Generation: pane.Status.Activation.Generation, Operation: pane.Status.Activation.OperationID, RuntimeID: pane.Status.Activation.RuntimeID, Session: target.Status.SessionRef.ConversationID()}
 	result := hostRelaunchResult(recipe, target, *pane, request, "tmux")
 	if request.dryRun {
-		return writeAgentRelaunchResult(stdout, request, result)
+		return c.publishHostTransferResult(stdout, request, result)
 	}
 	if recipe.restart.confirmationRequired() && !request.yes {
 		return refuse(relaunchReasonAgentBusy, "would interrupt work; re-run with --yes")
@@ -198,8 +202,8 @@ func (c *agentCommand) moveTmuxClaudeToProcess(reg coremetadata.Registry, target
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx, cancel, release := c.hostTransferLifetime()
+	defer release()
 	if err = c.stopTmuxTransfer(ctx, target, *pane, request); err != nil {
 		return err
 	}
@@ -419,11 +423,7 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 		return fail(err)
 	}
 	result.NewPaneUID, result.Outcome = binding.Pane, personaOutcomeRestarted
-	if err := writeAgentRelaunchResult(stdout, source.request, result); err != nil {
-		return fail(err)
-	}
-	fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", binding.Agent, binding.Pane)
-	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
+	return c.finishOwnedHostTransfer(ctx, cancel, &owned, sync, result, source.request, stdout, stderr, fail)
 }
 
 // Registry JSON omits empty root lists; nil and empty encode the same recipe.
