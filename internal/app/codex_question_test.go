@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -40,7 +41,7 @@ func TestCodexQuestionChannelAnswersBlockingRequestThroughCLI(t *testing.T) {
 	channel := codexQuestionChannel{
 		loadRegistry: fixture.resources.store().load,
 		store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
-		answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+		answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
 		window:       func() time.Duration { return time.Minute },
 		newID:        agentquestion.NewID,
 		poll:         time.Millisecond,
@@ -413,7 +414,7 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 		want   agentquestion.State
 		reason string
 	}{
-		{name: "disable", window: time.Minute, close: true, want: agentquestion.StateClosed, reason: "channel-off"},
+		{name: "cancel", window: time.Minute, close: true, want: agentquestion.StateClosed, reason: "watch-stopped"},
 		{name: "expiry", window: 20 * time.Millisecond, want: agentquestion.StateExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -423,7 +424,7 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 			channel := codexQuestionChannel{
 				loadRegistry: fixture.resources.store().load,
 				store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
-				answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+				answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
 				window:       func() time.Duration { return tc.window },
 				newID:        agentquestion.NewID,
 				poll:         time.Millisecond,
@@ -442,9 +443,7 @@ func TestCodexQuestionChannelCloseAndExpiryLeaveNativePromptAnswerable(t *testin
 				t.Fatalf("waiting record count = %d, err = %v", len(records), err)
 			}
 			if tc.close {
-				if _, _, err := runRoute(t, fixture.command, "question", "disable", "uid:"+questionTestAgent); err != nil {
-					t.Fatal(err)
-				}
+				cancel()
 			}
 			deadline := codexObserverGiveUp(t)
 			for {
@@ -481,7 +480,7 @@ func TestCodexQuestionNativeAnswerFirstRefusesLateCLIAnswer(t *testing.T) {
 	channel := codexQuestionChannel{
 		loadRegistry: fixture.resources.store().load,
 		store:        func() (*agentquestion.Store, error) { return fixture.store, nil },
-		answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+		answering:    func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
 		window:       func() time.Duration { return time.Minute },
 		newID:        agentquestion.NewID,
 		poll:         time.Millisecond,
@@ -540,7 +539,7 @@ func TestCodexQuestionWaitJoinsTheCanceledWaiterBeforeItsStoreWrite(t *testing.T
 		channel := codexQuestionChannel{
 			loadRegistry:        fixture.resources.store().load,
 			store:               func() (*agentquestion.Store, error) { return fixture.store, nil },
-			answering:           func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringClaude },
+			answering:           func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux },
 			window:              func() time.Duration { return time.Minute },
 			newID:               agentquestion.NewID,
 			poll:                time.Millisecond,
@@ -630,7 +629,7 @@ func TestCodexQuestionTurnEndClosesOnlyThisBindingsWaitingRequest(t *testing.T) 
 	for _, state := range []codexappserver.TurnState{codexappserver.TurnStateInterrupted, codexappserver.TurnStateCompleted, codexappserver.TurnStateFailed} {
 		t.Run(string(state), func(t *testing.T) {
 			fixture := newQuestionFixture(t, true)
-			channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
+			channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringProjmux)
 			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 			own := handleCodexTurnEndQuestion(t, fixture, channel, responder)
 			var others []string
@@ -699,7 +698,7 @@ func TestCodexQuestionTurnEndStopsPopupAndRefusesLateCLIAnswer(t *testing.T) {
 
 func TestCodexQuestionResolvedAfterTurnEndKeepsTheTurnEndedClose(t *testing.T) {
 	fixture := newQuestionFixture(t, true)
-	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
+	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringProjmux)
 	responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
 	record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
 	channel.HandleTurnCompleted(codexTurnEndIdentity, codexTurnCompleted("thread-1", codexappserver.TurnStateInterrupted))
@@ -720,7 +719,7 @@ type respondingCodexLifecycleConnection struct {
 // resolved. The reducer refuses that late resolve, so the turn end closes it.
 func TestCodexNativeObserverClosesQuestionOfAnInterruptedTurn(t *testing.T) {
 	fixture := newQuestionFixture(t, true)
-	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringClaude)
+	channel := codexTurnEndChannel(t, fixture, nil, config.AgentQuestionAnsweringProjmux)
 	sink := newRecordingCodexLifecycleSink()
 	conn := &respondingCodexLifecycleConnection{
 		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
@@ -761,5 +760,53 @@ func TestCodexNativeObserverClosesQuestionOfAnInterruptedTurn(t *testing.T) {
 	}
 	if len(conn.replies) != 0 {
 		t.Fatal("an interrupted turn's question answered the Codex request")
+	}
+}
+
+func TestCodexQuestionGlobalFileIgnoresEveryAnnotation(t *testing.T) {
+	for _, annotation := range []string{"", "on", "off"} {
+		for _, mode := range []config.AgentQuestionAnswering{config.AgentQuestionAnsweringClaude, config.AgentQuestionAnsweringProjmux} {
+			t.Run(annotation+"/"+string(mode), func(t *testing.T) {
+				f := newQuestionFixture(t, false)
+				a, _ := f.resources.registry.Agent(questionTestAgent)
+				a.Spec.Provider = aiModeCodex
+				a.Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentQuestionChannel: annotation}
+				paths := config.DefaultPaths(t.TempDir(), t.TempDir())
+				if err := config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), mode); err != nil {
+					t.Fatal(err)
+				}
+				resolver := func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }
+				f.command.questionAnswering = resolver
+				channel := codexQuestionChannel{loadRegistry: f.resources.store().load, store: func() (*agentquestion.Store, error) { return f.store, nil }, answering: resolver, window: func() time.Duration { return time.Minute }, newID: agentquestion.NewID, poll: time.Millisecond}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer func() { cancel(); channel.Wait() }()
+				responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+				channel.Handle(ctx, codexTurnEndIdentity, codexappserver.Notification{Method: "item/tool/requestUserInput", RequestID: "17", RawRequestID: json.RawMessage(`17`), Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","question":"Pick","options":[{"label":"A"}]}]}`)}, responder)
+				records, err := f.store.List(questionTestAgent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == config.AgentQuestionAnsweringClaude {
+					if len(records) != 0 {
+						t.Fatal("annotation forced hold")
+					}
+					return
+				}
+				if len(records) != 1 {
+					t.Fatal("global did not hold")
+				}
+				if err = config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), config.AgentQuestionAnsweringClaude); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err = runRoute(t, f.command, "question", "answer", "uid:"+questionTestAgent, records[0].ID, "--option", "1=A"); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-responder.replies:
+				case <-time.After(2 * time.Second):
+					t.Fatal("switch lost old waiting")
+				}
+			})
+		}
 	}
 }

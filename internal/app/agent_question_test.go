@@ -68,8 +68,12 @@ func newQuestionFixture(t *testing.T, enabled bool) *questionFixture {
 		t.Fatal(err)
 	}
 	fixture := &questionFixture{resources: resources, store: agentquestion.NewStore(t.TempDir())}
+	if enabled {
+		fixture.answering = config.AgentQuestionAnsweringProjmux
+	}
 	command, _, _ := newTestAgentCommand(t, resources)
 	command.questionStore = func() (*agentquestion.Store, error) { return fixture.store, nil }
+	command.questionAnswering = func() config.AgentQuestionAnswering { return fixture.answering }
 	fixture.command = command
 	return fixture
 }
@@ -364,28 +368,27 @@ func TestClaudeQuestionHookCanceledClosesSilentlyAndRefusesALateAnswer(t *testin
 	}
 }
 
-func TestClaudeQuestionHookDisableHandsTheQuestionBack(t *testing.T) {
+func TestClaudeQuestionHookLegacyDisablePreservesWaiting(t *testing.T) {
 	t.Parallel()
-
 	fixture := newQuestionFixture(t, true)
 	id, done := fixture.startHook(t, context.Background(), time.Minute)
+	before, _, _ := fixture.store.Get(id)
+	regBefore, _ := json.Marshal(fixture.resources.registry)
 	stdout, _, err := runRoute(t, fixture.command, "question", "disable", "uid:"+questionTestAgent)
-	if err != nil || !strings.Contains(stdout, "closed 1 waiting question(s)") {
-		t.Fatalf("disable stdout=%q err=%v", stdout, err)
+	if err != nil || !strings.Contains(stdout, "deprecated; no effect") {
+		t.Fatal(stdout, err)
 	}
-	if got := waitHookOutput(t, done); got != "" {
-		t.Fatalf("hook printed %q after disable", got)
+	after, _, _ := fixture.store.Get(id)
+	regAfter, _ := json.Marshal(fixture.resources.registry)
+	if !bytes.Equal(regBefore, regAfter) || !before.Deadline.Equal(after.Deadline) || after.State != agentquestion.StateWaiting {
+		t.Fatal("legacy disable mutated waiting/registry")
 	}
-	if record, _, _ := fixture.store.Get(id); record.State != agentquestion.StateClosed || record.Disposition != "channel-off" {
-		t.Fatalf("state = %s/%q, want closed/channel-off", record.State, record.Disposition)
+	fixture.answering = config.AgentQuestionAnsweringClaude
+	if _, _, err = runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, id, "--option", "1=make", "--option", "2=main"); err != nil {
+		t.Fatal(err)
 	}
-	listed, _, err := runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent)
-	if err != nil || !strings.Contains(listed, id+"\tclosed (channel-off; Claude Code still asks it in its own prompt)\n") {
-		t.Fatalf("list = %q, %v", listed, err)
-	}
-	agent, _ := fixture.resources.registry.Agent(questionTestAgent)
-	if coremetadata.QuestionChannelEnabled(*agent) {
-		t.Fatal("disable left the annotation set")
+	if waitHookOutput(t, done) == "" {
+		t.Fatal("global switch lost existing delivery")
 	}
 }
 
@@ -564,23 +567,18 @@ func TestAgentQuestionAnswerRefusalsLeaveTheRecordWaiting(t *testing.T) {
 
 func TestAgentQuestionChannelSwitchAndProviderRefusals(t *testing.T) {
 	t.Parallel()
-
 	fixture := newQuestionFixture(t, false)
 	record := fixture.createQuestionRecord(t)
-	_, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, record.ID, "--option", "1=make", "--option", "2=main")
-	if err == nil || !strings.Contains(err.Error(), "(question-channel-off)") {
-		t.Fatalf("answer with the channel off err = %v", err)
-	}
 	stdout, _, err := runRoute(t, fixture.command, "question", "enable", "uid:"+questionTestAgent)
-	if err != nil || stdout != "agent/codex question channel on\n" {
+	if err != nil || !strings.Contains(stdout, "deprecated; no effect") {
 		t.Fatalf("enable stdout=%q err=%v", stdout, err)
 	}
 	agent, _ := fixture.resources.registry.Agent(questionTestAgent)
-	if agent.Metadata.Annotations[coremetadata.AnnotationAgentQuestionChannel] != coremetadata.QuestionChannelOn {
+	if coremetadata.QuestionChannelEnabled(*agent) {
 		t.Fatalf("annotations = %#v", agent.Metadata.Annotations)
 	}
 	writes := fixture.resources.writes
-	if stdout, _, err := runRoute(t, fixture.command, "question", "enable", "uid:"+questionTestAgent); err != nil || !strings.Contains(stdout, "already on") || fixture.resources.writes != writes {
+	if stdout, _, err := runRoute(t, fixture.command, "question", "enable", "uid:"+questionTestAgent); err != nil || !strings.Contains(stdout, "deprecated; no effect") || fixture.resources.writes != writes {
 		t.Fatalf("repeat enable stdout=%q err=%v writes=%d->%d", stdout, err, writes, fixture.resources.writes)
 	}
 	stdout, _, err = runRoute(t, fixture.command, "question", "list", "uid:"+questionTestAgent, "-o", "json")
@@ -588,7 +586,7 @@ func TestAgentQuestionChannelSwitchAndProviderRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	var listed agentQuestionList
-	if err := json.Unmarshal([]byte(stdout), &listed); err != nil || listed.Channel != "on" || len(listed.Questions) != 1 ||
+	if err := json.Unmarshal([]byte(stdout), &listed); err != nil || listed.Channel != "off" || len(listed.Questions) != 1 ||
 		listed.Questions[0].ID != record.ID || listed.Questions[0].State != agentquestion.StateWaiting ||
 		len(listed.Questions[0].Prompts) != 2 || listed.Questions[0].Prompts[0].Options[2].Label != "just" || !listed.Questions[0].Prompts[0].MultiSelect {
 		t.Fatalf("list json = %s (%v)", stdout, err)
@@ -598,7 +596,7 @@ func TestAgentQuestionChannelSwitchAndProviderRefusals(t *testing.T) {
 		t.Fatalf("list text = %q, %v", stdout, err)
 	}
 
-	if stdout, _, err := runRoute(t, fixture.command, "question", "enable", "uid:agt-beta-codex"); err != nil || !strings.Contains(stdout, "question channel on") {
+	if stdout, _, err := runRoute(t, fixture.command, "question", "enable", "uid:agt-beta-codex"); err != nil || !strings.Contains(stdout, "deprecated; no effect") {
 		t.Fatalf("enable on a Codex Agent stdout=%q err=%v", stdout, err)
 	}
 }
@@ -793,5 +791,50 @@ func TestProcessAgentAnswerGateKeepsTmuxPolicy(t *testing.T) {
 	agent.Status.PaneRef = "missing"
 	if processAgentAnswers(f.resources.registry, *agent) {
 		t.Fatal("missing current Pane bypassed policy")
+	}
+}
+
+func TestLegacyQuestionCommandsNeverMutatePolicyRegistryOrStore(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		for _, annotation := range []string{"", "on", "off"} {
+			for _, mode := range []config.AgentQuestionAnswering{config.AgentQuestionAnsweringClaude, config.AgentQuestionAnsweringProjmux} {
+				t.Run(provider+"/"+annotation+"/"+string(mode), func(t *testing.T) {
+					f := newQuestionFixture(t, false)
+					a, _ := f.resources.registry.Agent(questionTestAgent)
+					a.Spec.Provider = provider
+					a.Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentQuestionChannel: annotation}
+					paths := config.DefaultPaths(t.TempDir(), t.TempDir())
+					if err := config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), mode); err != nil {
+						t.Fatal(err)
+					}
+					f.command.questionAnswering = func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }
+					record := f.createQuestionRecord(t)
+					regBefore, _ := json.Marshal(f.resources.registry)
+					storeBefore, _ := os.ReadFile(f.store.Path())
+					globalBefore, _ := os.ReadFile(paths.AgentQuestionAnsweringFile())
+					for _, action := range []string{"enable", "disable"} {
+						for _, ref := range []string{"uid:" + questionTestAgent, "uid:unknown"} {
+							out, _, err := runRoute(t, f.command, "question", action, ref)
+							if ref == "uid:"+questionTestAgent && (err != nil || !strings.Contains(out, "deprecated; no effect")) {
+								t.Fatal(out, err)
+							}
+							if ref == "uid:unknown" && err == nil {
+								t.Fatal("invalid selector accepted")
+							}
+						}
+					}
+					regAfter, _ := json.Marshal(f.resources.registry)
+					storeAfter, _ := os.ReadFile(f.store.Path())
+					globalAfter, _ := os.ReadFile(paths.AgentQuestionAnsweringFile())
+					if !bytes.Equal(regBefore, regAfter) || !bytes.Equal(storeBefore, storeAfter) || !bytes.Equal(globalBefore, globalAfter) || f.resources.writes != 0 {
+						t.Fatal("legacy CLI mutation")
+					}
+					r, _, _ := f.store.Get(record.ID)
+					if r.State != agentquestion.StateWaiting {
+						t.Fatal("pending closed")
+					}
+				})
+			}
+		}
 	}
 }

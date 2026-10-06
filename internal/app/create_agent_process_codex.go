@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
@@ -124,9 +125,10 @@ func (c *createCommand) newProcessCreateControl(result processAgentCreateResult)
 	if err = attention.activate(result.Binding, aiModeCodex, ""); err != nil {
 		return processCreateControl{}, err
 	}
-	control := &codexProcessControl{endpoint: result.codexEndpoint, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
+	control := &codexProcessControl{questionAnswering: func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }, endpoint: result.codexEndpoint, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
 		questionWindow: time.Duration(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
 		approvalWindow: time.Duration(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
 		attention:      &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}
+	processQuestionCallbacks.Store(result.Binding, processQuestionCallback(control.exactQuestions))
 	return processCreateControl{sync: control.sync, syncControls: control.syncControls, attention: control.attention}, nil
 }

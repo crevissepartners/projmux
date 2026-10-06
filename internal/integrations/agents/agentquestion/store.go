@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -88,6 +89,9 @@ const (
 	CloseReasonWatchStopped CloseReason = "watch-stopped"
 	// CloseReasonAnsweredElsewhere: Codex's own input surface answered first.
 	CloseReasonAnsweredElsewhere CloseReason = "answered-elsewhere"
+	// CloseReasonAnsweredDirect: the owning host accepted an exact typed answer.
+	// Only redacted terminal metadata is persisted.
+	CloseReasonAnsweredDirect CloseReason = "answered-direct"
 )
 
 // closeReasonsStillAsked maps every reason this release writes to whether
@@ -101,6 +105,7 @@ var closeReasonsStillAsked = map[CloseReason]bool{
 	CloseReasonTurnEnded:         false,
 	CloseReasonWatchStopped:      true,
 	CloseReasonAnsweredElsewhere: false,
+	CloseReasonAnsweredDirect:    false,
 }
 
 // ProviderStillAsks reports whether the provider still asks a question that
@@ -337,6 +342,64 @@ func (s *Store) List(agentUID string) ([]Record, error) {
 	return out, nil
 }
 
+// BeginDirect closes admission without claiming provider success. The receipt
+// contains existing public metadata only; the provider is called after unlock.
+func (s *Store) BeginDirect(expected Record) (Record, error) {
+	var receipt Record
+	err := s.withLock(lockWait, func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		index := findRecord(state.Records, expected.ID, expected.AgentUID)
+		if index < 0 {
+			return ErrNotFound
+		}
+		record := state.Records[index]
+		now := s.clock()
+		if err := refusalFor(record.Effective(now)); err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(record, expected) {
+			return ErrNotPending
+		}
+		record.State, record.Disposition, record.UpdatedAt = StateClosed, "direct-answer-pending", now
+		state.Records[index] = record
+		if err := s.writeLocked(state); err != nil {
+			return err
+		}
+		receipt = record
+		return nil
+	})
+	return receipt, err
+}
+
+// FinishDirect settles only the exact admission receipt. Losing the receipt,
+// including through an older writer's pruning, is an error, never success.
+func (s *Store) FinishDirect(receipt Record, accepted bool) error {
+	return s.withLock(lockWait, func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		index := findRecord(state.Records, receipt.ID, receipt.AgentUID)
+		if index < 0 {
+			return ErrNotFound
+		}
+		record := state.Records[index]
+		if receipt.State != StateClosed || receipt.Disposition != "direct-answer-pending" || !reflect.DeepEqual(record, receipt) {
+			return ErrNotPending
+		}
+		record.Disposition = "direct-answer-uncertain"
+		if accepted {
+			record.Disposition = string(CloseReasonAnsweredDirect)
+		}
+		record.UpdatedAt = s.clock()
+		state.Records[index] = record
+		return s.writeLocked(state)
+	})
+}
+
 // Answer settles one waiting record of agentUID with answers. The deadline is
 // judged under the lock with the store clock, so an answer racing the hook's
 // own expiry lands on exactly one side. A refusal changes nothing.
@@ -422,6 +485,9 @@ func (s *Store) Close(id string, reason CloseReason) (Record, error) {
 	}
 	invalid := false
 	record, err := s.transition(id, func(record Record, now time.Time) (State, string, bool) {
+		if record.State == StateClosed && record.Disposition == "direct-answer-pending" {
+			return StateClosed, "direct-answer-uncertain", true
+		}
 		if record.State != StateWaiting {
 			return record.State, "", false
 		}
@@ -507,11 +573,15 @@ func (s *Store) CloseAgent(agentUID string) (int, error) {
 		now := s.clock()
 		for i := range state.Records {
 			record := state.Records[i]
-			if record.AgentUID != agentUID || record.State != StateWaiting || !now.Before(record.Deadline) {
+			if record.AgentUID != agentUID || (record.State != StateWaiting || !now.Before(record.Deadline)) && !(record.State == StateClosed && record.Disposition == "direct-answer-pending") {
 				continue
 			}
 			record.State = StateClosed
-			record.Disposition = string(CloseReasonChannelOff)
+			if record.Disposition == "direct-answer-pending" {
+				record.Disposition = "direct-answer-uncertain"
+			} else {
+				record.Disposition = string(CloseReasonChannelOff)
+			}
 			record.UpdatedAt = now
 			state.Records[i] = record
 			closed++
@@ -561,7 +631,7 @@ func pruneRecords(records []Record, now time.Time, incoming int) ([]Record, erro
 	for len(out)+incoming > maxRecords {
 		oldest := -1
 		for i := range out {
-			if out[i].State.Terminal() && (oldest < 0 || out[i].UpdatedAt.Before(out[oldest].UpdatedAt)) {
+			if out[i].State.Terminal() && out[i].Disposition != "direct-answer-pending" && (oldest < 0 || out[i].UpdatedAt.Before(out[oldest].UpdatedAt)) {
 				oldest = i
 			}
 		}

@@ -827,15 +827,32 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering
 Set it with `projmux config agent-questions --answering <claude|projmux>`,
 or write the file. The setting applies to every Claude and native Codex Agent on this machine. The value
 is read case-insensitively with surrounding whitespace ignored. A
-missing, empty, or unreadable file, and any other value, is way 1. An Agent
-opted in with `projmux agent question enable` is way 2 whatever the file
-says. Codex handles only blocking app-server requests; a Codex Agent on the
-plain CLI lane has no app-server question channel. A Codex question set with an
-`isSecret` question stays in Codex's own input surface: projmux does not open
-an unmasked popup. `agent question list` points the operator to that window,
-and `agent question answer` refuses that set so secret text is not passed in
-command arguments. Other blocking Codex questions use the same popup and CLI
-answer paths as Claude. For Claude, the setting
+missing, empty, or unreadable file, and any other value, is way 1. Legacy per-Agent annotations have no effect. `agent question enable` and
+`disable` remain deprecated compatibility commands: they validate the target
+and succeed with a no-effect receipt, without changing Registry, settings, or
+waiting questions. Codex handles only blocking app-server requests; a Codex Agent on the
+plain CLI lane has no app-server question channel. Tmux secret questions stay
+in Codex's own input surface; unmasked popups and CLI secret argv are refused.
+Process Agents have no terminal: native questions use question-only typed IPC
+against the exact owning host. Parsed prompts and opaque question IDs can be
+read through `ReadExactProcessQuestions`; `AnswerExactProcessQuestion` accepts
+typed selections, including secret text from a masked body. Provider tokens,
+raw input, and secret answers are never returned to the frontend. Native
+process questions have no added answer-window deadline. Projmux process
+questions retain the configured window; direct accepted answers leave only
+redacted `answered-direct` terminal metadata in the question store. Held direct
+answers reserve admission before the original deadline, then write without a
+store lock. A reserved or uncertain outcome cannot be answered again; only a
+confirmed write settles as `answered-direct`. Offline lists retain stored history.
+
+The global value is read for every new question. A setting change affects new
+questions only: existing native pending requests and held records keep their
+exact ID, delivery, and original deadline until settled or ended. Lists expose
+the current policy separately from each request's captured policy and delivery.
+Duplicate, stale, retired, unknown, and non-question requests are refused
+without a provider write. An uncertain write is never retried.
+
+For Claude, the setting
 applies only to a projmux Agent's own conversation; other Claude sessions and
 subagents always get way 1. See
 [hooks.md](hooks.md#answering-askuserquestion-in-projmux).

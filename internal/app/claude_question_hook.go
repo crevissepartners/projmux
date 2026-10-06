@@ -98,14 +98,9 @@ func questionAnsweringFromPaths(paths config.Paths) config.AgentQuestionAnswerin
 	return answering
 }
 
-// questionAnsweredByProjmux resolves which way answers a confirmed
-// projmux Claude or Codex Agent's question: the Agent's own question channel annotation
-// is way 2 without reading anything else; otherwise the central setting
-// decides, read once. A nil resolver is way 1.
-func questionAnsweredByProjmux(agent coremetadata.Agent, answering func() config.AgentQuestionAnswering) bool {
-	if coremetadata.QuestionChannelEnabled(agent) {
-		return true
-	}
+// questionAnsweredByProjmux reads the sole global policy for new questions.
+// Legacy per-Agent annotations have no policy effect. A nil resolver is native.
+func questionAnsweredByProjmux(_ coremetadata.Agent, answering func() config.AgentQuestionAnswering) bool {
 	return answering != nil && answering() == config.AgentQuestionAnsweringProjmux
 }
 
@@ -114,9 +109,9 @@ func questionAnsweredByProjmux(agent coremetadata.Agent, answering func() config
 // documented PreToolUse decision: permissionDecision "allow" with updatedInput
 // carrying the original questions and the answers.
 //
-// It holds a question only in way 2: the Agent is opted in with `projmux agent
-// question enable`, or the central agent-question-answering setting is
-// `projmux`. Then it records the question, opens a projmux picker in a tmux
+// It holds a new question only when the central agent-question-answering
+// setting is `projmux`. Existing waiting questions retain their delivery.
+// Then it records the question, opens a projmux picker in a tmux
 // popup on the client the operator used last (when one is attached, or as soon
 // as one is, and once any popup already on it closes), titled with the asking
 // Agent and its Project/Window, and waits for that picker or `projmux agent

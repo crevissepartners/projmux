@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import subprocess
 import importlib.util
 import os
 from pathlib import Path
@@ -68,6 +72,46 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
             (directory / runner.FILES[0]).write_text('const cli = "OTHER"\n')
             with self.assertRaisesRegex(ValueError, "no longer consuming"):
                 runner.check_fixture_files(root)
+
+    def test_timeout_partial_metadata_is_bounded_private_and_preserves_failure(self):
+        sentinel = "private-timeout-fixture-sentinel"
+        event = {"Action": "run", "Test": "TestFixture/" + sentinel, "Output": sentinel}
+        partial = "\n".join([json.dumps(event)] * 24 + [
+            "null", "[]", "42", '"text"',
+            json.dumps({"Test": None}), json.dumps({"Test": []}),
+            json.dumps({"Test": "TestFixture", "Action": {}}),
+            json.dumps({"Test": sentinel, "Action": "run"}),
+            '{"Action":"run"'])
+        for captured in (partial.encode(), partial, None):
+            with self.subTest(kind=type(captured).__name__):
+                expired = subprocess.TimeoutExpired("go test", 240, output=captured, stderr=sentinel)
+                output = io.StringIO()
+                def invoke(command, **kwargs):
+                    if command[1] == "build":
+                        Path(command[command.index("-o") + 1]).write_bytes(b"fixture-binary")
+                        return subprocess.CompletedProcess(command, 0)
+                    if "-c" in command:
+                        self.assertEqual(kwargs["timeout"], 120)
+                        self.assertTrue(kwargs["check"])
+                        Path(command[command.index("-o") + 1]).write_bytes(b"fixture-test-binary")
+                        return subprocess.CompletedProcess(command, 0)
+                    self.assertEqual(kwargs["timeout"], 240)
+                    self.assertIn("-timeout=180s", command)
+                    raise expired
+                with patch.object(runner, "selected_tests", return_value=["TestFixture"]), patch.object(
+                    runner, "isolated_env", return_value={}), patch.object(
+                    runner.subprocess, "run", side_effect=invoke), contextlib.redirect_stdout(output):
+                    with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                        runner.main()
+                self.assertIs(caught.exception, expired)
+                text = output.getvalue()
+                self.assertNotIn(sentinel, text)
+                self.assertNotIn("process CLI summary:", text)
+                report = json.loads(text.split("process CLI timeout evidence: ")[1])
+                self.assertEqual(len(report["events"]), 0 if captured is None else 16)
+                self.assertTrue(all(row == {"test": "TestFixture", "action": "run"} for row in report["events"]))
+                self.assertGreaterEqual(report["elapsed_seconds"], report["test_command_seconds"])
+                self.assertGreaterEqual(report["elapsed_seconds"], report["precompile_seconds"])
 
     def test_isolation_removes_ambient_routes_and_provider_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:

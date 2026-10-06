@@ -122,8 +122,8 @@ type agentCommand struct {
 	// reads and settles; nil refuses.
 	questionStore func() (*agentquestion.Store, error)
 	// questionAnswering reads the central agent-question-answering setting
-	// `agent question answer` consults for an Agent that is not opted in;
-	// nil is way 1.
+	// controls admission and list policy; existing waiting delivery survives
+	// setting changes. Legacy per-Agent annotations have no effect.
 	questionAnswering func() config.AgentQuestionAnswering
 	// approvalStore opens the Claude permission request store `agent approval
 	// list|answer` reads and settles; nil refuses.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -747,9 +748,11 @@ func (c *createCommand) newProcessClaudeControl(result processAgentCreateResult)
 	if err = attention.activate(result.Binding, aiModeClaude, ""); err != nil {
 		return nil, err
 	}
-	return &claudeProcessControl{handle: handle, binding: result.Binding, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
+	control := &claudeProcessControl{questionAnswering: func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }, handle: handle, binding: result.Binding, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
 		questionWindow: time.Duration(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second, approvalWindow: time.Duration(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
-		attention: &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}, nil
+		attention: &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}
+	processQuestionCallbacks.Store(result.Binding, processQuestionCallback(control.exactQuestions))
+	return control, nil
 }
 
 func submitProcessInitialPrompt(ctx context.Context, result processAgentCreateResult, payload []string) error {

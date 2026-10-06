@@ -162,7 +162,7 @@ Subcommands:
 | [`projmux agent models`](#projmux-agent-models) | List model suggestions for Claude (default) or Codex (app-server); other names are still accepted |
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
-| [`projmux agent question`](#projmux-agent-question) | Answer one exact opted-in Claude or Codex Agent's questions from the command line |
+| [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
 Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
@@ -746,7 +746,7 @@ Output modes (`-o`): `json`
 
 ### `projmux agent question`
 
-Answer one exact opted-in Claude or Codex Agent's questions from the command line
+Answer one exact Claude or Codex Agent's current or waiting questions
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -772,8 +772,8 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent question enable`](#projmux-agent-question-enable) | Opt one exact Claude or Codex Agent into answering questions from the command line |
-| [`projmux agent question disable`](#projmux-agent-question-disable) | Opt one exact Claude or Codex Agent out of command-line answers |
+| [`projmux agent question enable`](#projmux-agent-question-enable) | Deprecated compatibility command; questions follow the global setting; no effect |
+| [`projmux agent question disable`](#projmux-agent-question-disable) | Deprecated compatibility command; questions follow the global setting; no effect |
 | [`projmux agent question list`](#projmux-agent-question-list) | List one exact Claude or Codex Agent's waiting and recent questions |
 | [`projmux agent question answer`](#projmux-agent-question-answer) | Answer one waiting question by option label, option number, or explicit free text |
 
@@ -781,7 +781,7 @@ Canonical spelling: `projmux agent question enable`, `projmux agent question dis
 
 #### `projmux agent question enable`
 
-Opt one exact Claude or Codex Agent into answering questions from the command line
+Deprecated compatibility command; questions follow the global setting; no effect
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -802,7 +802,7 @@ projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window
 
 #### `projmux agent question disable`
 
-Opt one exact Claude or Codex Agent out of command-line answers
+Deprecated compatibility command; questions follow the global setting; no effect
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -1597,7 +1597,7 @@ Measured isolated CLI exits (exit always follows actual provider Wait, rather th
 | Owner INT or TERM | 0 | 128 + the provider's actual signal |
 | Provider exits itself | Its exit code (tested: 9) | 143 for SIGTERM |
 
-Process post-create hooks run only with [hooks.post-create] runtime="process"; this also opts the hook into process Agents, while tmux execution stays unchanged. Questions and approvals are always captured and answered through agent question/approval commands. Default guidance explains process execution; off/custom guidance is unchanged.
+Process post-create hooks run only with [hooks.post-create] runtime="process"; this also opts the hook into process Agents, while tmux execution stays unchanged. Questions follow the global setting: native process questions use exact typed delivery; projmux questions retain their answer window. Approvals use agent approval commands. Default guidance explains process execution; off/custom guidance is unchanged.
 
 An explicit `--provider` wins, and a profile that names another provider is refused. Without `--provider`, the provider is the one named by the profile that `--profile <name>` or a `role` creation label selects.
 

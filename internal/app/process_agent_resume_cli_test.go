@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
@@ -1106,6 +1107,13 @@ func TestDeferredExplicitReplyActualCLI(t *testing.T) {
 
 func TestDeferredTailDrainKeepsControlsResponsiveActualCLI(t *testing.T) {
 	f := deferredResumeCLIFixture(t, aiModeCodex)
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), config.AgentQuestionAnsweringProjmux); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(f.root, "codex-provider.py")
 	raw, err := os.ReadFile(path)
 	if err != nil {

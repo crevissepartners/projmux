@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
+
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -25,6 +27,8 @@ type codexProcessControl struct {
 	questionWindow, approvalWindow time.Duration
 	now                            func() time.Time
 	records                        map[string]processhost.Request
+	questionAnswering              func() config.AgentQuestionAnswering
+	nativeQuestions                map[string]bool
 }
 
 func (c *codexProcessControl) closeRecord(id string, r processhost.Request) {
@@ -66,6 +70,7 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 			c.closeRecord(id, r)
 			_ = e.handle.Expire(e.authority(), r)
 			delete(c.records, id)
+			delete(c.nativeQuestions, id)
 		}
 		return err
 	}
@@ -78,6 +83,10 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 		id := processControlID(e.binding, r)
 		pending[id] = true
 		if _, known := c.records[id]; !known {
+			if r.Kind == "question" && captureNativeQuestion(&c.nativeQuestions, id, c.questionAnswering) {
+				c.records[id] = r
+				continue
+			}
 			captured, createErr := c.create(id, r)
 			if createErr != nil {
 				return createErr
@@ -88,6 +97,9 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 			c.records[id] = r
 		}
 
+		if c.nativeQuestions[id] {
+			continue
+		}
 		if err = c.answer(ctx, id, r); err != nil && !errors.Is(err, processhost.ErrStale) {
 			return err
 		}
@@ -96,6 +108,7 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 		if !pending[id] {
 			c.closeRecord(id, r)
 			delete(c.records, id)
+			delete(c.nativeQuestions, id)
 		}
 	}
 	return nil

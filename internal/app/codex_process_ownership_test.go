@@ -98,19 +98,38 @@ func TestCodexProcessQuestionPolicyParity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				paths := config.DefaultPaths(filepath.Join(f.root, "policy"), filepath.Dir(filepath.Dir(f.path)))
+				if err := config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), central); err != nil {
+					t.Fatal(err)
+				}
+				command := &createCommand{homeDir: func() (string, error) { return f.root, nil }, lookupEnv: func(key string) string {
+					if key == "XDG_CONFIG_HOME" {
+						return filepath.Dir(paths.ConfigDir)
+					}
+					return ""
+				}}
+				if _, err := command.newProcessCreateControl(processAgentCreateResult{Provider: aiModeCodex, Binding: f.endpoint.binding, codexEndpoint: f.endpoint, registryPath: f.path}); err != nil {
+					t.Fatal(err)
+				}
+				// Replace the old fixture bridge with the production constructor's callback.
+				callback, _ := processQuestionCallbacks.Load(f.endpoint.binding)
 				f.turn(t, "policy", "controls")
 				f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
-				if err := f.control.sync(context.Background()); err != nil {
+				views, err := callback.(processQuestionCallback)(context.Background(), processQuestionRequest{Binding: f.endpoint.binding})
+				if err != nil || len(views) != 1 {
+					t.Fatal(views, err)
+				}
+				want := "process-exact-question"
+				if central == config.AgentQuestionAnsweringProjmux {
+					want = "held-question"
+				}
+				if views[0].Delivery != want {
+					t.Fatalf("central=%s annotation=%v view=%+v", central, channel, views[0])
+				}
+				if _, err = callback.(processQuestionCallback)(context.Background(), processQuestionRequest{Binding: f.endpoint.binding, QuestionID: views[0].QuestionID, Selections: map[int]agentquestion.Selection{0: {Labels: []string{"blue"}}}}); err != nil {
 					t.Fatal(err)
 				}
-				questions, err := f.control.questions.List(f.endpoint.binding.Agent)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(questions) != 1 {
-					t.Fatalf("process question missing with channel=%v policy=%s: %d", channel, central, len(questions))
-				}
-				f.answerControls(t)
+
 			})
 		}
 	}
@@ -153,6 +172,11 @@ func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
 	f := newProcessCodexFixture(t, nil)
 	e := f.endpoint
 	paths := config.DefaultPaths(filepath.Join(f.root, "config"), filepath.Join(f.root, "state"))
+	if err := config.SaveAgentQuestionAnsweringFile(paths.AgentQuestionAnsweringFile(), config.AgentQuestionAnsweringProjmux); err != nil {
+		t.Fatal(err)
+	}
+	f.control.questionAnswering = func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }
+	processQuestionCallbacks.Store(e.binding, processQuestionCallback(f.control.exactQuestions))
 	f.control.questions = agentquestion.NewStore(paths.StateDir)
 	f.control.approvals = agentapproval.NewStore(paths.StateDir)
 	attention := newProcessAttentionStore(paths.StateDir)
@@ -200,6 +224,14 @@ func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
 	}
 	f.turn(t, "cli-controls", "controls")
 	f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+	snapshot, err := e.handle.Observe(e.binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := processAgentCreateResult{Handle: e.handle, Binding: e.binding, Provider: aiModeCodex, registryPath: f.path}
+	if err = result.recordProcessSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.control.sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}

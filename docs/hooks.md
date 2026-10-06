@@ -781,16 +781,13 @@ A question is answered one of two ways:
 
 | Way | When | What happens |
 | --- | --- | --- |
-| 1: Claude Code's prompt (default) | the Agent is not opted in and `agent-question-answering` is not `projmux` | the hook prints nothing and exits at once; Claude Code shows its usual question prompt |
-| 2: projmux | the Agent is opted in, or `agent-question-answering` is `projmux` | the hook records the question, opens a projmux picker popup, and takes the first answer from the popup or the command line |
+| 1: Claude Code's prompt (default) | `agent-question-answering` is not `projmux` | the hook prints nothing and exits at once; Claude Code shows its usual question prompt |
+| 2: projmux | `agent-question-answering` is `projmux` | the hook records the question, opens a projmux picker popup, and takes the first answer from the popup or the command line |
 
-The Agent's own switch wins over the setting, so an opted-in Agent is always
-way 2:
-
-```sh
-projmux agent question enable <agent-ref>
-projmux agent question disable <agent-ref>
-```
+All new questions follow the global setting. Per-Agent annotations have no
+policy effect. The legacy `agent question enable` and `disable` commands validate
+the target and return a deprecated no-effect receipt; they change no settings,
+annotations, or waiting questions.
 
 The setting is the central
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-question-answering` file (see
@@ -863,7 +860,8 @@ tells whether the provider still asks the question in its own prompt:
 | `popup-failed` | the picker failed, or three popups in a row failed to open or ended within 2 seconds of opening | yes |
 | `hook-canceled` | Claude Code canceled the hook (Esc in Claude Code, or its hook timeout), which declines the question | no |
 | `hook-failed` | the hook crashed after it recorded the question | yes |
-| `channel-off` | `agent question disable` | yes |
+| `channel-off` | legacy records from an older release | yes |
+| `answered-direct` | accepted exact process typed answer (redacted) | no |
 | `turn-ended` | the Codex turn that asked it ended | no |
 | `watch-stopped` | projmux's Codex observer stopped watching the request (its connection to Codex ended, or the observer stopped) | yes |
 | `answered-elsewhere` | Codex's own input surface answered it first | no |
@@ -902,9 +900,8 @@ If nobody answers within the window, the question expires, the popup closes,
 and Claude Code shows its own prompt as usual. The hook reads the window for
 every question and the installed timeout is the fixed ceiling, so a window
 changed with `projmux config agent-questions` or in the file applies to the
-next question without re-running `projmux agent integrate claude`. `agent
-question disable` also hands every question the Agent is still holding back to that
-prompt immediately. Records live in `<state dir>/agent-questions/` and settled
+next question without re-running `projmux agent integrate claude`. Changing global policy preserves existing waiting records and their original
+deadlines and answer paths. Legacy `agent question disable` has no effect. Records live in `<state dir>/agent-questions/` and settled
 ones are kept for a day.
 
 The hook never blocks the tool: every failure, and even a crash inside the

@@ -288,16 +288,19 @@ func TestClaudeQuestionHookResolutionOrder(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name       string
-		annotation bool
-		setting    string // "" leaves the file missing
-		pane       string
-		wantWay2   bool
-		wantReads  int
+		name          string
+		annotation    bool
+		annotationOff bool
+		setting       string // "" leaves the file missing
+		pane          string
+		wantWay2      bool
+		wantReads     int
 	}{
-		{name: "annotation on, setting missing", annotation: true, wantWay2: true},
-		{name: "annotation on, setting claude", annotation: true, setting: "claude", wantWay2: true},
-		{name: "annotation on, setting projmux", annotation: true, setting: "projmux", wantWay2: true},
+		{name: "annotation on, setting missing", annotation: true, wantReads: 1},
+		{name: "annotation on, setting claude", annotation: true, setting: "claude", wantReads: 1},
+		{name: "annotation on, setting projmux", annotation: true, setting: "projmux", wantWay2: true, wantReads: 1},
+		{name: "explicit annotation off, setting claude", annotationOff: true, setting: "claude", wantReads: 1},
+		{name: "explicit annotation off, setting projmux", annotationOff: true, setting: "projmux", wantWay2: true, wantReads: 1},
 		{name: "annotation off, setting missing", wantReads: 1},
 		{name: "annotation off, setting claude", setting: "claude", wantReads: 1},
 		{name: "annotation off, setting garbage", setting: "yes please", wantReads: 1},
@@ -309,6 +312,10 @@ func TestClaudeQuestionHookResolutionOrder(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			fixture := newQuestionFixture(t, test.annotation)
+			if test.annotationOff {
+				a, _ := fixture.resources.registry.Agent(questionTestAgent)
+				a.Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentQuestionChannel: "off"}
+			}
 			paths := config.DefaultPaths(t.TempDir(), t.TempDir())
 			if test.setting != "" {
 				if err := os.MkdirAll(paths.ConfigDir, 0o755); err != nil {
@@ -553,12 +560,10 @@ func TestAgentQuestionAnswerFollowsTheAnsweringSetting(t *testing.T) {
 		fixture.command.questionAnswering = func() config.AgentQuestionAnswering { return setting }
 		record := fixture.createQuestionRecord(t)
 		_, _, err := runRoute(t, fixture.command, "question", "answer", "uid:"+questionTestAgent, record.ID, "--option", "1=make", "--option", "2=main")
-		if setting == config.AgentQuestionAnsweringProjmux && err != nil {
+		if err != nil {
 			t.Fatalf("way 2 answer: %v", err)
 		}
-		if setting == config.AgentQuestionAnsweringClaude && (err == nil || !strings.Contains(err.Error(), "(question-channel-off)")) {
-			t.Fatalf("way 1 answer err = %v, want question-channel-off", err)
-		}
+
 	}
 }
 

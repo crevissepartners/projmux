@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
+
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -25,6 +27,8 @@ type claudeProcessControl struct {
 	questionWindow, approvalWindow time.Duration
 	now                            func() time.Time
 	records                        map[string]processhost.Request
+	questionAnswering              func() config.AgentQuestionAnswering
+	nativeQuestions                map[string]bool
 }
 
 // sync reconciles one bounded snapshot. All response writes go through the
@@ -65,6 +69,7 @@ func (c *claudeProcessControl) syncControls(ctx context.Context) error {
 			c.closeRecord(id, request)
 			_ = c.handle.Expire(authority, request)
 			delete(c.records, id)
+			delete(c.nativeQuestions, id)
 		}
 		return err
 	}
@@ -74,6 +79,10 @@ func (c *claudeProcessControl) syncControls(ctx context.Context) error {
 		pending[id] = true
 		if _, known := c.records[id]; !known {
 			created := c.now().UTC()
+			if request.Kind == "question" && captureNativeQuestion(&c.nativeQuestions, id, c.questionAnswering) {
+				c.records[id] = request
+				continue
+			}
 			if request.Kind == "question" {
 				var input struct {
 					Questions json.RawMessage `json:"questions"`
@@ -94,6 +103,9 @@ func (c *claudeProcessControl) syncControls(ctx context.Context) error {
 				return err
 			}
 			c.records[id] = request
+		}
+		if c.nativeQuestions[id] {
+			continue
 		}
 		var response *processhost.Response
 		terminal := false
@@ -137,6 +149,7 @@ func (c *claudeProcessControl) syncControls(ctx context.Context) error {
 		if !pending[id] || snap.State != "ready" {
 			c.closeRecord(id, request)
 			delete(c.records, id)
+			delete(c.nativeQuestions, id)
 		}
 	}
 	return nil
