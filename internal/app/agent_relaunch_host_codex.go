@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"reflect"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -55,6 +53,9 @@ func (c *agentCommand) runCodexHostRelaunch(reg coremetadata.Registry, target co
 		return err
 	}
 	if journal != nil {
+		if c.hostTransferResult != nil {
+			return fmt.Errorf("agent relaunch: pending Codex transfer requires CLI recovery; recover with: %s; nothing was changed", codexTransferRecoveryCommand(target.Metadata.UID, request))
+		}
 		return c.recoverCodexHostTransfer(reg, target, request, path, journal, stdout, stderr)
 	}
 	if request.host == "tmux" {
@@ -81,7 +82,7 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	}
 	result := hostRelaunchResult(recipe, target, *pane, request, "tmux")
 	if request.dryRun {
-		return writeAgentRelaunchResult(stdout, request, result)
+		return c.publishHostTransferResult(stdout, request, result)
 	}
 	if recipe.restart.confirmationRequired() && !request.yes {
 		return refuse(relaunchReasonAgentBusy, "would interrupt work; re-run with --yes")
@@ -106,8 +107,8 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx, cancel, release := c.hostTransferLifetime()
+	defer release()
 	authority := *pane.Status.Activation.Codex.Authority
 	domain, err := codexBrokerStateDomain(c.lookupEnv, os.UserHomeDir)
 	if err != nil {
@@ -453,9 +454,5 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 		return fail(err)
 	}
 	result.NewPaneUID, result.Outcome = binding.Pane, personaOutcomeRestarted
-	if err := writeAgentRelaunchResult(stdout, source.request, result); err != nil {
-		return fail(err)
-	}
-	fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", binding.Agent, binding.Pane)
-	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
+	return c.finishOwnedHostTransfer(ctx, cancel, &owned, sync, result, source.request, stdout, stderr, fail)
 }
