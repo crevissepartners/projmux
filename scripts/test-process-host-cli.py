@@ -117,10 +117,37 @@ def main() -> None:
         print(f"copied CLI sha256={hashlib.sha256(copy.read_bytes()).hexdigest()}", flush=True)
         selector = "^(" + "|".join(expected) + ")$"
         test_started = time.monotonic()
-        result = subprocess.run([go, "test", "-json", "-count=1", "-cpu=1",
-                                 "-timeout=180s", "-run", selector, "./internal/app"],
-                                cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=240)
+        try:
+            result = subprocess.run([go, "test", "-json", "-count=1", "-cpu=1",
+                                     "-timeout=180s", "-run", selector, "./internal/app"],
+                                    cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, timeout=240)
+        except subprocess.TimeoutExpired as expired:
+            partial = expired.stdout
+            if isinstance(partial, bytes):
+                partial = partial[-65536:].decode(errors="replace")
+            elif isinstance(partial, str):
+                partial = partial[-65536:]
+            else:
+                partial = ""
+            observed = []
+            for line in partial.splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict) or not isinstance(event.get("Test"), str):
+                    continue
+                test, action = event["Test"].split("/", 1)[0], event.get("Action")
+                if test in expected and isinstance(action, str) and action in {"run", "pass", "fail", "skip"}:
+                    observed.append({"test": test, "action": action})
+                    observed = observed[-16:]
+            print("process CLI timeout evidence: " + json.dumps({
+                "build_seconds": round(build_seconds, 3),
+                "test_command_seconds": round(time.monotonic() - test_started, 3),
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "events": observed}), flush=True)
+            raise
         test_seconds = time.monotonic() - test_started
         events = []
         for line in result.stdout.splitlines():
