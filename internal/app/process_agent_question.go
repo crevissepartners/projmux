@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -195,23 +196,45 @@ func exactQuestionViews(provider string, records map[string]processhost.Request,
 	sort.Slice(views, func(i, j int) bool { return views[i].QuestionID < views[j].QuestionID })
 	return views, nil
 }
-func exactQuestionRequest(provider string, r processQuestionRequest, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store) (processhost.Request, []agentquestion.Question, error) {
+func exactQuestionRequest(provider string, r processQuestionRequest, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store) (processhost.Request, []agentquestion.Question, agentquestion.Record, error) {
 	request, ok := records[r.QuestionID]
+	var held agentquestion.Record
 	if !ok || request.Kind != "question" || len(r.Selections) == 0 {
-		return processhost.Request{}, nil, processhost.ErrStale
+		return request, nil, held, processhost.ErrStale
+	}
+	prompts, err := processQuestionPrompts(provider, request)
+	if err != nil {
+		return request, nil, held, err
 	}
 	if !native[r.QuestionID] {
 		record, found, err := store.Get(r.QuestionID)
 		if err != nil {
-			return request, nil, err
+			return request, nil, held, err
 		}
 		if !found || record.State != agentquestion.StateWaiting {
-			return request, nil, processhost.ErrStale
+			return request, nil, held, processhost.ErrStale
 		}
+		stored, err := record.ParsedQuestions()
+		if err != nil || !reflect.DeepEqual(stored, prompts) {
+			return request, nil, held, processhost.ErrStale
+		}
+		held = record
 	}
-	prompts, err := processQuestionPrompts(provider, request)
-	return request, prompts, err
+	return request, prompts, held, nil
 }
+func admitHeldDirect(store *agentquestion.Store, provider string, b processhost.Binding, request processhost.Request, held agentquestion.Record, native bool) (agentquestion.Record, error) {
+	if native {
+		return agentquestion.Record{}, nil
+	}
+	if provider == aiModeClaude {
+		provider = ""
+	}
+	if held.AgentUID != b.Agent || held.PaneUID != b.Pane || held.SessionID != request.Session || held.Generation != b.Generation || held.RequestID != request.ID || held.Provider != provider || held.ID != processControlID(b, request) {
+		return agentquestion.Record{}, processhost.ErrStale
+	}
+	return store.BeginDirect(held)
+}
+
 func (c *claudeProcessControl) exactQuestions(ctx context.Context, r processQuestionRequest) ([]ExactProcessQuestion, error) {
 	if r.Binding != c.binding {
 		return nil, processhost.ErrStale
@@ -232,7 +255,7 @@ func (c *claudeProcessControl) exactQuestions(ctx context.Context, r processQues
 	if r.QuestionID == "" {
 		return exactQuestionViews(aiModeClaude, c.records, c.nativeQuestions, c.questions)
 	}
-	request, prompts, err := exactQuestionRequest(aiModeClaude, r, c.records, c.nativeQuestions, c.questions)
+	request, prompts, held, err := exactQuestionRequest(aiModeClaude, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {
 		return nil, err
 	}
@@ -240,12 +263,16 @@ func (c *claudeProcessControl) exactQuestions(ctx context.Context, r processQues
 	if err != nil {
 		return nil, agentquestion.ErrInvalidAnswer
 	}
-	err = c.handle.Respond(ctx, authority, request, processhost.Response{Answers: answers})
+	receipt, err := admitHeldDirect(c.questions, aiModeClaude, c.binding, request, held, c.nativeQuestions[r.QuestionID])
 	if err != nil {
 		return nil, err
 	}
+	err = c.handle.Respond(ctx, authority, request, processhost.Response{Answers: answers})
 	if !c.nativeQuestions[r.QuestionID] {
-		_, err = c.questions.Close(r.QuestionID, agentquestion.CloseReasonAnsweredDirect)
+		err = errors.Join(err, c.questions.FinishDirect(receipt, err == nil))
+	}
+	if err != nil {
+		return nil, err
 	}
 	delete(c.records, r.QuestionID)
 	delete(c.nativeQuestions, r.QuestionID)
@@ -270,18 +297,23 @@ func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuest
 	if r.QuestionID == "" {
 		return exactQuestionViews(aiModeCodex, c.records, c.nativeQuestions, c.questions)
 	}
-	request, prompts, err := exactQuestionRequest(aiModeCodex, r, c.records, c.nativeQuestions, c.questions)
+	request, prompts, held, err := exactQuestionRequest(aiModeCodex, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {
 		return nil, err
 	}
 	if _, err = agentquestion.BuildCodexAnswers(prompts, r.Selections); err != nil {
 		return nil, agentquestion.ErrInvalidAnswer
 	}
-	if err = c.endpoint.handle.RespondQuestion(ctx, c.endpoint.authority(), request, r.Selections); err != nil {
+	receipt, err := admitHeldDirect(c.questions, aiModeCodex, c.endpoint.binding, request, held, c.nativeQuestions[r.QuestionID])
+	if err != nil {
 		return nil, err
 	}
+	err = c.endpoint.handle.RespondQuestion(ctx, c.endpoint.authority(), request, r.Selections)
 	if !c.nativeQuestions[r.QuestionID] {
-		_, err = c.questions.Close(r.QuestionID, agentquestion.CloseReasonAnsweredDirect)
+		err = errors.Join(err, c.questions.FinishDirect(receipt, err == nil))
+	}
+	if err != nil {
+		return nil, err
 	}
 	delete(c.records, r.QuestionID)
 	delete(c.nativeQuestions, r.QuestionID)

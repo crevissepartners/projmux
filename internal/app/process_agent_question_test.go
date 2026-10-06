@@ -1,12 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,6 +238,179 @@ func TestExactQuestionHeldExpiryCannotWrite(t *testing.T) {
 	for _, n := range f.wire(t) {
 		if len(n["result"]) > 0 {
 			t.Fatal("expired response reached wire")
+		}
+	}
+}
+
+func TestOfflineProcessQuestionHistoryRemainsReadable(t *testing.T) {
+	f := newProcessCodexFixture(t, nil)
+	b := f.endpoint.binding
+	f.turn(t, "offline-history", "controls")
+	snap := f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+	result := processAgentCreateResult{Binding: b, Provider: aiModeCodex, Handle: f.endpoint.handle, codexEndpoint: f.endpoint, registryPath: f.path}
+	if err := result.recordProcessSnapshot(snap); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.control.syncControls(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	views, err := f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b})
+	if err != nil || len(views) != 1 {
+		t.Fatal(views, err)
+	}
+	id := views[0].QuestionID
+	record, found, err := f.control.questions.Get(id)
+	if err != nil || !found {
+		t.Fatal(record, found, err)
+	}
+	if _, err = f.control.questions.Close(id, agentquestion.CloseReasonHookCanceled); err != nil {
+		t.Fatal(err)
+	}
+	record.ID, record.Disposition = "question-0000000000000001", ""
+	if _, err = f.control.questions.Create(record); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.endpoint.handle.Stop(b); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snap, err = f.endpoint.handle.Wait(ctx, b)
+	if err != nil || snap.Exit == nil {
+		t.Fatal(snap, err)
+	}
+	if err = result.persistProcessWait(snap); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := f.store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := reg.Agent(b.Agent)
+	if agent.Status.Phase != coremetadata.PhaseOffline {
+		t.Fatal(agent.Status.Phase)
+	}
+	command := &agentCommand{loadRegistry: f.store.LoadDegradedReadOnly, messagePaths: agentMessagePaths{registryPath: f.path}, questionStore: func() (*agentquestion.Store, error) { return f.control.questions, nil }}
+	for _, asJSON := range []bool{false, true} {
+		var output bytes.Buffer
+		if err = command.listQuestions(agentQuestionRequest{spelling: "agent question list", json: asJSON}, *agent, &output); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), id) {
+			t.Fatal(output.String())
+		}
+		if asJSON {
+			var listed agentQuestionList
+			if err = json.Unmarshal(output.Bytes(), &listed); err != nil || len(listed.Questions) != 2 || len(listed.ExactQuestions) != 0 {
+				t.Fatal(output.String(), err)
+			}
+			for _, q := range listed.Questions {
+				if q.CanAnswer {
+					t.Fatal("offline question admitted", q.ID)
+				}
+			}
+		}
+	}
+	d := ProcessQuestionDispatcher{RegistryPath: f.path}
+	if _, err = d.ReadExactProcessQuestions(ctx, b.Agent); !errors.Is(err, processhost.ErrStale) {
+		t.Fatal(err)
+	}
+	if err = d.AnswerExactProcessQuestion(ctx, b.Agent, id, map[int]agentquestion.Selection{0: {Labels: []string{"blue"}}}); !errors.Is(err, processhost.ErrStale) {
+		t.Fatal(err)
+	}
+	for _, row := range f.wire(t) {
+		if len(row["result"]) > 0 {
+			t.Fatal("retired answer reached wire")
+		}
+	}
+}
+
+func TestHeldDirectAdmissionSurvivesDeadlineCrossing(t *testing.T) {
+	f := newProcessCodexFixture(t, nil)
+	b := f.endpoint.binding
+	f.turn(t, "crossing", "controls")
+	f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+	if err := f.control.syncControls(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	views, err := f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b})
+	if err != nil || len(views) != 1 || views[0].Deadline == nil {
+		t.Fatal(views, err)
+	}
+	deadline := *views[0].Deadline
+	calls := 0
+	f.control.questions = f.control.questions.WithClock(func() time.Time {
+		calls++
+		if calls <= 2 {
+			return deadline.Add(-time.Nanosecond)
+		}
+		return deadline.Add(time.Nanosecond)
+	})
+	_, err = f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b, QuestionID: views[0].QuestionID, Selections: map[int]agentquestion.Selection{0: {Labels: []string{"blue"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, found, err := f.control.questions.Get(views[0].QuestionID)
+	if err != nil || !found || record.State != agentquestion.StateClosed || record.Disposition != string(agentquestion.CloseReasonAnsweredDirect) || len(record.Answers) != 0 {
+		t.Fatal(record, found, err)
+	}
+	wrote := false
+	f.wait(t, func(processhost.Snapshot) bool {
+		for _, row := range f.pollWire(t) {
+			if bytes.Contains(row["result"], []byte("blue")) {
+				wrote = true
+			}
+		}
+		return wrote
+	})
+	if _, err = f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b, QuestionID: views[0].QuestionID, Selections: map[int]agentquestion.Selection{0: {Labels: []string{"blue"}}}}); err == nil {
+		t.Fatal("duplicate admission")
+	}
+}
+
+func TestExactQuestionErrorPreservesCapturedMaps(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		f := newProcessCodexFixture(t, nil)
+		f.control.questionAnswering = func() config.AgentQuestionAnswering {
+			if native {
+				return config.AgentQuestionAnsweringClaude
+			}
+			return config.AgentQuestionAnsweringProjmux
+		}
+		b := f.endpoint.binding
+		f.turn(t, "error-maps", "controls")
+		f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
+		views, err := f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b})
+		if err != nil || len(views) != 1 {
+			t.Fatal(views, err)
+		}
+		id := views[0].QuestionID
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if native {
+			cancel()
+		} else {
+			calls := 0
+			f.control.questions = f.control.questions.WithClock(func() time.Time {
+				calls++
+				if calls == 2 {
+					cancel()
+				}
+				return time.Now()
+			})
+		}
+		_, err = f.control.exactQuestions(ctx, processQuestionRequest{Binding: b, QuestionID: id, Selections: map[int]agentquestion.Selection{0: {Labels: []string{"blue"}}}})
+		if err == nil {
+			t.Fatal("canceled write accepted")
+		}
+		if _, ok := f.control.records[id]; !ok || f.control.nativeQuestions[id] != native {
+			t.Fatal("error recaptured policy or deleted request")
+		}
+		if !native {
+			record, found, err := f.control.questions.Get(id)
+			if err != nil || !found || record.Disposition != "direct-answer-uncertain" || len(record.Answers) != 0 {
+				t.Fatal(record, found, err)
+			}
 		}
 	}
 }

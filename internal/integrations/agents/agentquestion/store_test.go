@@ -582,3 +582,88 @@ func TestAnsweredDirectStoresOnlyTerminalMetadata(t *testing.T) {
 		t.Fatal("direct answer still asks")
 	}
 }
+
+func TestDirectAdmissionOwnsOnlyItsExactReceipt(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		store, clock := newTestStore(t)
+		record := createTestRecord(t, store, clock, 1, "agt-a")
+		changed := record
+		changed.Deadline = record.Deadline.Add(time.Nanosecond)
+		if _, err := store.BeginDirect(changed); !errors.Is(err, ErrNotPending) {
+			t.Fatal(err)
+		}
+		receipt, err := store.BeginDirect(record)
+		if err != nil || receipt.State != StateClosed || receipt.Disposition != "direct-answer-pending" || len(receipt.Answers) != 0 {
+			t.Fatal(receipt, err)
+		}
+		if _, err = NewStoreAt(store.Path()).WithClock(clock.Now).Answer(record.ID, record.AgentUID, testAnswers); !errors.Is(err, ErrClosed) {
+			t.Fatal(err)
+		}
+		// Completion crosses the original deadline after admission won.
+		later := store.WithClock(func() time.Time { return record.Deadline.Add(time.Nanosecond) })
+		if err = later.FinishDirect(receipt, accepted); err != nil {
+			t.Fatal(err)
+		}
+		settled, found, err := later.Get(record.ID)
+		reason := "direct-answer-uncertain"
+		if accepted {
+			reason = string(CloseReasonAnsweredDirect)
+		}
+		if err != nil || !found || settled.State != StateClosed || settled.Disposition != reason || len(settled.Answers) != 0 {
+			t.Fatal(settled, found, err)
+		}
+		if err = later.FinishDirect(receipt, true); !errors.Is(err, ErrNotPending) {
+			t.Fatal(err)
+		}
+	}
+	store, clock := newTestStore(t)
+	record := createTestRecord(t, store, clock, 1, "agt-a")
+	if _, err := store.Answer(record.ID, record.AgentUID, testAnswers); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginDirect(record); !errors.Is(err, ErrNotPending) {
+		t.Fatal(err)
+	}
+	late := createTestRecord(t, store, clock, 2, "agt-a")
+	if _, err := store.WithClock(func() time.Time { return late.Deadline }).BeginDirect(late); !errors.Is(err, ErrExpired) {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectReceiptCleanupAndPruning(t *testing.T) {
+	store, clock := newTestStore(t)
+	record := createTestRecord(t, store, clock, 1, "agt-a")
+	receipt, err := store.BeginDirect(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := pruneRecords([]Record{receipt}, clock.Now(), maxRecords)
+	if !errors.Is(err, ErrCapacity) {
+		t.Fatal(records, err)
+	}
+	// Unknown closed disposition remains valid to the existing version-1 reader.
+	if !validRecord(receipt) || !receipt.State.Terminal() {
+		t.Fatal(receipt)
+	}
+	cleaned, err := store.Close(receipt.ID, CloseReasonHookCanceled)
+	if err != nil || cleaned.Disposition != "direct-answer-uncertain" {
+		t.Fatal(cleaned, err)
+	}
+	if _, known := ProviderStillAsks(cleaned.Disposition); known {
+		t.Fatal("unknown cleanup became known")
+	}
+	if err = store.FinishDirect(receipt, true); !errors.Is(err, ErrNotPending) {
+		t.Fatal(err)
+	}
+	records, err = pruneRecords([]Record{receipt}, receipt.UpdatedAt.Add(terminalRetention+time.Nanosecond), 0)
+	if err != nil || len(records) != 0 {
+		t.Fatal(records, err)
+	}
+	// An old writer may prune the closed receipt under capacity pressure.
+	if err = os.WriteFile(store.Path(), []byte(`{"version":1,"records":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.FinishDirect(receipt, true); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+}

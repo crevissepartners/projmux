@@ -227,7 +227,11 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 	if err != nil {
 		return err
 	}
-	if pane, ok := reg.Pane(agent.Status.PaneRef); ok && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+	process := false
+	if pane, ok := reg.Pane(agent.Status.PaneRef); ok {
+		process = pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess
+	}
+	if process && agent.Status.Phase == coremetadata.PhaseRunning {
 		result.ExactQuestions, err = (ProcessQuestionDispatcher{RegistryPath: c.messagePaths.registryPath}).ReadExactProcessQuestions(context.Background(), agent.Metadata.UID)
 		if err != nil {
 			return err
@@ -243,6 +247,9 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 			continue
 		}
 		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers, Delivery: "held-question", CanAnswer: record.State == agentquestion.StateWaiting, asking: questionClosedAsking(record)}
+		if process && agent.Status.Phase != coremetadata.PhaseRunning {
+			view.CanAnswer = false
+		}
 		for i, question := range questions {
 			// Claude always takes free text, as its popup and BuildAnswers do;
 			// Codex takes it only when the question sets isOther.

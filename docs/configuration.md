@@ -840,7 +840,10 @@ typed selections, including secret text from a masked body. Provider tokens,
 raw input, and secret answers are never returned to the frontend. Native
 process questions have no added answer-window deadline. Projmux process
 questions retain the configured window; direct accepted answers leave only
-redacted `answered-direct` terminal metadata in the question store.
+redacted `answered-direct` terminal metadata in the question store. Held direct
+answers reserve admission before the original deadline, then write without a
+store lock. A reserved or uncertain outcome cannot be answered again; only a
+confirmed write settles as `answered-direct`. Offline lists retain stored history.
 
 The global value is read for every new question. A setting change affects new
 questions only: existing native pending requests and held records keep their
