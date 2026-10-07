@@ -192,11 +192,11 @@ func sidebarContinuationModeToken(t *testing.T, command string) string {
 		t.Fatalf("continuation command carries no --mode: %q", command)
 	}
 	rest := after
-	end := strings.Index(rest, "'")
-	if end < 0 {
+	before, _, ok0 := strings.Cut(rest, "'")
+	if !ok0 {
 		t.Fatalf("continuation command --mode token is unterminated: %q", command)
 	}
-	return rest[:end]
+	return before
 }
 
 // TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints is the mode
