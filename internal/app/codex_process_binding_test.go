@@ -143,7 +143,7 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	var env []string
 	for _, v := range os.Environ() {
 		key, _, _ := strings.Cut(v, "=")
-		if key == "HOME" || key == "CODEX_HOME" || key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" || key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" || strings.HasPrefix(key, "PMX_INTERNAL_") {
+		if key == "HOME" || key == "CODEX_HOME" || key == "XDG_STATE_HOME" || key == "OPENAI_API_KEY" || key == "CODEX_API_KEY" || key == "TMUX" || key == "TMUX_PANE" || key == "__PROJMUX_RUNTIME_ANCHOR_PANE" || strings.HasPrefix(key, "PMX_INTERNAL_") {
 			continue
 		}
 		env = append(env, v)
@@ -151,7 +151,7 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	env = append(env, "HOME="+root, "CODEX_HOME="+filepath.Join(root, ".codex"), "PMX_TEST_PROCESS_CODEX_CHILD=1")
+	env = append(env, "HOME="+root, "CODEX_HOME="+filepath.Join(root, ".codex"), "XDG_STATE_HOME="+filepath.Join(root, "state"), "PMX_TEST_PROCESS_CODEX_CHILD=1")
 	limits := processhost.DefaultLimits()
 	limits.Events = events
 	limits.Grace = 200 * time.Millisecond
@@ -313,6 +313,131 @@ func TestProcessCodexCompleteWireDefersOnlyPartialLastLine(t *testing.T) {
 	}
 }
 func TestCodexProcessBindingSingleWriterAndExactTokens(t *testing.T) {
+	t.Run("fixture-state-journal", func(t *testing.T) {
+		parent := t.TempDir()
+		sentinel := filepath.Join(parent, "sentry")
+		if err := os.WriteFile(sentinel, []byte("parent state stays private"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		snapshotParent := func() map[string]string {
+			t.Helper()
+			state := map[string]string{}
+			err := filepath.Walk(parent, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				rel, err := filepath.Rel(parent, path)
+				if err != nil {
+					return err
+				}
+				value := fmt.Sprintf("mode=%v", info.Mode())
+				if info.Mode().IsRegular() {
+					raw, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					value += fmt.Sprintf(" bytes=%x", raw)
+				} else if info.Mode()&os.ModeSymlink != 0 {
+					target, err := os.Readlink(path)
+					if err != nil {
+						return err
+					}
+					value += " link=" + target
+				}
+				state[rel] = value
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return state
+		}
+		before := snapshotParent()
+		t.Setenv("XDG_STATE_HOME", parent)
+		var fixtureEnv []string
+		fixture := newProcessCodexFixture(t, func(root, _ string, env []string) processhost.Command {
+			fixtureEnv = append([]string{}, env...)
+			stateHomes := 0
+			for _, entry := range env {
+				if value, ok := strings.CutPrefix(entry, "XDG_STATE_HOME="); ok {
+					stateHomes++
+					if value != filepath.Join(root, "state") {
+						t.Fatalf("fixture inherited parent state home: %q", value)
+					}
+				}
+			}
+			if stateHomes != 1 {
+				t.Fatalf("fixture state homes=%d", stateHomes)
+			}
+			return processhost.Command{Path: "python3", Args: []string{"-u", "-c", processCodexProviderFixture}, Dir: root, Env: env}
+		})
+		if product := os.Getenv("PMX_TEST_CLI"); product != "" {
+			// Reject before inherited FD admission: this is a separate bounded
+			// usage call, not the fixture's live owned supervisor.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			output, err := os.CreateTemp(fixture.root, "journal-contract-output-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer output.Close()
+			cmd := exec.CommandContext(ctx, product, "internal", "process-host-supervisor", "--fixture-refusal")
+			cmd.Env = append([]string{}, fixtureEnv...)
+			cmd.Stdout, cmd.Stderr = output, output
+			err = cmd.Run()
+			var exit *exec.ExitError
+			if ctx.Err() != nil || !errors.As(err, &exit) || exit.ExitCode() != 2 {
+				t.Fatalf("actual supervisor usage receipt: %v, context=%v", err, ctx.Err())
+			}
+			if info, err := output.Stat(); err != nil || info.Size() > 4096 {
+				t.Fatalf("usage output unbounded: %v %v", info, err)
+			}
+			journal := filepath.Join(fixture.root, "state", "projmux", "logs", "operations.jsonl")
+			info, err := os.Stat(journal)
+			if err != nil || info.Size() > 65536 {
+				t.Fatalf("fixture journal missing or unbounded: %v %v", info, err)
+			}
+			raw, err := os.ReadFile(journal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte("\n")) {
+				var event struct {
+					Component, Event, Result, Kind, Message, Command, Subcommand string
+				}
+				if err := json.Unmarshal(line, &event); err != nil {
+					t.Fatal(err)
+				}
+				if event.Component == "cli" && event.Event == "command.outcome" && event.Result == "error" && event.Kind == "usage" && event.Message == "invalid command usage" && event.Command == "" && event.Subcommand == "" {
+					found = true
+				}
+			}
+			if !found || bytes.Contains(raw, []byte("--fixture-refusal")) || bytes.Contains(raw, []byte(parent)) {
+				t.Fatal("actual usage outcome absent or journal contains argv/parent state")
+			}
+			t.Log("actual copied CLI usage2 journal stayed in fixture state")
+		} else {
+			t.Log("unit fixture environment checked; actual copied CLI journal branch requires process-host CLI gate")
+		}
+		if err := fixture.endpoint.handle.Stop(fixture.endpoint.binding); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if result, err := fixture.endpoint.handle.Wait(ctx, fixture.endpoint.binding); err != nil || result.Exit == nil {
+			t.Fatalf("fixture actual Wait: %+v %v", result, err)
+		}
+		after := snapshotParent()
+		if len(after) != len(before) {
+			t.Fatalf("parent state union changed: before=%v after=%v", before, after)
+		}
+		for path, value := range before {
+			if after[path] != value {
+				t.Fatalf("parent state metadata/content changed at %s", path)
+			}
+		}
+	})
 	f := newProcessCodexFixture(t, nil)
 	e := f.endpoint
 	if _, err := e.call(context.Background(), ""); err != nil {

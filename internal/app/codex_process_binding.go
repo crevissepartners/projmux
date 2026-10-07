@@ -304,8 +304,15 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 		return err
 	}
 	var receipt *codexProcessReceipt
+	var userDelivery *processhost.UserTurnDelivery
 	result := controlProcessForeground(ctx, peer, r, current, func() error {
 		switch r.Action {
+		case "user-deliver":
+			value, err := e.handle.DeliverUserTurn(ctx, r.Authority, r.Operation, r.Prompt)
+			if err == nil {
+				userDelivery = &value
+			}
+			return err
 		case "validate":
 			return nil
 		case "message":
@@ -322,6 +329,7 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 		return applyCodexForeground(ctx, e.handle, r)
 	})
 	result.Receipt = receipt
+	result.UserDelivery = userDelivery
 	_ = localipc.WriteJSON(conn, result)
 }
 
