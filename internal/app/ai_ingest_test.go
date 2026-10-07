@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2426,9 +2427,7 @@ func TestAIStatusWithNotifyWaitsForSendNotiHookResult(t *testing.T) {
 func claudeBackgroundIngest(t *testing.T, f *claudeQuietHookFixture, event string, extra map[string]any) aiIngestLogEntry {
 	t.Helper()
 	payload := map[string]any{"hook_event_name": event, "session_id": claudeQuietHookSession, "cwd": claudeQuietHookCWD}
-	for key, value := range extra {
-		payload[key] = value
-	}
+	maps.Copy(payload, extra)
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
