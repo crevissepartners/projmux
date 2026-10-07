@@ -478,3 +478,53 @@ func aiIngestReasonPackageFiles(t *testing.T) []*ast.File {
 	}
 	return files
 }
+
+func TestClaudeBackgroundDiagnosticsAreBoundedAndExcludeTaskContents(t *testing.T) {
+	f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+	secret := "do-not-record-task-content"
+	entry := claudeBackgroundIngest(t, f, "Stop", map[string]any{
+		"agent_id": strings.Repeat("子", 160), "agent_type": strings.Repeat("類", 160),
+		"prompt": secret, "tool_input": map[string]any{"command": secret},
+		"background_tasks": []any{
+			map[string]any{"type": "subagent", "status": "running", "description": secret, "command": secret},
+			map[string]any{"type": "workflow", "status": "pending", "name": secret},
+			map[string]any{"type": "shell", "status": "running", "command": secret},
+		},
+	})
+	if len([]rune(entry.AgentID)) != 128 || len([]rune(entry.AgentType)) != 128 || entry.BackgroundTasksInFlight == nil || *entry.BackgroundTasksInFlight != 2 {
+		t.Fatalf("diagnostic fields = %+v", entry)
+	}
+	if entry.Result != "state" || entry.Reason != "" {
+		t.Fatalf("outcome = %+v", entry)
+	}
+	path, err := f.cmd.aiIngestLogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("task contents leaked: %s", data)
+	}
+	text := formatAIIngestLogEntry(entry)
+	if !strings.Contains(text, "background_tasks_in_flight=2") || !strings.Contains(text, "agent_id=") {
+		t.Fatalf("text diagnostics = %q", text)
+	}
+}
+
+func TestClaudeBackgroundDiagnosticsOmitControlCharacters(t *testing.T) {
+	for _, identifier := range []string{"child\ninjected", "child\rinjected", "child\tinjected", "child\x00injected", "child\x1binjected", "child\u0085injected"} {
+		t.Run(strconv.Quote(identifier), func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+			entry := claudeBackgroundIngest(t, f, "PreToolUse", map[string]any{"agent_id": identifier, "agent_type": identifier})
+			if entry.AgentID != "" || entry.AgentType != "" {
+				t.Fatalf("unsafe identifiers recorded: %+v", entry)
+			}
+			if text := formatAIIngestLogEntry(entry); strings.Contains(text, "injected") {
+				t.Fatalf("unsafe text = %q", text)
+			}
+		})
+	}
+}

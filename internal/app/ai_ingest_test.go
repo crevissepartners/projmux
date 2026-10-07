@@ -2420,3 +2420,305 @@ func TestAIStatusWithNotifyWaitsForSendNotiHookResult(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 }
+
+// claudeBackgroundIngest exercises the real hook matcher, owned Registry
+// transition, pane projection and notification producer with recorded tmux IO.
+func claudeBackgroundIngest(t *testing.T, f *claudeQuietHookFixture, event string, extra map[string]any) aiIngestLogEntry {
+	t.Helper()
+	payload := map[string]any{"hook_event_name": event, "session_id": claudeQuietHookSession, "cwd": claudeQuietHookCWD}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cmd.ingestClaudeHook(data, f.explicitPane); err != nil {
+		t.Fatal(err)
+	}
+	records := claudeQuietHookLogRecords(t, f.cmd)
+	return records[len(records)-1]
+}
+
+func claudeBackgroundFixture(t *testing.T, kind coremetadata.AgentInteractionKind) *claudeQuietHookFixture {
+	t.Helper()
+	f := newClaudeQuietHookFixture(t, true)
+	read := f.cmd.readCommand
+	lookup := claudeIngestReadCommand(claudeQuietHookPane)
+	f.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if data, err := read(ctx, name, args...); err == nil {
+			return data, nil
+		}
+		return lookup(ctx, name, args...)
+	}
+	f.ingest(t, "PreToolUse") // establish the current conversation before fallback
+	setClaudeQuietInteraction(t, f, kind)
+	return f
+}
+
+func assertClaudeBackgroundInteraction(t *testing.T, f *claudeQuietHookFixture, want coremetadata.AgentInteractionKind, notifications int) {
+	t.Helper()
+	agent, _ := f.registry.Agent(f.agentUID)
+	if agent.Status.Interaction.Kind != want {
+		t.Fatalf("interaction = %+v, want %s", agent.Status.Interaction, want)
+	}
+	if got := len(f.cmd.notifyStore.(*stubNotifyStore).pushed); got != notifications {
+		t.Fatalf("notifications = %d, want %d", got, notifications)
+	}
+}
+
+func setClaudeBackgroundAction(t *testing.T, f *claudeQuietHookFixture, event, action string) {
+	t.Helper()
+	paths, err := configPaths(f.cmd.homeDir, f.cmd.lookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{Version: 1,
+		Providers: map[string]config.AIHookProviderActions{aiHookProviderClaude: {Events: map[string]string{event: action}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaudeBackgroundStopR1R2R4R5Compatibility(t *testing.T) {
+	cases := []struct {
+		name  string
+		tasks string
+	}{
+		{"R1_absent", ""}, {"R2_empty", `[]`},
+		{"R4_shell_monitor_teammate_unknown", `[{"type":"shell","status":"running"},{"type":"monitor","status":"pending"},{"type":"teammate","status":"running"},{"type":"future","status":"running"}]`},
+		{"R4_settled_unknown_status", `[{"type":"workflow","status":"completed"},{"type":"subagent","status":"failed"},{"type":"subagent","status":"future"}]`},
+		{"R5_object", `{ "type":"subagent","status":"running" }`}, {"R5_null", `null`}, {"R5_scalar", `"running"`},
+		{"R5_bad_entries", `[null,7,"running",[],{"status":"running"},{"type":"subagent"},{"type":7,"status":"pending"},{"type":"workflow","status":true}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionInProgress)
+			extra := map[string]any{}
+			if tc.tasks != "" {
+				var tasks any
+				if err := json.Unmarshal([]byte(tc.tasks), &tasks); err != nil {
+					t.Fatal(err)
+				}
+				extra["background_tasks"] = tasks
+			}
+			entry := claudeBackgroundIngest(t, f, "Stop", extra)
+			assertClaudeBackgroundInteraction(t, f, coremetadata.InteractionResponseComplete, 1)
+			if entry.Result != "notify" {
+				t.Fatalf("entry = %+v", entry)
+			}
+			if tc.tasks == "" {
+				if entry.BackgroundTasksInFlight != nil {
+					t.Fatalf("absent field = %+v", entry)
+				}
+			} else if entry.BackgroundTasksInFlight == nil || *entry.BackgroundTasksInFlight != 0 {
+				t.Fatalf("count = %+v", entry)
+			}
+		})
+	}
+}
+
+func TestClaudeBackgroundStopR3CountsOnlyRunningPendingSubagentsWorkflows(t *testing.T) {
+	for _, kind := range []string{"subagent", "workflow"} {
+		for _, status := range []string{"running", "pending"} {
+			t.Run(kind+"/"+status, func(t *testing.T) {
+				f := claudeBackgroundFixture(t, coremetadata.InteractionInProgress)
+				entry := claudeBackgroundIngest(t, f, "Stop", map[string]any{"background_tasks": []any{nil, map[string]any{"type": kind, "status": status}, map[string]any{"type": "shell", "status": "running"}}})
+				assertClaudeBackgroundInteraction(t, f, coremetadata.InteractionInProgress, 0)
+				if entry.Result != "state" || entry.Reason != "" || entry.BackgroundTasksInFlight == nil || *entry.BackgroundTasksInFlight != 1 {
+					t.Fatalf("entry = %+v", entry)
+				}
+				state := claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands)
+				if state[aiPaneBadgeKindOption] != aiBadgeKindInProgress {
+					t.Fatalf("projection = %v", state)
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeBackgroundStopR6RuntimeActions(t *testing.T) {
+	for _, action := range []string{aiHookActionQuiet, aiHookActionState} {
+		t.Run(action, func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+			setClaudeBackgroundAction(t, f, "Stop", action)
+			entry := claudeBackgroundIngest(t, f, "Stop", map[string]any{"background_tasks": []any{map[string]any{"type": "workflow", "status": "pending"}}})
+			want := coremetadata.InteractionInProgress
+			if action == aiHookActionQuiet {
+				want = coremetadata.InteractionResponseComplete
+			}
+			assertClaudeBackgroundInteraction(t, f, want, 0)
+			if entry.Result != action {
+				t.Fatalf("entry = %+v", entry)
+			}
+		})
+	}
+}
+
+func TestClaudeBackgroundR7PreservesOperatorWaitAndExistingToolClose(t *testing.T) {
+	for _, kind := range []coremetadata.AgentInteractionKind{coremetadata.InteractionApprovalRequired, coremetadata.InteractionInputRequired} {
+		for _, event := range []string{"Stop", "PreToolUse", "PostToolBatch", "SubagentStart", "SubagentStop", "PostToolUse", "PostToolUseFailure"} {
+			t.Run(string(kind)+"/"+event, func(t *testing.T) {
+				f := claudeBackgroundFixture(t, kind)
+				claudeBackgroundIngest(t, f, event, map[string]any{"agent_id": "child", "background_tasks": []any{map[string]any{"type": "workflow", "status": "running"}}})
+				want := kind
+				if event == "PostToolUse" || event == "PostToolUseFailure" {
+					want = coremetadata.InteractionInProgress
+				} // existing operator-answer handler wins
+				assertClaudeBackgroundInteraction(t, f, want, 0)
+			})
+		}
+	}
+}
+
+func TestClaudeBackgroundR8FallbackAdmission(t *testing.T) {
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "SubagentStart", "SubagentStop"} {
+		for _, mode := range []string{"subagent", "main_thread", "explicit_quiet", "already_busy", "idle", "wrong_session", "missing_session", "legacy_subagent_id"} {
+			t.Run(event+"/"+mode, func(t *testing.T) {
+				f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+				extra := map[string]any{"agent_id": "child", "agent_type": "Explore"}
+				want := coremetadata.InteractionResponseComplete
+				switch mode {
+				case "subagent":
+					want = coremetadata.InteractionInProgress
+				case "main_thread":
+					delete(extra, "agent_id")
+				case "explicit_quiet":
+					setClaudeBackgroundAction(t, f, event, aiHookActionQuiet)
+				case "already_busy":
+					want = coremetadata.InteractionInProgress
+					setClaudeQuietInteraction(t, f, want)
+				case "idle":
+					want = coremetadata.InteractionIdle
+					setClaudeQuietInteraction(t, f, want)
+				case "wrong_session":
+					extra["session_id"] = "other-session"
+				case "missing_session":
+					extra["session_id"] = ""
+				case "legacy_subagent_id":
+					delete(extra, "agent_id")
+					extra["subagent_id"] = "child"
+				}
+				entry := claudeBackgroundIngest(t, f, event, extra)
+				assertClaudeBackgroundInteraction(t, f, want, 0)
+				result := "quiet"
+				if mode == "subagent" {
+					result = "state"
+				}
+				if entry.Result != result {
+					t.Fatalf("entry = %+v, want %s", entry, result)
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeBackgroundR9SubagentStopIgnoresTaskSnapshotAndHonorsActions(t *testing.T) {
+	for _, action := range []string{"default", aiHookActionQuiet, aiHookActionState, aiHookActionNotify} {
+		t.Run(action, func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+			if action != "default" {
+				setClaudeBackgroundAction(t, f, "SubagentStop", action)
+			}
+			extra := map[string]any{"background_tasks": []any{map[string]any{"type": "subagent", "status": "running"}}}
+			// No agent_id: task snapshot alone must never trigger fallback.
+			entry := claudeBackgroundIngest(t, f, "SubagentStop", extra)
+			want := coremetadata.InteractionResponseComplete
+			pushed := 0
+
+			if action == aiHookActionNotify {
+				pushed = 1
+			}
+			assertClaudeBackgroundInteraction(t, f, want, pushed)
+			result := action
+			if action == "default" {
+				result = "quiet"
+			}
+			if entry.Result != result {
+				t.Fatalf("entry = %+v", entry)
+			}
+		})
+	}
+}
+
+func TestClaudeBackgroundR10ForeignStaleUnmanagedBindingsDoNotFallback(t *testing.T) {
+	for _, mode := range []string{"foreign", "stale", "unmanaged"} {
+		t.Run(mode, func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+			agent, _ := f.registry.Agent(f.agentUID)
+			switch mode {
+			case "foreign":
+				agent.Spec.Provider = "codex"
+				agent.Status.SessionRef = nil
+			case "stale":
+				agent.Status.PaneRef = ""
+			case "unmanaged":
+				f = newClaudeQuietHookFixture(t, false)
+			}
+			entry := claudeBackgroundIngest(t, f, "PreToolUse", map[string]any{"agent_id": "child"})
+			if mode != "unmanaged" {
+				if entry.Result != "ignored" {
+					t.Fatalf("entry = %+v", entry)
+				}
+			} else if entry.Result != "quiet" {
+				t.Fatalf("entry = %+v", entry)
+			}
+			if state := claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands); state[aiPaneBadgeKindOption] == aiBadgeKindInProgress {
+				t.Fatalf("fallback projected busy: %v", state)
+			}
+			if len(f.cmd.notifyStore.(*stubNotifyStore).pushed) != 0 {
+				t.Fatal("unexpected notification")
+			}
+		})
+	}
+}
+
+func TestClaudeBackgroundR11RepeatedStopsAndSettledWakeNotifyOnce(t *testing.T) {
+	f := claudeBackgroundFixture(t, coremetadata.InteractionInProgress)
+	store := notify.NewStore(filepath.Join(t.TempDir(), "notifications.json"))
+	f.cmd.notifyStore = store
+	f.cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	for _, event := range []string{"Stop", "Stop", "SubagentStop"} {
+		claudeBackgroundIngest(t, f, event, map[string]any{"agent_id": "child", "background_tasks": []any{map[string]any{"type": "subagent", "status": "running"}, map[string]any{"type": "workflow", "status": "pending"}}})
+		rows, err := store.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("in flight rows = %v", rows)
+		}
+	}
+	claudeBackgroundIngest(t, f, "UserPromptSubmit", nil)
+	for range 2 {
+		claudeBackgroundIngest(t, f, "Stop", map[string]any{"background_tasks": []any{}})
+	}
+	rows, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "ai:claude:stop:"+claudeQuietHookSession {
+		t.Fatalf("settled rows = %v", rows)
+	}
+	agent, _ := f.registry.Agent(f.agentUID)
+	if agent.Status.Interaction.Kind != coremetadata.InteractionResponseComplete {
+		t.Fatalf("settled interaction = %+v", agent.Status.Interaction)
+	}
+}
+
+func TestClaudeBackgroundR9ConfiguredSubagentStopPrecedesFallback(t *testing.T) {
+	for _, action := range []string{aiHookActionState, aiHookActionNotify} {
+		t.Run(action, func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+			setClaudeBackgroundAction(t, f, "SubagentStop", action)
+			entry := claudeBackgroundIngest(t, f, "SubagentStop", map[string]any{"agent_id": "child", "background_tasks": []any{map[string]any{"type": "subagent", "status": "running"}}})
+			pushed := 0
+			if action == aiHookActionNotify {
+				pushed = 1
+			}
+			assertClaudeBackgroundInteraction(t, f, coremetadata.InteractionResponseComplete, pushed)
+			if entry.Result != action {
+				t.Fatalf("entry = %+v", entry)
+			}
+		})
+	}
+}

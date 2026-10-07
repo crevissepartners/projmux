@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
@@ -129,4 +130,22 @@ func classifyAIHookKind(provider diagnostics.Provider, event string) diagnostics
 	default:
 	}
 	return diagnostics.AIKindUnknown
+}
+
+// Claude hook context retains only bounded identifiers and a task count;
+// background descriptions, commands, and tool payloads never enter this record.
+func claudeHookDiagnosticFields(entry aiIngestLogEntry, payload claudeHookPayload) aiIngestLogEntry {
+	entry.AgentID = boundedClaudeHookIdentifier(payload.AgentID)
+	entry.AgentType = boundedClaudeHookIdentifier(payload.AgentType)
+	entry.BackgroundTasksInFlight = payload.BackgroundTasksInFlight
+	return entry
+}
+
+func boundedClaudeHookIdentifier(value string) string {
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return ""
+		}
+	}
+	return truncateRunes(value, 128)
 }

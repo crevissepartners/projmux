@@ -96,18 +96,21 @@ type aiPaneMatchRow struct {
 }
 
 type aiIngestLogEntry struct {
-	Failure   *codexappserver.FailureDiagnostic  `json:"failure,omitempty"`
-	Recovery  *codexappserver.RecoveryDiagnostic `json:"recovery,omitempty"`
-	At        string                             `json:"at"`
-	Source    string                             `json:"source"`
-	Event     string                             `json:"event,omitempty"`
-	Result    string                             `json:"result"`
-	Reason    aiIngestReason                     `json:"reason,omitempty"`
-	Pane      string                             `json:"pane,omitempty"`
-	CWD       string                             `json:"cwd,omitempty"`
-	ThreadID  string                             `json:"thread_id,omitempty"`
-	SessionID string                             `json:"session_id,omitempty"`
-	TurnID    string                             `json:"turn_id,omitempty"`
+	AgentID                 string                             `json:"agent_id,omitempty"`
+	AgentType               string                             `json:"agent_type,omitempty"`
+	BackgroundTasksInFlight *int                               `json:"background_tasks_in_flight,omitempty"`
+	Failure                 *codexappserver.FailureDiagnostic  `json:"failure,omitempty"`
+	Recovery                *codexappserver.RecoveryDiagnostic `json:"recovery,omitempty"`
+	At                      string                             `json:"at"`
+	Source                  string                             `json:"source"`
+	Event                   string                             `json:"event,omitempty"`
+	Result                  string                             `json:"result"`
+	Reason                  aiIngestReason                     `json:"reason,omitempty"`
+	Pane                    string                             `json:"pane,omitempty"`
+	CWD                     string                             `json:"cwd,omitempty"`
+	ThreadID                string                             `json:"thread_id,omitempty"`
+	SessionID               string                             `json:"session_id,omitempty"`
+	TurnID                  string                             `json:"turn_id,omitempty"`
 	// Epoch is the observer epoch label a lifecycle transition belongs to. It
 	// is what makes two adjacent records comparable: the same label twice is
 	// one epoch reporting twice, a new label is a new connection.
@@ -552,6 +555,8 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 		parts = append(parts, entry.Event)
 	}
 	parts = append(parts, entry.Result)
+	// Claude identifiers add at most 1024 UTF-8 bytes plus labels. Their
+	// control characters are rejected before recording, including text output.
 	for _, field := range []struct {
 		key   string
 		value string
@@ -561,11 +566,16 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 		{"thread", entry.ThreadID},
 		{"session", entry.SessionID},
 		{"turn", entry.TurnID},
+		{"agent_id", entry.AgentID},
+		{"agent_type", entry.AgentType},
 		{"reason", string(entry.Reason)},
 	} {
 		if strings.TrimSpace(field.value) != "" {
 			parts = append(parts, field.key+"="+field.value)
 		}
+	}
+	if entry.BackgroundTasksInFlight != nil {
+		parts = append(parts, fmt.Sprintf("background_tasks_in_flight=%d", *entry.BackgroundTasksInFlight))
 	}
 	// Re-project parsed journal fields through their closed JSON encoders. These
 	// optional additions total at most 947 bytes including labels/separators;
