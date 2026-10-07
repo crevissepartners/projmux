@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
 // aiIngestReasonForbiddenSubstrings are the shapes that must never reach the
