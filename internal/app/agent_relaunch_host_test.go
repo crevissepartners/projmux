@@ -105,6 +105,11 @@ func TestClaudeHostMoveActualCLI(t *testing.T) {
 	record := awaitProcessResumeRecord(t, ctx, f, ref, func(r *coremetadata.ProcessSessionRecord) bool {
 		return r.SessionID == "process-session" && r.TurnID == ""
 	})
+	for _, args := range deferredArgv(t, f) {
+		if permissionModes(args) != "auto" {
+			t.Fatalf("tmux to process permission mode: %q", args)
+		}
+	}
 	reg, _ := f.store.LoadReadOnly()
 	if _, ok := reg.Pane(oldUID); ok {
 		t.Fatal("old tmux Pane retained")
@@ -150,6 +155,10 @@ func TestClaudeHostMoveActualCLI(t *testing.T) {
 	if _, ok := reg.Pane(record.Binding.PaneUID); ok {
 		t.Fatal("old process Pane retained")
 	}
+	interactive, err := os.ReadFile(filepath.Join(f.root, "tmux-argv"))
+	if err != nil || bytes.Contains(interactive, []byte("--permission-mode")) {
+		t.Fatalf("ordinary tmux mode changed: %v %s", err, interactive)
+	}
 }
 
 func hostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, string, string) {
@@ -171,7 +180,7 @@ func hostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, str
 	})
 	// The interactive fixture is a persistent process, while the process branch
 	// uses the existing stream-json protocol fixture. No actual provider runs.
-	script := "#!/bin/sh\nif [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nexec sleep 300\n"
+	script := "#!/bin/sh\nif [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nprintf '%s\\n' \"$@\" >> " + fmt.Sprintf("%q", filepath.Join(f.root, "tmux-argv")) + "\nexec sleep 300\n"
 	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

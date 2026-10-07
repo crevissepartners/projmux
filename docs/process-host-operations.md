@@ -8,11 +8,19 @@ output, exit codes, and the opt-in `post-create` hook contract are in
 [Process Host Post-Create](hooks.md#process-host-post-create). The Registry
 fields are in [Registry process evidence](registry.md#process-evidence).
 
-A new process Claude Agent starts with `--permission-mode auto`. The flag takes
-precedence over `permissions.defaultMode` in Claude settings. Only creation
-passes it, and projmux does not record the mode: resuming the Agent or moving it
-between hosts starts Claude without `--permission-mode`, and a deferred launch
-replays the command it stored.
+Every headless Claude launch explicitly selects `--permission-mode auto`: fresh
+creation, resume, same-host relaunch and moves into the process host share the
+same policy. Deferred launches freeze that argument with the rest of their
+prepared command and replay it unchanged. Auto does not guarantee that Claude
+will never ask for approval; profile allow/deny rules still apply. Ordinary
+tmux Claude and Codex launch policies are unchanged.
+
+An older deferred recipe without exactly one auto mode is refused before
+provider spawn or configuration writes. Use `projmux agent relaunch <agent-ref>`
+from an external terminal to explicitly prepare a new auto recipe, then submit
+first input; add `-- <first-prompt>` to start it immediately. Replacement retains
+the existing conversation and exact claim/recipe checks. Projmux does not edit
+the old argv or migrate it automatically.
 
 ## Driving the Agent from another terminal
 

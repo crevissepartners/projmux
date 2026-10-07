@@ -408,7 +408,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			if err != nil || frozen == nil {
 				t.Fatal(err)
 			}
-			if len(frozen.Files) < 1 {
+			if len(frozen.Files) < 1 || permissionModes(frozen.Command.Args) != "auto" {
 				t.Fatal("permissions snapshot proof missing")
 			}
 			// Changes to named profiles must not replace the committed recipe.
@@ -452,7 +452,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			argv := deferredArgv(t, f)
 			last := argv[len(argv)-1][1:]
 			want := append(append([]string{}, frozen.Command.Args...), "--resume", old.Record.SessionID)
-			if !reflect.DeepEqual(last, want) {
+			if !reflect.DeepEqual(last, want) || permissionModes(last) != "auto" {
 				t.Fatalf("frozen argv\ngot %q\nwant%q", last, want)
 			}
 			texts := deferredWireTexts(t, f)
@@ -862,6 +862,16 @@ func TestDeferredClaudeExplicitReplacementActualCLI(t *testing.T) {
 			if err != nil || old == nil {
 				t.Fatal(err)
 			}
+			// Explicit replacement can recover an older recipe with no mode,
+			// even when its settings snapshot is also unavailable.
+			modeIndex := slices.Index(old.Command.Args, "--permission-mode")
+			if modeIndex < 0 {
+				t.Fatal("auto missing from new prepared launch")
+			}
+			old.Command.Args = append(slices.Clone(old.Command.Args[:modeIndex]), old.Command.Args[modeIndex+2:]...)
+			if err = writeDeferredState(c.deferredStatePath("deferred-launches", uid), old); err != nil {
+				t.Fatal(err)
+			}
 			index := slices.Index(old.Command.Args, "--settings")
 			if index < 0 {
 				t.Fatal("settings snapshot absent")
@@ -903,7 +913,7 @@ func TestDeferredClaudeExplicitReplacementActualCLI(t *testing.T) {
 			resumed.shutdown(t)
 			argv := deferredArgv(t, f)
 			want := append(append([]string{}, next.Command.Args...), "--resume", next.Retired.SessionID)
-			if !reflect.DeepEqual(argv[len(argv)-1][1:], want) {
+			if !reflect.DeepEqual(argv[len(argv)-1][1:], want) || permissionModes(argv[len(argv)-1]) != "auto" {
 				t.Fatal("replacement argv")
 			}
 		})
@@ -1182,5 +1192,153 @@ func TestDeferredClaudeAbsentLaunchReservationRaceActualCLI(t *testing.T) {
 	texts := deferredWireTexts(t, f)
 	if !reflect.DeepEqual(argv[len(argv)-1][1:], want) || texts[len(texts)-1] != "race recovery" {
 		t.Fatal("post-refusal frozen arguments or raw input changed")
+	}
+}
+
+func TestDeferredClaudePermissionModeValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		valid bool
+	}{
+		{"auto", []string{"--model", "m", "--permission-mode", "auto", "--print"}, true},
+		{"equals-auto", []string{"--permission-mode=auto", "--print"}, true},
+		{"unset", []string{"--print"}, false},
+		{"other", []string{"--permission-mode", "default"}, false},
+		{"duplicate", []string{"--permission-mode", "auto", "--permission-mode=auto"}, false},
+		{"invalid", []string{"--permission-mode=invalid"}, false},
+		{"empty", []string{"--permission-mode="}, false},
+		{"missing-value", []string{"--print", "--permission-mode"}, false},
+		{"flag-as-value", []string{"--permission-mode", "--print"}, false},
+		{"after-delimiter", []string{"--", "--permission-mode", "auto"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := slices.Clone(tc.args)
+			err := validateDeferredClaudePermissionMode(tc.args)
+			if (err == nil) != tc.valid || !reflect.DeepEqual(before, tc.args) {
+				t.Fatalf("validation=%v argv=%q", err, tc.args)
+			}
+			if !tc.valid && (!errors.Is(err, processhost.ErrResumeRefused) || !strings.Contains(err.Error(), "use agent relaunch")) {
+				t.Fatalf("typed recovery absent: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeferredClaudeLegacyModeRefusalAndReplacementActualCLI(t *testing.T) {
+	for _, mode := range [][]string{nil, {"--permission-mode", "default"}, {"--permission-mode", "auto", "--permission-mode=auto"}, {"--permission-mode=invalid"}, {"--permission-mode"}} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			f := deferredRelaunchFixture(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+			deferredReady(t, ctx, f, first.ref)
+			first.shutdown(t)
+			run := deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "prepared-model")
+			run.finish(t)
+			c := deferredFixtureCommand(f)
+			uid := strings.TrimPrefix(first.ref, "uid:")
+			legacy, err := c.readDeferredLaunch(uid)
+			if err != nil || legacy == nil {
+				t.Fatal("prepared launch", err)
+			}
+			index := slices.Index(legacy.Command.Args, "--permission-mode")
+			if index < 0 {
+				t.Fatal("new recipe has no auto")
+			}
+			legacy.Command.Args = append(slices.Clone(legacy.Command.Args[:index]), legacy.Command.Args[index+2:]...)
+			legacy.Command.Args = append(legacy.Command.Args, mode...)
+			launchPath := c.deferredStatePath("deferred-launches", uid)
+			if err = writeDeferredState(launchPath, legacy); err != nil {
+				t.Fatal(err)
+			}
+			// Leave the old recipe unapplied: refusal must precede recovery CAS.
+			_, _, err = f.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				a, _ := reg.Agent(uid)
+				a.Spec, a.Metadata.Annotations = legacy.OldSpec, legacy.OldAnnotations
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity, _, err := localipc.Process(os.Getpid())
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := &deferredUserInput{Version: 1, Operation: "legacy-pending", Nonce: "old-nonce", Session: legacy.Retired.SessionID, Recipe: deferredLaunchDigest(legacy), Phase: "pending", Text: "preserve pending", Binding: legacy.Retired.Binding, Process: identity, Deadline: time.Now().Add(time.Minute)}
+			if err = c.writeDeferredInput(input); err != nil {
+				t.Fatal(err)
+			}
+			inputPath := c.deferredStatePath("deferred-inputs", uid)
+			beforeRegistry, _ := os.ReadFile(f.store.Path())
+			beforeLaunch, _ := os.ReadFile(launchPath)
+			beforeInput, _ := os.ReadFile(inputPath)
+			for _, flags := range [][]string{{"--wait-for-peer"}, {"--", "must not write"}} {
+				out, err := exec.CommandContext(ctx, f.binary, append([]string{"agent", "resume", first.ref}, flags...)...).CombinedOutput()
+				afterRegistry, _ := os.ReadFile(f.store.Path())
+				afterLaunch, _ := os.ReadFile(launchPath)
+				afterInput, _ := os.ReadFile(inputPath)
+				if err == nil || !bytes.Contains(out, []byte("process-resume-refused")) || !bytes.Contains(out, []byte("use agent relaunch")) || !bytes.Equal(beforeRegistry, afterRegistry) || !bytes.Equal(beforeLaunch, afterLaunch) || !bytes.Equal(beforeInput, afterInput) || len(deferredArgv(t, f)) != 1 {
+					t.Fatalf("legacy refusal mutated state/spawned: %v %s", err, out)
+				}
+				if _, err = os.Stat(c.deferredClaimPath(uid)); !os.IsNotExist(err) {
+					t.Fatal("refusal wrote claim", err)
+				}
+			}
+			// Restore the applied fixture source before testing explicit replacement;
+			// the refusals above deliberately used an unapplied crash projection.
+			_, _, err = f.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				a, _ := reg.Agent(uid)
+				a.Spec, a.Metadata.Annotations = legacy.NewSpec, legacy.NewAnnotations
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A new-auto intent can still restore a legacy Previous after a crash.
+			// Ordinary replay must refuse before that rollback writes any state.
+			priorCopy, intent := *legacy, *legacy
+			intent.Command.Args = append(slices.Clone(legacy.Command.Args[:len(legacy.Command.Args)-len(mode)]), "--permission-mode", "auto")
+			intent.OldSpec, intent.OldAnnotations = legacy.NewSpec, legacy.NewAnnotations
+			target := legacy.Retired.Binding
+			target.HostInstanceID, target.Generation, target.OperationID = "intent-host", "intent-generation", "intent-operation"
+			intent.Previous, intent.Attempt = &priorCopy, &deferredLaunchAttempt{Source: *legacy.Retired.Clone(), Target: target}
+			if err = writeDeferredState(launchPath, &intent); err != nil {
+				t.Fatal(err)
+			}
+			beforeRegistry, _ = os.ReadFile(f.store.Path())
+			beforeLaunch, _ = os.ReadFile(launchPath)
+			for _, flags := range [][]string{{"--wait-for-peer"}, {"--", "must not recover legacy"}} {
+				out, err := exec.CommandContext(ctx, f.binary, append([]string{"agent", "resume", first.ref}, flags...)...).CombinedOutput()
+				afterRegistry, _ := os.ReadFile(f.store.Path())
+				afterLaunch, _ := os.ReadFile(launchPath)
+				afterInput, _ := os.ReadFile(inputPath)
+				if err == nil || !bytes.Contains(out, []byte("use agent relaunch")) || !bytes.Equal(beforeRegistry, afterRegistry) || !bytes.Equal(beforeLaunch, afterLaunch) || !bytes.Equal(beforeInput, afterInput) || len(deferredArgv(t, f)) != 1 {
+					t.Fatalf("Previous legacy recovery wrote state/spawned: %v %s", err, out)
+				}
+				if _, err = os.Stat(c.deferredClaimPath(uid)); !os.IsNotExist(err) {
+					t.Fatal("intent refusal wrote claim", err)
+				}
+			}
+			// Explicit replacement alone may recover the intent and replace the
+			// exact prepared recipe through the existing Previous/digest/CAS path.
+			run = deferredRelaunchCLI(t, ctx, f, first.ref, "--model", "replacement-model")
+			next, err := c.readDeferredLaunch(uid)
+			if err != nil || next == nil || next.Model != "replacement-model" || permissionModes(next.Command.Args) != "auto" || deferredLaunchDigest(next) == deferredLaunchDigest(legacy) {
+				t.Fatal("explicit replacement", err)
+			}
+			run.finish(t)
+			resumed := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "replacement first"})
+			deferredReady(t, ctx, f, first.ref)
+			resumed.shutdown(t)
+			argv := deferredArgv(t, f)
+			want := append(slices.Clone(next.Command.Args), "--resume", legacy.Retired.SessionID)
+			if len(argv) != 2 || !reflect.DeepEqual(argv[1][1:], want) || permissionModes(argv[1]) != "auto" {
+				t.Fatal("replacement did not replay auto recipe", argv)
+			}
+			if retained, err := c.readDeferredLaunch(uid); err != nil || retained != nil {
+				t.Fatal("replacement not consumed", err)
+			}
+		})
 	}
 }
