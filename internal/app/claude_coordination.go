@@ -20,6 +20,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
@@ -277,6 +278,9 @@ type liveClaudeDialogueBroker struct {
 	store        *messagestore.Store
 	pushStore    *messagestore.Store
 	resolveRoute func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string)
+	// handoffRoute, when set, journals which envelope end MarkHandoff could
+	// not prove. The receipt reason stays broker-handoff-persist-failed.
+	handoffRoute func(diagnostics.ClaudeHandoffRouteRecord)
 }
 
 func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker, error) {
@@ -295,16 +299,35 @@ func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker
 // existing composite Registry authority without an app-server write. Operator
 // input has no source route, so only its target is proved.
 func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
+	_, _, ok := b.current(envelope)
+	return ok
+}
+
+// claudeUnprovenRoute is the envelope end Current could not prove.
+type claudeUnprovenRoute struct {
+	agentUID string
+	side     diagnostics.ClaudeHandoffRouteSide
+}
+
+// current is Current that also names the envelope end which failed to prove,
+// with the Registry it read. Before the Registry is read neither is set.
+func (b *liveClaudeDialogueBroker) current(envelope coremessage.Envelope) (coremetadata.Registry, *claudeUnprovenRoute, bool) {
 	if b == nil || envelope.Validate() != nil {
-		return false
+		return coremetadata.Registry{}, nil, false
 	}
 	registry, err := intmetadata.NewStore(b.registryPath).LoadDegradedReadOnly()
 	if err != nil {
-		return false
+		return coremetadata.Registry{}, nil, false
 	}
 	routes := []coremessage.Route{envelope.Source, envelope.Target}
 	if envelope.Operator() {
 		routes = routes[1:]
+	}
+	unproven := func(i int) *claudeUnprovenRoute {
+		if i == len(routes)-1 {
+			return &claudeUnprovenRoute{agentUID: routes[i].AgentUID, side: diagnostics.ClaudeHandoffTargetUnproven}
+		}
+		return &claudeUnprovenRoute{agentUID: routes[i].AgentUID, side: diagnostics.ClaudeHandoffSourceUnproven}
 	}
 	for i, expected := range routes {
 		resolve := b.resolveRoute
@@ -316,28 +339,28 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 			continue
 		}
 		if reason != "" || !messageRouteAccepts(route, expected) {
-			return false
+			return registry, unproven(i), false
 		}
 		if authority, ok := route.Authority().(coremetadata.CodexRouteAuthority); ok {
 			if !probeCodexMessageAuthority(filepath.Dir(filepath.Dir(b.registryPath)), authority) {
-				return false
+				return registry, unproven(i), false
 			}
 		}
 		if authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef); ok {
 			for _, process := range []coremetadata.ProcessIdentity{authority.Process, authority.LeaseProcess} {
 				actual, _, err := localipc.Process(process.PID)
 				if err != nil || actual != process {
-					return false
+					return registry, unproven(i), false
 				}
 			}
 			// Avoid probing this helper recursively. Its poster owns the target
 			// lease/socket check, including the source==target case.
 			if expected == envelope.Source && expected != envelope.Target && !probeClaudeRegistrationLease(b.registryPath, route) {
-				return false
+				return registry, unproven(i), false
 			}
 		}
 	}
-	return true
+	return registry, nil, true
 }
 
 func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRouteAuthority) bool {
@@ -358,11 +381,40 @@ func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRou
 }
 
 func (b *liveClaudeDialogueBroker) MarkHandoff(envelope coremessage.Envelope) error {
-	if !b.Current(envelope) {
+	if registry, unproven, ok := b.current(envelope); !ok {
+		b.recordHandoffRoute(registry, unproven)
 		return coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid, "the envelope route is no longer current")
 	}
 	_, _, err := b.pushStore.MarkHandoffMatching(envelope, "claude-coordination")
 	return err
+}
+
+func (b *liveClaudeDialogueBroker) recordHandoffRoute(registry coremetadata.Registry, unproven *claudeUnprovenRoute) {
+	if b == nil || b.handoffRoute == nil || unproven == nil {
+		return
+	}
+	b.handoffRoute(diagnostics.ClaudeHandoffRouteRecord{Side: unproven.side, Peer: claudeHandoffPeer(registry, unproven.agentUID), AgentUID: unproven.agentUID})
+}
+
+// claudeHandoffPeer names the unproved Agent's host and provider from the
+// Registry, never from the envelope's claimed provider.
+func claudeHandoffPeer(registry coremetadata.Registry, agentUID string) diagnostics.ClaudeHandoffPeer {
+	agent, found := registry.Agent(agentUID)
+	if !found {
+		return diagnostics.ClaudeHandoffPeerUnknown
+	}
+	process := processAgentAnswers(registry, *agent)
+	switch {
+	case agent.Spec.Provider == aiModeClaude && process:
+		return diagnostics.ClaudeHandoffPeerProcessClaude
+	case agent.Spec.Provider == aiModeCodex && process:
+		return diagnostics.ClaudeHandoffPeerProcessCodex
+	case agent.Spec.Provider == aiModeClaude:
+		return diagnostics.ClaudeHandoffPeerTmuxClaude
+	case agent.Spec.Provider == aiModeCodex:
+		return diagnostics.ClaudeHandoffPeerTmuxCodex
+	}
+	return diagnostics.ClaudeHandoffPeerUnknown
 }
 
 func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, observedAt time.Time) error {

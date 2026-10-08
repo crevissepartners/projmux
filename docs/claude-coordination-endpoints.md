@@ -189,6 +189,21 @@ the source and target `agentUID` and `provider`, `messageRef`,
 It cannot start or steer a user turn, answer an approval, interrupt a turn,
 execute a tool, call a connector, or write Codex app-server/model history.
 
+Before that handoff the target's helper proves both envelope ends again, and a
+tmux helper and a process helper share one resolver for every Agent other
+than their own. A tmux route is resolved first, exactly as before. A
+process-hosted source is then accepted only through the same live recheck its
+own sends use: for Claude, the Registry's exact provider process chain and its
+current registration on the host; for Codex, the host's validate of the exact
+binding, thread, and connection. The Registry alone selects the Agent; no
+envelope or payload value chooses the authority. So a process Claude or Codex
+sender reaches a tmux or process Claude target the same way a tmux sender
+does. A source or target that cannot be proved writes zero and fails the
+receipt as `broker-handoff-persist-failed`; the helper's
+`agent.message.claude-handoff-route` diagnostics record names which end failed
+and that Agent's Registry host and provider (see
+[operational diagnostics](operational-diagnostics.md)).
+
 The frame route is deliberately narrower than the durable one. The delivery
 fences (`paneUID`, `activationGeneration`, `incarnation`) stay on the durable
 envelope: no frame reader uses them, and a reply re-resolves its route from the

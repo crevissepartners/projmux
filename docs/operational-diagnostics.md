@@ -232,7 +232,7 @@ Claude process is not an ancestor of the sender writes one `component=agent`,
 `event=agent.message.foreign-source` `info`/`success` record. It adds only the
 opaque source `agent_uid` (`agent-…`) and its `pane_uid` (`pane-…`); the
 provider session id, process ids, and environment shown in the stderr warning
-are never recorded, and every family other than the two `agent` events below
+are never recorded, and every family other than the three `agent` events below
 rejects `agent_uid` and the `agent` component. A journal failure never changes
 the send.
 
@@ -346,6 +346,27 @@ the journal. Appends are best effort: a failing or slow journal never changes
 the hook's empty output, its nil result, or the helper's argv, environment,
 and stdin. Every other event family rejects the `hook` and `helper` sources
 and every `claude.registration.*` code.
+
+A Ready helper that refuses a push before its durable handoff, because one end
+of the envelope route can no longer be proved, writes one `component=agent`,
+`event=agent.message.claude-handoff-route` `error`/`error` record,
+`kind=runtime`. The sender's receipt keeps `broker-handoff-persist-failed`,
+the known zero-write reason every sender version reads; a new receipt reason
+would read as an invalid helper response on an older sender and turn a known
+zero write into an outcome-unknown failure. The record carries only:
+
+- `code`: `claude.handoff.source-route-unproven` or
+  `claude.handoff.target-route-unproven`, the end that failed.
+- `source`: that Agent's host and provider as the Registry records them, one of
+  `tmux-claude`, `tmux-codex`, `process-claude`, `process-codex`, or
+  `unknown` when the Registry has no such Agent. The envelope's claimed
+  provider never chooses it.
+- `agent_uid` (`agent-…`): the unproved Agent, omitted when not strictly
+  shaped.
+
+Message refs, payloads, provider sessions, process identities, sockets, and
+error text are never recorded. Like the registration records, it is best
+effort and never changes the receipt.
 
 Both routes are classified as the internal-only commands
 `claude-endpoint-register` and `claude-endpoint-helper`, so the helper's slow

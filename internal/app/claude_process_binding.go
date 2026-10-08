@@ -818,14 +818,7 @@ func processClaudeRouteResolver(registryPath string, proof claudeProcessProof) f
 	return func(reg coremetadata.Registry, agentUID string) (coremetadata.AgentRouteRef, string) {
 		current := proof
 		if agentUID != proof.Binding.Agent {
-			if route, reason := coremetadata.ResolveAgentRoute(reg, agentUID); reason == "" {
-				return route, reason
-			}
-			var ok bool
-			current, ok = discoverProcessClaudeProof(registryPath, reg, agentUID)
-			if !ok {
-				return coremetadata.AgentRouteRef{}, "process Claude authority is unavailable"
-			}
+			return resolveClaudePeerRoute(registryPath, reg, agentUID)
 		}
 		registration, err := lookupClaudeProcessRegistration(current)
 		if err != nil {

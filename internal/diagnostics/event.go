@@ -158,7 +158,7 @@ var (
 	// every other family.
 	allowedLevels     = stringSet("info", "warn", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", codexBrokerComponent)
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -347,6 +347,9 @@ func validateEventShape(event Event) error {
 	}
 	if event.Event == claudeRegistrationEvent {
 		return validateClaudeRegistrationEvent(event)
+	}
+	if event.Event == claudeHandoffRouteEvent {
+		return validateClaudeHandoffRouteEvent(event)
 	}
 	if event.Component == "agent" || event.AgentUID != "" {
 		return fmt.Errorf("agent message fields on unrelated event")
