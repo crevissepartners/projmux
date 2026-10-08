@@ -232,3 +232,18 @@ func TestProcessCreatorFlagIsParsedOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessCreateTypedCreatorRejectsArgvSyntax(t *testing.T) {
+	for _, value := range []string{"uid:agent-live", " agent-live", "agent/live", "agent\tother", "agent\nother"} {
+		_, err := newProcessAgentCreateRequest(processAgentCreateOptions{Project: selector.Ref{Kind: coremetadata.KindProject, UID: "proj-one"}, Creator: value})
+		if err == nil || !strings.Contains(err.Error(), "process-creator-uid-invalid") {
+			t.Fatalf("accepted non-normalized creator %q: %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "agent-live"} {
+		request, err := newProcessAgentCreateRequest(processAgentCreateOptions{Project: selector.Ref{Kind: coremetadata.KindProject, UID: "proj-one"}, Creator: value})
+		if err != nil || request.options.Creator != value {
+			t.Fatalf("bare UID changed %q: %+v %v", value, request, err)
+		}
+	}
+}

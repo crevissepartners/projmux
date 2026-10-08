@@ -84,6 +84,11 @@ func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentC
 	if opts.Provider != "" && !slices.Contains([]string{aiModeClaude, aiModeCodex, aiModeAntigravity}, opts.Provider) {
 		return processAgentCreateRequest{}, usageError("create agent: unknown Agent provider")
 	}
+	// This typed seam receives a normalized UID, not argv syntax. Reject an
+	// old in-process caller's uid: prefix without parsing it a second time.
+	if opts.Creator != "" && (strings.TrimSpace(opts.Creator) != opts.Creator || strings.ContainsAny(opts.Creator, ":/ \t\r\n")) {
+		return processAgentCreateRequest{}, usageError("create agent process-creator-uid-invalid: expected a bare Agent UID; nothing was created")
+	}
 	opts.Payload, opts.AddDirs, opts.Labels = slices.Clone(opts.Payload), slices.Clone(opts.AddDirs), maps.Clone(opts.Labels)
 	return processAgentCreateRequest{options: opts}, nil
 }
