@@ -268,6 +268,25 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			}
 			launchPath := c.deferredStatePath("deferred-launches", uid)
 			launchBefore, _ := os.ReadFile(launchPath)
+			// Consume the adopted validator through the private producer; a legacy
+			// frozen mode must be refused without recovery, replacement or a child.
+			if err = frozen.validatePermissionMode(); err != nil { t.Fatal("prepared auto recipe", err) }
+			legacy := *frozen
+			legacy.Command.Args = append([]string(nil), frozen.Command.Args...)
+			changedMode := false
+			for i, arg := range legacy.Command.Args {
+				if arg == "--permission-mode" && i+1 < len(legacy.Command.Args) { legacy.Command.Args[i+1] = "default"; changedMode = true; break }
+				if arg == "--permission-mode=auto" { legacy.Command.Args[i] = "--permission-mode=default"; changedMode = true; break }
+			}
+			if !changedMode { t.Fatal("common planner auto mode missing") }
+			if err = writeDeferredState(launchPath, &legacy); err != nil { t.Fatal(err) }
+			legacyBefore, _ := os.ReadFile(launchPath)
+			_, refusal := c.prepareOwnedClaudeResume(ctx, opts)
+			legacyAfter, _ := os.ReadFile(launchPath)
+			wireLegacy, _ := os.ReadFile(f.trace)
+			unchangedLegacy := reflect.DeepEqual(after, mustRegistry(t, f)) && bytes.Equal(legacyBefore, legacyAfter) && bytes.Equal(wireAfter, wireLegacy)
+			if err = os.WriteFile(launchPath, launchBefore, 0600); err != nil { t.Fatal(err) }
+			if refusal == nil || !unchangedLegacy { t.Fatal("legacy prepared Resume recovered, wrote or spawned") }
 			reused, err := c.prepareOwnedClaudeResume(ctx, opts)
 			launchAfter, _ := os.ReadFile(launchPath)
 			if err != nil || reused.State != agentProcessPrepared || !reflect.DeepEqual(prepared.Prepared, reused.Prepared) || !bytes.Equal(launchBefore, launchAfter) || !reflect.DeepEqual(after, mustRegistry(t, f)) || len(deferredArgv(t, f)) != 1 {
