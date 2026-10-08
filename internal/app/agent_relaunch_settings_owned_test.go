@@ -178,7 +178,11 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 				for i := range waits {
 					select {
 					case err := <-done:
-						if i == 0 { waitError = err } else if err != waitError { t.Fatal("concurrent Wait returned different errors") }
+						if i == 0 {
+							waitError = err
+						} else if err != waitError {
+							t.Fatal("concurrent Wait returned different errors")
+						}
 					case <-ctx.Done():
 						t.Fatal("exact Wait did not finish")
 					}
@@ -228,8 +232,12 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 			paths, err := config.DefaultPathsFromEnv()
-			if err != nil { t.Fatal(err) }
-			if _, err = persona.NewDefaultStore(paths).Write("settings-owned", []byte("Retain these fixture instructions.")); err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = persona.NewDefaultStore(paths).Write("settings-owned", []byte("Retain these fixture instructions.")); err != nil {
+				t.Fatal(err)
+			}
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--instructions", "settings-owned", "--model", "stub-model", "--effort", "low", "--", "initial"))
 			deferredReady(t, ctx, f, first.ref)
 			first.shutdown(t)
@@ -270,23 +278,41 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			launchBefore, _ := os.ReadFile(launchPath)
 			// Consume the adopted validator through the private producer; a legacy
 			// frozen mode must be refused without recovery, replacement or a child.
-			if err = frozen.validatePermissionMode(); err != nil { t.Fatal("prepared auto recipe", err) }
+			if err = frozen.validatePermissionMode(); err != nil {
+				t.Fatal("prepared auto recipe", err)
+			}
 			legacy := *frozen
 			legacy.Command.Args = append([]string(nil), frozen.Command.Args...)
 			changedMode := false
 			for i, arg := range legacy.Command.Args {
-				if arg == "--permission-mode" && i+1 < len(legacy.Command.Args) { legacy.Command.Args[i+1] = "default"; changedMode = true; break }
-				if arg == "--permission-mode=auto" { legacy.Command.Args[i] = "--permission-mode=default"; changedMode = true; break }
+				if arg == "--permission-mode" && i+1 < len(legacy.Command.Args) {
+					legacy.Command.Args[i+1] = "default"
+					changedMode = true
+					break
+				}
+				if arg == "--permission-mode=auto" {
+					legacy.Command.Args[i] = "--permission-mode=default"
+					changedMode = true
+					break
+				}
 			}
-			if !changedMode { t.Fatal("common planner auto mode missing") }
-			if err = writeDeferredState(launchPath, &legacy); err != nil { t.Fatal(err) }
+			if !changedMode {
+				t.Fatal("common planner auto mode missing")
+			}
+			if err = writeDeferredState(launchPath, &legacy); err != nil {
+				t.Fatal(err)
+			}
 			legacyBefore, _ := os.ReadFile(launchPath)
 			_, refusal := c.prepareOwnedClaudeResume(ctx, opts)
 			legacyAfter, _ := os.ReadFile(launchPath)
 			wireLegacy, _ := os.ReadFile(f.trace)
 			unchangedLegacy := reflect.DeepEqual(after, mustRegistry(t, f)) && bytes.Equal(legacyBefore, legacyAfter) && bytes.Equal(wireAfter, wireLegacy)
-			if err = os.WriteFile(launchPath, launchBefore, 0600); err != nil { t.Fatal(err) }
-			if refusal == nil || !unchangedLegacy { t.Fatal("legacy prepared Resume recovered, wrote or spawned") }
+			if err = os.WriteFile(launchPath, launchBefore, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if refusal == nil || !unchangedLegacy {
+				t.Fatal("legacy prepared Resume recovered, wrote or spawned")
+			}
 			reused, err := c.prepareOwnedClaudeResume(ctx, opts)
 			launchAfter, _ := os.ReadFile(launchPath)
 			if err != nil || reused.State != agentProcessPrepared || !reflect.DeepEqual(prepared.Prepared, reused.Prepared) || !bytes.Equal(launchBefore, launchAfter) || !reflect.DeepEqual(after, mustRegistry(t, f)) || len(deferredArgv(t, f)) != 1 {
@@ -299,14 +325,24 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 				t.Fatal("conflicting frozen recipe accepted")
 			}
 			// Snapshot validation must refuse without clearing the durable plan.
-			if len(frozen.Files) == 0 { t.Fatal("fixture did not freeze a referenced snapshot") }
+			if len(frozen.Files) == 0 {
+				t.Fatal("fixture did not freeze a referenced snapshot")
+			}
 			for path := range frozen.Files {
 				raw, err := os.ReadFile(path)
-				if err != nil { t.Fatal(err) }
-				if err = os.WriteFile(path, append(bytes.Clone(raw), '\n'), 0600); err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, append(bytes.Clone(raw), '\n'), 0600); err != nil {
+					t.Fatal(err)
+				}
 				_, err = c.prepareOwnedClaudeResume(ctx, opts)
-				if restoreErr := os.WriteFile(path, raw, 0600); restoreErr != nil { t.Fatal(restoreErr) }
-				if err == nil { t.Fatal("changed snapshot accepted") }
+				if restoreErr := os.WriteFile(path, raw, 0600); restoreErr != nil {
+					t.Fatal(restoreErr)
+				}
+				if err == nil {
+					t.Fatal("changed snapshot accepted")
+				}
 				break
 			}
 			launchAfter, _ = os.ReadFile(launchPath)
@@ -319,30 +355,50 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 				a.Metadata.Annotations[coremetadata.AnnotationAgentModel] = "foreign-model"
 				return nil
 			})
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			foreign := mustRegistry(t, f)
-			if _, err = c.prepareOwnedClaudeResume(ctx, opts); err == nil { t.Fatal("changed current source accepted") }
+			if _, err = c.prepareOwnedClaudeResume(ctx, opts); err == nil {
+				t.Fatal("changed current source accepted")
+			}
 			launchAfter, _ = os.ReadFile(launchPath)
-			if !bytes.Equal(launchBefore, launchAfter) || !reflect.DeepEqual(foreign, mustRegistry(t, f)) { t.Fatal("source refusal changed recipe/pending") }
+			if !bytes.Equal(launchBefore, launchAfter) || !reflect.DeepEqual(foreign, mustRegistry(t, f)) {
+				t.Fatal("source refusal changed recipe/pending")
+			}
 			_, _, err = f.store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 				a, _ := reg.Agent(uid)
 				a.Metadata.Annotations[coremetadata.AnnotationAgentModel] = current.Metadata.Annotations[coremetadata.AnnotationAgentModel]
 				return nil
 			})
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			claim, err := c.claimDeferredProcessAgent(ctx, opts)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer func() { _ = claim.Close() }()
 			if mode == "failed-init" {
 				path := filepath.Join(f.root, "provider.py")
 				raw, err := os.ReadFile(path)
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				broken := bytes.ReplaceAll(raw, []byte("emit({'type':'system','subtype':'init','session_id':'process-session'})"), []byte("emit({'type':'system','subtype':'init','session_id':'wrong-session'})"))
-				if bytes.Equal(raw, broken) { t.Fatal("existing init fixture anchor missing") }
-				if err = os.WriteFile(path, broken, 0600); err != nil { t.Fatal(err) }
+				if bytes.Equal(raw, broken) {
+					t.Fatal("existing init fixture anchor missing")
+				}
+				if err = os.WriteFile(path, broken, 0600); err != nil {
+					t.Fatal(err)
+				}
 				_, err = claim.Resume(ctx, processResumeFirstFrame{Kind: "user", Text: "actual first input"})
-				if err == nil { t.Fatal("wrong-session init accepted") }
-				if err = claim.Close(); err != nil { t.Fatal(err) }
+				if err == nil {
+					t.Fatal("wrong-session init accepted")
+				}
+				if err = claim.Close(); err != nil {
+					t.Fatal(err)
+				}
 				retained, readErr := c.readDeferredLaunch(uid)
 				candidate := deferredCandidate(t, f, first.ref)
 				if readErr != nil || retained == nil || !retained.matches(candidate) || !reflect.DeepEqual(retained.Command, frozen.Command) || candidate.Record.SessionID != oldRecord.SessionID || !coremetadata.MatchesProcessWait(candidate.Record.Binding, candidate.Pane.Status.LastTermination) {
@@ -355,35 +411,73 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 			c.rebind.create.newGeneration = func() (string, error) {
 				close(entered)
-				select { case <-release: return coremetadata.NewGeneration(); case <-ctx.Done(): return "", ctx.Err() }
+				select {
+				case <-release:
+					return coremetadata.NewGeneration()
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
 			}
-			type resumed struct { owned processAgentResumeResult; err error }
+			type resumed struct {
+				owned processAgentResumeResult
+				err   error
+			}
 			done := make(chan resumed, 1)
 			literal := "actual raw first input\nwith a literal newline"
-			go func() { owned, err := claim.Resume(ctx, processResumeFirstFrame{Kind: "user", Text: literal}); done <- resumed{owned, err} }()
-			select { case <-entered: case <-ctx.Done(): t.Fatal("first-input reservation barrier not reached") }
+			go func() {
+				owned, err := claim.Resume(ctx, processResumeFirstFrame{Kind: "user", Text: literal})
+				done <- resumed{owned, err}
+			}()
+			select {
+			case <-entered:
+			case <-ctx.Done():
+				t.Fatal("first-input reservation barrier not reached")
+			}
 			beforeRace := mustRegistry(t, f)
 			loser, err := claim.Resume(ctx, processResumeFirstFrame{Kind: "user", Text: "losing input"})
-			if err == nil || loser.Handle != nil || !reflect.DeepEqual(beforeRace, mustRegistry(t, f)) { t.Fatal("losing first input changed winner/pending") }
+			if err == nil || loser.Handle != nil || !reflect.DeepEqual(beforeRace, mustRegistry(t, f)) {
+				t.Fatal("losing first input changed winner/pending")
+			}
 			close(release)
 			var winner resumed
-			select { case winner = <-done: case <-ctx.Done(): t.Fatal("first input did not finish") }
-			if winner.err != nil || winner.owned.Handle == nil { t.Fatal("first input resume", winner.err) }
+			select {
+			case winner = <-done:
+			case <-ctx.Done():
+				t.Fatal("first input did not finish")
+			}
+			if winner.err != nil || winner.owned.Handle == nil {
+				t.Fatal("first input resume", winner.err)
+			}
 			changed, controls, attention, err := winner.owned.resumeSynchronization(c.rebind.create)
-			if err != nil { _ = winner.owned.fail(err); t.Fatal(err) }
+			if err != nil {
+				_ = winner.owned.fail(err)
+				t.Fatal(err)
+			}
 			consumer, consumerCancel := context.WithCancel(context.Background())
 			life := &agentHostTransferLifetime{Context: consumer, Cancel: consumerCancel, Target: &winner.owned, synchronization: processRelaunchSynchronization{changed, controls, attention}}
 			defer func() { life.Cancel(); _ = life.Wait(context.Background()) }()
 			deferredReady(t, ctx, f, first.ref)
-			currentRecord := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.Binding.Generation != oldRecord.Binding.Generation && r.SessionID == oldRecord.SessionID })
-			if currentRecord.History == nil || currentRecord.History.Binding != oldRecord.Binding { t.Fatal("first input lost old pending/history fence") }
+			currentRecord := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.Binding.Generation != oldRecord.Binding.Generation && r.SessionID == oldRecord.SessionID
+			})
+			if currentRecord.History == nil || currentRecord.History.Binding != oldRecord.Binding {
+				t.Fatal("first input lost old pending/history fence")
+			}
 			texts := deferredWireTexts(t, f)
-			if len(texts) != 2 || texts[1] != literal || strings.Contains(texts[1], "projmux-coordination") || len(deferredArgv(t, f)) != 2 { t.Fatal("first input duplicated/replaced raw user frame") }
-			if remaining, err := c.readDeferredLaunch(uid); err != nil || remaining != nil { t.Fatal("successful init did not consume exact plan", err) }
-			if record, err := readDeferredClaim(c.deferredClaimPath(uid)); err != nil || record.Nonce != "" { t.Fatal("first input left an active claim", err) }
+			if len(texts) != 2 || texts[1] != literal || strings.Contains(texts[1], "projmux-coordination") || len(deferredArgv(t, f)) != 2 {
+				t.Fatal("first input duplicated/replaced raw user frame")
+			}
+			if remaining, err := c.readDeferredLaunch(uid); err != nil || remaining != nil {
+				t.Fatal("successful init did not consume exact plan", err)
+			}
+			if record, err := readDeferredClaim(c.deferredClaimPath(uid)); err != nil || record.Nonce != "" {
+				t.Fatal("first input left an active claim", err)
+			}
 			latest := mustRegistry(t, f)
 			bound, _ := latest.Agent(uid)
-			if !bound.Status.SessionRef.SameConversation(source.Status.SessionRef) { t.Fatal("first input lost sessions binding") }
+			if !bound.Status.SessionRef.SameConversation(source.Status.SessionRef) {
+				t.Fatal("first input lost sessions binding")
+			}
 			life.Cancel()
 			_ = life.Wait(ctx)
 			assertOffline(t, f, life)

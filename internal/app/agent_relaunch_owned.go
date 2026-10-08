@@ -16,10 +16,10 @@ import (
 type agentProcessRelaunchState string
 
 const (
-	agentProcessPreview agentProcessRelaunchState = "Preview"
+	agentProcessPreview   agentProcessRelaunchState = "Preview"
 	agentProcessUnchanged agentProcessRelaunchState = "Unchanged"
-	agentProcessOwned agentProcessRelaunchState = "Owned"
-	agentProcessPrepared agentProcessRelaunchState = "Prepared"
+	agentProcessOwned     agentProcessRelaunchState = "Owned"
+	agentProcessPrepared  agentProcessRelaunchState = "Prepared"
 )
 
 // Prepared is a durable recipe projection, never a live owner or writer grant.
