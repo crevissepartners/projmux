@@ -483,7 +483,8 @@ func runClaudeEndpointHelper(args []string, recorder *diagnostics.ClaudeRegistra
 		producer: func(bootstrap claudeEndpointBootstrap) bool { return claudeHelperProducerMatches(bootstrap, parentPID) },
 		serve: func(bootstrap claudeEndpointBootstrap, ack io.Writer, admitted func()) diagnostics.ClaudeRegistrationReason {
 			return serveClaudeRegistration(context.Background(), bootstrap, ack, claudeEndpointIdleOptions{
-				stat: (*intmetadata.Store).RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor, admitted: admitted})
+				stat: (*intmetadata.Store).RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor, admitted: admitted,
+				handoffRoute: recorder.RecordHandoffRoute})
 		},
 	})
 }
@@ -697,6 +698,9 @@ type claudeEndpointIdleOptions struct {
 	// admitted, when set, runs once right after the acknowledgement byte is
 	// written. The helper records ready there.
 	admitted func()
+	// handoffRoute, when set, journals a push refused because one end of its
+	// route could not be proved again.
+	handoffRoute func(diagnostics.ClaudeHandoffRouteRecord)
 }
 
 // claudeEndpointIdleRegistryGate decides whether one idle accept-loop tick
@@ -730,7 +734,7 @@ func (g *claudeEndpointIdleRegistryGate) current(identity, registry func() bool)
 
 func claudeRegistrationRoute(bootstrap claudeEndpointBootstrap) (func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string), diagnostics.ClaudeRegistrationReason) {
 	if bootstrap.ProcessProof == nil {
-		return coremetadata.ResolveAgentRoute, claudeRegistrationProceed
+		return tmuxClaudeRouteResolver(bootstrap.RegistryPath, bootstrap.AgentUID), claudeRegistrationProceed
 	}
 	if !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
 		return nil, diagnostics.ClaudeRegistrationProviderProcessMismatch
@@ -881,9 +885,8 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if err != nil {
 		return diagnostics.ClaudeRegistrationDialogueBroker
 	}
-	if bootstrap.ProcessProof != nil {
-		dialogueBroker.resolveRoute = resolveRoute
-	}
+	dialogueBroker.resolveRoute = resolveRoute
+	dialogueBroker.handoffRoute = idle.handoffRoute
 	var providerPoster claudeProviderPoster
 	if bootstrap.ProcessProof != nil {
 		providerPoster = &processClaudeProviderPoster{proof: *bootstrap.ProcessProof, registrationGeneration: bootstrap.Registration.Authority.RegistrationGeneration, native: &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token, socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}, current: current}
