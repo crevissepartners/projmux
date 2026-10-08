@@ -2571,7 +2571,7 @@ func TestClaudeBackgroundR7PreservesOperatorWaitAndExistingToolClose(t *testing.
 }
 
 func TestClaudeBackgroundR8FallbackAdmission(t *testing.T) {
-	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "SubagentStart", "SubagentStop"} {
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "SubagentStart"} {
 		for _, mode := range []string{"subagent", "main_thread", "explicit_quiet", "already_busy", "idle", "wrong_session", "missing_session", "legacy_subagent_id"} {
 			t.Run(event+"/"+mode, func(t *testing.T) {
 				f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
@@ -2609,6 +2609,26 @@ func TestClaudeBackgroundR8FallbackAdmission(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestClaudeBackgroundSubagentStopDoesNotReopenCompletedResponse(t *testing.T) {
+	for _, snapshot := range []string{"absent", "empty", "in_flight"} {
+		t.Run(snapshot, func(t *testing.T) {
+			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
+			extra := map[string]any{"agent_id": "child"}
+			switch snapshot {
+			case "empty":
+				extra["background_tasks"] = []any{}
+			case "in_flight":
+				extra["background_tasks"] = []any{map[string]any{"type": "subagent", "status": "running"}}
+			}
+			entry := claudeBackgroundIngest(t, f, "SubagentStop", extra)
+			assertClaudeBackgroundInteraction(t, f, coremetadata.InteractionResponseComplete, 0)
+			if entry.Result != "quiet" {
+				t.Fatalf("entry = %+v, want quiet", entry)
+			}
+		})
 	}
 }
 
@@ -2704,7 +2724,7 @@ func TestClaudeBackgroundR11RepeatedStopsAndSettledWakeNotifyOnce(t *testing.T) 
 	}
 }
 
-func TestClaudeBackgroundR9ConfiguredSubagentStopPrecedesFallback(t *testing.T) {
+func TestClaudeBackgroundR9ConfiguredSubagentStopHonorsActions(t *testing.T) {
 	for _, action := range []string{aiHookActionState, aiHookActionNotify} {
 		t.Run(action, func(t *testing.T) {
 			f := claudeBackgroundFixture(t, coremetadata.InteractionResponseComplete)
