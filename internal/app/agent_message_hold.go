@@ -182,7 +182,15 @@ func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, tar
 	if locker, ok := c.messageStore.(agentMessageDispatchLocker); ok {
 		unlock, err := locker.LockTargetDispatch(target.Metadata.UID, agentMessageDispatchLockWait)
 		if err != nil {
-			return record, fmt.Errorf("keep send order to the target: %w", err)
+			// No helper was called, so this is a known zero write. Recording it
+			// as failed keeps the accepted record from waiting unreachable:
+			// a resend of the same ref and the release both skip accepted.
+			failed, _, applyErr := c.messageStore.Apply(record.Envelope.MessageRef,
+				c.publicMessageEvent(record, coremessage.EventFail, "provider-prewrite-refused", false))
+			if applyErr != nil {
+				return record, fmt.Errorf("keep send order to the target: %w", errors.Join(err, applyErr))
+			}
+			return failed, nil
 		}
 		defer unlock()
 	}

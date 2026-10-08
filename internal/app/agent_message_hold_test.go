@@ -1097,6 +1097,46 @@ func TestAgentMessageBusyHoldGapPreservesSendOrder(t *testing.T) {
 	}
 }
 
+// shortDispatchWaitStore keeps the real dispatch lock but waits only 1ms for it.
+type shortDispatchWaitStore struct{ *messagestore.Store }
+
+func (s shortDispatchWaitStore) LockTargetDispatch(agentUID string, _ time.Duration) (func(), error) {
+	return s.Store.LockTargetDispatch(agentUID, time.Millisecond)
+}
+
+// A send that cannot take the dispatch lock called no helper. It ends failed
+// with the known zero-write reason instead of leaving an accepted record that
+// neither a resend of the same ref nor the release would ever dispatch.
+func TestAgentMessageDispatchLockTimeoutFailsWithZeroWrites(t *testing.T) {
+	f := newHoldFixture(t)
+	f.setInteraction(t, coremetadata.InteractionIdle)
+	f.cmd.messageStore = shortDispatchWaitStore{f.store}
+	ref := "message-lock-timeout"
+	unlock, err := f.store.LockTargetDispatch(f.claudeUID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, sendErr := f.send(t, ref, false)
+	unlock()
+	if sendErr == nil || !strings.Contains(stdout, ref+"\tfailed\tprovider-prewrite-refused") {
+		t.Fatalf("lock timeout receipt %q err=%v", stdout, sendErr)
+	}
+	got := f.delivery(t, ref)
+	if got.State != coremessage.StateFailed || got.Reason != "provider-prewrite-refused" || got.OutcomeUnknown {
+		t.Fatalf("lock timeout record %+v", got)
+	}
+	resent, resendErr := f.send(t, ref, false)
+	if resendErr == nil || !strings.Contains(resent, ref+"\tfailed\tprovider-prewrite-refused") {
+		t.Fatalf("resend of the failed ref %q err=%v", resent, resendErr)
+	}
+	if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.adapter.submits) != 0 || f.delivery(t, ref).State != coremessage.StateFailed {
+		t.Fatalf("zero-write failure reached the helper: submits=%v %+v", f.adapter.submits, f.delivery(t, ref))
+	}
+}
+
 func TestClaudeBusyReceiptRejectsUnknownWrite(t *testing.T) {
 	response := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "held", Delivery: agentdelivery.Delivery{MessageRef: "message-busy", State: agentdelivery.StateHeld, Reason: claudeHoldReasonTurnActive}}
 	if _, ok := claudeResponseDelivery("message-busy", response); !ok {
