@@ -216,7 +216,7 @@ func (c *aiCommand) claudeBackgroundFallback(payload claudeHookPayload, action a
 		!(action.Action == aiHookActionQuiet && action.Source == aiHookActionSourceRuntime)
 }
 
-var errClaudeBackgroundProgressRejected = errors.New("Claude background progress conditions changed")
+var errClaudeBackgroundProgressRejected = errors.New("claude background progress conditions changed")
 
 func (c *aiCommand) ingestClaudeBackgroundProgress(paneID string, payload claudeHookPayload, metadata map[string]string, binding managedAgentBinding, owned bool) error {
 	var guard func(*coremetadata.Registry, managedAgentBinding) error
