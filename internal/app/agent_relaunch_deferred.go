@@ -28,6 +28,21 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 	if err = c.commitDeferredRelaunch(ctx, claim, candidate, record); err != nil {
 		return err
 	}
+	if c.hostTransferResult != nil {
+		// Prepared has no child, waiter or standby claimant. A Close failure
+		// remains a failure; it cannot be acknowledged as successful preparation.
+		if err = claim.Close(); err != nil {
+			return err
+		}
+		if !c.hostTransferResult.stopAdmission() || ctx.Err() != nil || c.hostTransferContext.Err() != nil {
+			return context.Canceled
+		}
+		result.Phase = coremetadata.PhaseOffline
+		result.NewPaneUID = record.Retired.Binding.PaneUID
+		c.hostTransferResult.Result = result
+		c.hostTransferResult.Prepared = processPreparedProjection(record)
+		return nil
+	}
 	output := stdout
 	if request.json {
 		output = stderr
