@@ -307,8 +307,12 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 	var userDelivery *processhost.UserTurnDelivery
 	result := controlProcessForeground(ctx, peer, r, current, func() error {
 		switch r.Action {
-		case "user-deliver":
-			value, err := e.handle.DeliverUserTurn(ctx, r.Authority, r.Operation, r.Prompt)
+		case "user-deliver", "user-steer":
+			deliver := e.handle.DeliverUserTurn
+			if r.Action == "user-steer" {
+				deliver = e.handle.SteerUserTurn
+			}
+			value, err := deliver(ctx, r.Authority, r.Operation, r.Prompt)
 			if err == nil {
 				userDelivery = &value
 			}

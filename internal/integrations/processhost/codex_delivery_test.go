@@ -436,3 +436,56 @@ func TestCodexUserDeliveryRetainsStreamAndControlLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexSteerUserTurnIdleAndCompletionAdmission(t *testing.T) {
+	c, _, log := codexStart(t, testHost(t, nil), "codex-normal")
+	a := codexAuthority(c)
+	adapter := c.handle.adapter.(*codexAdapter)
+	refuse := func(operation string) {
+		t.Helper()
+		before := codexWire(t, log)
+		got, err := c.SteerUserTurn(context.Background(), a, operation, "more")
+		if !errors.Is(err, ErrBusy) || got != (UserTurnDelivery{}) {
+			t.Fatalf("idle steer=%+v %v", got, err)
+		}
+		if !reflect.DeepEqual(before, codexWire(t, log)) {
+			t.Fatal("idle steer wrote provider bytes")
+		}
+		c.handle.mu.Lock()
+		used := c.handle.usedTurns[operation] || adapter.usedDeliveries[operation] || adapter.awaitingReply
+		c.handle.mu.Unlock()
+		if used {
+			t.Fatal("idle refusal changed admission bookkeeping")
+		}
+	}
+	refuse("reusable")
+	first, err := c.DeliverUserTurn(context.Background(), a, "reusable", "hold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.SteerUserTurn(context.Background(), a, "steer", "more")
+	if err != nil || got != (UserTurnDelivery{UserTurnSteer, "steer", first.TurnID}) {
+		t.Fatalf("steer=%+v %v", got, err)
+	}
+	if err := adapter.lock(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { _, err := c.SteerUserTurn(context.Background(), a, "queued", "more"); result <- err }()
+	ctx, cancel := context.WithTimeout(context.Background(), c.handle.host.limits.Startup)
+	defer cancel()
+	if _, err := adapter.client.InterruptExactTurn(ctx, a.Session, first.TurnID); err != nil {
+		adapter.unlock()
+		t.Fatal(err)
+	}
+	observeUntil(t, c.handle, func(s Snapshot) bool { return s.Turn == "" })
+	adapter.unlock()
+	if err := <-result; !errors.Is(err, ErrBusy) {
+		t.Fatalf("completion admission=%v", err)
+	}
+	refuse("after-completion")
+	wire := codexWire(t, log)
+	if countMethod(wire, "turn/start") != 1 || countMethod(wire, "turn/steer") != 1 {
+		t.Fatalf("new turn or late steer: %v", wire)
+	}
+}

@@ -473,7 +473,11 @@ func (c *agentCommand) callProcessTurn(reg coremetadata.Registry, agent coremeta
 // callProcessUserDelivery sends one Codex user input. Only the owned host
 // selects start or exact active-turn steer; a lost receipt is never replayed.
 func (c *agentCommand) callProcessUserDelivery(reg coremetadata.Registry, agent coremetadata.Agent, text string) (processhost.UserTurnDelivery, error) {
-	operation, result, err := c.callProcessForegroundAction(reg, agent, aiModeCodex, "user-deliver", text)
+	return c.callProcessUserInput(reg, agent, "user-deliver", text)
+}
+
+func (c *agentCommand) callProcessUserInput(reg coremetadata.Registry, agent coremetadata.Agent, action, text string) (processhost.UserTurnDelivery, error) {
+	operation, result, err := c.callProcessForegroundAction(reg, agent, aiModeCodex, action, text)
 	if err != nil {
 		return processhost.UserTurnDelivery{}, err
 	}
@@ -937,16 +941,30 @@ func addOpenCodexRecovery(err error, registry coremetadata.Registry, agent corem
 	return addOpenCodexBindingRecovery(err, exactAgentControlBinding{Identity: codexLifecycleIdentity{PaneUID: pane.Metadata.UID}, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID})
 }
 
-// Resolve once for start, retaining the same registry snapshot for tmux/Codex.
-// Steer keeps its existing native binding path.
+// Resolve once, retaining the same registry snapshot for tmux/Codex.
 func (c *agentCommand) resolveTurnControlBinding(action, ref, text string, stdout io.Writer) (exactAgentControlBinding, bool, error) {
-	if action != "start" {
-		binding, err := c.resolveControlBinding("agent turn "+action, ref)
-		return binding, false, err
-	}
-	reg, agent, err := c.resolveOneAgent("agent turn start", ref, selector.VerbReview)
+	reg, agent, err := c.resolveOneAgent("agent turn "+action, ref, selector.VerbReview)
 	if err != nil {
 		return exactAgentControlBinding{}, false, err
+	}
+	if action != "start" {
+		if action == "steer" && agent.Spec.Provider == aiModeCodex && processAgentAnswers(reg, agent) {
+			delivery, err := c.callProcessUserInput(reg, agent, "user-steer", text)
+			if errors.Is(err, processhost.ErrBusy) {
+				err = fmt.Errorf("%w; next: `projmux agent turn start uid:%s -- <text>`", err, agent.Metadata.UID)
+			}
+			if err == nil {
+				if delivery.Mode != processhost.UserTurnSteer {
+					err = processhost.ErrStale
+				} else {
+					pane, _ := reg.Pane(agent.Status.PaneRef)
+					_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s acceptance=%s delivery=%s\n", c.agentActionText(agentActionSteerTurn), safeApprovalDetail(pane.Status.ProcessSession.ThreadID), safeApprovalDetail(delivery.TurnID), agentControlAcceptanceProvider, agentControlDeliveryUnconfirmed)
+				}
+			}
+			return exactAgentControlBinding{}, true, err
+		}
+		binding, err := c.bindAgentControl("agent turn "+action, reg, agent)
+		return binding, false, err
 	}
 	if handled, err := c.startDeferredUserTurn(reg, agent, text, stdout); handled || err != nil {
 		return exactAgentControlBinding{}, handled, err
