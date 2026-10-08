@@ -229,9 +229,8 @@ func TestProcessResumeActualCLIRoundTrip(t *testing.T) {
 				if len(calls) != 2 {
 					t.Fatalf("Claude startup count: %s", argv)
 				}
-				// Fresh creation starts in auto mode. The mode is not recorded,
-				// so the resume of the same Agent is replanned without one.
-				if permissionModes(calls[0]) != "auto" || permissionModes(calls[1]) != "" {
+				// Creation and resume share the headless auto policy.
+				if permissionModes(calls[0]) != "auto" || permissionModes(calls[1]) != "auto" {
 					t.Fatalf("permission mode: create %q resume %q", calls[0], calls[1])
 				}
 				found := false
@@ -1257,4 +1256,22 @@ func permissionModes(argv []string) string {
 		}
 	}
 	return strings.Join(modes, ",")
+}
+
+func TestProcessClaudeOfflineResumeSelectsAutoActualCLI(t *testing.T) {
+	f := deferredRelaunchFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+	deferredReady(t, ctx, f, first.ref)
+	first.shutdown(t)
+	old := deferredCandidate(t, f, first.ref)
+	second := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "offline resume"})
+	deferredReady(t, ctx, f, first.ref)
+	second.shutdown(t)
+	current := deferredCandidate(t, f, first.ref)
+	argv := deferredArgv(t, f)
+	if len(argv) != 2 || permissionModes(argv[0]) != "auto" || permissionModes(argv[1]) != "auto" || current.Record.SessionID != old.Record.SessionID || current.Record.Binding.Generation == old.Record.Binding.Generation {
+		t.Fatal("offline auto argv/conversation", argv)
+	}
 }

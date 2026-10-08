@@ -218,6 +218,11 @@ func TestProcessClaudeRelaunchActualCLI(t *testing.T) {
 	if strings.Count(string(wire), "next task") != 1 || strings.Count(string(wire), "prompt-only task") != 1 || bytes.Contains(wire, []byte("unconfirmed")) {
 		t.Fatalf("wire %s", wire)
 	}
+	for _, args := range deferredArgv(t, f) {
+		if permissionModes(args) != "auto" {
+			t.Fatalf("samehost permission mode: %q", args)
+		}
+	}
 	argv, _ := os.ReadFile(filepath.Join(f.root, "argv.jsonl"))
 	if !bytes.Contains(argv, []byte(`"--resume", "process-session"`)) || !bytes.Contains(argv, []byte(`"--model", "new-model"`)) {
 		t.Fatalf("argv %s", argv)

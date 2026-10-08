@@ -341,6 +341,9 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 		return candidate, record, err
 	}
 	if !replacement {
+		if err = record.validatePermissionMode(); err != nil {
+			return candidate, nil, err
+		}
 		if err = record.validateFiles(); err != nil {
 			return candidate, nil, err
 		}
@@ -377,6 +380,9 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 	unlock()
 	unlock = func() {}
 	if !replacement {
+		if err = record.validatePermissionMode(); err != nil {
+			return candidate, nil, err
+		}
 		if err = record.validateFiles(); err != nil {
 			return candidate, nil, err
 		}
@@ -406,7 +412,52 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 	return candidate, record, err
 }
 
+// Ordinary recovery may restore Previous before returning a command. Refuse
+// a legacy current or prior recipe before either recovery can write durable state.
+func (record *deferredLaunchRecord) validatePermissionMode() error {
+	if err := validateDeferredClaudePermissionMode(record.Command.Args); err != nil {
+		return err
+	}
+	if record.Previous != nil {
+		return validateDeferredClaudePermissionMode(record.Previous.Command.Args)
+	}
+	return nil
+}
+
+// Validate the frozen argv without repairing it. Explicit relaunch replacement
+// uses the common planner and retains the existing digest/claim/CAS authority.
+func validateDeferredClaudePermissionMode(args []string) error {
+	count := 0
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		mode, found := strings.CutPrefix(arg, "--permission-mode=")
+		if arg == "--permission-mode" {
+			found = true
+			i++
+			if i < len(args) {
+				mode = args[i]
+			}
+		}
+		if found {
+			count++
+			if mode != processClaudePermissionMode || count > 1 {
+				return deferredRefused("prepared Claude launch requires exactly one --permission-mode auto; use agent relaunch to replace the prepared launch")
+			}
+		}
+	}
+	if count != 1 {
+		return deferredRefused("prepared Claude launch requires exactly one --permission-mode auto; use agent relaunch to replace the prepared launch")
+	}
+	return nil
+}
+
 func (c *agentCommand) frozenDeferredCommand(candidate processResumeCandidate, record *deferredLaunchRecord) (processhost.Command, error) {
+	if err := validateDeferredClaudePermissionMode(record.Command.Args); err != nil {
+		return processhost.Command{}, err
+	}
 	ai, ok := c.ai.(*aiCommand)
 	if !ok {
 		return processhost.Command{}, deferredRefused("process launcher unavailable")

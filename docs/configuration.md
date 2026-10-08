@@ -1504,6 +1504,14 @@ rules are written as a Claude settings file,
 started with `--settings <that file>`. Each resume writes it again from the
 current profile.
 
+Headless Claude creation, resume, same-host relaunch and moves into the process
+host explicitly select `--permission-mode auto`, while retaining the profile's
+allow/deny rules. This is a process launch policy, not a per-Agent setting, and
+does not eliminate approval requests. Older deferred commands without exactly
+one auto mode require explicit `agent relaunch` replacement before first input;
+see [Operating Process-Hosted Agents](process-host-operations.md). Ordinary tmux
+Claude and Codex policies are unchanged.
+
 When a profile with `sandbox` or `approval` is applied to a Codex Agent, the
 native lane sends them as the thread's `sandbox` and `approvalPolicy` on
 `thread/start` and every native `thread/resume`. The thread's answer must
