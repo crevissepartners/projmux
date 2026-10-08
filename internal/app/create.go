@@ -166,9 +166,11 @@ type createCommand struct {
 	homeDir   func() (string, error)
 	lookupEnv func(string) string
 	// processAncestors walks this process's parent chain for the creator
-	// pane-chain check (create_creator.go). Nil skips that observation
-	// silently: fixtures that build the command directly.
+	// pane-chain check (create_creator.go). Nil silently disables both pane
+	// and process creator observations for callers that opt out of provenance.
 	processAncestors func() ([]int, error)
+	// processCreatorAncestors captures kernel identities in nearest-first order.
+	processCreatorAncestors func() ([]coremetadata.ProcessIdentity, error)
 	// operatorCreatorClient, when set through recordOperatorCreator, is the
 	// operator client every create of this command records as its creator in
 	// place of the pane-chain observation.
@@ -229,17 +231,18 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 			executable: os.Executable,
 			lookupEnv:  lookupEnv,
 		},
-		activeTarget:     defaultActiveTargetLookup(),
-		anchorTarget:     defaultAnchoredActiveTargetLookup,
-		shell:            configuredShell(lookupEnv),
-		sessionNameFor:   namer.SessionName,
-		newOperationID:   newCreateOperationID,
-		now:              time.Now,
-		newGeneration:    coremetadata.NewGeneration,
-		resolveWorkspace: resolveAgentWorkspace,
-		homeDir:          os.UserHomeDir,
-		lookupEnv:        lookupEnv,
-		processAncestors: processAncestry,
+		activeTarget:            defaultActiveTargetLookup(),
+		anchorTarget:            defaultAnchoredActiveTargetLookup,
+		shell:                   configuredShell(lookupEnv),
+		sessionNameFor:          namer.SessionName,
+		newOperationID:          newCreateOperationID,
+		now:                     time.Now,
+		newGeneration:           coremetadata.NewGeneration,
+		resolveWorkspace:        resolveAgentWorkspace,
+		homeDir:                 os.UserHomeDir,
+		lookupEnv:               lookupEnv,
+		processAncestors:        processAncestry,
+		processCreatorAncestors: processCreatorAncestry,
 	}
 	bind := func(ctx context.Context, explicit bool) error {
 		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, lookupEnv, command.routeAnchor, explicit)

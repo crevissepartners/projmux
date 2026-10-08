@@ -91,7 +91,7 @@ func TestProcessCreateRequestRejectsAmbiguousTypedScope(t *testing.T) {
 func TestProcessCreateRequestCopiesCallerOwnedLaunchValues(t *testing.T) {
 	opts := processAgentCreateOptions{
 		Project:  selector.Ref{Kind: coremetadata.KindProject, UID: "proj-one"},
-		Provider: aiModeClaude, Creator: "uid:agent-creator",
+		Provider: aiModeClaude, Creator: "agent-creator",
 		Payload: []string{"task"}, AddDirs: []string{"/extra"}, Labels: map[string]string{"role": "worker"},
 	}
 	request, err := newProcessAgentCreateRequest(opts)
@@ -109,7 +109,6 @@ func TestProcessCreateRequestRequiresScopeAndUnambiguousInstructions(t *testing.
 	for _, opts := range []processAgentCreateOptions{
 		{Provider: aiModeClaude},
 		{Window: selector.Ref{Kind: coremetadata.KindWindow, UID: "win-one"}, Instructions: "one", Persona: "two"},
-		{Window: selector.Ref{Kind: coremetadata.KindWindow, UID: "win-one"}, Creator: "a-name"},
 	} {
 		if _, err := newProcessAgentCreateRequest(opts); err == nil {
 			t.Fatalf("accepted invalid request: %+v", opts)
@@ -211,5 +210,40 @@ func TestProcessSnapshotRecordsOnlyRecordedFieldChanges(t *testing.T) {
 	idle.State = "starting"
 	if err := result.recordProcessSnapshot(idle); err != nil {
 		t.Fatalf("non-ready snapshot opened a transaction: %v", err)
+	}
+}
+
+func TestProcessCreatorFlagIsParsedOnce(t *testing.T) {
+	for _, value := range []string{"uid:agent-live", "", "agent-bare", "named"} {
+		flags, err := parseResourceCreateFlags(canonicalCreateAgent, []string{"--host", "process", "--creator", value}, nil, resourceCreateShape{host: true, provider: true, split: true})
+		if value != "uid:agent-live" {
+			want := fmt.Sprintf("--creator must be an exact Agent reference uid:<agent>; got %q", value)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%q: %v", value, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := newProcessAgentCreateRequest(processAgentCreateOptions{Project: selector.Ref{Kind: coremetadata.KindProject, UID: "proj-one"}, Creator: flags.creator})
+		if err != nil || request.options.Creator != "agent-live" {
+			t.Fatalf("parsed UID was reparsed: %+v %v", request, err)
+		}
+	}
+}
+
+func TestProcessCreateTypedCreatorRejectsArgvSyntax(t *testing.T) {
+	for _, value := range []string{"uid:agent-live", " agent-live", "agent/live", "agent\tother", "agent\nother"} {
+		_, err := newProcessAgentCreateRequest(processAgentCreateOptions{Project: selector.Ref{Kind: coremetadata.KindProject, UID: "proj-one"}, Creator: value})
+		if err == nil || !strings.Contains(err.Error(), "process-creator-uid-invalid") {
+			t.Fatalf("accepted non-normalized creator %q: %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "agent-live"} {
+		request, err := newProcessAgentCreateRequest(processAgentCreateOptions{Project: selector.Ref{Kind: coremetadata.KindProject, UID: "proj-one"}, Creator: value})
+		if err != nil || request.options.Creator != value {
+			t.Fatalf("bare UID changed %q: %+v %v", value, request, err)
+		}
 	}
 }

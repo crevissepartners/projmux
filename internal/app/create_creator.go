@@ -23,15 +23,17 @@ import (
 //  1. pane-chain: an explicit `create agent` (any spelling, including
 //     --create-window and a fan-out) or `create window --provider` ran inside
 //     an Agent's managed Pane, proven by the checks below. It always wins.
-//  2. explicit: the caller declared `--creator uid:<agent>` and no pane chain
-//     was recorded. A declaration that names no Agent refuses the create
-//     before anything changes; one that disagrees with a recorded pane chain
+//  2. process-chain: the caller descends from a live process provider child,
+//     verified by kernel identity and current Registry binding.
+//  3. explicit: the caller declared `--creator uid:<agent>` and no pane chain
+//     or process chain was recorded. A declaration that names no Agent refuses
+//     the create before anything changes; one that disagrees with an observed chain
 //     is dropped with one stderr line.
-//  3. operator: the create ran in process for a named operator client -- the
+//  4. operator: the create ran in process for a named operator client -- the
 //     UI intents (client "ui"), or a client layered on top of projmux through
 //     recordOperatorCreator. Such a create observes no pane chain, because
 //     its process environment says nothing about who asked.
-//  4. nothing, when there is no evidence.
+//  5. nothing, when there is no evidence.
 //
 // The record is provenance, never authentication. Apart from the refused
 // declaration, no outcome changes anything else about the create: not the
@@ -71,6 +73,7 @@ const creatorProcessChainMaxSteps = 64
 type creatorProvenance struct {
 	agentUID string
 	paneUID  string
+	basis    string
 	// skip is the reason token when an ambient Pane existed but recording was
 	// skipped. Empty with no agentUID means there was nothing to observe.
 	// Only the tokens creatorSkipIsSilent rejects are printed.
@@ -108,18 +111,28 @@ func (c *createCommand) observeCreator(ctx context.Context, working *coremetadat
 	if c == nil {
 		return creatorProvenance{}
 	}
-	return observePaneChainActor(ctx, c.lookupEnv, c.processAncestors, working,
+	observed := observePaneChainActor(ctx, c.lookupEnv, c.processAncestors, working,
 		func(ctx context.Context, paneID, _ string) (int, string) { return c.confirmCreatorAnchor(ctx, paneID) })
+	if observed.recorded() {
+		observed.basis = coremetadata.CreatorBasisPaneChain
+		return observed
+	}
+	process := c.observeProcessCreator(working)
+	if process.recorded() || process.skip != "" {
+		return process
+	}
+	return observed
 }
 
 // Declaration tokens, printed as `creator declaration not recorded: <token>`
 // when a valid --creator loses to stronger evidence. A closed vocabulary.
 const (
+	creatorDeclinedProcessChain        = "process-chain-disagrees"
 	creatorDeclinedPaneChain           = "pane-chain-disagrees"
 	creatorDeclinedOperator            = "operator-client"
 	creatorDeclinedDiagnosticFmt       = "creator declaration not recorded: %s (--creator uid:%s)\n"
 	creatorFlagName                    = "creator"
-	creatorFlagUsage                   = "Agent that created this one, as uid:<agent>; recorded as the explicit creator basis only when no pane chain is observed"
+	creatorFlagUsage                   = "Agent that created this one, as uid:<agent>; recorded as the explicit creator basis only when no pane or process chain is observed"
 	creatorFlagRequiresAgentRefusalFmt = "%s --creator applies only to an Agent; name an Agent --provider; nothing was created"
 )
 
@@ -196,9 +209,12 @@ func (c *createCommand) decideCreator(ctx context.Context, spelling string, work
 	}
 	observed := c.observeCreator(ctx, working)
 	if observed.recorded() {
-		record := creatorRecord{basis: coremetadata.CreatorBasisPaneChain, agentUID: observed.agentUID, paneUID: observed.paneUID}
+		record := creatorRecord{basis: observed.basis, agentUID: observed.agentUID, paneUID: observed.paneUID}
 		if declared != "" && declared != observed.agentUID {
 			record.declared, record.declined = declared, creatorDeclinedPaneChain
+			if observed.basis == coremetadata.CreatorBasisProcessChain {
+				record.declined = creatorDeclinedProcessChain
+			}
 		}
 		return record, nil
 	}
@@ -214,6 +230,8 @@ func (r creatorRecord) annotations() map[string]string {
 	switch r.basis {
 	case coremetadata.CreatorBasisPaneChain:
 		return coremetadata.CreatorAnnotations(r.agentUID, r.paneUID)
+	case coremetadata.CreatorBasisProcessChain:
+		return coremetadata.ProcessCreatorAnnotations(r.agentUID, r.paneUID)
 	case coremetadata.CreatorBasisExplicit:
 		return coremetadata.ExplicitCreatorAnnotations(r.agentUID)
 	case coremetadata.CreatorBasisOperator:
@@ -409,6 +427,85 @@ func processAncestry() ([]int, error) {
 			return chain, err
 		}
 		chain = append(chain, pid)
+		if parent <= 1 || parent == pid {
+			break
+		}
+		pid = parent
+	}
+	return chain, nil
+}
+
+// Process candidates must be provider children, never just a shared host.
+const (
+	creatorSkipProcessIdentity  = "process-child-identity-mismatch"
+	creatorSkipProcessBinding   = "process-binding-mismatch"
+	creatorSkipProcessAmbiguous = "process-child-ambiguous"
+)
+
+func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) creatorProvenance {
+	// The existing ancestry seam is also the in-process opt-out from ambient
+	// provenance. Honor it for both pane and process observations.
+	if c == nil || working == nil || c.processAncestors == nil || c.processCreatorAncestors == nil {
+		return creatorProvenance{}
+	}
+	chain, err := c.processCreatorAncestors()
+	// A partial walk is not evidence: no guessed ancestry on read failure.
+	if err != nil || len(chain) == 0 || len(chain) > creatorProcessChainMaxSteps {
+		// A partially observed provider candidate deserves a stable diagnostic;
+		// an unrelated shell still has no creator claim to report.
+		for _, identity := range chain {
+			for _, pane := range working.Panes {
+				if activation := pane.Status.Activation.Process; activation != nil && activation.Child.PID == identity.PID {
+					return creatorProvenance{skip: creatorSkipProcessUnobservable}
+				}
+			}
+		}
+		return creatorProvenance{}
+	}
+	var rejected string
+	for _, identity := range chain {
+		var matches []creatorProvenance
+		for _, pane := range working.Panes {
+			activation := pane.Status.Activation.Process
+			if activation == nil || activation.Child.PID != identity.PID {
+				continue
+			}
+			if !identity.Valid() || int64(identity.OwnerUID) != int64(os.Getuid()) || activation.Child != identity {
+				rejected = creatorSkipProcessIdentity
+				continue
+			}
+			binding := activation.Binding
+			current, _, ok := working.CurrentProcessActivation(binding)
+			agent, found := working.Agent(binding.AgentUID)
+			_, missing := pane.HasCondition(coremetadata.ConditionMissingRuntime)
+			if !ok || !found || missing || agent.Status.Phase != coremetadata.PhaseRunning ||
+				binding.PaneUID != pane.Metadata.UID || current != *activation ||
+				pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != binding ||
+				pane.Status.ProcessSession.Provider != agent.Spec.Provider {
+				rejected = creatorSkipProcessBinding
+				continue
+			}
+			matches = append(matches, creatorProvenance{agentUID: binding.AgentUID, paneUID: binding.PaneUID, basis: coremetadata.CreatorBasisProcessChain})
+		}
+		if len(matches) > 1 {
+			return creatorProvenance{skip: creatorSkipProcessAmbiguous}
+		}
+		if len(matches) == 1 {
+			return matches[0]
+		}
+	}
+	return creatorProvenance{skip: rejected}
+}
+
+func processCreatorAncestry() ([]coremetadata.ProcessIdentity, error) {
+	pid := os.Getpid()
+	chain := make([]coremetadata.ProcessIdentity, 0, 8)
+	for range creatorProcessChainMaxSteps {
+		identity, parent, err := localipc.Process(pid)
+		if err != nil {
+			return chain, err
+		}
+		chain = append(chain, identity)
 		if parent <= 1 || parent == pid {
 			break
 		}

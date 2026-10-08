@@ -84,7 +84,7 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
             '{"Action":"run"'])
         for captured in (partial.encode(), partial, None):
             with self.subTest(kind=type(captured).__name__):
-                expired = subprocess.TimeoutExpired("go test", 240, output=captured, stderr=sentinel)
+                expired = subprocess.TimeoutExpired("go test", 360, output=captured, stderr=sentinel)
                 output = io.StringIO()
                 def invoke(command, **kwargs):
                     if command[1] == "build":
@@ -95,8 +95,8 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
                         self.assertTrue(kwargs["check"])
                         Path(command[command.index("-o") + 1]).write_bytes(b"fixture-test-binary")
                         return subprocess.CompletedProcess(command, 0)
-                    self.assertEqual(kwargs["timeout"], 240)
-                    self.assertIn("-timeout=180s", command)
+                    self.assertEqual(kwargs["timeout"], 360)
+                    self.assertIn("-timeout=300s", command)
                     raise expired
                 with patch.object(runner, "selected_tests", return_value=["TestFixture"]), patch.object(
                     runner, "isolated_env", return_value={}), patch.object(

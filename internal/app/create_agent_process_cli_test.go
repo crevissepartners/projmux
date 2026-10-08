@@ -612,3 +612,126 @@ func TestProcessCreateGuidanceActualCLI(t *testing.T) {
 		t.Fatalf("Wait: %v %s", err, stderr.String())
 	}
 }
+
+func TestProcessCreatorActualCLI(t *testing.T) {
+	for _, mode := range []string{"process-chain", "explicit", "unrelated"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			// The fixture provider executes create through its own child shell/process.
+			script := filepath.Join(f.root, "provider.py")
+			raw, err := os.ReadFile(script)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Parent and child share a Registry but each provider owns its endpoint.
+			raw = []byte(strings.Replace(string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'", 1))
+			branch := "elif prompt=='nested-create':\n   result=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'create','agent','--host','process','--project','uid:" + f.project + "','--window','uid:" + f.window + "','--provider','claude','--name','nested'],input='',text=True,capture_output=True)\n   result_path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'nested-result')\n   with open(result_path+'.tmp','w') as result_file:result_file.write(str(result.returncode)+'\\n'+result.stdout+result.stderr)\n   os.replace(result_path+'.tmp',result_path)\n  elif prompt=='register-again':"
+			if err = os.WriteFile(script, []byte(strings.Replace(string(raw), "elif prompt=='register-again':", branch, 1)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := f.args()
+			if mode == "process-chain" {
+				args = append(args, "--", "nested-create")
+			}
+			parent := exec.CommandContext(ctx, f.binary, args...)
+			input, err := parent.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := parent.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			parent.Stderr = &stderr
+			if err = parent.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := false
+			defer func() {
+				_ = input.Close()
+				if !waited {
+					_ = parent.Process.Kill()
+					_ = parent.Wait()
+				}
+			}()
+			line, err := bufio.NewReader(output).ReadString('\n')
+			if err != nil {
+				t.Fatalf("ownership %v %s", err, stderr.String())
+			}
+			parentUID := strings.TrimPrefix(strings.Fields(line)[1], "uid:")
+			if mode != "process-chain" {
+				childArgs := []string{"create", "agent", "--host", "process", "--project", "uid:" + f.project, "--window", "uid:" + f.window, "--provider", "claude", "--name", "nested"}
+				if mode == "explicit" {
+					childArgs = append(childArgs, "--creator", "uid:"+parentUID)
+				}
+				out, err := exec.CommandContext(ctx, f.binary, childArgs...).CombinedOutput()
+				if err != nil {
+					t.Fatalf("create %v %s", err, out)
+				}
+			} else {
+				for {
+					raw, err := os.ReadFile(filepath.Join(f.root, "nested-result"))
+					if err == nil {
+						if !bytes.HasPrefix(raw, []byte("0\n")) {
+							t.Fatalf("nested create %s", raw)
+						}
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatalf("nested create timeout %s", stderr.String())
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var nested *coremetadata.Agent
+			for i := range reg.Agents {
+				if reg.Agents[i].Metadata.Name == "nested" {
+					nested = &reg.Agents[i]
+				}
+			}
+			if nested == nil {
+				t.Fatal("nested Agent absent")
+			}
+			annotations := nested.Metadata.Annotations
+			if mode == "unrelated" {
+				if annotations[coremetadata.AnnotationCreatorBasis] != "" {
+					t.Fatalf("unrelated creator %v", annotations)
+				}
+			} else if annotations[coremetadata.AnnotationCreatorBasis] != mode || annotations[coremetadata.AnnotationCreatorAgent] != parentUID {
+				t.Fatalf("creator %v", annotations)
+			}
+			pane, _ := reg.Pane(nested.Status.PaneRef)
+			for _, key := range []string{coremetadata.AnnotationCreatorAgent, coremetadata.AnnotationCreatorPane, coremetadata.AnnotationCreatorBasis} {
+				if pane.Metadata.Annotations[key] != annotations[key] {
+					t.Fatalf("Pane creator differs: %s", key)
+				}
+			}
+			_ = input.Close()
+			err = parent.Wait()
+			waited = true
+			if err != nil {
+				t.Fatalf("parent Wait %v %s", err, stderr.String())
+			}
+		})
+	}
+}
+
+func TestProcessCreatorMalformedFlagActualCLI(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	for _, value := range []string{"", "agent-bare", "a-name"} {
+		cmd := exec.Command(f.binary, f.args("--creator", value)...)
+		out, err := cmd.CombinedOutput()
+		want := fmt.Sprintf("create agent --creator must be an exact Agent reference uid:<agent>; got %q; nothing was created", value)
+		if err == nil || !strings.Contains(string(out), want) {
+			t.Fatalf("value %q: %v %s", value, err, out)
+		}
+	}
+}

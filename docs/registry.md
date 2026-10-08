@@ -132,3 +132,27 @@ new build **before binary publication**: schema v5 may already have been
 written even when the installed binary is still old. Inspect the envelope and
 restore the verified snapshot or complete a forward fix before permitting
 old writers to resume.
+
+### Process caller creator provenance
+
+Agent creates from a process-hosted provider's descendants record
+`projmux.io/creator-basis=process-chain`, `projmux.io/creator-agent` and
+`projmux.io/creator-pane` on the created Agent and its managed Pane.
+A bounded 64-step nearest-first kernel ancestry walk matches the provider
+child's PID, OS uid and birth identity to a live process activation in the same
+Registry. Project, Window, Agent, Pane, generation and current ownership must
+agree. A common host process alone is insufficient. The nearest unique valid
+provider child wins; multiple valid Panes for the same child fail closed.
+
+Valid pane-chain evidence takes precedence and skips process observation.
+Process-chain precedes an explicit declaration; a disagreeing declaration
+prints `creator declaration not recorded: process-chain-disagrees`.
+In-process operator overrides retain precedence. Invalid explicit references
+still refuse creation. These annotations are provenance, never authentication.
+
+Unrelated shells do not infer a creator or print a process diagnostic.
+An ancestry read failure after observing a candidate prints
+`process-chain-unobservable` and does not infer a creator. Matching candidates rejected by identity or binding checks
+print `creator not recorded: process-child-identity-mismatch` or
+`process-binding-mismatch`; ambiguous matches print `process-child-ambiguous`.
+Observation failures preserve create stdout, routing and exit status.

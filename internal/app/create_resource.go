@@ -70,6 +70,7 @@ type resourceCreateFlags struct {
 	provider     string
 	providerSet  bool
 	// creator is the bare Agent UID --creator declared, or empty.
+	// Both tmux and process requests consume this already validated UID.
 	creator string
 	cwd     string
 	addDirs repeatedFlag

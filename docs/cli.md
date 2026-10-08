@@ -1535,7 +1535,7 @@ Allowed effects:
 projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 ```
 
-`--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane chain is observed; an observed pane chain always wins, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication.
+`--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane or process chain is observed; a valid pane chain wins over process-chain, which wins over a declaration, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
@@ -1605,7 +1605,7 @@ When neither decides it -- no profile, `--profile none`, or a profile without `p
 
 Codex applies --instructions only when a new Agent starts with a prompt through its native thread. A promptless or --interactive-only Codex create with instructions is refused before creation.
 
-`--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane chain is observed; an observed pane chain always wins, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication.
+`--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane or process chain is observed; a valid pane chain wins over process-chain, which wins over a declaration, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
