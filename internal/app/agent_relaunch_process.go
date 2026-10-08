@@ -58,7 +58,7 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 	if err != nil {
 		return err
 	}
-	if c.processResumePreparation && (len(recipe.restart.settings.resolution.Reasons) > 0 || recipe.restart.settings.resolution.ProfileSwitched || !reflect.DeepEqual(recipe.workspace, target.Spec.Workspace)) {
+	if c.processResumePreparation && (len(recipe.restart.settings.resolution.Reasons) > 0 || recipe.restart.settings.resolution.ProfileSwitched || recipe.workspace.CWD != target.Spec.Workspace.CWD || !slices.Equal(recipe.workspace.AdditionalWritableRoots, target.Spec.Workspace.AdditionalWritableRoots)) {
 		return refuse(relaunchReasonNoConversation, "recorded resume recipe changed; use explicit agent relaunch")
 	}
 	result := recipe.result(target, pane, request)

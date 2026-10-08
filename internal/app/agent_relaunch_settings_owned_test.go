@@ -455,6 +455,9 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 			}
 			consumer, consumerCancel := context.WithCancel(context.Background())
 			life := &agentHostTransferLifetime{Context: consumer, Cancel: consumerCancel, Target: &winner.owned, synchronization: processRelaunchSynchronization{changed, controls, attention}}
+			// The consumer owns the foreground synchronization loop before ready.
+			waited := make(chan error, 1)
+			go func() { waited <- life.Wait(consumer) }()
 			defer func() { life.Cancel(); _ = life.Wait(context.Background()) }()
 			deferredReady(t, ctx, f, first.ref)
 			currentRecord := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
@@ -479,7 +482,11 @@ func TestOwnedProcessSettingsActualCLI(t *testing.T) {
 				t.Fatal("first input lost sessions binding")
 			}
 			life.Cancel()
-			_ = life.Wait(ctx)
+			select {
+			case <-waited:
+			case <-ctx.Done():
+				t.Fatal("foreground consumer did not persist actual Wait")
+			}
 			assertOffline(t, f, life)
 		})
 	}
