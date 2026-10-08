@@ -139,8 +139,13 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 	// zero writes, leaving the durable record safe for held release.
 	processPoster, process := poster.(*processClaudeProviderPoster)
 	if process {
+		// A proof that fails here precedes MarkHandoff, so it journals here.
+		prove := func() bool { return broker.Current(*envelope.BrokerEnvelope) }
+		if journal, ok := broker.(claudeReservationProver); ok {
+			prove = func() bool { return journal.CurrentBeforeReservation(*envelope.BrokerEnvelope) }
+		}
 		outcome, reserveErr := processPoster.reserve(content, func() bool {
-			return envelope.Deadline.After(h.now()) && broker != nil && broker.Current(*envelope.BrokerEnvelope)
+			return envelope.Deadline.After(h.now()) && broker != nil && prove()
 		}, true)
 		if reserveErr != nil {
 			if outcome.Reason == claudeHoldReasonTurnActive {

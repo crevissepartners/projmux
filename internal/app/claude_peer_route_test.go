@@ -201,6 +201,52 @@ func TestClaudeHelperHandoffNamesUnprovenSource(t *testing.T) {
 	}
 }
 
+// A process Claude target's helper proves the envelope before its busy
+// reservation, ahead of MarkHandoff. A source it cannot prove there keeps the
+// reservation's known zero-write receipt, writes nothing, and still journals
+// which end failed, as the handoff refusal does.
+func TestClaudeProcessHelperReservationNamesUnprovenSource(t *testing.T) {
+	f := newProcessPeerFixture(t)
+	unknown := publicMessageRoute(f.codexRoute)
+	unknown.AgentUID = "agent-absent"
+	foreign := publicMessageRoute(f.codexRoute)
+	foreign.Incarnation = "foreign-incarnation"
+	for _, test := range []struct {
+		name   string
+		source coremessage.Route
+		peer   diagnostics.ClaudeHandoffPeer
+	}{
+		{"absent-agent", unknown, diagnostics.ClaudeHandoffPeerUnknown},
+		{"stale-process-codex", foreign, diagnostics.ClaudeHandoffPeerProcessCodex},
+	} {
+		broker, err := newLiveClaudeDialogueBroker(f.codex.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		broker.resolveRoute = f.tmuxHelperRoute(t)
+		var refused []diagnostics.ClaudeHandoffRouteRecord
+		broker.handoffRoute = func(r diagnostics.ClaudeHandoffRouteRecord) { refused = append(refused, r) }
+		envelope := dialogueForRoute("message-reservation-unproven-"+test.name, f.claudeRoute, time.Now().UTC())
+		envelope.BrokerEnvelope.Source = test.source
+		hub := newClaudeCoordinationHub()
+		setFrameBudgetReplyExecutable(hub)
+		native := &frameBudgetRecordingPoster{token: "token"}
+		poster := &processClaudeProviderPoster{proof: f.claudeProof, native: native, current: func() bool { return true }}
+		before, _ := f.claude.handle.Observe(f.claude.binding)
+		delivery := hub.submitPush(envelope, broker, poster)
+		if delivery.State != agentdelivery.StateFailed || delivery.Reason != "provider-prewrite-refused" || delivery.Ambiguous || native.calls != 0 {
+			t.Fatalf("%s: receipt %+v provider calls=%d", test.name, delivery, native.calls)
+		}
+		if after, _ := f.claude.handle.Observe(f.claude.binding); after.MessageReservation != "" || after.Sequence != before.Sequence {
+			t.Fatalf("%s: refused proof reached the host: %+v", test.name, after)
+		}
+		want := diagnostics.ClaudeHandoffRouteRecord{Side: diagnostics.ClaudeHandoffSourceUnproven, Peer: test.peer, AgentUID: test.source.AgentUID}
+		if len(refused) != 1 || refused[0] != want {
+			t.Fatalf("%s: journal %+v, want %+v", test.name, refused, want)
+		}
+	}
+}
+
 // The tmux helper still proves its own Agent and every tmux peer by the tmux
 // registration alone, with the exact refusal text it had.
 func TestClaudeTmuxHelperKeepsTmuxRouteResolution(t *testing.T) {

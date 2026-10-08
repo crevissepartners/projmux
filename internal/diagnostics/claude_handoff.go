@@ -9,8 +9,10 @@ import (
 // claudeHandoffRouteEvent is the record a Claude target helper writes when it
 // refuses a push before its durable handoff because one end of the envelope
 // route could not be proved again. The receipt keeps its existing
-// `broker-handoff-persist-failed` reason, which every sender version reads as
-// a known zero-write failure; this record names the cause the receipt cannot.
+// `broker-handoff-persist-failed` reason, or `provider-prewrite-refused` when a
+// process target's proof before its reservation fails, which every sender
+// version reads as a known zero-write failure; this record names the cause the
+// receipt cannot.
 const claudeHandoffRouteEvent = "agent.message.claude-handoff-route"
 
 // claudeHandoffCodePrefix prefixes every side in the record's `code`.

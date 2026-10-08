@@ -543,6 +543,19 @@ type processClaudeResumeLaunch struct {
 	Turn, Prompt string
 }
 
+// processClaudeHeldRelease is the held-message release a process Claude turn
+// result wakes. Tests replace it; the production release runs detached.
+var processClaudeHeldRelease = defaultHeldMessageRelease
+
+// processClaudeTurnCompletion wakes the held-message release of the Agent whose
+// turn just ended, so peer messages held while that turn ran are delivered
+// after its result, even when an earlier release window already ended.
+func processClaudeTurnCompletion() *processhost.TurnCompletion {
+	return &processhost.TurnCompletion{Notify: func(binding processhost.Binding) {
+		processClaudeHeldRelease().releaseIfHeld(binding.Agent)
+	}}
+}
+
 // startProcessClaude binds the foreground owner to exact ownership transactions.
 // The caller allocates the reservation and chooses launch policy.
 func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string, resume *processClaudeResumeLaunch) (*processhost.Handle, error) {
@@ -555,9 +568,7 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	}
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
-	launch.TurnCompleted = &processhost.TurnCompletion{Notify: func(binding processhost.Binding) {
-		defaultHeldMessageRelease().releaseIfHeld(binding.Agent)
-	}}
+	launch.TurnCompleted = processClaudeTurnCompletion()
 	if resume != nil {
 		launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 			service.publishChild(handle)
@@ -589,9 +600,7 @@ func startProcessClaudeTransfer(ctx context.Context, host *processhost.Host, lau
 	}
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
-	launch.TurnCompleted = &processhost.TurnCompletion{Notify: func(binding processhost.Binding) {
-		defaultHeldMessageRelease().releaseIfHeld(binding.Agent)
-	}}
+	launch.TurnCompleted = processClaudeTurnCompletion()
 	launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 		service.publishChild(handle)
 		return service.launchErr

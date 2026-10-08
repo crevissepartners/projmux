@@ -154,6 +154,36 @@ func TestClaudeProviderTurnControlPendingAndAnswerable(t *testing.T) {
 	}
 }
 
+// Request IDs are scoped to one turn. A provider turn whose first frame is a
+// permission request reusing the previous turn's ID opens a new turn before
+// the duplicate check, so the request is pending and answerable; the previous
+// turn's answer token stays stale.
+func TestClaudeProviderTurnFirstControlReusingPreviousRequestID(t *testing.T) {
+	p := start(t, testHost(t, nil), "normal")
+	a := bound(t, p)
+	fixtureFrame(t, p, map[string]any{"type": "fixture-provider-control"})
+	first := observeUntil(t, p, func(s Snapshot) bool { return len(s.Pending) == 1 })
+	if err := p.Respond(context.Background(), a, first.Pending[0], Response{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" && len(eventsOf(p, "provider-turn-ended")) == 1 })
+	fixtureFrame(t, p, map[string]any{"type": "fixture-provider-control"})
+	second := observeUntil(t, p, func(s Snapshot) bool { return len(eventsOf(p, "provider-turn-started")) == 2 })
+	if len(second.Pending) != 1 || second.Pending[0].ID != first.Pending[0].ID || second.Turn == first.Turn || second.Pending[0].Turn != second.Turn {
+		t.Fatalf("reused request ID dropped from the next provider turn: first=%+v second=%+v", first, second)
+	}
+	if pending := eventsOf(p, "control-pending"); len(pending) != 2 {
+		t.Fatalf("control-pending events: %+v", pending)
+	}
+	if err := p.Respond(context.Background(), a, first.Pending[0], Response{Allow: true}); err != ErrStale {
+		t.Fatalf("previous turn's answer token admitted: %v", err)
+	}
+	if err := p.Respond(context.Background(), a, second.Pending[0], Response{Allow: true}); err != nil {
+		t.Fatal(err)
+	}
+	observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" && len(eventsOf(p, "provider-turn-ended")) == 2 })
+}
+
 // Operator input into a visibly open host turn is written and accepted as
 // joined; the CLI folds it in and the turn still ends with one result.
 func TestClaudeOperatorInputJoinsRunningTurnPreservesActiveOwnership(t *testing.T) {

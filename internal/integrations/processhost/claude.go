@@ -576,10 +576,13 @@ func (p *Handle) consume(raw []byte) error {
 		if frame.Request.Subtype != "can_use_tool" || frame.Request.Tool == "" {
 			return errors.New("unsupported control request")
 		}
+		// A control request that opens a provider turn starts a new request ID
+		// scope, so open the turn before the duplicate check: an ID reused from
+		// the previous turn is a new request, not a replay.
+		p.providerTurnFrameLocked()
 		if p.usedRequests[frame.RequestID] {
 			return nil
 		}
-		p.providerTurnFrameLocked()
 		if len(p.requests) >= p.host.limits.Requests || len(p.usedRequests) >= p.host.limits.Events || p.activeCriticalLocked() >= p.host.limits.Events {
 			return errors.New("control request capacity exceeded")
 		}

@@ -34,6 +34,12 @@ const agentMessageReleaseRoute = "agent-message-release"
 // unlocks, so a waiter that gives up cannot strand a record held before that.
 const agentMessageReleaseLockWait = 30 * time.Second
 
+// agentMessageDispatchLockWait bounds how long one send queues behind another
+// send's dispatch to the same target. One dispatch is bounded by the local IPC
+// deadline of its provider submit, so a wait this long only ends on a stuck
+// holder.
+const agentMessageDispatchLockWait = 30 * time.Second
+
 // agentMessageReleaseRetryWindow bounds how long one release keeps its lock
 // re-judging a record it cannot judge yet or watching a target that awaits its
 // operator, so a helper that stays busy or a dialog that stays open cannot hold
@@ -78,6 +84,10 @@ type agentMessageHeldLister interface {
 
 type agentMessageReleaseLocker interface {
 	LockTargetRelease(string, time.Duration) (func(), error)
+}
+
+type agentMessageDispatchLocker interface {
+	LockTargetDispatch(string, time.Duration) (func(), error)
 }
 
 // heldMessageRelease launches the detached release for an Agent that has at
@@ -159,12 +169,22 @@ func (c *agentCommand) heldRelease() heldMessageRelease {
 
 // deliverOrHoldCoordination is the send's delivery step. A Claude target that
 // awaits its operator, or that already has held messages this one must not
-// overtake, keeps the message held instead of calling its helper.
+// overtake, keeps the message held instead of calling its helper. The whole
+// step runs under the target's dispatch lock: a busy helper answers held before
+// the send records the hold, and a later send that read the held records in
+// that gap would overtake this one once the turn ends.
 func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, target coremetadata.Agent,
 	targetRoute coremetadata.AgentRouteRef, envelope coremessage.Envelope,
 ) (messagestore.Record, error) {
 	if target.Spec.Provider != string(aiprovider.Claude) {
 		return c.pushCoordination(record, target, targetRoute, envelope)
+	}
+	if locker, ok := c.messageStore.(agentMessageDispatchLocker); ok {
+		unlock, err := locker.LockTargetDispatch(target.Metadata.UID, agentMessageDispatchLockWait)
+		if err != nil {
+			return record, fmt.Errorf("keep send order to the target: %w", err)
+		}
+		defer unlock()
 	}
 	blocked := claudeAgentAwaitsOperator(target, c.messageClock())
 	earlier, reason := c.earlierHeldFor(target.Metadata.UID, record.Envelope.MessageRef)

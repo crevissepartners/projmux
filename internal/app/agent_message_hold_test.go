@@ -1034,6 +1034,69 @@ func TestAgentMessageBusyClaudeHeldReleasePreservesOrder(t *testing.T) {
 	}
 }
 
+// busyGapAdapter runs afterBusy once, after the helper answered a busy target
+// held and before the sending command records that hold.
+type busyGapAdapter struct {
+	*holdClaudeAdapter
+	afterBusy func()
+}
+
+func (a *busyGapAdapter) Submit(ctx context.Context, path string, route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (agentdelivery.Delivery, error) {
+	delivery, err := a.holdClaudeAdapter.Submit(ctx, path, route, envelope)
+	if delivery.State == agentdelivery.StateHeld && a.afterBusy != nil {
+		afterBusy := a.afterBusy
+		a.afterBusy = nil
+		afterBusy()
+	}
+	return delivery, err
+}
+
+// A busy helper answers held before the send records the hold. A later send
+// started in that gap, after the turn ended, must not overtake the earlier
+// one: it waits for the earlier dispatch and is held behind it.
+func TestAgentMessageBusyHoldGapPreservesSendOrder(t *testing.T) {
+	f := newHoldFixture(t)
+	f.setInteraction(t, coremetadata.InteractionIdle)
+	f.installFakeSleep()
+	first, second := "message-gap-first", "message-gap-second"
+	f.adapter.busy = 1
+	secondDone := make(chan error, 1)
+	f.cmd.messageClaude = &busyGapAdapter{holdClaudeAdapter: f.adapter, afterBusy: func() {
+		// The turn has ended: the second send is not refused busy. Give it the
+		// chance to finish inside the gap before the first records its hold.
+		f.now = f.now.Add(time.Millisecond)
+		go func() {
+			_, err := f.send(t, second, false)
+			secondDone <- err
+		}()
+		select {
+		case err := <-secondDone:
+			secondDone <- err
+		case <-time.After(200 * time.Millisecond):
+		}
+	}}
+	if _, err := f.send(t, first, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	if a, b := f.delivery(t, first), f.delivery(t, second); a.State != coremessage.StateHeld || b.State != coremessage.StateHeld {
+		t.Fatalf("later send overtook the busy hold: first=%+v second=%+v submits=%v", a, b, f.adapter.submits)
+	}
+	if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{first, first, second}; !slices.Equal(f.adapter.submits, want) {
+		t.Fatalf("submits %v want %v", f.adapter.submits, want)
+	}
+	for _, ref := range []string{first, second} {
+		if got := f.delivery(t, ref); got.State != coremessage.StateDelivered {
+			t.Fatalf("%s: %+v", ref, got)
+		}
+	}
+}
+
 func TestClaudeBusyReceiptRejectsUnknownWrite(t *testing.T) {
 	response := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "held", Delivery: agentdelivery.Delivery{MessageRef: "message-busy", State: agentdelivery.StateHeld, Reason: claudeHoldReasonTurnActive}}
 	if _, ok := claudeResponseDelivery("message-busy", response); !ok {

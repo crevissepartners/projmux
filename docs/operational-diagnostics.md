@@ -350,8 +350,11 @@ and every `claude.registration.*` code.
 A Ready helper that refuses a push before its durable handoff, because one end
 of the envelope route can no longer be proved, writes one `component=agent`,
 `event=agent.message.claude-handoff-route` `error`/`error` record,
-`kind=runtime`. The sender's receipt keeps `broker-handoff-persist-failed`,
-the known zero-write reason every sender version reads; a new receipt reason
+`kind=runtime`. A process Claude target's helper proves the route before its
+busy reservation, which precedes the handoff, and writes the same record when
+that proof fails. The sender's receipt keeps `broker-handoff-persist-failed`
+(`provider-prewrite-refused` for that reservation proof), the known zero-write
+reason every sender version reads; a new receipt reason
 would read as an invalid helper response on an older sender and turn a known
 zero write into an outcome-unknown failure. The record carries only:
 
