@@ -248,6 +248,23 @@ actual Wait evidence, and explicitly resume with a new generation before sending
 the next turn. Before expiry, a proven handoff or definite prewrite refusal cancels the timer.
 Late helper outcomes cannot reopen an expired reservation; only an actual result
 can settle it on the same generation.
+
+A Claude turn holds zero or more host inputs and exactly one result. After the
+session is bound, a same-session `system/init`, turn frame, `control_request` or
+`result` with no admitted turn opens a provider turn (`provider-turn-started`,
+ID `provider-<connection>-<n>`) that the next result closes
+(`provider-turn-ended`, then `turn-result` and the `TurnCompleted` wake).
+Idle `system` notifications do not open a turn. Before binding these frames,
+and any frame on another session, remain protocol failures. `UserInput` writes
+operator input into a turn the provider has visibly opened and emits
+`input-joined`; pending controls (`ErrClaudeControlPending`), a pending
+handoff, an interrupt, a turn not yet opened, and more than
+`ClaudeJoinedInputs`/`ClaudeJoinedInputBytes` (`ErrClaudeJoinLimit`) refuse with
+zero writes. `Turn` keeps its one-turn admission. Inputs joined to a closed turn
+carry to the next provider turn, which records them as
+`joined-input-unattributed`: the stream does not echo user frames, so their
+result attribution is unknown and they are never rewritten. Peer reservations
+stay busy during any open turn.
 Stop resolves the owned process lifetime; it does not reopen the stopped generation. Existing tmux tests are
 unchanged. The processhost fixtures additionally check hook/init agreement.
 

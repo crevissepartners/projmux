@@ -536,6 +536,12 @@ func processTurnAcceptance(result processForegroundResult) error {
 	case result.Accepted:
 		return nil
 	case result.Busy:
+		switch result.BusyReason {
+		case processBusyJoinLimit:
+			return fmt.Errorf("%w: %s: the running turn already holds %d joined inputs or %d bytes; wait for its result", processhost.ErrBusy, processBusyJoinLimit, processhost.ClaudeJoinedInputs, processhost.ClaudeJoinedInputBytes)
+		case processBusyControlPending:
+			return fmt.Errorf("%w: %s: answer the pending permission or question first", processhost.ErrBusy, processBusyControlPending)
+		}
 		return processhost.ErrBusy
 	case result.Closed:
 		return processhost.ErrClosed
@@ -546,6 +552,13 @@ func processTurnAcceptance(result processForegroundResult) error {
 
 func (c *agentCommand) writeProcessTurn(stdout io.Writer, label string, agent coremetadata.Agent, operation string) error {
 	_, err := fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process\n", c.agentActionText(label), agent.Metadata.UID, operation)
+	return err
+}
+
+// writeJoinedProcessTurn appends the running turn an input joined; the
+// leading fields keep writeProcessTurn's format.
+func (c *agentCommand) writeJoinedProcessTurn(stdout io.Writer, label string, agent coremetadata.Agent, operation string, join processTurnJoin) error {
+	_, err := fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process delivery=joined running-turn=%s origin=%s\n", c.agentActionText(label), agent.Metadata.UID, operation, join.Turn, join.Origin)
 	return err
 }
 

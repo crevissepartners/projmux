@@ -735,3 +735,102 @@ func TestProcessCreatorMalformedFlagActualCLI(t *testing.T) {
 		}
 	}
 }
+
+// A turn Claude opens itself no longer kills the owned session: its
+// permission request stays answerable and operator input over it is busy with
+// a named reason. Operator input into a running host turn joins that turn.
+func TestProcessClaudeProviderTurnAndJoinedInputActualCLI(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	defer func() {
+		if t.Failed() {
+			raw, _ := os.ReadFile(f.trace)
+			t.Logf("wire=%s owner=%s", raw, stderr.String())
+		}
+	}()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := strings.Fields(line)[1]
+	uid := strings.TrimPrefix(ref, "uid:")
+	paths, _ := config.DefaultPathsFromEnv()
+	approvals := agentapproval.NewStore(paths.StateDir)
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+		t.Logf("CLI %v: %v %s", args, err, out)
+		return string(out), err
+	}
+	session := func() *coremetadata.ProcessSessionRecord {
+		reg, _ := f.store.LoadReadOnly()
+		agent, _ := reg.Agent(uid)
+		p, _ := reg.Pane(agent.Status.PaneRef)
+		return p.Status.ProcessSession
+	}
+	if _, err = run("agent", "turn", "start", ref, "--", "background"); err != nil {
+		t.Fatal(err)
+	}
+	processCLIUntil(t, ctx, func() bool {
+		records, _ := approvals.List(uid)
+		return len(records) == 1 && records[0].State == agentapproval.StateWaiting
+	})
+	processCLIUntil(t, ctx, func() bool {
+		s := session()
+		return s != nil && strings.HasPrefix(s.TurnID, "provider-") && len(s.Pending) == 1 && s.Pending[0].TurnID == s.TurnID
+	})
+	if out, err := run("agent", "turn", "start", ref, "--", "over-dialog"); err == nil || !strings.Contains(out, "control-pending") {
+		t.Fatalf("input over a provider permission: %v %s", err, out)
+	}
+	requests, _ := approvals.List(uid)
+	if _, err = run("agent", "approval", "answer", ref, requests[0].ID, "--allow"); err != nil {
+		t.Fatal(err)
+	}
+	processCLIUntil(t, ctx, func() bool { s := session(); return s != nil && s.TurnID == "" && len(s.Pending) == 0 })
+	out, err := run("agent", "turn", "start", ref, "--", "hold")
+	if err != nil || strings.Contains(out, "delivery=joined") {
+		t.Fatalf("idle input: %v %s", err, out)
+	}
+	held := strings.TrimPrefix(strings.Fields(out)[4], "turn=")
+	// Until Claude visibly opens the turn, input is a zero-write busy; then it joins.
+	joinedOut := ""
+	processCLIUntil(t, ctx, func() bool {
+		out, err := run("agent", "turn", "start", ref, "--", "joined-input")
+		if err != nil && !strings.Contains(out, "process admission capacity exhausted") {
+			t.Fatalf("join refused: %v %s", err, out)
+		}
+		joinedOut = out
+		return err == nil
+	})
+	if want := " runtime=process delivery=joined running-turn=" + held + " origin=host\n"; !strings.HasSuffix(joinedOut, want) {
+		t.Fatalf("joined output %q, want suffix %q", joinedOut, want)
+	}
+	processCLIUntil(t, ctx, func() bool { s := session(); return s != nil && s.TurnID == "" })
+	raw, _ := os.ReadFile(f.trace)
+	if got := bytes.Count(raw, []byte(`"joined-input"`)); got != 1 {
+		t.Fatalf("joined input written %d times", got)
+	}
+	_ = input.Close()
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("owner did not survive the provider turn: %v %s", err, stderr.String())
+	}
+}

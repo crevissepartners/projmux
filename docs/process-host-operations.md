@@ -46,9 +46,36 @@ question channel or central answering setting says, because there is no
 provider screen to answer them on. They appear in `projmux attention list` and
 as notifications until answered.
 
-An Agent runs one turn at a time. A turn start while another turn or message is
-still in progress is refused with `process admission capacity exhausted` and
-exit status 1; wait for the turn to finish, or interrupt it, then retry.
+A Codex Agent runs one turn at a time. A turn start while another turn or
+message is still in progress is refused with `process admission capacity
+exhausted` and exit status 1; wait for the turn to finish, or interrupt it,
+then retry.
+
+A Claude Agent follows the turns Claude itself reports. A turn opens with the
+first provider frame, such as `system/init`, and closes with its `result`.
+Claude also opens turns on its own once the conversation exists: a background
+task finishing, a message from another Claude Code session, or a scheduled
+wake-up. The host follows those turns instead of stopping the Agent. A
+permission or question inside one is answered the usual way, and peer
+messages sent during it are held until it ends.
+
+`agent turn start` while a Claude turn is running joins that turn. The text is
+written to Claude, which reads it at its next tool boundary and answers within
+the same turn, as typing into the terminal would. The result line adds
+`delivery=joined running-turn=<turn> origin=<host|message|provider>`; `turn=`
+still names your input's operation. A joined input is refused, with nothing
+written and exit status 1, when:
+
+| Reason | When |
+| --- | --- |
+| `control-pending` | A permission or question in the running turn is unanswered; answer it first |
+| `joined-input-limit` | The running turn already holds 8 joined inputs or 262144 bytes of them |
+| plain `process admission capacity exhausted` | Claude has not yet visibly started the turn, a peer message handoff is pending, or an interrupt is in flight |
+
+If a joined input reaches Claude just as its turn ends, Claude may answer it in
+a turn of its own. The stream cannot tell that turn from one Claude started for
+another reason, so the host records the input as written with its result
+attribution unknown. It is never sent again.
 
 Terminal operations have no meaning for a process Pane and are refused before
 anything changes, with a stable token as the error prefix:

@@ -87,8 +87,11 @@ request_count=0
 for line in sys.stdin:
  frame=json.loads(line)
  if frame['type']=='user':
-  emit({'type':'system','subtype':'init','session_id':'process-session'})
   prompt=frame['message']['content']
+  # Input written into a running turn joins it: no second init, one result.
+  if prompt.startswith('joined'):
+   emit({'type':'assistant','session_id':'process-session','joined_echo':prompt});emit({'type':'result','subtype':'success','session_id':'process-session'});continue
+  emit({'type':'system','subtype':'init','session_id':'process-session'})
   if prompt in ('question','permission'):
    inp={'questions':[{'question':'Color?','header':'Color','options':[{'label':'blue','description':'Blue'},{'label':'red','description':'Red'}],'multiSelect':False}]} if prompt=='question' else {'command':'printf fixture'}
    tool='AskUserQuestion' if prompt=='question' else 'Bash'
@@ -102,6 +105,17 @@ for line in sys.stdin:
   elif prompt=='register-again':
    hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'});emit({'type':'result','subtype':'success','session_id':'process-session'})
   elif prompt=='interrupt':emit({'type':'assistant','session_id':'process-session','content':'waiting'})
+  elif prompt=='hold':emit({'type':'assistant','session_id':'process-session','content':'holding'})
+  elif prompt=='background':
+   # The turn ends, then Claude opens one itself (measured background task
+   # completion) and asks for a permission inside it.
+   emit({'type':'result','subtype':'success','session_id':'process-session'})
+   emit({'type':'system','subtype':'task_notification','session_id':'process-session','task_id':'bg'})
+   # Key order keeps this init out of the host-turn init rewrites other tests apply.
+   emit({'session_id':'process-session','type':'system','subtype':'init'})
+   inp={'command':'printf provider'}
+   hook('claude-permission-hook',{'hook_event_name':'PermissionRequest','session_id':'process-session','tool_name':'Bash','tool_input':inp,'tool_use_id':'provider-tool'})
+   emit({'type':'control_request','request_id':'provider-1','request':{'subtype':'can_use_tool','tool_name':'Bash','input':inp}})
   else:emit({'type':'result','subtype':'success','session_id':'process-session'})
  elif frame['type']=='control_response':
   emit({'type':'assistant','session_id':'process-session','wire_echo':frame})

@@ -596,6 +596,8 @@ func TestProcessAttentionEventStateMachine(t *testing.T) {
 		terminal    bool
 	}{
 		{event: processhost.Event{Kind: "turn-submitted"}, badge: aibadge.InProgress},
+		{event: processhost.Event{Kind: "provider-turn-started"}, badge: aibadge.InProgress},
+		{event: processhost.Event{Kind: "input-joined"}},
 		{event: processhost.Event{Kind: "control-pending", Request: &processhost.Request{ID: "q", Kind: "question"}}, kind: aibadge.InputRequired},
 		{event: processhost.Event{Kind: "control-pending", Request: &processhost.Request{ID: "a", Kind: "permission"}}, kind: aibadge.ApprovalRequired},
 		{event: processhost.Event{Kind: "turn-result", Raw: []byte(`{"subtype":"success"}`)}, kind: aibadge.ResponseComplete, badge: aibadge.ResponseComplete},

@@ -238,9 +238,15 @@ func (c *agentCommand) startProcessClaudeTurn(reg coremetadata.Registry, agent c
 	if agent.Spec.Provider != aiModeClaude || !found || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
 		return false, nil
 	}
-	operation, err := c.callProcessTurn(reg, agent, aiModeClaude, "turn", text)
+	operation, result, err := c.callProcessForegroundAction(reg, agent, aiModeClaude, "turn", text)
 	if err != nil {
 		return true, err
+	}
+	if err = processTurnAcceptance(result); err != nil {
+		return true, err
+	}
+	if result.Join != nil {
+		return true, c.writeJoinedProcessTurn(stdout, agentActionSendTurn, agent, operation, *result.Join)
 	}
 	return true, c.writeProcessTurn(stdout, agentActionSendTurn, agent, operation)
 }
