@@ -193,7 +193,7 @@ func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) err
 }
 
 // ErrClaudeTurnActive proves reservation refused before any provider write.
-var ErrClaudeTurnActive = fmt.Errorf("Claude turn active: %w", ErrBusy)
+var ErrClaudeTurnActive = fmt.Errorf("claude turn active: %w", ErrBusy)
 
 // ReserveClaudeMessage admits endpoint input under the same mutex as Turn.
 // Only the host's verified helper boundary may call it. No provider write is
