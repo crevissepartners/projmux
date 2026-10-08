@@ -67,18 +67,37 @@ type processTurnJoin struct {
 	Turn, Origin string
 }
 
-// Bounded Claude refusals that keep Busy and add an operator-visible reason.
+// Named Claude refusals that keep Busy and add an operator-visible reason.
 const (
-	processBusyJoinLimit      = "joined-input-limit"
-	processBusyControlPending = "control-pending"
+	processBusyJoinLimit        = "joined-input-limit"
+	processBusyControlPending   = "control-pending"
+	processBusyJoinUnsupported  = "join-unsupported"
+	processBusyTurnNotOpen      = "turn-not-open"
+	processBusyMessageHandoff   = "message-handoff-pending"
+	processBusyHandoffExpired   = "message-handoff-expired"
+	processBusyInterruptPending = "interrupt-pending"
+	processBusyEventLimit       = "event-limit"
 )
 
+var processBusyReasons = []struct {
+	err    error
+	reason string
+}{
+	{processhost.ErrClaudeJoinLimit, processBusyJoinLimit},
+	{processhost.ErrClaudeControlPending, processBusyControlPending},
+	{processhost.ErrClaudeJoinUnsupported, processBusyJoinUnsupported},
+	{processhost.ErrClaudeTurnNotOpen, processBusyTurnNotOpen},
+	{processhost.ErrClaudeMessageHandoff, processBusyMessageHandoff},
+	{processhost.ErrClaudeMessageHandoffExpired, processBusyHandoffExpired},
+	{processhost.ErrClaudeInterruptPending, processBusyInterruptPending},
+	{processhost.ErrClaudeEventLimit, processBusyEventLimit},
+}
+
 func processBusyReason(err error) string {
-	switch {
-	case errors.Is(err, processhost.ErrClaudeJoinLimit):
-		return processBusyJoinLimit
-	case errors.Is(err, processhost.ErrClaudeControlPending):
-		return processBusyControlPending
+	for _, known := range processBusyReasons {
+		if errors.Is(err, known.err) {
+			return known.reason
+		}
 	}
 	return ""
 }

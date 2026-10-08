@@ -174,6 +174,24 @@ var (
 	// ErrClaudeControlPending refuses input over an unanswered permission or
 	// question with zero writes; answers keep their own exact token.
 	ErrClaudeControlPending = fmt.Errorf("claude turn awaits a permission or question answer: %w", ErrBusy)
+	// ErrClaudeJoinUnsupported refuses Turn while a turn runs: Turn opens a
+	// turn and never joins one; UserInput is the joining path.
+	ErrClaudeJoinUnsupported = fmt.Errorf("claude turn running and this input path cannot join it: %w", ErrBusy)
+	// ErrClaudeTurnNotOpen refuses input into an admitted turn Claude has not
+	// yet visibly opened on the bound session.
+	ErrClaudeTurnNotOpen = fmt.Errorf("claude turn admitted but not yet open: %w", ErrBusy)
+	// ErrClaudeMessageHandoff refuses input into a peer message turn whose
+	// handoff outcome is pending and whose turn Claude has not visibly opened.
+	ErrClaudeMessageHandoff = fmt.Errorf("claude turn awaits a peer message handoff: %w", ErrBusy)
+	// ErrClaudeMessageHandoffExpired refuses input into a peer message turn
+	// whose handoff outcome never arrived and that Claude never visibly
+	// opened; admission stays fenced until a result or exit.
+	ErrClaudeMessageHandoffExpired = fmt.Errorf("claude turn holds an expired peer message handoff: %w", ErrBusy)
+	// ErrClaudeInterruptPending refuses input into a turn being interrupted.
+	ErrClaudeInterruptPending = fmt.Errorf("claude turn is being interrupted: %w", ErrBusy)
+	// ErrClaudeEventLimit refuses input while the running turn holds the
+	// host's critical event limit.
+	ErrClaudeEventLimit = fmt.Errorf("claude turn holds its critical event limit: %w", ErrBusy)
 )
 
 // Turn origins. A provider turn is one Claude opened itself after the session
@@ -203,8 +221,10 @@ func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) err
 // UserInput submits one operator input. Without an open turn it opens one like
 // Turn. While a turn Claude has visibly opened is running, the input is written
 // into that turn and accepted as joined: the CLI folds it in at its next tool
-// boundary. Pending controls, a pending handoff or interrupt, and the joined
-// limit refuse with zero writes.
+// boundary. That includes a peer message turn whose handoff outcome is late or
+// missing: Claude's own frames prove the turn runs. Pending controls, an
+// interrupt and the joined limit refuse with zero writes. Every refusal wraps
+// ErrBusy with a named reason.
 func (p *Handle) UserInput(ctx context.Context, a Authority, operation, prompt string) (TurnAdmission, error) {
 	return p.submitUserInput(ctx, a, operation, prompt, true)
 }
@@ -219,12 +239,12 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 		return TurnAdmission{}, ErrStale
 	}
 	if p.activeCriticalLocked() >= p.host.limits.Events {
-		return TurnAdmission{}, ErrBusy
+		return TurnAdmission{}, ErrClaudeEventLimit
 	}
 	frame := map[string]any{"type": "user", "session_id": p.session, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": prompt}}
 	if p.turn != "" {
-		if !join || !p.turnOpen || p.session == "" || p.messageReservation != "" || p.interrupt != "" {
-			return TurnAdmission{}, ErrBusy
+		if err := p.joinRefusalLocked(join); err != nil {
+			return TurnAdmission{}, err
 		}
 		if len(p.requests) > 0 {
 			return TurnAdmission{}, ErrClaudeControlPending
@@ -263,6 +283,29 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 	}
 	p.emitLocked("turn-submitted", nil, nil)
 	return TurnAdmission{Turn: operation, Origin: TurnOriginHost}, nil
+}
+
+// joinRefusalLocked names why input cannot join the running turn. A message
+// turn's reservation fences joins only until Claude visibly opens the turn;
+// the reservation itself still fences peer admission until a result.
+func (p *Handle) joinRefusalLocked(join bool) error {
+	if !join {
+		return ErrClaudeJoinUnsupported
+	}
+	if !p.turnOpen || p.session == "" {
+		switch p.messageReservation {
+		case "":
+			return ErrClaudeTurnNotOpen
+		case "expired":
+			return ErrClaudeMessageHandoffExpired
+		default:
+			return ErrClaudeMessageHandoff
+		}
+	}
+	if p.interrupt != "" {
+		return ErrClaudeInterruptPending
+	}
+	return nil
 }
 
 // beginTurnLocked owns admission for a turn that the provider has not yet
@@ -339,7 +382,7 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 		return ErrClaudeTurnActive
 	}
 	if p.activeCriticalLocked() >= p.host.limits.Events {
-		return ErrBusy
+		return ErrClaudeEventLimit
 	}
 	p.beginTurnLocked(turn, TurnOriginMessage)
 	p.carriedJoined = nil
@@ -352,7 +395,8 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 
 // FinishClaudeMessage records a proven write outcome, never provider completion.
 // A definite zero-write releases the reservation but keeps the operation ID
-// consumed. Uncertain delivery expires visibly but keeps turn admission fenced
+// consumed; a turn Claude has visibly opened stays admitted as a provider turn
+// until its actual result. Uncertain delivery expires visibly but keeps turn admission fenced
 // until an actual result or exit; expiry never infers provider completion.
 func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn string, written, uncertain bool) error {
 	p.mu.Lock()
@@ -385,8 +429,17 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 	} else {
 		p.emitLocked("message-prewrite-refused", nil, nil)
 		if p.messageReservation != "expired" {
-			p.endTurnLocked()
 			p.clearMessageReservationLocked()
+			if p.turnOpen {
+				// Claude's frames opened a turn the peer message never entered:
+				// it is Claude's own. Keep it, with its joined inputs, pending
+				// controls and interrupt, until its actual result.
+				p.turnOrigin = TurnOriginProvider
+				raw, _ := json.Marshal(map[string]any{"attribution": "provider", "refusedMessage": turn})
+				p.emitLocked("provider-turn-started", raw, nil)
+			} else {
+				p.endTurnLocked()
+			}
 		}
 	}
 	return nil

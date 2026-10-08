@@ -236,7 +236,9 @@ message receipts with one provider write per message. Endpoint inputs reserve a
 MessageRef turn through the exact registered helper's kernel identity before the
 native post. Host stdin turns and endpoint reservations share one admission
 mutex; busy and duplicate inputs write nothing. Definite prewrite failure releases
-the reservation. Uncertain delivery appears as `awaiting-message-handoff` in the
+the reservation; if Claude has already visibly opened the turn, the turn becomes a
+provider turn (`provider-turn-started` with `refusedMessage`) that keeps its joined
+inputs, controls and admission until its actual result. Uncertain delivery appears as `awaiting-message-handoff` in the
 internal snapshot. The internal `Limits.MessageReservation` defaults to 30 seconds
 and bounds that handoff wait, including a helper that never reports an outcome.
 At expiry the snapshot reports `MessageReservation = "expired"` and the host emits
@@ -262,10 +264,16 @@ protocol failure. A permission request that opens a provider turn starts that
 turn's request ID scope, so an ID reused from the previous turn is a new
 request, not a duplicate. `UserInput` writes
 operator input into a turn the provider has visibly opened and emits
-`input-joined`; pending controls (`ErrClaudeControlPending`), a pending
-handoff, an interrupt, a turn not yet opened, and more than
-`ClaudeJoinedInputs`/`ClaudeJoinedInputBytes` (`ErrClaudeJoinLimit`) refuse with
-zero writes. `Turn` keeps its one-turn admission. Inputs joined to a closed turn
+`input-joined`, including a peer message turn whose handoff outcome is pending
+or expired. Every refusal writes nothing and wraps `ErrBusy` with a named
+reason: pending controls (`ErrClaudeControlPending`), a turn not yet opened
+(`ErrClaudeTurnNotOpen`, or `ErrClaudeMessageHandoff` and
+`ErrClaudeMessageHandoffExpired` for a message turn), an interrupt
+(`ErrClaudeInterruptPending`), the turn's critical event limit
+(`ErrClaudeEventLimit`) and more than
+`ClaudeJoinedInputs`/`ClaudeJoinedInputBytes` (`ErrClaudeJoinLimit`). `Turn`
+keeps its one-turn admission and refuses a running turn with
+`ErrClaudeJoinUnsupported`. Inputs joined to a closed turn
 carry to the next provider turn, which records them as
 `joined-input-unattributed`: the stream does not echo user frames, so their
 result attribution is unknown and they are never rewritten. Peer reservations

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -101,7 +102,7 @@ func TestProcessTurnAcceptanceMapsHostResult(t *testing.T) {
 	}
 }
 
-// Bounded Claude refusals keep Busy and name their limit; a joined acceptance
+// Named Claude refusals keep Busy and name their reason; a joined acceptance
 // adds a field without changing Accepted or the Codex delivery receipt.
 func TestProcessTurnAcceptanceNamesBoundedClaudeRefusals(t *testing.T) {
 	for _, test := range []struct {
@@ -111,6 +112,13 @@ func TestProcessTurnAcceptanceNamesBoundedClaudeRefusals(t *testing.T) {
 	}{
 		{processhost.ErrClaudeJoinLimit, processBusyJoinLimit, []string{"joined-input-limit", "8 joined inputs", "262144 bytes"}},
 		{processhost.ErrClaudeControlPending, processBusyControlPending, []string{"control-pending", "pending permission or question"}},
+		{processhost.ErrClaudeJoinUnsupported, processBusyJoinUnsupported, []string{"join-unsupported", "cannot join"}},
+		{processhost.ErrClaudeTurnNotOpen, processBusyTurnNotOpen, []string{"turn-not-open", "has not started yet"}},
+		{processhost.ErrClaudeMessageHandoff, processBusyMessageHandoff, []string{"message-handoff-pending", "peer message is being handed"}},
+		{processhost.ErrClaudeMessageHandoffExpired, processBusyHandoffExpired, []string{"message-handoff-expired", "never reported its outcome"}},
+		{processhost.ErrClaudeInterruptPending, processBusyInterruptPending, []string{"interrupt-pending", "being interrupted"}},
+		{processhost.ErrClaudeEventLimit, processBusyEventLimit, []string{"event-limit", "event limit"}},
+		{fmt.Errorf("wrapped: %w", processhost.ErrClaudeTurnNotOpen), processBusyTurnNotOpen, []string{"turn-not-open"}},
 		{processhost.ErrBusy, "", []string{"process admission capacity exhausted"}},
 	} {
 		if got := processBusyReason(test.err); got != test.reason {

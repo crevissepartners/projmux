@@ -536,13 +536,28 @@ func processTurnAcceptance(result processForegroundResult) error {
 	case result.Accepted:
 		return nil
 	case result.Busy:
+		var advice string
 		switch result.BusyReason {
 		case processBusyJoinLimit:
-			return fmt.Errorf("%w: %s: the running turn already holds %d joined inputs or %d bytes; wait for its result", processhost.ErrBusy, processBusyJoinLimit, processhost.ClaudeJoinedInputs, processhost.ClaudeJoinedInputBytes)
+			advice = fmt.Sprintf("the running turn already holds %d joined inputs or %d bytes; wait for its result", processhost.ClaudeJoinedInputs, processhost.ClaudeJoinedInputBytes)
 		case processBusyControlPending:
-			return fmt.Errorf("%w: %s: answer the pending permission or question first", processhost.ErrBusy, processBusyControlPending)
+			advice = "answer the pending permission or question first"
+		case processBusyJoinUnsupported:
+			advice = "a turn is running and this input path cannot join it; wait for its result"
+		case processBusyTurnNotOpen:
+			advice = "the admitted turn has not started yet; retry shortly"
+		case processBusyMessageHandoff:
+			advice = "a peer message is being handed to the agent; retry shortly"
+		case processBusyHandoffExpired:
+			advice = "a peer message handoff never reported its outcome; input waits for the turn's result or the agent's exit"
+		case processBusyInterruptPending:
+			advice = "the running turn is being interrupted; wait for its result"
+		case processBusyEventLimit:
+			advice = "the running turn holds its event limit; wait for its result"
+		default:
+			return processhost.ErrBusy
 		}
-		return processhost.ErrBusy
+		return fmt.Errorf("%w: %s: %s", processhost.ErrBusy, result.BusyReason, advice)
 	case result.Closed:
 		return processhost.ErrClosed
 	default:

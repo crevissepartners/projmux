@@ -52,7 +52,7 @@ func TestInstalledClaudeMessageReservationExpiry(t *testing.T) {
 	if s.Exit != nil || s.Turn != "native-uncertain" || hasEvent(p, "process-exited") {
 		t.Fatal("expiry invented result/exit", s)
 	}
-	if err := p.Turn(context.Background(), a, "blocked", "offline next input"); err != ErrBusy {
+	if err := p.Turn(context.Background(), a, "blocked", "offline next input"); err != ErrClaudeJoinUnsupported {
 		t.Fatal("expired generation reopened", err)
 	}
 	stopResume(t, p)

@@ -67,7 +67,7 @@ func TestClaudeMessageReservationReleaseAndUncertainty(t *testing.T) {
 			if s.MessageReservation != "awaiting-message-handoff" || s.Turn != "message-1" {
 				t.Fatal(s)
 			}
-			if err := p.Turn(context.Background(), a, "busy", "ordinary"); err != ErrBusy {
+			if err := p.Turn(context.Background(), a, "busy", "ordinary"); err != ErrClaudeJoinUnsupported {
 				t.Fatal("busy admitted", err)
 			}
 			if err := p.ReserveClaudeMessage(context.Background(), a, "message-1"); err != ErrStale {
@@ -86,7 +86,7 @@ func TestClaudeMessageReservationReleaseAndUncertainty(t *testing.T) {
 				if s.Turn != "message-1" || s.MessageReservation != "awaiting-message-handoff" || s.Exit != nil {
 					t.Fatal("idle ack inferred cancellation", s)
 				}
-				if err := p.Turn(context.Background(), a, "blocked-after-idle-ack", "ordinary"); err != ErrBusy {
+				if err := p.Turn(context.Background(), a, "blocked-after-idle-ack", "ordinary"); err != ErrClaudeJoinUnsupported {
 					t.Fatal("idle ack admitted next turn", err)
 				}
 			}
