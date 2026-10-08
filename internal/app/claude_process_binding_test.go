@@ -660,11 +660,13 @@ func (a *heldListerAlias) HeldFor(agentUID string) ([]messagestore.Record, error
 // delivers the held record with no resend. A result with nothing held launches
 // nothing.
 func TestClaudeProcessTurnResultRestartsAnEndedHeldRelease(t *testing.T) {
+	// The process fixture comes first: it shortens TMPDIR for its sockets, and
+	// the test's temporary root is fixed by the first TempDir call.
+	process := newProcessClaudeFixture(t, nil)
+	process.proof(t)
 	hold := newHoldFixture(t)
 	hold.setInteraction(t, coremetadata.InteractionIdle)
 	hold.installFakeSleep()
-	process := newProcessClaudeFixture(t, nil)
-	process.proof(t)
 	alias := &heldListerAlias{store: hold.store, from: process.binding.Agent, to: hold.claudeUID, listed: make(chan int, 16)}
 	launched := make(chan string, 16)
 	previous := processClaudeHeldRelease
