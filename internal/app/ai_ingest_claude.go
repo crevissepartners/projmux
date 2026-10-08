@@ -8,29 +8,33 @@ import (
 	"os"
 	"strings"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
 const claudeTranscriptTailLimit = 256 * 1024
 
 type claudeHookPayload struct {
-	EventName        string
-	SessionID        string
-	CWD              string
-	TranscriptPath   string
-	NotificationType string
-	Message          string
-	Prompt           string
-	ToolName         string
-	ToolUseID        string
-	ToolInput        map[string]any
-	ErrorType        string
-	ErrorMessage     string
-	SubagentType     string
-	SubagentID       string
-	TeammateName     string
-	TeammateID       string
-	TeammateContext  string
+	AgentID                 string
+	AgentType               string
+	BackgroundTasksInFlight *int
+	EventName               string
+	SessionID               string
+	CWD                     string
+	TranscriptPath          string
+	NotificationType        string
+	Message                 string
+	Prompt                  string
+	ToolName                string
+	ToolUseID               string
+	ToolInput               map[string]any
+	ErrorType               string
+	ErrorMessage            string
+	SubagentType            string
+	SubagentID              string
+	TeammateName            string
+	TeammateID              string
+	TeammateContext         string
 }
 
 func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
@@ -47,7 +51,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		SessionID:    payload.SessionID,
 	})
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, SessionID: payload.SessionID})
+		c.appendAIIngestLog(claudeHookLogEntry("", payload, "ignored", aiIngestRecordReason(matchReason)))
 		return nil
 	}
 	defer c.flushPendingAgentSessionRef(paneID)
@@ -71,17 +75,26 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "PermissionRequest":
 		return c.ingestClaudePermissionRequest(paneID, payload, metadata, action)
 	case "Stop":
-		return c.ingestClaudeStop(paneID, payload, metadata, action)
+		return c.ingestClaudeStop(paneID, payload, metadata, action, binding, owned)
 	case "StopFailure":
 		return c.ingestClaudeStopFailure(paneID, payload, metadata, action)
 	case "SubagentStop":
+		if action.Action == aiHookActionQuiet && c.claudeBackgroundFallback(payload, action, binding, owned) {
+			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
+		}
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
 	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
 		if payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure" {
 			c.closeClaudePermissionAnsweredInTerminal(data, payload)
 		}
 		return c.ingestClaudeOperatorDialogClosed(paneID, payload, metadata, action, binding, owned)
-	case "PreToolUse", "PostToolBatch", "UserPromptExpansion", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
+	case "PreToolUse", "PostToolBatch", "SubagentStart":
+		if c.claudeBackgroundFallback(payload, action, binding, owned) {
+			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
+		}
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
+		return nil
+	case "UserPromptExpansion", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	case "TeammateIdle":
@@ -112,12 +125,16 @@ func (c *aiCommand) ingestClaudeUserPromptSubmit(paneID string, payload claudeHo
 // answer: a tool ran or failed after its permission dialog, a permission was
 // denied, or an MCP elicitation returned. Only an Agent still recorded as
 // awaiting its operator moves to in_progress, state only; every other Agent
-// stays quiet and writes nothing. PostToolUse fires on every tool call, so the
+// stays quiet unless current subagent activity repairs a completed projection.
+// PostToolUse fires on every tool call, so the
 // judgment reads only the binding the hook marking already loaded.
 func (c *aiCommand) ingestClaudeOperatorDialogClosed(paneID string, payload claudeHookPayload, metadata map[string]string,
 	action aiHookActionResolution, binding managedAgentBinding, owned bool,
 ) error {
 	if !owned || binding.agent.Spec.Provider != aiModeClaude || !claudeAgentAwaitsOperator(binding.agent, c.sessionRefClock()()) {
+		if (payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure") && c.claudeBackgroundFallback(payload, action, binding, owned) {
+			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
+		}
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	}
@@ -164,10 +181,17 @@ func (c *aiCommand) ingestClaudePermissionRequest(paneID string, payload claudeH
 	})
 }
 
-func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
+func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution, binding managedAgentBinding, owned bool) error {
 	if action.Action == aiHookActionQuiet {
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
+	}
+	if payload.BackgroundTasksInFlight != nil && *payload.BackgroundTasksInFlight > 0 {
+		if owned && claudeAgentAwaitsOperator(binding.agent, c.sessionRefClock()()) {
+			c.quietClaudeHook(paneID, payload, "")
+			return nil
+		}
+		return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
 	}
 	message := readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
 	body := formatClaudeStopNotifyBody(message)
@@ -179,6 +203,52 @@ func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, m
 		Force:     true,
 		BadgeKind: aiBadgeKindResponseComplete,
 	})
+}
+
+// A subagent hook can repair an older Stop's completed projection only on
+// the exact owned Claude conversation. Explicit quiet overrides win; an
+// ordinary main-thread hook and an Agent awaiting its operator stay unchanged.
+func (c *aiCommand) claudeBackgroundFallback(payload claudeHookPayload, action aiHookActionResolution, binding managedAgentBinding, owned bool) bool {
+	return payload.AgentID != "" && owned && binding.agent.Spec.Provider == aiModeClaude &&
+		payload.SessionID != "" && binding.agent.Status.SessionRef.ConversationID() == payload.SessionID &&
+		binding.agent.Status.Interaction.Kind == coremetadata.InteractionResponseComplete &&
+		!claudeAgentAwaitsOperator(binding.agent, c.sessionRefClock()()) &&
+		!(action.Action == aiHookActionQuiet && action.Source == aiHookActionSourceRuntime)
+}
+
+var errClaudeBackgroundProgressRejected = errors.New("claude background progress conditions changed")
+
+func (c *aiCommand) ingestClaudeBackgroundProgress(paneID string, payload claudeHookPayload, metadata map[string]string, binding managedAgentBinding, owned bool) error {
+	var guard func(*coremetadata.Registry, managedAgentBinding) error
+	if owned {
+		guard = func(working *coremetadata.Registry, commitBinding managedAgentBinding) error {
+			current, ok := working.Agent(binding.agent.Metadata.UID)
+			pane, paneOK := working.Pane(binding.paneUID)
+			if commitBinding.agent.Metadata.UID != binding.agent.Metadata.UID || commitBinding.paneUID != binding.paneUID ||
+				commitBinding.runtimeID != binding.runtimeID || !ok || !paneOK || current.Spec.Provider != aiModeClaude ||
+				current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != binding.paneUID ||
+				pane.Status.Activation.AgentUID != binding.agent.Metadata.UID ||
+				pane.Status.Activation.RuntimeID != paneID || pane.Status.Activation.Generation != binding.generation ||
+				current.Status.SessionRef.ConversationID() != binding.agent.Status.SessionRef.ConversationID() ||
+				agentInteractionAwaitsOperator(current.Status.Interaction.Kind) ||
+				(payload.EventName != "Stop" && current.Status.Interaction.Kind != coremetadata.InteractionResponseComplete) {
+				return errClaudeBackgroundProgressRejected
+			}
+			return nil
+		}
+	}
+	if err := c.applyAIStatusInternalWithActivationPolicy("thinking", paneID, attentionNotifyInput{
+		Metadata: metadata, BadgeKind: aiBadgeKindInProgress,
+	}, false, false, string(coremetadata.InteractionSourceProviderHook), true, true, guard); err != nil {
+		if errors.Is(err, errClaudeBackgroundProgressRejected) {
+			c.quietClaudeHook(paneID, payload, "")
+			return nil
+		}
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
+		return err
+	}
+	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", ""))
+	return nil
 }
 
 func (c *aiCommand) ingestClaudeStopFailure(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
@@ -266,7 +336,7 @@ func (c *aiCommand) emitClaudeHookStatus(paneID string, payload claudeHookPayloa
 }
 
 func claudeHookLogEntry(paneID string, payload claudeHookPayload, result string, reason aiIngestReason) aiIngestLogEntry {
-	return aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID}
+	return claudeHookDiagnosticFields(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID}, payload)
 }
 
 // quietClaudeHook only records the quiet outcome. Every caller is reached from
@@ -275,12 +345,33 @@ func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, re
 	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", reason))
 }
 
+// Retain only the count. Unknown or malformed task data is compatibility
+// input, not a reason to reject the hook or leave a session permanently busy.
+func claudeBackgroundTasksInFlight(value any) int {
+	tasks, _ := value.([]any)
+	count := 0
+	for _, item := range tasks {
+		task, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := task["type"].(string)
+		status, _ := task["status"].(string)
+		if (kind == "subagent" || kind == "workflow") && (status == "running" || status == "pending") {
+			count++
+		}
+	}
+	return count
+}
+
 func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return claudeHookPayload{}, fmt.Errorf("parse claude hook payload: %w", err)
 	}
 	payload := claudeHookPayload{
+		AgentID:          firstString(raw, "agent_id"),
+		AgentType:        firstString(raw, "agent_type"),
 		EventName:        firstString(raw, "hook_event_name", "event_name"),
 		SessionID:        firstString(raw, "session_id", "session-id"),
 		CWD:              firstString(raw, "cwd", "workspace", "project_dir"),
@@ -297,6 +388,10 @@ func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
 		TeammateName:     firstString(raw, "teammate_name", "teammateName", "teammate"),
 		TeammateID:       firstString(raw, "teammate_id", "teammateId"),
 		TeammateContext:  firstString(raw, "teammate_context", "teammateContext", "context", "reason", "message"),
+	}
+	if tasks, present := raw["background_tasks"]; present {
+		count := claudeBackgroundTasksInFlight(tasks)
+		payload.BackgroundTasksInFlight = &count
 	}
 	if payload.CWD == "" {
 		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")

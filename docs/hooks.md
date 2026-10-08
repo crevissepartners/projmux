@@ -542,7 +542,7 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `UserPromptSubmit` | marks the matched pane hook-active and sets AI state to thinking/busy; no notify queue entry is pushed |
 | `UserPromptExpansion` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; for an exact managed initial-task binding it records `pending` startup readiness and opens the separately bounded acknowledgement window, but never acknowledges the task; no notify queue entry is pushed |
-| `Stop` | pushes a Claude completion row, using the last assistant transcript text when `transcript_path` is readable |
+| `Stop` | keeps busy without a completion row while `background_tasks` contains running/pending subagents or workflows; otherwise pushes a Claude completion row, using the last assistant transcript text when `transcript_path` is readable |
 | `StopFailure` | pushes a critical Claude error row with error type/message metadata when present |
 | `SubagentStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `SubagentStop` | marks the pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
@@ -562,6 +562,39 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `WorktreeRemove` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `CwdChanged` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `FileChanged` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+
+For `Stop`, only `background_tasks` entries with `type` equal to `subagent` or
+`workflow` and `status` equal to `running` or `pending` count as in flight.
+They keep the existing `in_progress` projection, state only, with no completion
+notification. Approval or input waits remain unchanged. The settled wake turn's
+`Stop` produces the usual completion row; repeated settled Stops retain the
+existing session-based notification deduplication. Missing, empty, unknown, or
+malformed task data retains the earlier completion behavior. Shells, monitors,
+teammates, and other task types do not count. Explicit `quiet` still suppresses
+Stop handling; `state` still suppresses notifications.
+
+The tool and subagent events listed above also repair a completed projection
+when they carry a nonempty `agent_id` for the exact owned managed Claude Agent's
+current session. This fallback applies to `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, `PostToolBatch`, `SubagentStart`, and `SubagentStop` only,
+and changes `response_complete` to `in_progress` without a notification.
+Main-thread events, other interaction states, foreign/stale/unmanaged bindings,
+and explicit runtime `quiet` overrides do not trigger it. Existing operator
+answer handlers and configured `SubagentStop` notify/state handlers take
+precedence. `SubagentStop` never uses its task snapshot to choose a state: that
+snapshot can still list the finishing subagent as running. The background
+transition rechecks the Agent/Pane/runtime binding, current conversation, and
+allowed interaction inside the Registry transaction. If another hook records
+approval/input wait or changes that binding first, the observation stays quiet
+without changing state, projecting a badge, acknowledging notifications, or
+releasing held messages.
+
+Agent-hook JSON diagnostics add `agent_id` and `agent_type` (each capped at 128
+characters; identifiers containing control characters are omitted), plus `background_tasks_in_flight` when the task field is present,
+including zero. These are diagnostic fields, not new badge values. Task
+contents, commands, descriptions, prompts, and tool input are not retained in
+these fields. In-flight Stop and fallback records use `result=state` with an
+empty reason. See the upstream [Stop input contract](https://code.claude.com/docs/en/hooks#stop-input).
 
 `Stop` is the first transcript tail reader. It opens the `transcript_path` its
 own payload reports, reads at most the last 256 KiB, and keeps one string: the

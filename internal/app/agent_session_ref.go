@@ -427,9 +427,24 @@ func (c *aiCommand) exactProviderActivationEvidence(binding managedAgentBinding,
 		strings.TrimSpace(c.env(internalActivationGenerationEnv)) == binding.generation
 }
 
-func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID string, kind coremetadata.AgentInteractionKind, source string, activationEligible bool) (coremetadata.Agent, bool, error) {
+func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID string, kind coremetadata.AgentInteractionKind, source string, activationEligible bool, guards ...func(*coremetadata.Registry, managedAgentBinding) error) (coremetadata.Agent, bool, error) {
+	if len(guards) > 1 {
+		return coremetadata.Agent{}, false, fmt.Errorf("at most one interaction guard is supported")
+	}
+	var guard func(*coremetadata.Registry, managedAgentBinding) error
+	if len(guards) == 1 {
+		guard = guards[0]
+	}
+	if guard != nil {
+		// A rejected background observation must not be flushed onto a newer
+		// conversation by the hook return defer.
+		defer c.takeAgentSessionRef(paneID)
+	}
 	binding, ok, err := c.managedAgentBindingForPane(paneID)
 	if err != nil || !ok {
+		if guard != nil && err == nil {
+			return binding.agent, true, errClaudeBackgroundProgressRejected
+		}
 		return binding.agent, ok, err
 	}
 	agent := binding.agent
@@ -469,7 +484,7 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		(agent.Status.Activation.State == coremetadata.ActivationPending || agent.Status.Activation.State == coremetadata.ActivationUnconfirmed) &&
 		kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle
 	turnUnchanged := !hasNativeObservation || binding.codex == nil || strings.TrimSpace(nativeObservation.TurnID) == "" || binding.codex.TurnID == strings.TrimSpace(nativeObservation.TurnID)
-	if sessionUnchanged && turnUnchanged && !activationNeedsAck && current.Kind == kind && current.Source == source && clock().Sub(current.ObservedAt) < time.Second {
+	if guard == nil && sessionUnchanged && turnUnchanged && !activationNeedsAck && current.Kind == kind && current.Source == source && clock().Sub(current.ObservedAt) < time.Second {
 		return agent, true, nil
 	}
 	var committed coremetadata.Agent
@@ -477,6 +492,11 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 	var history sessionhistory.Record
 	var recordHistory bool
 	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
+		if guard != nil {
+			if err := guard(working, binding); err != nil {
+				return err
+			}
+		}
 		current, ok := working.Agent(agent.Metadata.UID)
 		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != agent.Status.PaneRef {
 			return fmt.Errorf("managed Agent binding changed before interaction commit")

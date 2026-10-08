@@ -383,7 +383,14 @@ func (c *aiCommand) applyAIStatusInternalWithSource(state, paneID string, notify
 	return c.applyAIStatusInternalWithActivationPolicy(state, paneID, notifyIn, dispatchQueue, dispatchDesktop, source, persist, true)
 }
 
-func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist, activationEligible bool) error {
+func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist, activationEligible bool, guards ...func(*coremetadata.Registry, managedAgentBinding) error) error {
+	if len(guards) > 1 {
+		return fmt.Errorf("at most one interaction guard is supported")
+	}
+	var guard func(*coremetadata.Registry, managedAgentBinding) error
+	if len(guards) == 1 {
+		guard = guards[0]
+	}
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -398,9 +405,12 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 	kind := semanticInteractionForAIStatus(state, badgeKind)
 	managed := false
 	if persist {
-		committed, isManaged, err := c.persistManagedAgentInteractionWithActivationPolicy(paneID, kind, source, activationEligible)
+		committed, isManaged, err := c.persistManagedAgentInteractionWithActivationPolicy(paneID, kind, source, activationEligible, guard)
 		if err != nil {
 			if errors.Is(err, errManagedAgentObservationIgnored) {
+				if guard != nil {
+					return errClaudeBackgroundProgressRejected
+				}
 				return nil
 			}
 			return err
