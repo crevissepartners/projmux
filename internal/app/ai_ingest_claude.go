@@ -237,7 +237,7 @@ func (c *aiCommand) ingestClaudeBackgroundProgress(paneID string, payload claude
 			return nil
 		}
 	}
-	if err := c.applyAIStatusInternalWithGuard("thinking", paneID, attentionNotifyInput{
+	if err := c.applyAIStatusInternalWithActivationPolicy("thinking", paneID, attentionNotifyInput{
 		Metadata: metadata, BadgeKind: aiBadgeKindInProgress,
 	}, false, false, string(coremetadata.InteractionSourceProviderHook), true, true, guard); err != nil {
 		if errors.Is(err, errClaudeBackgroundProgressRejected) {

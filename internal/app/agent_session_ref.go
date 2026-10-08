@@ -427,13 +427,14 @@ func (c *aiCommand) exactProviderActivationEvidence(binding managedAgentBinding,
 		strings.TrimSpace(c.env(internalActivationGenerationEnv)) == binding.generation
 }
 
-func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID string, kind coremetadata.AgentInteractionKind, source string, activationEligible bool) (coremetadata.Agent, bool, error) {
-	return c.persistManagedAgentInteractionWithGuard(paneID, kind, source, activationEligible, nil)
-}
-
-// A guard is evaluated under the Registry transaction before any mutation.
-// Existing callers have no guard and retain their original transition rules.
-func (c *aiCommand) persistManagedAgentInteractionWithGuard(paneID string, kind coremetadata.AgentInteractionKind, source string, activationEligible bool, guard func(*coremetadata.Registry, managedAgentBinding) error) (coremetadata.Agent, bool, error) {
+func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID string, kind coremetadata.AgentInteractionKind, source string, activationEligible bool, guards ...func(*coremetadata.Registry, managedAgentBinding) error) (coremetadata.Agent, bool, error) {
+	if len(guards) > 1 {
+		return coremetadata.Agent{}, false, fmt.Errorf("at most one interaction guard is supported")
+	}
+	var guard func(*coremetadata.Registry, managedAgentBinding) error
+	if len(guards) == 1 {
+		guard = guards[0]
+	}
 	if guard != nil {
 		// A rejected background observation must not be flushed onto a newer
 		// conversation by the hook return defer.
