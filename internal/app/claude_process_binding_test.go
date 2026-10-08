@@ -636,6 +636,103 @@ func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T
 	}
 }
 
+// heldListerAlias answers HeldFor for the process fixture's Agent from the
+// hold fixture's Agent: the two fixtures name one target under two UIDs. Each
+// answer for that Agent reports how many records it listed.
+type heldListerAlias struct {
+	store    *messagestore.Store
+	from, to string
+	listed   chan int
+}
+
+func (a *heldListerAlias) HeldFor(agentUID string) ([]messagestore.Record, error) {
+	if agentUID != a.from {
+		return nil, nil
+	}
+	held, err := a.store.HeldFor(a.to)
+	a.listed <- len(held)
+	return held, err
+}
+
+// A message held while its target's turn ran outlives a release window that
+// ended with the target still busy. The result of the target's next turn must
+// wake the release through the real process start wiring, and that release
+// delivers the held record with no resend. A result with nothing held launches
+// nothing.
+func TestClaudeProcessTurnResultRestartsAnEndedHeldRelease(t *testing.T) {
+	// The process fixture comes first: it shortens TMPDIR for its sockets, and
+	// the test's temporary root is fixed by the first TempDir call.
+	process := newProcessClaudeFixture(t, nil)
+	process.proof(t)
+	hold := newHoldFixture(t)
+	hold.setInteraction(t, coremetadata.InteractionIdle)
+	hold.installFakeSleep()
+	alias := &heldListerAlias{store: hold.store, from: process.binding.Agent, to: hold.claudeUID, listed: make(chan int, 16)}
+	launched := make(chan string, 16)
+	previous := processClaudeHeldRelease
+	t.Cleanup(func() { processClaudeHeldRelease = previous })
+	processClaudeHeldRelease = func() heldMessageRelease {
+		return heldMessageRelease{store: func() (agentMessageHeldLister, error) { return alias, nil },
+			launch: func(agentUID string) error { launched <- agentUID; return nil }}
+	}
+	awaitListed := func(want int) {
+		t.Helper()
+		select {
+		case got := <-alias.listed:
+			if got != want {
+				t.Fatalf("turn result listed %d held records, want %d", got, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("turn result did not wake the held-message release")
+		}
+	}
+
+	process.turn(t, "result-nothing-held", "ordinary")
+	awaitListed(0)
+
+	// Held by a busy turn, with a deadline past the release window.
+	ref := "message-result-wake"
+	hold.putHeld(t, ref, hold.now, hold.now.Add(time.Hour), claudeHoldReasonTurnActive)
+	hold.adapter.busy = 1000
+	if err := hold.cmd.releaseHeldMessages(hold.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	var waited time.Duration
+	for _, wait := range hold.waits {
+		waited += wait
+	}
+	if got := hold.delivery(t, ref); got.State != coremessage.StateHeld || waited < agentMessageReleaseRetryWindow {
+		t.Fatalf("release window did not end with the record held: %+v after %s", got, waited)
+	}
+	select {
+	case agentUID := <-launched:
+		t.Fatalf("a result with nothing held launched a release for %s", agentUID)
+	default:
+	}
+	hold.adapter.busy = 0
+	submitted := len(hold.adapter.submits)
+
+	process.turn(t, "result-wakes-release", "ordinary")
+	awaitListed(1)
+	select {
+	case agentUID := <-launched:
+		if agentUID != process.binding.Agent {
+			t.Fatalf("release launched for %s, want the turn's Agent %s", agentUID, process.binding.Agent)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("held record did not launch a release")
+	}
+	if err := hold.cmd.releaseHeldMessages(hold.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if got := hold.delivery(t, ref); got.State != coremessage.StateDelivered {
+		t.Fatalf("woken release did not deliver the held record: %+v", got)
+	}
+	if got := hold.adapter.submits[submitted:]; len(got) != 1 || got[0] != ref {
+		t.Fatalf("woken release submits %v, want exactly %s", got, ref)
+	}
+}
+
 func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	source := newProcessClaudeFixture(t, nil)
 	sourceProof := source.proof(t)

@@ -84,3 +84,28 @@ func TestLockTargetReleaseSerializesOneTargetAndBoundsTheWait(t *testing.T) {
 		t.Fatalf("the release lock wrote the store: %v", err)
 	}
 }
+
+// The dispatch lock serializes one target's sends like the release lock, but
+// a release that holds its lock across waits never blocks a send's dispatch.
+func TestLockTargetDispatchIsIndependentOfTheReleaseLock(t *testing.T) {
+	t.Parallel()
+	store := NewStore(t.TempDir())
+	release, err := store.LockTargetRelease("agent-target", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	dispatch, err := store.LockTargetDispatch("agent-target", 30*time.Millisecond)
+	if err != nil {
+		t.Fatalf("dispatch waited on the release lock: %v", err)
+	}
+	if _, err := store.LockTargetDispatch("agent-target", 30*time.Millisecond); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second dispatch error = %v, want ErrBusy at the bound", err)
+	}
+	dispatch()
+	again, err := store.LockTargetDispatch("agent-target", 30*time.Millisecond)
+	if err != nil {
+		t.Fatalf("dispatch after unlock: %v", err)
+	}
+	again()
+}

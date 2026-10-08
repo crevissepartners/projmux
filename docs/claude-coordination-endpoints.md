@@ -199,7 +199,9 @@ binding, thread, and connection. The Registry alone selects the Agent; no
 envelope or payload value chooses the authority. So a process Claude or Codex
 sender reaches a tmux or process Claude target the same way a tmux sender
 does. A source or target that cannot be proved writes zero and fails the
-receipt as `broker-handoff-persist-failed`; the helper's
+receipt as `broker-handoff-persist-failed`, or as `provider-prewrite-refused`
+when a process Claude target's proof before its busy reservation fails; either
+way the helper's
 `agent.message.claude-handoff-route` diagnostics record names which end failed
 and that Agent's Registry host and provider (see
 [operational diagnostics](operational-diagnostics.md)).
@@ -246,6 +248,12 @@ existing `held` state with reason `target-awaiting-operator`, prints
 and exits 0. Plain sends and a Claude source's `--reply-to` behave the same.
 A send to a target that is not blocked is also held while that target still has
 an earlier held message, so a later message never overtakes an earlier one.
+Sends to one Claude target take a per-target dispatch lock across that check,
+the helper call, and recording its result, so a later send cannot read the
+held messages before an earlier busy refusal is recorded as held. The lock
+waits at most 30 seconds; a send that cannot take it calls no helper and ends
+`failed` with the known zero-write reason `provider-prewrite-refused`, and a
+resend of the same reference reports that same result.
 For a process-hosted Claude target, an exact host refusal because its turn is
 active also keeps the message `held`, with reason `target-turn-active`. The
 host reservation precedes durable handoff and provider writes, so this refusal

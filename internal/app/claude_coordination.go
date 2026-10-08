@@ -278,8 +278,9 @@ type liveClaudeDialogueBroker struct {
 	store        *messagestore.Store
 	pushStore    *messagestore.Store
 	resolveRoute func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string)
-	// handoffRoute, when set, journals which envelope end MarkHandoff could
-	// not prove. The receipt reason stays broker-handoff-persist-failed.
+	// handoffRoute, when set, journals which envelope end MarkHandoff, or a
+	// process target's proof before its reservation, could not prove. The
+	// receipt reason stays the known zero-write reason of that step.
 	handoffRoute func(diagnostics.ClaudeHandoffRouteRecord)
 }
 
@@ -387,6 +388,23 @@ func (b *liveClaudeDialogueBroker) MarkHandoff(envelope coremessage.Envelope) er
 	}
 	_, _, err := b.pushStore.MarkHandoffMatching(envelope, "claude-coordination")
 	return err
+}
+
+// claudeReservationProver is a broker that journals a proof failing before a
+// process target's busy reservation, which precedes MarkHandoff.
+type claudeReservationProver interface {
+	CurrentBeforeReservation(coremessage.Envelope) bool
+}
+
+// CurrentBeforeReservation is Current for a process Claude target's fence
+// before its reservation. A failed proof journals the unproved end exactly as
+// MarkHandoff does; the receipt keeps the reservation's zero-write reason.
+func (b *liveClaudeDialogueBroker) CurrentBeforeReservation(envelope coremessage.Envelope) bool {
+	registry, unproven, ok := b.current(envelope)
+	if !ok {
+		b.recordHandoffRoute(registry, unproven)
+	}
+	return ok
 }
 
 func (b *liveClaudeDialogueBroker) recordHandoffRoute(registry coremetadata.Registry, unproven *claudeUnprovenRoute) {

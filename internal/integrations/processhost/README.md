@@ -254,8 +254,13 @@ session is bound, a same-session `system/init`, turn frame, `control_request` or
 `result` with no admitted turn opens a provider turn (`provider-turn-started`,
 ID `provider-<connection>-<n>`) that the next result closes
 (`provider-turn-ended`, then `turn-result` and the `TurnCompleted` wake).
-Idle `system` notifications do not open a turn. Before binding these frames,
-and any frame on another session, remain protocol failures. `UserInput` writes
+Idle `system` notifications do not open a turn. Before binding, an init without
+an owned first input, a `control_request` and a `result` remain protocol
+failures; output frames (`assistant`, `stream_event` and the like) are emitted
+as `output` but open no turn. After binding, any frame on another session is a
+protocol failure. A permission request that opens a provider turn starts that
+turn's request ID scope, so an ID reused from the previous turn is a new
+request, not a duplicate. `UserInput` writes
 operator input into a turn the provider has visibly opened and emits
 `input-joined`; pending controls (`ErrClaudeControlPending`), a pending
 handoff, an interrupt, a turn not yet opened, and more than

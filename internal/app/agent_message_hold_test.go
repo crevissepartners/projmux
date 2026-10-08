@@ -1034,6 +1034,109 @@ func TestAgentMessageBusyClaudeHeldReleasePreservesOrder(t *testing.T) {
 	}
 }
 
+// busyGapAdapter runs afterBusy once, after the helper answered a busy target
+// held and before the sending command records that hold.
+type busyGapAdapter struct {
+	*holdClaudeAdapter
+	afterBusy func()
+}
+
+func (a *busyGapAdapter) Submit(ctx context.Context, path string, route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (agentdelivery.Delivery, error) {
+	delivery, err := a.holdClaudeAdapter.Submit(ctx, path, route, envelope)
+	if delivery.State == agentdelivery.StateHeld && a.afterBusy != nil {
+		afterBusy := a.afterBusy
+		a.afterBusy = nil
+		afterBusy()
+	}
+	return delivery, err
+}
+
+// A busy helper answers held before the send records the hold. A later send
+// started in that gap, after the turn ended, must not overtake the earlier
+// one: it waits for the earlier dispatch and is held behind it.
+func TestAgentMessageBusyHoldGapPreservesSendOrder(t *testing.T) {
+	f := newHoldFixture(t)
+	f.setInteraction(t, coremetadata.InteractionIdle)
+	f.installFakeSleep()
+	first, second := "message-gap-first", "message-gap-second"
+	f.adapter.busy = 1
+	secondDone := make(chan error, 1)
+	f.cmd.messageClaude = &busyGapAdapter{holdClaudeAdapter: f.adapter, afterBusy: func() {
+		// The turn has ended: the second send is not refused busy. Give it the
+		// chance to finish inside the gap before the first records its hold.
+		f.now = f.now.Add(time.Millisecond)
+		go func() {
+			_, err := f.send(t, second, false)
+			secondDone <- err
+		}()
+		select {
+		case err := <-secondDone:
+			secondDone <- err
+		case <-time.After(200 * time.Millisecond):
+		}
+	}}
+	if _, err := f.send(t, first, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	if a, b := f.delivery(t, first), f.delivery(t, second); a.State != coremessage.StateHeld || b.State != coremessage.StateHeld {
+		t.Fatalf("later send overtook the busy hold: first=%+v second=%+v submits=%v", a, b, f.adapter.submits)
+	}
+	if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{first, first, second}; !slices.Equal(f.adapter.submits, want) {
+		t.Fatalf("submits %v want %v", f.adapter.submits, want)
+	}
+	for _, ref := range []string{first, second} {
+		if got := f.delivery(t, ref); got.State != coremessage.StateDelivered {
+			t.Fatalf("%s: %+v", ref, got)
+		}
+	}
+}
+
+// shortDispatchWaitStore keeps the real dispatch lock but waits only 1ms for it.
+type shortDispatchWaitStore struct{ *messagestore.Store }
+
+func (s shortDispatchWaitStore) LockTargetDispatch(agentUID string, _ time.Duration) (func(), error) {
+	return s.Store.LockTargetDispatch(agentUID, time.Millisecond)
+}
+
+// A send that cannot take the dispatch lock called no helper. It ends failed
+// with the known zero-write reason instead of leaving an accepted record that
+// neither a resend of the same ref nor the release would ever dispatch.
+func TestAgentMessageDispatchLockTimeoutFailsWithZeroWrites(t *testing.T) {
+	f := newHoldFixture(t)
+	f.setInteraction(t, coremetadata.InteractionIdle)
+	f.cmd.messageStore = shortDispatchWaitStore{f.store}
+	ref := "message-lock-timeout"
+	unlock, err := f.store.LockTargetDispatch(f.claudeUID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, sendErr := f.send(t, ref, false)
+	unlock()
+	if sendErr == nil || !strings.Contains(stdout, ref+"\tfailed\tprovider-prewrite-refused") {
+		t.Fatalf("lock timeout receipt %q err=%v", stdout, sendErr)
+	}
+	got := f.delivery(t, ref)
+	if got.State != coremessage.StateFailed || got.Reason != "provider-prewrite-refused" || got.OutcomeUnknown {
+		t.Fatalf("lock timeout record %+v", got)
+	}
+	resent, resendErr := f.send(t, ref, false)
+	if resendErr == nil || !strings.Contains(resent, ref+"\tfailed\tprovider-prewrite-refused") {
+		t.Fatalf("resend of the failed ref %q err=%v", resent, resendErr)
+	}
+	if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.adapter.submits) != 0 || f.delivery(t, ref).State != coremessage.StateFailed {
+		t.Fatalf("zero-write failure reached the helper: submits=%v %+v", f.adapter.submits, f.delivery(t, ref))
+	}
+}
+
 func TestClaudeBusyReceiptRejectsUnknownWrite(t *testing.T) {
 	response := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "held", Delivery: agentdelivery.Delivery{MessageRef: "message-busy", State: agentdelivery.StateHeld, Reason: claudeHoldReasonTurnActive}}
 	if _, ok := claudeResponseDelivery("message-busy", response); !ok {
