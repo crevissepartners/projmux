@@ -576,12 +576,13 @@ Stop handling; `state` still suppresses notifications.
 The tool and subagent events listed above also repair a completed projection
 when they carry a nonempty `agent_id` for the exact owned managed Claude Agent's
 current session. This fallback applies to `PreToolUse`, `PostToolUse`,
-`PostToolUseFailure`, `PostToolBatch`, `SubagentStart`, and `SubagentStop` only,
+`PostToolUseFailure`, `PostToolBatch`, and `SubagentStart` only,
 and changes `response_complete` to `in_progress` without a notification.
 Main-thread events, other interaction states, foreign/stale/unmanaged bindings,
 and explicit runtime `quiet` overrides do not trigger it. Existing operator
-answer handlers and configured `SubagentStop` notify/state handlers take
-precedence. `SubagentStop` never uses its task snapshot to choose a state: that
+answer handlers take precedence. `SubagentStop` uses only its configured
+notify/state handlers and never reopens a completed projection through this
+fallback. It never uses its task snapshot to choose a state: that
 snapshot can still list the finishing subagent as running. The background
 transition rechecks the Agent/Pane/runtime binding, current conversation, and
 allowed interaction inside the Registry transaction. If another hook records

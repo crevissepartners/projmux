@@ -79,9 +79,6 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "StopFailure":
 		return c.ingestClaudeStopFailure(paneID, payload, metadata, action)
 	case "SubagentStop":
-		if action.Action == aiHookActionQuiet && c.claudeBackgroundFallback(payload, action, binding, owned) {
-			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
-		}
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
 	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
 		if payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure" {
