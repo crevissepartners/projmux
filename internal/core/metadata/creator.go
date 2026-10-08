@@ -10,6 +10,7 @@ package metadata
 // A record carries exactly one basis and only the keys that basis proves:
 //
 //   - pane-chain: creator-agent and creator-pane, observed.
+//   - process-chain: the same keys, observed from a live provider child.
 //   - explicit: creator-agent only, declared by the caller.
 //   - operator: creator-client only, stated by an in-process operator client.
 //
@@ -21,7 +22,7 @@ const (
 	// (explicit).
 	AnnotationCreatorAgent = "projmux.io/creator-agent"
 	// AnnotationCreatorPane is the bare UID of that Agent's managed Pane. Only
-	// the pane-chain basis proves it.
+	// the pane-chain and process-chain bases prove it.
 	AnnotationCreatorPane = "projmux.io/creator-pane"
 	// AnnotationCreatorClient is the operator client name (see package
 	// operatorclient) of an operator record.
@@ -32,12 +33,14 @@ const (
 	// CreatorBasisPaneChain is observation: the create's ambient tmux Pane is
 	// the creator's live managed Pane on the create's own app server, and the
 	// create process descends from that Pane's process. It wins over every
-	// other basis.
+	// other CLI observation basis; in-process operator overrides remain separate.
 	CreatorBasisPaneChain = "pane-chain"
+	// CreatorBasisProcessChain observes a live process provider ancestor.
+	CreatorBasisProcessChain = "process-chain"
 	// CreatorBasisExplicit is the caller's declaration (`--creator
 	// uid:<agent>`) naming an Agent that exists in the Registry. It can be
 	// forged, which is what this basis says; it is recorded only when no
-	// pane chain is.
+	// pane or process chain is.
 	CreatorBasisExplicit = "explicit"
 	// CreatorBasisOperator is an in-process operator client acting for the
 	// operator. Only in-process code can state it; no argv spelling does.
@@ -70,5 +73,14 @@ func OperatorCreatorAnnotations(client string) map[string]string {
 	return map[string]string{
 		AnnotationCreatorClient: client,
 		AnnotationCreatorBasis:  CreatorBasisOperator,
+	}
+}
+
+// ProcessCreatorAnnotations records the observed provider child's managed Pane.
+func ProcessCreatorAnnotations(agentUID, paneUID string) map[string]string {
+	return map[string]string{
+		AnnotationCreatorAgent: agentUID,
+		AnnotationCreatorPane:  paneUID,
+		AnnotationCreatorBasis: CreatorBasisProcessChain,
 	}
 }

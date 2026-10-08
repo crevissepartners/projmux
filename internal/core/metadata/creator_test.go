@@ -59,6 +59,9 @@ func TestCreatorBasisMapsCarryOnlyTheKeysTheirEvidenceProves(t *testing.T) {
 		got  map[string]string
 		want map[string]string
 	}{
+		{name: "process-chain", got: ProcessCreatorAnnotations("agent-process", "pane-process"), want: map[string]string{
+			"projmux.io/creator-agent": "agent-process", "projmux.io/creator-pane": "pane-process", "projmux.io/creator-basis": "process-chain",
+		}},
 		{name: "explicit", got: ExplicitCreatorAnnotations("agent-declared"), want: map[string]string{
 			"projmux.io/creator-agent": "agent-declared",
 			"projmux.io/creator-basis": "explicit",

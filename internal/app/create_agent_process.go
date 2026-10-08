@@ -32,9 +32,10 @@ import (
 type processAgentCreateOptions struct {
 	Project, Window                                                    selector.Ref
 	Provider, Name, CWD, Model, Effort, Instructions, Profile, Persona string
-	Creator                                                            string
-	Payload, AddDirs                                                   []string
-	Labels                                                             map[string]string
+	// Creator is the bare Agent UID validated by parseResourceCreateFlags.
+	Creator          string
+	Payload, AddDirs []string
+	Labels           map[string]string
 }
 
 type processAgentCreateRequest struct{ options processAgentCreateOptions }
@@ -59,6 +60,7 @@ type processAgentCreateResult struct {
 	waitReceipt   *coremetadata.TerminationEvidence
 	waitRecorded  bool
 	recorded      *processRecordedSnapshot
+	creator       creatorRecord
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
@@ -81,13 +83,6 @@ func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentC
 	}
 	if opts.Provider != "" && !slices.Contains([]string{aiModeClaude, aiModeCodex, aiModeAntigravity}, opts.Provider) {
 		return processAgentCreateRequest{}, usageError("create agent: unknown Agent provider")
-	}
-	if opts.Creator != "" {
-		creator, err := parseCreatorFlag(canonicalCreateAgent, opts.Creator)
-		if err != nil {
-			return processAgentCreateRequest{}, err
-		}
-		opts.Creator = creator
 	}
 	opts.Payload, opts.AddDirs, opts.Labels = slices.Clone(opts.Payload), slices.Clone(opts.AddDirs), maps.Clone(opts.Labels)
 	return processAgentCreateRequest{options: opts}, nil
@@ -385,7 +380,7 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 		if err := mutator.ReserveProcessBinding(reg, metadataProcessBinding(binding)); err != nil {
 			return err
 		}
-		result = processAgentCreateResult{Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding, Provider: provider}
+		result = processAgentCreateResult{Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding, Provider: provider, creator: creator}
 		return nil
 	})
 	return result, MapMetadataError(err)
@@ -665,6 +660,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err = submitProcessInitialPrompt(ctx, result, flags.payload); err != nil {
 		return c.failProcessCreate(&result, err)
 	}
+	result.creator.report(stderr)
 	if err = c.writeProcessCreateResult(stdout, stderr, mode, result); err != nil {
 		return c.failProcessCreate(&result, err)
 	}

@@ -89,7 +89,7 @@ var (
 
 // creatorFlagNote documents --creator on every route that creates an Agent from
 // argv.
-const creatorFlagNote = "`--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane chain is observed; an observed pane chain always wins, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication."
+const creatorFlagNote = "`--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane or process chain is observed; a valid pane chain wins over process-chain, which wins over a declaration, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication."
 
 // DomainEffectKind is the closed extension discriminant for effects outside
 // the Projmux resource graph. Phase 0 introduces only the downstream delivery
