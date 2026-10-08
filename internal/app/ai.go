@@ -384,6 +384,10 @@ func (c *aiCommand) applyAIStatusInternalWithSource(state, paneID string, notify
 }
 
 func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist, activationEligible bool) error {
+	return c.applyAIStatusInternalWithGuard(state, paneID, notifyIn, dispatchQueue, dispatchDesktop, source, persist, activationEligible, nil)
+}
+
+func (c *aiCommand) applyAIStatusInternalWithGuard(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist, activationEligible bool, guard func(*coremetadata.Registry, managedAgentBinding) error) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -398,9 +402,12 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 	kind := semanticInteractionForAIStatus(state, badgeKind)
 	managed := false
 	if persist {
-		committed, isManaged, err := c.persistManagedAgentInteractionWithActivationPolicy(paneID, kind, source, activationEligible)
+		committed, isManaged, err := c.persistManagedAgentInteractionWithGuard(paneID, kind, source, activationEligible, guard)
 		if err != nil {
 			if errors.Is(err, errManagedAgentObservationIgnored) {
+				if guard != nil {
+					return errClaudeBackgroundProgressRejected
+				}
 				return nil
 			}
 			return err

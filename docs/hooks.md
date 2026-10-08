@@ -582,7 +582,12 @@ Main-thread events, other interaction states, foreign/stale/unmanaged bindings,
 and explicit runtime `quiet` overrides do not trigger it. Existing operator
 answer handlers and configured `SubagentStop` notify/state handlers take
 precedence. `SubagentStop` never uses its task snapshot to choose a state: that
-snapshot can still list the finishing subagent as running.
+snapshot can still list the finishing subagent as running. The background
+transition rechecks the Agent/Pane/runtime binding, current conversation, and
+allowed interaction inside the Registry transaction. If another hook records
+approval/input wait or changes that binding first, the observation stays quiet
+without changing state, projecting a badge, acknowledging notifications, or
+releasing held messages.
 
 Agent-hook JSON diagnostics add `agent_id` and `agent_type` (each capped at 128
 characters; identifiers containing control characters are omitted), plus `background_tasks_in_flight` when the task field is present,

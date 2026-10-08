@@ -80,7 +80,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		return c.ingestClaudeStopFailure(paneID, payload, metadata, action)
 	case "SubagentStop":
 		if action.Action == aiHookActionQuiet && c.claudeBackgroundFallback(payload, action, binding, owned) {
-			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata)
+			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
 		}
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
 	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
@@ -90,7 +90,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		return c.ingestClaudeOperatorDialogClosed(paneID, payload, metadata, action, binding, owned)
 	case "PreToolUse", "PostToolBatch", "SubagentStart":
 		if c.claudeBackgroundFallback(payload, action, binding, owned) {
-			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata)
+			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
 		}
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
@@ -133,7 +133,7 @@ func (c *aiCommand) ingestClaudeOperatorDialogClosed(paneID string, payload clau
 ) error {
 	if !owned || binding.agent.Spec.Provider != aiModeClaude || !claudeAgentAwaitsOperator(binding.agent, c.sessionRefClock()()) {
 		if (payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure") && c.claudeBackgroundFallback(payload, action, binding, owned) {
-			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata)
+			return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
 		}
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
@@ -191,7 +191,7 @@ func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, m
 			c.quietClaudeHook(paneID, payload, "")
 			return nil
 		}
-		return c.ingestClaudeBackgroundProgress(paneID, payload, metadata)
+		return c.ingestClaudeBackgroundProgress(paneID, payload, metadata, binding, owned)
 	}
 	message := readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
 	body := formatClaudeStopNotifyBody(message)
@@ -216,10 +216,34 @@ func (c *aiCommand) claudeBackgroundFallback(payload claudeHookPayload, action a
 		!(action.Action == aiHookActionQuiet && action.Source == aiHookActionSourceRuntime)
 }
 
-func (c *aiCommand) ingestClaudeBackgroundProgress(paneID string, payload claudeHookPayload, metadata map[string]string) error {
-	if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{
+var errClaudeBackgroundProgressRejected = errors.New("Claude background progress conditions changed")
+
+func (c *aiCommand) ingestClaudeBackgroundProgress(paneID string, payload claudeHookPayload, metadata map[string]string, binding managedAgentBinding, owned bool) error {
+	var guard func(*coremetadata.Registry, managedAgentBinding) error
+	if owned {
+		guard = func(working *coremetadata.Registry, commitBinding managedAgentBinding) error {
+			current, ok := working.Agent(binding.agent.Metadata.UID)
+			pane, paneOK := working.Pane(binding.paneUID)
+			if commitBinding.agent.Metadata.UID != binding.agent.Metadata.UID || commitBinding.paneUID != binding.paneUID ||
+				commitBinding.runtimeID != binding.runtimeID || !ok || !paneOK || current.Spec.Provider != aiModeClaude ||
+				current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != binding.paneUID ||
+				pane.Status.Activation.AgentUID != binding.agent.Metadata.UID ||
+				pane.Status.Activation.RuntimeID != paneID || pane.Status.Activation.Generation != binding.generation ||
+				current.Status.SessionRef.ConversationID() != binding.agent.Status.SessionRef.ConversationID() ||
+				agentInteractionAwaitsOperator(current.Status.Interaction.Kind) ||
+				(payload.EventName != "Stop" && current.Status.Interaction.Kind != coremetadata.InteractionResponseComplete) {
+				return errClaudeBackgroundProgressRejected
+			}
+			return nil
+		}
+	}
+	if err := c.applyAIStatusInternalWithGuard("thinking", paneID, attentionNotifyInput{
 		Metadata: metadata, BadgeKind: aiBadgeKindInProgress,
-	}); err != nil {
+	}, false, false, string(coremetadata.InteractionSourceProviderHook), true, true, guard); err != nil {
+		if errors.Is(err, errClaudeBackgroundProgressRejected) {
+			c.quietClaudeHook(paneID, payload, "")
+			return nil
+		}
 		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
 		return err
 	}

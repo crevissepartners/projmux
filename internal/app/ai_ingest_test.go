@@ -2721,3 +2721,98 @@ func TestClaudeBackgroundR9ConfiguredSubagentStopPrecedesFallback(t *testing.T) 
 		})
 	}
 }
+
+// Force the interleaving at the Registry commit boundary, after the hook's
+// admission snapshot. No concurrent process or timing assumption is needed.
+func TestClaudeBackgroundR3R8RejectConcurrentOperatorWait(t *testing.T) {
+	for _, event := range []string{"Stop", "PreToolUse"} {
+		for _, kind := range []coremetadata.AgentInteractionKind{coremetadata.InteractionApprovalRequired, coremetadata.InteractionInputRequired} {
+			t.Run(event+"/"+string(kind), func(t *testing.T) {
+				assertClaudeBackgroundRejectedCommit(t, event, func(f *claudeQuietHookFixture) {
+					setClaudeQuietInteraction(t, f, kind)
+				})
+			})
+		}
+	}
+}
+
+func TestClaudeBackgroundR3R8RejectChangedConversationAndRuntime(t *testing.T) {
+	for _, event := range []string{"Stop", "PreToolUse"} {
+		for _, change := range []string{"conversation", "runtime", "phase"} {
+			t.Run(event+"/"+change, func(t *testing.T) {
+				assertClaudeBackgroundRejectedCommit(t, event, func(f *claudeQuietHookFixture) {
+					agent, _ := f.registry.Agent(f.agentUID)
+					switch change {
+					case "conversation":
+						agent.Status.SessionRef.Claude.SessionID = "new-conversation"
+					case "runtime":
+						pane, _ := f.registry.Pane(agent.Status.PaneRef)
+						pane.Status.Activation.RuntimeID = "%999"
+					case "phase":
+						agent.Status.Phase = coremetadata.PhaseOffline
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestClaudeBackgroundR8RejectChangedCompletedInteraction(t *testing.T) {
+	assertClaudeBackgroundRejectedCommit(t, "PreToolUse", func(f *claudeQuietHookFixture) {
+		setClaudeQuietInteraction(t, f, coremetadata.InteractionIdle)
+	})
+}
+
+func assertClaudeBackgroundRejectedCommit(t *testing.T, event string, insert func(*claudeQuietHookFixture)) {
+	t.Helper()
+	initial := coremetadata.InteractionResponseComplete
+	if event == "Stop" {
+		// Also proves guarded Stop cannot use the one-second in_progress
+		// dedup shortcut and bypass its transaction predicate.
+		initial = coremetadata.InteractionInProgress
+	}
+	f := claudeBackgroundFixture(t, initial)
+	store := f.cmd.notifyStore.(*stubNotifyStore)
+	ackCount, listCalls := len(store.ackedIDs), store.listCalls
+	heldReads, launches := 0, 0
+	f.cmd.heldRelease = heldMessageRelease{
+		store: func() (agentMessageHeldLister, error) {
+			heldReads++
+			return nil, errors.New("unexpected held store read")
+		},
+		launch: func(string) error { launches++; return nil },
+	}
+	commandsBefore := len(cmdRecorder(f.cmd).commands)
+	update := f.cmd.updateRegistry
+	var expected coremetadata.Registry
+	attempts := 0
+	f.cmd.updateRegistry = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		attempts++
+		if attempts == 1 {
+			insert(f)
+			expected = f.registry.Clone()
+		}
+		return update(fn)
+	}
+	entry := claudeBackgroundIngest(t, f, event, map[string]any{
+		"agent_id": "child", "background_tasks": []any{map[string]any{"type": "subagent", "status": "running"}},
+	})
+	if entry.Result != "quiet" || entry.Reason != "" || attempts != 1 {
+		t.Fatalf("result=%+v commit attempts=%d, want quiet and one guarded transaction", entry, attempts)
+	}
+	if !reflect.DeepEqual(f.registry.Clone(), expected) {
+		t.Fatal("rejected background observation changed Registry state")
+	}
+	for _, command := range cmdRecorder(f.cmd).commands[commandsBefore:] {
+		if command.name != "tmux" || len(command.args) < 5 || command.args[0] != "set-option" {
+			continue
+		}
+		switch command.args[4] {
+		case aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption, attentionAckOption, attentionFocusArmedOption:
+			t.Fatalf("rejected background observation wrote projection/ack: %+v", command)
+		}
+	}
+	if heldReads != 0 || launches != 0 || len(store.ackedIDs) != ackCount || store.listCalls != listCalls || len(store.pushed) != 0 {
+		t.Fatalf("rejected side effects: held reads=%d launches=%d ack=%v listCalls=%d pushes=%v", heldReads, launches, store.ackedIDs, store.listCalls, store.pushed)
+	}
+}
