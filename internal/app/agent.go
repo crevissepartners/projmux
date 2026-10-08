@@ -52,6 +52,8 @@ type agentCommand struct {
 	// Set only on a per-call copy by the private typed host-transfer adapter.
 	hostTransferContext context.Context
 	hostTransferResult  *agentHostTransferResult
+	// Private no-firstinput Resume preparation preserves the recorded recipe.
+	processResumePreparation bool
 
 	processRuntime *processPaneRuntime
 

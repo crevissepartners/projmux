@@ -198,6 +198,8 @@ WithCodexCatalogThreadReader	Thread-reader injection option retained as the only
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
 agentCommand.callProcessUserDelivery	Planned private web_process_user_input.go:deliverProcessUserInput foreign-owned Codex user-input consumer retains this typed caller to obtain actual Mode/Operation/TurnID once, without replay or fallback; explicit public Turn intent stays unchanged.
+agentCommand.prepareOwnedClaudeResume	Private S568 no-first-input Claude Resume producer retained for Prepared-to-actual-first-input ownership proofs and the planned web consumer; frozen recipe validation and CLI peer Wait remain unchanged.
+agentCommand.runOwnedProcessRelaunch	Private S568 typed samehost settings producer retained for Preview/Unchanged/Owned/Prepared ownership proofs and the planned web consumer; independent Cancel and exact Wait preserve CLI foreground lifetime.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
 applyCodexForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.

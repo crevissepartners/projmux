@@ -179,6 +179,25 @@ first input. JSON puts ownership lines on stderr. The new resolved arguments,
 workspace and referenced configuration snapshots are durably frozen in private
 state; the environment and first input are not part of that launch record.
 
+Private samehost consumers can receive a typed `Preview`, `Unchanged`, `Owned`
+or `Prepared` result. `Owned` carries the actual target, synchronization and an
+independent lifetime: the receiver registers its exact Wait before acknowledging
+success, and registration failure or shutdown cancels that target and completes
+its durable Wait. Ending the producer request after handoff leaves the child
+owned by the receiver. The existing self-target and confirmation guards still
+apply; an owning consumer must Stop, finish actual Wait and read fresh Offline
+state before applying another configuration.
+
+Claude preparation without first input returns `Prepared` with its durable
+recipe proof and retained conversation/last termination, with no child, active
+claim or standby waiter. A private explicit Resume validates an existing frozen
+plan without replacing it; when absent, it prepares the recorded configuration
+through the samehost planner and refuses implicit recipe drift. `Prepared` has no
+live lifetime to register. The first actual user input acquires the existing
+claim and uses the frozen resume engine. These are CORE producer contracts for
+a future consumer; they do not establish web UI support. The public CLI retains
+its foreground ownership, stdin/signal cancellation and deferred peer waiting.
+
 The first peer message starts that configuration with its existing untrusted
 coordination envelope. An operator can instead submit `agent turn start` from
 another terminal; that text becomes the raw first user frame. Success is

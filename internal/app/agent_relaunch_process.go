@@ -7,11 +7,9 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/signal"
 	"reflect"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -60,27 +58,30 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 	if err != nil {
 		return err
 	}
+	if c.processResumePreparation && (len(recipe.restart.settings.resolution.Reasons) > 0 || recipe.restart.settings.resolution.ProfileSwitched || recipe.workspace.CWD != target.Spec.Workspace.CWD || !slices.Equal(recipe.workspace.AdditionalWritableRoots, target.Spec.Workspace.AdditionalWritableRoots)) {
+		return refuse(relaunchReasonNoConversation, "recorded resume recipe changed; use explicit agent relaunch")
+	}
 	result := recipe.result(target, pane, request)
 	deferred := recipe.restart.provider == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
 	changesLayers := recipe.restart.settings.resolution.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
 	if !deferred && recipe.restart.running && request.model == "" && len(recipe.restart.settings.resolution.Reasons) == 0 && !(changesLayers && recipe.restart.settings.resolution.LayersChanged()) && len(request.prompt) == 0 {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = pane.Metadata.UID
-		return writeAgentRelaunchResult(stdout, request, result)
+		return c.publishHostTransferResult(stdout, request, result)
 	}
 	if request.dryRun {
 		result.Outcome = personaOutcomeWouldResume
 		if recipe.restart.running {
 			result.Outcome = personaOutcomeWouldRestart
 		}
-		return writeAgentRelaunchResult(stdout, request, result)
+		return c.publishHostTransferResult(stdout, request, result)
 	}
 	launch, err := c.planProcessRelaunchLaunch(target, pane, request, recipe)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	ctx, cancel, release := c.hostTransferLifetime()
+	defer release()
 	candidate, err := c.stopProcessRelaunch(ctx, reg, target, pane, request, recipe.restart)
 	if err != nil {
 		return err
@@ -339,6 +340,14 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		result.Outcome = personaOutcomeRestarted
 	}
 	result.NewPaneUID = binding.Pane
+	if c.hostTransferResult != nil {
+		return c.finishOwnedHostTransfer(ctx, cancel, &owned, sync, result, request, stdout, stderr, fail, func() error {
+			if prepared != nil {
+				return c.finishDeferredLaunch(prepared, owned, true)
+			}
+			return nil
+		})
+	}
 	if err = writeAgentRelaunchResult(stdout, request, result); err != nil {
 		return fail(err)
 	}
