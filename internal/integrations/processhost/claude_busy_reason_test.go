@@ -2,7 +2,6 @@ package processhost
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -184,12 +183,15 @@ func TestClaudeMessageTurnJoinsOnceClaudeOpensIt(t *testing.T) {
 }
 
 // If the helper reports a definite zero-write after an input joined the
-// visibly open message turn, the frames belonged to a turn Claude opened
-// itself. The joined input stays written with unknown attribution on that
-// provider turn and is never resent.
-func TestClaudeMessageTurnJoinedInputAfterZeroWriteNeverRetries(t *testing.T) {
-	p := start(t, testHost(t, nil), "normal")
+// visibly open message turn, the frames belong to a turn Claude opened itself.
+// That turn keeps admission until its actual result: a later peer stays held,
+// a later operator input joins it, and the result closes it with the joined
+// inputs attributed to it. Nothing is resent.
+func TestClaudeMessageTurnZeroWriteKeepsOpenTurnUntilResult(t *testing.T) {
+	completed := make(chan Binding, 8)
+	p := startNotified(t, completed)
 	a := bound(t, p)
+	awaitCompleted(t, completed)
 	if err := p.ReserveClaudeMessage(context.Background(), a, "message"); err != nil {
 		t.Fatal(err)
 	}
@@ -201,17 +203,49 @@ func TestClaudeMessageTurnJoinedInputAfterZeroWriteNeverRetries(t *testing.T) {
 	if err := p.FinishClaudeMessage(context.Background(), a, "message", false, false); err != nil {
 		t.Fatal(err)
 	}
+	if s, _ := p.Observe(binding()); s.Turn != "message" || s.MessageReservation != "" {
+		t.Fatalf("zero-write emptied the open turn: %+v", s)
+	}
+	if err := p.ReserveClaudeMessage(context.Background(), a, "peer-next"); err != ErrClaudeTurnActive {
+		t.Fatalf("peer admitted before the open turn's result: %v", err)
+	}
+	admission, err := p.UserInput(context.Background(), a, "join-2", "joined")
+	if err != nil || admission != (TurnAdmission{Joined: true, Turn: "message", Origin: TurnOriginProvider}) {
+		t.Fatalf("operator input after zero-write: %+v %v", admission, err)
+	}
 	fixtureFrame(t, p, map[string]any{"type": "fixture-result"})
 	observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" && hasEvent(p, "provider-turn-ended") })
+	awaitCompleted(t, completed)
 	started := eventsOf(p, "provider-turn-started")
-	var attribution struct {
-		Attribution  string
-		JoinedInputs []string
+	if len(started) != 1 || started[0].Turn != "message" || !strings.Contains(string(started[0].Raw), `"refusedMessage":"message"`) {
+		t.Fatalf("provider turn evidence: %+v", started)
 	}
-	if len(started) != 1 || json.Unmarshal(started[0].Raw, &attribution) != nil || attribution.Attribution != "unknown" || len(attribution.JoinedInputs) != 1 || attribution.JoinedInputs[0] != "join" {
-		t.Fatalf("carried attribution: %+v %+v", started, attribution)
+	results := eventsOf(p, "turn-result")
+	if len(results) != 2 || results[1].Turn != "message" {
+		t.Fatalf("result not correlated with the open turn: %+v", results)
 	}
-	if len(eventsOf(p, "input-joined")) != 1 || len(eventsOf(p, "joined-input-unattributed")) != 1 {
-		t.Fatal("joined input was resent or lost its evidence")
+	if len(eventsOf(p, "input-joined")) != 2 || hasEvent(p, "joined-input-unattributed") {
+		t.Fatal("joined inputs were resent or lost attribution")
+	}
+	if err = p.ReserveClaudeMessage(context.Background(), a, "peer-next"); err != nil {
+		t.Fatalf("refused peer ID stayed consumed: %v", err)
+	}
+}
+
+// Without visible frames a definite zero-write still releases the turn.
+func TestClaudeMessageTurnZeroWriteBeforeFramesReleasesTurn(t *testing.T) {
+	p := start(t, testHost(t, nil), "normal")
+	a := bound(t, p)
+	if err := p.ReserveClaudeMessage(context.Background(), a, "message"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.FinishClaudeMessage(context.Background(), a, "message", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := p.Observe(binding()); s.Turn != "" || s.MessageReservation != "" || hasEvent(p, "provider-turn-started") {
+		t.Fatalf("zero-write kept an unopened turn: %+v", s)
+	}
+	if err := p.ReserveClaudeMessage(context.Background(), a, "peer-next"); err != nil {
+		t.Fatal(err)
 	}
 }

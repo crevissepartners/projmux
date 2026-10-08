@@ -395,7 +395,8 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 
 // FinishClaudeMessage records a proven write outcome, never provider completion.
 // A definite zero-write releases the reservation but keeps the operation ID
-// consumed. Uncertain delivery expires visibly but keeps turn admission fenced
+// consumed; a turn Claude has visibly opened stays admitted as a provider turn
+// until its actual result. Uncertain delivery expires visibly but keeps turn admission fenced
 // until an actual result or exit; expiry never infers provider completion.
 func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn string, written, uncertain bool) error {
 	p.mu.Lock()
@@ -428,8 +429,17 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 	} else {
 		p.emitLocked("message-prewrite-refused", nil, nil)
 		if p.messageReservation != "expired" {
-			p.endTurnLocked()
 			p.clearMessageReservationLocked()
+			if p.turnOpen {
+				// Claude's frames opened a turn the peer message never entered:
+				// it is Claude's own. Keep it, with its joined inputs, pending
+				// controls and interrupt, until its actual result.
+				p.turnOrigin = TurnOriginProvider
+				raw, _ := json.Marshal(map[string]any{"attribution": "provider", "refusedMessage": turn})
+				p.emitLocked("provider-turn-started", raw, nil)
+			} else {
+				p.endTurnLocked()
+			}
 		}
 	}
 	return nil

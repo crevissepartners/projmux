@@ -236,7 +236,9 @@ message receipts with one provider write per message. Endpoint inputs reserve a
 MessageRef turn through the exact registered helper's kernel identity before the
 native post. Host stdin turns and endpoint reservations share one admission
 mutex; busy and duplicate inputs write nothing. Definite prewrite failure releases
-the reservation. Uncertain delivery appears as `awaiting-message-handoff` in the
+the reservation; if Claude has already visibly opened the turn, the turn becomes a
+provider turn (`provider-turn-started` with `refusedMessage`) that keeps its joined
+inputs, controls and admission until its actual result. Uncertain delivery appears as `awaiting-message-handoff` in the
 internal snapshot. The internal `Limits.MessageReservation` defaults to 30 seconds
 and bounds that handoff wait, including a helper that never reports an outcome.
 At expiry the snapshot reports `MessageReservation = "expired"` and the host emits
