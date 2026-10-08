@@ -22,10 +22,15 @@ type holdClaudeAdapter struct {
 	submits  []string
 	statuses int
 	onSubmit func(string)
+	busy     int
 }
 
 func (a *holdClaudeAdapter) Submit(_ context.Context, _ string, _ coremetadata.AgentRouteRef, envelope coremessage.Envelope) (agentdelivery.Delivery, error) {
 	a.submits = append(a.submits, envelope.MessageRef)
+	if a.busy > 0 {
+		a.busy--
+		return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateHeld, Reason: claudeHoldReasonTurnActive}, nil
+	}
 	if a.onSubmit != nil {
 		a.onSubmit(envelope.MessageRef)
 	}
@@ -205,7 +210,7 @@ func (f *holdFixture) delivery(t *testing.T, ref string) coremessage.Delivery {
 
 // putHeld stores one held record addressed to the fixture Agent directly, so a
 // test controls its acceptance time and deadline.
-func (f *holdFixture) putHeld(t *testing.T, ref string, acceptedAt, deadline time.Time) {
+func (f *holdFixture) putHeld(t *testing.T, ref string, acceptedAt, deadline time.Time, reasons ...string) {
 	t.Helper()
 	public := publicMessageRoute(f.route)
 	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: conversationRefFor(ref),
@@ -214,8 +219,12 @@ func (f *holdFixture) putHeld(t *testing.T, ref string, acceptedAt, deadline tim
 	if _, _, err := f.store.PutAccepted(envelope, "claude-coordination"); err != nil {
 		t.Fatal(err)
 	}
+	reason := claudeHoldReasonAwaitingOperator
+	if len(reasons) > 0 {
+		reason = reasons[0]
+	}
 	if record, _, err := f.store.Apply(ref, coremessage.Event{Kind: coremessage.EventHold, MessageRef: ref,
-		ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: claudeHoldReasonAwaitingOperator,
+		ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: reason,
 		ObservedAt: acceptedAt}); err != nil || record.Delivery.State != coremessage.StateHeld {
 		t.Fatalf("hold %s = %+v err=%v", ref, record.Delivery, err)
 	}
@@ -989,5 +998,85 @@ func TestAgentMessageReleaseRouteIsPlumbingOnly(t *testing.T) {
 		if err := runAgentMessageRelease(args); err == nil || !IsUsageError(err) {
 			t.Fatalf("args %q error = %v, want a usage error", args, err)
 		}
+	}
+}
+
+func TestAgentMessageBusyClaudeHeldReleasePreservesOrder(t *testing.T) {
+	f := newHoldFixture(t)
+	f.setInteraction(t, coremetadata.InteractionIdle)
+	f.adapter.busy = 2
+	f.installFakeSleep()
+	first := "message-busy-first"
+	stdout, err := f.send(t, first, false)
+	if err != nil || !strings.Contains(stdout, "held\t"+claudeHoldReasonTurnActive) {
+		t.Fatalf("receipt %q %v", stdout, err)
+	}
+	if record, _, err := f.store.Get(first); err != nil || record.HandoffObserved {
+		t.Fatalf("busy handoff: %+v %v", record, err)
+	}
+	second := "message-busy-second"
+	f.now = f.now.Add(time.Millisecond)
+	_, err = f.send(t, second, false)
+	if err != nil || len(f.adapter.submits) != 1 {
+		t.Fatalf("later message overtook busy: %v %v", f.adapter.submits, err)
+	}
+	if err = f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{first, first, first, second}
+	if !slices.Equal(f.adapter.submits, want) {
+		t.Fatalf("submits %v want %v", f.adapter.submits, want)
+	}
+	for _, ref := range []string{first, second} {
+		if got := f.delivery(t, ref); got.State != coremessage.StateDelivered {
+			t.Fatalf("%s: %+v", ref, got)
+		}
+	}
+}
+
+func TestClaudeBusyReceiptRejectsUnknownWrite(t *testing.T) {
+	response := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "held", Delivery: agentdelivery.Delivery{MessageRef: "message-busy", State: agentdelivery.StateHeld, Reason: claudeHoldReasonTurnActive}}
+	if _, ok := claudeResponseDelivery("message-busy", response); !ok {
+		t.Fatal("known busy rejected")
+	}
+	response.Delivery.Ambiguous = true
+	if _, ok := claudeResponseDelivery("message-busy", response); ok {
+		t.Fatal("unknown write accepted as held")
+	}
+}
+
+func TestBusyClaudeHeldExpiresBindingChangesAndUnknownWriteNeverRetries(t *testing.T) {
+	for _, mode := range []string{"deadline", "binding", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newHoldFixture(t)
+			f.setInteraction(t, coremetadata.InteractionIdle)
+			ref := "message-busy-terminal"
+			deadline := f.now.Add(time.Minute)
+			f.putHeld(t, ref, f.now, deadline, claudeHoldReasonTurnActive)
+			want := coremessage.StateExpired
+			switch mode {
+			case "deadline":
+				f.now = deadline
+			case "binding":
+				f.routeErr = errors.New("binding changed")
+				want = coremessage.StateStale
+			case "unknown":
+				_, _, err := f.store.MarkHandoff(ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want = coremessage.StateFailed
+			}
+			if err := f.cmd.releaseHeldMessages(f.claudeUID); err != nil {
+				t.Fatal(err)
+			}
+			got := f.delivery(t, ref)
+			if got.State != want || got.Reason == "" || len(f.adapter.submits) != 0 {
+				t.Fatalf("terminal %+v submits %v", got, f.adapter.submits)
+			}
+			if mode == "unknown" && !got.OutcomeUnknown {
+				t.Fatal("unknown write lost")
+			}
+		})
 	}
 }

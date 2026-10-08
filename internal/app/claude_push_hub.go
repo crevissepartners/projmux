@@ -89,8 +89,9 @@ func renderProviderCoordinationContent(envelope claudeCoordinationEnvelope, exec
 	return string(content), nil
 }
 
-// submitPush is immediate and terminal: it never creates a held/no-waiter
-// state. Broker handoff persistence precedes the sole provider write. A known
+// submitPush is immediate. Only a proved busy process Claude reservation
+// returns held for durable release; other results are terminal. Broker handoff
+// persistence precedes the sole provider write. A known
 // zero-byte failure is safe to report as non-ambiguous; any bytes without a
 // full helper receipt are ambiguous and never retried.
 func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, broker claudeDialogueBroker,
@@ -134,16 +135,39 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		})
 		return message.delivery
 	}
+	// A process reservation must precede durable handoff: a busy host proves
+	// zero writes, leaving the durable record safe for held release.
+	processPoster, process := poster.(*processClaudeProviderPoster)
+	if process {
+		outcome, reserveErr := processPoster.reserve(content, func() bool {
+			return envelope.Deadline.After(h.now()) && broker != nil && broker.Current(*envelope.BrokerEnvelope)
+		}, true)
+		if reserveErr != nil {
+			if outcome.Reason == claudeHoldReasonTurnActive {
+				delete(h.messages, envelope.MessageRef) // retry only this proven zero-write refusal
+				return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateHeld, Reason: outcome.Reason}
+			}
+			message.delivery = agentdelivery.Delivery{State: agentdelivery.StateFailed, MessageRef: envelope.MessageRef,
+				WaiterRef: newCoordinationRef("push"), Reason: outcome.Reason}
+			return message.delivery
+		}
+	}
 	if envelope.BrokerEnvelope == nil || broker == nil || broker.MarkHandoff(*envelope.BrokerEnvelope) != nil {
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{
 			Kind: agentdelivery.EventFail, MessageRef: envelope.MessageRef, Reason: "broker-handoff-persist-failed",
 			OutcomeKnown: true,
 		})
+		if process {
+			_, _ = processPoster.exchange(content, "finish", claudeProviderPostOutcome{})
+		}
 		return message.delivery
 	}
 	// Durable broker work may cross the deadline. Recheck at the final
 	// pre-write boundary so an expired message can never reach the provider.
 	if !envelope.Deadline.After(h.now()) {
+		if process {
+			_, _ = processPoster.exchange(content, "finish", claudeProviderPostOutcome{})
+		}
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{
 			Kind: agentdelivery.EventExpire, MessageRef: envelope.MessageRef, Reason: "ttl-after-durable-handoff",
 		})
@@ -153,7 +177,11 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 	message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{
 		Kind: agentdelivery.EventBeginHandoff, MessageRef: envelope.MessageRef, WaiterRef: handoffRef,
 	})
-	outcome, postErr := poster.Post(content, func() bool {
+	post := poster.Post
+	if process {
+		post = processPoster.postReserved
+	}
+	outcome, postErr := post(content, func() bool {
 		return envelope.Deadline.After(h.now()) && broker.Current(*envelope.BrokerEnvelope)
 	})
 	if postErr != nil || !outcome.FullFrameWritten {

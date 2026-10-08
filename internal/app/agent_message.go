@@ -225,7 +225,7 @@ func claudeResponseDelivery(messageRef string, response claudeCoordinationRespon
 		}
 	}
 	delivery := response.Delivery
-	if delivery.MessageRef != messageRef || !delivery.State.Terminal() || response.Kind != string(delivery.State) {
+	if delivery.MessageRef != messageRef || (!delivery.State.Terminal() && delivery.State != agentdelivery.StateHeld) || response.Kind != string(delivery.State) {
 		return agentdelivery.Delivery{}, false
 	}
 	switch delivery.State {
@@ -244,6 +244,10 @@ func claudeResponseDelivery(messageRef string, response claudeCoordinationRespon
 			(delivery.State == agentdelivery.StateStale &&
 				(delivery.Reason == "helper-stale" || delivery.Reason == "unknown-message"))
 		if !validReason {
+			return agentdelivery.Delivery{}, false
+		}
+	case agentdelivery.StateHeld:
+		if delivery.Ambiguous || delivery.WaiterRef != "" || delivery.Reason != claudeHoldReasonTurnActive {
 			return agentdelivery.Delivery{}, false
 		}
 	case agentdelivery.StateFailed:
