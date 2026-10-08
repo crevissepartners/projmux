@@ -30,6 +30,28 @@ func processCreatorFixture(t *testing.T) (*createCommand, coremetadata.Registry,
 	return fx.command, reg, child
 }
 
+func TestProcessCreatorRespectsProvenanceOptOut(t *testing.T) {
+	c, reg, _ := processCreatorFixture(t)
+	owner := reg.Panes[len(reg.Panes)-1].Metadata.OwnerUID()
+	c.processAncestors = nil
+	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
+		t.Fatal("opted-out caller observed ambient processes")
+		return nil, nil
+	}
+	for _, declared := range []string{"", owner} {
+		record, err := c.decideCreator(context.Background(), canonicalCreateAgent, &reg, declared)
+		if err != nil || record.observed.recorded() || record.observed.skip != "" {
+			t.Fatalf("ambient record %+v: %v", record, err)
+		}
+		if declared == "" && record.annotations() != nil {
+			t.Fatalf("opted-out caller inferred creator: %+v", record)
+		}
+		if declared != "" && (record.basis != coremetadata.CreatorBasisExplicit || record.agentUID != owner) {
+			t.Fatalf("explicit creator lost: %+v", record)
+		}
+	}
+}
+
 func TestProcessCreatorEvidenceAndPrecedence(t *testing.T) {
 	c, reg, _ := processCreatorFixture(t)
 	pane := reg.Panes[len(reg.Panes)-1]

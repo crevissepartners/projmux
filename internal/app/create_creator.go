@@ -443,7 +443,9 @@ const (
 )
 
 func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) creatorProvenance {
-	if working == nil || c.processCreatorAncestors == nil {
+	// The existing ancestry seam is also the in-process opt-out from ambient
+	// provenance. Honor it for both pane and process observations.
+	if c == nil || working == nil || c.processAncestors == nil || c.processCreatorAncestors == nil {
 		return creatorProvenance{}
 	}
 	chain, err := c.processCreatorAncestors()
