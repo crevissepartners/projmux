@@ -68,6 +68,7 @@ type claudeProcessCheckResult struct {
 	Process                coremetadata.ProcessIdentity
 	Valid                  bool
 	Admitted               bool
+	TurnActive             bool
 	Binding                processhost.Binding
 	Registration           *coremetadata.ClaudeRegistration
 	RegistrationGeneration string
@@ -447,13 +448,15 @@ func (s *claudeProcessService) input(ctx context.Context, request claudeProcessC
 	authority := processhost.Authority{Binding: s.binding, Connection: snap.Connection, Session: snap.Session}
 	turn := fmt.Sprintf("endpoint-%x", sha256.Sum256([]byte(content.MessageRef)))
 	switch request.Input.Phase {
-	case "reserve":
+	case "reserve", "reserve-before-handoff":
 		store := messagestore.NewStore(filepath.Dir(filepath.Dir(s.registryPath)))
 		record, found, err := store.Get(content.MessageRef)
-		if err != nil || !found || !record.Envelope.Deadline.After(time.Now()) || record.Envelope.Target.AgentUID != s.binding.Agent || record.Envelope.Target.PaneUID != s.binding.Pane || record.Envelope.Target.ActivationGeneration != s.binding.Generation {
+		if err != nil || !found || (request.Input.Phase == "reserve-before-handoff" && record.HandoffObserved) || record.Delivery.State.Terminal() || !record.Envelope.Deadline.After(time.Now()) || record.Envelope.Target.AgentUID != s.binding.Agent || record.Envelope.Target.PaneUID != s.binding.Pane || record.Envelope.Target.ActivationGeneration != s.binding.Generation {
 			return result
 		}
-		result.Admitted = s.handle.ReserveClaudeMessage(ctx, authority, turn) == nil
+		err = s.handle.ReserveClaudeMessage(ctx, authority, turn)
+		result.Admitted = err == nil
+		result.TurnActive = errors.Is(err, processhost.ErrClaudeTurnActive)
 	case "finish":
 		result.Admitted = s.handle.FinishClaudeMessage(ctx, authority, turn, request.Input.Written, request.Input.Uncertain) == nil
 	}
@@ -541,6 +544,9 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	}
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
+	launch.TurnCompleted = &processhost.TurnCompletion{Notify: func(binding processhost.Binding) {
+		defaultHeldMessageRelease().releaseIfHeld(binding.Agent)
+	}}
 	if resume != nil {
 		launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 			service.publishChild(handle)
@@ -572,6 +578,9 @@ func startProcessClaudeTransfer(ctx context.Context, host *processhost.Host, lau
 	}
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
+	launch.TurnCompleted = &processhost.TurnCompletion{Notify: func(binding processhost.Binding) {
+		defaultHeldMessageRelease().releaseIfHeld(binding.Agent)
+	}}
 	launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 		service.publishChild(handle)
 		return service.launchErr
@@ -627,20 +636,39 @@ func (p *processClaudeProviderPoster) exchange(content, phase string, outcome cl
 	if !result.Valid || result.Binding != p.proof.Binding || result.Process != p.proof.Process {
 		return false, processhost.ErrStale
 	}
+	if result.TurnActive && (phase == "reserve" || phase == "reserve-before-handoff") && !result.Admitted {
+		return false, processhost.ErrClaudeTurnActive
+	}
 	return result.Admitted, nil
 }
 
-func (p *processClaudeProviderPoster) Post(content string, fence func() bool) (claudeProviderPostOutcome, error) {
+func (p *processClaudeProviderPoster) reserve(content string, fence func() bool, beforeHandoff bool) (claudeProviderPostOutcome, error) {
 	refused := claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}
 	if p.current == nil || !p.current() || (fence != nil && !fence()) || p.native == nil {
 		return refused, processhost.ErrStale
 	}
-	admitted, err := p.exchange(content, "reserve", claudeProviderPostOutcome{})
-	// A lost reservation reply cannot trigger a native write. The host snapshot
-	// retains the pending reservation; there is no automatic replay.
+	phase := "reserve"
+	if beforeHandoff {
+		phase = "reserve-before-handoff"
+	}
+	admitted, err := p.exchange(content, phase, claudeProviderPostOutcome{})
+	if errors.Is(err, processhost.ErrClaudeTurnActive) {
+		return claudeProviderPostOutcome{Reason: claudeHoldReasonTurnActive}, err
+	}
 	if err != nil || !admitted {
 		return refused, processhost.ErrBusy
 	}
+	return claudeProviderPostOutcome{}, nil
+}
+
+func (p *processClaudeProviderPoster) Post(content string, fence func() bool) (claudeProviderPostOutcome, error) {
+	if refused, err := p.reserve(content, fence, false); err != nil {
+		return refused, err
+	}
+	return p.postReserved(content, fence)
+}
+
+func (p *processClaudeProviderPoster) postReserved(content string, fence func() bool) (claudeProviderPostOutcome, error) {
 	outcome, postErr := p.native.Post(content, fence)
 	_, finishErr := p.exchange(content, "finish", outcome)
 	if finishErr != nil && postErr == nil && !outcome.FullFrameWritten {

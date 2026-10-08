@@ -246,6 +246,14 @@ existing `held` state with reason `target-awaiting-operator`, prints
 and exits 0. Plain sends and a Claude source's `--reply-to` behave the same.
 A send to a target that is not blocked is also held while that target still has
 an earlier held message, so a later message never overtakes an earlier one.
+For a process-hosted Claude target, an exact host refusal because its turn is
+active also keeps the message `held`, with reason `target-turn-active`. The
+host reservation precedes durable handoff and provider writes, so this refusal
+proves zero writes. Release retries the same oldest record while busy; an
+actual session-correlated result wakes release again, including after a
+10-minute release window ended. Capacity, stale authority, lost replies, and
+partial or uncertain provider writes do not qualify for busy holding.
+
 Codex targets are never held. An observation older than the 30-minute
 interaction freshness window reads as `unknown` and does not block.
 

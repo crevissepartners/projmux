@@ -192,6 +192,9 @@ func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) err
 	return nil
 }
 
+// ErrClaudeTurnActive proves reservation refused before any provider write.
+var ErrClaudeTurnActive = fmt.Errorf("claude turn active: %w", ErrBusy)
+
 // ReserveClaudeMessage admits endpoint input under the same mutex as Turn.
 // Only the host's verified helper boundary may call it. No provider write is
 // performed here; the reservation remains visible if that boundary disappears.
@@ -204,7 +207,10 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] {
 		return ErrStale
 	}
-	if p.turn != "" || p.activeCriticalLocked() >= p.host.limits.Events {
+	if p.turn != "" {
+		return ErrClaudeTurnActive
+	}
+	if p.activeCriticalLocked() >= p.host.limits.Events {
 		return ErrBusy
 	}
 	p.turn = turn
@@ -486,6 +492,9 @@ func (p *Handle) consume(raw []byte) error {
 		p.clearMessageReservationLocked()
 		p.interruptAck = false
 		p.trimCriticalLocked()
+		if completed := p.launch.TurnCompleted; completed != nil && completed.Notify != nil {
+			go completed.Notify(p.launch.Binding)
+		}
 	case "rate_limit_event":
 		p.emitLocked("provider-event", raw, nil)
 	case "stream_event", "assistant", "user", "tool_progress", "tool_use_summary":

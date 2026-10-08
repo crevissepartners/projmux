@@ -94,6 +94,7 @@ type Launch struct {
 	Command                  Command
 	Completion               *Completion
 	Spawned                  *SpawnCallback
+	TurnCompleted            *TurnCompletion
 	provider                 string
 	adapter                  adapterConfig
 	resume                   *SessionRecord
@@ -101,6 +102,11 @@ type Launch struct {
 	codexTransfer            *CodexTransfer
 	resumeTurn, resumePrompt string
 }
+
+// TurnCompletion observes an actual correlated Claude result after admission
+// is cleared. Notify runs asynchronously outside host locks and never writes
+// provider input; its pointer belongs to the immutable launch identity.
+type TurnCompletion struct{ Notify func(Binding) }
 
 // SpawnCallback publishes exact child birth before provider initialization.
 // The pointer is launch identity; retries retain it and never publish twice.

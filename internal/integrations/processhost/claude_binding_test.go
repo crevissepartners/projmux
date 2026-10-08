@@ -164,3 +164,54 @@ func TestClaudeUnknownFramesRemainBoundedObservations(t *testing.T) {
 	turn(t, p, "after-observations", "ordinary")
 	observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" })
 }
+
+func TestClaudeBusyPeerPreservesActiveOwnershipAndResultWake(t *testing.T) {
+	completed := make(chan Binding, 4)
+	h := testHost(t, nil)
+	p, err := h.Start(context.Background(), Launch{Binding: binding(), Command: fixtureCommand("normal"), TurnCompleted: &TurnCompletion{Notify: func(b Binding) { completed <- b }}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = p.Stop(binding())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = p.Wait(ctx, binding())
+	})
+	turn(t, p, "first", "ordinary")
+	observeUntil(t, p, func(s Snapshot) bool { return s.State == "ready" && s.Turn == "" })
+	select {
+	case b := <-completed:
+		if b != binding() {
+			t.Fatal(b)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("result wake missing")
+	}
+	turn(t, p, "active", "question")
+	before := observeUntil(t, p, func(s Snapshot) bool { return len(s.Pending) == 1 })
+	a := authority(p)
+	if err = p.ReserveClaudeMessage(context.Background(), a, "peer"); err != ErrClaudeTurnActive {
+		t.Fatalf("busy classification: %v", err)
+	}
+	after, _ := p.Observe(binding())
+	if after.Turn != before.Turn || len(after.Pending) != 1 || after.Pending[0].ID != before.Pending[0].ID || after.MessageReservation != "" {
+		t.Fatalf("ownership changed: %+v", after)
+	}
+	select {
+	case <-completed:
+		t.Fatal("busy refusal woke result")
+	default:
+	}
+	if err = p.Respond(context.Background(), a, before.Pending[0], Response{Answers: map[string]string{"Color?": "blue"}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-completed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second result wake missing")
+	}
+	if err = p.ReserveClaudeMessage(context.Background(), a, "peer"); err != nil {
+		t.Fatal("busy consumed peer ID", err)
+	}
+}

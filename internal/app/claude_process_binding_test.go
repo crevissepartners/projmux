@@ -654,8 +654,19 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	response, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
 	cancel()
-	if err != nil || response.Delivery.State == agentdelivery.StateDelivered {
-		t.Fatal("busy delivered", response, err)
+	if err != nil || response.Delivery.State != agentdelivery.StateHeld || response.Delivery.Reason != claudeHoldReasonTurnActive {
+		t.Fatal("busy not held", response, err)
+	}
+	record, _, recordErr := store.Get(envelope.MessageRef)
+	if recordErr != nil || record.HandoffObserved {
+		t.Fatalf("busy marked handoff: %+v %v", record, recordErr)
+	}
+	// Repeated busy checks must remain retryable and preserve the same active turn.
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	response, err = callClaudeCoordination(ctx, source.path, targetRoute, request)
+	cancel()
+	if err != nil || response.Delivery.State != agentdelivery.StateHeld {
+		t.Fatalf("second busy: %+v %v", response, err)
 	}
 	after, _ := target.handle.Observe(target.binding)
 	if after.Turn != pending.Turn || len(after.Pending) != 1 || after.Pending[0].ID != pending.Pending[0].ID {
@@ -682,6 +693,15 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 			t.Fatal("busy/forged helper wrote", e)
 		}
 	}
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	response, err = callClaudeCoordination(ctx, source.path, targetRoute, request)
+	cancel()
+	if err != nil || response.Delivery.State != agentdelivery.StateDelivered {
+		t.Fatalf("busy not retryable after result: %+v %v", response, err)
+	}
+	target.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
+	answerProcessEndpointQuestion(t, target)
+	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
 	target.turn(t, "after-busy", "ordinary")
 	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
 }

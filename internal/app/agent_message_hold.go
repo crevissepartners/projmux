@@ -18,11 +18,12 @@ import (
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 )
 
-// claudeHoldReasonAwaitingOperator is the one reason a coordination message is
+// claudeHoldReasonAwaitingOperator is the reason a coordination message is
 // held: its Claude target is showing its operator a question, a permission
 // dialog, or an MCP elicitation, and a push frame would render as pending input
 // over that widget.
 const claudeHoldReasonAwaitingOperator = "target-awaiting-operator"
+const claudeHoldReasonTurnActive = "target-turn-active"
 
 // agentMessageReleaseRoute is the hidden route of the detached held-message
 // release: `projmux internal agent-message-release --agent uid:<agent>`.
@@ -166,11 +167,19 @@ func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, tar
 		return c.pushCoordination(record, target, targetRoute, envelope)
 	}
 	blocked := claudeAgentAwaitsOperator(target, c.messageClock())
-	if !blocked && !c.earlierHeldFor(target.Metadata.UID, record.Envelope.MessageRef) {
-		return c.pushCoordination(record, target, targetRoute, envelope)
+	earlier, reason := c.earlierHeldFor(target.Metadata.UID, record.Envelope.MessageRef)
+	if !blocked && !earlier {
+		updated, err := c.pushCoordination(record, target, targetRoute, envelope)
+		if err == nil && updated.Delivery.State == coremessage.StateHeld {
+			c.heldRelease().releaseIfHeld(target.Metadata.UID)
+		}
+		return updated, err
+	}
+	if blocked || reason == "" {
+		reason = claudeHoldReasonAwaitingOperator
 	}
 	held, _, err := c.messageStore.Apply(record.Envelope.MessageRef,
-		c.publicMessageEvent(record, coremessage.EventHold, claudeHoldReasonAwaitingOperator, false))
+		c.publicMessageEvent(record, coremessage.EventHold, reason, false))
 	if err != nil {
 		return record, fmt.Errorf("hold message while the target awaits its operator: %w", err)
 	}
@@ -185,21 +194,21 @@ func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, tar
 	return held, nil
 }
 
-func (c *agentCommand) earlierHeldFor(agentUID, messageRef string) bool {
+func (c *agentCommand) earlierHeldFor(agentUID, messageRef string) (bool, string) {
 	lister, ok := c.messageStore.(agentMessageHeldLister)
 	if !ok {
-		return false
+		return false, ""
 	}
 	held, err := lister.HeldFor(agentUID)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	for _, record := range held {
 		if record.Envelope.MessageRef != messageRef {
-			return true
+			return true, record.Delivery.Reason
 		}
 	}
-	return false
+	return false, ""
 }
 
 // heldReleaseOutcome is how judging one held record ended.
@@ -424,6 +433,9 @@ func (c *agentCommand) releaseHeldMessage(record messagestore.Record) (heldRelea
 	if claudeAgentAwaitsOperator(target, now) {
 		return heldReleaseBlocked, target, nil
 	}
-	_, err = c.pushCoordination(record, target, route, record.Envelope)
+	updated, err := c.pushCoordination(record, target, route, record.Envelope)
+	if err == nil && updated.Delivery.State == coremessage.StateHeld {
+		return heldReleaseUndecidable, target, nil
+	}
 	return heldReleaseDone, coremetadata.Agent{}, err
 }

@@ -21,6 +21,9 @@ func agentMessageHeldReceiptAction(receipt agentMessageReceipt) string {
 	if receipt.Delivery.Reason == deferredHoldReason {
 		return "delivery resumes when the claimant wakes this Agent; check projmux agent message status " + receipt.MessageRef + "; do not resend"
 	}
+	if receipt.Delivery.Reason == claudeHoldReasonTurnActive {
+		return "delivery resumes automatically when the target Agent's active turn ends; check projmux agent message status " + receipt.MessageRef + "; do not resend"
+	}
 	return agentMessageHeldAction(receipt.MessageRef)
 }
 
