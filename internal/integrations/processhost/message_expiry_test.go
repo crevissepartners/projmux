@@ -29,7 +29,7 @@ func TestClaudeMessageReservationExpiresWithoutInferringCompletion(t *testing.T)
 			if s.Turn != "uncertain" || s.Exit != nil || s.State != "ready" || !hasEvent(p, "message-reservation-expired") {
 				t.Fatal("expiry inferred completion/exit", s)
 			}
-			if err := p.Turn(context.Background(), a, "next", "ordinary"); err != ErrBusy {
+			if err := p.Turn(context.Background(), a, "next", "ordinary"); err != ErrClaudeJoinUnsupported {
 				t.Fatal("expired generation admitted next turn", err)
 			}
 			// A late helper acknowledgement is not a provider result.
@@ -139,7 +139,7 @@ func TestClaudeExpiredPrewriteOutcomeDoesNotReopenGeneration(t *testing.T) {
 	if s.MessageReservation != "expired" || s.Turn != "lost-helper" {
 		t.Fatal("late helper outcome reopened expired generation", s)
 	}
-	if err := p.Turn(context.Background(), a, "next", "ordinary"); err != ErrBusy {
+	if err := p.Turn(context.Background(), a, "next", "ordinary"); err != ErrClaudeJoinUnsupported {
 		t.Fatal(err)
 	}
 }

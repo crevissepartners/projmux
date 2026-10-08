@@ -262,10 +262,16 @@ protocol failure. A permission request that opens a provider turn starts that
 turn's request ID scope, so an ID reused from the previous turn is a new
 request, not a duplicate. `UserInput` writes
 operator input into a turn the provider has visibly opened and emits
-`input-joined`; pending controls (`ErrClaudeControlPending`), a pending
-handoff, an interrupt, a turn not yet opened, and more than
-`ClaudeJoinedInputs`/`ClaudeJoinedInputBytes` (`ErrClaudeJoinLimit`) refuse with
-zero writes. `Turn` keeps its one-turn admission. Inputs joined to a closed turn
+`input-joined`, including a peer message turn whose handoff outcome is pending
+or expired. Every refusal writes nothing and wraps `ErrBusy` with a named
+reason: pending controls (`ErrClaudeControlPending`), a turn not yet opened
+(`ErrClaudeTurnNotOpen`, or `ErrClaudeMessageHandoff` and
+`ErrClaudeMessageHandoffExpired` for a message turn), an interrupt
+(`ErrClaudeInterruptPending`), the turn's critical event limit
+(`ErrClaudeEventLimit`) and more than
+`ClaudeJoinedInputs`/`ClaudeJoinedInputBytes` (`ErrClaudeJoinLimit`). `Turn`
+keeps its one-turn admission and refuses a running turn with
+`ErrClaudeJoinUnsupported`. Inputs joined to a closed turn
 carry to the next provider turn, which records them as
 `joined-input-unattributed`: the stream does not echo user frames, so their
 result attribution is unknown and they are never rewritten. Peer reservations

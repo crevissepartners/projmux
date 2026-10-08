@@ -46,7 +46,11 @@ func TestSequentialTurnsOutliveHistoryLimits(t *testing.T) {
 			if err := submit("held", "duplicate"); err != ErrStale {
 				t.Fatal(err)
 			}
-			if err := submit("new", "competing"); err != ErrBusy {
+			busy := ErrBusy
+			if provider == "claude" {
+				busy = ErrClaudeJoinUnsupported
+			}
+			if err := submit("new", "competing"); err != busy {
 				t.Fatal(err)
 			}
 		})

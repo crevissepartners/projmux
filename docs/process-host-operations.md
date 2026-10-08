@@ -70,7 +70,15 @@ written and exit status 1, when:
 | --- | --- |
 | `control-pending` | A permission or question in the running turn is unanswered; answer it first |
 | `joined-input-limit` | The running turn already holds 8 joined inputs or 262144 bytes of them |
-| plain `process admission capacity exhausted` | Claude has not yet visibly started the turn, a peer message handoff is pending, or an interrupt is in flight |
+| `turn-not-open` | Claude has not yet visibly started the admitted turn |
+| `message-handoff-pending` | A peer message turn is reserved and Claude has not yet visibly started it |
+| `message-handoff-expired` | A peer message handoff never reported its outcome and Claude never visibly started the turn |
+| `interrupt-pending` | An interrupt of the running turn is in flight |
+| `event-limit` | The running turn holds the host's event limit |
+
+Each refusal reads `process admission capacity exhausted: <reason>: <advice>`.
+A turn started for a peer message accepts joined input as soon as Claude
+visibly starts it, even when the handoff outcome is late or never arrives.
 
 If a joined input reaches Claude just as its turn ends, Claude may answer it in
 a turn of its own. The stream cannot tell that turn from one Claude started for
@@ -130,8 +138,9 @@ the Agent's single turn for that message until the provider confirms it. If the
 outcome is still unconfirmed after 30 seconds, the reservation expires:
 
 - projmux raises an error notification for the Agent;
-- the reserved turn stays taken, so later turns and messages to this Agent are
-  refused with `process admission capacity exhausted`;
+- the reserved turn stays taken, so later messages to this Agent are held and
+  `agent turn start` is refused with `message-handoff-expired`, unless Claude
+  has visibly started the turn, in which case the input joins it;
 - projmux does not assume the message arrived, does not resend it, and does not
   stop the provider.
 

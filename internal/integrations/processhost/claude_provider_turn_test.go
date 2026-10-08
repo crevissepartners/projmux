@@ -136,7 +136,7 @@ func TestClaudeProviderTurnControlPendingAndAnswerable(t *testing.T) {
 			if _, err := p.UserInput(context.Background(), a, "over-dialog", "joined"); err != ErrClaudeControlPending || !errors.Is(err, ErrBusy) {
 				t.Fatalf("input over pending control: %v", err)
 			}
-			if err := p.Turn(context.Background(), a, "strict", "ordinary"); err != ErrBusy {
+			if err := p.Turn(context.Background(), a, "strict", "ordinary"); err != ErrClaudeJoinUnsupported {
 				t.Fatalf("strict turn admitted: %v", err)
 			}
 			if after, _ := p.Observe(binding()); after.Sequence != sequence {
@@ -197,7 +197,7 @@ func TestClaudeOperatorInputJoinsRunningTurnPreservesActiveOwnership(t *testing.
 		defer p.mu.Unlock()
 		return p.turnOpen
 	})
-	if err := p.Turn(context.Background(), a, "strict", "ordinary"); err != ErrBusy {
+	if err := p.Turn(context.Background(), a, "strict", "ordinary"); err != ErrClaudeJoinUnsupported {
 		t.Fatalf("Turn kept its one-turn contract: %v", err)
 	}
 	admission, err := p.UserInput(context.Background(), a, "join-1", "joined-result")
@@ -269,7 +269,7 @@ func TestClaudeJoinedInputRequiresVisibleUnfencedTurn(t *testing.T) {
 	p := start(t, testHost(t, nil), "normal")
 	a := bound(t, p)
 	turn(t, p, "silent", "silent")
-	if _, err := p.UserInput(context.Background(), a, "early", "joined"); err != ErrBusy {
+	if _, err := p.UserInput(context.Background(), a, "early", "joined"); err != ErrClaudeTurnNotOpen {
 		t.Fatalf("joined before the provider opened the turn: %v", err)
 	}
 	fixtureFrame(t, p, map[string]any{"type": "fixture-result"})
@@ -278,7 +278,7 @@ func TestClaudeJoinedInputRequiresVisibleUnfencedTurn(t *testing.T) {
 	if err := p.ReserveClaudeMessage(context.Background(), a, "message"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.UserInput(context.Background(), a, "during-handoff", "joined"); err != ErrBusy {
+	if _, err := p.UserInput(context.Background(), a, "during-handoff", "joined"); err != ErrClaudeMessageHandoff {
 		t.Fatalf("joined a pending peer handoff: %v", err)
 	}
 	if err := p.FinishClaudeMessage(context.Background(), a, "message", false, false); err != nil {
@@ -290,7 +290,7 @@ func TestClaudeJoinedInputRequiresVisibleUnfencedTurn(t *testing.T) {
 	if err := p.Interrupt(context.Background(), a, "interrupt"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.UserInput(context.Background(), a, "during-interrupt", "joined"); err != ErrBusy {
+	if _, err := p.UserInput(context.Background(), a, "during-interrupt", "joined"); err != ErrClaudeInterruptPending {
 		t.Fatalf("joined an interrupted turn: %v", err)
 	}
 	fixtureFrame(t, p, map[string]any{"type": "fixture-release-interrupt"})

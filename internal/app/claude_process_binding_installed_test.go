@@ -286,7 +286,7 @@ func TestInstalledProcessClaudeBinding(t *testing.T) {
 	if s.Turn != uncertainTurn || s.MessageReservation != "awaiting-message-handoff" || s.Exit != nil {
 		t.Fatal("idle ack inferred cancellation", s)
 	}
-	if err := f.handle.Turn(context.Background(), authority, "blocked-after-ack", "ordinary"); err != processhost.ErrBusy {
+	if err := f.handle.Turn(context.Background(), authority, "blocked-after-ack", "ordinary"); err != processhost.ErrClaudeJoinUnsupported {
 		t.Fatal("uncertain admission opened", err)
 	}
 	if err := f.handle.Stop(f.binding); err != nil {
