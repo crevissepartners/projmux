@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -97,5 +98,51 @@ func TestProcessTurnAcceptanceMapsHostResult(t *testing.T) {
 		if err := processTurnAcceptance(test.result); !errors.Is(err, test.want) || (test.want == nil && err != nil) {
 			t.Fatalf("%+v: err=%v, want %v", test.result, err, test.want)
 		}
+	}
+}
+
+// Bounded Claude refusals keep Busy and name their limit; a joined acceptance
+// adds a field without changing Accepted or the Codex delivery receipt.
+func TestProcessTurnAcceptanceNamesBoundedClaudeRefusals(t *testing.T) {
+	for _, test := range []struct {
+		err    error
+		reason string
+		want   []string
+	}{
+		{processhost.ErrClaudeJoinLimit, processBusyJoinLimit, []string{"joined-input-limit", "8 joined inputs", "262144 bytes"}},
+		{processhost.ErrClaudeControlPending, processBusyControlPending, []string{"control-pending", "pending permission or question"}},
+		{processhost.ErrBusy, "", []string{"process admission capacity exhausted"}},
+	} {
+		if got := processBusyReason(test.err); got != test.reason {
+			t.Fatalf("%v: reason %q, want %q", test.err, got, test.reason)
+		}
+		err := processTurnAcceptance(processForegroundResult{Busy: true, BusyReason: test.reason})
+		if !errors.Is(err, processhost.ErrBusy) {
+			t.Fatalf("%v: lost busy classification: %v", test.err, err)
+		}
+		for _, want := range test.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%v: %q lacks %q", test.err, err, want)
+			}
+		}
+	}
+	raw, err := json.Marshal(processForegroundResult{Accepted: true})
+	if err != nil || strings.Contains(string(raw), "Join") || strings.Contains(string(raw), "BusyReason") {
+		t.Fatalf("unjoined result changed its wire shape: %s %v", raw, err)
+	}
+	var joined processForegroundResult
+	if err = json.Unmarshal([]byte(`{"Accepted":true,"Join":{"Turn":"running","Origin":"provider"}}`), &joined); err != nil || !joined.Accepted || joined.Join == nil || *joined.Join != (processTurnJoin{Turn: "running", Origin: "provider"}) || joined.UserDelivery != nil {
+		t.Fatalf("joined result: %+v %v", joined, err)
+	}
+	if err = processTurnAcceptance(joined); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	agent := coremetadata.Agent{Metadata: coremetadata.ObjectMeta{UID: "agent-a"}}
+	if err = (&agentCommand{}).writeJoinedProcessTurn(&out, agentActionSendTurn, agent, "operation-1", *joined.Join); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Send new turn agent=uid:agent-a turn=operation-1 runtime=process delivery=joined running-turn=running origin=provider\n"; out.String() != want {
+		t.Fatalf("joined output %q, want %q", out.String(), want)
 	}
 }

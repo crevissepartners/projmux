@@ -225,7 +225,18 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 				return s.currentForegroundBinding(ctx, a.Binding)
 			}
 		}
-		result := controlProcessForeground(bounded, peer, r, current, func() error { return applyClaudeForeground(bounded, s.handle, r) })
+		var admission processhost.TurnAdmission
+		var applyErr error
+		result := controlProcessForeground(bounded, peer, r, current, func() error {
+			applyErr = applyClaudeForeground(bounded, s.handle, r, &admission)
+			return applyErr
+		})
+		if result.Accepted && admission.Joined {
+			result.Join = &processTurnJoin{Turn: admission.Turn, Origin: admission.Origin}
+		}
+		if result.Busy {
+			result.BusyReason = processBusyReason(applyErr)
+		}
 		_ = localipc.WriteJSON(conn, result)
 		return
 	}

@@ -161,35 +161,163 @@ func (p *Handle) writeLocked(ctx context.Context, frame any) error {
 	return err
 }
 
-// Turn submits exactly one user input. Its return acknowledges the wire write,
-// not provider readiness or completion. A retained turn ID never writes again.
+// A running turn takes a bounded number of joined operator inputs. A single
+// input keeps the frame limit enforced by writeLocked.
+const (
+	ClaudeJoinedInputs     = 8
+	ClaudeJoinedInputBytes = 256 << 10
+)
+
+var (
+	// ErrClaudeJoinLimit refuses a joined input with zero writes.
+	ErrClaudeJoinLimit = fmt.Errorf("claude running turn already holds its joined input limit (%d inputs, %d bytes): %w", ClaudeJoinedInputs, ClaudeJoinedInputBytes, ErrBusy)
+	// ErrClaudeControlPending refuses input over an unanswered permission or
+	// question with zero writes; answers keep their own exact token.
+	ErrClaudeControlPending = fmt.Errorf("claude turn awaits a permission or question answer: %w", ErrBusy)
+)
+
+// Turn origins. A provider turn is one Claude opened itself after the session
+// was bound; a message turn is a reserved peer handoff.
+const (
+	TurnOriginHost     = "host"
+	TurnOriginMessage  = "message"
+	TurnOriginProvider = "provider"
+)
+
+// TurnAdmission describes how one accepted user input entered the stream.
+// Joined is true when the input was written into an already open turn; Turn
+// and Origin then name that running turn rather than the input's operation.
+type TurnAdmission struct {
+	Joined       bool
+	Turn, Origin string
+}
+
+// Turn submits exactly one user input that opens a turn. Its return
+// acknowledges the wire write, not provider readiness or completion. A
+// retained turn ID never writes again.
 func (p *Handle) Turn(ctx context.Context, a Authority, turn, prompt string) error {
+	_, err := p.submitUserInput(ctx, a, turn, prompt, false)
+	return err
+}
+
+// UserInput submits one operator input. Without an open turn it opens one like
+// Turn. While a turn Claude has visibly opened is running, the input is written
+// into that turn and accepted as joined: the CLI folds it in at its next tool
+// boundary. Pending controls, a pending handoff or interrupt, and the joined
+// limit refuse with zero writes.
+func (p *Handle) UserInput(ctx context.Context, a Authority, operation, prompt string) (TurnAdmission, error) {
+	return p.submitUserInput(ctx, a, operation, prompt, true)
+}
+
+func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, prompt string, join bool) (TurnAdmission, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.admitLocked(ctx, a); err != nil {
-		return err
+		return TurnAdmission{}, err
 	}
-	if turn == "" || len(turn) > 256 || p.usedTurns[turn] {
-		return ErrStale
+	if operation == "" || len(operation) > 256 || p.usedTurns[operation] {
+		return TurnAdmission{}, ErrStale
 	}
-	if p.turn != "" || p.activeCriticalLocked() >= p.host.limits.Events {
-		return ErrBusy
+	if p.activeCriticalLocked() >= p.host.limits.Events {
+		return TurnAdmission{}, ErrBusy
 	}
-	p.turn = turn
-	p.rememberTurnLocked(turn)
 	frame := map[string]any{"type": "user", "session_id": p.session, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": prompt}}
+	if p.turn != "" {
+		if !join || !p.turnOpen || p.session == "" || p.messageReservation != "" || p.interrupt != "" {
+			return TurnAdmission{}, ErrBusy
+		}
+		if len(p.requests) > 0 {
+			return TurnAdmission{}, ErrClaudeControlPending
+		}
+		if len(p.joined) >= ClaudeJoinedInputs || p.joinedBytes+len(prompt) > ClaudeJoinedInputBytes {
+			return TurnAdmission{}, ErrClaudeJoinLimit
+		}
+		p.fenceOperationLocked(operation)
+		if err := p.writeLocked(ctx, frame); err != nil {
+			if p.state != "stopping" {
+				p.forgetUnwrittenTurnLocked(operation)
+			}
+			return TurnAdmission{}, err
+		}
+		p.joined = append(p.joined, operation)
+		p.joinedBytes += len(prompt)
+		raw, _ := json.Marshal(map[string]any{"operation": operation, "origin": p.turnOrigin, "index": len(p.joined)})
+		p.emitLocked("input-joined", raw, nil)
+		return TurnAdmission{Joined: true, Turn: p.turn, Origin: p.turnOrigin}, nil
+	}
+	carried := p.carriedJoined
+	p.beginTurnLocked(operation, TurnOriginHost)
 	if err := p.writeLocked(ctx, frame); err != nil {
 		if p.state != "stopping" {
-			p.turn = ""
-			p.forgetUnwrittenTurnLocked(turn)
+			p.endTurnLocked()
+			p.carriedJoined = carried
+			p.forgetUnwrittenTurnLocked(operation)
 		}
-		return err
+		return TurnAdmission{}, err
 	}
+	// A host turn after a closed turn proves nothing about earlier joined
+	// inputs; only a provider-opened turn can carry their attribution.
+	p.carriedJoined = nil
 	if p.session == "" {
 		go p.awaitInitialization()
 	}
 	p.emitLocked("turn-submitted", nil, nil)
-	return nil
+	return TurnAdmission{Turn: operation, Origin: TurnOriginHost}, nil
+}
+
+// beginTurnLocked owns admission for a turn that the provider has not yet
+// visibly opened. Provider frames set turnOpen.
+func (p *Handle) beginTurnLocked(turn, origin string) {
+	p.turn, p.turnOrigin, p.turnOpen = turn, origin, false
+	p.joined, p.joinedBytes, p.unattributed = nil, 0, nil
+	p.rememberTurnLocked(turn)
+}
+
+// endTurnLocked clears turn admission. Inputs joined to the closed turn are
+// written; whether the CLI folded them in or queued them is unproven, so they
+// carry to the next provider-opened turn.
+func (p *Handle) endTurnLocked() {
+	p.carriedJoined = p.joined
+	p.turn, p.turnOrigin, p.turnOpen = "", "", false
+	p.joined, p.joinedBytes, p.unattributed = nil, 0, nil
+}
+
+// openProviderTurnLocked admits a turn Claude started itself on the bound
+// session: a background task notification, a cross-session message or a
+// scheduled wake. Earlier joined inputs the CLI may have queued past their
+// turn's result cannot be told apart from such a turn, so they are recorded
+// as written with unknown result attribution, never resent.
+func (p *Handle) openProviderTurnLocked() {
+	p.providerTurns++
+	turn := fmt.Sprintf("provider-%s-%d", p.connection, p.providerTurns)
+	for p.usedTurns[turn] {
+		p.providerTurns++
+		turn = fmt.Sprintf("provider-%s-%d", p.connection, p.providerTurns)
+	}
+	carried := p.carriedJoined
+	p.carriedJoined = nil
+	p.beginTurnLocked(turn, TurnOriginProvider)
+	p.turnOpen = true
+	p.unattributed = carried
+	attribution := map[string]any{"attribution": "provider"}
+	if len(carried) > 0 {
+		attribution = map[string]any{"attribution": "unknown", "joinedInputs": carried}
+	}
+	raw, _ := json.Marshal(attribution)
+	p.emitLocked("provider-turn-started", raw, nil)
+}
+
+// providerTurnFrameLocked marks the current turn visibly open, or opens a
+// provider turn when Claude emits turn frames with no admitted turn on the
+// bound session. Before the session is bound there is no ownership proof.
+func (p *Handle) providerTurnFrameLocked() {
+	if p.turn != "" {
+		p.turnOpen = true
+		return
+	}
+	if p.session != "" {
+		p.openProviderTurnLocked()
+	}
 }
 
 // ErrClaudeTurnActive proves reservation refused before any provider write.
@@ -213,8 +341,8 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 	if p.activeCriticalLocked() >= p.host.limits.Events {
 		return ErrBusy
 	}
-	p.turn = turn
-	p.rememberTurnLocked(turn)
+	p.beginTurnLocked(turn, TurnOriginMessage)
+	p.carriedJoined = nil
 	p.messageReservation = "awaiting-message-handoff"
 	p.messageOutcomeRecorded = false
 	p.startMessageReservationTimerLocked(turn)
@@ -257,7 +385,7 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 	} else {
 		p.emitLocked("message-prewrite-refused", nil, nil)
 		if p.messageReservation != "expired" {
-			p.turn = ""
+			p.endTurnLocked()
 			p.clearMessageReservationLocked()
 		}
 	}
@@ -418,24 +546,31 @@ func (p *Handle) consume(raw []byte) error {
 			p.emitLocked("provider-event", raw, nil)
 			return nil
 		}
-		if frame.Session == "" || p.turn == "" || (p.hookSession != "" && p.hookSession != frame.Session) {
+		// After binding, a later init on the same session with no admitted turn
+		// is Claude opening a turn itself. Before binding only an owned first
+		// input may produce init.
+		if frame.Session == "" || p.turn == "" && p.session == "" || (p.hookSession != "" && p.hookSession != frame.Session) {
 			return errors.New("init without session or first input")
 		}
 		if session := p.launch.expectedResumeSession(); session != "" && frame.Session != session {
 			return errors.New("claude resume returned a different session")
 		}
 		if p.session == frame.Session {
+			p.providerTurnFrameLocked()
 			return nil
+		}
+		if p.turn == "" {
+			return errors.New("init without session or first input")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), p.host.limits.Startup)
 		defer cancel()
 		if err := p.host.tx.Commit(ctx, p.launch.Binding, frame.Session); err != nil {
 			return fmt.Errorf("binding CAS: %w", err)
 		}
-		p.session, p.state = frame.Session, "ready"
+		p.session, p.state, p.turnOpen = frame.Session, "ready", true
 		p.emitLocked("ready", nil, nil)
 	case "control_request":
-		if p.session == "" || p.turn == "" || frame.RequestID == "" {
+		if p.session == "" || frame.RequestID == "" {
 			return errors.New("unbound control request")
 		}
 		if frame.Request.Subtype != "can_use_tool" || frame.Request.Tool == "" {
@@ -444,6 +579,7 @@ func (p *Handle) consume(raw []byte) error {
 		if p.usedRequests[frame.RequestID] {
 			return nil
 		}
+		p.providerTurnFrameLocked()
 		if len(p.requests) >= p.host.limits.Requests || len(p.usedRequests) >= p.host.limits.Events || p.activeCriticalLocked() >= p.host.limits.Events {
 			return errors.New("control request capacity exceeded")
 		}
@@ -483,12 +619,21 @@ func (p *Handle) consume(raw []byte) error {
 			p.interruptAck = true
 		}
 	case "result":
-		if p.turn == "" || p.session == "" || frame.Session != p.session {
+		if p.session == "" || frame.Session != p.session {
 			return errors.New("unbound turn result")
 		}
+		p.providerTurnFrameLocked()
 		p.expireLocked()
+		if len(p.unattributed) > 0 {
+			evidence, _ := json.Marshal(map[string]any{"joinedInputs": p.unattributed})
+			p.emitLocked("joined-input-unattributed", evidence, nil)
+		}
+		if p.turnOrigin == TurnOriginProvider {
+			p.emitLocked("provider-turn-ended", nil, nil)
+		}
 		p.emitLocked("turn-result", raw, nil)
-		p.turn, p.interrupt = "", ""
+		p.endTurnLocked()
+		p.interrupt = ""
 		p.clearMessageReservationLocked()
 		p.interruptAck = false
 		p.trimCriticalLocked()
@@ -498,6 +643,7 @@ func (p *Handle) consume(raw []byte) error {
 	case "rate_limit_event":
 		p.emitLocked("provider-event", raw, nil)
 	case "stream_event", "assistant", "user", "tool_progress", "tool_use_summary":
+		p.providerTurnFrameLocked()
 		p.emitLocked("output", raw, nil)
 	default:
 		p.emitLocked("provider-event", raw, nil)

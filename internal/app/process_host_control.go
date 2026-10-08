@@ -55,6 +55,32 @@ type processForegroundResult struct {
 	Observation         *processHostObservation       `json:",omitempty"`
 	Receipt             *codexProcessReceipt          `json:",omitempty"`
 	UserDelivery        *processhost.UserTurnDelivery `json:",omitempty"`
+	// Join is set only when a Claude operator input entered an already
+	// running turn; Accepted keeps its meaning. BusyReason names a bounded
+	// refusal (joined limit, pending answer) without changing Busy.
+	Join       *processTurnJoin `json:",omitempty"`
+	BusyReason string           `json:",omitempty"`
+}
+
+// processTurnJoin names the running turn an accepted input joined.
+type processTurnJoin struct {
+	Turn, Origin string
+}
+
+// Bounded Claude refusals that keep Busy and add an operator-visible reason.
+const (
+	processBusyJoinLimit      = "joined-input-limit"
+	processBusyControlPending = "control-pending"
+)
+
+func processBusyReason(err error) string {
+	switch {
+	case errors.Is(err, processhost.ErrClaudeJoinLimit):
+		return processBusyJoinLimit
+	case errors.Is(err, processhost.ErrClaudeControlPending):
+		return processBusyControlPending
+	}
+	return ""
 }
 
 func controlProcessForeground(ctx context.Context, peer coremetadata.ProcessIdentity, request processForegroundRequest, current func(context.Context, processhost.Authority) error, apply func() error) processForegroundResult {
@@ -70,10 +96,16 @@ func controlProcessForeground(ctx context.Context, peer coremetadata.ProcessIden
 	return processForegroundResult{Accepted: err == nil, Stale: errors.Is(err, processhost.ErrStale), Busy: errors.Is(err, processhost.ErrBusy), Closed: errors.Is(err, processhost.ErrClosed)}
 }
 
-func applyClaudeForeground(ctx context.Context, handle *processhost.Handle, r processForegroundRequest) error {
+// applyClaudeForeground records how an accepted operator input entered the
+// stream in admission; other actions leave it untouched.
+func applyClaudeForeground(ctx context.Context, handle *processhost.Handle, r processForegroundRequest, admission *processhost.TurnAdmission) error {
 	switch r.Action {
 	case "turn":
-		return handle.Turn(ctx, r.Authority, r.Operation, r.Prompt)
+		value, err := handle.UserInput(ctx, r.Authority, r.Operation, r.Prompt)
+		if err == nil && admission != nil {
+			*admission = value
+		}
+		return err
 	case "interrupt":
 		return handle.Interrupt(ctx, r.Authority, r.Turn)
 	case "respond":

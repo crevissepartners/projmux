@@ -133,6 +133,13 @@ type Handle struct {
 	hookSession            string
 	connection             string
 	turn                   string
+	turnOrigin             string
+	turnOpen               bool
+	providerTurns          uint64
+	joined                 []string
+	joinedBytes            int
+	carriedJoined          []string
+	unattributed           []string
 	messageReservation     string
 	messageOutcomeRecorded bool
 	interrupt              string
@@ -659,6 +666,14 @@ func (p *Handle) Events(binding Binding, after uint64) ([]Event, Snapshot, error
 // Completed operation IDs are a bounded stale fence, not lifetime admission.
 // The current operation stays in the fence until it completes.
 func (p *Handle) rememberTurnLocked(operation string) {
+	p.fenceOperationLocked(operation)
+	// Request IDs belong to the exact active turn, never the whole session.
+	clear(p.usedRequests)
+}
+
+// fenceOperationLocked consumes an operation ID without starting a turn, so a
+// joined input keeps the running turn's request identities.
+func (p *Handle) fenceOperationLocked(operation string) {
 	for len(p.usedTurnOrder) >= p.host.limits.Events {
 		oldest := p.usedTurnOrder[0]
 		p.usedTurnOrder = p.usedTurnOrder[1:]
@@ -666,8 +681,6 @@ func (p *Handle) rememberTurnLocked(operation string) {
 	}
 	p.usedTurns[operation] = true
 	p.usedTurnOrder = append(p.usedTurnOrder, operation)
-	// Request IDs belong to the exact active turn, never the whole session.
-	clear(p.usedRequests)
 }
 
 func (p *Handle) forgetUnwrittenTurnLocked(operation string) {

@@ -155,7 +155,7 @@ func processAttentionRestore(handle processAttentionHost, binding processhost.Bi
 func (r *processAttentionRecord) applyEvent(event processhost.Event) (string, error) {
 	kind := ""
 	switch event.Kind {
-	case "turn-submitted", "message-reserved":
+	case "turn-submitted", "message-reserved", "provider-turn-started":
 		r.PendingEnded = false
 		r.Badge = aibadge.InProgress
 	case "control-pending":

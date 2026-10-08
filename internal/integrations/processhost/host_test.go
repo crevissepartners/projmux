@@ -246,9 +246,17 @@ func fixtureProvider() {
 		}
 		switch frame["type"] {
 		case "user":
-			_ = writer.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "session"})
 			message, _ := frame["message"].(map[string]any)
 			prompt, _ := message["content"].(string)
+			// The CLI folds input written into a running turn into that turn:
+			// no second init, at most one result (raw stream measurement).
+			if strings.HasPrefix(prompt, "joined") || prompt == "silent" {
+				if prompt == "joined-result" {
+					result()
+				}
+				continue
+			}
+			_ = writer.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": "session"})
 			switch prompt {
 			case "question", "allow", "deny":
 				tool := "Bash"
@@ -289,6 +297,32 @@ func fixtureProvider() {
 			_ = writer.Encode(map[string]any{"type": "assistant", "session_id": "session", "cancel_echo": frame["request_id"]})
 		case "fixture-release-interrupt":
 			_ = writer.Encode(map[string]any{"type": "result", "subtype": "error_during_execution", "session_id": "session"})
+		case "fixture-result":
+			result()
+		case "fixture-provider-turn":
+			// A turn Claude opens itself (measured: background task completion):
+			// idle notifications, then a second init on the same session.
+			session, _ := frame["session"].(string)
+			if session == "" {
+				session = "session"
+			}
+			_ = writer.Encode(map[string]any{"type": "system", "subtype": "task_notification", "session_id": session, "task_id": "task"})
+			_ = writer.Encode(map[string]any{"type": "system", "subtype": "background_tasks_changed", "session_id": session, "tasks": []any{}})
+			_ = writer.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": session})
+			switch frame["shape"] {
+			case "control":
+				_ = writer.Encode(map[string]any{"type": "control_request", "request_id": "provider-request", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "input": map[string]any{"command": "true"}}})
+			case "open":
+				_ = writer.Encode(map[string]any{"type": "assistant", "session_id": session, "message": map[string]any{"content": "working"}})
+			default:
+				_ = writer.Encode(map[string]any{"type": "assistant", "session_id": session, "message": map[string]any{"content": "noticed"}})
+				result()
+			}
+		case "fixture-provider-control":
+			// control_request is the first frame of a provider turn.
+			_ = writer.Encode(map[string]any{"type": "control_request", "request_id": "provider-first", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "input": map[string]any{"command": "true"}}})
+		case "fixture-provider-output":
+			_ = writer.Encode(map[string]any{"type": "assistant", "session_id": "session", "message": map[string]any{"content": "unprompted"}})
 		}
 	}
 	if mode == "session-end" {
