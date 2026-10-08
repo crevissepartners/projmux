@@ -26,8 +26,8 @@ import (
 //  2. process-chain: the caller descends from a live process provider child,
 //     verified by kernel identity and current Registry binding.
 //  3. explicit: the caller declared `--creator uid:<agent>` and no pane chain
-//     or process chain was recorded. A declaration that names no Agent refuses the create
-//     before anything changes; one that disagrees with a recorded pane chain
+//     or process chain was recorded. A declaration that names no Agent refuses
+//     the create before anything changes; one that disagrees with an observed chain
 //     is dropped with one stderr line.
 //  4. operator: the create ran in process for a named operator client -- the
 //     UI intents (client "ui"), or a client layered on top of projmux through
@@ -449,6 +449,15 @@ func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) cr
 	chain, err := c.processCreatorAncestors()
 	// A partial walk is not evidence: no guessed ancestry on read failure.
 	if err != nil || len(chain) == 0 || len(chain) > creatorProcessChainMaxSteps {
+		// A partially observed provider candidate deserves a stable diagnostic;
+		// an unrelated shell still has no creator claim to report.
+		for _, identity := range chain {
+			for _, pane := range working.Panes {
+				if activation := pane.Status.Activation.Process; activation != nil && activation.Child.PID == identity.PID {
+					return creatorProvenance{skip: creatorSkipProcessUnobservable}
+				}
+			}
+		}
 		return creatorProvenance{}
 	}
 	var rejected string
@@ -459,7 +468,7 @@ func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) cr
 			if activation == nil || activation.Child.PID != identity.PID {
 				continue
 			}
-			if !identity.Valid() || identity.OwnerUID != uint32(os.Getuid()) || activation.Child != identity {
+			if !identity.Valid() || int64(identity.OwnerUID) != int64(os.Getuid()) || activation.Child != identity {
 				rejected = creatorSkipProcessIdentity
 				continue
 			}
@@ -492,7 +501,7 @@ func processCreatorAncestry() ([]coremetadata.ProcessIdentity, error) {
 	for range creatorProcessChainMaxSteps {
 		identity, parent, err := localipc.Process(pid)
 		if err != nil {
-			return nil, err
+			return chain, err
 		}
 		chain = append(chain, identity)
 		if parent <= 1 || parent == pid {

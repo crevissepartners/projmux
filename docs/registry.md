@@ -150,8 +150,9 @@ prints `creator declaration not recorded: process-chain-disagrees`.
 In-process operator overrides retain precedence. Invalid explicit references
 still refuse creation. These annotations are provenance, never authentication.
 
-Unrelated shells and failed ancestry reads do not infer a creator or print a
-process diagnostic. Matching candidates rejected by identity or binding checks
+Unrelated shells do not infer a creator or print a process diagnostic.
+An ancestry read failure after observing a candidate prints
+`process-chain-unobservable` and does not infer a creator. Matching candidates rejected by identity or binding checks
 print `creator not recorded: process-child-identity-mismatch` or
 `process-binding-mismatch`; ambiguous matches print `process-child-ambiguous`.
 Observation failures preserve create stdout, routing and exit status.

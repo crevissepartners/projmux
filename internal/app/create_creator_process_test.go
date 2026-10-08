@@ -89,7 +89,7 @@ func TestProcessCreatorRejectsStaleAndUnrelatedEvidence(t *testing.T) {
 				return []coremetadata.ProcessIdentity{r.Panes[len(r.Panes)-1].Status.Activation.Process.HostProcess}, nil
 			}
 		}},
-		{"read failure", "", func(c *createCommand, r *coremetadata.Registry, id coremetadata.ProcessIdentity) {
+		{"read failure", creatorSkipProcessUnobservable, func(c *createCommand, r *coremetadata.Registry, id coremetadata.ProcessIdentity) {
 			c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
 				return []coremetadata.ProcessIdentity{id}, errors.New("unobservable")
 			}
@@ -155,5 +155,48 @@ func TestProcessCreatorRejectsStaleAndUnrelatedEvidence(t *testing.T) {
 				t.Fatalf("stderr %q want %q", stderr.String(), want)
 			}
 		})
+	}
+}
+
+func TestProcessCreatorSelectsNearestValidProviderChild(t *testing.T) {
+	c, reg, child := processCreatorFixture(t)
+	original := reg.Panes[len(reg.Panes)-1].Clone()
+	pane := original.Clone()
+	owner, _ := reg.Agent(pane.Metadata.OwnerUID())
+	agent := owner.Clone()
+	pane.Metadata.UID = "pane-nearer"
+	agent.Metadata.UID = "agent-nearer"
+	agent.Status.PaneRef = pane.Metadata.UID
+	pane.Metadata.OwnerRef.UID = agent.Metadata.UID
+	binding := &pane.Status.Activation.Process.Binding
+	binding.AgentUID, binding.PaneUID = agent.Metadata.UID, pane.Metadata.UID
+	pane.Status.Activation.AgentUID = agent.Metadata.UID
+	pane.Status.ProcessSession.Binding = *binding
+	nearer := child
+	nearer.PID, nearer.Start = 7002, "nearer-birth"
+	pane.Status.Activation.Process.Child = nearer
+	reg.Panes = append(reg.Panes, pane)
+	reg.Agents = append(reg.Agents, agent)
+	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
+		return []coremetadata.ProcessIdentity{nearer, child}, nil
+	}
+	got := c.observeCreator(context.Background(), &reg)
+	if got.paneUID != pane.Metadata.UID {
+		t.Fatalf("nearest child lost to Registry ordering: %+v", got)
+	}
+	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
+		return []coremetadata.ProcessIdentity{child, nearer}, nil
+	}
+	got = c.observeCreator(context.Background(), &reg)
+	if got.paneUID != original.Metadata.UID {
+		t.Fatalf("reversed ancestry: %+v", got)
+	}
+	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
+		return []coremetadata.ProcessIdentity{nearer, child}, nil
+	}
+	reg.Panes[len(reg.Panes)-1].Status.Activation.Generation = "stale"
+	got = c.observeCreator(context.Background(), &reg)
+	if got.paneUID != original.Metadata.UID {
+		t.Fatalf("stale nearest child hid valid farther child: %+v", got)
 	}
 }

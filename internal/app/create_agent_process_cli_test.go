@@ -625,6 +625,8 @@ func TestProcessCreatorActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Parent and child share a Registry but each provider owns its endpoint.
+			raw = []byte(strings.Replace(string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'", 1))
 			branch := "elif prompt=='nested-create':\n   result=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'create','agent','--host','process','--project','uid:" + f.project + "','--window','uid:" + f.window + "','--provider','claude','--name','nested'],input='',text=True,capture_output=True)\n   open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'nested-result'),'w').write(str(result.returncode)+'\\n'+result.stdout+result.stderr)\n  elif prompt=='register-again':"
 			if err = os.WriteFile(script, []byte(strings.Replace(string(raw), "elif prompt=='register-again':", branch, 1)), 0600); err != nil {
 				t.Fatal(err)
