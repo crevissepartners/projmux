@@ -463,27 +463,58 @@ func (c *agentCommand) runTurnInterrupt(args []string, stdout io.Writer) error {
 // process host. Starts enter the provider stream as plain user frames;
 // coordination messages keep their separate envelope route.
 func (c *agentCommand) callProcessTurn(reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, error) {
+	operation, result, err := c.callProcessForegroundAction(reg, agent, provider, action, text)
+	if err != nil {
+		return "", err
+	}
+	return operation, processTurnAcceptance(result)
+}
+
+// callProcessUserDelivery sends one Codex user input. Only the owned host
+// selects start or exact active-turn steer; a lost receipt is never replayed.
+func (c *agentCommand) callProcessUserDelivery(reg coremetadata.Registry, agent coremetadata.Agent, text string) (processhost.UserTurnDelivery, error) {
+	operation, result, err := c.callProcessForegroundAction(reg, agent, aiModeCodex, "user-deliver", text)
+	if err != nil {
+		return processhost.UserTurnDelivery{}, err
+	}
+	return processUserDeliveryAcceptance(result, operation)
+}
+
+func processUserDeliveryAcceptance(result processForegroundResult, operation string) (processhost.UserTurnDelivery, error) {
+	if err := processTurnAcceptance(result); err != nil {
+		return processhost.UserTurnDelivery{}, err
+	}
+	r := result.UserDelivery
+	if r == nil || result.Stale || result.Busy || result.Closed || result.Receipt != nil ||
+		(r.Mode != processhost.UserTurnStart && r.Mode != processhost.UserTurnSteer) ||
+		operation == "" || r.Operation != operation || strings.TrimSpace(r.TurnID) == "" || strings.TrimSpace(r.TurnID) != r.TurnID {
+		return processhost.UserTurnDelivery{}, processhost.ErrStale
+	}
+	return *r, nil
+}
+
+func (c *agentCommand) callProcessForegroundAction(reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, processForegroundResult, error) {
 	pane, found := reg.Pane(agent.Status.PaneRef)
 	if !found || pane.Status.ProcessSession == nil || agent.Spec.Provider != provider || c.controlPaths == nil {
-		return "", processhost.ErrStale
+		return "", processForegroundResult{}, processhost.ErrStale
 	}
 	session := pane.Status.ProcessSession
 	activation, current, ok := reg.CurrentProcessActivation(session.Binding)
 	if !ok || current != provider {
-		return "", processhost.ErrStale
+		return "", processForegroundResult{}, processhost.ErrStale
 	}
 	paths, err := c.controlPaths()
 	if err != nil {
-		return "", err
+		return "", processForegroundResult{}, err
 	}
 	socket := processHostSocket(provider, intmetadata.PathFor(paths.StateDir), pane.Metadata.UID, session.Binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
-		return "", fmt.Errorf("process-host-unavailable: %w", err)
+		return "", processForegroundResult{}, fmt.Errorf("process-host-unavailable: %w", err)
 	}
 	operation, err := newCreateOperationID()
 	if err != nil {
-		return "", err
+		return "", processForegroundResult{}, err
 	}
 	sessionID := session.SessionID
 	if provider == aiModeCodex {
@@ -495,9 +526,9 @@ func (c *agentCommand) callProcessTurn(reg coremetadata.Registry, agent coremeta
 	request := processHostRequest(provider, nil, &processForegroundRequest{Authority: authority, Action: action, Operation: operation, Prompt: text, Turn: session.TurnID})
 	result, err := callProcessForeground(ctx, socket, identity, activation.HostProcess, request)
 	if err != nil {
-		return "", fmt.Errorf("process-host-unavailable: %w", err)
+		return "", processForegroundResult{}, fmt.Errorf("process-host-unavailable: %w", err)
 	}
-	return operation, processTurnAcceptance(result)
+	return operation, result, nil
 }
 
 func processTurnAcceptance(result processForegroundResult) error {

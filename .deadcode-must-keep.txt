@@ -197,6 +197,7 @@ VersionTuple.normalized	Test-only installed qualification helper retained for ex
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
+agentCommand.callProcessUserDelivery	Planned private web_process_user_input.go:deliverProcessUserInput foreign-owned Codex user-input consumer retains this typed caller to obtain actual Mode/Operation/TurnID once, without replay or fallback; explicit public Turn intent stays unchanged.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
 applyCodexForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
@@ -276,6 +277,7 @@ pickerOptionsFromCompatPicker	Compat picker option projection retained as the te
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+processUserDeliveryAcceptance	Retained typed receipt validation for the planned foreign-owned Codex deliverProcessUserInput consumer rejects missing or malformed actual Mode/Operation/TurnID without replay or fallback.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.

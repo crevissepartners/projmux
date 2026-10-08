@@ -52,8 +52,9 @@ type processForegroundResult struct {
 	InvalidAnswer       bool
 	Questions           []ExactProcessQuestion `json:",omitempty"`
 	Stale, Busy, Closed bool
-	Observation         *processHostObservation `json:",omitempty"`
-	Receipt             *codexProcessReceipt    `json:",omitempty"`
+	Observation         *processHostObservation       `json:",omitempty"`
+	Receipt             *codexProcessReceipt          `json:",omitempty"`
+	UserDelivery        *processhost.UserTurnDelivery `json:",omitempty"`
 }
 
 func controlProcessForeground(ctx context.Context, peer coremetadata.ProcessIdentity, request processForegroundRequest, current func(context.Context, processhost.Authority) error, apply func() error) processForegroundResult {
