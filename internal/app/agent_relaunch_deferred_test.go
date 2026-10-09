@@ -69,7 +69,7 @@ func deferredRelaunchFixture(t *testing.T) processCreateCLI {
 	if err = os.WriteFile(script, []byte(provider), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "claude"), []byte("#!/bin/sh\nexec python3 -u "+fmt.Sprintf("%q", script)+" \"$@\"\n"), 0700); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "claude"), []byte("#!/bin/sh\n"+processFixtureExports(root)+"exec python3 -u "+fmt.Sprintf("%q", script)+" \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(filepath.Join(root, "tmux"), []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {

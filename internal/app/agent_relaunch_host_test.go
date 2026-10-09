@@ -180,7 +180,7 @@ func hostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, str
 	})
 	// The interactive fixture is a persistent process, while the process branch
 	// uses the existing stream-json protocol fixture. No actual provider runs.
-	script := "#!/bin/sh\nif [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nprintf '%s\\n' \"$@\" >> " + fmt.Sprintf("%q", filepath.Join(f.root, "tmux-argv")) + "\nexec sleep 300\n"
+	script := "#!/bin/sh\n" + processFixtureExports(f.root) + "if [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nprintf '%s\\n' \"$@\" >> " + fmt.Sprintf("%q", filepath.Join(f.root, "tmux-argv")) + "\nexec sleep 300\n"
 	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
