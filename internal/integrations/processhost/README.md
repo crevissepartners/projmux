@@ -85,8 +85,13 @@ retain their separate grace budget. Startup rollback allows these four budgets
 plus one grace of scheduling margin before reaping a nonconforming helper.
 Repeated Stop is idempotent; a different binding is refused.
 
-`Wait` reports actual child evidence. `Snapshot.Termination` uses the existing
-metadata classifier, and the consumer offers it to `Mutator.RecordTermination`.
+`Wait` reports actual child evidence. `Snapshot.Termination` combines the
+metadata classifier with owner Stop intent recorded before stdin closes.
+Owner shutdown (including EOF followed by TERM/KILL escalation) is `normal`
+without changing the actual Wait code or signal. External provider death and
+protocol failure cleanup retain their original classification. A Stop after
+observed child Wait cannot relabel it. The consumer offers the receipt to
+`Mutator.RecordTermination`.
 Turn results and interrupt acknowledgments never produce termination evidence.
 
 `ClaudeCommand` preserves supplied launch arguments, adding only the stream

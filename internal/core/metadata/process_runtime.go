@@ -185,7 +185,9 @@ func validProcessWaitStatus(receipt TerminationEvidence) bool {
 	} else if receipt.Signal == "" {
 		return false
 	}
-	return validTerminationEvidenceShape(receipt) && receipt.Classification == ClassifyProcessExit(code, receipt.Signal)
+	// A supervisor may attest owner shutdown as normal even when the actual
+	// Wait is non-zero or signalled. The receipt still needs an exact Wait shape.
+	return validTerminationEvidenceShape(receipt) && (receipt.Classification == TerminationNormal || receipt.Classification == ClassifyProcessExit(code, receipt.Signal))
 }
 
 func (m Mutator) commitProcessRegistry(reg *Registry, next Registry) error {

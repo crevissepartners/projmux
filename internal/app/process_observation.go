@@ -143,7 +143,7 @@ func recordedProcessExit(reg coremetadata.Registry, binding processhost.Binding,
 		exit.Code = *receipt.ExitCode
 	}
 	view := processHostObservation{Binding: binding, Host: activation.HostProcess, Child: activation.Child, Provider: provider, State: "exited", Exit: exit}
-	if receipt.Classification != coremetadata.ClassifyProcessExit(exit.Code, exit.Signal) || !processObservationOwnership(reg, binding, view) {
+	if !coremetadata.MatchesProcessWait(metadataProcessBinding(binding), receipt) || !processObservationOwnership(reg, binding, view) {
 		return processhost.Snapshot{}, false
 	}
 	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: exit}, true

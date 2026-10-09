@@ -271,3 +271,38 @@ func TestProcessObservationRetiredWaitRemainsOfflineWithoutAuthority(t *testing.
 		})
 	}
 }
+
+func TestRecordedOwnerNormalProcessExitMatchesWait(t *testing.T) {
+	data, err := os.ReadFile("../core/metadata/testdata/registry-v5-process.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, signal := range []string{"", "TERM"} {
+		t.Run("signal="+signal, func(t *testing.T) {
+			var reg coremetadata.Registry
+			if err := json.Unmarshal(data, &reg); err != nil {
+				t.Fatal(err)
+			}
+			pane := &reg.Panes[1]
+			activation := *pane.Status.Activation.Process
+			activation.HostProcess.OwnerUID = uint32(os.Getuid())
+			activation.Child.OwnerUID = uint32(os.Getuid())
+			pane.Status.Activation.Process = &activation
+			binding := processSchemaBinding(activation.Binding)
+			code := 143
+			receipt := coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.TerminationNormal, ObservedAt: time.Now().UTC(), PaneUID: binding.Pane, AgentUID: binding.Agent, Generation: binding.Generation, OperationID: binding.Operation, ExitCode: &code, Signal: signal}
+			if signal != "" {
+				receipt.ExitCode = nil
+			}
+			pane.Status.LastTermination = receipt.Clone()
+			s, ok := recordedProcessExit(reg, binding, *pane, activation, "codex")
+			if !ok || s.Exit == nil || s.Exit.Signal != signal || (signal == "" && s.Exit.Code != code) {
+				t.Fatal("recorded owner Wait lost", s)
+			}
+			pane.Status.LastTermination.Generation = "old"
+			if _, ok := recordedProcessExit(reg, binding, *pane, activation, "codex"); ok {
+				t.Fatal("foreign normal receipt accepted")
+			}
+		})
+	}
+}

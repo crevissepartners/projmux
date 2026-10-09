@@ -10,6 +10,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -550,10 +551,10 @@ func TestProcessCreateClosedStdinExitActualCLI(t *testing.T) {
 			}
 			pane, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
 			receipt := pane.Status.LastTermination
-			if receipt == nil || (want == 0 && (receipt.ExitCode == nil || *receipt.ExitCode != 0)) || (want == 143 && receipt.Signal == "") {
+			if receipt == nil || receipt.Classification != coremetadata.TerminationNormal || (want == 0 && (receipt.ExitCode == nil || *receipt.ExitCode != 0)) || (want == 143 && receipt.Signal == "") {
 				t.Fatalf("actual Wait missing: %+v", receipt)
 			}
-			t.Logf("stdin=/dev/null forced=%t actual CLI exit=%d", forced, want)
+			t.Logf("stdin=/dev/null forced=%t actual CLI exit=%d classification=%s", forced, want, receipt.Classification)
 		})
 	}
 }
@@ -840,5 +841,105 @@ func TestProcessClaudeProviderTurnAndJoinedInputActualCLI(t *testing.T) {
 	waited = true
 	if err != nil {
 		t.Fatalf("owner did not survive the provider turn: %v %s", err, stderr.String())
+	}
+}
+
+func TestProcessOwnerStopExit143RemainsResumableActualCLI(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%t", explicit), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			path := filepath.Join(f.root, "provider.py")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Install the handler before the first user frame, then remain alive after
+			// stdin EOF so the real supervisor must send TERM. Wait must retain 143.
+			provider := strings.Replace(string(raw), "for line in sys.stdin:", "import signal\nsignal.signal(signal.SIGTERM,lambda *_: sys.exit(143))\nfor line in sys.stdin:", 1)
+			provider += "\nthreading.Event().wait()\n"
+			if err = os.WriteFile(path, []byte(provider), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args("-o", "none", "--", "hello")...)
+			input, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			if err = cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := false
+			defer func() {
+				_ = input.Close()
+				if !waited {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			}()
+			var agentUID string
+			for {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(reg.Agents) == 1 {
+					pane, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
+					if reg.Agents[0].Status.SessionRef != nil && pane.Status.ProcessSession != nil && pane.Status.ProcessSession.SessionID != "" {
+						agentUID = reg.Agents[0].Metadata.UID
+						break
+					}
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("session was not recorded")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			if explicit {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				agent, _ := reg.Agent(agentUID)
+				pane, _ := reg.Pane(agent.Status.PaneRef)
+				session := pane.Status.ProcessSession
+				socket := processClaudeHostSocket(f.store.Path(), pane.Metadata.UID, session.Binding.Generation)
+				identity, err := localipc.InspectOwnedSocket(socket)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := claudeProcessCheck{Foreground: &processForegroundRequest{Authority: processhost.Authority{Binding: processSchemaBinding(session.Binding), Connection: session.ConnectionID, Session: session.SessionID}, Action: "stop"}}
+				reply, err := callProcessForeground(ctx, socket, identity, pane.Status.Activation.Process.HostProcess, request)
+				if err != nil || !reply.Accepted {
+					t.Fatalf("explicit stop: %+v %v", reply, err)
+				}
+			} else {
+				_ = input.Close()
+			}
+			err = cmd.Wait()
+			waited = true
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 143 {
+				t.Fatalf("actual Wait: %v %s", err, output.String())
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, _ := reg.Agent(agentUID)
+			pane, _ := reg.Pane(agent.Status.PaneRef)
+			receipt := pane.Status.LastTermination
+			if receipt == nil || receipt.Classification != coremetadata.TerminationNormal || receipt.ExitCode == nil || *receipt.ExitCode != 143 || receipt.Signal != "" {
+				t.Fatalf("owner TERM lost actual Wait or normal classification: %+v", receipt)
+			}
+			candidates := listResumableProcessAgents(reg, processResumeFilter{})
+			if agent.Status.Phase != coremetadata.PhaseOffline || len(candidates) != 1 || candidates[0].Agent.Metadata.UID != agentUID {
+				t.Fatalf("owner stop lost resumability: %+v agent=%+v", candidates, agent)
+			}
+			t.Logf("copied CLI explicit=%t: normal exitCode=%d resumable=%s", explicit, *receipt.ExitCode, candidates[0].Agent.Metadata.UID)
+		})
 	}
 }

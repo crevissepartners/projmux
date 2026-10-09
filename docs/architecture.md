@@ -236,3 +236,15 @@ The longer design notes live under [design/](design/), one file per subject:
 - owning terminal emulator bindings
 - becoming a generic worktree orchestrator
 - implementing a fully custom TUI before parity is reached
+
+### Process provider shutdown evidence
+
+A process provider stopped by its owner (explicit Stop or foreground stdin
+EOF) records `lastTermination.classification = "normal"`, including when the
+supervisor escalates from stdin EOF to TERM or KILL. The actual child Wait
+exit code or signal stays unchanged; a provider that handles TERM and exits
+143 still records `exitCode = 143`. Recorded conversations remain resumable
+under the existing resume guards. External provider signals and crashes keep
+the existing abnormal classification (external HUP remains `killed`).
+Protocol failure cleanup does not count as an owner stop, and Stop after
+observed Wait cannot relabel an earlier exit. No Registry schema changes.
