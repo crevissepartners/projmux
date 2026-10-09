@@ -65,7 +65,31 @@ func (p *Handle) CheckClaudeHook(ctx context.Context, binding Binding, pid int, 
 	return p.checkClaudeHookLocked(ctx, binding, pid, session)
 }
 
+// CheckClaudeHookObserved is CheckClaudeHook without the Registry transaction.
+// Only a caller that proved CheckClaudeHook for this binding against a Registry
+// it knows is unchanged since may use it. Every handle-held fact is still checked.
+func (p *Handle) CheckClaudeHookObserved(ctx context.Context, binding Binding, pid int, session string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.hookSession == "" || p.hookSession != session {
+		return ErrStale
+	}
+	return p.observedClaudeHookLocked(ctx, binding, pid, session)
+}
+
 func (p *Handle) checkClaudeHookLocked(ctx context.Context, binding Binding, pid int, session string) error {
+	if err := p.observedClaudeHookLocked(ctx, binding, pid, session); err != nil {
+		return err
+	}
+	current, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
+	defer cancel()
+	if err := p.host.tx.Current(current, binding); err != nil {
+		return err
+	}
+	return current.Err()
+}
+
+func (p *Handle) observedClaudeHookLocked(ctx context.Context, binding Binding, pid int, session string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -76,12 +100,7 @@ func (p *Handle) checkClaudeHookLocked(ctx context.Context, binding Binding, pid
 	if p.state != "starting" && p.state != "ready" {
 		return ErrClosed
 	}
-	current, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
-	defer cancel()
-	if err := p.host.tx.Current(current, binding); err != nil {
-		return err
-	}
-	return current.Err()
+	return nil
 }
 
 // Response discriminates question answers from permission decisions. Deny is
