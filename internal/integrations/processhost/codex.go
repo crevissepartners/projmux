@@ -185,18 +185,20 @@ type codexAdapter struct {
 	client *codexappserver.Client
 	// Typed writes serialize, but the reader must keep draining while an RPC
 	// waits. A bounded queue preserves start/interrupt reply ordering.
-	control       chan struct{}
-	awaitingReply bool                          // guarded by p.mu
-	replyQueue    []codexappserver.Notification // guarded by p.mu
+	control           chan struct{}
+	awaitingReply     bool                          // guarded by p.mu
+	replyQueue        []codexappserver.Notification // guarded by p.mu
+	notificationFence chan chan struct{}
 	// FIFO replay horizon: the last Events admitted deliveries, including
 	// confirmed refusals. Eviction permits reuse beyond that bounded horizon.
 	usedDeliveries map[string]bool // guarded by p.mu
 	deliveryOrder  []string        // guarded by p.mu
+	providerTurns  []string        // bounded provider turn ID fence, guarded by p.mu
 }
 
 func (cfg CodexConfig) clone() adapterConfig { cfg.Roots = slices.Clone(cfg.Roots); return cfg }
 func (cfg CodexConfig) newAdapter(p *Handle) providerAdapter {
-	return &codexAdapter{p: p, control: make(chan struct{}, 1), usedDeliveries: make(map[string]bool)}
+	return &codexAdapter{p: p, control: make(chan struct{}, 1), notificationFence: make(chan chan struct{}), usedDeliveries: make(map[string]bool)}
 }
 
 func (c *codexAdapter) attach(stream io.ReadWriteCloser) {
@@ -231,6 +233,11 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	if _, err := c.client.InitializeExperimental(ctx, cfg.Version); err != nil {
 		return err
 	}
+	// Resume can open a goal turn before its RPC reply. Keep those frames in
+	// wire order until the returned thread has been committed to this generation.
+	c.p.mu.Lock()
+	c.awaitingReply = true
+	c.p.mu.Unlock()
 	var thread codexappserver.ThreadBinding
 	var err error
 	expected := ""
@@ -255,6 +262,12 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	if expected != "" && thread.ThreadID != expected {
 		return fmt.Errorf("%w: returned thread differs from source", ErrResumeRefused)
 	}
+	// RPC replies and notifications have separate consumers. Before exposing
+	// ready, join the notification reader so every frame preceding the reply
+	// has reached replyQueue, even when this goroutine runs first.
+	if err = c.flushNotifications(ctx); err != nil {
+		return err
+	}
 	p := c.p
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -266,7 +279,8 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	}
 	p.session, p.state = thread.ThreadID, "ready"
 	p.emitLocked("ready", nil, nil)
-	return nil
+	c.awaitingReply = false
+	return c.drainReplyLocked()
 }
 func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt string) error {
 	_, err := c.deliver(ctx, a, operation, prompt, false, false)
@@ -354,6 +368,7 @@ func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prom
 	}
 	if mode == UserTurnStart {
 		p.turn = turn
+		c.rememberProviderTurnLocked(turn)
 		p.emitLocked("turn-submitted", nil, nil)
 	}
 	c.awaitingReply = false
@@ -477,11 +492,26 @@ func (c *codexAdapter) respond(ctx context.Context, a Authority, token Request, 
 }
 func (c *codexAdapter) readOutput() {
 	defer c.client.Close()
-	for n := range c.client.Notifications() {
-		err := c.consume(n)
-		if err != nil {
-			c.p.protocolFailure(err)
-			return
+	reading := true
+	for reading {
+		select {
+		case n, ok := <-c.client.Notifications():
+			if !ok {
+				reading = false
+				break
+			}
+			if err := c.consume(n); err != nil {
+				c.p.protocolFailure(err)
+				return
+			}
+		case fence := <-c.notificationFence:
+			closed, err := c.drainNotifications()
+			if err != nil {
+				c.p.protocolFailure(err)
+				return
+			}
+			close(fence)
+			reading = !closed
 		}
 	}
 	// Stream loss is not child exit. Give the independent Wait reader one
@@ -500,11 +530,50 @@ func (c *codexAdapter) readOutput() {
 		c.p.protocolFailure(errors.New("codex connection lost"))
 	}
 }
+
+// The client enqueues notifications before publishing the RPC reply. Drain at
+// most the bounded channel's capacity: every frame preceding that reply is
+// already in this FIFO or consumed by this same reader.
+func (c *codexAdapter) drainNotifications() (bool, error) {
+	for range c.p.host.limits.Events {
+		select {
+		case n, ok := <-c.client.Notifications():
+			if !ok {
+				return true, nil
+			}
+			if err := c.consume(n); err != nil {
+				return false, err
+			}
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *codexAdapter) flushNotifications(ctx context.Context) error {
+	fence := make(chan struct{})
+	select {
+	case c.notificationFence <- fence:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.p.done:
+		return ErrClosed
+	}
+	select {
+	case <-fence:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.p.done:
+		return ErrClosed
+	}
+}
 func (c *codexAdapter) consume(n codexappserver.Notification) error {
 	p := c.p
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.state != "ready" {
+	if p.state != "ready" && !(p.state == "starting" && c.awaitingReply) {
 		return nil
 	}
 	if c.awaitingReply {
@@ -580,6 +649,32 @@ func (c *codexAdapter) consumeLocked(n codexappserver.Notification) error {
 		return nil
 	}
 	switch n.Method {
+	case "thread/tokenUsage/updated", "thread/goal/updated":
+		// Session telemetry may refer to the completed root turn, including
+		// immediately after resume. It carries no turn or control authority.
+		if identity.ThreadID != p.session {
+			return ErrStale
+		}
+		p.emitLocked("provider-event", n.Params, nil)
+	case "turn/started":
+		if identity.ThreadID != p.session || identity.TurnID == "" || len(identity.TurnID) > 256 {
+			return ErrStale
+		}
+		if p.turn == identity.TurnID {
+			// The notification for a host-submitted turn can precede its reply.
+			p.emitLocked("provider-event", n.Params, nil)
+			return nil
+		}
+		if p.turn != "" || slices.Contains(c.providerTurns, identity.TurnID) {
+			return ErrStale
+		}
+		if p.activeCriticalLocked() >= p.host.limits.Events {
+			return ErrBusy
+		}
+		p.turn = identity.TurnID
+		c.rememberProviderTurnLocked(p.turn)
+		clear(p.usedRequests)
+		p.emitLocked("provider-turn-started", n.Params, nil)
 	case "turn/completed":
 		if identity.ThreadID != p.session || identity.TurnID == "" || identity.TurnID != p.turn {
 			return ErrStale
@@ -596,4 +691,11 @@ func (c *codexAdapter) consumeLocked(n codexappserver.Notification) error {
 		p.emitLocked("provider-event", n.Params, nil)
 	}
 	return nil
+}
+
+func (c *codexAdapter) rememberProviderTurnLocked(turn string) {
+	if len(c.providerTurns) >= c.p.host.limits.Events {
+		c.providerTurns = c.providerTurns[1:]
+	}
+	c.providerTurns = append(c.providerTurns, turn)
 }
