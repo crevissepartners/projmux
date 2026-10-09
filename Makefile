@@ -48,6 +48,11 @@ build:
 
 install: build
 	@mkdir -p $(INSTALL_DIR)
+	@echo ">> checking live process owners before binary publication..."
+	@$(PROJMUX_BIN) internal install-preflight || { \
+	  echo "install preflight refused; binary publication not started" >&2; \
+	  exit 1; \
+	}
 	@echo ">> converging live config before binary publication..."
 	@$(PROJMUX_BIN) config apply --bin $(INSTALL_BIN) --socket $(PROJMUX_INSTALL_SOCKET) || { \
 	  echo "install pre-publication convergence failed; binary publication not started; recovery: run \`projmux config apply --socket $(PROJMUX_INSTALL_SOCKET)\`" >&2; \

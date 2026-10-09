@@ -87,6 +87,12 @@ const (
 	// replacementEventInvocationExit is a short-lived invocation returning on
 	// its own. The next invocation runs the installed image.
 	replacementEventInvocationExit = "invocation-exit"
+	// replacementEventProcessOwnerExit is a process Agent's owner ending: its
+	// foreground creator, resumer, or relauncher returns. The supervisor helper
+	// ends with that activation, and resuming the Agent starts both on the
+	// installed image. `delete agent` also ends an owner, but it removes the
+	// Agent, so nothing is left to resume.
+	replacementEventProcessOwnerExit = "process-owner-exit"
 )
 
 // replacementLifecycleEvents is the closed event set, in documentation order.
@@ -95,6 +101,7 @@ var replacementLifecycleEvents = []string{
 	replacementEventShellWrapperExit,
 	replacementEventUsageDemandLapse,
 	replacementEventInvocationExit,
+	replacementEventProcessOwnerExit,
 }
 
 // replacementPaneRelaunch is the operator action behind `pane-relaunch`.
@@ -162,6 +169,14 @@ var replacementRolePolicies = map[string]replacementRolePolicy{
 		Disposition: replacementDispositionReportOnly,
 		Route:       "lease-expiry",
 		Action:      []replacementActionStep{{Event: replacementEventUsageDemandLapse}},
+	},
+	projmuxProcessRoleProcessHostHelper: {
+		Disposition: replacementDispositionReportOnly,
+		Route:       "process-owner-restart",
+		Action: []replacementActionStep{
+			{Event: replacementEventProcessOwnerExit},
+			{Command: "projmux agent resume <agent-ref>"},
+		},
 	},
 	projmuxProcessRoleOther: {
 		Disposition: replacementDispositionReportOnly,

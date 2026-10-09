@@ -670,6 +670,7 @@ func TestProjmuxProcessRoleOrderKeepsTheUnnamedRemainderLast(t *testing.T) {
 		{"projmux", "shell"},
 		{"projmux", "internal", claudeEndpointHelperRoute},
 		{"projmux", "internal", "status", "usage", usagecmd.NativeWatcherInternalFlag},
+		{"projmux", "internal", "process-host-supervisor"},
 		{"projmux", "internal", "statusbar", "render"},
 	} {
 		reachable[projmuxProcessRole(cmdline)] = true

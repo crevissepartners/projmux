@@ -128,15 +128,38 @@ The owner answers observation with control protocol 1. Next to its process
 identities and state it reports `Protocol` (`1`), `Revision` (the same commit,
 empty when unknown), `Actions` (the requests it implements), `Turn` (whether a
 provider turn is running), `Pending` (the number of unanswered questions and
-approvals, never their content), and `OwnerMode` (`foreground`, the owner is
-the command that created, resumed, or relaunched the Agent). An answer without
-these fields comes from an owner that predates them and is read as protocol 0.
+approvals, never their content), `OwnerMode` (`foreground`, the owner is
+the command that created, resumed, or relaunched the Agent), and
+`Coordination` (the Claude coordination version the owner's build speaks). An
+answer without these fields comes from an owner that predates them and is read
+as protocol 0; an answer without `Coordination` alone leaves that version
+unknown.
 
 `Status` in `describe` and `get` is `live` while the owner answers and
 `offline` after the owner recorded the provider's exit. When the owner cannot
 be reached and no exit was recorded, for example after the owner
 was killed with `SIGKILL`, the status is `unknown`: projmux does not guess that
 the provider stopped.
+
+## Installing while owners run
+
+An install never stops or replaces a running owner. `make install` lists the
+live owners in its residue census, each with its Agent, provider, `Revision`,
+and coordination version (`coordination unknown` when the owner does not report
+one), and leaves them on the build they started with.
+
+Before it publishes anything, `make install` runs `projmux internal
+install-preflight`. When the new build would migrate the Registry to a newer
+`schemaVersion`, or a live Claude owner reports a coordination version the new
+build does not speak, and at least one owner is live, the install stops with
+exit 1. The binary and the live config stay unchanged, and the message lists
+the owners and how to stop them: end each foreground owner (Ctrl-C or close its
+standard input), install again, then `projmux agent resume <agent-ref>`.
+`projmux delete agent <agent-ref>` also stops an owner, but it removes the
+Agent, which then cannot be resumed. An owner whose coordination version is
+unknown does not stop an install. A live owner is the recorded host process of
+a current process activation, matched by pid and start time, so owners the web
+server hosts are included.
 
 ## Stopping the Agent
 

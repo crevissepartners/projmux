@@ -2557,6 +2557,11 @@ var routes = []Route{
 			// user reaches for, and the canonical graph is the surface a
 			// generated reference and a release boundary are built from.
 			"projmux internal codex-broker serve|probe [--state-domain <absolute>] ...",
+			// The install preflight, invoked by `make install` before anything
+			// is published. It is absent from the canonical projection for the
+			// same reason as the census below: installer plumbing, not a
+			// command spelling.
+			"projmux internal install-preflight",
 			// The install residue census, invoked by `make install` and by the
 			// npm wrapper's first interactive run after an install. Like the
 			// broker runtime it is deliberately absent from the canonical

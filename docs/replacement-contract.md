@@ -277,6 +277,7 @@ the same words.
 | `session-client` | `shell` | one per attached client | **the operator's whole attached session.** This role is the reason a drain cannot be uniform: every other role is background work, and this one is the person at the terminal |
 | `agent-endpoint` | `internal claude-endpoint-helper` | one per registered agent activation | that agent's messaging endpoint until its pane is recreated |
 | `usage-watcher` | `internal status usage --watch-codex-rate-limits` | one per machine, lease-held | rate-limit sampling until the lease is taken again |
+| `process-host-helper` | `internal process-host-supervisor` | one per live process Agent activation | that process Agent's provider; it lives exactly as long as its owner's activation |
 | `other` | every route not named above | unbounded | — |
 
 **`other` is a total guard, not a count of replacement targets.** It exists so
@@ -328,6 +329,7 @@ code's policy map and event set, in both directions.
 | `session-client` | `report-only` | `operator-reattach` | event `shell-wrapper-exit`, then `projmux shell` |
 | `agent-endpoint` | `report-only` | `pane-relaunch` | `projmux stop project <project-ref>`, then `projmux start project <project-ref>` |
 | `usage-watcher` | `report-only` | `lease-expiry` | event `usage-demand-lapse` |
+| `process-host-helper` | `report-only` | `process-owner-restart` | event `process-owner-exit`, then `projmux agent resume <agent-ref>` |
 | `other` | `report-only` | `process-exit` | event `invocation-exit` |
 
 **The operator action is the route spelled as something that can happen.** A
@@ -345,6 +347,7 @@ reaches into `internal`, and when an event is outside this list.
 | `shell-wrapper-exit` | the terminal command that ran `projmux shell` returns. The wrapper waits on its `tmux attach-session` child, so it ends only when that client does |
 | `usage-demand-lapse` | no usage render has refreshed the watcher's demand marker within its 15-second TTL, so the watcher cancels itself and releases its lease; the next render starts one on the installed image. A status line still rendering the usage segment keeps that demand fresh |
 | `invocation-exit` | a short-lived invocation returns on its own, and the next one runs the installed image |
+| `process-owner-exit` | a process Agent's owner ends: its foreground creator, resumer, or relauncher returns. The supervisor helper ends with that activation. `projmux delete agent` also ends an owner but removes the Agent, so it cannot be resumed |
 
 **`pane-relaunch` is a Project runtime cycle.** Each role it covers lives as
 long as one managed Pane: the supervisor is that Pane's own process, the
@@ -662,6 +665,7 @@ reconstruction.
 | `residual.role.session-client` | `L2` | counter |
 | `residual.role.agent-endpoint` | `L2` | counter |
 | `residual.role.usage-watcher` | `L2` | counter |
+| `residual.role.process-host-helper` | `L2` | counter |
 | `residual.role.other` | `L2` | counter |
 | `residual.oldest-seconds` | `L2` | counter |
 | `residual.domain.this` | `L2` | counter |

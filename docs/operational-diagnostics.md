@@ -774,7 +774,19 @@ found residual processes:
    Recorded to ~/.local/state/projmux/install-residue.jsonl (17 installs, last 38m ago).
 ```
 
-An install that reached the whole fleet prints nothing at all. A platform with
+Live process Agent owners are printed in a second block whenever any exist,
+because an install never stops them:
+
+```
+>> 1 live process owner retained; this install does not stop or replace it
+     reviewer (uid:agent-…)  codex  revision 4f1308af…  coordination unknown
+   Each keeps its own build until its Agent is stopped and resumed with
+   `projmux agent resume <agent-ref>`.
+```
+
+That block names Agents and builds on the terminal only; the record keeps the
+count. An install that reached the whole fleet and retained no owner prints
+nothing at all. A platform with
 no readable process table (macOS, which has no `/proc/<pid>/exe`) also prints
 nothing: the census cannot be taken there and the operator has no action
 available, so a line at every install would be permanent noise. Both cases
@@ -812,10 +824,11 @@ silent.
 | `observed` | projmux processes classified |
 | `replaced` | how many of them run the image this install replaced |
 | `sinceLastInstallSeconds` | gap to the previous record; absent on the first |
-| `roles[].role` | `broker-runtime`, `lifecycle-observer`, `supervisor`, or `other` |
+| `roles[].role` | a role from the process role vocabulary in [replacement-contract.md](replacement-contract.md#process-role-vocabulary), such as `broker-runtime`, `supervisor`, `process-host-helper`, or `other` |
 | `roles[].processes` / `current` / `replaced` | that role's census |
 | `roles[].replacedAgeSeconds` | ascending age distribution of that role's residual processes, whole seconds |
 | `roles[].replacedAgeCapped` | present when the 512-sample per-role bound was reached, so the distribution above is a prefix |
+| `processOwners` | live process Agent owners the install retained, counted from the Registry; absent when there were none |
 
 The record carries **no pid, no executable path, and no argv**, on the terminal
 and in the file alike. Counts and durations are the whole of it; process
