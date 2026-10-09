@@ -59,7 +59,13 @@ type UserTurnDelivery struct {
 // DeliverUserTurn starts while idle or steers the exact admitted active turn.
 // A refused or uncertain steer is never retried as another turn or a start.
 func (c *CodexHandle) DeliverUserTurn(ctx context.Context, a Authority, operation, prompt string) (UserTurnDelivery, error) {
-	return c.handle.adapter.(*codexAdapter).deliver(ctx, a, operation, prompt, true)
+	return c.handle.adapter.(*codexAdapter).deliver(ctx, a, operation, prompt, true, false)
+}
+
+// SteerUserTurn only delivers to the running turn selected at owned admission.
+// Idle refusal occurs before consuming the operation or writing provider bytes.
+func (c *CodexHandle) SteerUserTurn(ctx context.Context, a Authority, operation, prompt string) (UserTurnDelivery, error) {
+	return c.handle.adapter.(*codexAdapter).deliver(ctx, a, operation, prompt, true, true)
 }
 
 // A local refusal has no provider turn ID; the consumed operation is its ID.
@@ -256,11 +262,11 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	return nil
 }
 func (c *codexAdapter) turn(ctx context.Context, a Authority, operation, prompt string) error {
-	_, err := c.deliver(ctx, a, operation, prompt, false)
+	_, err := c.deliver(ctx, a, operation, prompt, false, false)
 	return err
 }
 
-func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prompt string, allowSteer bool) (UserTurnDelivery, error) {
+func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prompt string, allowSteer, steerOnly bool) (UserTurnDelivery, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.p.host.limits.Startup)
 	defer cancel()
 	if err := c.lock(ctx); err != nil {
@@ -278,6 +284,10 @@ func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prom
 		return UserTurnDelivery{}, ErrStale
 	}
 	mode, turn := UserTurnStart, p.turn
+	if steerOnly && turn == "" {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, ErrBusy
+	}
 	if turn != "" {
 		if !allowSteer {
 			p.mu.Unlock()
