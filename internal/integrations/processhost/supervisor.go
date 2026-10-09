@@ -82,6 +82,7 @@ func ServeSupervisor(lifetime, spec, status *os.File) error {
 	_ = os.Stderr.Close()
 	// The group was created by this exact child Start, not found by PID search.
 	group := cmd.Process.Pid
+	stopOrphans := reapOrphans(group)
 	died := make(chan struct{})
 	go func() { _, _ = io.Copy(io.Discard, lifetime); close(died) }()
 	signals := make(chan os.Signal, 1)
@@ -90,6 +91,7 @@ func ServeSupervisor(lifetime, spec, status *os.File) error {
 	waited := make(chan error, 1)
 	go func() { waited <- observeChildExit(group) }()
 	if err := out.Encode(processStatus{PID: group}); err != nil {
+		stopOrphans()
 		_ = syscall.Kill(-group, syscall.SIGKILL)
 		_, cleanupErr := finishOwnedChild(cmd, <-waited, launch.Grace)
 		return errors.Join(err, cleanupErr)
@@ -102,6 +104,7 @@ func ServeSupervisor(lifetime, spec, status *os.File) error {
 	case <-signals:
 		observationErr = stopGroup(group, launch.Grace, waited)
 	}
+	stopOrphans()
 	exit, err := finishOwnedChild(cmd, observationErr, launch.Grace)
 	if err != nil {
 		return err

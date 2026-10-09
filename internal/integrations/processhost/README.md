@@ -49,8 +49,10 @@ stdout and stderr independently. After supervisor exit, both drains share one
 grace deadline; inherited descriptors cannot delay Wait indefinitely. Closing an
 unfinished drain emits a protected stream-gap before process-exited. Ordinary
 EOF is reconciled with independent child Wait evidence; EOF alone is never exit0.
-Linux uses a subreaper in the dedicated helper;
-macOS waits for launchd to reap orphan descendants. The helper is not a daemon.
+Linux uses a subreaper in the dedicated helper. While the provider lives, the
+helper reaps each exited orphan it adopts (on SIGCHLD, with a periodic backstop),
+including orphans outside the provider group, by exact PID and never the
+provider itself; macOS waits for launchd to reap orphan descendants. The helper is not a daemon.
 Before signalling a finished provider group, the helper observes exit without
 reaping the group leader (Linux waitid WNOWAIT; Darwin owned-child SZOMB). Its
 PID/PGID therefore remains reserved until group signalling finishes and actual

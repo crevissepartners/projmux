@@ -11,6 +11,9 @@ import (
 
 func prepareReaper() error { return nil }
 
+// macOS has no subreaper: launchd adopts and reaps orphan descendants.
+func reapOrphans(int) (stop func()) { return func() {} }
+
 func reapGroup(group int, grace time.Duration) error {
 	return waitGroupAbsent(group, grace, func() error { return syscall.Kill(-group, 0) })
 }
