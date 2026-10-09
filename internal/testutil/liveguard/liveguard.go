@@ -77,10 +77,13 @@ const (
 
 // inheritedEnv names the variables through which a process inherits a live
 // tmux client or a managed Pane's identity. The guard unsets them; a test that
-// needs one sets its own value. The last four equal internal/app's
+// needs one sets its own value. All but the first two equal internal/app's
 // runtimeMutationAnchorPaneEnv, internalActivationPaneUIDEnv,
-// internalActivationGenerationEnv and internalClaudeRegistryPathEnv, which a
-// test in internal/app keeps in step; this package cannot import them.
+// internalActivationGenerationEnv, internalClaudeRegistryPathEnv and the
+// process-hosted Claude and Codex binding and host variables, which a test in
+// internal/app keeps in step; this package cannot import them. A process
+// activation shell carries the last four, and a hook test that inherits them
+// takes the process-hosted path instead of the tmux one.
 var inheritedEnv = []string{
 	"TMUX",
 	"TMUX_PANE",
@@ -88,6 +91,10 @@ var inheritedEnv = []string{
 	"PMX_INTERNAL_ACTIVATION_PANE_UID",
 	"PMX_INTERNAL_ACTIVATION_GENERATION",
 	"PMX_INTERNAL_CLAUDE_REGISTRY_PATH",
+	"PMX_INTERNAL_CLAUDE_PROCESS_BINDING",
+	"PMX_INTERNAL_CLAUDE_PROCESS_HOST",
+	"PMX_INTERNAL_CODEX_PROCESS_BINDING",
+	"PMX_INTERNAL_CODEX_PROCESS_HOST",
 }
 
 // privateEnv maps each variable that locates per-user state to its directory

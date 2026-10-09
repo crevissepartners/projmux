@@ -165,11 +165,11 @@ func TestClaudeCommandPreservesLaunchPolicy(t *testing.T) {
 		t.Fatal("supervisor accepted implicit inherited environment")
 	}
 	args := []string{"--permission-mode", "manual", "--settings", "configured.json", "--model", "haiku"}
-	cmd, err := ClaudeCommand("claude", "/work", []string{"EXPLICIT=1"}, args)
+	cmd, err := ClaudeCommand("claude", "/work", []string{"HOME=/home/explicit"}, args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(strings.Join(cmd.Args, " "), strings.Join(args, " ")) || cmd.Env[0] != "EXPLICIT=1" {
+	if !strings.HasPrefix(strings.Join(cmd.Args, " "), strings.Join(args, " ")) || cmd.Env[0] != "HOME=/home/explicit" {
 		t.Fatal(cmd)
 	}
 	for _, bad := range []string{"--output-format=json", "--input-format", "--permission-prompt-tool", "--"} {
