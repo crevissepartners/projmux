@@ -14,15 +14,26 @@ type envPolicy struct {
 // commonEnv is the user session a headless provider and the commands it runs
 // need: locale, paths, temporary and XDG locations, proxies and CA bundles.
 // TMUX_TMPDIR locates the tmux server for projmux commands an agent runs; the
-// TMUX and TMUX_PANE client markers are not kept. PROJMUX_ is projmux's own
-// configuration, which the provider's projmux hook commands read.
+// TMUX and TMUX_PANE client markers are not kept.
 var commonEnv = envPolicy{
-	keys: []string{
+	keys: append([]string{
 		"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TMUX_TMPDIR", "SSH_AUTH_SOCK",
 		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy",
 		"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
-	},
-	prefixes: []string{"LC_", "XDG_", "PROJMUX_"},
+	}, projmuxSettingsEnv...),
+	prefixes: []string{"LC_", "XDG_"},
+}
+
+// projmuxSettingsEnv are the user settings documented in
+// docs/configuration.md that the projmux commands an agent or its provider
+// hooks run still read: project roots, locale and notification delivery. The
+// rest of the PROJMUX_ namespace is per-invocation context (hook variables such
+// as PROJMUX_PANE and PROJMUX_SESSION, popup, notify-depth and switch handoff
+// keys) or concerns the operator's own terminal, so it is never inherited.
+var projmuxSettingsEnv = []string{
+	"PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS", "TMUX_SESSIONIZER_ROOTS", "PROJMUX_LOCALE",
+	"PROJMUX_NOTIFY_HOOK", "PROJMUX_NOTIFY_EXPIRE_MS", "PROJMUX_DESKTOP_NOTIFY_MODE", "PROJMUX_DESKTOP_NOTIFY",
+	"PROJMUX_WSL_TOAST_ICON_DIR", "PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS",
 }
 
 // claudeEnv is Claude Code's authentication, cloud-provider and configuration

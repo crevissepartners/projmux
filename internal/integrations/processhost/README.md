@@ -92,8 +92,11 @@ Turn results and interrupt acknowledgments never produce termination evidence.
 `ClaudeCommand` preserves supplied launch arguments, adding only the stream
 transport. `ClaudeCommand` and `CodexCommand` keep only the allowlisted
 inherited environment (`env.go`): the user session (PATH, HOME, locale, XDG,
-TMPDIR, TMUX_TMPDIR, proxies, CA bundles), `PROJMUX_*` configuration, and that
-provider's authentication and configuration variables. Another session's
+TMPDIR, TMUX_TMPDIR, proxies, CA bundles), the documented `PROJMUX_*` user
+settings that projmux commands run by the agent read (project roots, locale,
+notification delivery), and that provider's authentication and configuration
+variables. Per-invocation `PROJMUX_*` context such as hook variables
+(`PROJMUX_PANE`, `PROJMUX_SESSION`) is never inherited. Another session's
 markers such as `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`,
 `CODEX_CI`, `GOMAXPROCS`, `TMUX` and `TMUX_PANE` never reach the provider. The
 consumer appends the activation identity after filtering. `Respond` is the only control-response writer: questions

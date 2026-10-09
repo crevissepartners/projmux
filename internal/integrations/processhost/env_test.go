@@ -30,6 +30,16 @@ var inheritedProviderMarkers = []string{
 	"PMX_INTERNAL_CLAUDE_PROCESS_BINDING={}",
 	"PMX_INTERNAL_CODEX_PROCESS_HOST=/run/other",
 	"PMX_PLANTED_MARKER=1",
+	"PROJMUX_PANE=%1",
+	"PROJMUX_SESSION=other",
+	"PROJMUX_SESSION_KIND=persistent",
+	"PROJMUX_CWD=/other",
+	"PROJMUX_RUNTIME=process",
+	"PROJMUX_SOCKET=projmux",
+	"PROJMUX_POPUP_TARGET_PANE=%2",
+	"PROJMUX_ORIGIN_CLIENT=/dev/pts/1",
+	"PROJMUX_NOTIFY_HOOK_DEPTH=1",
+	"PROJMUX_FOCUS_DEBUG=1",
 	"MALFORMED",
 }
 
@@ -50,6 +60,8 @@ var allowedSessionEnv = []string{
 	"no_proxy=localhost",
 	"SSL_CERT_FILE=/etc/ssl/cert.pem",
 	"PROJMUX_PROJDIR=/home/user/repos",
+	"PROJMUX_LOCALE=ko-KR",
+	"PROJMUX_DESKTOP_NOTIFY_MODE=off",
 }
 
 func TestProviderCommandsKeepOnlyTheAllowlistedEnvironment(t *testing.T) {
