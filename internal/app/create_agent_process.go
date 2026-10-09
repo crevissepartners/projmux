@@ -461,40 +461,125 @@ func processRecordedControl(request processhost.Request) coremetadata.ProcessRec
 	return coremetadata.ProcessRecordedControl{ID: request.ID, Kind: request.Kind, ConnectionID: request.Connection, SessionID: request.Session, TurnID: request.Turn}
 }
 
+// processOwnedRecheck is the owned Wait synchronization window. Handle changes
+// are coalesced into one synchronization per window, as the poll wrote them;
+// it also bounds how long a change nobody reports stays unsynchronized: an
+// answer another process stores for a pending control, and every change of a
+// Handle without change notification.
+const processOwnedRecheck = 100 * time.Millisecond
+
+// processChangeHandle is an owned Handle that reports its Snapshot changes.
+type processChangeHandle interface {
+	Changed(processhost.Binding) (<-chan struct{}, error)
+}
+
 // waitProcessAgent owns shutdown and persists only actual supervisor Wait.
-// A short Wait deadline is a condition check, not a fixed sleep: child exit wins
-// immediately. Cancellation closes only this Handle's dedicated lifetime.
+// It wakes for child exit, the end of ctx, a Handle change (synchronized at
+// the end of its coalescing window), and a recheck only while a control is
+// pending: an idle owner does not wake. When ctx ends it keeps synchronizing for one more
+// recheck interval and synchronizes once more before it stops the provider, as
+// the poll it replaces did, so a first turn that has just started still records
+// its conversation. Cancellation closes only this Handle's dedicated lifetime.
 func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSnapshot func(processhost.Snapshot) error) (processhost.Snapshot, error) {
 	if r.Handle == nil {
 		return processhost.Snapshot{}, errors.New("process host was not started")
 	}
+	type waitResult struct {
+		snapshot processhost.Snapshot
+		err      error
+	}
+	exited := make(chan waitResult, 1)
+	waitCtx, cancelWait := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelWait()
+	go func() {
+		snapshot, err := r.Handle.Wait(waitCtx, r.Binding)
+		exited <- waitResult{snapshot, err}
+	}()
+	changes, _ := r.Handle.(processChangeHandle)
 	var failure error
-	var stopDeadline time.Time
-	for {
-		if (ctx.Err() != nil || failure != nil) && stopDeadline.IsZero() {
-			failure = errors.Join(failure, r.Handle.Stop(r.Binding))
-			stopDeadline = time.Now().Add(3*processhost.DefaultLimits().Grace + 2*processhost.DefaultLimits().Write)
+	var coalesce, recheck, grace, cleanup <-chan time.Time
+	var changed <-chan struct{}
+	// subscribe precedes every Observe, so a change after Observe still wakes.
+	subscribe := func() (err error) {
+		if changes != nil {
+			changed, err = changes.Changed(r.Binding)
 		}
-		if !stopDeadline.IsZero() && !time.Now().Before(stopDeadline) {
+		return err
+	}
+	lifetime := ctx.Done()
+	// A lifetime that already ended stops at once, without synchronizing.
+	ending := ctx.Err() != nil
+	dirty := false
+	if syncSnapshot != nil && !ending {
+		// The first synchronization comes one recheck interval after the
+		// ownership line, as the first poll did, so a launch settles before
+		// the owner writes; it subscribes then.
+		recheck = time.After(processOwnedRecheck)
+	}
+	for {
+		select {
+		case result := <-exited:
+			return r.finishWait(result.snapshot, result.err, failure)
+		default:
+		}
+		if dirty {
+			// One synchronization covers every change reported so far.
+			coalesce = nil
+			if err := subscribe(); err != nil {
+				return processhost.Snapshot{}, errors.Join(failure, err)
+			}
+			snapshot, err := r.Handle.Observe(r.Binding)
+			if err != nil {
+				return snapshot, errors.Join(failure, err)
+			}
+			dirty, recheck = false, nil
+			switch snapshot.State {
+			case "stopping", "exited", "unknown":
+				// The provider is going away; controls and attention close after
+				// its Wait, as when the poll found the child gone first.
+				continue
+			}
+			failure = syncSnapshot(snapshot)
+			if changes == nil || len(snapshot.Pending) > 0 {
+				recheck = time.After(processOwnedRecheck)
+			}
+			continue
+		}
+		if (ending || failure != nil) && cleanup == nil {
+			failure = errors.Join(failure, r.Handle.Stop(r.Binding))
+			cleanup = time.After(3*processhost.DefaultLimits().Grace + 2*processhost.DefaultLimits().Write)
+			lifetime, changed, coalesce, recheck, grace = nil, nil, nil, nil, nil
+		}
+		select {
+		case result := <-exited:
+			return r.finishWait(result.snapshot, result.err, failure)
+		case <-lifetime:
+			lifetime = nil
+			if syncSnapshot == nil {
+				ending = true
+			} else {
+				grace = time.After(processOwnedRecheck)
+			}
+		case <-grace:
+			grace, dirty, ending = nil, true, true
+		case <-changed:
+			changed, coalesce = nil, time.After(processOwnedRecheck)
+		case <-coalesce:
+			coalesce, dirty = nil, true
+		case <-recheck:
+			recheck, dirty = nil, true
+		case <-cleanup:
 			return processhost.Snapshot{}, errors.Join(failure, errors.New("owned process Wait cleanup exceeded its bound"))
 		}
-		poll, cancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
-		snapshot, err := r.Handle.Wait(poll, r.Binding)
-		cancel()
-		if err == nil {
-			return snapshot, errors.Join(failure, r.persistProcessWait(snapshot))
-		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			return snapshot, errors.Join(failure, err)
-		}
-		snapshot, err = r.Handle.Observe(r.Binding)
-		if err != nil {
-			return snapshot, errors.Join(failure, err)
-		}
-		if failure == nil && stopDeadline.IsZero() && syncSnapshot != nil {
-			failure = syncSnapshot(snapshot)
-		}
 	}
+}
+
+// finishWait persists an actual Wait; a Wait error is returned with failure.
+func (r *processAgentCreateResult) finishWait(snapshot processhost.Snapshot, err, failure error) (processhost.Snapshot, error) {
+	if err != nil {
+		return snapshot, errors.Join(failure, err)
+	}
+	return snapshot, errors.Join(failure, r.persistProcessWait(snapshot))
 }
 
 func (r *processAgentCreateResult) persistProcessWait(snapshot processhost.Snapshot) error {

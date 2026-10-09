@@ -168,6 +168,10 @@ type Handle struct {
 	completionContext      context.Context
 
 	messageReservationTimer *time.Timer
+
+	// changed is handed out by Changed and closed by the next Snapshot change;
+	// nil while nobody waits.
+	changed chan struct{}
 }
 
 // Snapshot is a bounded resynchronization view. Turn results do not set Exit.
@@ -213,6 +217,7 @@ func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
 	if err != nil && p.lifetime == nil {
 		p.mu.Lock()
 		p.state, p.failure = "unknown", err.Error()
+		p.changedLocked()
 		p.mu.Unlock()
 		p.finish()
 	}
@@ -473,6 +478,7 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	}
 	p.mu.Lock()
 	p.pid = status.PID
+	p.changedLocked()
 	p.mu.Unlock()
 	first <- err
 	var actual *Exit
@@ -555,6 +561,7 @@ func (p *Handle) finish() {
 			if len(p.diagnostics) > p.host.limits.DiagnosticBytes {
 				p.diagnostics = bytes.Clone(p.diagnostics[len(p.diagnostics)-p.host.limits.DiagnosticBytes:])
 			}
+			p.changedLocked()
 			p.mu.Unlock()
 		}
 	}
@@ -575,6 +582,7 @@ func (p *Handle) stop() {
 			p.state = "stopping"
 		}
 		p.expireLocked()
+		p.changedLocked()
 		// Deliver provider EOF before asking the supervisor to start its bounded
 		// shutdown. Admission and pending control are already closed above.
 		if p.stdin != nil {
@@ -604,6 +612,30 @@ func (p *Handle) Wait(ctx context.Context, binding Binding) (Snapshot, error) {
 		return p.Observe(binding)
 	case <-ctx.Done():
 		return Snapshot{}, ctx.Err()
+	}
+}
+
+// Changed returns a channel closed by the next Snapshot change after the call,
+// so an owner waits for changes instead of polling. Every event, provider
+// diagnostics, and each transition that changes the Snapshot without an event
+// close it; exit closes it through the process-exited transition.
+func (p *Handle) Changed(binding Binding) (<-chan struct{}, error) {
+	if binding != p.launch.Binding {
+		return nil, ErrStale
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.changed == nil {
+		p.changed = make(chan struct{})
+	}
+	return p.changed, nil
+}
+
+// changedLocked wakes Changed waiters.
+func (p *Handle) changedLocked() {
+	if p.changed != nil {
+		close(p.changed)
+		p.changed = nil
 	}
 }
 
@@ -727,6 +759,7 @@ func (p *Handle) activeCriticalLocked() int {
 func (p *Handle) emitLocked(kind string, raw []byte, request *Request) {
 	p.seq++
 	event := Event{Binding: p.launch.Binding, Session: p.session, Connection: p.connection, Turn: p.turn, Sequence: p.seq, Kind: kind, Raw: bytes.Clone(raw), Request: request, Exit: p.exit}
+	p.changedLocked()
 	if kind != "output" && kind != "provider-event" {
 		p.critical = append(p.critical, event)
 		p.trimCriticalLocked()
@@ -751,6 +784,7 @@ func (p *Handle) readDiagnostics(r *os.File) {
 			if len(p.diagnostics) > p.host.limits.DiagnosticBytes {
 				p.diagnostics = bytes.Clone(p.diagnostics[len(p.diagnostics)-p.host.limits.DiagnosticBytes:])
 			}
+			p.changedLocked()
 			p.mu.Unlock()
 		}
 		if err != nil {

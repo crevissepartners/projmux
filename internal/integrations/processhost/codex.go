@@ -107,6 +107,9 @@ func (c *CodexHandle) Events(b Binding, after uint64) ([]Event, Snapshot, error)
 	return c.handle.Events(b, after)
 }
 func (c *CodexHandle) Stop(b Binding) error { return c.handle.Stop(b) }
+func (c *CodexHandle) Changed(b Binding) (<-chan struct{}, error) {
+	return c.handle.Changed(b)
+}
 func (c *CodexHandle) Wait(ctx context.Context, b Binding) (Snapshot, error) {
 	return c.handle.Wait(ctx, b)
 }
