@@ -142,7 +142,7 @@ func newProcessClaudeFixture(t *testing.T, command func(string, string) processh
 	return newProcessClaudeFixtureAt(t, command, "")
 }
 
-func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) processhost.Command, sharedPath string) *processClaudeFixture {
+func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) processhost.Command, sharedPath string, lifetime ...processOwnerLifetime) *processClaudeFixture {
 	t.Helper()
 	// Keep copied supervisor/provider paths short on both supported platforms.
 	t.Setenv("TMPDIR", "/tmp")
@@ -244,7 +244,11 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 		cmd = command(root, binary)
 		cmd.Env = append(cmd.Env, "PMX_TEST_PROCESS_BINARY="+binary, "PMX_TEST_PROCESS_ROOT="+root, "PMX_TEST_PROCESS_CLAUDE_CHILD=1")
 	}
-	handle, err := startProcessClaude(context.Background(), host, processhost.Launch{Binding: b, Command: cmd}, path, nil)
+	ctx := context.Background()
+	if len(lifetime) > 0 {
+		ctx = lifetime[0].withContext(ctx)
+	}
+	handle, err := startProcessClaude(ctx, host, processhost.Launch{Binding: b, Command: cmd}, path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -77,6 +77,7 @@ const (
 	// processHostOwnerForeground is the owner mode of a host whose lifetime is
 	// its foreground creator, resumer, or relauncher.
 	processHostOwnerForeground = "foreground"
+	processHostOwnerDetached   = "detached"
 )
 
 // errProcessHostUnsupportedAction refuses an action the owner does not

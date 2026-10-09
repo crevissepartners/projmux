@@ -54,19 +54,19 @@ type processProtocolHost struct {
 	pending  int
 }
 
-func newProcessProtocolHost(t *testing.T, provider string) processProtocolHost {
+func newProcessProtocolHost(t *testing.T, provider string, lifetime ...processOwnerLifetime) processProtocolHost {
 	t.Helper()
 	var h processProtocolHost
 	var store *intmetadata.Store
 	if provider == aiModeClaude {
-		f := newProcessClaudeFixture(t, nil)
+		f := newProcessClaudeFixtureAt(t, nil, "", lifetime...)
 		f.turn(t, "protocol-pending", "question")
 		h.snap = f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) > 0 })
 		h.binding, h.path, store = f.binding, f.path, f.store
 		h.socket = processClaudeHostSocket(f.path, f.binding.Pane, f.binding.Generation)
 		h.actions, h.pending = claudeForegroundActions, 1
 	} else {
-		f := newProcessCodexFixture(t, nil)
+		f := newProcessCodexFixtureWithEvents(t, nil, processhost.DefaultLimits().Events, lifetime...)
 		f.turn(t, "protocol-pending", "controls")
 		h.snap = f.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
 		h.binding, h.path, store = f.endpoint.binding, f.path, f.store
@@ -297,5 +297,37 @@ func TestDefaultProcessHostRevisionLookupReadsLiveOwner(t *testing.T) {
 	paneRef, _ := h.registry.Pane(h.binding.Pane)
 	if got := defaultProcessHostRevisionLookup()(h.registry, *paneRef); got != testProcessHostRevision {
 		t.Fatalf("live owner revision = %q", got)
+	}
+}
+
+// The declaration reaches real provider endpoints before their observation
+// socket is published, including contexts that suppress startup cancellation.
+func TestProcessHostObservationOwnerLifetime(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		for _, tc := range []struct {
+			name     string
+			lifetime processOwnerLifetime
+			want     string
+		}{
+			{"stdin EOF", processOwnerLifetime{stdinEOF: processStdinEOFTrigger}, processHostOwnerForeground},
+			{"explicit stop or signal", processOwnerLifetime{}, processHostOwnerDetached},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				h := newProcessProtocolHost(t, provider, tc.lifetime)
+				if view := h.view(t); view.OwnerMode != tc.want {
+					t.Fatalf("OwnerMode = %q, want %q", view.OwnerMode, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestProcessForegroundLifetimeModeSurvivesContextWrapping(t *testing.T) {
+	ctx, cancel := processForegroundLifetime()
+	cancel()
+	for _, derived := range []context.Context{ctx, context.WithoutCancel(ctx)} {
+		if got := processOwnerMode(derived); got != processHostOwnerForeground {
+			t.Fatalf("public CLI OwnerMode = %q", got)
+		}
 	}
 }

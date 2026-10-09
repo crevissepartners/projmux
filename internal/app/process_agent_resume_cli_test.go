@@ -95,6 +95,22 @@ func awaitProcessResumeRecord(t *testing.T, ctx context.Context, f processCreate
 		}
 	}
 }
+func assertProcessCLIForeground(t *testing.T, f processCreateCLI, record coremetadata.ProcessSessionRecord) {
+	t.Helper()
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, ok := reg.Pane(record.Binding.PaneUID)
+	if !ok || pane.Status.Activation.Process == nil {
+		t.Fatal("no live CLI owner")
+	}
+	view, ok := observeProcessHostOwner(reg, f.store.Path(), *pane)
+	if !ok || view.OwnerMode != processHostOwnerForeground {
+		t.Fatalf("public CLI owner observation: ok=%v, view=%+v", ok, view)
+	}
+}
+
 func processResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 	t.Helper()
 	if os.Getenv("PMX_TEST_CLI") == "" {
@@ -153,6 +169,7 @@ func TestProcessResumeActualCLIRoundTrip(t *testing.T) {
 			}
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", prompt))
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.TurnID != "" && len(r.Pending) > 0 })
+			assertProcessCLIForeground(t, f, old)
 			out, err := exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref, "--", "refused live task").CombinedOutput()
 			if err == nil || !bytes.Contains(out, []byte("process-resume-owned")) {
 				t.Fatalf("live owner: %v %s", err, out)
@@ -172,6 +189,7 @@ func TestProcessResumeActualCLIRoundTrip(t *testing.T) {
 			current := awaitProcessResumeRecord(t, ctx, f, second.ref, func(r *coremetadata.ProcessSessionRecord) bool {
 				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != "" && r.TurnID == ""
 			})
+			assertProcessCLIForeground(t, f, current)
 			if current.Binding.PaneUID != old.Binding.PaneUID || current.Binding.OperationID == old.Binding.OperationID || current.History == nil || current.History.Binding != old.Binding || current.History.InterruptedTurnID != old.TurnID || len(current.History.Expired) != len(old.Pending) {
 				t.Fatalf("resume history/current identities: %+v", current)
 			}
@@ -727,6 +745,10 @@ func TestDeferredPeerWakeAndKilledClaimantActualCLI(t *testing.T) {
 				for _, ref := range refs {
 					deferredCLIStatus(t, ctx, f, ref, "delivered")
 				}
+				current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+					return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
+				})
+				assertProcessCLIForeground(t, f, current)
 				latency := time.Since(started)
 				if latency > 5*time.Second {
 					t.Fatalf("wake latency=%s", latency)

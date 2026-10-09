@@ -163,6 +163,7 @@ func TestProcessClaudeRelaunchActualCLI(t *testing.T) {
 	current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
 		return r.Binding.Generation != old.Binding.Generation && r.TurnID == ""
 	})
+	assertProcessCLIForeground(t, f, current)
 	if current.SessionID != old.SessionID || current.History == nil || current.History.Binding != old.Binding || len(current.History.Expired) != len(old.Pending) {
 		t.Fatalf("history %+v", current)
 	}

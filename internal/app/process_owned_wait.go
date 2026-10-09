@@ -19,10 +19,35 @@ import (
 // typed consumer's context.
 type processOwnerTrigger func(end context.CancelFunc)
 
-// processForegroundLifetime is the public CLI owner lifetime: SIGINT or
-// SIGTERM ends it.
+// processOwnerLifetime describes the launcher-owned lifetime before the provider
+// starts. stdinEOF is the EOF shutdown trigger; nil means only the caller's
+// explicit stop or signal context ends ownership. The caller starts this trigger
+// once (possibly before a deferred claim), and uses the same context for launch
+// and owned Wait. It never changes an already published endpoint's mode.
+type processOwnerLifetime struct {
+	stdinEOF processOwnerTrigger
+}
+
+type processOwnerLifetimeKey struct{}
+
+func (l processOwnerLifetime) withContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, processOwnerLifetimeKey{}, l)
+}
+
+func processOwnerMode(ctx context.Context) string {
+	lifetime, explicit := ctx.Value(processOwnerLifetimeKey{}).(processOwnerLifetime)
+	if explicit && lifetime.stdinEOF == nil {
+		return processHostOwnerDetached
+	}
+	// Existing typed callers without a lifetime declaration retain foreground.
+	return processHostOwnerForeground
+}
+
+// processForegroundLifetime is the public CLI owner lifetime: stdin EOF plus
+// SIGINT or SIGTERM ends it. Each CLI path starts its EOF watch exactly once.
 func processForegroundLifetime() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	return (processOwnerLifetime{stdinEOF: processStdinEOFTrigger}).withContext(ctx), cancel
 }
 
 // processStdinEOFTrigger is the public CLI trigger: EOF is owner shutdown.

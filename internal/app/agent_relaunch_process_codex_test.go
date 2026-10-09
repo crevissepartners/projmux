@@ -72,6 +72,7 @@ func TestProcessCodexRelaunchActualCLI(t *testing.T) {
 	current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
 		return r.Binding.Generation != old.Binding.Generation && r.ThreadID != ""
 	})
+	assertProcessCLIForeground(t, f, current)
 	if result.AgentUID != old.Binding.AgentUID || result.NewPaneUID != old.Binding.PaneUID || result.Outcome != personaOutcomeRestarted || !reflect.DeepEqual(result.RelaunchReasons, []string{"model-changed", "effort-changed"}) {
 		t.Fatalf("result %+v", result)
 	}

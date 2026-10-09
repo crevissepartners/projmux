@@ -24,7 +24,7 @@ type processHostObservation struct {
 	Provider, State string
 	Exit            *processhost.Exit `json:",omitempty"`
 	// Control protocol v1 (processHostProtocol). Revision is the owner's build
-	// revision, Actions its foreground actions, Turn whether a provider turn is
+	// revision, Actions its supported actions, Turn whether a provider turn is
 	// running, and Pending the count of open control requests; their content
 	// never crosses. An answer without Protocol is a protocol-0 owner.
 	// Coordination is the owner build's claudeCoordinationVersion; an owner
@@ -44,7 +44,7 @@ func newProcessHostObservation(binding processhost.Binding, host, child coremeta
 	return processHostObservation{
 		Binding: binding, Host: host, Child: child, Provider: snap.Provider, State: snap.State, Exit: snap.Exit,
 		Protocol: processHostProtocol, Revision: processHostRevision(), Actions: slices.Clone(actions),
-		Turn: snap.Turn != "", Pending: len(snap.Pending), OwnerMode: processHostOwnerForeground,
+		Turn: snap.Turn != "", Pending: len(snap.Pending),
 		Coordination: claudeCoordinationVersion,
 	}
 }

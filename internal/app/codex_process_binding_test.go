@@ -80,7 +80,7 @@ func newProcessCodexFixture(t *testing.T, command func(string, string, []string)
 	return newProcessCodexFixtureWithEvents(t, command, processhost.DefaultLimits().Events)
 }
 
-func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int) *processCodexFixture {
+func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int, lifetime ...processOwnerLifetime) *processCodexFixture {
 	t.Helper()
 	// Keep copied supervisor/provider paths short on both supported platforms.
 	t.Setenv("TMPDIR", "/tmp")
@@ -170,7 +170,11 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	if command != nil {
 		cmd = command(root, binary, env)
 	}
-	endpoint, err := startProcessCodex(context.Background(), host, processhost.Launch{Binding: b, Command: cmd}, cfg, path, nil)
+	ctx := context.Background()
+	if len(lifetime) > 0 {
+		ctx = lifetime[0].withContext(ctx)
+	}
+	endpoint, err := startProcessCodex(ctx, host, processhost.Launch{Binding: b, Command: cmd}, cfg, path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
