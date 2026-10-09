@@ -2,17 +2,12 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
-	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, stdout, stderr io.Writer) error {
@@ -23,7 +18,7 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 	if mode == cli.OutputModePaneID {
 		return usageError("agent resume: process agents do not have a pane-id output")
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := processForegroundLifetime()
 	defer cancel()
 	options := processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID}, Model: model, Effort: effort}
 	claim, err := c.claimDeferredProcessAgent(ctx, options)
@@ -40,7 +35,9 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 			return err
 		}
 	}
-	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
+	// The claim waits for its first input under the same EOF trigger; the owned
+	// Wait below does not start it again.
+	processStdinEOFTrigger(cancel)
 	result, err := claim.WaitPeer(ctx)
 	if err != nil {
 		if result.Handle == nil && err == context.Canceled {
@@ -56,21 +53,5 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 	if err = result.writeResumeResult(creator, stdout, stderr, mode); err != nil {
 		return result.fail(err)
 	}
-	snapshot, waitErr := result.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(syncChanged, func(snapshot processhost.Snapshot) error {
-		if len(snapshot.Pending) > 0 {
-			return syncControls(context.WithoutCancel(ctx))
-		}
-		return nil
-	}))
-	controlErr := syncControls(context.Background())
-	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
-		controlErr = nil
-	}
-	if err = errors.Join(waitErr, controlErr, syncAttention()); err != nil {
-		if ended, ok := processOwnerEnded(result.owner.registryPath, result.Binding, result.owner.waitRecorded, snapshot, err, stderr); ok {
-			return ended
-		}
-		return processResumeFailure(result.Binding, err)
-	}
-	return processWaitExit(snapshot)
+	return result.ownedWait(syncChanged, syncControls, syncAttention).run(ctx, cancel, nil, stderr)
 }

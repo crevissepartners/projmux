@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -359,35 +358,23 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 			return fail(err)
 		}
 	}
-	return runProcessRelaunchOwner(ctx, cancel, &owned, sync)
+	return runProcessRelaunchOwner(ctx, cancel, &owned, sync, processStdinEOFTrigger)
 }
 
-func runProcessRelaunchOwner(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, sync processRelaunchSynchronization, stdinWatched ...bool) error {
-	if len(stdinWatched) == 0 || !stdinWatched[0] {
-		go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
-	}
-	return (&agentHostTransferLifetime{Context: ctx, Cancel: cancel, Target: owned, synchronization: sync}).Wait(ctx)
+func runProcessRelaunchOwner(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, sync processRelaunchSynchronization, trigger processOwnerTrigger) error {
+	return (&agentHostTransferLifetime{Context: ctx, Cancel: cancel, Target: owned, synchronization: sync, trigger: trigger}).Wait(ctx)
 }
 
 // Shared by the CLI foreground adapter and the typed host-transfer consumer.
-func waitOwnedProcessRelaunch(ctx context.Context, owned *processAgentResumeResult, sync processRelaunchSynchronization) error {
-	snapshot, waitErr := owned.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(sync.changed, func(snapshot processhost.Snapshot) error {
-		if len(snapshot.Pending) > 0 {
-			return sync.controls(context.WithoutCancel(ctx))
-		}
-		return nil
-	}))
-	controlErr := sync.controls(context.Background())
-	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
-		controlErr = nil
-	}
-	if err := errors.Join(waitErr, controlErr, sync.attention()); err != nil {
+// A retired generation keeps relaunch's own guidance instead of the Registry
+// notice create and resume print.
+func processRelaunchOwnedWait(owned *processAgentResumeResult, sync processRelaunchSynchronization) processOwnedWait {
+	return processOwnedWait{owner: &owned.owner, binding: owned.Binding, changed: sync.changed, controls: sync.controls, attention: sync.attention, fail: func(err error) error {
 		if owned.owner.waitRecorded && (errors.Is(err, processhost.ErrClosed) || errors.Is(err, processhost.ErrStale)) {
 			return fmt.Errorf("agent relaunch: generation %s is retired; this caller no longer owns agent uid:%s; inspect with: projmux describe agent uid:%s: %w", owned.Binding.Generation, owned.Binding.Agent, owned.Binding.Agent, err)
 		}
 		return err
-	}
-	return processWaitExit(snapshot)
+	}}
 }
 func processRelaunchRecovery(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest) string {
 	command := relaunchRerunCommand(reg, target, request)

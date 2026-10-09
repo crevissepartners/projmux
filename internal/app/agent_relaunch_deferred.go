@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -50,7 +49,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 	if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed\n", record.Agent, record.Retired.Binding.PaneUID); err != nil {
 		return err
 	}
-	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
+	processStdinEOFTrigger(cancel)
 	owned, err := claim.WaitPeer(ctx)
 	if err != nil {
 		if owned.Handle == nil && errors.Is(err, context.Canceled) {
@@ -74,7 +73,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 		return owned.fail(err)
 	}
 	// stdin is already watched above; the owner loop remains the B1 Wait path.
-	return runProcessRelaunchOwner(ctx, cancel, &owned, processRelaunchSynchronization{changed, controls, attention}, true)
+	return runProcessRelaunchOwner(ctx, cancel, &owned, processRelaunchSynchronization{changed, controls, attention}, nil)
 }
 
 func (c *agentCommand) commitDeferredRelaunch(ctx context.Context, claim *deferredProcessClaim, candidate processResumeCandidate, record *deferredLaunchRecord) error {
