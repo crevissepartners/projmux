@@ -1562,3 +1562,93 @@ func TestProcessHostLostResumeActualCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessCodexResumeGoalFirstFramesActualCLI(t *testing.T) {
+	for _, kind := range []string{"user", "peer"} {
+		t.Run(kind, func(t *testing.T) {
+			f := processResumeCLIFixture(t, aiModeCodex)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			first.shutdown(t)
+			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			path := filepath.Join(f.root, "codex-provider.py")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			script := strings.Replace(string(raw), " elif method in ('thread/start','thread/resume'):", ` elif method=='thread/resume':
+  current='goal-resumed'
+  notify('turn/started',{'threadId':'process-thread','turn':{'id':current}})
+  reply({'thread':{'id':'process-thread'},'model':'stub-model','reasoningEffort':'low','sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'})
+ elif method in ('thread/start','thread/resume'):`, 1)
+			script = strings.Replace(script, " elif method=='turn/interrupt':", " elif method=='turn/steer':reply({'turnId':current})\n elif method=='turn/interrupt':", 1)
+			if err = os.WriteFile(path, []byte(script), 0600); err != nil {
+				t.Fatal(err)
+			}
+			text := "explicit resume task"
+			if kind == "user" {
+				second := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", text})
+				current := awaitProcessResumeRecord(t, ctx, f, second.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+					return r.Binding.Generation != old.Binding.Generation && r.TurnID == "goal-resumed"
+				})
+				if current.ThreadID != old.ThreadID {
+					t.Fatal("conversation changed")
+				}
+				assertProcessCLIForeground(t, f, current)
+				second.shutdown(t)
+			} else {
+				text, err = providerCoordinationContent(dialogueEnvelope("goal-first-peer", time.Now().Add(time.Minute)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PMX_TEST_DEFERRED_INTERNAL", "1")
+				c := New().agent
+				request, err := newProcessAgentResumeRequest(processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: strings.TrimPrefix(first.ref, "uid:")}, Prompt: processResumeFirstFrame{Kind: kind, Text: text}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := c.resumeProcessAgent(ctx, request)
+				defer func() { _ = result.fail(nil) }()
+				if err != nil {
+					t.Fatal(err)
+				}
+				snapshot, err := result.Handle.Observe(result.Binding)
+				if err != nil || snapshot.Turn != "goal-resumed" || snapshot.Session != old.ThreadID || snapshot.State != "ready" || snapshot.Exit != nil {
+					t.Fatalf("peer goal owner: %+v %v", snapshot, err)
+				}
+			}
+			raw, err = os.ReadFile(f.trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			starts, steers := 0, 0
+			for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte("\n")) {
+				var frame struct {
+					Method string `json:"method"`
+					Params struct {
+						ExpectedTurnID string `json:"expectedTurnId"`
+						Input          []struct {
+							Text string `json:"text"`
+						} `json:"input"`
+					} `json:"params"`
+				}
+				if err = json.Unmarshal(line, &frame); err != nil {
+					t.Fatal(err)
+				}
+				if frame.Method == "turn/start" {
+					starts++
+				}
+				if frame.Method == "turn/steer" {
+					steers++
+					if frame.Params.ExpectedTurnID != "goal-resumed" || len(frame.Params.Input) != 1 || frame.Params.Input[0].Text != text {
+						t.Fatalf("first frame rewritten or misrouted: %s", line)
+					}
+				}
+			}
+			if starts != 1 || steers != 1 {
+				t.Fatalf("turn/start=%d turn/steer=%d", starts, steers)
+			}
+		})
+	}
+}

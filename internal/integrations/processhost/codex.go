@@ -185,9 +185,10 @@ type codexAdapter struct {
 	client *codexappserver.Client
 	// Typed writes serialize, but the reader must keep draining while an RPC
 	// waits. A bounded queue preserves start/interrupt reply ordering.
-	control       chan struct{}
-	awaitingReply bool                          // guarded by p.mu
-	replyQueue    []codexappserver.Notification // guarded by p.mu
+	control           chan struct{}
+	awaitingReply     bool                          // guarded by p.mu
+	replyQueue        []codexappserver.Notification // guarded by p.mu
+	notificationFence chan chan struct{}
 	// FIFO replay horizon: the last Events admitted deliveries, including
 	// confirmed refusals. Eviction permits reuse beyond that bounded horizon.
 	usedDeliveries map[string]bool // guarded by p.mu
@@ -197,7 +198,7 @@ type codexAdapter struct {
 
 func (cfg CodexConfig) clone() adapterConfig { cfg.Roots = slices.Clone(cfg.Roots); return cfg }
 func (cfg CodexConfig) newAdapter(p *Handle) providerAdapter {
-	return &codexAdapter{p: p, control: make(chan struct{}, 1), usedDeliveries: make(map[string]bool)}
+	return &codexAdapter{p: p, control: make(chan struct{}, 1), notificationFence: make(chan chan struct{}), usedDeliveries: make(map[string]bool)}
 }
 
 func (c *codexAdapter) attach(stream io.ReadWriteCloser) {
@@ -260,6 +261,12 @@ func (c *codexAdapter) initialize(ctx context.Context) error {
 	}
 	if expected != "" && thread.ThreadID != expected {
 		return fmt.Errorf("%w: returned thread differs from source", ErrResumeRefused)
+	}
+	// RPC replies and notifications have separate consumers. Before exposing
+	// ready, join the notification reader so every frame preceding the reply
+	// has reached replyQueue, even when this goroutine runs first.
+	if err = c.flushNotifications(ctx); err != nil {
+		return err
 	}
 	p := c.p
 	p.mu.Lock()
@@ -485,11 +492,26 @@ func (c *codexAdapter) respond(ctx context.Context, a Authority, token Request, 
 }
 func (c *codexAdapter) readOutput() {
 	defer c.client.Close()
-	for n := range c.client.Notifications() {
-		err := c.consume(n)
-		if err != nil {
-			c.p.protocolFailure(err)
-			return
+	reading := true
+	for reading {
+		select {
+		case n, ok := <-c.client.Notifications():
+			if !ok {
+				reading = false
+				break
+			}
+			if err := c.consume(n); err != nil {
+				c.p.protocolFailure(err)
+				return
+			}
+		case fence := <-c.notificationFence:
+			closed, err := c.drainNotifications()
+			if err != nil {
+				c.p.protocolFailure(err)
+				return
+			}
+			close(fence)
+			reading = !closed
 		}
 	}
 	// Stream loss is not child exit. Give the independent Wait reader one
@@ -506,6 +528,45 @@ func (c *codexAdapter) readOutput() {
 	c.p.mu.Unlock()
 	if active {
 		c.p.protocolFailure(errors.New("codex connection lost"))
+	}
+}
+
+// The client enqueues notifications before publishing the RPC reply. Drain at
+// most the bounded channel's capacity: every frame preceding that reply is
+// already in this FIFO or consumed by this same reader.
+func (c *codexAdapter) drainNotifications() (bool, error) {
+	for range c.p.host.limits.Events {
+		select {
+		case n, ok := <-c.client.Notifications():
+			if !ok {
+				return true, nil
+			}
+			if err := c.consume(n); err != nil {
+				return false, err
+			}
+		default:
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *codexAdapter) flushNotifications(ctx context.Context) error {
+	fence := make(chan struct{})
+	select {
+	case c.notificationFence <- fence:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.p.done:
+		return ErrClosed
+	}
+	select {
+	case <-fence:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.p.done:
+		return ErrClosed
 	}
 }
 func (c *codexAdapter) consume(n codexappserver.Notification) error {

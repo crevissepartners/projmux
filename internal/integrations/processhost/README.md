@@ -182,11 +182,15 @@ An explicit `turn/started` while idle admits that exact provider turn and keeps
 the owner alive; subsequent input steers it through the usual generation checks.
 Initialization queues bounded notifications until the returned thread is
 committed, so a goal turn opened during resume is admitted in wire order too.
+Failure to drain that queue fails initialization and retires the owned child
+through the same actual Wait cleanup as other initialization failures.
 Foreign threads, overlapping turns, replayed starts within the bounded turn ID
 horizon, and turn frames without a matching start remain protocol failures.
 Thread token-usage and goal updates may name a completed root turn; these are
 session telemetry and grant no turn or control authority. Turn completion never
 stands in for child Wait or generation retirement.
+The app delivers an explicit resume prompt or peer first frame to the active
+goal turn through exact steering, or starts a new turn while idle.
 
 A well-formed server refusal of turn/start produces a failed `turn-result`
 with the consumed operation ID while preserving the session and owned child.

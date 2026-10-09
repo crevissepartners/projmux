@@ -352,7 +352,10 @@ func (r *processAgentResumeResult) startCodexResume(ctx context.Context, host *p
 	if err != nil {
 		return err
 	}
-	return r.Handle.Turn(ctx, processhost.Authority{Binding: r.Binding, Connection: snapshot.Connection, Session: snapshot.Session}, r.Binding.Operation+"-resume", frame.Text)
+	// Resume can already have opened a goal continuation on the bound thread.
+	// Deliver the first frame to that exact turn, or start one while idle.
+	_, err = endpoint.handle.DeliverUserTurn(ctx, processhost.Authority{Binding: r.Binding, Connection: snapshot.Connection, Session: snapshot.Session}, r.Binding.Operation+"-resume", frame.Text)
+	return err
 }
 
 // A failed Start can return a handle before any child exists. Only exact
