@@ -76,6 +76,11 @@ type installResidueRecord struct {
 	// Roles is the per-role census, including each role's residual age
 	// distribution.
 	Roles []projmuxProcessRoleVintage `json:"roles,omitempty"`
+	// ProcessOwners is how many live process Agent owners the install
+	// retained. They are counted from the Registry rather than the process
+	// table, because a web-hosted owner runs another executable; which owners
+	// and which builds they run is printed, never recorded.
+	ProcessOwners int `json:"processOwners,omitempty"`
 }
 
 const installerUnknown = "unknown"
@@ -90,6 +95,7 @@ type installResidueCommand struct {
 	getenv      func(string) string
 	stateDir    func() (string, error)
 	readVintage func(now time.Time) projmuxProcessVintage
+	readOwners  func() ([]installProcessOwner, error)
 }
 
 func newInstallResidueCommand() *installResidueCommand {
@@ -104,6 +110,7 @@ func newInstallResidueCommand() *installResidueCommand {
 			return paths.StateDir, nil
 		},
 		readVintage: defaultInstallResidueVintage,
+		readOwners:  defaultLiveInstallProcessOwners,
 	}
 }
 
@@ -143,6 +150,12 @@ func (c *installResidueCommand) Run(stderr io.Writer) {
 	if c.readVintage != nil {
 		vintage = c.readVintage(now)
 	}
+	var owners []installProcessOwner
+	if c.readOwners != nil {
+		// An unreadable Registry retains nothing this census can name; the
+		// process table above is still the whole fleet of this executable.
+		owners, _ = c.readOwners()
+	}
 
 	record := installResidueRecord{
 		At:        now.Format(time.RFC3339),
@@ -151,6 +164,8 @@ func (c *installResidueCommand) Run(stderr io.Writer) {
 		Observed:  vintage.Observed(),
 		Replaced:  vintage.Replaced(),
 		Roles:     vintage.Roles,
+
+		ProcessOwners: len(owners),
 	}
 
 	path := c.ledgerPath()
@@ -170,12 +185,34 @@ func (c *installResidueCommand) Run(stderr io.Writer) {
 	// be permanent noise; the ledger still records that the measurement was
 	// attempted and was impossible, which is the macOS coverage gap a later
 	// replacement design has to know about.
-	if !record.Supported || record.Replaced == 0 || stderr == nil {
+	if stderr == nil {
 		return
 	}
-	if text := renderInstallResidueNotice(record, pointer); text != "" {
+	if record.Supported && record.Replaced > 0 {
+		if text := renderInstallResidueNotice(record, pointer); text != "" {
+			_, _ = io.WriteString(stderr, text)
+		}
+	}
+	if text := renderInstallProcessOwnerNotice(owners); text != "" {
 		_, _ = io.WriteString(stderr, text)
 	}
+}
+
+// renderInstallProcessOwnerNotice names the live process owners this install
+// retained, with the build each one runs. They are not residue in the sense of
+// the notice above: no install stops them, and each keeps its own build until
+// its Agent is stopped and resumed.
+func renderInstallProcessOwnerNotice(owners []installProcessOwner) string {
+	if len(owners) == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, ">> %d live process %s retained; this install does not stop or replace %s\n",
+		len(owners), pluralizeInstallOwners(len(owners)), map[bool]string{true: "it", false: "them"}[len(owners) == 1])
+	buf.WriteString(renderInstallProcessOwnerRows(owners, claudeCoordinationVersion))
+	buf.WriteString("   Each keeps its own build until its Agent is stopped and resumed with\n")
+	buf.WriteString("   `projmux agent resume <agent-ref>`.\n")
+	return buf.String()
 }
 
 func (c *installResidueCommand) ledgerPath() string {

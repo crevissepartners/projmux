@@ -27,12 +27,15 @@ type processHostObservation struct {
 	// revision, Actions its foreground actions, Turn whether a provider turn is
 	// running, and Pending the count of open control requests; their content
 	// never crosses. An answer without Protocol is a protocol-0 owner.
-	Protocol  int      `json:",omitempty"`
-	Revision  string   `json:",omitempty"`
-	Actions   []string `json:",omitempty"`
-	Turn      bool     `json:",omitempty"`
-	Pending   int      `json:",omitempty"`
-	OwnerMode string   `json:",omitempty"`
+	// Coordination is the owner build's claudeCoordinationVersion; an owner
+	// that leaves it out predates the field and its version is unknown.
+	Protocol     int      `json:",omitempty"`
+	Revision     string   `json:",omitempty"`
+	Actions      []string `json:",omitempty"`
+	Turn         bool     `json:",omitempty"`
+	Pending      int      `json:",omitempty"`
+	OwnerMode    string   `json:",omitempty"`
+	Coordination int      `json:",omitempty"`
 }
 
 // newProcessHostObservation describes one owner's current snapshot in control
@@ -42,6 +45,7 @@ func newProcessHostObservation(binding processhost.Binding, host, child coremeta
 		Binding: binding, Host: host, Child: child, Provider: snap.Provider, State: snap.State, Exit: snap.Exit,
 		Protocol: processHostProtocol, Revision: processHostRevision(), Actions: slices.Clone(actions),
 		Turn: snap.Turn != "", Pending: len(snap.Pending), OwnerMode: processHostOwnerForeground,
+		Coordination: claudeCoordinationVersion,
 	}
 }
 
@@ -180,28 +184,38 @@ type processHostRevisionLookup func(coremetadata.Registry, coremetadata.Pane) st
 // observation read budget. An unreachable or protocol-0 owner is unknown.
 func defaultProcessHostRevisionLookup() processHostRevisionLookup {
 	return func(registry coremetadata.Registry, pane coremetadata.Pane) string {
-		activation := pane.Status.Activation.Process
-		if activation == nil {
-			return ""
-		}
-		binding := processSchemaBinding(activation.Binding)
-		agent, ok := registry.Agent(binding.Agent)
-		if !ok {
-			return ""
-		}
 		paths, err := config.DefaultPathsFromEnv()
 		if err != nil {
 			return ""
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
-		defer cancel()
-		observer := remoteProcessObserver{ctx: ctx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: binding}
-		view, err := observer.observeHostView(binding, *activation, agent.Spec.Provider)
-		if err != nil {
+		view, ok := observeProcessHostOwner(registry, intmetadata.PathFor(paths.StateDir), pane)
+		if !ok {
 			return ""
 		}
 		return view.hostRevision()
 	}
+}
+
+// observeProcessHostOwner reads the observation of the owner hosting an exact
+// process Pane's current activation within the shared read budget.
+func observeProcessHostOwner(registry coremetadata.Registry, registryPath string, pane coremetadata.Pane) (processHostObservation, bool) {
+	activation := pane.Status.Activation.Process
+	if activation == nil {
+		return processHostObservation{}, false
+	}
+	binding := processSchemaBinding(activation.Binding)
+	agent, ok := registry.Agent(binding.Agent)
+	if !ok {
+		return processHostObservation{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
+	defer cancel()
+	observer := remoteProcessObserver{ctx: ctx, registry: registry, registryPath: registryPath, binding: binding}
+	view, err := observer.observeHostView(binding, *activation, agent.Spec.Provider)
+	if err != nil {
+		return processHostObservation{}, false
+	}
+	return view, true
 }
 
 // processHostSocket names the owned control socket of one provider's host.

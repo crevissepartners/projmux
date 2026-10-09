@@ -25,9 +25,11 @@ func TestMakeInstallPropagatesReplacementFailureAfterResidue(t *testing.T) {
 		name              string
 		replacementStatus string
 		residueStatus     string
+		preflightStatus   string
 		wantFailure       bool
 	}{
 		{name: "successful replacement", replacementStatus: "0", residueStatus: "0"},
+		{name: "preflight refuses publication", replacementStatus: "0", residueStatus: "0", preflightStatus: "1", wantFailure: true},
 		{name: "unreachable replacement", replacementStatus: "1", residueStatus: "0", wantFailure: true},
 		{name: "both diagnostics fail", replacementStatus: "7", residueStatus: "9", wantFailure: true},
 		{name: "residue stays best effort", replacementStatus: "0", residueStatus: "9"},
@@ -40,6 +42,7 @@ func TestMakeInstallPropagatesReplacementFailureAfterResidue(t *testing.T) {
 			body := `#!/bin/sh
 printf '%s\n' "$*" >> "$INSTALL_TEST_CALLS"
 case "$*" in
+  'internal install-preflight') exit "${INSTALL_TEST_PREFLIGHT_STATUS:-0}" ;;
   'internal install-replace') exit "$INSTALL_TEST_REPLACEMENT_STATUS" ;;
   'internal install-residue') exit "$INSTALL_TEST_RESIDUE_STATUS" ;;
 esac
@@ -54,6 +57,7 @@ esac
 				"INSTALL_TEST_CALLS="+log,
 				"INSTALL_TEST_REPLACEMENT_STATUS="+tc.replacementStatus,
 				"INSTALL_TEST_RESIDUE_STATUS="+tc.residueStatus,
+				"INSTALL_TEST_PREFLIGHT_STATUS="+tc.preflightStatus,
 				"MAKEFLAGS=", "MFLAGS=")
 			output, runErr := cmd.CombinedOutput()
 			if (runErr != nil) != tc.wantFailure {
@@ -63,7 +67,21 @@ esac
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantCalls := "config apply --bin " + installed + " --socket projmux\n" +
+			if tc.preflightStatus != "" {
+				// The refusal stops the recipe before convergence and
+				// publication: the only call is the preflight itself.
+				if string(calls) != "internal install-preflight\n" {
+					t.Fatalf("refused install command sequence = %q", calls)
+				}
+				if _, err := os.Stat(installed); !os.IsNotExist(err) {
+					t.Fatalf("refused install published the binary: %v", err)
+				}
+				if !strings.Contains(string(output), "install preflight refused; binary publication not started") {
+					t.Fatalf("refused install output: %s", output)
+				}
+				return
+			}
+			wantCalls := "internal install-preflight\nconfig apply --bin " + installed + " --socket projmux\n" +
 				"config apply --socket projmux\nnotification reconcile\ninternal install-replace\ninternal install-residue\n"
 			if string(calls) != wantCalls {
 				t.Fatalf("install command sequence = %q, want %q", calls, wantCalls)
@@ -72,7 +90,8 @@ esac
 			if err != nil || string(published) != body {
 				t.Fatalf("replacement failure undid binary publication: %v", err)
 			}
-			wantOutput := ">> converging live config before binary publication...\n" +
+			wantOutput := ">> checking live process owners before binary publication...\n" +
+				">> converging live config before binary publication...\n" +
 				">> atomically replaced " + installed + "\n" +
 				">> verifying post-publication live config...\n" +
 				">> reconciling notify queue...\n" +

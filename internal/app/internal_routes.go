@@ -26,6 +26,7 @@ var internalSubcommands = []string{
 	"process-host-supervisor",
 	"activation-exec",
 	"codex-broker",
+	"install-preflight",
 	"install-residue",
 	"install-replace",
 }
@@ -148,6 +149,12 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return runAgentMessageRelease(rest)
 	case "codex-broker":
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
+	case "install-preflight":
+		// The install preflight, the first step of `make install`. It is
+		// machine-invoked plumbing that runs before anything is published, and
+		// the one install step that may stop an install: when this build
+		// changes a version a live process owner depends on.
+		return runInstallPreflight(rest, stderr)
 	case "install-replace":
 		// The install-side replacement pass. Like the census below it is
 		// machine-invoked plumbing -- a step of `make install` -- rather than a

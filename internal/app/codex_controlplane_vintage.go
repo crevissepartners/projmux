@@ -76,6 +76,13 @@ const (
 	// One holds the lease for the whole machine, so it is a single process
 	// that no pane recreation reaches.
 	projmuxProcessRoleUsageWatcher = "usage-watcher"
+	// projmuxProcessRoleProcessHostHelper is the supervisor helper between a
+	// process Agent's owner and its provider.
+	//
+	// It lives exactly as long as its owner's activation, and the owner is
+	// retained: an install never stops it, so the helper is never a
+	// replacement target either.
+	projmuxProcessRoleProcessHostHelper = "process-host-helper"
 	// projmuxProcessRoleOther is every remaining child of this executable.
 	//
 	// It exists so that a route this census does not know cannot make the
@@ -101,6 +108,7 @@ var projmuxProcessRoleOrder = []string{
 	projmuxProcessRoleSessionClient,
 	projmuxProcessRoleAgentEndpoint,
 	projmuxProcessRoleUsageWatcher,
+	projmuxProcessRoleProcessHostHelper,
 	projmuxProcessRoleOther,
 }
 
@@ -421,6 +429,8 @@ func projmuxProcessRole(cmdline []string) string {
 	case slices.Contains(words, "agent-hook") && slices.Contains(words, "ingest") &&
 		slices.Contains(words, codexNativeLifecycleIngestRoute):
 		return codexControlPlaneRoleObserver
+	case slices.Contains(words, "process-host-supervisor"):
+		return projmuxProcessRoleProcessHostHelper
 	case slices.Contains(words, "supervise"):
 		return projmuxProcessRoleSupervisor
 	case slices.Contains(words, claudeEndpointHelperRoute):
