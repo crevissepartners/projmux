@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -27,6 +29,60 @@ func processForegroundLifetime() (context.Context, context.CancelFunc) {
 // Provider content never uses the owner's stdout.
 func processStdinEOFTrigger(end context.CancelFunc) {
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin); end() }()
+}
+
+// processGenerationHandle is an owned Handle that asks its host's
+// Transactions.Current whether the Registry still holds its generation.
+type processGenerationHandle interface {
+	CheckGeneration(context.Context, processhost.Binding) error
+}
+
+// An owned Wait first checks its generation this long after the ownership line,
+// then doubles the interval up to processGenerationCheckMax.
+const (
+	processGenerationCheckFirst = 30 * time.Second
+	processGenerationCheckMax   = 2 * time.Minute
+)
+
+// errProcessGenerationAbandoned ends an owned Wait whose generation the
+// Registry no longer holds: its provider was stopped and no Wait was recorded.
+var errProcessGenerationAbandoned = errors.New("the Registry no longer holds this process generation; its provider was stopped and no Wait was recorded")
+
+// processGenerationSchedule spaces an owned Wait's generation checks.
+type processGenerationSchedule struct{ first, max time.Duration }
+
+func (s processGenerationSchedule) next(previous time.Duration) time.Duration {
+	first, most := s.first, s.max
+	if first <= 0 {
+		first, most = processGenerationCheckFirst, processGenerationCheckMax
+	}
+	if previous <= 0 {
+		return first
+	}
+	return min(2*previous, max(most, first))
+}
+
+// checkGeneration reports processhost.ErrStale only when the Registry no longer
+// holds this generation; a read failure decides nothing. A generation that is
+// not abandoned keeps its lease directory younger than /tmp aging.
+func (r *processAgentCreateResult) checkGeneration(ctx context.Context, handle processGenerationHandle) error {
+	err := handle.CheckGeneration(ctx, r.Binding)
+	if errors.Is(err, processhost.ErrStale) {
+		return err
+	}
+	touchProcessLeaseDir(claudeActivationLeaseDir(r.registryPath, r.Binding.Pane, r.Binding.Generation), time.Now())
+	return err
+}
+
+// touchProcessLeaseDir renews a live generation's lease directory, so tmpfiles
+// aging (`Q /tmp ... 10d`) never removes it under a long-lived owner. Only a
+// private directory of this uid is touched; a missing one is not created. The
+// sockets in it are left alone: their owners recognize them by change time,
+// and aging skips sockets that are still bound.
+func touchProcessLeaseDir(dir string, now time.Time) {
+	if privateClaudeLeaseDir(dir) {
+		_ = os.Chtimes(dir, now, now)
+	}
 }
 
 // processOwnedWait is the one owned Wait tail of a process generation after
@@ -65,6 +121,14 @@ func (w processOwnedWait) run(ctx context.Context, end context.CancelFunc, trigg
 		controlErr = nil
 	}
 	if err := errors.Join(waitErr, controlErr, w.attention()); err != nil {
+		if errors.Is(waitErr, errProcessGenerationAbandoned) {
+			// Another process owns what follows; this owner's cleanup guidance
+			// would act on a generation it no longer holds.
+			if ended, ok := processOwnerEnded(w.owner.registryPath, w.binding, false, snapshot, err, stderr); ok {
+				return ended
+			}
+			return fmt.Errorf("agent uid:%s generation %s: %w", w.binding.Agent, w.binding.Generation, err)
+		}
 		if w.endedElsewhere {
 			if ended, ok := processOwnerEnded(w.owner.registryPath, w.binding, w.owner.waitRecorded, snapshot, err, stderr); ok {
 				return ended

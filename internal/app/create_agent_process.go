@@ -60,6 +60,8 @@ type processAgentCreateResult struct {
 	waitRecorded  bool
 	recorded      *processRecordedSnapshot
 	creator       creatorRecord
+	// generationChecks spaces owned Wait generation checks; zero is the default.
+	generationChecks processGenerationSchedule
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
@@ -480,6 +482,9 @@ type processChangeHandle interface {
 // recheck interval and synchronizes once more before it stops the provider, as
 // the poll it replaces did, so a first turn that has just started still records
 // its conversation. Cancellation closes only this Handle's dedicated lifetime.
+// A Handle that can check its generation also wakes on a backed-off schedule
+// to ask the Registry whether it still holds the generation: only when it does
+// not does the owner stop the provider, and then records no Wait for it.
 func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSnapshot func(processhost.Snapshot) error) (processhost.Snapshot, error) {
 	if r.Handle == nil {
 		return processhost.Snapshot{}, errors.New("process host was not started")
@@ -496,9 +501,27 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 		exited <- waitResult{snapshot, err}
 	}()
 	changes, _ := r.Handle.(processChangeHandle)
-	var failure error
-	var coalesce, recheck, grace, cleanup <-chan time.Time
+	generations, _ := r.Handle.(processGenerationHandle)
+	var failure, abandoned error
+	var coalesce, recheck, grace, cleanup, check <-chan time.Time
 	var changed <-chan struct{}
+	var checked chan error
+	var interval time.Duration
+	// startCheck schedules the next generation check. The check runs beside
+	// the loop, so a slow Registry read never delays exit or a stop.
+	startCheck := func() {
+		if generations != nil {
+			interval = r.generationChecks.next(interval)
+			check = time.After(interval)
+		}
+	}
+	// An abandoned generation's actual Wait is no receipt (CAS failure).
+	finish := func(result waitResult) (processhost.Snapshot, error) {
+		if abandoned != nil {
+			return result.snapshot, errors.Join(abandoned, failure, result.err)
+		}
+		return r.finishWait(result.snapshot, result.err, failure)
+	}
 	// subscribe precedes every Observe, so a change after Observe still wakes.
 	subscribe := func() (err error) {
 		if changes != nil {
@@ -516,10 +539,13 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 		// the owner writes; it subscribes then.
 		recheck = time.After(processOwnedRecheck)
 	}
+	if !ending {
+		startCheck()
+	}
 	for {
 		select {
 		case result := <-exited:
-			return r.finishWait(result.snapshot, result.err, failure)
+			return finish(result)
 		default:
 		}
 		if dirty {
@@ -545,14 +571,14 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 			}
 			continue
 		}
-		if (ending || failure != nil) && cleanup == nil {
+		if (ending || failure != nil || abandoned != nil) && cleanup == nil {
 			failure = errors.Join(failure, r.Handle.Stop(r.Binding))
 			cleanup = time.After(3*processhost.DefaultLimits().Grace + 2*processhost.DefaultLimits().Write)
-			lifetime, changed, coalesce, recheck, grace = nil, nil, nil, nil, nil
+			lifetime, changed, coalesce, recheck, grace, check, checked = nil, nil, nil, nil, nil, nil, nil
 		}
 		select {
 		case result := <-exited:
-			return r.finishWait(result.snapshot, result.err, failure)
+			return finish(result)
 		case <-lifetime:
 			lifetime = nil
 			if syncSnapshot == nil {
@@ -568,6 +594,16 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 			coalesce, dirty = nil, true
 		case <-recheck:
 			recheck, dirty = nil, true
+		case <-check:
+			check, checked = nil, make(chan error, 1)
+			go func(checked chan<- error) { checked <- r.checkGeneration(waitCtx, generations) }(checked)
+		case err := <-checked:
+			checked = nil
+			if errors.Is(err, processhost.ErrStale) {
+				abandoned = fmt.Errorf("%w: %w", errProcessGenerationAbandoned, err)
+				continue
+			}
+			startCheck()
 		case <-cleanup:
 			return processhost.Snapshot{}, errors.Join(failure, errors.New("owned process Wait cleanup exceeded its bound"))
 		}

@@ -603,6 +603,19 @@ func (p *Handle) Stop(binding Binding) error {
 	return nil
 }
 
+// CheckGeneration asks the host's Transactions.Current whether the Registry
+// still holds this Handle's generation. It grants nothing, does not depend on
+// provider state, and holds no Handle lock while the Registry is read. ErrStale
+// means the Registry abandoned the generation; any other error decides nothing.
+func (p *Handle) CheckGeneration(ctx context.Context, binding Binding) error {
+	if binding != p.launch.Binding {
+		return ErrStale
+	}
+	current, cancel := context.WithTimeout(ctx, p.host.limits.Startup)
+	defer cancel()
+	return p.host.tx.Current(current, binding)
+}
+
 func (p *Handle) Wait(ctx context.Context, binding Binding) (Snapshot, error) {
 	if binding != p.launch.Binding {
 		return Snapshot{}, ErrStale
