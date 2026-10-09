@@ -14,7 +14,7 @@ import (
 type processIdentityReader func(int) (coremetadata.ProcessIdentity, int, error)
 
 func processIdentityAbsent(recorded coremetadata.ProcessIdentity, read processIdentityReader) bool {
-	if !recorded.Valid() || recorded.OwnerUID != uint32(os.Getuid()) {
+	if !recorded.Valid() || int64(recorded.OwnerUID) != int64(os.Getuid()) {
 		return false
 	}
 	current, _, err := read(recorded.PID)
@@ -65,7 +65,7 @@ func removeHostLostLease(registryPath string, a coremetadata.ProcessActivation) 
 		return
 	}
 	stat, ok := before.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != a.HostProcess.OwnerUID || stat.Uid != uint32(os.Getuid()) {
+	if !ok || stat.Uid != a.HostProcess.OwnerUID || int64(stat.Uid) != int64(os.Getuid()) {
 		return
 	}
 	entries, err := os.ReadDir(path)
