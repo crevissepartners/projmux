@@ -154,6 +154,7 @@ func (p *Handle) writeLocked(ctx context.Context, frame any) error {
 		p.failure = "control write failed; outcome unknown"
 		p.state = "stopping"
 		p.expireLocked()
+		p.changedLocked()
 		_ = p.lifetime.Close()
 		if err == nil {
 			err = errors.New("short control write")
@@ -315,6 +316,7 @@ func (p *Handle) beginTurnLocked(turn, origin string) {
 	p.turn, p.turnOrigin, p.turnOpen = turn, origin, false
 	p.joined, p.joinedBytes, p.unattributed = nil, 0, nil
 	p.rememberTurnLocked(turn)
+	p.changedLocked()
 }
 
 // endTurnLocked clears turn admission. Inputs joined to the closed turn are
@@ -324,6 +326,7 @@ func (p *Handle) endTurnLocked() {
 	p.carriedJoined = p.joined
 	p.turn, p.turnOrigin, p.turnOpen = "", "", false
 	p.joined, p.joinedBytes, p.unattributed = nil, 0, nil
+	p.changedLocked()
 }
 
 // openProviderTurnLocked admits a turn Claude started itself on the bound
@@ -474,6 +477,7 @@ func (p *Handle) stopMessageReservationTimerLocked() {
 func (p *Handle) clearMessageReservationLocked() {
 	p.stopMessageReservationTimerLocked()
 	p.messageReservation = ""
+	p.changedLocked()
 }
 
 // Respond is the only response writer. Hook consumers can observe Request but
