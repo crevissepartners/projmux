@@ -154,8 +154,9 @@ install-preflight`. When the new build would migrate the Registry to a newer
 build does not speak, and at least one owner is live, the install stops with
 exit 1. The binary and the live config stay unchanged, and the message lists
 the owners and how to stop them: end each foreground owner (Ctrl-C or close its
-standard input) or run `projmux delete agent <agent-ref>`, install again, then
-`projmux agent resume <agent-ref>`. An owner whose coordination version is
+standard input), install again, then `projmux agent resume <agent-ref>`.
+`projmux delete agent <agent-ref>` also stops an owner, but it removes the
+Agent, which then cannot be resumed. An owner whose coordination version is
 unknown does not stop an install. A live owner is the recorded host process of
 a current process activation, matched by pid and start time, so owners the web
 server hosts are included.

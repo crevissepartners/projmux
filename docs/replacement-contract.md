@@ -347,7 +347,7 @@ reaches into `internal`, and when an event is outside this list.
 | `shell-wrapper-exit` | the terminal command that ran `projmux shell` returns. The wrapper waits on its `tmux attach-session` child, so it ends only when that client does |
 | `usage-demand-lapse` | no usage render has refreshed the watcher's demand marker within its 15-second TTL, so the watcher cancels itself and releases its lease; the next render starts one on the installed image. A status line still rendering the usage segment keeps that demand fresh |
 | `invocation-exit` | a short-lived invocation returns on its own, and the next one runs the installed image |
-| `process-owner-exit` | a process Agent's owner ends: its foreground creator, resumer, or relauncher returns, or `projmux delete agent` stops it. The supervisor helper ends with that activation |
+| `process-owner-exit` | a process Agent's owner ends: its foreground creator, resumer, or relauncher returns. The supervisor helper ends with that activation. `projmux delete agent` also ends an owner but removes the Agent, so it cannot be resumed |
 
 **`pane-relaunch` is a Project runtime cycle.** Each role it covers lives as
 long as one managed Pane: the supervisor is that Pane's own process, the

@@ -47,8 +47,9 @@ func TestInstallPreflightStopsSchemaChangingInstallWithLiveOwners(t *testing.T) 
 		"reviewer (uid:agent-b)  codex  revision " + testInstallOwnerRevision + "  coordination 5",
 		"portfolio (uid:agent-a)  claude  revision unknown  coordination unknown",
 		"Binary and live config are unchanged",
-		"`projmux delete agent <agent-ref>`",
+		"end its foreground owner (Ctrl-C or close its stdin)\n",
 		"`projmux agent resume <agent-ref>`",
+		"`projmux delete agent <agent-ref>` also stops an owner, but it removes the Agent: it cannot be resumed.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("refusal lacks %q:\n%s", want, out)

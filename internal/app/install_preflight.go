@@ -253,8 +253,9 @@ func (c *installPreflightCommand) Run(stderr io.Writer) error {
 	fmt.Fprintf(&buf, ", and %d live process %s %s on it\n", len(owners), pluralizeInstallOwners(len(owners)), verb)
 	buf.WriteString(renderInstallProcessOwnerRows(owners, c.coordinationVersion))
 	buf.WriteString("   Binary and live config are unchanged. Stop each owner, then install again:\n")
-	buf.WriteString("     end its foreground owner (Ctrl-C or close its stdin), or `projmux delete agent <agent-ref>`\n")
+	buf.WriteString("     end its foreground owner (Ctrl-C or close its stdin)\n")
 	buf.WriteString("   After the install, `projmux agent resume <agent-ref>` starts each Agent on the installed build.\n")
+	buf.WriteString("   `projmux delete agent <agent-ref>` also stops an owner, but it removes the Agent: it cannot be resumed.\n")
 	_, _ = io.WriteString(stderr, buf.String())
 	return installPreflightExitError{}
 }

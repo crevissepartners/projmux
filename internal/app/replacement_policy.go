@@ -88,9 +88,10 @@ const (
 	// its own. The next invocation runs the installed image.
 	replacementEventInvocationExit = "invocation-exit"
 	// replacementEventProcessOwnerExit is a process Agent's owner ending: its
-	// foreground creator, resumer, or relauncher returns, or `delete agent`
-	// stops it. The supervisor helper ends with that activation, and resuming
-	// the Agent starts both on the installed image.
+	// foreground creator, resumer, or relauncher returns. The supervisor helper
+	// ends with that activation, and resuming the Agent starts both on the
+	// installed image. `delete agent` also ends an owner, but it removes the
+	// Agent, so nothing is left to resume.
 	replacementEventProcessOwnerExit = "process-owner-exit"
 )
 
