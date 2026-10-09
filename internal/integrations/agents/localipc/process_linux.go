@@ -20,15 +20,21 @@ func Process(pid int) (coremetadata.ProcessIdentity, int, error) {
 	// #nosec G304 -- pid is a checked decimal integer in a fixed procfs path.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return coremetadata.ProcessIdentity{}, 0, errors.New("process unavailable")
+		if errors.Is(err, os.ErrNotExist) {
+			return coremetadata.ProcessIdentity{}, 0, ErrProcessAbsent
+		}
+		return coremetadata.ProcessIdentity{}, 0, err
 	}
 	end := strings.LastIndexByte(string(data), ')')
 	if end < 0 {
 		return coremetadata.ProcessIdentity{}, 0, errors.New("process identity unavailable")
 	}
 	fields := strings.Fields(string(data[end+1:]))
-	if len(fields) < 20 || fields[0] == "Z" || fields[0] == "X" {
-		return coremetadata.ProcessIdentity{}, 0, errors.New("process unavailable")
+	if len(fields) < 20 {
+		return coremetadata.ProcessIdentity{}, 0, errors.New("process identity unavailable")
+	}
+	if fields[0] == "Z" || fields[0] == "X" {
+		return coremetadata.ProcessIdentity{}, 0, ErrProcessAbsent
 	}
 	parent, err := strconv.Atoi(fields[1])
 	if err != nil {

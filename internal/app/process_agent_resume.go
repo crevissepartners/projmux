@@ -28,6 +28,7 @@ type processAgentResumeOptions struct {
 	Scope         processResumeScope
 	Prompt        processResumeFirstFrame
 	Model, Effort string
+	allowHostLost bool // Only explicit CLI resume opts in.
 	claim         *deferredProcessClaim
 }
 type processAgentResumeRequest struct{ options processAgentResumeOptions }
@@ -40,6 +41,7 @@ type processAgentResumeResult struct {
 	previousRecord          *coremetadata.ProcessSessionRecord
 	previousAttention       *processAttentionRecord
 	attentionChecked        bool
+	previousActivation      *coremetadata.ProcessActivation
 	deferredSynchronization *processResumeSynchronization
 }
 
@@ -104,6 +106,11 @@ func (c *agentCommand) processResumeCandidate(request processAgentResumeRequest)
 	if pane != nil && pane.Status.Activation.Process != nil {
 		identity, _, e := localipc.Process(pane.Status.Activation.Process.HostProcess.PID)
 		alive = e == nil && identity == pane.Status.Activation.Process.HostProcess
+	}
+	if opts.allowHostLost && !alive && pane != nil && pane.Status.Activation.Process != nil {
+		if candidate, ok := hostLostResumeCandidate(reg, uid, localipc.Process); ok {
+			return candidate, nil
+		}
 	}
 	if err = processResumeRefusal(reg, uid, alive); err != nil {
 		return processResumeCandidate{}, err
@@ -174,6 +181,9 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b, request.options.claim, deferredLaunch); err != nil {
 		return result, err
 	}
+	if candidate.HostLost != nil {
+		removeHostLostLease(path, *candidate.HostLost)
+	}
 	result = c.processResumeResult(candidate, b, path)
 	result.previousAttention = previousAttention
 	result.attentionChecked = candidate.Record.Provider == aiModeCodex
@@ -242,11 +252,13 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := processResumeRefusal(*reg, binding.Agent, false); err != nil {
-			return err
+		if candidate.HostLost == nil {
+			if err := processResumeRefusal(*reg, binding.Agent, false); err != nil {
+				return err
+			}
 		}
 		pane, _ := processResumePane(*reg, binding.Agent)
-		if !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) {
+		if pane == nil || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) {
 			return fmt.Errorf("%s: %w: recorded generation changed", processResumeRefused, processhost.ErrResumeRefused)
 		}
 		agent, _ := reg.Agent(binding.Agent)
@@ -254,7 +266,11 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 			return fmt.Errorf("%s: %w: resume recipe changed", processResumeRefused, processhost.ErrResumeRefused)
 		}
 		mutator := c.rebind.create.store.mutator()
-		if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(binding)); err != nil {
+		if candidate.HostLost != nil {
+			if err := reserveHostLostResume(reg, candidate, metadataProcessBinding(binding), localipc.Process, mutator); err != nil {
+				return err
+			}
+		} else if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(binding)); err != nil {
 			return err
 		}
 		return settings.record(reg, mutator, binding.Agent)
@@ -272,7 +288,7 @@ func (c *agentCommand) processResumeResult(candidate processResumeCandidate, bin
 			owner.Created.windowName = window.Metadata.Name
 		}
 	}
-	return processAgentResumeResult{Binding: binding, Previous: candidate.Previous, owner: owner, previousBinding: processSchemaBinding(candidate.Record.Binding), previousRecord: candidate.Record.Clone()}
+	return processAgentResumeResult{Binding: binding, Previous: candidate.Previous, previousActivation: candidate.HostLost, owner: owner, previousBinding: processSchemaBinding(candidate.Record.Binding), previousRecord: candidate.Record.Clone()}
 }
 
 func (r *processAgentResumeResult) startProcessResume(ctx context.Context, creator *createCommand, plan processhost.Command, config processhost.CodexConfig, frame processResumeFirstFrame) error {
@@ -354,6 +370,9 @@ func (r *processAgentResumeResult) restoreReservation() error {
 		return nil
 	}
 	_, _, err := intmetadata.NewStore(r.owner.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		if r.previousActivation != nil {
+			return intmetadata.DefaultMutator().RestoreProcessHostLostResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord, *r.previousActivation)
+		}
 		return intmetadata.DefaultMutator().RestoreProcessResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord)
 	})
 	if err == nil {

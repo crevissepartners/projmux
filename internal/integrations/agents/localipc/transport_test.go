@@ -260,3 +260,17 @@ func TestPeerProcessReturnsExactKernelBirth(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestKernelProcessAbsenceIsDistinctFromUnreadableIdentity(t *testing.T) {
+	if _, _, err := Process(-1); err == nil || errors.Is(err, ErrProcessAbsent) {
+		t.Fatal("invalid PID claimed kernel absence", err)
+	}
+	identity, _, err := Process(os.Getpid())
+	if err != nil || !identity.Valid() || identity.PID != os.Getpid() {
+		t.Fatal("live identity unavailable", identity, err)
+	}
+	// Linux and Darwin kernel PID limits are below this positive PID.
+	if _, _, err := Process(1 << 30); !errors.Is(err, ErrProcessAbsent) {
+		t.Fatal("missing PID did not prove absence", err)
+	}
+}

@@ -23,14 +23,14 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 	if mode == cli.OutputModePaneID {
 		return usageError("agent resume: process agents do not have a pane-id output")
 	}
-	paneCandidate, err := c.processResumeCandidate(processAgentResumeRequest{options: processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID}}})
+	paneCandidate, err := c.processResumeCandidate(processAgentResumeRequest{options: processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID}, allowHostLost: true}})
 	if err != nil {
 		return err
 	}
 	if paneCandidate.Record.Provider == aiModeClaude && strings.TrimSpace(strings.Join(prompt, " ")) == "" {
 		return usageError("agent resume: process Claude requires -- <prompt>; stream-json emits init only after the first user frame")
 	}
-	options := processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID}, Model: model, Effort: effort}
+	options := processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID}, Model: model, Effort: effort, allowHostLost: true}
 	if len(prompt) > 0 {
 		options.Prompt = processResumeFirstFrame{Kind: "user", Text: strings.Join(prompt, " ")}
 	}
@@ -51,6 +51,11 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 	}
 	if err = result.writeResumeResult(creator, stdout, stderr, mode); err != nil {
 		return result.fail(err)
+	}
+	if mode != cli.OutputModeNone && result.Previous.MayBeTruncated {
+		if _, err = fmt.Fprintln(stderr, "previous generation: reconcile/unknown; last turn may have been truncated"); err != nil {
+			return result.fail(err)
+		}
 	}
 	if mode != cli.OutputModeNone && (result.Previous.InterruptedTurn != "" || len(result.Previous.Expired) > 0) {
 		if _, err = fmt.Fprintf(stderr, "previous generation: interruptedTurn=%s expiredControls=%d\n", result.Previous.InterruptedTurn, len(result.Previous.Expired)); err != nil {

@@ -369,3 +369,33 @@ ready. Successful recovery retains the failed target's actual exit in the
 private operation record. A dry-run or refusal starts no provider and changes
 no stored recipe. The same instruction, sandbox, approval and reply-only guards
 apply to moves as to existing relaunch operations.
+
+## Recovering a conversation after its owner was lost
+
+Explicit CLI `agent resume <agent-ref> -- <prompt>` can recover a current
+process conversation after both its owner and provider disappeared, including
+across a reboot. The kernel must prove absence of both recorded PID, owner UID
+and birth identities. A live identity, unreadable identity, or incomplete
+conversation keeps the existing refusal. PID reuse does not revive the old
+process identity. Read-only queries never record this convergence. Automatic
+reattachment by other callers, deferred claims and relaunch retain their existing
+behavior.
+
+Resume rechecks the two identities inside its reservation transaction and
+atomically records `reconcile`/`unknown` termination and reserves a fresh generation.
+It preserves the Agent UID, Pane UID and Claude session or Codex thread.
+`ResumeState` remains `unknown`: no exit code, signal or supervisor Wait is
+invented. A record already retired as unknown, with no process identities left,
+cannot use this recovery path.
+
+The resume output warns `last turn may have been truncated`. The existing
+`processSession.history` records that generation, its `interruptedTurnID` and
+expired controls; an interrupted turn may be incomplete and is never replayed.
+The unknown termination receipt is preserved until a later actual termination
+supersedes it. If startup fails before a child is spawned, the dead activation is
+restored so a later explicit retry must prove absence again.
+
+The retired generation's lease directory is removed only if it is still the
+same inspected directory, belongs to the current UID, has mode 0700 and is empty.
+Residual sockets and files are left for inspection; recovery never recursively
+removes them.
