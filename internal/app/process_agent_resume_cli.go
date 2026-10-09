@@ -6,11 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -41,7 +38,7 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := processForegroundLifetime()
 	defer cancel()
 	result, err := c.resumeProcessAgent(ctx, request)
 	if err != nil {
@@ -60,25 +57,14 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 			return result.fail(err)
 		}
 	}
-	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
-	snapshot, waitErr := result.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(syncChanged, func(snapshot processhost.Snapshot) error {
-		if len(snapshot.Pending) > 0 {
-			return syncControls(context.WithoutCancel(ctx))
-		}
-		return nil
-	}))
-	controlErr := syncControls(context.Background())
-	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
-		controlErr = nil
-	}
-	waitErr = errors.Join(waitErr, controlErr, syncAttention())
-	if waitErr != nil {
-		if ended, ok := processOwnerEnded(result.owner.registryPath, result.Binding, result.owner.waitRecorded, snapshot, waitErr, stderr); ok {
-			return ended
-		}
-		return processResumeFailure(result.Binding, waitErr)
-	}
-	return processWaitExit(snapshot)
+	return result.ownedWait(syncChanged, syncControls, syncAttention).run(ctx, cancel, processStdinEOFTrigger, stderr)
+}
+
+// ownedWait keeps resume's failure guidance: the recorded conversation is
+// preserved unless another process already took this generation over.
+func (r *processAgentResumeResult) ownedWait(changed func(processhost.Snapshot) error, controls func(context.Context) error, attention func() error) processOwnedWait {
+	return processOwnedWait{owner: &r.owner, binding: r.Binding, changed: changed, controls: controls, attention: attention,
+		endedElsewhere: true, fail: func(err error) error { return processResumeFailure(r.Binding, err) }}
 }
 
 // Failed resume preserves the Agent and its recorded conversation. Cleanup

@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/signal"
 	"reflect"
 	"sync"
-	"syscall"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
@@ -43,6 +41,7 @@ type agentHostTransferLifetime struct {
 	Cancel          context.CancelFunc
 	Target          *processAgentResumeResult
 	synchronization processRelaunchSynchronization
+	trigger         processOwnerTrigger
 	once            sync.Once
 	err             error
 }
@@ -55,7 +54,7 @@ func (life *agentHostTransferLifetime) Wait(ctx context.Context) error {
 	defer stop()
 	life.once.Do(func() {
 		defer life.Cancel()
-		life.err = waitOwnedProcessRelaunch(life.Context, life.Target, life.synchronization)
+		life.err = processRelaunchOwnedWait(life.Target, life.synchronization).run(life.Context, life.Cancel, life.trigger, nil)
 	})
 	return life.err
 }
@@ -86,7 +85,7 @@ func (c *agentCommand) runOwnedHostRelaunch(ctx context.Context, reg coremetadat
 
 func (c *agentCommand) hostTransferLifetime() (context.Context, context.CancelFunc, func()) {
 	if c.hostTransferResult == nil {
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		ctx, cancel := processForegroundLifetime()
 		return ctx, cancel, cancel
 	}
 	ctx, cancel := context.WithCancel(context.WithoutCancel(c.hostTransferContext))
@@ -131,7 +130,7 @@ func (c *agentCommand) finishOwnedHostTransfer(ctx context.Context, cancel conte
 		return fail(err)
 	}
 	fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", owned.Binding.Agent, owned.Binding.Pane)
-	return runProcessRelaunchOwner(ctx, cancel, owned, synchronization)
+	return runProcessRelaunchOwner(ctx, cancel, owned, synchronization, processStdinEOFTrigger)
 }
 
 // runOwnedProcessRelaunch is the private samehost settings producer. A command

@@ -7,7 +7,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -649,7 +648,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := processForegroundLifetime()
 	defer cancel()
 	result, err := c.startProcessAgent(ctx, request)
 	if err != nil {
@@ -669,33 +668,13 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err = c.writeProcessCreateResult(stdout, stderr, mode, result); err != nil {
 		return c.failProcessCreate(&result, err)
 	}
-	// EOF is owner shutdown. Provider content never uses the owner's stdout.
-	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
-	syncSnapshot := processSnapshotSynchronizer(func(snapshot processhost.Snapshot) error {
+	return processOwnedWait{owner: &result, binding: result.Binding, changed: func(snapshot processhost.Snapshot) error {
 		if err := result.recordProcessSnapshot(snapshot); err != nil {
 			return err
 		}
 		return control.sync(context.WithoutCancel(ctx))
-	}, func(snapshot processhost.Snapshot) error {
-		if len(snapshot.Pending) > 0 {
-			return control.syncControls(context.WithoutCancel(ctx))
-		}
-		return nil
-	})
-	snapshot, waitErr := result.waitProcessAgent(ctx, syncSnapshot)
-	// A closed authority still closes answer records and projects termination.
-	controlErr := control.syncControls(context.Background())
-	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {
-		controlErr = nil
-	}
-	waitErr = errors.Join(waitErr, controlErr, control.attention.sync(result.Handle, result.Binding))
-	if waitErr != nil {
-		if ended, ok := processOwnerEnded(result.registryPath, result.Binding, result.waitRecorded, snapshot, waitErr, stderr); ok {
-			return ended
-		}
-		return processCreateCleanupError(result, waitErr)
-	}
-	return processWaitExit(snapshot)
+	}, controls: control.syncControls, attention: func() error { return control.attention.sync(result.Handle, result.Binding) },
+		endedElsewhere: true, fail: func(err error) error { return processCreateCleanupError(result, err) }}.run(ctx, cancel, processStdinEOFTrigger, stderr)
 }
 
 func (c *createCommand) failProcessCreate(result *processAgentCreateResult, cause error) error {
