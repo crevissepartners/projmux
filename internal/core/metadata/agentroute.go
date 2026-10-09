@@ -251,6 +251,12 @@ func ResolveProcessCodexRoute(reg Registry, agentUID string, e CodexProcessRoute
 	return AgentRouteRef{AgentUID: agentUID, PaneUID: e.PaneUID, Generation: e.Generation, authority: e}, ""
 }
 
+// CodexCompositeAuthorityUnavailableReason is the route refusal a Codex Agent
+// without a current composite authority produces. It is exported so the
+// message path can recognize the one reason worth explaining further without
+// re-spelling it.
+const CodexCompositeAuthorityUnavailableReason = "Codex composite authority is unavailable"
+
 func resolveAgentRoute(reg Registry, agentUID string, requireRuntime bool) (AgentRouteRef, string) {
 	agent, ok := reg.Agent(agentUID)
 	if !ok || agent.Status.Phase != PhaseRunning || agent.Status.PaneRef == "" {
@@ -274,7 +280,7 @@ func resolveAgentRoute(reg Registry, agentUID string, requireRuntime bool) (Agen
 		if binding == nil || binding.Authority == nil || !binding.Authority.Valid() || binding.ThreadID == "" ||
 			durable == nil || durable.Provider != "codex" || durable.Codex == nil || durable.Codex.ThreadID != binding.ThreadID ||
 			durable.Codex.Endpoint == nil || !durable.Codex.Endpoint.Same(binding.Authority.Endpoint()) {
-			return AgentRouteRef{}, "Codex composite authority is unavailable"
+			return AgentRouteRef{}, CodexCompositeAuthorityUnavailableReason
 		}
 		ref.authority = CodexRouteAuthority{ThreadID: binding.ThreadID, Authority: *binding.Authority}
 	case "claude":

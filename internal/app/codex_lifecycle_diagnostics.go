@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -165,10 +166,95 @@ func codexAuthorityReasonCounts(counts map[string]int) []codexAuthorityReasonCou
 type codexLifecycleAuthorityLookup func(string) codexLifecycleAuthorityDiagnostic
 
 func defaultCodexLifecycleAuthorityLookup() codexLifecycleAuthorityLookup {
-	runner := inttmux.ExecRunner{}
+	return routedCodexLifecycleAuthorityLookup(os.Getenv, loadResourceRegistry, inttmux.ExecRunner{})
+}
+
+// routedCodexLifecycleAuthorityLookup observes the authority triple on the
+// server the reader is attached to, or, outside tmux, on the exact server the
+// Pane's Project session was last verified live on.
+//
+// A bare tmux outside tmux asks whichever server its default socket names.
+// Every reader without a tmux client - a headless Agent's shell above all -
+// therefore reported a healthy native Agent as unavailable with "tmux
+// observation failed", which is the same word an owner reads when the observer
+// really is gone.
+func routedCodexLifecycleAuthorityLookup(lookupEnv func(string) string, load func() (coremetadata.Registry, error), runner tmuxRunner) codexLifecycleAuthorityLookup {
 	return func(paneUID string) codexLifecycleAuthorityDiagnostic {
-		return observeCodexLifecycleAuthority(context.Background(), runner, paneUID)
+		ctx := context.Background()
+		if lookupEnv == nil || strings.TrimSpace(lookupEnv("TMUX")) != "" || load == nil {
+			return observeCodexLifecycleAuthority(ctx, runner, paneUID)
+		}
+		registry, err := load()
+		if err != nil {
+			return codexLifecycleAuthorityDiagnostic{Source: "unavailable", Reason: "registry observation failed", EpochStatus: "unknown"}
+		}
+		target, err := tmuxSocketPathTarget(codexPaneSessionSocketPath(registry, paneUID))
+		if err != nil {
+			return codexLifecycleAuthorityDiagnostic{Source: "unavailable", Reason: "no exact tmux route", EpochStatus: "unknown"}
+		}
+		return observeCodexLifecycleAuthority(ctx, explicitTmuxRunner{runner: runner, target: target}, paneUID)
 	}
+}
+
+// codexPaneSessionSocketPath is the verified socket path of the live Project
+// session that owns an Agent Pane, or empty when the ownership chain or the
+// path is not exact.
+func codexPaneSessionSocketPath(registry coremetadata.Registry, paneUID string) string {
+	pane, ok := registry.Pane(strings.TrimSpace(paneUID))
+	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent {
+		return ""
+	}
+	agent, ok := registry.Agent(pane.Metadata.OwnerRef.UID)
+	if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow {
+		return ""
+	}
+	window, ok := registry.Window(agent.Metadata.OwnerRef.UID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject {
+		return ""
+	}
+	project, ok := registry.Project(window.Metadata.OwnerRef.UID)
+	if !ok || project.Status.Session == nil || !project.Status.Session.Live {
+		return ""
+	}
+	return project.Status.Session.SocketPath
+}
+
+// codexLifecycleRecovery names what an operator is waiting for when a Codex
+// Agent has no native authority, for the reasons whose recovery condition is
+// known. It is appended to a route refusal so the refusal says why and until
+// when instead of only that authority is unavailable.
+func codexLifecycleRecovery(reason string) string {
+	switch codexObserverReasonFor(reason) {
+	case codexObserverReasonDrainRequired:
+		return "the Codex broker is draining after a projmux install and admits this Agent's lifecycle observer only after the last Codex Agent bound to the older image exits; recovery: wait for those Agents to end, or stop and resume them"
+	case codexObserverReasonSinkError:
+		return "the lifecycle observer could not write projmux state and retries with backoff; it recovers by itself once a write succeeds (check free disk space and `projmux diagnostics`)"
+	case codexObserverReasonObserverTimeout:
+		return "the lifecycle observer was still starting when its creator stopped waiting; it attaches by itself once it is ready"
+	case codexObserverReasonGenerationUnavailable:
+		return "the lifecycle observer could not commit its endpoint authority yet and retries with backoff"
+	default:
+		return ""
+	}
+}
+
+// explainCodexRouteReason appends the observed lifecycle authority and, when
+// known, its recovery condition to the composite-authority refusal. The reason
+// keeps its exact bytes as a prefix, so anything matching on it still matches.
+func explainCodexRouteReason(lookup codexLifecycleAuthorityLookup, agent coremetadata.Agent, reason string) string {
+	if reason != coremetadata.CodexCompositeAuthorityUnavailableReason || lookup == nil || agent.Status.PaneRef == "" {
+		return reason
+	}
+	diagnostic := lookup(agent.Status.PaneRef)
+	observed := strings.TrimSpace(diagnostic.Source + " " + diagnostic.Reason)
+	if observed == "" {
+		return reason
+	}
+	explained := reason + "; lifecycle " + observed
+	if recovery := codexLifecycleRecovery(diagnostic.Reason); recovery != "" {
+		explained += ": " + recovery
+	}
+	return explained
 }
 
 func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, paneUID string) codexLifecycleAuthorityDiagnostic {

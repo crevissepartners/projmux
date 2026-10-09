@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -2155,7 +2156,7 @@ func TestCodexNativeObserverBindingLossExitsSilentConnectionWithoutWrites(t *tes
 	}
 }
 
-func TestCodexNativeObserverSinkFailureRemainsInvalidatingWhenClearFails(t *testing.T) {
+func TestCodexNativeObserverPersistentSinkFailureHoldsInvalidatingAndRetries(t *testing.T) {
 	identity := testCodexLifecycleIdentity()
 	conn := &fakeCodexLifecycleConnection{
 		snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
@@ -2164,22 +2165,40 @@ func TestCodexNativeObserverSinkFailureRemainsInvalidatingWhenClearFails(t *test
 	conn.events <- codexappserver.Notification{Method: "thread/status/changed", Params: []byte(`{"threadId":"thread-1","status":{"type":"idle"}}`)}
 	sink := newRecordingCodexLifecycleSink()
 	sink.failApplyFrom = 2
-	observer := codexNativeObserver{identity: identity, delay: time.Millisecond, sink: sink, open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil }}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := observer.Run(ctx); err == nil {
-		t.Fatal("sink failure was swallowed")
+	var opens atomic.Int32
+	observer := codexNativeObserver{identity: identity, delay: time.Millisecond, sink: sink, open: func(context.Context) (codexLifecycleConnection, error) {
+		opens.Add(1)
+		return conn, nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	giveUp := codexObserverGiveUp(t)
+	// A write that keeps failing for a reason unrelated to the binding must
+	// keep the observer alive and retrying, not end it on the first failure.
+	for opens.Load() < 3 {
+		select {
+		case <-sink.wake:
+		case err := <-done:
+			t.Fatalf("observer ended on a retryable sink failure: %v; events=%#v", err, sink.snapshot())
+		case <-giveUp:
+			t.Fatalf("observer did not retry: opens=%d events=%#v", opens.Load(), sink.snapshot())
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("cancelled retrying observer returned %v", err)
 	}
 	events := sink.snapshot()
 	if !containsCodexObserverEvent(events, "authority:invalidating") || containsCodexObserverEvent(events, "authority:provider-hook") {
-		t.Fatalf("failed clear exposed fallback authority: %#v", events)
+		t.Fatalf("failed write exposed fallback authority: %#v", events)
 	}
 	if authorities := sink.authoritySnapshot(); len(authorities) == 0 || authorities[len(authorities)-1] != "invalidating:sink-error" {
-		t.Fatalf("failed clear diagnostic authority = %#v", authorities)
+		t.Fatalf("failed write diagnostic authority = %#v", authorities)
 	}
 }
 
-func TestCodexNativeObserverInitialSinkFailureClearsPendingBeforeFallback(t *testing.T) {
+func TestCodexNativeObserverInitialSinkFailureRecoversWithoutHookFallback(t *testing.T) {
 	identity := testCodexLifecycleIdentity()
 	conn := &fakeCodexLifecycleConnection{
 		snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
@@ -2187,18 +2206,34 @@ func TestCodexNativeObserverInitialSinkFailureClearsPendingBeforeFallback(t *tes
 	}
 	sink := newRecordingCodexLifecycleSink()
 	sink.failApplyAt = 1
-	observer := codexNativeObserver{identity: identity, delay: time.Millisecond, sink: sink, open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil }}
-	if err := observer.Run(context.Background()); err == nil {
-		t.Fatal("initial sink failure was swallowed")
+	startup := make(chan codexObserverStartupResult, 4)
+	observer := codexNativeObserver{identity: identity, delay: time.Millisecond, sink: sink,
+		open:          func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+		reportStartup: func(result codexObserverStartupResult) { startup <- result },
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
 	want := []string{
 		"apply:in_progress:invalidated=false:clears=0",
 		"authority:invalidating",
 		"apply:unknown:invalidated=true:clears=0",
-		"authority:provider-hook",
+		"apply:in_progress:invalidated=false:clears=0",
+		"authority:provider-control-plane",
 	}
-	if got := sink.snapshot(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("initial sink cleanup = %#v, want %#v", got, want)
+	waitForCodexObserverEvents(t, sink, len(want))
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("recovered observer returned %v", err)
+	}
+	if got := sink.snapshot()[:len(want)]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("initial sink recovery = %#v, want %#v", got, want)
+	}
+	if first := <-startup; first.Status != codexObserverStartupRetrying || first.Reason != string(codexObserverReasonSinkError) {
+		t.Fatalf("first startup report = %+v, want retrying sink-error", first)
+	}
+	if second := <-startup; second.Status != codexObserverStartupReady {
+		t.Fatalf("second startup report = %+v, want ready", second)
 	}
 }
 
