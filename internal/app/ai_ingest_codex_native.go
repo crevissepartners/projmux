@@ -413,6 +413,10 @@ type codexNativeObserver struct {
 	// the distinction between a Pane that is still reconnecting and one that
 	// is stuck.
 	recovery codexObserverRecovery
+	// owedInvalidation is the label of an epoch whose invalidating authority
+	// could not be written, so the Pane may still say ready. Recovery retries
+	// it; a committed ready epoch clears it.
+	owedInvalidation string
 }
 
 // codexObserverRecovery names the lost epoch one recovery pass is working
@@ -448,26 +452,38 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 	recovering := false
 	recoveryAttempts := 0
 	startupAttempts := 0
-	// retryCommit retires an epoch whose own commit could not be written for a
-	// reason unrelated to the binding and schedules the next attempt. A first
-	// epoch publishes the one invalidating projection, naming sink-error, and
-	// tells a waiting creator the observer is retrying; a replacement epoch is
-	// discarded without a second publication, exactly like a failed control
-	// proof.
-	retryCommit := func(epoch uint64, epochLabel string, control *codexControlServer, client codexLifecycleConnection) (bool, error) {
+	// failCommit is the one handler for a write that failed while committing an
+	// epoch. A refusal the binding predicate made on purpose ends the observer
+	// through hook fallback, as before. Every other failure retires the epoch
+	// and schedules the next attempt.
+	//
+	// published says some part of this epoch is already visible: its semantic
+	// projection, or its ready authority. Its control endpoint is closed here,
+	// so such an epoch is always invalidated and held, during recovery too; only
+	// a replacement that published nothing is discarded without a second
+	// publication, exactly like a failed control proof. A first epoch also tells
+	// a waiting creator the observer is retrying.
+	failCommit := func(err error, epoch uint64, epochLabel string, control *codexControlServer, client codexLifecycleConnection, published bool) (bool, error) {
 		if control != nil {
 			_ = control.Close()
 		}
+		if !codexObserverSinkRetryable(err) {
+			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
+			_ = client.Close()
+			return false, errors.Join(err, cleanupErr)
+		}
 		_ = client.Close()
-		if recovering {
+		if recovering && !published {
 			o.discardRecoveryEpoch(epoch)
 		} else {
-			_ = o.invalidateAndHold(epoch, epochLabel, codexObserverReasonSinkError)
-			recovering = true
-			recoveryAttempts = 0
+			o.holdInvalidating(epoch, epochLabel)
 			o.recovery = codexObserverRecovery{epochLabel: epochLabel, reason: codexObserverReasonSinkError}
-			o.journal(codexObserverTransitionReconnecting, epochLabel, codexObserverReasonSinkError)
-			o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: string(codexObserverReasonSinkError)})
+			if !recovering {
+				recovering = true
+				recoveryAttempts = 0
+				o.journal(codexObserverTransitionReconnecting, epochLabel, codexObserverReasonSinkError)
+				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: string(codexObserverReasonSinkError)})
+			}
 		}
 		recoveryAttempts++
 		return o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonSinkError)
@@ -704,55 +720,25 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		// invalidating here, so public callers cannot reach the new socket until
 		// SetAuthority commits the exact replacement epoch below.
 		if err := o.sink.Apply(o.identity, projection); err != nil {
-			if codexObserverSinkRetryable(err) {
-				if retry, recoveryErr := retryCommit(epoch, epochLabel, control, client); recoveryErr != nil {
-					return recoveryErr
-				} else if !retry {
-					return nil
-				}
-				continue
+			if retry, runErr := failCommit(err, epoch, epochLabel, control, client, false); runErr != nil || !retry {
+				return runErr
 			}
-			if control != nil {
-				_ = control.Close()
-			}
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
+			continue
 		}
 		lastInteractionAt := o.currentTime()
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityControlPlane, epochLabel, string(codexObserverReasonReady)); err != nil {
-			if codexObserverSinkRetryable(err) {
-				if retry, recoveryErr := retryCommit(epoch, epochLabel, control, client); recoveryErr != nil {
-					return recoveryErr
-				} else if !retry {
-					return nil
-				}
-				continue
+			if retry, runErr := failCommit(err, epoch, epochLabel, control, client, true); runErr != nil || !retry {
+				return runErr
 			}
-			if control != nil {
-				_ = control.Close()
-			}
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
+			continue
 		}
 		if err := o.flushProgress(); err != nil {
-			if codexObserverSinkRetryable(err) {
-				if retry, recoveryErr := retryCommit(epoch, epochLabel, control, client); recoveryErr != nil {
-					return recoveryErr
-				} else if !retry {
-					return nil
-				}
-				continue
+			if retry, runErr := failCommit(err, epoch, epochLabel, control, client, true); runErr != nil || !retry {
+				return runErr
 			}
-			if control != nil {
-				_ = control.Close()
-				control = nil
-			}
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
+			continue
 		}
+		o.owedInvalidation = ""
 		o.journal(codexObserverTransitionConnected, epochLabel, codexObserverReasonReady)
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: epochLabel})
 		recovering = false
@@ -1044,8 +1030,11 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			if exit.hold {
 				transition = o.invalidateAndHold
 			}
-			if err := transition(epoch, epochLabel, exit.reason); err != nil && (exit.stopping || !codexObserverSinkRetryable(err)) {
-				return err
+			if err := transition(epoch, epochLabel, exit.reason); err != nil {
+				if exit.stopping || !codexObserverSinkRetryable(err) {
+					return err
+				}
+				o.owedInvalidation = epochLabel
 			}
 			// A transition whose write failed for a reason unrelated to the
 			// binding still enters recovery. Whatever part of it was published
@@ -1197,6 +1186,7 @@ func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 		return false, nil
 	}
+	o.payOwedInvalidation()
 	return o.waitRetry(ctx, attempts), nil
 }
 
@@ -1372,6 +1362,28 @@ func (o *codexNativeObserver) applyInvalidation(epochLabel string, reason codexO
 	o.journal(codexObserverTransitionFallback, epochLabel, reason)
 	o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(reason)})
 	return nil
+}
+
+// holdInvalidating publishes the one invalidating projection for an epoch
+// whose ready state may be visible. When that write itself fails, the Pane can
+// still say ready with no control endpoint behind it, so the invalidation is
+// owed and the recovery scheduler retries it before every attempt.
+func (o *codexNativeObserver) holdInvalidating(epoch uint64, epochLabel string) {
+	if err := o.invalidateAndHold(epoch, epochLabel, codexObserverReasonSinkError); err != nil {
+		o.owedInvalidation = epochLabel
+	}
+}
+
+// payOwedInvalidation retries the authority half of an invalidation a failed
+// write left owed. The authority triple is what turns callers away from a
+// closed control endpoint, so it is the part that must land.
+func (o *codexNativeObserver) payOwedInvalidation() {
+	if o.owedInvalidation == "" {
+		return
+	}
+	if err := o.sink.SetAuthority(o.identity, codexAuthorityInvalidating, o.owedInvalidation, string(codexObserverReasonSinkError)); err == nil {
+		o.owedInvalidation = ""
+	}
 }
 
 // discardRecoveryEpoch retires a replacement candidate without writing the

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/agentprogress"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
@@ -349,5 +350,97 @@ func TestCodexObserverSlowStartupFallsBackOnlyFromPending(t *testing.T) {
 	convergeCodexObserverSlowStartup(sink, identity, slow)
 	if runner.options[aiPaneCodexAuthorityOption] != codexAuthorityControlPlane || runner.options[aiPaneCodexEpochOption] != "4242-1" {
 		t.Fatalf("creator fallback overwrote a committed epoch: %#v", runner.options)
+	}
+}
+
+type progressLockTimeoutSink struct {
+	*recordingCodexLifecycleSink
+}
+
+func (s *progressLockTimeoutSink) ApplyProgress(_ codexLifecycleIdentity, progress coremetadata.AgentProgress, _ agentprogress.Diagnostics) error {
+	if progress.TurnRef != "" {
+		return fmt.Errorf("progress write: %w", intmetadata.ErrLockTimeout)
+	}
+	return nil
+}
+
+// TestCodexNativeObserverReplacementReadyThenProgressFailureInvalidates pins
+// the epoch that published ready and then failed its first progress write.
+// Its control endpoint is closed, so the Pane must leave ready during
+// recovery too, instead of the replacement being discarded silently.
+func TestCodexNativeObserverReplacementReadyThenProgressFailureInvalidates(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	conn := &fakeCodexLifecycleConnection{
+		snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
+		events:   make(chan codexappserver.Notification),
+	}
+	sink := &progressLockTimeoutSink{newRecordingCodexLifecycleSink()}
+	sink.failApplyAt = 1
+	waits := 0
+	observer := codexNativeObserver{identity: identity, sink: sink,
+		open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+		waitRecovery: func(context.Context, time.Duration) bool {
+			waits++
+			return waits < 2
+		},
+	}
+	if err := observer.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if waits != 2 {
+		t.Fatalf("observer did not reach the replacement progress failure: waits=%d", waits)
+	}
+	authorities := sink.authoritySnapshot()
+	if !slices.Contains(authorities, codexAuthorityControlPlane+":ready") {
+		t.Fatalf("replacement never published ready: %#v", authorities)
+	}
+	if got := authorities[len(authorities)-1]; got != codexAuthorityInvalidating+":sink-error" {
+		t.Fatalf("replacement progress failure left authority %q, want invalidating:sink-error (%#v)", got, authorities)
+	}
+}
+
+type invalidatingLockTimeoutSink struct {
+	*recordingCodexLifecycleSink
+	mu       sync.Mutex
+	failures int
+}
+
+func (s *invalidatingLockTimeoutSink) SetAuthority(identity codexLifecycleIdentity, source, epoch, reason string) error {
+	s.mu.Lock()
+	fail := source == codexAuthorityInvalidating && s.failures > 0
+	if fail {
+		s.failures--
+	}
+	s.mu.Unlock()
+	if fail {
+		return fmt.Errorf("set authority: %w", intmetadata.ErrLockTimeout)
+	}
+	return s.recordingCodexLifecycleSink.SetAuthority(identity, source, epoch, reason)
+}
+
+// TestCodexNativeObserverOwedInvalidationLandsBeforeRetry pins a ready epoch
+// whose write failed and whose invalidating write then failed too. The Pane
+// must not keep saying ready: recovery retries the owed invalidation before
+// it waits for the next attempt.
+func TestCodexNativeObserverOwedInvalidationLandsBeforeRetry(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	conn := &fakeCodexLifecycleConnection{
+		snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
+		events:   make(chan codexappserver.Notification, 1),
+	}
+	conn.events <- codexappserver.Notification{Method: "thread/status/changed", Params: []byte(`{"threadId":"thread-1","status":{"type":"idle"}}`)}
+	sink := &invalidatingLockTimeoutSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink(), failures: 1}
+	sink.failApplyAt = 2
+	observer := codexNativeObserver{identity: identity, sink: sink,
+		open:         func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+		waitRecovery: func(context.Context, time.Duration) bool { return false },
+	}
+	if err := observer.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	authorities := sink.authoritySnapshot()
+	want := []string{codexAuthorityControlPlane + ":ready", codexAuthorityInvalidating + ":sink-error"}
+	if !slices.Equal(authorities, want) {
+		t.Fatalf("authorities = %#v, want %#v", authorities, want)
 	}
 }
