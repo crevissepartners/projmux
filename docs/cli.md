@@ -249,6 +249,8 @@ Previous interrupted turns and expired controls remain in processSession.history
 
 Resume refusals are process-resume-not-resumable (no resumable record or unknown), process-resume-owned (exact live owner), and process-resume-refused (invalid, ambiguous, unretired, or provider-rejected evidence). They exit nonzero without falling back to a new conversation.
 
+Process Codex refuses an attention record whose binding differs from its recorded process binding before reserving a generation or invoking the provider. process-resume-attention-binding-mismatch reports recordedGeneration and attentionGeneration; Registry, Agent, conversation, and attention records remain unchanged. Inspect the Agent and resolve the attention ownership conflict before retrying; retiring another generation alone does not repair it. Matching or absent attention records retain the existing resume behavior.
+
 Tmux resume retains its existing syntax and detached behavior; process prompt and output options do not apply.
 
 A Codex CLI resume reapplies the Agent's current Profile sandbox and approval. Codex CLI cannot apply approval=untrusted; that resume is refused before creating a Pane.
