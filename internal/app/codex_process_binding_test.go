@@ -649,9 +649,40 @@ s=socket.socket(socket.AF_UNIX);s.settimeout(3);s.connect(sys.argv[1]);s.sendall
 		t.Fatal("real host refused", err)
 	}
 }
-func TestCodexProcessMessageBusyAndStaleReceiptsNeverWrite(t *testing.T) {
+
+// processCodexSteerFixture answers turn/steer with the given Python statement.
+func processCodexSteerFixture(steer string) func(string, string, []string) processhost.Command {
+	return func(root, binary string, env []string) processhost.Command {
+		fixture := strings.Replace(processCodexProviderFixture, " elif method=='turn/interrupt':", " elif method=='turn/steer':"+steer+"\n elif method=='turn/interrupt':", 1)
+		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Dir: root, Env: env}
+	}
+}
+
+// processCodexTurnWrites counts turn/start and turn/steer and returns every
+// steer's expected turn and input text in wire order.
+func processCodexTurnWrites(t *testing.T, f *processCodexFixture) (starts int, steers []map[string]string) {
+	t.Helper()
+	for _, n := range f.pollWire(t) {
+		switch string(n["method"]) {
+		case `"turn/start"`:
+			starts++
+		case `"turn/steer"`:
+			var params struct {
+				ExpectedTurnID string `json:"expectedTurnId"`
+				Input          []struct{ Text string }
+			}
+			if err := json.Unmarshal(n["params"], &params); err != nil || len(params.Input) != 1 {
+				t.Fatalf("steer params: %s %v", n["params"], err)
+			}
+			steers = append(steers, map[string]string{"turn": params.ExpectedTurnID, "text": params.Input[0].Text})
+		}
+	}
+	return starts, steers
+}
+
+func TestCodexProcessMessageSteersRunningTurnAndStaleReceiptNeverWrites(t *testing.T) {
 	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, nil)
+	right := newProcessCodexFixture(t, processCodexSteerFixture("reply({})"))
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 	left.endpoint.messages.Store(m)
 	right.endpoint.messages.Store(m)
@@ -659,10 +690,34 @@ func TestCodexProcessMessageBusyAndStaleReceiptsNeverWrite(t *testing.T) {
 	now := time.Now().UTC()
 	deadline := now.Add(time.Minute)
 	right.turn(t, "hold", "hold")
-	receipt, err := m.send(ctx, left.endpoint.binding.Agent, right.endpoint.binding.Agent, "message-busy", "conversation-busy", "busy", now, deadline)
-	if err != nil || receipt.Delivery.State != coremessage.StateRefused || receipt.Delivery.Reason != "host-busy" {
-		t.Fatalf("busy: %+v %v", receipt, err)
+	running := right.wait(t, func(s processhost.Snapshot) bool { return s.Turn != "" }).Turn
+	const steered = 10
+	for i := range steered {
+		ref := fmt.Sprintf("message-steer-%d", i)
+		receipt, err := m.send(ctx, left.endpoint.binding.Agent, right.endpoint.binding.Agent, ref, "conversation-steer", fmt.Sprintf("steer %d", i), now, deadline)
+		if err != nil || receipt.Delivery.State != coremessage.StateDelivered || receipt.Delivery.Reason != "host-turn-steered" || receipt.Delivery.OutcomeUnknown {
+			t.Fatalf("steer %d: %+v %v", i, receipt, err)
+		}
 	}
+	starts, steers := processCodexTurnWrites(t, right)
+	if starts != 1 || len(steers) != steered {
+		t.Fatalf("running turn writes: starts=%d steers=%d", starts, len(steers))
+	}
+	for i, steer := range steers {
+		var frame map[string]any
+		if err := json.Unmarshal([]byte(steer["text"]), &frame); err != nil {
+			t.Fatalf("steer %d is not the coordination envelope: %q %v", i, steer["text"], err)
+		}
+		// The envelope stays peer coordination; it never becomes operator input.
+		if steer["turn"] != running || frame["kind"] != "projmux-coordination" || frame["authority"] != "untrusted-coordination-only" ||
+			frame["messageRef"] != fmt.Sprintf("message-steer-%d", i) || frame["payload"] != fmt.Sprintf("steer %d", i) {
+			t.Fatalf("steer %d: turn=%s frame=%v", i, steer["turn"], frame)
+		}
+	}
+	if snap := right.wait(t, func(s processhost.Snapshot) bool { return true }); snap.Turn != running {
+		t.Fatalf("steer replaced the running turn: %+v", snap)
+	}
+	var err error
 	from, _ := processCodexMessageRoute(ctx, left.endpoint)
 	to, _ := processCodexMessageRoute(ctx, right.endpoint)
 	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-stale-receipt", ConversationRef: "conversation-stale", Source: from, Target: to, Authority: coremessage.PeerAuthority(), Payload: "stale", AcceptedAt: now, Deadline: deadline}
@@ -683,14 +738,53 @@ func TestCodexProcessMessageBusyAndStaleReceiptsNeverWrite(t *testing.T) {
 	if err != nil || result.Receipt == nil || result.Receipt.Delivery.State != coremessage.StateStale {
 		t.Fatalf("stale receipt: %+v %v", result, err)
 	}
-	count := 0
-	for _, n := range right.wire(t) {
-		if string(n["method"]) == `"turn/start"` {
-			count++
-		}
+	if starts, steers = processCodexTurnWrites(t, right); starts != 1 || len(steers) != steered {
+		t.Fatalf("stale wire writes: starts=%d steers=%d", starts, len(steers))
 	}
-	if count != 1 {
-		t.Fatalf("busy/stale wire writes %d", count)
+}
+
+func TestCodexProcessMessageIdleStartsTurn(t *testing.T) {
+	left := newProcessCodexFixture(t, nil)
+	right := newProcessCodexFixture(t, processCodexSteerFixture("reply({})"))
+	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
+	right.endpoint.messages.Store(m)
+	now := time.Now().UTC()
+	receipt, err := m.send(context.Background(), left.endpoint.binding.Agent, right.endpoint.binding.Agent, "message-idle", "conversation-idle", "idle", now, now.Add(time.Minute))
+	if err != nil || receipt.Delivery.State != coremessage.StateDelivered || receipt.Delivery.Reason != "host-turn-accepted" {
+		t.Fatalf("idle: %+v %v", receipt, err)
+	}
+	if starts, steers := processCodexTurnWrites(t, right); starts != 1 || len(steers) != 0 {
+		t.Fatalf("idle writes: starts=%d steers=%d", starts, len(steers))
+	}
+}
+
+// A steer the provider refuses or never answers settles with its reason and is
+// never retried as a start or another steer.
+func TestCodexProcessMessageFailedSteerSettlesWithoutStart(t *testing.T) {
+	for _, test := range []struct {
+		name, steer, reason string
+		state               coremessage.State
+		unknown             bool
+	}{
+		{"refused", "emit({'id':n['id'],'error':{'code':-32600,'message':'no active turn'}})", "provider-refused", coremessage.StateRefused, false},
+		{"lost", "sys.exit(0)", "delivery-outcome-unknown", coremessage.StateFailed, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			left := newProcessCodexFixture(t, nil)
+			right := newProcessCodexFixture(t, processCodexSteerFixture(test.steer))
+			m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
+			right.endpoint.messages.Store(m)
+			right.turn(t, "hold", "hold")
+			right.wait(t, func(s processhost.Snapshot) bool { return s.Turn != "" })
+			now := time.Now().UTC()
+			receipt, err := m.send(context.Background(), left.endpoint.binding.Agent, right.endpoint.binding.Agent, "message-failed-steer", "conversation-failed", "fails", now, now.Add(time.Minute))
+			if err != nil || receipt.Delivery.State != test.state || receipt.Delivery.Reason != test.reason || receipt.Delivery.OutcomeUnknown != test.unknown {
+				t.Fatalf("failed steer: %+v %v", receipt, err)
+			}
+			if starts, steers := processCodexTurnWrites(t, right); starts != 1 || len(steers) != 1 {
+				t.Fatalf("failed steer retried: starts=%d steers=%d", starts, len(steers))
+			}
+		})
 	}
 }
 

@@ -169,10 +169,14 @@ accepts input. Otherwise stop the owner and continue in a new generation with
 [`projmux agent resume`](cli.md#projmux-agent-resume); the stopped generation
 never reopens.
 
-Process Codex Agents have no such reservation. A message becomes a Codex turn
-directly, and its receipt settles as soon as Codex accepts or refuses that
-turn; a message to a Codex Agent that is still busy is refused with the reason
-`host-busy`.
+Process Codex Agents have no such reservation. A message to an idle Codex
+Agent starts a Codex turn, and one to a Codex Agent that is running a turn is
+steered into that exact turn, as with a tmux Codex Agent. Its receipt settles
+as soon as Codex accepts or refuses that turn or steer: `delivered` with the
+reason `host-turn-accepted` for a start or `host-turn-steered` for a steer. A
+refused or uncertain steer is never retried as a new turn; its receipt is
+`refused` with `provider-refused`, or `failed` with
+`delivery-outcome-unknown`.
 
 ## Damaged attention store
 
