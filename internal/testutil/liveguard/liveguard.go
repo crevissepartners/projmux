@@ -334,9 +334,11 @@ func guardLockRoot(root string) (*os.File, error) {
 
 // guardReclaimKilledRoots removes the roots under dir whose owner was killed
 // before its deferred cleanup ran (SIGKILL, a tool timeout's SIGTERM, a
-// -test.timeout panic), and returns how many it removed. An owner holds its
-// lock until it dies, so a root whose lock this process can take has no live
-// owner. A root without the lock file, the old name format included, is never
+// -test.timeout panic), and returns how many it removed. A free lock alone
+// does not prove death: a test can accidentally close the owner's descriptor.
+// The recorded owner must also be gone before its root is reclaimed. PID reuse
+// can conservatively retain a dead root until the reused PID exits.
+// A root without the lock file, the old name format included, is never
 // touched: it predates the lock, or its maker died before taking it, and it
 // belongs to whoever left it. A dead run's writes are not audited.
 //
@@ -373,8 +375,14 @@ func guardReclaimKilledRoots(dir, own string, stderr io.Writer) int {
 		}
 		switch err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); {
 		case err == nil:
-			dead = append(dead, deadRoot{root, lock})
-			continue
+			data, _ := io.ReadAll(io.LimitReader(lock, 32))
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if parseErr == nil && pid > 0 && !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+				live[pid] = true
+			} else {
+				dead = append(dead, deadRoot{root, lock})
+				continue
+			}
 		case errors.Is(err, syscall.EWOULDBLOCK):
 			data, _ := io.ReadAll(io.LimitReader(lock, 32))
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
