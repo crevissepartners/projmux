@@ -620,7 +620,10 @@ func TestCodexHostMoveActualCLIPrepareAbortTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+	// The runtime that holds this binding was launched by the CLI binary under
+	// test, so it is reached by the identity it granted, not by this test
+	// binary's image.
+	discovery, err := codexBrokerRuntimeDiscovery(domain, key, authority.BrokerRuntimeID)
 	if err != nil {
 		t.Fatal(err)
 	}

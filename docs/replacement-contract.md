@@ -426,8 +426,10 @@ path — its device, inode, size, and modification time, which an atomic install
 always changes — and launches the runtime with that key. So after an install,
 every client that creates an Agent (TUI, CLI, or a long-lived web server whose
 own image is older) reaches the installed image's runtime and never meets the
-superseded runtime's `drain-required`. Two binaries at two paths run two
-runtimes; each costs one upstream connection.
+superseded runtime's `drain-required`. Each binary path runs its own runtime
+(for example `~/go/bin/projmux` and a web-dev build), and each costs one upstream
+connection and about 27 MB of RSS. Rebuilding a binary in place adds one more
+runtime for as long as Agents bound to the previous build remain.
 
 The superseded runtime is left exactly as it was: its existing bindings keep
 their connection, lifecycle reads, and turn writes, and the drain above closes

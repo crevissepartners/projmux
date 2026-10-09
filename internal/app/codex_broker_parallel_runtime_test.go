@@ -169,3 +169,63 @@ func TestNewCodexAgentAttachesToTheInstalledImageWhileTheOldRuntimeDrains(t *tes
 		t.Fatalf("thread rebinding on the installed image after the old binding left: %v", err)
 	}
 }
+
+// TestCodexMessageFromAnotherBinaryPathReachesTheRuntimeThatGrantedIt is the
+// two-binary case a live machine has: an Agent bound on the runtime binary A
+// started (say the web-dev build) receives a message sent by binary B (say
+// ~/go/bin/projmux), whose own image keys a different runtime. The sender
+// proves the target's authority on the runtime that granted it, never on the
+// one its own image would start.
+func TestCodexMessageFromAnotherBinaryPathReachesTheRuntimeThatGrantedIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("codex broker runtime requires Unix filesystem semantics")
+	}
+	endpointRef := coremetadata.CodexEndpointRef{StateDomainID: "domain-two-binaries", EndpointGenerationID: "generation-two-binaries"}
+	key, err := codexbroker.NewEndpointKey(endpointRef.StateDomainID, endpointRef.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	binaryA, binaryB := filepath.Join(dir, "web-dev", "projmux"), filepath.Join(dir, "go-bin", "projmux")
+	for _, path := range []string{binaryA, binaryB} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("same build"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	imageA, imageB := codexBrokerImageOf(binaryA), codexBrokerImageOf(binaryB)
+	if imageA == "" || imageA == imageB {
+		t.Fatalf("two binary paths keyed one runtime: %q %q", imageA, imageB)
+	}
+	domain := shortTempDomain(t)
+	var replaced atomic.Bool
+	discoveryA, hostA := startImageBrokerRuntimeForTest(t, domain, key, imageA, &replaced)
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-web"), "", nil, discoveryA, nil)
+	session.endpoint = endpointRef
+	defer session.Close()
+	authority, err := openBrokerEpoch(t, session).GenerationAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The sender is binary B: every new binding it makes goes to B's runtime.
+	previous := codexBrokerImage
+	codexBrokerImage = func() string { return imageB }
+	t.Cleanup(func() { codexBrokerImage = previous })
+	senderDiscovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if senderDiscovery.SocketPath() == discoveryA.SocketPath() {
+		t.Fatal("binary B derived binary A's runtime socket for a new binding")
+	}
+	route := coremetadata.CodexRouteAuthority{ThreadID: "thread-web", Authority: authority}
+	if !probeCodexMessageAuthority(domain, route) {
+		t.Fatal("a message from binary B could not prove the authority binary A's runtime granted")
+	}
+	if authority.BrokerRuntimeID != hostA.RuntimeID() {
+		t.Fatalf("authority runtime = %q, want binary A's %q", authority.BrokerRuntimeID, hostA.RuntimeID())
+	}
+}
