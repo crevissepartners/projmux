@@ -135,6 +135,12 @@ answer without these fields comes from an owner that predates them and is read
 as protocol 0; an answer without `Coordination` alone leaves that version
 unknown.
 
+`Status` in `describe` and `get` is `live` while the owner answers and
+`offline` after the owner recorded the provider's exit. When the owner cannot
+be reached and no exit was recorded, for example after the owner
+was killed with `SIGKILL`, the status is `unknown`: projmux does not guess that
+the provider stopped.
+
 ## Installing while owners run
 
 An install never stops or replaces a running owner. `make install` lists the
@@ -153,12 +159,6 @@ standard input) or run `projmux delete agent <agent-ref>`, install again, then
 unknown does not stop an install. A live owner is the recorded host process of
 a current process activation, matched by pid and start time, so owners the web
 server hosts are included.
-
-`Status` in `describe` and `get` is `live` while the owner answers and
-`offline` after the owner recorded the provider's exit. When the owner cannot
-be reached and no exit was recorded, for example after the owner
-was killed with `SIGKILL`, the status is `unknown`: projmux does not guess that
-the provider stopped.
 
 ## Stopping the Agent
 
