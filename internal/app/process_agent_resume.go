@@ -135,6 +135,14 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		return result, err
 	}
 	path := intmetadata.PathFor(state)
+	// A failed earlier initialization can retire a new Registry generation
+	// before attention was activated. Detect that conflict before reserving or
+	// starting another provider; another retry cannot repair its ownership.
+	if candidate.Record.Provider == aiModeCodex {
+		if err = checkCodexResumeAttention(newProcessAttentionStore(state), processSchemaBinding(candidate.Record.Binding)); err != nil {
+			return result, err
+		}
+	}
 	candidate, deferredLaunch, err := c.prepareDeferredLaunch(ctx, candidate, request.options)
 	if err != nil {
 		return result, err

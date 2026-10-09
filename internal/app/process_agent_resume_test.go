@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/crevissepartners/projmux/internal/cli"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,50 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
+
+func TestCodexResumeAttentionChecksTheWholeBindingWithoutRepair(t *testing.T) {
+	store := newProcessAttentionStore(t.TempDir())
+	recorded := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "recorded-generation", Operation: "operation"}
+	if err := checkCodexResumeAttention(store, recorded); err != nil {
+		t.Fatal("absent attention should retain existing resume behavior", err)
+	}
+	for _, change := range []struct {
+		name string
+		edit func(*processhost.Binding)
+	}{
+		{"matching", func(*processhost.Binding) {}},
+		{"generation", func(b *processhost.Binding) { b.Generation = "attention-generation" }},
+		{"same generation different operation", func(b *processhost.Binding) { b.Operation = "other" }},
+		{"host", func(b *processhost.Binding) { b.Host = "other" }},
+		{"agent", func(b *processhost.Binding) { b.Agent = "other" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			attention := recorded
+			change.edit(&attention)
+			if err := store.write(map[string]processAttentionRecord{recorded.Pane: {Binding: attention, Provider: aiModeCodex, Terminal: true}}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(store.path)
+			err := checkCodexResumeAttention(store, recorded)
+			if attention == recorded {
+				if err != nil {
+					t.Fatal("matching attention refused", err)
+				}
+			} else {
+				if !errors.Is(err, processhost.ErrResumeRefused) || !strings.Contains(err.Error(), processResumeAttentionMismatch) || !strings.Contains(err.Error(), "recordedGeneration="+recorded.Generation) || !strings.Contains(err.Error(), "attentionGeneration="+attention.Generation) {
+					t.Fatal("missing exact conflict reason", err)
+				}
+				if strings.Contains(processResumeFailure(recorded, err).Error(), "after this owned generation is retired") {
+					t.Fatal("conflict claimed retirement/retry would repair attention")
+				}
+			}
+			after, _ := os.ReadFile(store.path)
+			if !bytes.Equal(before, after) {
+				t.Fatal("preflight repaired attention")
+			}
+		})
+	}
+}
 
 func TestProcessSupportedResumeFirstFrameDistinguishesUserAndPeer(t *testing.T) {
 	agent := selector.Ref{Kind: coremetadata.KindAgent, UID: "agent-resume"}

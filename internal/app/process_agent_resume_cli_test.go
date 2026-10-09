@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -155,6 +156,76 @@ func processResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		}
 	}
 	return f
+}
+
+func TestCodexResumeAttentionConflictRefusesBeforeProviderActualCLI(t *testing.T) {
+	for _, conflict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("conflict=%t", conflict), func(t *testing.T) {
+			f := processResumeCLIFixture(t, aiModeCodex)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			first.shutdown(t)
+			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path())))
+			if !conflict {
+				second := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref})
+				current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.Binding.Generation != old.Binding.Generation })
+				if current.ThreadID != old.ThreadID || second.ref != first.ref {
+					t.Fatal("matching attention lost the recorded conversation")
+				}
+				second.shutdown(t)
+				return
+			}
+			if err := attention.update(func(records map[string]processAttentionRecord) error {
+				r := records[old.Binding.PaneUID]
+				r.Binding.Generation = "gen-conflicting-attention"
+				r.Binding.Operation = "op-conflicting-attention"
+				records[old.Binding.PaneUID] = r
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			// Even a provider version probe would create this marker. The
+			// conflict must refuse before launch preparation, not just RPC.
+			marker := filepath.Join(f.root, "unexpected-provider")
+			if err := os.WriteFile(filepath.Join(f.root, "codex"), []byte("#!/bin/sh\n: > "+fmt.Sprintf("%q", marker)+"\nexit 99\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			preserved := map[string][]byte{}
+			for _, path := range []string{f.store.Path(), attention.path, filepath.Join(f.root, "wire.jsonl")} {
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				preserved[path] = raw
+			}
+			for range 2 {
+				out, err := exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref, "--model", "different-model", "--", "must not send this turn").CombinedOutput()
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+					t.Fatalf("conflict exit: %v %s", err, out)
+				}
+				for _, want := range []string{processResumeAttentionMismatch, "recordedGeneration=" + old.Binding.Generation, "attentionGeneration=gen-conflicting-attention", "recorded conversation preserved", "projmux describe agent " + first.ref} {
+					if !bytes.Contains(out, []byte(want)) {
+						t.Fatalf("missing %q: %s", want, out)
+					}
+				}
+				if bytes.Contains(out, []byte("after this owned generation is retired")) || bytes.Contains(out, []byte("foreground=owned")) {
+					t.Fatalf("incorrect retry or startup guidance: %s", out)
+				}
+				for path, before := range preserved {
+					after, err := os.ReadFile(path)
+					if err != nil || !bytes.Equal(before, after) {
+						t.Fatalf("conflict changed %s: %v", filepath.Base(path), err)
+					}
+				}
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatal("conflict invoked provider", err)
+				}
+			}
+		})
+	}
 }
 
 func TestProcessResumeActualCLIRoundTrip(t *testing.T) {

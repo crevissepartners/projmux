@@ -96,6 +96,9 @@ func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand)
 	previous := ""
 	if old, ok := records[r.Binding.Pane]; ok {
 		if old.Binding != r.previousBinding {
+			if r.owner.Provider == aiModeCodex {
+				return nil, nil, nil, &codexResumeAttentionConflict{recorded: r.previousBinding, attention: old.Binding}
+			}
 			return nil, nil, nil, processhost.ErrStale
 		}
 		previous = old.Binding.Generation
@@ -163,5 +166,34 @@ func processResumeHasReference(fs *flag.FlagSet, args []string) bool {
 }
 
 func processResumeFailure(binding processhost.Binding, cause error) error {
+	var conflict *codexResumeAttentionConflict
+	if errors.As(cause, &conflict) {
+		return fmt.Errorf("agent resume: recorded conversation preserved for agent uid:%s pane uid:%s: %w", binding.Agent, binding.Pane, cause)
+	}
 	return fmt.Errorf("agent resume: recorded conversation preserved for agent uid:%s pane uid:%s; after this owned generation is retired, retry: projmux agent resume uid:%s -- <prompt>: %w", binding.Agent, binding.Pane, binding.Agent, cause)
+}
+
+const processResumeAttentionMismatch = "process-resume-attention-binding-mismatch"
+
+// The attention record is an ownership fence, not proof of provider failure.
+// Keep its exact binding intact, even when the recorded generation is retired.
+type codexResumeAttentionConflict struct {
+	recorded, attention processhost.Binding
+}
+
+func (e *codexResumeAttentionConflict) Error() string {
+	return fmt.Sprintf("%s: attention binding differs from the recorded process binding (recordedGeneration=%s attentionGeneration=%s); recorded conversation preserved for agent uid:%s pane uid:%s; inspect: projmux describe agent uid:%s; resolve the attention ownership conflict before retrying", processResumeAttentionMismatch, e.recorded.Generation, e.attention.Generation, e.recorded.Agent, e.recorded.Pane, e.recorded.Agent)
+}
+
+func (e *codexResumeAttentionConflict) Unwrap() error { return processhost.ErrResumeRefused }
+
+func checkCodexResumeAttention(store *processAttentionStore, recorded processhost.Binding) error {
+	records, err := store.read()
+	if err != nil {
+		return err
+	}
+	if old, ok := records[recorded.Pane]; ok && old.Binding != recorded {
+		return &codexResumeAttentionConflict{recorded: recorded, attention: old.Binding}
+	}
+	return nil
 }
