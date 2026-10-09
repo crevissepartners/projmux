@@ -23,6 +23,7 @@ type processResumeFilter struct {
 type processResumePrevious struct {
 	InterruptedTurn string
 	Expired         []coremetadata.ProcessRecordedControl
+	MayBeTruncated  bool
 }
 
 type processResumeCandidate struct {
@@ -30,6 +31,7 @@ type processResumeCandidate struct {
 	Pane     coremetadata.Pane
 	Record   coremetadata.ProcessSessionRecord
 	Previous processResumePrevious
+	HostLost *coremetadata.ProcessActivation
 }
 
 // listResumableProcessAgents is a read-only durable candidate projection. It

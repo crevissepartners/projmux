@@ -353,6 +353,31 @@ func TestProcessResumeOwnerKillIsNotResumableActualCLI(t *testing.T) {
 			}
 			pane, _ := reg.Pane(record.Binding.PaneUID)
 			child := pane.Status.Activation.Process.Child
+			// Freeze the fixture supervisor so this specifically observes the
+			// owner-only death window, even under a slow test runner. Both-gone
+			// recovery has its own test below.
+			_, supervisorPID, err := localipc.Process(child.PID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor, _, err := localipc.Process(supervisorPID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(child.PID, syscall.SIGSTOP); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(supervisorPID, syscall.SIGSTOP); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if current, _, err := localipc.Process(child.PID); err == nil && current == child {
+					_ = syscall.Kill(child.PID, syscall.SIGCONT)
+				}
+				if current, _, err := localipc.Process(supervisorPID); err == nil && current == supervisor {
+					_ = syscall.Kill(supervisorPID, syscall.SIGCONT)
+				}
+			})
 			t.Cleanup(func() {
 				if identity, _, err := localipc.Process(child.PID); err == nil && identity == child {
 					_ = syscall.Kill(child.PID, syscall.SIGKILL)
@@ -363,9 +388,18 @@ func TestProcessResumeOwnerKillIsNotResumableActualCLI(t *testing.T) {
 			}
 			_ = run.cmd.Wait()
 			run.done = true
+			if current, _, err := localipc.Process(child.PID); err != nil || current != child {
+				t.Fatal("provider must remain alive in owner-only fixture", err)
+			}
 			out, err := exec.CommandContext(ctx, f.binary, "agent", "resume", run.ref, "--", "must refuse").CombinedOutput()
 			if err == nil || !bytes.Contains(out, []byte("process-resume-not-resumable")) {
 				t.Fatalf("KILL resume: %v %s", err, out)
+			}
+			if err := syscall.Kill(child.PID, syscall.SIGCONT); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(supervisorPID, syscall.SIGCONT); err != nil {
+				t.Fatal(err)
 			}
 			for {
 				identity, _, err := localipc.Process(child.PID)
@@ -1434,5 +1468,97 @@ func TestCodexResumeRetiredAttentionAndInitFailureActualCLI(t *testing.T) {
 	}
 	if bytes.Count(wire, []byte(`"method": "thread/start"`))+bytes.Count(wire, []byte(`"method":"thread/start"`)) != 1 {
 		t.Fatal("resume created another thread", string(wire))
+	}
+}
+
+func TestProcessHostLostResumeActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := processResumeCLIFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			prompt := "question"
+			if provider == aiModeCodex {
+				prompt = "controls"
+			}
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", prompt))
+			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.TurnID != "" && len(r.Pending) > 0 })
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ := reg.Pane(old.Binding.PaneUID)
+			a := *pane.Status.Activation.Process
+			// Kill only fixture-owned processes, retaining the exact kernel identities.
+			// Stop at a point outside the unrelated notification lock: SIGKILL
+			// while holding that file lock would exercise stale-notify recovery,
+			// rather than the process conversation ownership boundary.
+			notifyLock := filepath.Join(filepath.Dir(filepath.Dir(f.store.Path())), "notify.json.lock")
+			for {
+				if err := syscall.Kill(a.HostProcess.PID, syscall.SIGSTOP); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Lstat(notifyLock); os.IsNotExist(err) {
+					break
+				}
+				if err := syscall.Kill(a.HostProcess.PID, syscall.SIGCONT); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("owner never released notification lock")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			if err := syscall.Kill(a.HostProcess.PID, syscall.SIGKILL); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(a.Child.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				t.Fatal(err)
+			}
+			_ = first.input.Close()
+			_ = first.cmd.Wait()
+			first.done = true
+			for !processActivationAbsent(a, localipc.Process) {
+				select {
+				case <-ctx.Done():
+					t.Fatal("fixture processes did not disappear")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			before, err := os.ReadFile(f.store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"get", "agents", "-o", "json"}, {"describe", "agent", first.ref}} {
+				if out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput(); err != nil {
+					t.Fatalf("read: %v %s", err, out)
+				}
+			}
+			after, _ := os.ReadFile(f.store.Path())
+			if !bytes.Equal(before, after) {
+				t.Fatal("read-only query converged")
+			}
+			second := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "new explicit task"})
+			current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
+			})
+			if current.Binding.PaneUID != old.Binding.PaneUID || second.ref != first.ref || current.SessionID != old.SessionID || current.ThreadID != old.ThreadID || current.History == nil || current.History.Binding != old.Binding || current.History.InterruptedTurnID != old.TurnID || len(current.History.Expired) != len(old.Pending) {
+				t.Fatalf("conversation/history changed: %+v", current)
+			}
+			reg, err = f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ = reg.Pane(current.Binding.PaneUID)
+			receipt := pane.Status.LastTermination
+			if receipt == nil || receipt.Source != coremetadata.TerminationSourceReconcile || receipt.Classification != coremetadata.TerminationUnknown || receipt.ExitCode != nil || receipt.Signal != "" {
+				t.Fatalf("invented Wait: %+v", receipt)
+			}
+			second.shutdown(t)
+			if !strings.Contains(second.stderr.String(), "last turn may have been truncated") {
+				t.Fatal("missing warning", second.stderr.String())
+			}
+		})
 	}
 }
