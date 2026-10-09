@@ -377,8 +377,9 @@ process conversation after both its owner and provider disappeared, including
 across a reboot. The kernel must prove absence of both recorded PID, owner UID
 and birth identities. A live identity, unreadable identity, or incomplete
 conversation keeps the existing refusal. PID reuse does not revive the old
-process identity. Read-only queries never record this convergence, and automatic
-web reattachment, deferred claims and relaunch retain their existing behavior.
+process identity. Read-only queries never record this convergence. Automatic
+reattachment by other callers, deferred claims and relaunch retain their existing
+behavior.
 
 Resume rechecks the two identities inside its reservation transaction and
 atomically records `reconcile`/`unknown` termination and reserves a fresh generation.

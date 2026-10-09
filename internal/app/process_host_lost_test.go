@@ -116,7 +116,7 @@ func TestHostLostResumeRechecksKernelAndCAS(t *testing.T) {
 func TestHostLostResumeRequiresExplicitCLIAndRetainsUnknownRefusal(t *testing.T) {
 	reg, a := hostLostFixture(t)
 	// These kernel identities have no live PID, so the CLI preflight can inspect
-	// them. Shared requests (web/deferred/relaunch) never opt in.
+	// them. Other callers, including deferred claims and relaunch, never opt in.
 	c := &agentCommand{loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }}
 	request := processAgentResumeRequest{options: processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: a.Binding.AgentUID}}}
 	if _, err := c.processResumeCandidate(request); err == nil {
