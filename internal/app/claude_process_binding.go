@@ -78,6 +78,7 @@ type claudeProcessCheckResult struct {
 // fields are immutable after ready closes; each exchange is handled serially.
 type claudeProcessService struct {
 	registryPath           string
+	ownerMode              string
 	binding                processhost.Binding
 	listener               *localipc.Listener
 	ready                  chan struct{}
@@ -211,6 +212,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		host, _, hostErr := localipc.Process(os.Getpid())
 		reg, regErr := intmetadata.NewStore(s.registryPath).LoadDegradedReadOnly()
 		view := newProcessHostObservation(binding, host, s.ownedProcess, snap, claudeForegroundActions)
+		view.OwnerMode = s.ownerMode
 		if readErr == nil && hostErr == nil && regErr == nil && binding == s.binding && snap.PID == s.ownedProcess.PID && processObservationMatches(reg, binding, view) {
 			result = processForegroundResult{Accepted: true, Observation: &view}
 		}
@@ -648,7 +650,7 @@ func prepareProcessClaude(ctx context.Context, launch processhost.Launch, regist
 	if err != nil {
 		return nil, err
 	}
-	service := &claudeProcessService{registryPath: registryPath, binding: launch.Binding, listener: listener, closeLease: closeLease, ready: make(chan struct{})}
+	service := &claudeProcessService{registryPath: registryPath, ownerMode: processOwnerMode(ctx), binding: launch.Binding, listener: listener, closeLease: closeLease, ready: make(chan struct{})}
 	// Startup cancellation does not shorten the already owned child lifetime.
 	lifetime := context.WithoutCancel(ctx)
 	go service.serve(lifetime)

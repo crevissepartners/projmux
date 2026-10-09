@@ -444,6 +444,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
 				return r.Binding.Generation != old.Record.Binding.Generation && r.SessionID != ""
 			})
+			assertProcessCLIForeground(t, f, current)
 			if current.SessionID != old.Record.SessionID || current.Binding.PaneUID != old.Record.Binding.PaneUID {
 				t.Fatal("conversation changed")
 			}

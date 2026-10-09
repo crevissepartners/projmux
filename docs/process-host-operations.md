@@ -128,12 +128,14 @@ The owner answers observation with control protocol 1. Next to its process
 identities and state it reports `Protocol` (`1`), `Revision` (the same commit,
 empty when unknown), `Actions` (the requests it implements), `Turn` (whether a
 provider turn is running), `Pending` (the number of unanswered questions and
-approvals, never their content), `OwnerMode` (`foreground`, the owner is
-the command that created, resumed, or relaunched the Agent), and
+approvals, never their content), `OwnerMode` (`foreground` when stdin EOF ends
+the owner lifetime, `detached` when the launcher supplies only explicit stop or
+signal lifetime), and
 `Coordination` (the Claude coordination version the owner's build speaks). An
 answer without these fields comes from an owner that predates them and is read
 as protocol 0; an answer without `Coordination` alone leaves that version
-unknown.
+unknown. Public create, resume, deferred claim, and relaunch commands continue
+to own foreground lifetimes; this observation adds no detached launch command.
 
 `Status` in `describe` and `get` is `live` while the owner answers and
 `offline` after the owner recorded the provider's exit. When the owner cannot

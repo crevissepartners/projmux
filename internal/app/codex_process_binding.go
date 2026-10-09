@@ -32,6 +32,7 @@ type codexProcessEndpoint struct {
 	socketIdentity localipc.SocketIdentity
 	handle         *processhost.CodexHandle
 	registryPath   string
+	ownerMode      string
 	listener       *localipc.Listener
 	once           sync.Once
 	closeLease     func(context.Context) error
@@ -108,7 +109,7 @@ func startProcessCodexConversation(ctx context.Context, host *processhost.Host, 
 	if err != nil {
 		return nil, err
 	}
-	endpoint := &codexProcessEndpoint{binding: launch.Binding, socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
+	endpoint := &codexProcessEndpoint{binding: launch.Binding, ownerMode: processOwnerMode(ctx), socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
 	launch.Command.Env = processCodexLaunchEnv(launch, socket)
 	launch.Completion = &processhost.Completion{Cleanup: endpoint.close}
 	if transfer != nil {
@@ -289,6 +290,7 @@ func (e *codexProcessEndpoint) exchangeObservation(conn *net.UnixConn, peer core
 	snap, readErr := e.handle.Observe(binding)
 	reg, regErr := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
 	view := newProcessHostObservation(binding, e.evidence.HostProcess, e.evidence.Process, snap, codexForegroundActions)
+	view.OwnerMode = e.ownerMode
 	if readErr == nil && regErr == nil && binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, binding, view) {
 		result = processForegroundResult{Accepted: true, Observation: &view}
 	}
