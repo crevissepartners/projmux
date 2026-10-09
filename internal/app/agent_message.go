@@ -55,6 +55,9 @@ type liveAgentMessageRouteResolver struct {
 	registryPath     string
 	leaseProbe       func(string, coremetadata.AgentRouteRef) claudeProbeOutcome
 	eligibilityProbe func(string, coremetadata.AgentRouteRef) claudeProbeOutcome
+	// codexAuthority reads the lifecycle authority a Codex refusal explains.
+	// Nil uses the routed default.
+	codexAuthority codexLifecycleAuthorityLookup
 }
 
 func (r liveAgentMessageRouteResolver) registrationReady(route coremetadata.AgentRouteRef) claudeProbeOutcome {
@@ -124,6 +127,15 @@ func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, a
 		// A missing Claude registration has three causes with three different
 		// next actions. The reason keeps its exact bytes and the shape is
 		// appended, so this stays readable to anything already matching on it.
+		// A missing Codex authority is explained the same way: the observed
+		// lifecycle reason and, when known, the condition it recovers on.
+		if agent.Spec.Provider == aiModeCodex {
+			lookup := r.codexAuthority
+			if lookup == nil {
+				lookup = defaultCodexLifecycleAuthorityLookup()
+			}
+			return coremetadata.AgentRouteRef{}, errors.New(explainCodexRouteReason(lookup, agent, reason))
+		}
 		return coremetadata.AgentRouteRef{}, errors.New(explainClaudeRouteReason(registry, agent, reason))
 	}
 	if route.Authority().Provider() == string(aiprovider.Claude) {

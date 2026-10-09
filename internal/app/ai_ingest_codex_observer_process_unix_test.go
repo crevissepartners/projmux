@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
 func TestCodexObserverChildStartupMatrixAndExactRoute(t *testing.T) {
@@ -27,7 +29,6 @@ func TestCodexObserverChildStartupMatrixAndExactRoute(t *testing.T) {
 		want    codexObserverStartupResult
 	}{
 		{name: "early exit", body: "exit 17", want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-exited"}},
-		{name: "handshake timeout", body: "sleep 30", timeout: 25 * time.Millisecond, want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-timeout"}},
 		{name: "typed fallback", body: fmt.Sprintf("printf '%s fallback control-unavailable\\n'; sleep 30", codexObserverStartupPrefix), want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "control-unavailable", committed: true}},
 		{name: "ready then exit", body: fmt.Sprintf("printf '%s ready epoch-early\\n'", codexObserverStartupPrefix), want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-exited"}},
 	} {
@@ -43,6 +44,40 @@ func TestCodexObserverChildStartupMatrixAndExactRoute(t *testing.T) {
 			waitForCodexObserverProcessGone(t, pid)
 		})
 	}
+
+	t.Run("transfer handshake timeout", func(t *testing.T) {
+		pidPath := filepath.Join(t.TempDir(), "pid")
+		t.Setenv("PROJMUX_OBSERVER_TEST_PID", pidPath)
+		executable := writeCodexObserverProcessFixture(t, "printf '%s' \"$$\" > \"$PROJMUX_OBSERVER_TEST_PID\"\nsleep 30")
+		transfer := target
+		transfer.TransferGrant = &codexbroker.NativeTransferGrant{}
+		got := startCodexLifecycleObserverProcess(executable, transfer, 25*time.Millisecond)
+		if want := (codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-timeout"}); got != want {
+			t.Fatalf("transfer startup result = %+v, want %+v", got, want)
+		}
+		waitForCodexObserverProcessGone(t, readCodexObserverFixturePID(t, pidPath))
+	})
+
+	// A slow start is detached, not killed: the creator stops waiting and the
+	// observer keeps every later transition. Killing it here left a loaded
+	// machine's new Codex Agents with no observer at all.
+	t.Run("slow start is detached", func(t *testing.T) {
+		pidPath := filepath.Join(t.TempDir(), "pid")
+		t.Setenv("PROJMUX_OBSERVER_TEST_PID", pidPath)
+		executable := writeCodexObserverProcessFixture(t, "printf '%s' \"$$\" > \"$PROJMUX_OBSERVER_TEST_PID\"\nsleep 30")
+		got := startCodexLifecycleObserverProcess(executable, target, 25*time.Millisecond)
+		if want := (codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: "observer-timeout"}); got != want {
+			t.Fatalf("slow startup result = %+v, want %+v", got, want)
+		}
+		pid := readCodexObserverFixturePID(t, pidPath)
+		t.Cleanup(func() {
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			waitForCodexObserverProcessGone(t, pid)
+		})
+		if err := syscall.Kill(pid, 0); err != nil {
+			t.Fatalf("slow observer did not survive its creator's deadline: %v", err)
+		}
+	})
 
 	t.Run("ready survives settle", func(t *testing.T) {
 		root := t.TempDir()

@@ -118,8 +118,9 @@ const (
 	codexObserverReasonReady      codexObserverReason = "ready"
 	codexObserverReasonConnecting codexObserverReason = "connecting"
 
-	// Open, snapshot, control, and sink failures. The first four are what
-	// codexNativeReason maps one transport error onto.
+	// Open, snapshot, control, and sink failures. The first four, and
+	// drain-required below, are what codexNativeReason maps one transport
+	// error onto.
 	codexObserverReasonUnsupported           codexObserverReason = "unsupported"
 	codexObserverReasonProtocolError         codexObserverReason = "protocol-error"
 	codexObserverReasonTimeout               codexObserverReason = "timeout"
@@ -128,6 +129,11 @@ const (
 	codexObserverReasonControlUnavailable    codexObserverReason = "control-unavailable"
 	codexObserverReasonGenerationUnavailable codexObserverReason = codexNativeReasonGenerationUnavailable
 	codexObserverReasonThreadUnloaded        codexObserverReason = "thread-unloaded"
+	// codexObserverReasonDrainRequired is a broker that refused this observer
+	// because its runtime is draining after an install. It is kept apart from
+	// unavailable because its recovery condition is different and known: the
+	// observer attaches once the last binding of the older image has exited.
+	codexObserverReasonDrainRequired codexObserverReason = "drain-required"
 
 	// Event-loop exits. Each token names exactly one way out of the loop, and
 	// the three the observer used to collapse into one bucket are separated
@@ -195,6 +201,7 @@ var codexObserverReasons = []codexObserverReason{
 	codexObserverReasonControlUnavailable,
 	codexObserverReasonGenerationUnavailable,
 	codexObserverReasonThreadUnloaded,
+	codexObserverReasonDrainRequired,
 	codexObserverReasonCancelled,
 	codexObserverReasonStreamClosed,
 	codexObserverReasonEndpointSuspended,
@@ -252,7 +259,32 @@ var (
 	// codexObserverExitThreadUnloaded is the exit taken when the reduced
 	// projection says the bound thread is gone.
 	codexObserverExitThreadUnloaded = codexObserverExit{reason: codexObserverReasonThreadUnloaded}
+	// codexObserverExitSinkError is the exit taken when a projmux state write
+	// failed for a reason that says nothing about the binding. It holds like a
+	// closed stream: the endpoint is still served, so the Pane keeps the one
+	// invalidating projection and the recovery scheduler commits a replacement
+	// epoch once a write succeeds again.
+	codexObserverExitSinkError = codexObserverExit{reason: codexObserverReasonSinkError, hold: true}
 )
+
+// codexObserverSinkRetryable reports whether one failed sink write is worth
+// retrying on the same binding.
+//
+// An ignored observation is a refusal the exact-binding predicate made on
+// purpose, so retrying it cannot succeed. Every other failure - a Registry lock
+// wait that timed out behind a long create, a full disk, one tmux write that
+// failed - says nothing about the binding. Ending the observer on one of those
+// used to strip native control from a live Agent for good; the binding check
+// the recovery scheduler makes before every attempt is what decides whether a
+// retry still has a reason to run.
+func codexObserverSinkRetryable(err error) bool {
+	return err != nil && !errors.Is(err, errManagedAgentObservationIgnored) && !errors.Is(err, errCodexLifecycleInvalidationRejected)
+}
+
+// errCodexLifecycleInvalidationRejected is the reducer refusing to invalidate
+// an epoch it does not own. It is a decision, not a failed write, so it is
+// never retried.
+var errCodexLifecycleInvalidationRejected = errors.New("codex native lifecycle epoch could not be invalidated")
 
 // codexObserverStreamExit is the exit for a closed notification stream.
 //
@@ -381,6 +413,10 @@ type codexNativeObserver struct {
 	// the distinction between a Pane that is still reconnecting and one that
 	// is stuck.
 	recovery codexObserverRecovery
+	// owedInvalidation is the label of an epoch whose invalidating authority
+	// could not be written, so the Pane may still say ready. Recovery retries
+	// it; a committed ready epoch clears it.
+	owedInvalidation string
 }
 
 // codexObserverRecovery names the lost epoch one recovery pass is working
@@ -415,6 +451,43 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 	}
 	recovering := false
 	recoveryAttempts := 0
+	startupAttempts := 0
+	// failCommit is the one handler for a write that failed while committing an
+	// epoch. A refusal the binding predicate made on purpose ends the observer
+	// through hook fallback, as before. Every other failure retires the epoch
+	// and schedules the next attempt.
+	//
+	// published says some part of this epoch is already visible: its semantic
+	// projection, or its ready authority. Its control endpoint is closed here,
+	// so such an epoch is always invalidated and held, during recovery too; only
+	// a replacement that published nothing is discarded without a second
+	// publication, exactly like a failed control proof. A first epoch also tells
+	// a waiting creator the observer is retrying.
+	failCommit := func(err error, epoch uint64, epochLabel string, control *codexControlServer, client codexLifecycleConnection, published bool) (bool, error) {
+		if control != nil {
+			_ = control.Close()
+		}
+		if !codexObserverSinkRetryable(err) {
+			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
+			_ = client.Close()
+			return false, errors.Join(err, cleanupErr)
+		}
+		_ = client.Close()
+		if recovering && !published {
+			o.discardRecoveryEpoch(epoch)
+		} else {
+			o.holdInvalidating(epoch, epochLabel)
+			o.recovery = codexObserverRecovery{epochLabel: epochLabel, reason: codexObserverReasonSinkError}
+			if !recovering {
+				recovering = true
+				recoveryAttempts = 0
+				o.journal(codexObserverTransitionReconnecting, epochLabel, codexObserverReasonSinkError)
+				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: string(codexObserverReasonSinkError)})
+			}
+		}
+		recoveryAttempts++
+		return o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonSinkError)
+	}
 	for ctx.Err() == nil {
 		bindingTimeout := o.bindingTimeout
 		if bindingTimeout <= 0 {
@@ -431,8 +504,25 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			return nil
 		}
 		if err := o.clearProgress(); err != nil {
-			o.setStartupFallback(codexObserverReasonSinkError)
-			return err
+			if !codexObserverSinkRetryable(err) {
+				o.setStartupFallback(codexObserverReasonSinkError)
+				return err
+			}
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonSinkError); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
+			o.setStartupRetrying(codexObserverReasonSinkError, err)
+			if !o.waitRetry(ctx, startupAttempts) {
+				return nil
+			}
+			startupAttempts++
+			continue
 		}
 		openTimeout := o.openTimeout
 		if openTimeout <= 0 {
@@ -453,11 +543,13 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				continue
 			}
 			// A broker can refuse a new bind while an older image drains.
-			// Keep this exact observer alive so it can bind when that broker exits.
+			// Keep this exact observer alive so it can bind when that broker
+			// exits, and back off: a drain can outlast the oldest live Agent.
 			o.setStartupRetrying(reason, err)
-			if !waitCodexObserver(ctx, delay) {
+			if !o.waitRetry(ctx, startupAttempts) {
 				return nil
 			}
+			startupAttempts++
 			continue
 		}
 		if !client.LifecycleEventsAvailable() {
@@ -563,6 +655,17 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					}
 					continue
 				}
+				if codexObserverSinkRetryable(authorityErr) {
+					// The authority write is a Registry mutation, so a lock wait
+					// that timed out behind another command lands here. The
+					// generation itself was not refused.
+					o.setStartupRetrying(codexObserverReasonGenerationUnavailable, authorityErr)
+					if !o.waitRetry(ctx, startupAttempts) {
+						return nil
+					}
+					startupAttempts++
+					continue
+				}
 				o.setStartupFallback(codexObserverReasonGenerationUnavailable)
 				return nil
 			}
@@ -617,31 +720,25 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		// invalidating here, so public callers cannot reach the new socket until
 		// SetAuthority commits the exact replacement epoch below.
 		if err := o.sink.Apply(o.identity, projection); err != nil {
-			if control != nil {
-				_ = control.Close()
+			if retry, runErr := failCommit(err, epoch, epochLabel, control, client, false); runErr != nil || !retry {
+				return runErr
 			}
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
+			continue
 		}
 		lastInteractionAt := o.currentTime()
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityControlPlane, epochLabel, string(codexObserverReasonReady)); err != nil {
-			if control != nil {
-				_ = control.Close()
+			if retry, runErr := failCommit(err, epoch, epochLabel, control, client, true); runErr != nil || !retry {
+				return runErr
 			}
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
+			continue
 		}
 		if err := o.flushProgress(); err != nil {
-			if control != nil {
-				_ = control.Close()
-				control = nil
+			if retry, runErr := failCommit(err, epoch, epochLabel, control, client, true); runErr != nil || !retry {
+				return runErr
 			}
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, codexObserverReasonSinkError)
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
+			continue
 		}
+		o.owedInvalidation = ""
 		o.journal(codexObserverTransitionConnected, epochLabel, codexObserverReasonReady)
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: epochLabel})
 		recovering = false
@@ -680,6 +777,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					continue
 				}
 				if err := o.sink.Apply(o.identity, refresh); err != nil {
+					if codexObserverSinkRetryable(err) {
+						exit = codexObserverExitSinkError
+						break eventLoop
+					}
 					if control != nil {
 						_ = control.Close()
 						control = nil
@@ -723,6 +824,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				return nil
 			case <-progressTicker.C:
 				if err := o.flushProgress(); err != nil {
+					if codexObserverSinkRetryable(err) {
+						exit = codexObserverExitSinkError
+						break eventLoop
+					}
 					if control != nil {
 						_ = control.Close()
 						control = nil
@@ -777,6 +882,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 						continue
 					}
 					if err := o.flushProgress(); err != nil {
+						if codexObserverSinkRetryable(err) {
+							exit = codexObserverExitSinkError
+							break eventLoop
+						}
 						if control != nil {
 							_ = control.Close()
 							control = nil
@@ -838,6 +947,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					apply = func() error { return sink.ApplyWithNoticeContent(o.identity, projection, content) }
 				}
 				if err := apply(); err != nil {
+					if codexObserverSinkRetryable(err) {
+						exit = codexObserverExitSinkError
+						break eventLoop
+					}
 					if control != nil {
 						_ = control.Close()
 						control = nil
@@ -866,6 +979,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					if progressEvent.Kind == agentprogress.EventTurnTerminal {
 						_, _ = o.progress.Flush(o.currentTime())
 						if err := o.clearProgress(); err != nil {
+							if codexObserverSinkRetryable(err) {
+								exit = codexObserverExitSinkError
+								break eventLoop
+							}
 							if control != nil {
 								_ = control.Close()
 								control = nil
@@ -877,6 +994,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 							return errors.Join(err, cleanupErr)
 						}
 					} else if err := o.flushProgress(); err != nil {
+						if codexObserverSinkRetryable(err) {
+							exit = codexObserverExitSinkError
+							break eventLoop
+						}
 						if control != nil {
 							_ = control.Close()
 							control = nil
@@ -910,8 +1031,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				transition = o.invalidateAndHold
 			}
 			if err := transition(epoch, epochLabel, exit.reason); err != nil {
-				return err
+				if exit.stopping || !codexObserverSinkRetryable(err) {
+					return err
+				}
+				o.owedInvalidation = epochLabel
 			}
+			// A transition whose write failed for a reason unrelated to the
+			// binding still enters recovery. Whatever part of it was published
+			// stays hook-suppressing, and the replacement epoch republishes the
+			// whole projection once a write succeeds again.
 		}
 		if exit.stopping {
 			return nil
@@ -1058,6 +1186,13 @@ func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 		return false, nil
 	}
+	o.payOwedInvalidation()
+	return o.waitRetry(ctx, attempts), nil
+}
+
+// waitRetry waits the capped exponential backoff for one more attempt after
+// attempts failed ones. It reports false only when ctx ended the wait.
+func (o *codexNativeObserver) waitRetry(ctx context.Context, attempts int) bool {
 	delay := o.delay
 	if delay <= 0 {
 		delay = codexObserverReconnectDelay
@@ -1080,7 +1215,7 @@ func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int
 	if wait == nil {
 		wait = waitCodexObserver
 	}
-	return wait(ctx, delay), nil
+	return wait(ctx, delay)
 }
 
 func (o *codexNativeObserver) currentTime() time.Time {
@@ -1178,7 +1313,7 @@ func (o *codexNativeObserver) clearProgress() error {
 func (o *codexNativeObserver) invalidateAndFallback(epoch uint64, epochLabel string, reason codexObserverReason) error {
 	projection := o.decorateGenerationProjection(o.reducer.invalidate(epoch))
 	if !projection.Accepted {
-		return errors.New("codex native lifecycle epoch could not be invalidated")
+		return errCodexLifecycleInvalidationRejected
 	}
 	return o.applyInvalidation(epochLabel, reason, projection, true)
 }
@@ -1194,14 +1329,14 @@ func (o *codexNativeObserver) applyInvalidationAndFallback(epochLabel string, re
 func (o *codexNativeObserver) invalidateAndHold(epoch uint64, epochLabel string, reason codexObserverReason) error {
 	projection := o.decorateGenerationProjection(o.reducer.invalidate(epoch))
 	if !projection.Accepted {
-		return errors.New("codex native lifecycle epoch could not be invalidated")
+		return errCodexLifecycleInvalidationRejected
 	}
 	return o.applyInvalidation(epochLabel, reason, projection, false)
 }
 
 func (o *codexNativeObserver) applyInvalidation(epochLabel string, reason codexObserverReason, projection codexLifecycleProjection, fallback bool) error {
 	if !projection.Accepted || !projection.Invalidated {
-		return errors.New("codex native lifecycle invalidation projection is not accepted")
+		return fmt.Errorf("%w: invalidation projection is not accepted", errCodexLifecycleInvalidationRejected)
 	}
 	if err := o.sink.SetAuthority(o.identity, codexAuthorityInvalidating, epochLabel, string(reason)); err != nil {
 		return err
@@ -1227,6 +1362,28 @@ func (o *codexNativeObserver) applyInvalidation(epochLabel string, reason codexO
 	o.journal(codexObserverTransitionFallback, epochLabel, reason)
 	o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(reason)})
 	return nil
+}
+
+// holdInvalidating publishes the one invalidating projection for an epoch
+// whose ready state may be visible. When that write itself fails, the Pane can
+// still say ready with no control endpoint behind it, so the invalidation is
+// owed and the recovery scheduler retries it before every attempt.
+func (o *codexNativeObserver) holdInvalidating(epoch uint64, epochLabel string) {
+	if err := o.invalidateAndHold(epoch, epochLabel, codexObserverReasonSinkError); err != nil {
+		o.owedInvalidation = epochLabel
+	}
+}
+
+// payOwedInvalidation retries the authority half of an invalidation a failed
+// write left owed. The authority triple is what turns callers away from a
+// closed control endpoint, so it is the part that must land.
+func (o *codexNativeObserver) payOwedInvalidation() {
+	if o.owedInvalidation == "" {
+		return
+	}
+	if err := o.sink.SetAuthority(o.identity, codexAuthorityInvalidating, o.owedInvalidation, string(codexObserverReasonSinkError)); err == nil {
+		o.owedInvalidation = ""
+	}
 }
 
 // discardRecoveryEpoch retires a replacement candidate without writing the
@@ -1269,7 +1426,7 @@ func waitCodexObserver(ctx context.Context, delay time.Duration) bool {
 }
 
 // codexNativeReason maps one transport error onto the shared vocabulary. Its
-// four tokens are not a second vocabulary: they are members of
+// five tokens are not a second vocabulary: they are members of
 // codexObserverReasons, so an open failure and a loop exit are comparable.
 func codexNativeReason(err error) codexObserverReason {
 	switch {
@@ -1279,6 +1436,8 @@ func codexNativeReason(err error) codexObserverReason {
 		return codexObserverReasonProtocolError
 	case errors.Is(err, context.DeadlineExceeded):
 		return codexObserverReasonTimeout
+	case codexbroker.RefusalOf(err) == codexbroker.RefusalDrainRequired:
+		return codexObserverReasonDrainRequired
 	default:
 		return codexObserverReasonUnavailable
 	}
@@ -1299,6 +1458,9 @@ type aiCodexLifecycleSink struct {
 	command       *aiCommand
 	runner        tmuxCommandRunner
 	noticeContent codexNoticeContent
+	// onlyFrom, when set, makes SetAuthority a compare-and-set against the
+	// current source; see SetAuthorityFrom.
+	onlyFrom string
 }
 
 func (s aiCodexLifecycleSink) BindingCurrent(identity codexLifecycleIdentity) bool {
@@ -1419,6 +1581,9 @@ func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, sour
 		}
 		before[field.option] = value
 	}
+	if s.onlyFrom != "" && strings.TrimSpace(before[aiPaneCodexAuthorityOption]) != s.onlyFrom {
+		return errCodexAuthorityNotFrom
+	}
 	applied := make([]string, 0, len(fields))
 	for _, field := range fields {
 		args := []string{"set-option", "-p", "-t", identity.RuntimeID, field.option, field.value}
@@ -1441,6 +1606,28 @@ func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, sour
 		applied = append(applied, field.option)
 	}
 	return nil
+}
+
+// errCodexAuthorityNotFrom is a compare-and-set authority write that found a
+// different current source and wrote nothing.
+var errCodexAuthorityNotFrom = errors.New("codex lifecycle authority source changed")
+
+// SetAuthorityFrom writes the triple only while the current source is from,
+// inside the same fence as every other authority write. It reports whether the
+// write happened. A creator that stopped waiting for a slow observer uses it so
+// its fallback can never overwrite an epoch the observer committed meanwhile.
+func (s aiCodexLifecycleSink) SetAuthorityFrom(identity codexLifecycleIdentity, from, source, epoch, reason string) (bool, error) {
+	if strings.TrimSpace(from) == "" {
+		return false, errors.New("codex lifecycle authority compare requires a source")
+	}
+	s.onlyFrom = from
+	if err := s.SetAuthority(identity, source, epoch, reason); err != nil {
+		if errors.Is(err, errCodexAuthorityNotFrom) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (s aiCodexLifecycleSink) SetGenerationAuthority(identity codexLifecycleIdentity, endpoint coremetadata.CodexEndpointRef, state coremetadata.CodexGenerationState, authority coremetadata.CodexAuthorityRef) error {
@@ -1996,6 +2183,21 @@ func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObser
 	if result.Status == codexObserverStartupFallback && result.Reason != "" && !result.committed {
 		return convergeCodexObserverStartupFallback(sink, identity, result.Reason)
 	}
+	if result.Status == codexObserverStartupRetrying && !result.committed {
+		return convergeCodexObserverSlowStartup(sink, identity, result)
+	}
+	return result
+}
+
+// convergeCodexObserverSlowStartup is the creator's answer to an observer that
+// is still starting when the creator stops waiting. Provider hooks take over
+// only while the Pane still holds the pending authority this creator wrote: an
+// observer that committed meanwhile, or wrote its own retry reason, is left
+// alone, and a later ready epoch replaces the hook authority written here.
+func convergeCodexObserverSlowStartup(sink aiCodexLifecycleSink, identity codexLifecycleIdentity, result codexObserverStartupResult) codexObserverStartupResult {
+	if _, err := sink.SetAuthorityFrom(identity, codexAuthorityPending, codexAuthorityHook, "", result.Reason); err != nil && !sink.BindingCurrent(identity) {
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
+	}
 	return result
 }
 
@@ -2095,8 +2297,23 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 		terminateCodexObserverProcess(cmd)
 		return result
 	case <-timer.C:
-		terminateCodexObserverProcess(cmd)
-		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverTimeout)}
+		if target.TransferGrant != nil {
+			// A transfer completes only against a ready observer, and the grant
+			// must not outlive the creator that holds it.
+			terminateCodexObserverProcess(cmd)
+			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverTimeout)}
+		}
+		// A slow start is not a failed one. Under a loaded tmux server every
+		// query the observer makes before its first report can take most of a
+		// second, so killing it here left the Agent with no observer at all and
+		// nothing that would ever start one. The observer owns every later
+		// transition itself; the creator only stops waiting for it.
+		_ = stdout.Close()
+		if err := cmd.Process.Release(); err != nil {
+			terminateCodexObserverProcess(cmd)
+			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
+		}
+		return codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: string(codexObserverReasonObserverTimeout)}
 	}
 }
 
@@ -2208,6 +2425,9 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// A creator that stopped waiting closes the startup pipe. The one late
+	// report must then fail as a write error, not end the observer.
+	signal.Ignore(syscall.SIGPIPE)
 	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
 	session, sessionErr := newCodexBrokerObserverSessionForRoute(target.Identity, "", nil, target.NativeRoute)
