@@ -68,6 +68,10 @@ func TestLiveMachineGuardUnsetsThisPackagesLiveRouting(t *testing.T) {
 		internalActivationPaneUIDEnv,
 		internalActivationGenerationEnv,
 		internalClaudeRegistryPathEnv,
+		internalClaudeProcessBindingEnv,
+		internalClaudeProcessHostEnv,
+		internalCodexProcessBindingEnv,
+		internalCodexProcessHostEnv,
 	} {
 		if !slices.Contains(inherited, key) {
 			t.Errorf("liveguard does not unset %s; add it to its inherited list", key)

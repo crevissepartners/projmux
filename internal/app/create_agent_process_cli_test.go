@@ -165,7 +165,7 @@ func newProcessCreateCLI(t *testing.T) processCreateCLI {
 	if err = os.WriteFile(script, []byte(provider), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "claude"), []byte("#!/bin/sh\nexec python3 -u "+fmt.Sprintf("%q", script)+"\n"), 0700); err != nil {
+	if err = os.WriteFile(filepath.Join(root, "claude"), []byte("#!/bin/sh\n"+processFixtureExports(root)+"exec python3 -u "+fmt.Sprintf("%q", script)+"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -558,6 +558,14 @@ func TestProcessCreateClosedStdinExitActualCLI(t *testing.T) {
 	}
 }
 
+// processFixtureExports lets a provider wrapper hand the fixture root and the
+// copied product binary to its script. A process-hosted provider receives only
+// allowlisted inherited variables, so the test's own environment never
+// reaches it.
+func processFixtureExports(root string) string {
+	return "export PMX_TEST_PROCESS_ROOT=" + fmt.Sprintf("%q", root) + " PMX_TEST_PROCESS_BINARY=" + fmt.Sprintf("%q", filepath.Join(root, "projmux")) + "\n"
+}
+
 // processGuidanceLocation is the default guidance sentence that tells a
 // process-hosted model where it runs and how it is controlled.
 const processGuidanceLocation = "This agent runs in a foreground process host without a tmux pane."
@@ -567,7 +575,7 @@ const processGuidanceLocation = "This agent runs in a foreground process host wi
 func TestProcessCreateGuidanceActualCLI(t *testing.T) {
 	f := newProcessCreateCLI(t)
 	argv := filepath.Join(f.root, "argv")
-	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$@\" >" + fmt.Sprintf("%q", argv) + "\nexec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + "\n"
+	wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "printf '%s\\n' \"$@\" >" + fmt.Sprintf("%q", argv) + "\nexec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + "\n"
 	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(wrapper), 0700); err != nil {
 		t.Fatal(err)
 	}

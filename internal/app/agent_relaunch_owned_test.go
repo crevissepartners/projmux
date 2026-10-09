@@ -19,8 +19,11 @@ import (
 
 // The production transfer starts its supervisor through os.Executable. In
 // this copied fixture executable, dispatch only that exact production route.
+// The supervisor receives only the provider environment allowlist, so the
+// exact argv selects the dispatch rather than a test marker; go test never
+// passes it.
 func init() {
-	if os.Getenv("PMX_TEST_CLI") != "" && len(os.Args) == 3 && os.Args[1] == "internal" && os.Args[2] == "process-host-supervisor" {
+	if len(os.Args) == 3 && os.Args[1] == "internal" && os.Args[2] == "process-host-supervisor" {
 		if err := Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

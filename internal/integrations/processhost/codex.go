@@ -17,6 +17,7 @@ import (
 
 // CodexCommand selects a dedicated stdio app-server, never a daemon or proxy.
 // Settings and policy overrides remain explicit consumer-supplied arguments.
+// The environment keeps only the allowlisted inherited variables (providerEnv).
 func CodexCommand(path, dir string, env, resolvedArgs []string) (Command, error) {
 	for _, arg := range resolvedArgs {
 		for _, reserved := range []string{"app-server", "daemon", "proxy", "--listen", "--stdio", "--code-mode-host", "--"} {
@@ -25,7 +26,7 @@ func CodexCommand(path, dir string, env, resolvedArgs []string) (Command, error)
 			}
 		}
 	}
-	return Command{Path: path, Dir: dir, Env: slices.Clone(env), Args: append([]string{"app-server", "--listen", "stdio://"}, resolvedArgs...)}, nil
+	return Command{Path: path, Dir: dir, Env: providerEnv(env, codexEnv), Args: append([]string{"app-server", "--listen", "stdio://"}, resolvedArgs...)}, nil
 }
 
 // CodexConfig uses the existing typed launch vocabulary. Empty settings retain

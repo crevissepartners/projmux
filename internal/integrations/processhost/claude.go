@@ -11,6 +11,7 @@ import (
 
 // ClaudeCommand preserves the resolved policy/settings argv and adds only the
 // stream transport. It refuses transport overrides to keep framing unambiguous.
+// The environment keeps only the allowlisted inherited variables (providerEnv).
 func ClaudeCommand(path, dir string, env, resolvedArgs []string) (Command, error) {
 	for _, arg := range resolvedArgs {
 		for _, reserved := range []string{"--input-format", "--output-format", "--permission-prompt-tool", "--print", "-p", "--"} {
@@ -21,7 +22,7 @@ func ClaudeCommand(path, dir string, env, resolvedArgs []string) (Command, error
 	}
 	args := append([]string{}, resolvedArgs...)
 	args = append(args, "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--permission-prompt-tool", "stdio")
-	return Command{Path: path, Dir: dir, Env: append([]string{}, env...), Args: args}, nil
+	return Command{Path: path, Dir: dir, Env: providerEnv(env, claudeEnv), Args: args}, nil
 }
 
 // Authority includes the connection/session as observed from this exact handle.
