@@ -38,18 +38,27 @@ const (
 	// reclaimDialTimeout bounds the liveness probe that decides whether an
 	// artifact is stale.
 	reclaimDialTimeout = 250 * time.Millisecond
+	// maxImageBytes bounds the image generation token a discovery carries.
+	maxImageBytes = 64
+	// maxPublishedRecords bounds how many records one directory scan reads.
+	maxPublishedRecords = 64
 )
 
 // Discovery is the pure location contract of one broker runtime.
 //
-// A runtime is a singleton per (state domain, endpoint) pair, and that pair is
-// the whole of its identity: not a pid, not a wall clock, not a working
-// directory, and not whichever runtime happened to answer first. The domain is
-// an absolute, owner-private directory supplied by the caller, because this
-// package may not reach the process configuration that resolves one.
+// A runtime is a singleton per (state domain, endpoint, image) triple, and that
+// triple is the whole of its identity: not a pid, not a wall clock, not a
+// working directory, and not whichever runtime happened to answer first. The
+// domain is an absolute, owner-private directory supplied by the caller,
+// because this package may not reach the process configuration that resolves
+// one. The image is an opaque token naming the installed executable a client
+// expects to run its runtime; an empty image is the legacy contract every build
+// used before images existed, so an older client and an older runtime still
+// meet on the same socket.
 type Discovery struct {
 	domain   string
 	endpoint EndpointKey
+	image    string
 	key      string
 }
 
@@ -57,6 +66,20 @@ type Discovery struct {
 // endpoint. It creates nothing; every path it names is validated for
 // ownership at the moment it is used.
 func NewDiscovery(stateDomain string, endpoint EndpointKey) (Discovery, error) {
+	return NewImageDiscovery(stateDomain, endpoint, "")
+}
+
+// NewImageDiscovery derives the discovery contract for one state domain,
+// endpoint, and executable image.
+//
+// Two images of one endpoint are two runtimes. That is what lets a runtime
+// started by a newly installed executable serve new bindings at once while the
+// runtime of the image it superseded keeps carrying the bindings it already
+// holds and drains: neither has to take the other's socket.
+func NewImageDiscovery(stateDomain string, endpoint EndpointKey, image string) (Discovery, error) {
+	if !validImage(image) {
+		return Discovery{}, refuse(RefusalEndpointUnknown, nil)
+	}
 	domain := strings.TrimSpace(stateDomain)
 	if domain == "" || !filepath.IsAbs(domain) {
 		return Discovery{}, refuse(RefusalDomainRequired, nil)
@@ -68,16 +91,37 @@ func NewDiscovery(stateDomain string, endpoint EndpointKey) (Discovery, error) {
 		return Discovery{}, refuse(RefusalEndpointUnknown, nil)
 	}
 	domain = filepath.Clean(domain)
-	sum := sha256.Sum256([]byte(domain + "\x00" + string(endpoint)))
-	discovery := Discovery{domain: domain, endpoint: endpoint, key: hex.EncodeToString(sum[:discoveryKeyBytes])}
+	material := domain + "\x00" + string(endpoint)
+	if image != "" {
+		material += "\x00" + image
+	}
+	sum := sha256.Sum256([]byte(material))
+	discovery := Discovery{domain: domain, endpoint: endpoint, image: image, key: hex.EncodeToString(sum[:discoveryKeyBytes])}
 	if len(discovery.SocketPath()) > maxSocketPathBytes {
 		return Discovery{}, refuse(RefusalSocketPathTooLong, nil)
 	}
 	return discovery, nil
 }
 
+// validImage accepts the empty legacy image and a bounded lowercase hex token.
+func validImage(image string) bool {
+	if len(image) > maxImageBytes {
+		return false
+	}
+	for _, r := range image {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // Endpoint returns the endpoint this discovery scopes.
 func (d Discovery) Endpoint() EndpointKey { return d.endpoint }
+
+// Image returns the executable image token this discovery scopes, or empty for
+// the legacy contract.
+func (d Discovery) Image() string { return d.image }
 
 // Domain returns the absolute state domain this discovery is scoped to. It is
 // the value a launcher passes to the runtime process it starts, so both sides
@@ -113,6 +157,7 @@ type discoveryRecord struct {
 	Protocol    int         `json:"protocol"`
 	MinProtocol int         `json:"minProtocol"`
 	Endpoint    EndpointKey `json:"endpoint"`
+	Image       string      `json:"image,omitempty"`
 	Runtime     string      `json:"runtime"`
 	PID         int         `json:"pid"`
 	Credential  string      `json:"credential"`
@@ -168,7 +213,7 @@ func readRecord(discovery Discovery) (discoveryRecord, error) {
 	if err := json.Unmarshal(payload, &record); err != nil {
 		return discoveryRecord{}, refuse(RefusalDiscoveryUntrusted, err)
 	}
-	if record.Endpoint != discovery.endpoint || strings.TrimSpace(record.Runtime) == "" ||
+	if record.Endpoint != discovery.endpoint || record.Image != discovery.image || strings.TrimSpace(record.Runtime) == "" ||
 		strings.TrimSpace(record.Credential) == "" {
 		return discoveryRecord{}, refuse(RefusalDiscoveryUntrusted, nil)
 	}
@@ -184,6 +229,100 @@ func PublishedRuntimeID(discovery Discovery) (string, error) {
 		return "", err
 	}
 	return record.Runtime, nil
+}
+
+// Published lists the runtimes this state domain has an ownership-checked
+// record for, in directory order. It creates nothing and repairs nothing: an
+// absent directory is an empty result, and a record that does not derive back
+// to its own location is skipped rather than removed.
+func Published(stateDomain string) ([]Discovery, error) {
+	locator, err := NewDiscovery(stateDomain, DefaultEndpointKey)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(locator.Dir())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, refuse(RefusalDiscoveryUntrusted, err)
+	}
+	var published []Discovery
+	for _, entry := range entries {
+		if len(published) >= maxPublishedRecords {
+			break
+		}
+		name := entry.Name()
+		if !entry.Type().IsRegular() || !strings.HasPrefix(name, discoveryPrefix) || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		var header struct {
+			Endpoint EndpointKey `json:"endpoint"`
+			Image    string      `json:"image"`
+		}
+		path := filepath.Join(locator.Dir(), name)
+		payload, err := readBounded(path)
+		if err != nil || json.Unmarshal(payload, &header) != nil {
+			continue
+		}
+		discovery, err := NewImageDiscovery(locator.domain, header.Endpoint, header.Image)
+		if err != nil || discovery.RecordPath() != path {
+			continue
+		}
+		if _, err := readRecord(discovery); err != nil {
+			continue
+		}
+		published = append(published, discovery)
+	}
+	return published, nil
+}
+
+// LocateRuntime returns the discovery contract of the published runtime with
+// this exact identity on this endpoint, whichever image it serves.
+//
+// It is how a caller holding authority a runtime already granted reaches that
+// runtime again. Deriving the contract from the caller's own image instead
+// would send an existing binding to whichever runtime this executable starts,
+// which never granted it.
+func LocateRuntime(stateDomain string, endpoint EndpointKey, runtimeID string) (Discovery, error) {
+	if strings.TrimSpace(runtimeID) == "" {
+		return Discovery{}, refuse(RefusalRuntimeReplaced, nil)
+	}
+	published, err := Published(stateDomain)
+	if err != nil {
+		return Discovery{}, err
+	}
+	for _, discovery := range published {
+		if discovery.endpoint != endpoint {
+			continue
+		}
+		if record, err := readRecord(discovery); err == nil && record.Runtime == runtimeID {
+			return discovery, nil
+		}
+	}
+	return Discovery{}, refuse(RefusalHostUnavailable, nil)
+}
+
+// readBounded reads one owner-private regular record file within the record
+// bound.
+func readBounded(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || !ownedByCurrentUser(info) {
+		return nil, refuse(RefusalDiscoveryUntrusted, nil)
+	}
+	file, err := os.Open(path) // #nosec G304 -- path is one entry of the owner-private discovery directory.
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	payload, err := io.ReadAll(io.LimitReader(file, maxRecordBytes+1))
+	if err != nil || len(payload) > maxRecordBytes {
+		return nil, refuse(RefusalDiscoveryUntrusted, err)
+	}
+	return payload, nil
 }
 
 // writeRecord publishes one runtime's record atomically at owner-only mode.

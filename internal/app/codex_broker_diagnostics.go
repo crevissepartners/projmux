@@ -223,7 +223,7 @@ func codexBrokerPublishedRuntimes(domain string) ([]codexbroker.Discovery, strin
 		return nil, string(codexbroker.RefusalDiscoveryUntrusted)
 	}
 	var published []codexbroker.Discovery
-	seen := make(map[codexbroker.EndpointKey]struct{}, len(entries))
+	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		if len(published) >= codexBrokerPublishedLimit {
 			break
@@ -233,14 +233,17 @@ func codexBrokerPublishedRuntimes(domain string) ([]codexbroker.Discovery, strin
 			!strings.HasPrefix(name, codexBrokerRecordPrefix) || !strings.HasSuffix(name, codexBrokerRecordSuffix) {
 			continue
 		}
-		endpoint, ok := codexBrokerRecordEndpoint(filepath.Join(dir, name))
+		endpoint, image, ok := codexBrokerRecordEndpoint(filepath.Join(dir, name))
 		if !ok {
 			continue
 		}
-		if _, duplicate := seen[endpoint]; duplicate {
+		if _, duplicate := seen[name]; duplicate {
 			continue
 		}
-		discovery, err := codexbroker.NewDiscovery(domain, endpoint)
+		// One endpoint can have one runtime per executable image: the image an
+		// install superseded drains while the installed one serves new Agents.
+		// Both are runtimes this domain published, so both are listed.
+		discovery, err := codexbroker.NewImageDiscovery(domain, endpoint, image)
 		// The endpoint a record announces must derive back to the record that
 		// announced it. A record naming some other endpoint is not a runtime
 		// this domain published; it is a file whose contents disagree with its
@@ -248,37 +251,42 @@ func codexBrokerPublishedRuntimes(domain string) ([]codexbroker.Discovery, strin
 		if err != nil || discovery.RecordPath() != filepath.Join(dir, name) {
 			continue
 		}
-		seen[endpoint] = struct{}{}
+		seen[name] = struct{}{}
 		published = append(published, discovery)
 	}
 	sort.Slice(published, func(i, j int) bool {
-		return published[i].Endpoint() < published[j].Endpoint()
+		if published[i].Endpoint() != published[j].Endpoint() {
+			return published[i].Endpoint() < published[j].Endpoint()
+		}
+		return published[i].Image() < published[j].Image()
 	})
 	return published, ""
 }
 
-// codexBrokerRecordEndpoint reads the endpoint one discovery record announces.
+// codexBrokerRecordEndpoint reads the endpoint and image one discovery record
+// announces.
 //
 // Only that field is taken. The credential, the pid, and the protocol window
 // stay with Dial, which reads the record again under its own ownership proof,
 // so nothing here can widen what a diagnostics read is trusted to know.
-func codexBrokerRecordEndpoint(path string) (codexbroker.EndpointKey, bool) {
+func codexBrokerRecordEndpoint(path string) (codexbroker.EndpointKey, string, bool) {
 	file, err := os.Open(path) // #nosec G304 -- path is one entry of the derived discovery directory.
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	defer file.Close()
 	payload, err := io.ReadAll(io.LimitReader(file, codexBrokerRecordLimit+1))
 	if err != nil || len(payload) > codexBrokerRecordLimit {
-		return "", false
+		return "", "", false
 	}
 	var record struct {
 		Endpoint codexbroker.EndpointKey `json:"endpoint"`
+		Image    string                  `json:"image"`
 	}
 	if err := json.Unmarshal(payload, &record); err != nil || record.Endpoint == "" {
-		return "", false
+		return "", "", false
 	}
-	return record.Endpoint, true
+	return record.Endpoint, record.Image, true
 }
 
 // projectCodexBrokerTelemetry turns one runtime answer into the rendered

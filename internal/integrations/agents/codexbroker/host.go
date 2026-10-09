@@ -218,6 +218,7 @@ func (h *Host) publish() error {
 		Protocol:    h.protocol.Preferred,
 		MinProtocol: h.protocol.Minimum,
 		Endpoint:    h.discovery.endpoint,
+		Image:       h.discovery.image,
 		Runtime:     h.runtimeID,
 		PID:         os.Getpid(),
 		Credential:  h.credential,

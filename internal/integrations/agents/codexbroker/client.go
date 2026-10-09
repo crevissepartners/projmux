@@ -142,6 +142,52 @@ func ProbeAuthority(ctx context.Context, discovery Discovery, cfg DialConfig, ru
 	return conn.CheckAuthority(ctx, runtime, thread, fence)
 }
 
+// siblingHoldsNothing is the closed set of probe answers that prove nothing is
+// held, or that nothing reachable is. A probe that ran out of time is in it on
+// purpose: one wedged older runtime must not refuse every new binding.
+var siblingHoldsNothing = map[Refusal]bool{
+	RefusalBindingClosed:      true,
+	RefusalHostUnavailable:    true,
+	RefusalHostClosed:         true,
+	RefusalRuntimeReplaced:    true,
+	RefusalDisconnectBoundary: true,
+	RefusalBrokerClosed:       true,
+	RefusalRequestUnknown:     true,
+}
+
+// UnboundElsewhere refuses binding-exists when a published runtime of the same
+// endpoint other than this discovery's own still holds a binding for this exact
+// thread, and returns nil otherwise.
+//
+// A thread is bound in at most one runtime. While an older image drains, the
+// runtime this executable starts does not know which threads the older one
+// holds, so a new binding asks every sibling first. The ask is an
+// authority-only probe with an empty fence: a runtime without the thread
+// answers binding-closed, and any other answer -- a stale epoch, a control
+// barrier not yet open -- proves it still holds one. A sibling that cannot be
+// reached holds nothing a caller could reach either, and is skipped.
+func UnboundElsewhere(ctx context.Context, discovery Discovery, thread string, cfg DialConfig) error {
+	published, err := Published(discovery.domain)
+	if err != nil {
+		return err
+	}
+	for _, sibling := range published {
+		if sibling.endpoint != discovery.endpoint || sibling.RecordPath() == discovery.RecordPath() {
+			continue
+		}
+		record, err := readRecord(sibling)
+		if err != nil {
+			continue
+		}
+		err = ProbeAuthority(ctx, sibling, cfg, record.Runtime, thread, Fence{})
+		if err != nil && (DialStageOf(err) != "" || siblingHoldsNothing[RefusalOf(err)]) {
+			continue
+		}
+		return refuse(RefusalBindingExists, nil)
+	}
+	return nil
+}
+
 func dialLifecycleIPC(ctx context.Context, discovery Discovery, protocol ProtocolRange) (*Conn, error) {
 	timeout := ownedLifecycleLimit
 	if deadline, ok := ctx.Deadline(); ok {

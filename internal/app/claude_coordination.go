@@ -369,7 +369,10 @@ func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRou
 	if err != nil {
 		return false
 	}
-	discovery, err := codexbroker.NewDiscovery(stateDir, key)
+	// The authority names the runtime that granted it. Reach that runtime, not
+	// whichever one this executable's image would start, so a binding an older
+	// image still holds keeps receiving while that image drains.
+	discovery, err := codexbroker.LocateRuntime(stateDir, key, authority.Authority.BrokerRuntimeID)
 	if err != nil {
 		return false
 	}
