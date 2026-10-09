@@ -596,6 +596,7 @@ func TestClaudeRegistrationHelperRecordsAfterTheAckCloses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = regular.Close() })
 	closed, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatal(err)
@@ -632,7 +633,7 @@ func TestClaudeRegistrationHelperRecordsAfterTheAckCloses(t *testing.T) {
 			journal := &claudeRegistrationJournal{}
 			journal.onAppend = func(event diagnostics.Event) {
 				// Without a usable fd 3 the pipe was never the helper's.
-				if test.ack == nil && event.Code != diagnostics.ClaudeRegistrationReady.Code() && !claudeHelperAckClosed(read) {
+				if test.ack == nil && len(test.args) == 0 && test.env == nil && event.Code != diagnostics.ClaudeRegistrationReady.Code() && !claudeHelperAckClosed(read) {
 					t.Errorf("%s appended while the hook's acknowledgement was still open", event.Code)
 				}
 			}
@@ -640,9 +641,9 @@ func TestClaudeRegistrationHelperRecordsAfterTheAckCloses(t *testing.T) {
 			if env == nil {
 				env = noEnv
 			}
-			openAck := func() *os.File { return write }
+			openAck := func() (*os.File, diagnostics.ClaudeRegistrationReason) { return write, "" }
 			if test.ack != nil {
-				openAck = func() *os.File { return test.ack(write) }
+				openAck = func() (*os.File, diagnostics.ClaudeRegistrationReason) { return test.ack(write), "" }
 			}
 			served := 0
 			in := claudeEndpointHelperInput{args: test.args, lookupEnv: env, stdin: strings.NewReader(test.stdin), openAck: openAck,
@@ -655,6 +656,12 @@ func TestClaudeRegistrationHelperRecordsAfterTheAckCloses(t *testing.T) {
 					}
 					return test.serve
 				}}
+			if len(test.args) != 0 || test.env != nil {
+				in.openAck = func() (*os.File, diagnostics.ClaudeRegistrationReason) {
+					t.Fatal("preflight took ownership of fd 3")
+					return nil, ""
+				}
+			}
 			if err := recordClaudeEndpointHelper(journal.recorder(), in); err != nil {
 				t.Fatalf("helper returned %v", err)
 			}
@@ -843,5 +850,23 @@ func TestClaudeEndpointHelperLockObserverRecordsItsCommand(t *testing.T) {
 	}
 	if event := events[0]; event.Event != "registry.lock.acquisition" || event.Command != "claude-endpoint-helper" || event.Subcommand != "" {
 		t.Fatalf("lock record = %+v, want command claude-endpoint-helper", event)
+	}
+}
+
+// A non-pipe descriptor belongs to the caller, including when fd 3 is the
+// runtime's netpoll descriptor. Reject it without creating an owning wrapper.
+func TestClaudeEndpointAckRejectsNonPipeWithoutClosingIt(t *testing.T) {
+	t.Parallel()
+	file, err := os.Create(filepath.Join(t.TempDir(), "not-an-ack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ack, reason := openClaudeEndpointAck(file.Fd())
+	if ack != nil || reason != diagnostics.ClaudeRegistrationHelperAckNotPipe {
+		t.Fatalf("ack = %v, reason = %v", ack, reason)
+	}
+	if _, err := file.WriteString("still owned by caller"); err != nil {
+		t.Fatalf("helper closed caller descriptor: %v", err)
 	}
 }

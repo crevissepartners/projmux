@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
@@ -142,5 +145,38 @@ func TestClaudeDialogueCleanupFailureStillRecordsActualProviderOutcome(t *testin
 	receipts := readTestTerminationJournal(t, command)
 	if len(receipts) != 1 || receipts[0].ExitCode == nil || *receipts[0].ExitCode != 17 {
 		t.Fatal("actual outcome was replaced by launch failure")
+	}
+}
+
+func TestClaudeEndpointHelperPreflightPreservesProcessFD3(t *testing.T) {
+	// Initialize netpoll without supplying or replacing fd 3. Depending on
+	// startup order, fd 3 can belong to the runtime or another process input.
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var before, after syscall.Stat_t
+	if err := syscall.Fstat(3, &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := New().Run([]string{"internal", "claude-endpoint-helper", "--unknown-before-auth"}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Fstat(3, &after); err != nil {
+		t.Fatalf("helper closed process fd 3: %v", err)
+	}
+	if before.Dev != after.Dev || before.Ino != after.Ino || before.Mode != after.Mode {
+		t.Fatal("helper replaced process fd 3")
+	}
+	if err := listener.SetDeadline(time.Now().Add(10 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := listener.Accept()
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if !os.IsTimeout(err) {
+		t.Fatalf("netpoll after helper preflight: %v", err)
 	}
 }
