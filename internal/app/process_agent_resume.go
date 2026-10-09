@@ -39,6 +39,7 @@ type processAgentResumeResult struct {
 	previousBinding         processhost.Binding
 	previousRecord          *coremetadata.ProcessSessionRecord
 	previousAttention       *processAttentionRecord
+	attentionChecked        bool
 	deferredSynchronization *processResumeSynchronization
 }
 
@@ -140,15 +141,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	// attention badge alone grants no authority to replace another binding.
 	var previousAttention *processAttentionRecord
 	if candidate.Record.Provider == aiModeCodex {
-		journal, journalErr := terminationJournalForRegistryPath(path)
-		if journalErr != nil {
-			return result, journalErr
-		}
-		receipts, readErr := journal.read()
-		if readErr != nil {
-			return result, readErr
-		}
-		previousAttention, err = checkCodexResumeAttention(newProcessAttentionStore(state), processSchemaBinding(candidate.Record.Binding), receipts)
+		previousAttention, err = readCodexResumeAttention(path, processSchemaBinding(candidate.Record.Binding))
 		if err != nil {
 			return result, err
 		}
@@ -183,6 +176,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	result = c.processResumeResult(candidate, b, path)
 	result.previousAttention = previousAttention
+	result.attentionChecked = candidate.Record.Provider == aiModeCodex
 	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
 		if result.hasNoChild() {
 			err = errors.Join(err, result.restoreReservation())
@@ -282,6 +276,16 @@ func (c *agentCommand) processResumeResult(candidate processResumeCandidate, bin
 }
 
 func (r *processAgentResumeResult) startProcessResume(ctx context.Context, creator *createCommand, plan processhost.Command, config processhost.CodexConfig, frame processResumeFirstFrame) error {
+	// Relaunch also uses this start path. Capture its retired writer before
+	// child birth, while preserving an absent record checked by resume.
+	if r.owner.Provider == aiModeCodex && !r.attentionChecked {
+		var err error
+		r.previousAttention, err = readCodexResumeAttention(r.owner.registryPath, r.previousBinding)
+		if err != nil {
+			return err
+		}
+		r.attentionChecked = true
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err

@@ -190,6 +190,18 @@ func (e *codexResumeAttentionConflict) Error() string {
 
 func (e *codexResumeAttentionConflict) Unwrap() error { return processhost.ErrResumeRefused }
 
+func readCodexResumeAttention(registryPath string, recorded processhost.Binding) (*processAttentionRecord, error) {
+	journal, err := terminationJournalForRegistryPath(registryPath)
+	if err != nil {
+		return nil, err
+	}
+	receipts, err := journal.read()
+	if err != nil {
+		return nil, err
+	}
+	return checkCodexResumeAttention(newProcessAttentionStore(filepath.Dir(filepath.Dir(registryPath))), recorded, receipts)
+}
+
 func checkCodexResumeAttention(store *processAttentionStore, recorded processhost.Binding, receipts []coremetadata.TerminationEvidence) (*processAttentionRecord, error) {
 	records, err := store.read()
 	if err != nil {

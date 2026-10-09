@@ -1395,7 +1395,7 @@ func TestCodexResumeRetiredAttentionAndInitFailureActualCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref).CombinedOutput()
-	if err == nil || !bytes.Contains(out, []byte("fixture init refusal")) {
+	if err == nil || !bytes.Contains(out, []byte(`"method":"initialize"`)) || !bytes.Contains(out, []byte(`"rpc_code":-32603`)) {
 		t.Fatalf("init refusal: %v %s", err, out)
 	}
 	failed := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
