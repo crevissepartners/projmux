@@ -84,9 +84,11 @@ const (
 	// currently Running Agent activation. It is committed before the runtime
 	// session is killed and only a canonical control action may carry it.
 	TerminationInterrupted TerminationClassification = "interrupted"
-	// TerminationNormal is an observed exit status 0.
+	// TerminationNormal is an observed exit status 0, or a process provider
+	// exit following recorded owner shutdown intent. Owner shutdown preserves
+	// the actual Wait exit code or signal, including non-zero results.
 	//
-	// It is emphatically NOT intent. A provider that exits 0 because the
+	// This does not claim canonical deletion intent. A provider that exits 0 because the
 	// operator typed a quit command and a provider that exits 0 because it
 	// finished a batch produce byte-identical wait statuses, so promoting
 	// exit 0 to "intentional" would invent evidence nobody produced.
@@ -151,7 +153,8 @@ func ValidTerminationClassification(classification TerminationClassification) bo
 	}
 }
 
-// ClassifyProcessExit maps one reaped wait status onto observed evidence.
+// ClassifyProcessExit maps one reaped wait status without owner stop intent
+// onto observed evidence. Process hosts may combine it with recorded Stop.
 //
 // signal is the empty string for a child that exited on its own. A signalled
 // child is abnormal regardless of the code the platform reports alongside it,

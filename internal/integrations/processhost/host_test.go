@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
@@ -199,6 +200,10 @@ func fixtureProvider() {
 		return
 	}
 	switch mode {
+	case "stop-exit143":
+		terms := make(chan os.Signal, 1)
+		signal.Notify(terms, syscall.SIGTERM)
+		go func() { <-terms; os.Exit(143) }()
 	case "ignore-eof-term":
 		ignoreTerm()
 	case "exit0":
@@ -360,7 +365,7 @@ func fixtureProvider() {
 			panic(err)
 		}
 	}
-	if mode == "group" || mode == "ignore-eof" || mode == "ignore-eof-term" {
+	if mode == "group" || mode == "ignore-eof" || mode == "stop-exit143" || mode == "ignore-eof-term" {
 		for {
 			time.Sleep(time.Hour)
 		}

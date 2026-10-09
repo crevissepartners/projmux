@@ -225,3 +225,31 @@ func TestProcessCreationRecordsBirthBeforeConversation(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnerNormalProcessWaitPreservesActualStatus(t *testing.T) {
+	for _, signal := range []string{"", "TERM", "KILL"} {
+		t.Run("signal="+signal, func(t *testing.T) {
+			reg := processSchemaFixture(t)
+			pane := &reg.Panes[1]
+			activation := *pane.Status.Activation.Process
+			code := 143
+			receipt := TerminationEvidence{Source: TerminationSourceSupervisor, Classification: TerminationNormal, ObservedAt: time.Now().UTC(), PaneUID: activation.Binding.PaneUID, AgentUID: activation.Binding.AgentUID, Generation: activation.Binding.Generation, OperationID: activation.Binding.OperationID, ExitCode: &code, Signal: signal}
+			if signal != "" {
+				receipt.ExitCode = nil
+			}
+			if err := (Mutator{}).RecordProcessWait(&reg, activation, receipt); err != nil {
+				t.Fatal(err)
+			}
+			pane, _ = reg.Pane(activation.Binding.PaneUID)
+			if !SameProcessWait(pane.Status.LastTermination, &receipt) || !MatchesProcessWait(activation.Binding, pane.Status.LastTermination) {
+				t.Fatal("actual Wait changed", pane.Status.LastTermination)
+			}
+			bad := receipt
+			bad.ExitCode = nil
+			bad.Signal = ""
+			if MatchesProcessWait(activation.Binding, &bad) {
+				t.Fatal("normal without Wait accepted")
+			}
+		})
+	}
+}

@@ -164,6 +164,7 @@ type Handle struct {
 	statusDone             chan struct{}
 	spawnErr               error
 	stopOnce               sync.Once
+	ownerStopped           bool
 	adapter                providerAdapter
 	completionContext      context.Context
 
@@ -185,6 +186,7 @@ type Snapshot struct {
 	Diagnostic                                string
 	Exit                                      *Exit
 	Resume                                    *ResumeHistory
+	ownerStopped                              bool
 }
 
 // Event carries host-local sequence and exact binding; Raw is bounded by the
@@ -574,11 +576,20 @@ func (p *Handle) finish() {
 	close(p.done)
 }
 
-func (p *Handle) stop() {
+func (p *Handle) stop() { p.stopWithIntent(false) }
+
+func (p *Handle) stopWithIntent(ownerInitiated bool) {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
 		p.stopMessageReservationTimerLocked()
 		if p.state != "exited" && p.state != "unknown" {
+			// Status observation may precede publication while streams drain.
+			// A late Stop must not relabel that already observed death.
+			select {
+			case <-p.statusDone:
+			default:
+				p.ownerStopped = ownerInitiated && p.failure == ""
+			}
 			p.state = "stopping"
 		}
 		p.expireLocked()
@@ -595,11 +606,13 @@ func (p *Handle) stop() {
 	})
 }
 
+// Stop records owner shutdown intent before closing provider stdin. Internal
+// failure cleanup and Stop after observed exit do not confer normality.
 func (p *Handle) Stop(binding Binding) error {
 	if binding != p.launch.Binding {
 		return ErrStale
 	}
-	p.stop()
+	p.stopWithIntent(true)
 	return nil
 }
 
@@ -662,7 +675,7 @@ func (p *Handle) Observe(binding Binding) (Snapshot, error) {
 }
 
 func (p *Handle) snapshotLocked() Snapshot {
-	s := Snapshot{Provider: p.launch.provider, Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
+	s := Snapshot{ownerStopped: p.ownerStopped, Provider: p.launch.provider, Binding: p.launch.Binding, State: p.state, Session: p.session, Connection: p.connection, Turn: p.turn, MessageReservation: p.messageReservation, PID: p.pid, SupervisorPID: p.supervisorPID, Sequence: p.seq, Failure: p.failure, Diagnostic: string(p.diagnostics)}
 	if p.exit != nil {
 		e := *p.exit
 		s.Exit = &e
@@ -855,14 +868,18 @@ func (p *Handle) protocolFailure(err error) {
 	p.stop()
 }
 
-// Termination uses the existing pure classifier; the caller offers this exact
-// generation's evidence through metadata.Mutator.RecordTermination. No hook or
+// Termination combines actual Wait with recorded owner shutdown intent. The
+// caller offers this generation's evidence through metadata.Mutator.RecordTermination. No hook or
 // turn event invokes that writer, and no registry is mutated by this package.
 func (s Snapshot) Termination(at time.Time) (metadata.TerminationEvidence, bool) {
 	if s.State != "exited" || s.Exit == nil {
 		return metadata.TerminationEvidence{}, false
 	}
-	e := metadata.TerminationEvidence{Source: metadata.TerminationSourceSupervisor, Classification: metadata.ClassifyProcessExit(s.Exit.Code, s.Exit.Signal), ObservedAt: at, PaneUID: s.Binding.Pane, AgentUID: s.Binding.Agent, Generation: s.Binding.Generation, OperationID: s.Binding.Operation, Signal: s.Exit.Signal}
+	classification := metadata.ClassifyProcessExit(s.Exit.Code, s.Exit.Signal)
+	if s.ownerStopped && s.Failure == "" {
+		classification = metadata.TerminationNormal
+	}
+	e := metadata.TerminationEvidence{Source: metadata.TerminationSourceSupervisor, Classification: classification, ObservedAt: at, PaneUID: s.Binding.Pane, AgentUID: s.Binding.Agent, Generation: s.Binding.Generation, OperationID: s.Binding.Operation, Signal: s.Exit.Signal}
 	if s.Exit.Signal == "" {
 		code := s.Exit.Code
 		e.ExitCode = &code
