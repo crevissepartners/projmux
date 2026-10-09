@@ -246,7 +246,11 @@ func (c *installPreflightCommand) Run(stderr io.Writer) error {
 		}
 		fmt.Fprintf(&buf, " the Claude coordination version to %d", c.coordinationVersion)
 	}
-	fmt.Fprintf(&buf, ", and %d live process %s depend on it\n", len(owners), pluralizeInstallOwners(len(owners)))
+	verb := "depend"
+	if len(owners) == 1 {
+		verb = "depends"
+	}
+	fmt.Fprintf(&buf, ", and %d live process %s %s on it\n", len(owners), pluralizeInstallOwners(len(owners)), verb)
 	buf.WriteString(renderInstallProcessOwnerRows(owners, c.coordinationVersion))
 	buf.WriteString("   Binary and live config are unchanged. Stop each owner, then install again:\n")
 	buf.WriteString("     end its foreground owner (Ctrl-C or close its stdin), or `projmux delete agent <agent-ref>`\n")
