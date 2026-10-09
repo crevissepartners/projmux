@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -222,16 +222,19 @@ func TestProcessOwnedWaitRenewsLeaseDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	listener, err := net.Listen("unix", filepath.Join(dir, "host.sock"))
+	socket := filepath.Join(dir, "host.sock")
+	listener, err := localipc.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	aged := time.Now().Add(-9 * 24 * time.Hour)
-	for _, name := range []string{filepath.Join(dir, "host.sock"), dir} {
-		if err := os.Chtimes(name, aged, aged); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.Chtimes(dir, aged, aged); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := localipc.InspectOwnedSocket(socket)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	handle := &generationOwnedHandle{
@@ -255,18 +258,28 @@ func TestProcessOwnedWaitRenewsLeaseDirectory(t *testing.T) {
 	}
 	handle.awaitChecks(t, 1)
 	deadline := time.After(10 * time.Second)
-	for !renewed(dir) || !renewed(filepath.Join(dir, "host.sock")) {
+	for !renewed(dir) {
 		select {
 		case <-handle.checked:
 		case <-deadline:
-			t.Fatal("generation checks did not renew the lease directory and its socket")
+			t.Fatal("generation checks did not renew the lease directory")
 		}
+	}
+	// Socket owners recognize their socket by change time: renewal never
+	// touches it, so the owner still removes it on close.
+	if after, err := localipc.InspectOwnedSocket(socket); err != nil || after != identity {
+		t.Fatalf("renewal changed the owner's socket identity: %v", err)
 	}
 
 	// A renewal never creates a lease directory that is gone.
 	end()
 	<-done
-	_ = listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(socket); !os.IsNotExist(err) {
+		t.Fatalf("socket owner could not remove its socket after renewals: %v", err)
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}

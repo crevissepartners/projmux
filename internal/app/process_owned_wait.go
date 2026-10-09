@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -76,21 +74,15 @@ func (r *processAgentCreateResult) checkGeneration(ctx context.Context, handle p
 	return err
 }
 
-// touchProcessLeaseDir renews a live generation's lease directory and the
-// sockets in it, so tmpfiles aging (`Q /tmp ... 10d`) never removes them under
-// a long-lived owner. Only a private directory of this uid is touched; a
-// missing one is not created.
+// touchProcessLeaseDir renews a live generation's lease directory, so tmpfiles
+// aging (`Q /tmp ... 10d`) never removes it under a long-lived owner. Only a
+// private directory of this uid is touched; a missing one is not created. The
+// sockets in it are left alone: their owners recognize them by change time,
+// and aging skips sockets that are still bound.
 func touchProcessLeaseDir(dir string, now time.Time) {
-	if !privateClaudeLeaseDir(dir) {
-		return
+	if privateClaudeLeaseDir(dir) {
+		_ = os.Chtimes(dir, now, now)
 	}
-	entries, _ := os.ReadDir(dir)
-	for _, entry := range entries {
-		if entry.Type()&fs.ModeSocket != 0 {
-			_ = os.Chtimes(filepath.Join(dir, entry.Name()), now, now)
-		}
-	}
-	_ = os.Chtimes(dir, now, now)
 }
 
 // processOwnedWait is the one owned Wait tail of a process generation after
