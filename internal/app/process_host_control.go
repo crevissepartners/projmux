@@ -5,6 +5,10 @@ import (
 	"errors"
 	"net"
 	"os"
+	"regexp"
+	"runtime/debug"
+	"slices"
+	"sync"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -52,15 +56,63 @@ type processForegroundResult struct {
 	InvalidAnswer       bool
 	Questions           []ExactProcessQuestion `json:",omitempty"`
 	Stale, Busy, Closed bool
-	Observation         *processHostObservation       `json:",omitempty"`
-	Receipt             *codexProcessReceipt          `json:",omitempty"`
-	UserDelivery        *processhost.UserTurnDelivery `json:",omitempty"`
+	// Unsupported names an action this owner does not implement. A client
+	// built before it reads the refusal as stale.
+	Unsupported  bool                          `json:",omitempty"`
+	Observation  *processHostObservation       `json:",omitempty"`
+	Receipt      *codexProcessReceipt          `json:",omitempty"`
+	UserDelivery *processhost.UserTurnDelivery `json:",omitempty"`
 	// Join is set only when a Claude operator input entered an already
 	// running turn; Accepted keeps its meaning. BusyReason names a bounded
 	// refusal (joined limit, pending answer) without changing Busy.
 	Join       *processTurnJoin `json:",omitempty"`
 	BusyReason string           `json:",omitempty"`
 }
+
+// Control protocol v1. An owner reports these in its observation; an answer
+// without Protocol comes from an owner built before the protocol had a version
+// and is read as protocol 0.
+const (
+	processHostProtocol = 1
+	// processHostOwnerForeground is the owner mode of a host whose lifetime is
+	// its foreground creator, resumer, or relauncher.
+	processHostOwnerForeground = "foreground"
+)
+
+// errProcessHostUnsupportedAction refuses an action the owner does not
+// implement, so a newer client is not told its authority went stale.
+var errProcessHostUnsupportedAction = errors.New("process-host-unsupported-action")
+
+// The foreground actions each provider host implements, sorted. The same list
+// is reported in observation and decides the unsupported-action refusal.
+var (
+	claudeForegroundActions = []string{"interrupt", "respond", "stop", "turn"}
+	codexForegroundActions  = []string{"approval", "interrupt", "message", "question", "stop", "turn", "user-deliver", "user-steer", "validate"}
+)
+
+func processForegroundSupported(actions []string, action string) error {
+	if !slices.Contains(actions, action) {
+		return errProcessHostUnsupportedAction
+	}
+	return nil
+}
+
+var processRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// processHostRevision is the owner's own build revision: a 40-hex vcs.revision
+// or empty when the binary was built without one.
+var processHostRevision = sync.OnceValue(func() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" && processRevisionPattern.MatchString(setting.Value) {
+			return setting.Value
+		}
+	}
+	return ""
+})
 
 // processTurnJoin names the running turn an accepted input joined.
 type processTurnJoin struct {
@@ -112,12 +164,15 @@ func controlProcessForeground(ctx context.Context, peer coremetadata.ProcessIden
 		return result
 	}
 	err = apply()
-	return processForegroundResult{Accepted: err == nil, Stale: errors.Is(err, processhost.ErrStale), Busy: errors.Is(err, processhost.ErrBusy), Closed: errors.Is(err, processhost.ErrClosed)}
+	return processForegroundResult{Accepted: err == nil, Stale: errors.Is(err, processhost.ErrStale), Busy: errors.Is(err, processhost.ErrBusy), Closed: errors.Is(err, processhost.ErrClosed), Unsupported: errors.Is(err, errProcessHostUnsupportedAction)}
 }
 
 // applyClaudeForeground records how an accepted operator input entered the
 // stream in admission; other actions leave it untouched.
 func applyClaudeForeground(ctx context.Context, handle *processhost.Handle, r processForegroundRequest, admission *processhost.TurnAdmission) error {
+	if err := processForegroundSupported(claudeForegroundActions, r.Action); err != nil {
+		return err
+	}
 	switch r.Action {
 	case "turn":
 		value, err := handle.UserInput(ctx, r.Authority, r.Operation, r.Prompt)

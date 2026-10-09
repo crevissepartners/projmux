@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -22,6 +23,35 @@ type processHostObservation struct {
 	Host, Child     coremetadata.ProcessIdentity
 	Provider, State string
 	Exit            *processhost.Exit `json:",omitempty"`
+	// Control protocol v1 (processHostProtocol). Revision is the owner's build
+	// revision, Actions its foreground actions, Turn whether a provider turn is
+	// running, and Pending the count of open control requests; their content
+	// never crosses. An answer without Protocol is a protocol-0 owner.
+	Protocol  int      `json:",omitempty"`
+	Revision  string   `json:",omitempty"`
+	Actions   []string `json:",omitempty"`
+	Turn      bool     `json:",omitempty"`
+	Pending   int      `json:",omitempty"`
+	OwnerMode string   `json:",omitempty"`
+}
+
+// newProcessHostObservation describes one owner's current snapshot in control
+// protocol v1.
+func newProcessHostObservation(binding processhost.Binding, host, child coremetadata.ProcessIdentity, snap processhost.Snapshot, actions []string) processHostObservation {
+	return processHostObservation{
+		Binding: binding, Host: host, Child: child, Provider: snap.Provider, State: snap.State, Exit: snap.Exit,
+		Protocol: processHostProtocol, Revision: processHostRevision(), Actions: slices.Clone(actions),
+		Turn: snap.Turn != "", Pending: len(snap.Pending), OwnerMode: processHostOwnerForeground,
+	}
+}
+
+// hostRevision is the owner build an observation reports, or empty for a
+// protocol-0 owner or a build without a revision.
+func (v processHostObservation) hostRevision() string {
+	if v.Protocol < 1 || !processRevisionPattern.MatchString(v.Revision) {
+		return ""
+	}
+	return v.Revision
 }
 
 // Both the responder and reader compare the complete immutable activation.
@@ -116,21 +146,62 @@ func recordedProcessExit(reg coremetadata.Registry, binding processhost.Binding,
 }
 
 func (r remoteProcessObserver) observeHost(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (processhost.Snapshot, error) {
+	view, err := r.observeHostView(binding, activation, provider)
+	if err != nil {
+		return processhost.Snapshot{}, err
+	}
+	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: view.Exit}, nil
+}
+
+// observeHostView reads the exact live owner's observation, including the
+// protocol fields a protocol-0 owner leaves empty.
+func (r remoteProcessObserver) observeHostView(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (processHostObservation, error) {
 	socket := processHostSocket(provider, r.registryPath, binding.Pane, binding.Generation)
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil {
-		return processhost.Snapshot{}, err
+		return processHostObservation{}, err
 	}
 	result, err := callProcessForeground(r.ctx, socket, identity, activation.HostProcess, processHostRequest(provider, &binding, nil))
 	if err != nil {
-		return processhost.Snapshot{}, err
+		return processHostObservation{}, err
 	}
 	current, err := localipc.InspectOwnedSocket(socket)
 	if err != nil || current != identity || !result.Accepted || result.Observation == nil || !processObservationMatches(r.registry, binding, *result.Observation) {
-		return processhost.Snapshot{}, processhost.ErrStale
+		return processHostObservation{}, processhost.ErrStale
 	}
-	view := result.Observation
-	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: view.Exit}, nil
+	return *result.Observation, nil
+}
+
+// processHostRevisionLookup reports the build revision of the owner hosting
+// an exact process Pane's current activation, or empty when it is unknown.
+type processHostRevisionLookup func(coremetadata.Registry, coremetadata.Pane) string
+
+// defaultProcessHostRevisionLookup asks the live owner within the shared
+// observation read budget. An unreachable or protocol-0 owner is unknown.
+func defaultProcessHostRevisionLookup() processHostRevisionLookup {
+	return func(registry coremetadata.Registry, pane coremetadata.Pane) string {
+		activation := pane.Status.Activation.Process
+		if activation == nil {
+			return ""
+		}
+		binding := processSchemaBinding(activation.Binding)
+		agent, ok := registry.Agent(binding.Agent)
+		if !ok {
+			return ""
+		}
+		paths, err := config.DefaultPathsFromEnv()
+		if err != nil {
+			return ""
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
+		defer cancel()
+		observer := remoteProcessObserver{ctx: ctx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: binding}
+		view, err := observer.observeHostView(binding, *activation, agent.Spec.Provider)
+		if err != nil {
+			return ""
+		}
+		return view.hostRevision()
+	}
 }
 
 // processHostSocket names the owned control socket of one provider's host.
