@@ -19,7 +19,7 @@ import (
 func TestCodexResumeAttentionChecksTheWholeBindingWithoutRepair(t *testing.T) {
 	store := newProcessAttentionStore(t.TempDir())
 	recorded := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "recorded-generation", Operation: "operation"}
-	if err := checkCodexResumeAttention(store, recorded); err != nil {
+	if _, err := checkCodexResumeAttention(store, recorded, nil); err != nil {
 		t.Fatal("absent attention should retain existing resume behavior", err)
 	}
 	for _, change := range []struct {
@@ -39,7 +39,7 @@ func TestCodexResumeAttentionChecksTheWholeBindingWithoutRepair(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, _ := os.ReadFile(store.path)
-			err := checkCodexResumeAttention(store, recorded)
+			_, err := checkCodexResumeAttention(store, recorded, nil)
 			if attention == recorded {
 				if err != nil {
 					t.Fatal("matching attention refused", err)
@@ -126,5 +126,95 @@ func TestProcessSupportedResumeKeepsTmuxGrammarAndDetachedResult(t *testing.T) {
 		if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
 			t.Fatalf("tmux bytes changed for %q: %q %q %v", args, stdout, stderr, err)
 		}
+	}
+}
+
+func TestCodexResumeAttentionRequiresExactRetiredOwner(t *testing.T) {
+	store := newProcessAttentionStore(t.TempDir())
+	recorded := processhost.Binding{Host: "new-host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "new-generation", Operation: "new-op"}
+	old := processAttentionRecord{Binding: recorded, Provider: aiModeCodex}
+	old.Binding.Host, old.Binding.Generation, old.Binding.Operation = "old-host", "old-generation", "old-op"
+	exit := 0
+	receipt := coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.TerminationNormal, ObservedAt: time.Now().UTC(), AgentUID: old.Binding.Agent, PaneUID: old.Binding.Pane, Generation: old.Binding.Generation, OperationID: old.Binding.Operation, ExitCode: &exit}
+	for _, tc := range []struct {
+		name  string
+		edit  func(*processAttentionRecord, *coremetadata.TerminationEvidence)
+		allow bool
+	}{
+		{"exact Wait", func(*processAttentionRecord, *coremetadata.TerminationEvidence) {}, true},
+		{"terminal badge without Wait", func(o *processAttentionRecord, r *coremetadata.TerminationEvidence) {
+			o.Terminal = true
+			r.Source = coremetadata.TerminationSourceReconcile
+		}, false},
+		{"wrong generation Wait", func(_ *processAttentionRecord, r *coremetadata.TerminationEvidence) { r.Generation = "other" }, false},
+		{"wrong operation Wait", func(_ *processAttentionRecord, r *coremetadata.TerminationEvidence) { r.OperationID = "other" }, false},
+		{"wrong Agent", func(o *processAttentionRecord, r *coremetadata.TerminationEvidence) {
+			o.Binding.Agent = "other"
+			r.AgentUID = "other"
+		}, false},
+		{"wrong Pane", func(o *processAttentionRecord, r *coremetadata.TerminationEvidence) {
+			o.Binding.Pane = "other"
+			r.PaneUID = "other"
+		}, false},
+		{"wrong Window", func(o *processAttentionRecord, _ *coremetadata.TerminationEvidence) { o.Binding.Window = "other" }, false},
+		{"wrong Project", func(o *processAttentionRecord, _ *coremetadata.TerminationEvidence) { o.Binding.Project = "other" }, false},
+		{"wrong provider", func(o *processAttentionRecord, _ *coremetadata.TerminationEvidence) { o.Provider = aiModeClaude }, false},
+		{"same generation", func(o *processAttentionRecord, r *coremetadata.TerminationEvidence) {
+			o.Binding.Generation = recorded.Generation
+			r.Generation = recorded.Generation
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, evidence := old, receipt
+			tc.edit(&o, &evidence)
+			if err := store.write(map[string]processAttentionRecord{recorded.Pane: o}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(store.path)
+			selected, err := checkCodexResumeAttention(store, recorded, []coremetadata.TerminationEvidence{evidence})
+			if tc.allow {
+				if err != nil || selected == nil || selected.Binding != o.Binding {
+					t.Fatal("retired owner refused", err)
+				}
+			} else if !errors.Is(err, processhost.ErrResumeRefused) {
+				t.Fatal("unproven owner accepted", err)
+			}
+			after, _ := os.ReadFile(store.path)
+			if !bytes.Equal(before, after) {
+				t.Fatal("preflight mutated attention")
+			}
+		})
+	}
+}
+
+func TestCodexResumeAttentionTakeoverFencesWholeBinding(t *testing.T) {
+	state := t.TempDir()
+	store := newProcessAttentionStore(state)
+	old := processAttentionRecord{Provider: aiModeCodex, Binding: processhost.Binding{Host: "old-host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "old-gen", Operation: "old-op"}}
+	binding := old.Binding
+	binding.Host, binding.Generation, binding.Operation = "new-host", "new-gen", "new-op"
+	result := processAgentResumeResult{Binding: binding, previousBinding: old.Binding, previousAttention: &old, owner: processAgentCreateResult{registryPath: state + "/metadata/registry.json"}}
+	if err := store.write(map[string]processAttentionRecord{binding.Pane: old}); err != nil {
+		t.Fatal(err)
+	}
+	changed := old
+	changed.Binding.Host = "concurrent-host"
+	if err := store.write(map[string]processAttentionRecord{binding.Pane: changed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.activateCodexResumeAttention(); !errors.Is(err, processhost.ErrResumeRefused) {
+		t.Fatal("same-generation race accepted", err)
+	}
+	if err := store.write(map[string]processAttentionRecord{binding.Pane: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.activateCodexResumeAttention(); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.activateCodexResumeAttention(); err != nil {
+		t.Fatal("idempotence", err)
+	}
+	if err := store.clear(old.Binding, 0); !errors.Is(err, processhost.ErrStale) {
+		t.Fatal("old writer retained authority", err)
 	}
 }

@@ -88,23 +88,26 @@ func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand)
 	if sync := r.deferredSynchronization; sync != nil {
 		return sync.changed, sync.controls, sync.attention, nil
 	}
-	attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(r.owner.registryPath)))
-	records, err := attention.read()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	previous := ""
-	if old, ok := records[r.Binding.Pane]; ok {
-		if old.Binding != r.previousBinding {
-			if r.owner.Provider == aiModeCodex {
-				return nil, nil, nil, &codexResumeAttentionConflict{recorded: r.previousBinding, attention: old.Binding}
-			}
-			return nil, nil, nil, processhost.ErrStale
+	if r.owner.Provider == aiModeCodex {
+		if err := r.activateCodexResumeAttention(); err != nil {
+			return nil, nil, nil, err
 		}
-		previous = old.Binding.Generation
-	}
-	if err = attention.activate(r.Binding, r.owner.Provider, previous); err != nil {
-		return nil, nil, nil, err
+	} else {
+		attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(r.owner.registryPath)))
+		records, err := attention.read()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		previous := ""
+		if old, ok := records[r.Binding.Pane]; ok {
+			if old.Binding != r.previousBinding {
+				return nil, nil, nil, processhost.ErrStale
+			}
+			previous = old.Binding.Generation
+		}
+		if err = attention.activate(r.Binding, r.owner.Provider, previous); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 
 	control, err := creator.newProcessCreateControl(r.owner)
@@ -176,7 +179,7 @@ func processResumeFailure(binding processhost.Binding, cause error) error {
 const processResumeAttentionMismatch = "process-resume-attention-binding-mismatch"
 
 // The attention record is an ownership fence, not proof of provider failure.
-// Keep its exact binding intact, even when the recorded generation is retired.
+// A mismatched binding may be replaced only with exact child Wait evidence.
 type codexResumeAttentionConflict struct {
 	recorded, attention processhost.Binding
 }
@@ -187,13 +190,47 @@ func (e *codexResumeAttentionConflict) Error() string {
 
 func (e *codexResumeAttentionConflict) Unwrap() error { return processhost.ErrResumeRefused }
 
-func checkCodexResumeAttention(store *processAttentionStore, recorded processhost.Binding) error {
+func checkCodexResumeAttention(store *processAttentionStore, recorded processhost.Binding, receipts []coremetadata.TerminationEvidence) (*processAttentionRecord, error) {
 	records, err := store.read()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if old, ok := records[recorded.Pane]; ok && old.Binding != recorded {
-		return &codexResumeAttentionConflict{recorded: recorded, attention: old.Binding}
+	old, ok := records[recorded.Pane]
+	if !ok {
+		return nil, nil
 	}
-	return nil
+	if old.Binding != recorded && !retiredCodexResumeAttention(old, recorded, receipts) {
+		return nil, &codexResumeAttentionConflict{recorded: recorded, attention: old.Binding}
+	}
+	return &old, nil
+}
+
+func retiredCodexResumeAttention(old processAttentionRecord, recorded processhost.Binding, receipts []coremetadata.TerminationEvidence) bool {
+	b := old.Binding
+	if old.Provider != aiModeCodex || b.Project != recorded.Project || b.Window != recorded.Window || b.Agent != recorded.Agent || b.Pane != recorded.Pane || b.Generation == recorded.Generation || b.Operation == recorded.Operation || b.Host == "" {
+		return false
+	}
+	for _, receipt := range receipts {
+		if coremetadata.MatchesProcessWait(metadataProcessBinding(b), &receipt) {
+			return true
+		}
+	}
+	return false
+}
+
+// Recheck the whole preflight binding under the attention writer lock. A
+// concurrent replacement cannot borrow retirement proof for another binding.
+func (r *processAgentResumeResult) activateCodexResumeAttention() error {
+	store := newProcessAttentionStore(filepath.Dir(filepath.Dir(r.owner.registryPath)))
+	return store.update(func(records map[string]processAttentionRecord) error {
+		old, exists := records[r.Binding.Pane]
+		if exists && old.Binding == r.Binding && old.Provider == aiModeCodex {
+			return nil
+		}
+		if (exists && (r.previousAttention == nil || old.Binding != r.previousAttention.Binding || old.Provider != r.previousAttention.Provider)) || (!exists && r.previousAttention != nil) {
+			return &codexResumeAttentionConflict{recorded: r.previousBinding, attention: old.Binding}
+		}
+		records[r.Binding.Pane] = processAttentionRecord{Binding: r.Binding, Provider: aiModeCodex, Pending: map[string]processAttentionPending{}}
+		return nil
+	})
 }
