@@ -82,6 +82,15 @@ func reapOrphans(provider int) (stop func()) {
 // exact PID at a time. A zombie's PID cannot be recycled until it is reaped,
 // and waitid(P_PID) cannot touch a process that is not this helper's child.
 func reapExitedOrphans(provider int) {
+	// Peek first so an idle supervisor costs one syscall, not a /proc scan.
+	var peek unix.Siginfo
+	err := unix.Waitid(unix.P_ALL, 0, &peek, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+	for errors.Is(err, unix.EINTR) {
+		err = unix.Waitid(unix.P_ALL, 0, &peek, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+	}
+	if err != nil || peek.Signo == 0 {
+		return
+	}
 	self := os.Getpid()
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
