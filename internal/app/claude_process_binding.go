@@ -207,7 +207,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		snap, readErr := s.handle.Observe(binding)
 		host, _, hostErr := localipc.Process(os.Getpid())
 		reg, regErr := intmetadata.NewStore(s.registryPath).LoadDegradedReadOnly()
-		view := processHostObservation{Binding: binding, Provider: snap.Provider, State: snap.State, Host: host, Child: s.ownedProcess, Exit: snap.Exit}
+		view := newProcessHostObservation(binding, host, s.ownedProcess, snap, claudeForegroundActions)
 		if readErr == nil && hostErr == nil && regErr == nil && binding == s.binding && snap.PID == s.ownedProcess.PID && processObservationMatches(reg, binding, view) {
 			result = processForegroundResult{Accepted: true, Observation: &view}
 		}

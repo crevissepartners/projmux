@@ -564,6 +564,8 @@ func processTurnAcceptance(result processForegroundResult) error {
 		return fmt.Errorf("%w: %s: %s", processhost.ErrBusy, result.BusyReason, advice)
 	case result.Closed:
 		return processhost.ErrClosed
+	case result.Unsupported:
+		return fmt.Errorf("%w: the agent's process owner does not implement this action; relaunch the agent to run a current owner", errProcessHostUnsupportedAction)
 	default:
 		return processhost.ErrStale
 	}

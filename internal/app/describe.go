@@ -36,6 +36,9 @@ type describeCommand struct {
 	// codexAuthority is a bounded, content-free runtime observation for the
 	// exact managed Pane. It never persists provider payload fields.
 	codexAuthority codexLifecycleAuthorityLookup
+	// processRevision asks the live owner of a process Agent's current
+	// activation for its build revision.
+	processRevision processHostRevisionLookup
 }
 
 func (c *describeCommand) readSnapshot(registry coremetadata.Registry) resourceReadSnapshot {
@@ -47,10 +50,11 @@ func (c *describeCommand) readSnapshot(registry coremetadata.Registry) resourceR
 
 func newDescribeCommand() *describeCommand {
 	return &describeCommand{
-		loadRegistry:   loadResourceRegistry,
-		runtime:        defaultRuntimeLookup(),
-		activeTarget:   defaultActiveTargetLookup(),
-		codexAuthority: defaultCodexLifecycleAuthorityLookup(),
+		loadRegistry:    loadResourceRegistry,
+		runtime:         defaultRuntimeLookup(),
+		activeTarget:    defaultActiveTargetLookup(),
+		codexAuthority:  defaultCodexLifecycleAuthorityLookup(),
+		processRevision: defaultProcessHostRevisionLookup(),
 	}
 }
 
@@ -124,6 +128,7 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 	match := resolution.Matches[0]
 	var runtimeRows [][2]string
 	if kind == coremetadata.KindAgent {
+		runtimeRows = append(runtimeRows, c.processHostRevisionRows(registry, match.UID)...)
 		if agent, ok := registry.Agent(match.UID); ok && agent.Spec.Provider == aiModeCodex && agent.Status.PaneRef != "" && c.codexAuthority != nil {
 			diagnostic := c.codexAuthority(agent.Status.PaneRef)
 			runtimeRows = append(runtimeRows,
@@ -150,6 +155,25 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 		}
 	}
 	return writeResourceDescription(stdout, spelling, kind, match, registry, runtimeRows...)
+}
+
+// processHostRevisionRows names the build of the owner hosting a process
+// Agent's current activation. An owner that cannot be reached, predates control
+// protocol v1, or was built without a revision is unknown.
+func (c *describeCommand) processHostRevisionRows(registry coremetadata.Registry, uid string) [][2]string {
+	agent, ok := registry.Agent(uid)
+	if !ok || c.processRevision == nil {
+		return nil
+	}
+	pane, ok := registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Status.Activation.Process == nil {
+		return nil
+	}
+	revision := c.processRevision(registry, *pane)
+	if revision == "" {
+		revision = "unknown"
+	}
+	return [][2]string{{"HostRevision", revision}}
 }
 
 // writeResourceDescription renders the human description block of one resource.

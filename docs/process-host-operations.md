@@ -95,6 +95,7 @@ anything changes, with a stable token as the error prefix:
 | `process-popup-unsupported`, `process-relaunch-unsupported` | Opening a popup on, or relaunching, the Pane |
 | `process-create-pane-unsupported`, `process-split-unsupported` | Using the Pane as the anchor of a new Pane |
 | `process-host-unavailable` | A turn, interrupt, or answer when the owner cannot be reached |
+| `process-host-unsupported-action` | A request the owner does not implement, typically because an older projmux started it; relaunch the Agent to run a current owner |
 
 ## Reading its state
 
@@ -111,6 +112,25 @@ for a process Pane. They never include provider content.
 | `PendingControls` | Number of unanswered questions and approvals |
 
 `HostPID` and `ChildPID` appear until the owner records the provider's exit.
+
+`describe agent` also asks the running owner which build it is:
+
+| Row | Meaning |
+| --- | --- |
+| `HostRevision` | The 40-character commit the owner was built from, or `unknown` when the owner cannot be reached within a short read budget, was started by a projmux that predates this row, or was built without a commit |
+
+An owner keeps running the binary it started with, so after an upgrade
+`HostRevision` tells you which Agents still run an older owner until you
+relaunch or resume them. `describe -o json` stays the stored Registry
+resource and does not carry this live row.
+
+The owner answers observation with control protocol 1. Next to its process
+identities and state it reports `Protocol` (`1`), `Revision` (the same commit,
+empty when unknown), `Actions` (the requests it implements), `Turn` (whether a
+provider turn is running), `Pending` (the number of unanswered questions and
+approvals, never their content), and `OwnerMode` (`foreground`, the owner is
+the command that created, resumed, or relaunched the Agent). An answer without
+these fields comes from an owner that predates them and is read as protocol 0.
 
 `Status` in `describe` and `get` is `live` while the owner answers and
 `offline` after the owner recorded the provider's exit. When the owner cannot

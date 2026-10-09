@@ -288,7 +288,7 @@ func (e *codexProcessEndpoint) exchangeObservation(conn *net.UnixConn, peer core
 	binding := *request.Observe
 	snap, readErr := e.handle.Observe(binding)
 	reg, regErr := intmetadata.NewStore(e.registryPath).LoadDegradedReadOnly()
-	view := processHostObservation{Binding: binding, Provider: snap.Provider, State: snap.State, Host: e.evidence.HostProcess, Child: e.evidence.Process, Exit: snap.Exit}
+	view := newProcessHostObservation(binding, e.evidence.HostProcess, e.evidence.Process, snap, codexForegroundActions)
 	if readErr == nil && regErr == nil && binding == e.binding && snap.PID == e.evidence.Process.PID && processObservationMatches(reg, binding, view) {
 		result = processForegroundResult{Accepted: true, Observation: &view}
 	}
@@ -306,6 +306,9 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 	var receipt *codexProcessReceipt
 	var userDelivery *processhost.UserTurnDelivery
 	result := controlProcessForeground(ctx, peer, r, current, func() error {
+		if err := processForegroundSupported(codexForegroundActions, r.Action); err != nil {
+			return err
+		}
 		switch r.Action {
 		case "user-deliver", "user-steer":
 			deliver := e.handle.DeliverUserTurn
