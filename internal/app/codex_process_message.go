@@ -16,7 +16,8 @@ import (
 
 // The foreground owner supplies the exact endpoint set. There is no ambient
 // daemon lookup or fallback to the shared broker. Delivered witnesses a typed
-// turn/start acceptance, separately from the provider's later turn result.
+// turn/start acceptance while idle, or a turn/steer acceptance into the exact
+// running turn, separately from the provider's later turn result.
 type codexProcessMessages struct {
 	mu            sync.Mutex
 	store         *messagestore.Store
@@ -140,10 +141,15 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 			kind, reason = coremessage.EventRefuse, "host-busy"
 			break
 		}
+		// A running turn takes the envelope as a steer, as a tmux Codex target
+		// does. A refused or uncertain steer is never retried as a start.
 		operation := fmt.Sprintf("message-%x", sha256.Sum256([]byte(messageRef)))
-		turnErr := target.handle.Turn(ctx, target.authority(), operation, content)
+		delivery, turnErr := target.handle.DeliverUserTurn(ctx, target.authority(), operation, content)
 		switch {
 		case turnErr == nil:
+			if delivery.Mode == processhost.UserTurnSteer {
+				reason = "host-turn-steered"
+			}
 		case errors.Is(turnErr, processhost.ErrBusy):
 			kind, reason = coremessage.EventRefuse, "host-busy"
 		case errors.Is(turnErr, processhost.ErrStale):
