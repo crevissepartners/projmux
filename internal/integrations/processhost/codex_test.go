@@ -81,6 +81,11 @@ func codexFixture(mode string) {
 			if mode == "codex-resume-wrong-thread" {
 				id = "another-thread"
 			}
+			if mode == "codex-goal-resume" {
+				emit("thread/tokenUsage/updated", map[string]any{"threadId": id, "turnId": "completed-root"})
+				current = "goal-resumed"
+				emit("turn/started", map[string]any{"threadId": id, "turn": map[string]string{"id": current}})
+			}
 			reply(map[string]any{"thread": map[string]string{"id": id}, "model": "fixture-model", "reasoningEffort": "high", "sandbox": map[string]string{"type": "readOnly"}, "approvalPolicy": "on-request"})
 		case "thread/start":
 			var p struct {
@@ -154,6 +159,13 @@ func codexFixture(mode string) {
 			reply(map[string]any{"turn": map[string]string{"id": current}})
 			prompt := p.Input[0].Text
 			switch prompt {
+			case "goal":
+				complete()
+				root := current
+				current = "goal-next"
+				emit("turn/started", map[string]any{"threadId": "thread", "turn": map[string]string{"id": current}})
+				emit("thread/tokenUsage/updated", map[string]any{"threadId": "thread", "turnId": root})
+				emit("thread/goal/updated", map[string]any{"threadId": "thread", "turnId": root})
 			case "controls":
 				responses = 0
 				params := map[string]any{"threadId": "thread", "turnId": current, "itemId": "item", "startedAtMs": 1, "command": "echo fixture", "cwd": "/fixture", "availableDecisions": []string{"accept", "decline", "cancel"}}
