@@ -40,7 +40,10 @@ image accepts no new work on any of the three layers*.
   ask. `broker-runtime` is asked, through the drain this application already
   ships: a runtime whose own image has been unlinked drains at the next session
   that reaches it, refuses new work with `drain-required`, and closes when its
-  last binding goes. Every other role is reported with the route that does
+  last binding goes. New bindings never wait for that drain: a runtime is keyed
+  by the executable image as well as the endpoint, so clients of the installed
+  binary start and use their own runtime at once (see *Parallel runtimes per
+  image* below). Every other role is reported with the route that does
   replace it and is left alone — see *The L2 replacement policy* below. A
   replacement that has not finished within the drain cutoff is reported as
   `replacement-cutoff-reached` and is still not ended.
@@ -415,11 +418,41 @@ platform with no executable link to read declines to drain rather than draining
 on a guess: `defaultProjmuxImageReplaced` answers false on darwin, and the
 absence is stated by this table's `unsupported-platform` row.
 
-A native observer whose first bind receives a drain refusal leaves the Pane on
-hook fallback and keeps retrying that exact Agent and thread. It writes no
-composite authority until a current broker binding opens. When the old broker
-finishes its accepted work and exits, the observer can bind to the replacement
-and publish authority; messages remain refused while the binding is absent.
+### Parallel runtimes per image
+
+A broker runtime is a singleton per state domain, endpoint, **and executable
+image**. A client keys a new binding by the file installed at its own executable
+path — its device, inode, size, and modification time, which an atomic install
+always changes — and launches the runtime with that key. So after an install,
+every client that creates an Agent (TUI, CLI, or a long-lived web server whose
+own image is older) reaches the installed image's runtime and never meets the
+superseded runtime's `drain-required`. Each binary path runs its own runtime
+(for example `~/go/bin/projmux` and a web-dev build), and each costs one upstream
+connection and about 27 MB of RSS. Rebuilding a binary in place adds one more
+runtime for as long as Agents bound to the previous build remain.
+
+The superseded runtime is left exactly as it was: its existing bindings keep
+their connection, lifecycle reads, and turn writes, and the drain above closes
+it after the last one goes. A caller that holds authority one runtime granted —
+a message route proving a Codex Agent's authority, a relaunch or transfer
+recovery — finds that runtime by its published runtime identity rather than by
+its own image, so an existing binding is never sent to a runtime that did not
+grant it.
+
+A thread is bound in at most one runtime. Before a fresh connection binds a
+thread, the observer asks every other published runtime of the endpoint, with
+an authority-only probe and an empty fence, whether it still holds that thread;
+one that does makes the bind refuse `binding-exists`, as the singleton would
+have, and the observer retries until the older binding is gone. A record with no
+image is the pre-image contract, so an older client and an older runtime still
+meet on the same socket.
+
+A native observer whose first bind receives a drain refusal — an older client
+that still keys by the pre-image contract — leaves the Pane on hook fallback and
+keeps retrying that exact Agent and thread. It writes no composite authority
+until a current broker binding opens. When the old broker finishes its accepted
+work and exits, the observer can bind to the replacement and publish authority;
+messages remain refused while the binding is absent.
 
 An existing exact binding remains on the old broker during drain. In an isolated
 copied-binary test with an auth-free provider fixture, public `agent message

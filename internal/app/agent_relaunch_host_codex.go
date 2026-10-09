@@ -118,7 +118,7 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	if err != nil {
 		return err
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+	discovery, err := codexBrokerRuntimeDiscovery(domain, key, authority.BrokerRuntimeID)
 	if err != nil {
 		return err
 	}

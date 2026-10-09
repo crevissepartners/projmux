@@ -160,7 +160,9 @@ func TestInstalledCodexRecoveryDiagnosticFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(paths.StateDir, key)
+	// The observer under test runs the installed binary and keys its runtime
+	// by that binary's image, so the fixture host publishes under the same one.
+	discovery, err := codexBrokerDiscoveryForImage(paths.StateDir, key, codexBrokerImageOf(input.Binary))
 	if err != nil {
 		t.Fatal(err)
 	}

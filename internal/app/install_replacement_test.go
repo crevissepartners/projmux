@@ -281,11 +281,11 @@ func TestInstallReplacementNoticeSpeaksOnlyWhenAnActionFollows(t *testing.T) {
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomePending, Attempted: 2},
-			want:    ">> asked 2 long-lived processes to stand down; they are still carrying work\n   The runtime accepts no new work and goes when that work ends.\n",
+			want:    ">> asked 2 long-lived processes to stand down; they are still carrying work\n   New Codex Agents attach to the installed image's runtime now; the old runtime keeps only\n   the Agents already bound to it and exits when the last one ends.\n",
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomePending, Attempted: 1},
-			want:    ">> asked 1 long-lived process to stand down; it is still carrying work\n   The runtime accepts no new work and goes when that work ends.\n",
+			want:    ">> asked 1 long-lived process to stand down; it is still carrying work\n   New Codex Agents attach to the installed image's runtime now; the old runtime keeps only\n   the Agents already bound to it and exits when the last one ends.\n",
 		},
 		{
 			outcome: installReplacementOutcome{Outcome: installReplacementOutcomeComplete, Drained: 2},

@@ -82,7 +82,8 @@ const (
 	installReplacementOutcomeComplete = "replacement-complete"
 	// installReplacementOutcomePending is a drain that was accepted and had
 	// not finished when the pass stopped watching. The runtime is carrying
-	// live work; it accepts no new work and goes when that work ends.
+	// live work; it accepts no new work and goes when that work ends, while
+	// new bindings already go to the runtime of the installed image.
 	installReplacementOutcomePending = "replacement-drain-pending"
 	// installReplacementOutcomeUnreachable is a residual target the shipped
 	// path could not reach. The refusal that says why travels with it.
@@ -396,7 +397,8 @@ func renderInstallReplacementNotice(outcome installReplacementOutcome) string {
 			outcome.Drained, pluralizeInstallReplacementProcesses(outcome.Drained))
 	case installReplacementOutcomePending:
 		return fmt.Sprintf(">> asked %d long-lived %s to stand down; %s still carrying work\n"+
-			"   The runtime accepts no new work and goes when that work ends.\n",
+			"   New Codex Agents attach to the installed image's runtime now; the old runtime keeps only\n"+
+			"   the Agents already bound to it and exits when the last one ends.\n",
 			outcome.Attempted, pluralizeInstallReplacementProcesses(outcome.Attempted),
 			pluralizeInstallReplacementSubject(outcome.Attempted))
 	case installReplacementOutcomeUnreachable:

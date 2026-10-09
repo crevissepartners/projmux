@@ -227,7 +227,7 @@ func (c *agentCommand) reclaimCodexHostTransfer(ctx context.Context, record *cod
 	if err != nil {
 		return nil, err
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(domain, record.Receipt.Source.Endpoint)
+	discovery, err := codexBrokerRuntimeDiscovery(domain, record.Receipt.Source.Endpoint, record.Receipt.Source.RuntimeID)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (c *agentCommand) inspectCodexHostTransfer(ctx context.Context, record *cod
 	if err != nil {
 		return codexbroker.TransferReceipt{}, err
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(domain, record.Receipt.Source.Endpoint)
+	discovery, err := codexBrokerRuntimeDiscovery(domain, record.Receipt.Source.Endpoint, record.Receipt.Source.RuntimeID)
 	if err != nil {
 		return codexbroker.TransferReceipt{}, err
 	}
@@ -304,7 +304,7 @@ func (c *agentCommand) cleanupNoEffectCodexTransfer(ctx context.Context, path st
 	if err != nil {
 		return err
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(domain, record.Receipt.Source.Endpoint)
+	discovery, err := codexBrokerRuntimeDiscovery(domain, record.Receipt.Source.Endpoint, record.Receipt.Source.RuntimeID)
 	if err != nil {
 		return err
 	}

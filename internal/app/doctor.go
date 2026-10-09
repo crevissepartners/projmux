@@ -657,6 +657,17 @@ func writeDoctorCodexBrokerText(buf *bytes.Buffer, broker *codexBrokerDiagnostic
 		fmt.Fprintf(buf, "; observed endpoint: %s", broker.Endpoint)
 	}
 	buf.WriteString("\n")
+	// Several records are several runtimes: one per endpoint and executable
+	// image. After an install the superseded image's runtime is one of them,
+	// and an operator reading two runtimes needs to know that is the design,
+	// not a leak.
+	if broker.Published > 1 {
+		buf.WriteString("  Parallel runtimes: one per endpoint and executable image; a runtime whose image an install\n" +
+			"  superseded keeps only the Agents already bound to it and exits after the last one ends, while new\n" +
+			"  Agents attach to the installed image's runtime. Each binary path runs its own runtime (for\n" +
+			"  example ~/go/bin/projmux and a web-dev build), so every rebuild adds one (about 27 MB) while\n" +
+			"  older bindings remain\n")
+	}
 	if broker.State != codexBrokerStateRunning {
 		return
 	}

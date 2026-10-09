@@ -26,6 +26,9 @@ func startCodexBrokerRuntimeProcessForRoute(executable string, discovery codexbr
 		return syscall.EINVAL
 	}
 	args := []string{"internal", "codex-broker", "serve", "--state-domain", discovery.Domain()}
+	if image := discovery.Image(); image != "" {
+		args = append(args, "--image", image)
+	}
 	if route != (codexBrokerEndpointRoute{}) {
 		args = append(args,
 			"--endpoint-state-domain", route.StateDomainID,

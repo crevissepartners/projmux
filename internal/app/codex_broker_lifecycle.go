@@ -30,6 +30,9 @@ const (
 	// codexBrokerObserverStartupTimeout bounds reaching or starting the
 	// runtime for one binding.
 	codexBrokerObserverStartupTimeout = 10 * time.Second
+	// codexBrokerSiblingProbeTimeout bounds each probe that asks an older
+	// image's runtime whether it still holds the thread being bound.
+	codexBrokerSiblingProbeTimeout = 500 * time.Millisecond
 )
 
 // The broker epoch is the whole native producer for one activation: the
@@ -289,7 +292,29 @@ func (s *codexBrokerObserverSession) ensure(ctx context.Context) (*codexbroker.R
 		default:
 		}
 	}
+	if conn == nil && s.transferGrant != nil {
+		// A native transfer grant is held by the runtime that reserved the
+		// transfer, which may serve an image an install has since superseded.
+		// Bind there; the current image's runtime never saw the reservation.
+		located, err := codexBrokerRuntimeDiscovery(s.discovery.Domain(), s.discovery.Endpoint(), s.transferGrant.Receipt.Source.RuntimeID)
+		if err != nil {
+			recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleObserver, diagnostics.CodexBrokerOperationEnsure, err)
+			return nil, nil, err
+		}
+		s.mu.Lock()
+		s.discovery = located
+		s.mu.Unlock()
+	}
 	if conn == nil {
+		// A thread is bound in at most one runtime. An older image that is still
+		// draining may hold this exact thread, so a fresh connection asks it
+		// first and refuses as the singleton would have, rather than opening a
+		// second binding of one thread on a second upstream connection.
+		if err := codexbroker.UnboundElsewhere(ctx, s.discovery, s.identity.ThreadID,
+			codexbroker.DialConfig{Timeout: codexBrokerSiblingProbeTimeout}); err != nil {
+			recordCodexBrokerRefusal(diagnostics.CodexBrokerRoleObserver, diagnostics.CodexBrokerOperationBind, err)
+			return nil, nil, err
+		}
 		opened, err := codexbroker.Ensure(ctx, s.discovery, codexbroker.EnsureConfig{
 			Launch:         s.launch,
 			StartupTimeout: codexBrokerObserverStartupTimeout,

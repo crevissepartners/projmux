@@ -153,6 +153,7 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	endpointGeneration := fs.String("endpoint-generation", "", "durable Codex endpoint generation identity")
 	endpointSocket := fs.String("endpoint-socket", "", "absolute private Codex endpoint socket")
 	endpointDefault := fs.Bool("endpoint-default", false, "attach the durable generation to the unmanaged default endpoint")
+	image := fs.String("image", "", "executable image token the runtime singleton is scoped to")
 	idle := fs.Duration("idle-timeout", 0, "bounded idle shutdown after the last binding is removed")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -171,7 +172,10 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return usageError(err.Error())
 	}
-	discovery, err := c.discoveryFor(*stateDomain, endpointKey)
+	// The image comes from the launcher, never from this process: the client
+	// chose the socket it is waiting on, and a runtime that published anywhere
+	// else would leave that client polling an empty path.
+	discovery, err := c.discoveryFor(*stateDomain, endpointKey, strings.TrimSpace(*image))
 	if err != nil {
 		return err
 	}
@@ -294,10 +298,10 @@ func (c *codexBrokerCommand) launcher(discovery codexbroker.Discovery) codexbrok
 
 // discovery resolves the runtime singleton contract for this process.
 func (c *codexBrokerCommand) discovery(override string) (codexbroker.Discovery, error) {
-	return c.discoveryFor(override, codexbroker.DefaultEndpointKey)
+	return c.discoveryFor(override, codexbroker.DefaultEndpointKey, codexBrokerImage())
 }
 
-func (c *codexBrokerCommand) discoveryFor(override string, endpoint codexbroker.EndpointKey) (codexbroker.Discovery, error) {
+func (c *codexBrokerCommand) discoveryFor(override string, endpoint codexbroker.EndpointKey, image string) (codexbroker.Discovery, error) {
 	domain := strings.TrimSpace(override)
 	if domain == "" {
 		resolved, err := c.stateDomain()
@@ -309,15 +313,30 @@ func (c *codexBrokerCommand) discoveryFor(override string, endpoint codexbroker.
 	if !filepath.IsAbs(domain) {
 		return codexbroker.Discovery{}, usageError("internal codex-broker requires an absolute --state-domain")
 	}
-	return codexBrokerDiscoveryForEndpoint(domain, endpoint)
+	return codexBrokerDiscoveryForImage(domain, endpoint, image)
 }
 
+// codexBrokerDiscoveryForEndpoint is the runtime a new binding on this
+// endpoint goes to: the one keyed by the executable currently installed at
+// this process's path. A binding that already exists is reached through
+// codexBrokerRuntimeDiscovery instead, because its runtime may serve an image
+// an install has since superseded.
 func codexBrokerDiscoveryForEndpoint(domain string, endpoint codexbroker.EndpointKey) (codexbroker.Discovery, error) {
-	discovery, err := codexbroker.NewDiscovery(domain, endpoint)
+	return codexBrokerDiscoveryForImage(domain, endpoint, codexBrokerImage())
+}
+
+func codexBrokerDiscoveryForImage(domain string, endpoint codexbroker.EndpointKey, image string) (codexbroker.Discovery, error) {
+	discovery, err := codexbroker.NewImageDiscovery(domain, endpoint, image)
 	if err != nil {
 		return codexbroker.Discovery{}, fmt.Errorf("resolve codex broker discovery: %s", codexbroker.RefusalOf(err))
 	}
 	return discovery, nil
+}
+
+// codexBrokerRuntimeDiscovery reaches the published runtime that granted an
+// existing binding, whichever image it serves.
+func codexBrokerRuntimeDiscovery(domain string, endpoint codexbroker.EndpointKey, runtimeID string) (codexbroker.Discovery, error) {
+	return codexbroker.LocateRuntime(domain, endpoint, runtimeID)
 }
 
 // stateDomain resolves this process's projmux state directory.
