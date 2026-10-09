@@ -703,33 +703,79 @@ type claudeEndpointIdleOptions struct {
 	handoffRoute func(diagnostics.ClaudeHandoffRouteRecord)
 }
 
-// claudeEndpointIdleRegistryGate decides whether one idle accept-loop tick
-// reloads the Registry. The accept-loop goroutine owns it alone; every
-// delivery-time check keeps calling the full current closure.
+// claudeEndpointIdleRegistryGate decides whether one idle tick reloads the
+// Registry. One goroutine owns each instance: the helper accept loop, or a
+// process owner's serial exchange loop for the helper's plain check. Every
+// helper delivery-time check keeps calling the full current closure.
 type claudeEndpointIdleRegistryGate struct {
-	stat      func() (intmetadata.RegistryFileIdentity, error)
-	now       func() time.Time
-	floor     time.Duration
+	stat  func() (intmetadata.RegistryFileIdentity, error)
+	now   func() time.Time
+	floor time.Duration
+	// digest, when set, hashes the Registry file bytes. When the floor elapses
+	// with an unchanged stat identity, equal bytes skip the Registry part, so a
+	// stat identity collision still reloads changed bytes within the floor.
+	digest    func() ([sha256.Size]byte, error)
 	evaluated bool
 	identity  intmetadata.RegistryFileIdentity
 	at        time.Time
+	sum       [sha256.Size]byte
+	summed    bool
 }
 
 // current runs the identity part on every tick and the Registry part only when
-// the Registry stat identity changed, the stat failed, or the floor elapsed.
+// the Registry stat identity changed, the stat failed, the last Registry part
+// refused, or the floor elapsed with changed or unhashed bytes.
 func (g *claudeEndpointIdleRegistryGate) current(identity, registry func() bool) bool {
 	if !identity() {
 		return false
 	}
-	// The stat is captured before the load, so a write racing the load leaves a
-	// newer identity behind and forces another evaluation on the next tick.
+	// The stat and digest are captured before the load, so a write racing the
+	// load leaves newer values behind and forces another evaluation later.
 	observed, err := g.stat()
 	now := g.now()
-	if g.evaluated && err == nil && observed == g.identity && now.Sub(g.at) < g.floor {
-		return true
+	if g.evaluated && err == nil && observed == g.identity {
+		if now.Sub(g.at) < g.floor {
+			return true
+		}
+		if g.summed {
+			if sum, sumErr := g.digest(); sumErr == nil && sum == g.sum {
+				g.at = now
+				return true
+			}
+		}
 	}
-	g.evaluated, g.identity, g.at = err == nil, observed, now
-	return registry()
+	var sum [sha256.Size]byte
+	summed := false
+	if g.digest != nil {
+		var sumErr error
+		sum, sumErr = g.digest()
+		summed = sumErr == nil
+	}
+	ok := registry()
+	g.evaluated, g.identity, g.at, g.sum, g.summed = err == nil && ok, observed, now, sum, summed
+	return ok
+}
+
+// registryFileDigest hashes the Registry file bytes without decoding them.
+// The file is opened inside its own directory, so the read cannot leave it.
+func registryFileDigest(path string) ([sha256.Size]byte, error) {
+	var sum [sha256.Size]byte
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return sum, err
+	}
+	defer root.Close()
+	file, err := root.Open(filepath.Base(path))
+	if err != nil {
+		return sum, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return sum, err
+	}
+	hash.Sum(sum[:0])
+	return sum, nil
 }
 
 func claudeRegistrationRoute(bootstrap claudeEndpointBootstrap) (func(coremetadata.Registry, string) (coremetadata.AgentRouteRef, string), diagnostics.ClaudeRegistrationReason) {

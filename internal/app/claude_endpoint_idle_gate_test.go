@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"net"
 	"os"
@@ -270,6 +271,59 @@ func TestClaudeEndpointIdleRegistryGateEvaluatesOnlyOnChangeFailureOrFloor(t *te
 	if gate.current(identityPart, registryPart) {
 		t.Fatal("stale Registry evaluation did not refuse the tick")
 	}
+	// A refusal is never cached: the same stat identity is evaluated again.
+	before[1] = loads
+	if gate.current(identityPart, registryPart) || loads != before[1]+1 {
+		t.Fatal("a refused Registry evaluation was cached for an unchanged identity")
+	}
+}
+
+// With a digest, the floor reloads only changed bytes. A stat identity
+// collision still reloads changed bytes within one floor; an unhashed
+// evaluation always reloads at the floor.
+func TestClaudeEndpointIdleRegistryGateFloorReloadsOnlyChangedBytes(t *testing.T) {
+	t.Parallel()
+	var (
+		clock     time.Time
+		sum       = [sha256.Size]byte{1}
+		digestErr error
+		loads     int
+	)
+	gate := claudeEndpointIdleRegistryGate{
+		stat: func() (intmetadata.RegistryFileIdentity, error) {
+			return intmetadata.RegistryFileIdentity{Inode: 1}, nil
+		},
+		now:    func() time.Time { return clock },
+		floor:  claudeEndpointIdleRegistryFloor,
+		digest: func() ([sha256.Size]byte, error) { return sum, digestErr },
+	}
+	step := 0
+	tick := func(after time.Duration, wantLoad bool) {
+		t.Helper()
+		step++
+		clock = clock.Add(after)
+		before := loads
+		if !gate.current(func() bool { return true }, func() bool { loads++; return true }) {
+			t.Fatalf("step %d refused a current endpoint", step)
+		}
+		if loaded := loads > before; loaded != wantLoad {
+			t.Fatalf("step %d loaded the Registry = %v, want %v", step, loaded, wantLoad)
+		}
+	}
+	floor := claudeEndpointIdleRegistryFloor
+	tick(0, true)
+	tick(floor, false)
+	tick(floor, false)
+	sum[0]++
+	tick(claudeEndpointPollInterval, false)
+	tick(floor, true)
+	tick(floor, false)
+	digestErr = errors.New("registry read failed")
+	tick(floor, true)
+	tick(floor, true)
+	digestErr = nil
+	tick(floor, true)
+	tick(floor, false)
 }
 
 func TestClaudeEndpointRegistryStatIdentityTracksReplacementAndMissingFile(t *testing.T) {

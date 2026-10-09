@@ -91,6 +91,9 @@ type claudeProcessService struct {
 	closeErr               error
 	registration           *coremetadata.ClaudeRegistration
 	registrationGeneration string
+	// hookRegistry gates the Registry part of the helper's read-only check and
+	// lookup. Only the serial exchange loop touches it.
+	hookRegistry *claudeEndpointIdleRegistryGate
 }
 
 func (s *claudeProcessService) close(ctx context.Context) error {
@@ -283,7 +286,7 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 		if parent != process.PID || s.handle.BindClaudeHook(ctx, binding, process.PID, request.Session) != nil || s.recordActivation(process, request.Session) != nil {
 			return refused
 		}
-	} else if s.handle.CheckClaudeHook(ctx, binding, process.PID, request.Session) != nil {
+	} else if s.checkHook(ctx, operation, binding, process.PID, request.Session) != nil {
 		return refused
 	}
 	switch operation {
@@ -303,6 +306,31 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 		result.Registration = &copy
 	}
 	return result
+}
+
+// checkHook revalidates the observed SessionStart. The endpoint helper sends a
+// plain check every idle tick and two lookups on each of its own Registry
+// reloads. Those read-only operations reload the Registry only when its stat
+// identity changed, the last reload refused, or the idle floor elapsed. Input
+// and registration (helper) mutate state and run the full Registry transaction.
+func (s *claudeProcessService) checkHook(ctx context.Context, operation string, binding processhost.Binding, pid int, session string) error {
+	if operation != "check" && operation != "lookup" {
+		return s.handle.CheckClaudeHook(ctx, binding, pid, session)
+	}
+	if s.hookRegistry == nil {
+		store := intmetadata.NewStore(s.registryPath)
+		s.hookRegistry = &claudeEndpointIdleRegistryGate{stat: store.RegistryFileIdentity, now: time.Now, floor: claudeEndpointIdleRegistryFloor,
+			digest: func() ([sha256.Size]byte, error) { return registryFileDigest(s.registryPath) }}
+	}
+	err := processhost.ErrStale
+	s.hookRegistry.current(func() bool {
+		err = s.handle.CheckClaudeHookObserved(ctx, binding, pid, session)
+		return err == nil
+	}, func() bool {
+		err = s.handle.CheckClaudeHook(ctx, binding, pid, session)
+		return err == nil
+	})
+	return err
 }
 
 // The client preflight and host admission use the same ownership and birth

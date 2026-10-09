@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -133,6 +134,8 @@ type processClaudeFixture struct {
 	host               *processhost.Host
 	store              *intmetadata.Store
 	control            *claudeProcessControl
+	// registryChecks counts the host's Registry ownership transactions.
+	registryChecks *atomic.Int64
 }
 
 func newProcessClaudeFixture(t *testing.T, command func(string, string) processhost.Command) *processClaudeFixture {
@@ -211,10 +214,12 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 	}); err != nil {
 		t.Fatal(err)
 	}
+	registryChecks := new(atomic.Int64)
 	current := func(ctx context.Context, binding processhost.Binding) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		registryChecks.Add(1)
 		reg, err := store.LoadDegradedReadOnly()
 		if err != nil {
 			return err
@@ -256,7 +261,7 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 	})
 	questions := agentquestion.NewStore(filepath.Join(root, "answers"))
 	approvals := agentapproval.NewStore(filepath.Join(root, "answers"))
-	f := &processClaudeFixture{root: root, binary: binary, path: path, binding: b, handle: handle, host: host, store: store}
+	f := &processClaudeFixture{root: root, binary: binary, path: path, binding: b, handle: handle, host: host, store: store, registryChecks: registryChecks}
 	f.control = &claudeProcessControl{handle: handle, binding: b, questions: questions, approvals: approvals, questionWindow: time.Minute, approvalWindow: time.Minute, now: time.Now}
 	return f
 }
