@@ -3,6 +3,10 @@ package processhost
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,4 +46,91 @@ func observeChildExit(pid int) error {
 		}
 		return err
 	}
+}
+
+// orphanReapInterval backs up SIGCHLD; a missed or coalesced signal waits at
+// most this long.
+const orphanReapInterval = 5 * time.Second
+
+// reapOrphans reaps exited descendants the subreaper adopts while the provider
+// lives, including those outside the provider group. It never waits for the
+// provider itself, so observeChildExit and finishOwnedChild keep its exit
+// status and PID/PGID reservation. The returned stop ends reaping.
+func reapOrphans(provider int) (stop func()) {
+	sigchld := make(chan os.Signal, 1)
+	signal.Notify(sigchld, syscall.SIGCHLD)
+	done, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(finished)
+		defer signal.Stop(sigchld)
+		ticker := time.NewTicker(orphanReapInterval)
+		defer ticker.Stop()
+		for {
+			reapExitedOrphans(provider)
+			select {
+			case <-done:
+				return
+			case <-sigchld:
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() { close(done); <-finished }
+}
+
+// reapExitedOrphans waits only for zombie children other than provider, one
+// exact PID at a time. A zombie's PID cannot be recycled until it is reaped,
+// and waitid(P_PID) cannot touch a process that is not this helper's child.
+func reapExitedOrphans(provider int) {
+	// Peek first so an idle supervisor costs one syscall, not a /proc scan.
+	var peek unix.Siginfo
+	err := unix.Waitid(unix.P_ALL, 0, &peek, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+	for errors.Is(err, unix.EINTR) {
+		err = unix.Waitid(unix.P_ALL, 0, &peek, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+	}
+	if err != nil || peek.Signo == 0 {
+		return
+	}
+	self := os.Getpid()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 || pid == provider {
+			continue
+		}
+		if parent, zombie := procChildState(pid); parent != self || !zombie {
+			continue
+		}
+		var info unix.Siginfo
+		for {
+			err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOHANG, nil)
+			if !errors.Is(err, unix.EINTR) {
+				break
+			}
+		}
+	}
+}
+
+func procChildState(pid int) (parent int, zombie bool) {
+	// #nosec G304 -- pid is a checked decimal integer in a fixed procfs path.
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, false
+	}
+	end := strings.LastIndexByte(string(data), ')')
+	if end < 0 {
+		return 0, false
+	}
+	fields := strings.Fields(string(data[end+1:]))
+	if len(fields) < 2 {
+		return 0, false
+	}
+	parent, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, false
+	}
+	return parent, fields[0] == "Z"
 }

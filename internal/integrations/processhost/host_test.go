@@ -65,6 +65,9 @@ func TestMain(m *testing.M) {
 				time.Sleep(time.Millisecond)
 			}
 			os.Exit(1)
+		case "processhost-orphan-parent":
+			fixtureOrphanParent()
+			os.Exit(0)
 		case "processhost-leaf":
 			for {
 				time.Sleep(time.Hour)
@@ -163,6 +166,25 @@ func hasEvent(p *Handle, kind string) bool {
 	return false
 }
 
+func fixtureOrphanParent() {
+	count, err := strconv.Atoi(os.Getenv("PROCESSHOST_ORPHAN_COUNT"))
+	if err != nil {
+		panic(err)
+	}
+	pids := make([]string, 0, count)
+	for range count {
+		leaf := exec.Command(os.Args[0], "processhost-escaped-leaf", os.Getenv("PROCESSHOST_RELEASE_FILE"))
+		leaf.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := leaf.Start(); err != nil {
+			panic(err)
+		}
+		pids = append(pids, strconv.Itoa(leaf.Process.Pid))
+	}
+	if err := os.WriteFile(os.Getenv("PROCESSHOST_LEAF_FILE"), []byte(strings.Join(pids, " ")), 0600); err != nil {
+		panic(err)
+	}
+}
+
 func fixtureProvider() {
 	mode := "normal"
 	if len(os.Args) > 2 {
@@ -198,6 +220,13 @@ func fixtureProvider() {
 			panic(err)
 		}
 		return
+	case "orphans":
+		// The intermediate exits after starting its leaves, so every leaf is
+		// reparented to the supervisor subreaper outside the provider group.
+		parent := exec.Command(os.Args[0], "processhost-orphan-parent")
+		if err := parent.Run(); err != nil {
+			panic(err)
+		}
 	case "exit7":
 		os.Exit(7)
 	case "hup":
