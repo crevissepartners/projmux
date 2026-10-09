@@ -123,6 +123,38 @@ func TestLiveMachineGuardReclaimLeavesARootWhoseOwnerHoldsItsLock(t *testing.T) 
 	requireDir(t, root)
 }
 
+// An in-process helper can close a descriptor it does not own. A different
+// guarded run must not remove the still-running owner's provider stand-ins
+// just because that owner's flock was released.
+func TestLiveMachineGuardReclaimLeavesALiveOwnerWithAReleasedLock(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	root := filepath.Join(dir, rootPrefix+"p1-released")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := guardLockRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, providerDirName)
+	if err := guardInstallProviderStandIns(bin); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if n := guardReclaimKilledRoots(dir, "", &out); n != 0 || out.Len() != 0 {
+		t.Errorf("reclaim = %d with output %q, want 0 and nothing", n, out.String())
+	}
+	for _, name := range []string{ownerLockName, filepath.Join(providerDirName, "codex"), filepath.Join(providerDirName, "claude")} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Errorf("live owner's %s disappeared: %v", name, err)
+		}
+	}
+}
+
 // TestLiveMachineGuardReclaimLeavesRootsWithoutAnOwnerLock pins that a root
 // without the lock file is never reclaimed: an old-format name (even with a
 // free lock inside), a new-format root with no lock, and one whose maker died
@@ -271,7 +303,7 @@ func makeLockedRoot(t *testing.T, dir, name string) string {
 }
 
 // makeFreeRoot makes a root under dir whose owner has died: the lock file is
-// in place, names this process, and is free. It is written without ever being
+// in place, names an exited process, and is free. It is written without ever being
 // locked, so it is free by construction: a lock taken and then released could
 // still be held by a parallel test's fork, which carries the descriptor until
 // its child execs, and the reclaim would read that as a live owner.
@@ -281,7 +313,11 @@ func makeFreeRoot(t *testing.T, dir, name string) string {
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ownerLockName), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+	owner := exec.Command("true")
+	if err := owner.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ownerLockName), []byte(strconv.Itoa(owner.Process.Pid)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root
