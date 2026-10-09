@@ -479,7 +479,7 @@ func runClaudeEndpointHelper(args []string, recorder *diagnostics.ClaudeRegistra
 	parentPID := os.Getppid()
 	return recordClaudeEndpointHelper(recorder, claudeEndpointHelperInput{
 		args: args, lookupEnv: os.LookupEnv, stdin: os.Stdin,
-		openAck:  func() *os.File { return os.NewFile(3, "claude-endpoint-ack") },
+		openAck:  func() (*os.File, diagnostics.ClaudeRegistrationReason) { return openClaudeEndpointAck(3) },
 		producer: func(bootstrap claudeEndpointBootstrap) bool { return claudeHelperProducerMatches(bootstrap, parentPID) },
 		serve: func(bootstrap claudeEndpointBootstrap, ack io.Writer, admitted func()) diagnostics.ClaudeRegistrationReason {
 			return serveClaudeRegistration(context.Background(), bootstrap, ack, claudeEndpointIdleOptions{
@@ -487,6 +487,20 @@ func runClaudeEndpointHelper(args []string, recorder *diagnostics.ClaudeRegistra
 				handoffRoute: recorder.RecordHandoffRoute})
 		},
 	})
+}
+
+// Inspect the inherited descriptor before os.NewFile takes ownership. An
+// accidental in-process invocation can have the Go runtime's epoll descriptor
+// at fd 3; even a rejected wrapper would eventually close it via its finalizer.
+func openClaudeEndpointAck(fd uintptr) (*os.File, diagnostics.ClaudeRegistrationReason) {
+	var info syscall.Stat_t
+	if err := syscall.Fstat(int(fd), &info); err != nil {
+		return nil, diagnostics.ClaudeRegistrationHelperAckMissing
+	}
+	if info.Mode&syscall.S_IFMT != syscall.S_IFIFO {
+		return nil, diagnostics.ClaudeRegistrationHelperAckNotPipe
+	}
+	return os.NewFile(fd, "claude-endpoint-ack"), ""
 }
 
 // recordClaudeEndpointHelper is runClaudeEndpointHelper with the helper
@@ -508,27 +522,25 @@ type claudeEndpointHelperInput struct {
 	args      []string
 	lookupEnv func(string) (string, bool)
 	stdin     io.Reader
-	openAck   func() *os.File
+	openAck   func() (*os.File, diagnostics.ClaudeRegistrationReason)
 	producer  func(claudeEndpointBootstrap) bool
 	serve     func(bootstrap claudeEndpointBootstrap, ack io.Writer, admitted func()) diagnostics.ClaudeRegistrationReason
 }
 
 // claudeEndpointHelper returns the reason the helper stopped. It closes the
-// acknowledgement before it returns on every path, so a caller that records
+// owned acknowledgement before it returns, so a caller that records
 // the result appends only after the hook read its byte or EOF.
 //
 // The subject is set only once the producer check passed: the bootstrap then
 // provably came from the live hook that matched this pane and its agent
 // against the Registry, so its UIDs are those Registry-matched values.
 func claudeEndpointHelper(in claudeEndpointHelperInput, admitted func(claudeRegistrationSubject)) (claudeRegistrationSubject, diagnostics.ClaudeRegistrationReason) {
-	ack := in.openAck()
 	if len(in.args) != 0 || claudeHelperCredentialEnvironmentPresent(in.lookupEnv) {
-		// Never inspected or written, fd 3 is still let go of before the
-		// caller records, like on every other path.
-		if ack != nil {
-			_ = ack.Close()
-		}
 		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperArguments
+	}
+	ack, reason := in.openAck()
+	if reason != "" {
+		return claudeRegistrationSubject{}, reason
 	}
 	if ack == nil {
 		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationHelperAckMissing
@@ -550,7 +562,7 @@ func claudeEndpointHelper(in claudeEndpointHelperInput, admitted func(claudeRegi
 		return claudeRegistrationSubject{}, diagnostics.ClaudeRegistrationProducerMismatch
 	}
 	subject := claudeRegistrationSubject{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID}
-	reason := in.serve(bootstrap, ack, func() { admitted(subject) })
+	reason = in.serve(bootstrap, ack, func() { admitted(subject) })
 	_ = ack.Close()
 	return subject, reason
 }
