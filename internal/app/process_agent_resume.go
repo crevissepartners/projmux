@@ -38,6 +38,8 @@ type processAgentResumeResult struct {
 	owner                   processAgentCreateResult
 	previousBinding         processhost.Binding
 	previousRecord          *coremetadata.ProcessSessionRecord
+	previousAttention       *processAttentionRecord
+	attentionChecked        bool
 	deferredSynchronization *processResumeSynchronization
 }
 
@@ -135,11 +137,12 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		return result, err
 	}
 	path := intmetadata.PathFor(state)
-	// A failed earlier initialization can retire a new Registry generation
-	// before attention was activated. Detect that conflict before reserving or
-	// starting another provider; another retry cannot repair its ownership.
+	// Prove retirement before reserving or preparing a provider. A terminal
+	// attention badge alone grants no authority to replace another binding.
+	var previousAttention *processAttentionRecord
 	if candidate.Record.Provider == aiModeCodex {
-		if err = checkCodexResumeAttention(newProcessAttentionStore(state), processSchemaBinding(candidate.Record.Binding)); err != nil {
+		previousAttention, err = readCodexResumeAttention(path, processSchemaBinding(candidate.Record.Binding))
+		if err != nil {
 			return result, err
 		}
 	}
@@ -172,6 +175,8 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		return result, err
 	}
 	result = c.processResumeResult(candidate, b, path)
+	result.previousAttention = previousAttention
+	result.attentionChecked = candidate.Record.Provider == aiModeCodex
 	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
 		if result.hasNoChild() {
 			err = errors.Join(err, result.restoreReservation())
@@ -271,6 +276,16 @@ func (c *agentCommand) processResumeResult(candidate processResumeCandidate, bin
 }
 
 func (r *processAgentResumeResult) startProcessResume(ctx context.Context, creator *createCommand, plan processhost.Command, config processhost.CodexConfig, frame processResumeFirstFrame) error {
+	// Relaunch also uses this start path. Capture its retired writer before
+	// child birth, while preserving an absent record checked by resume.
+	if r.owner.Provider == aiModeCodex && !r.attentionChecked {
+		var err error
+		r.previousAttention, err = readCodexResumeAttention(r.owner.registryPath, r.previousBinding)
+		if err != nil {
+			return err
+		}
+		r.attentionChecked = true
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -300,6 +315,15 @@ func (r *processAgentResumeResult) startClaudeResume(ctx context.Context, host *
 
 func (r *processAgentResumeResult) startCodexResume(ctx context.Context, host *processhost.Host, launch processhost.Launch, config processhost.CodexConfig, old processhost.SessionRecord, frame processResumeFirstFrame) error {
 	launch.Spawned = processCodexCreateSpawn(r.owner.registryPath, r.Binding)
+	publish := launch.Spawned.Publish
+	launch.Spawned.Publish = func(ctx context.Context, handle *processhost.Handle) error {
+		if err := publish(ctx, handle); err != nil {
+			return err
+		}
+		// Birth is now durable, so even initialization failure and its actual
+		// Wait leave attention on the same generation as the Registry.
+		return r.activateCodexResumeAttention()
+	}
 	endpoint, err := startProcessCodex(ctx, host, launch, config, r.owner.registryPath, &old)
 	r.owner.codexEndpoint = endpoint
 	if endpoint != nil && endpoint.handle != nil {

@@ -1368,3 +1368,71 @@ func TestProcessClaudeOfflineResumeSelectsAutoActualCLI(t *testing.T) {
 		t.Fatal("offline auto argv/conversation", argv)
 	}
 }
+
+func TestCodexResumeRetiredAttentionAndInitFailureActualCLI(t *testing.T) {
+	f := processResumeCLIFixture(t, aiModeCodex)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--", "first task"))
+	first.shutdown(t)
+	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+	attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path())))
+	records, err := attention.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := records[old.Binding.PaneUID]
+	path := filepath.Join(f.root, "codex-provider.py")
+	script, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedScript := bytes.Replace(script, []byte("if method=='initialize':reply({'userAgent':'projmux/0.160.0'})"), []byte("if method=='initialize':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture init refusal'}})"), 1)
+	if bytes.Equal(script, failedScript) {
+		t.Fatal("fixture failure injection did not match")
+	}
+	if err := os.WriteFile(path, failedScript, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref).CombinedOutput()
+	if err == nil || !bytes.Contains(out, []byte(`"method":"initialize"`)) || !bytes.Contains(out, []byte(`"rpc_code":-32603`)) {
+		t.Fatalf("init refusal: %v %s", err, out)
+	}
+	failed := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+		return r.ResumeState == coremetadata.ProcessResumable && r.Binding.Generation != old.Binding.Generation
+	})
+	records, err = attention.read()
+	if err != nil || records[failed.Binding.PaneUID].Binding != processSchemaBinding(failed.Binding) || failed.ThreadID != old.ThreadID {
+		t.Fatal("init failure left attention skew or lost thread", err)
+	}
+	if err := os.WriteFile(path, script, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Recreate a persisted pre-fix attention record. Its original actual Wait
+	// remains in the append-only journal; no terminal-badge inference is used.
+	if err := attention.update(func(records map[string]processAttentionRecord) error {
+		records[old.Binding.PaneUID] = retired
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "same conversation"})
+	current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+		return r.Binding.Generation != failed.Binding.Generation && r.ConnectionID != ""
+	})
+	if current.ThreadID != old.ThreadID || second.ref != first.ref {
+		t.Fatal("retired attention recovery replaced conversation")
+	}
+	second.shutdown(t)
+	records, err = attention.read()
+	if err != nil || records[current.Binding.PaneUID].Binding != processSchemaBinding(current.Binding) {
+		t.Fatal("resume did not transfer exact attention binding", err)
+	}
+	wire, err := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(wire, []byte(`"method": "thread/start"`))+bytes.Count(wire, []byte(`"method":"thread/start"`)) != 1 {
+		t.Fatal("resume created another thread", string(wire))
+	}
+}
