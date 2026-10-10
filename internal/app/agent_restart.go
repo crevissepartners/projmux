@@ -140,6 +140,7 @@ func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest, socke
 	if err != nil {
 		return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
 	}
+	request.projectUID = resumePlan.projectUID
 	if c.rebind != nil && c.rebind.create != nil {
 		if r.comparesPromptParts && !resumePlan.dialogueReplyOnly {
 			// The same reads the resume makes, from the same Project.

@@ -2020,14 +2020,14 @@ var routes = []Route{
 		Notes:          []string{"Codex applies Profile sandbox and approval on native and CLI lanes. Codex CLI accepts approval=on-request or never; approval=untrusted requires the native lane."},
 		Disposition:    DispositionCanonical,
 		Usage: []string{
-			"projmux profile list",
+			"projmux profile list [--project <ref> | -p <ref>]",
 			"projmux profile show <name>",
 			"projmux profile set <name> [--file <path> | -]",
 			"projmux profile delete <name> --yes",
 		},
 		Canonical: []string{"profile list", "profile show", "profile set", "profile delete"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity", CanonicalSummary: "List stored profiles", Usage: []string{"projmux profile list"}, Canonical: []string{"profile list"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationFanOut, Summary: "List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, validity, and Project scope", CanonicalSummary: "List stored profiles", Usage: []string{"projmux profile list [--project <ref> | -p <ref>]"}, Canonical: []string{"profile list"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Print one profile's content exactly as stored", Usage: []string{"projmux profile show <name>"}, Canonical: []string{"profile show"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Validate one profile from a file or stdin and write it only when valid", CanonicalSummary: "Validate and write one profile", Usage: []string{"projmux profile set <name> [--file <path> | -]"}, Canonical: []string{"profile set"}},
 			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete one stored profile file", Usage: []string{"projmux profile delete <name> --yes"}, Canonical: []string{"profile delete"}},

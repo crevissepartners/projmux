@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -413,9 +414,12 @@ func planTopologyAgentReplay(
 	// invalid leaves them unlayered, so the seam below refuses the replay of
 	// this Agent exactly as it did before layers existed.
 	if resolver, ok := launcher.(agentSettingsResolver); ok {
-		request := agentSettingsRequest{}.withPromptParts(work.guidance, work.links)
+		request := (agentSettingsRequest{projectUID: project.Metadata.UID}).withPromptParts(work.guidance, work.links)
 		if resolved, err := resolver.ResolveAgentSettingsRequest(decision.provider, agent.Metadata.Annotations, request); err == nil {
 			work.settings = resolved.writeSnapshot()
+		} else if profile.ReasonOf(err) == profile.ReasonOutOfScope {
+			plan.noteAgent(label, diagnostics.TopologyAgentProviderUnavailable, err.Error())
+			return registryTopologyAgentPlan{}, false
 		}
 	}
 	launchAnnotations := work.guidance.resumeLaunchAnnotations(work.links.resumeLaunchAnnotations(work.settings.launchAnnotations(agent.Metadata.Annotations)))

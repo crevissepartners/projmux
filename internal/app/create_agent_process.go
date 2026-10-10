@@ -225,6 +225,15 @@ func (c *createCommand) planProcessAgent(opts processAgentCreateOptions) (proces
 		return plan, errors.New("process creator is not configured")
 	}
 	flags := processCreateFlags(opts)
+	registry, err := c.store.snapshot()
+	if err != nil {
+		return plan, err
+	}
+	plan.project, plan.window, err = resolveProcessCreateScope(registry, opts)
+	if err != nil {
+		return plan, err
+	}
+	flags.profileProjectUID = plan.project.Metadata.UID
 	provider, err := c.resolveCreateProvider(canonicalCreateAgent, "", flags)
 	if err != nil {
 		return plan, err
@@ -237,14 +246,6 @@ func (c *createCommand) planProcessAgent(opts processAgentCreateOptions) (proces
 		return plan, err
 	}
 	if err = c.resolveCreateProfile(canonicalCreateAgent, provider, &flags); err != nil {
-		return plan, err
-	}
-	registry, err := c.store.snapshot()
-	if err != nil {
-		return plan, err
-	}
-	plan.project, plan.window, err = resolveProcessCreateScope(registry, opts)
-	if err != nil {
 		return plan, err
 	}
 	if err = c.refuseMissingRoot(plan.project); err != nil {

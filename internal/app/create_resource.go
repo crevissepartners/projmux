@@ -59,16 +59,18 @@ func (r createResult) receiptAction() cli.ReceiptAction {
 
 // resourceCreateFlags is the parsed argv of a resource-backed create route.
 type resourceCreateFlags struct {
-	projects     repeatedFlag
-	windows      repeatedFlag
-	panes        repeatedFlag
-	selectors    repeatedFlag
-	labels       repeatedFlag
-	name         string
-	host         string
-	placementSet bool
-	provider     string
-	providerSet  bool
+	// profileProjectUID is the target resolved from Registry ownership, never cwd.
+	profileProjectUID string
+	projects          repeatedFlag
+	windows           repeatedFlag
+	panes             repeatedFlag
+	selectors         repeatedFlag
+	labels            repeatedFlag
+	name              string
+	host              string
+	placementSet      bool
+	provider          string
+	providerSet       bool
 	// creator is the bare Agent UID --creator declared, or empty.
 	// Both tmux and process requests consume this already validated UID.
 	creator string

@@ -12,7 +12,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/core/selector"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // profileCommand implements `projmux profile list|show|set|delete`.
@@ -103,6 +106,8 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 	fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
+	projectRef := fs.String("project", "", "list global profiles and profiles scoped to this Project")
+	fs.StringVar(projectRef, "p", "", "alias of --project")
 	operands, err := personacmd.ParseArgs(fs, args)
 	if err != nil {
 		return err
@@ -119,8 +124,32 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
+	projectUID := ""
+	if *projectRef != "" {
+		ref, err := selector.ParseRef(coremetadata.KindProject, *projectRef)
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		paths, err := configPaths(c.homeDir, c.lookupEnv)
+		if err != nil {
+			return err
+		}
+		registry, err := intmetadata.NewDefaultStore(paths).LoadReadOnly()
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		query := selector.Query{Project: &ref}
+		resolved, err := selector.New(registry).ResolveProjects(query)
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		if err := selector.Enforce(selector.Target{Verb: selector.VerbGet, Kind: coremetadata.KindProject}, selector.DescribeSelector(query), resolved); err != nil {
+			return MapMetadataError(err)
+		}
+		projectUID = resolved.Matches[0].UID
+	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSOURCE\tPROVIDER\tINSTRUCTIONS\tMODEL\tEFFORT\tROLES\tDIGEST\tVALID")
+	fmt.Fprintln(tw, "NAME\tSOURCE\tPROVIDER\tINSTRUCTIONS\tMODEL\tEFFORT\tROLES\tDIGEST\tVALID\tSCOPE")
 	// An item the profile does not name -- a provider-neutral profile's
 	// provider included -- and every item of a file that does not parse is
 	// "-". An invalid profile that parses still shows what it names.
@@ -131,13 +160,20 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 		return value
 	}
 	for _, entry := range entries {
+		if projectUID != "" && !profile.VisibleInProject(entry.Project, projectUID) {
+			continue
+		}
+		scope := entry.Project
+		if scope == "" {
+			scope = "global"
+		}
 		valid := "yes"
 		if !entry.Valid {
 			valid = "no (" + entry.Reason + ")"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", entry.Name, entry.Source,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", entry.Name, entry.Source,
 			cell(entry.Provider), cell(entry.Instructions), cell(entry.Model), cell(entry.Effort),
-			cell(strings.Join(entry.Roles, ",")), cell(entry.Digest), valid)
+			cell(strings.Join(entry.Roles, ",")), cell(entry.Digest), valid, scope)
 	}
 	return tw.Flush()
 }

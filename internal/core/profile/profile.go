@@ -44,6 +44,8 @@ const SourceUser = "user"
 // Refusal reason tokens. They are stable strings: every refusal this package
 // reports carries exactly one of them in its error text.
 const (
+	ReasonScopeChanged = "profile-scope-changed"
+	ReasonOutOfScope   = "profile-out-of-scope"
 	ReasonNameInvalid  = "profile-name-invalid"
 	ReasonNameReserved = "profile-name-reserved"
 	ReasonNotFound     = "profile-not-found"
@@ -138,6 +140,7 @@ type Profile struct {
 // its roles still count and a listing still shows what it names; a file that
 // does not parse has none of them.
 type Entry struct {
+	Project      string
 	Name         string
 	Source       string
 	Path         string
@@ -154,6 +157,7 @@ type Entry struct {
 
 // withSpec fills the items of spec the entry shows.
 func (e Entry) withSpec(spec Spec) Entry {
+	e.Project = spec.Project
 	e.Provider, e.Instructions, e.Model, e.Effort, e.Roles = spec.Provider, spec.Instructions, spec.Model, spec.Effort, spec.Roles
 	return e
 }
@@ -292,6 +296,17 @@ func (s Store) Write(name string, content []byte) (Entry, error) {
 	}
 	for _, other := range others {
 		if other.Name == name {
+			if existing, found, err := readUserFile(s.dir, name); err != nil {
+				return Entry{}, err
+			} else if found {
+				oldProject, err := storedProjectScope(existing)
+				if err != nil {
+					return Entry{}, named(err, name)
+				}
+				if oldProject != spec.Project {
+					return Entry{}, &Error{Reason: ReasonScopeChanged, Name: name, Detail: fmt.Sprintf("cannot change scope from %q to %q; delete and recreate the profile", oldProject, spec.Project)}
+				}
+			}
 			continue
 		}
 		for _, role := range spec.Roles {
@@ -448,13 +463,18 @@ func (s Store) describe(entry Entry, content []byte) Entry {
 // the profile that lists it broke: a role several profiles list is
 // profile-role-claimed, and a role whose one listing profile is invalid is
 // profile-role-profile-invalid, carrying that profile's own reason.
-func (s Store) RoleProfile(role string) (string, error) {
+// With projectUID supplied, only global profiles and that Project's profiles
+// can select a role. Uniqueness still applies across the entire store.
+func (s Store) RoleProfile(role string, projectUID ...string) (string, error) {
 	entries, err := s.List()
 	if err != nil {
 		return "", err
 	}
 	var listing []Entry
 	for _, entry := range entries {
+		if len(projectUID) != 0 && !VisibleInProject(entry.Project, projectUID[0]) {
+			continue
+		}
 		if slices.Contains(entry.Roles, role) {
 			listing = append(listing, entry)
 		}
@@ -568,4 +588,51 @@ func writeAtomic(path string, content []byte) error {
 	committed = true
 	state.RepairPrivateFile(path)
 	return nil
+}
+
+// VisibleInProject reports whether a profile scope is visible to projectUID.
+func VisibleInProject(scope, projectUID string) bool {
+	return scope == "" || scope == projectUID
+}
+
+// CheckProject refuses applying a scoped profile outside its Project.
+func CheckProject(name string, spec Spec, projectUID string) error {
+	if VisibleInProject(spec.Project, projectUID) {
+		return nil
+	}
+	return &Error{Reason: ReasonOutOfScope, Name: name, Detail: fmt.Sprintf("is scoped to Project %s and cannot be used in Project %s", spec.Project, projectUID)}
+}
+
+// storedProjectScope reads the immutable scope even when another field is
+// broken, so fixing a malformed model/permission through Write remains possible.
+// It accepts the same single-line project string as Parse; an ambiguous or
+// malformed scope must be repaired by hand before Write can replace the file.
+func storedProjectScope(content []byte) (string, error) {
+	if spec, err := Parse(content); err == nil {
+		return spec.Project, nil
+	}
+	scope := ""
+	seen := false
+	for line := range strings.SplitSeq(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			header := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+			if strings.HasSuffix(header, "]") && strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(header, "["), "]")) == permissionsTable {
+				break
+			}
+		}
+		key, _, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != keyProject {
+			continue
+		}
+		if seen {
+			return "", &Error{Reason: ReasonSyntax, Detail: "project is given twice"}
+		}
+		spec, err := Parse([]byte(line))
+		if err != nil {
+			return "", err
+		}
+		scope, seen = spec.Project, true
+	}
+	return scope, nil
 }

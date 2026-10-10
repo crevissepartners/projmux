@@ -3074,7 +3074,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux profile list
+projmux profile list [--project <ref> | -p <ref>]
 projmux profile show <name>
 projmux profile set <name> [--file <path> | -]
 projmux profile delete <name> --yes
@@ -3086,7 +3086,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux profile list`](#projmux-profile-list) | List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity |
+| [`projmux profile list`](#projmux-profile-list) | List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, validity, and Project scope |
 | [`projmux profile show`](#projmux-profile-show) | Print one profile's content exactly as stored |
 | [`projmux profile set`](#projmux-profile-set) | Validate one profile from a file or stdin and write it only when valid |
 | [`projmux profile delete`](#projmux-profile-delete) | Delete one stored profile file |
@@ -3095,7 +3095,7 @@ Canonical spelling: `projmux profile list`, `projmux profile show`, `projmux pro
 
 ### `projmux profile list`
 
-List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, and validity
+List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, validity, and Project scope
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -3111,7 +3111,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux profile list
+projmux profile list [--project <ref> | -p <ref>]
 ```
 
 ### `projmux profile show`

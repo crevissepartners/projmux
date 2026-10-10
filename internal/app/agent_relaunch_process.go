@@ -166,6 +166,7 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 	guidance.recorded = target.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]
 	links := planProjectLinksWith(c.rebind.launcher, provider, *project, target.Metadata.Annotations)
 	settingsRequest := request.settings().withPromptParts(guidance, links)
+	settingsRequest.projectUID = project.Metadata.UID
 	var err error
 	restart.settings, err = c.rebind.resolveSettings(provider, target.Metadata.Annotations, settingsRequest)
 	if err != nil {
@@ -197,9 +198,9 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 	resolvedTarget, _ := resolvedRegistry.Agent(target.Metadata.UID)
 	annotations := guidance.resumeLaunchAnnotations(links.resumeLaunchAnnotations(restart.settings.launchAnnotations(resolvedTarget.Metadata.Annotations)))
 	if provider == aiModeCodex {
-		_, _, err = c.rebind.create.codexResumeProfile(annotations)
+		_, _, err = c.rebind.create.codexResumeProfile(annotations, project.Metadata.UID)
 	} else {
-		_, _, _, _, err = ai.resumeProfileSettings(provider, annotations)
+		_, _, _, _, err = ai.resumeProfileSettings(provider, annotations, project.Metadata.UID)
 	}
 	if err != nil {
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, err.Error())

@@ -330,7 +330,7 @@ func (c *agentCommand) preflightCodexRelaunch(plan agentResumePlan, annotations 
 	if c.rebind == nil || c.rebind.create == nil {
 		return errors.New("the resume materialization seam is not configured")
 	}
-	if _, _, err := c.rebind.create.codexResumeProfile(annotations); err != nil {
+	if _, _, err := c.rebind.create.codexResumeProfile(annotations, plan.projectUID); err != nil {
 		return err
 	}
 	return validateStoredCodexNativeResumeRoute(plan.ref)
