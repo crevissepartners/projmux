@@ -365,7 +365,12 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 		// A frozen launch preserves its settings, but the recorded profile's
 		// current Project scope still applies. Refuse before recovery can write
 		// the Registry or the prepared launch sidecar.
-		for _, annotations := range []map[string]string{candidate.Agent.Metadata.Annotations, record.NewAnnotations} {
+		annotationsToCheck := []map[string]string{candidate.Agent.Metadata.Annotations, record.NewAnnotations}
+		if record.Previous != nil {
+			// Prompt recovery can restore the prior recipe before first input.
+			annotationsToCheck = append(annotationsToCheck, record.OldAnnotations, record.Previous.NewAnnotations)
+		}
+		for _, annotations := range annotationsToCheck {
 			if name := annotations[coremetadata.AnnotationAgentProfile]; name != "" {
 				creator := c.rebind.create
 				_, _, _, scopeErr := resolveRecordedProfile(creator.homeDir, creator.lookupEnv, name, candidate.Record.Binding.ProjectUID)
