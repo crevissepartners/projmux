@@ -56,8 +56,26 @@ first provider frame, such as `system/init`, and closes with its `result`.
 Claude also opens turns on its own once the conversation exists: a background
 task finishing, a message from another Claude Code session, or a scheduled
 wake-up. The host follows those turns instead of stopping the Agent. A
-permission or question inside one is answered the usual way, and peer
-messages sent during it are held until it ends.
+permission or question inside one is answered the usual way.
+
+Peer messages join a visibly open, bound Claude turn through Claude's native
+peer socket. Claude folds the untrusted coordination envelope into its next
+tool boundary with a peer marker; the host does not write a user frame to
+stdin or open another turn. A successful send is `delivered` with reason
+`provider-native-peer-joined`. This proves the native write and helper receipt,
+not that Claude followed or replied to the message.
+
+Pending permission/question controls, an interrupt, a turn not yet visibly
+open, a pending/expired message handoff, or a full joined-input/event budget
+keep peer messages `held target-turn-active` with zero native writes. Held
+messages resume automatically after the turn ends and expire at their existing
+deadline. Partial or uncertain writes are never retried. Native peer admission
+and operator input share the same limit of 8 joined inputs and 262144 bytes
+(serialized coordination content for peers, prompt content for operator input).
+A proved zero-write peer failure releases its budget without ending the
+running turn; a missing or uncertain handoff retains admission evidence.
+Claude's own inbound peer policy still applies; host delivery does not override
+it.
 
 `agent turn start` while a Claude turn is running joins that turn. The text is
 written to Claude, which reads it at its next tool boundary and answers within

@@ -1131,3 +1131,107 @@ func TestProcessVirtualWindowRefusalsActualCLI(t *testing.T) {
 		})
 	}
 }
+
+// The actual copied CLI sends a peer from the exact owned provider child while
+// the target's turn runs. Only the native socket sees the coordination frame.
+func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	path := filepath.Join(f.root, "provider.py")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Replace(string(raw), "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})", "elif prompt=='send-message':\n   emit({'type':'assistant','session_id':'process-session','content':'running'})", 1)
+	// Keep the native arrival in the existing turn, without a control prompt.
+	script = strings.Replace(script, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();continue", 1)
+	if err = os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, f.args("--", "send-message")...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatal(err, stderr.String())
+	}
+	ref := strings.Fields(line)[1]
+	uid := strings.TrimPrefix(ref, "uid:")
+	var receipt []byte
+	processCLIUntil(t, ctx, func() bool {
+		receipt, _ = os.ReadFile(filepath.Join(f.root, "message-receipt"))
+		return bytes.Contains(receipt, []byte("delivered")) || bytes.Contains(receipt, []byte("held"))
+	})
+	if !bytes.Contains(receipt, []byte("\tdelivered")) {
+		t.Fatalf("running peer %s", receipt)
+	}
+	messageRef := strings.Fields(string(receipt))[0]
+	status, statusErr := exec.CommandContext(ctx, f.binary, "agent", "message", "status", messageRef, "-o", "json").CombinedOutput()
+	if statusErr != nil || !bytes.Contains(status, []byte(claudeNativePeerJoinedReason)) {
+		t.Fatalf("joined receipt reason %v %s", statusErr, status)
+	}
+	processCLIUntil(t, ctx, func() bool {
+		reg, _ := f.store.LoadReadOnly()
+		agent, _ := reg.Agent(uid)
+		pane, _ := reg.Pane(agent.Status.PaneRef)
+		session := pane.Status.ProcessSession
+		return session != nil && session.SessionID == "process-session" && session.TurnID != ""
+	})
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := reg.Agent(uid)
+	pane, _ := reg.Pane(agent.Status.PaneRef)
+	session := pane.Status.ProcessSession
+	if session == nil || session.SessionID != "process-session" || session.TurnID == "" || agent.Status.Phase != coremetadata.PhaseRunning {
+		t.Fatal("native admission replaced active ownership", pane)
+	}
+	running := session.TurnID
+	native, err := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(native, []byte("untrusted-coordination-only")) != 1 {
+		t.Fatalf("native write count %s", native)
+	}
+	stdin, _ := os.ReadFile(f.trace)
+	if bytes.Contains(stdin, []byte("projmux-coordination")) || bytes.Contains(stdin, []byte("peer payload")) {
+		t.Fatalf("peer leaked into user stdin %s", stdin)
+	}
+	// The same registration remains current after delivery; no replacement.
+	out, err := exec.CommandContext(ctx, f.binary, "agent", "capabilities", ref, "-o", "json").CombinedOutput()
+	if err != nil || bytes.Contains(out, []byte("ended-not-current")) {
+		t.Fatalf("registration ended %v %s", err, out)
+	}
+	out, err = exec.CommandContext(ctx, f.binary, "agent", "turn", "start", ref, "--", "joined-finish").CombinedOutput()
+	if err != nil || !bytes.Contains(out, []byte("running-turn="+running)) {
+		t.Fatalf("turn changed %v %s", err, out)
+	}
+	processCLIUntil(t, ctx, func() bool {
+		reg, _ := f.store.LoadReadOnly()
+		a, _ := reg.Agent(uid)
+		p, _ := reg.Pane(a.Status.PaneRef)
+		return p.Status.ProcessSession != nil && p.Status.ProcessSession.TurnID == ""
+	})
+	_ = input.Close()
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("owner died %v %s", err, stderr.String())
+	}
+}

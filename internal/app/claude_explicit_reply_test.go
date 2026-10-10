@@ -32,7 +32,7 @@ func (b *durableReplyTestBroker) MarkHandoff(e coremessage.Envelope) error {
 	_, _, err := b.store.MarkHandoff(e.MessageRef)
 	return err
 }
-func (b *durableReplyTestBroker) MarkDelivered(e coremessage.Envelope, now time.Time) error {
+func (b *durableReplyTestBroker) MarkDelivered(e coremessage.Envelope, now time.Time, reasons ...string) error {
 	_, _, err := b.store.Apply(e.MessageRef, coremessage.Event{Kind: coremessage.EventDeliver, MessageRef: e.MessageRef,
 		ConversationRef: e.ConversationRef, Target: e.Target, ObservedAt: now, Reason: "provider-pipe-full-frame"})
 	return err

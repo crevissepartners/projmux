@@ -69,6 +69,7 @@ type claudeProcessCheckResult struct {
 	Valid                  bool
 	Admitted               bool
 	TurnActive             bool
+	Joined                 bool
 	Binding                processhost.Binding
 	Registration           *coremetadata.ClaudeRegistration
 	RegistrationGeneration string
@@ -495,7 +496,9 @@ func (s *claudeProcessService) input(ctx context.Context, request claudeProcessC
 		if err != nil || !found || (request.Input.Phase == "reserve-before-handoff" && record.HandoffObserved) || record.Delivery.State.Terminal() || !record.Envelope.Deadline.After(time.Now()) || record.Envelope.Target.AgentUID != s.binding.Agent || record.Envelope.Target.PaneUID != s.binding.Pane || record.Envelope.Target.ActivationGeneration != s.binding.Generation {
 			return result
 		}
-		err = s.handle.ReserveClaudeMessage(ctx, authority, turn)
+		admission, reserveErr := s.handle.ReserveClaudePeerMessage(ctx, authority, turn, len(request.Input.Content))
+		err = reserveErr
+		result.Joined = admission.Joined
 		result.Admitted = err == nil
 		result.TurnActive = errors.Is(err, processhost.ErrClaudeTurnActive)
 	case "finish":
@@ -666,30 +669,30 @@ type processClaudeProviderPoster struct {
 	current                func() bool
 }
 
-func (p *processClaudeProviderPoster) exchange(content, phase string, outcome claudeProviderPostOutcome) (bool, error) {
+func (p *processClaudeProviderPoster) exchange(content, phase string, outcome claudeProviderPostOutcome) (claudeProcessCheckResult, error) {
 	conn, err := dialProcessClaudeHost(p.proof)
 	if err != nil {
-		return false, err
+		return claudeProcessCheckResult{}, err
 	}
 	defer conn.Close()
 	request := claudeProcessCheck{Binding: p.proof.Binding, Session: p.proof.Session, Input: &claudeProcessInput{Connection: p.proof.Binding.Operation, RegistrationGeneration: p.registrationGeneration, Content: content, Phase: phase, Written: outcome.FullFrameWritten, Uncertain: outcome.Ambiguous()}}
 	if err = localipc.WriteJSON(conn, request); err != nil {
-		return false, err
+		return claudeProcessCheckResult{}, err
 	}
 	if err = conn.CloseWrite(); err != nil {
-		return false, err
+		return claudeProcessCheckResult{}, err
 	}
 	var result claudeProcessCheckResult
 	if err = localipc.ReadJSON(conn, &result); err != nil {
-		return false, err
+		return claudeProcessCheckResult{}, err
 	}
 	if !result.Valid || result.Binding != p.proof.Binding || result.Process != p.proof.Process {
-		return false, processhost.ErrStale
+		return claudeProcessCheckResult{}, processhost.ErrStale
 	}
 	if result.TurnActive && (phase == "reserve" || phase == "reserve-before-handoff") && !result.Admitted {
-		return false, processhost.ErrClaudeTurnActive
+		return claudeProcessCheckResult{}, processhost.ErrClaudeTurnActive
 	}
-	return result.Admitted, nil
+	return result, nil
 }
 
 func (p *processClaudeProviderPoster) reserve(content string, fence func() bool, beforeHandoff bool) (claudeProviderPostOutcome, error) {
@@ -701,21 +704,24 @@ func (p *processClaudeProviderPoster) reserve(content string, fence func() bool,
 	if beforeHandoff {
 		phase = "reserve-before-handoff"
 	}
-	admitted, err := p.exchange(content, phase, claudeProviderPostOutcome{})
+	admission, err := p.exchange(content, phase, claudeProviderPostOutcome{})
 	if errors.Is(err, processhost.ErrClaudeTurnActive) {
 		return claudeProviderPostOutcome{Reason: claudeHoldReasonTurnActive}, err
 	}
-	if err != nil || !admitted {
+	if err != nil || !admission.Admitted {
 		return refused, processhost.ErrBusy
 	}
-	return claudeProviderPostOutcome{}, nil
+	return claudeProviderPostOutcome{Joined: admission.Joined}, nil
 }
 
 func (p *processClaudeProviderPoster) Post(content string, fence func() bool) (claudeProviderPostOutcome, error) {
-	if refused, err := p.reserve(content, fence, false); err != nil {
-		return refused, err
+	admission, err := p.reserve(content, fence, false)
+	if err != nil {
+		return admission, err
 	}
-	return p.postReserved(content, fence)
+	outcome, err := p.postReserved(content, fence)
+	outcome.Joined = admission.Joined
+	return outcome, err
 }
 
 func (p *processClaudeProviderPoster) postReserved(content string, fence func() bool) (claudeProviderPostOutcome, error) {

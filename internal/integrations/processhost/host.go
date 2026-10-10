@@ -138,6 +138,7 @@ type Handle struct {
 	providerTurns          uint64
 	joined                 []string
 	joinedBytes            int
+	joinedMessages         map[string]claudePeerReservation
 	carriedJoined          []string
 	unattributed           []string
 	messageReservation     string
@@ -783,8 +784,12 @@ func (p *Handle) activeCriticalLocked() int {
 }
 
 func (p *Handle) emitLocked(kind string, raw []byte, request *Request) {
+	p.emitTurnLocked(kind, raw, request, p.turn)
+}
+
+func (p *Handle) emitTurnLocked(kind string, raw []byte, request *Request, turn string) {
 	p.seq++
-	event := Event{Binding: p.launch.Binding, Session: p.session, Connection: p.connection, Turn: p.turn, Sequence: p.seq, Kind: kind, Raw: bytes.Clone(raw), Request: request, Exit: p.exit}
+	event := Event{Binding: p.launch.Binding, Session: p.session, Connection: p.connection, Turn: turn, Sequence: p.seq, Kind: kind, Raw: bytes.Clone(raw), Request: request, Exit: p.exit}
 	p.changedLocked()
 	if kind != "output" && kind != "provider-event" {
 		p.critical = append(p.critical, event)

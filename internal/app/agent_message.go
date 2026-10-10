@@ -242,7 +242,7 @@ func claudeResponseDelivery(messageRef string, response claudeCoordinationRespon
 	}
 	switch delivery.State {
 	case agentdelivery.StateDelivered:
-		if delivery.Ambiguous || delivery.WaiterRef == "" || delivery.Reason != "provider-pipe-full-frame" {
+		if delivery.Ambiguous || delivery.WaiterRef == "" || (delivery.Reason != "provider-pipe-full-frame" && delivery.Reason != claudeNativePeerJoinedReason) {
 			return agentdelivery.Delivery{}, false
 		}
 	case agentdelivery.StateRefused, agentdelivery.StateExpired, agentdelivery.StateStale:

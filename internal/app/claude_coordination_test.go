@@ -62,7 +62,7 @@ func (b *failingClaudeDialogueBroker) MarkHandoff(coremessage.Envelope) error {
 	return b.handoffErr
 }
 
-func (b *failingClaudeDialogueBroker) MarkDelivered(coremessage.Envelope, time.Time) error {
+func (b *failingClaudeDialogueBroker) MarkDelivered(coremessage.Envelope, time.Time, ...string) error {
 	b.deliveries++
 	return b.deliveredErr
 }

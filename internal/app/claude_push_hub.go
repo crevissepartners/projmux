@@ -25,6 +25,8 @@ import (
 // source fields, never by this number.
 const coordinationFrameSchemaVersion = 2
 
+const claudeNativePeerJoinedReason = "provider-native-peer-joined"
+
 type claudeProviderCoordinationContent struct {
 	Kind            string                 `json:"kind"`
 	SchemaVersion   int                    `json:"schemaVersion"`
@@ -138,6 +140,7 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 	// A process reservation must precede durable handoff: a busy host proves
 	// zero writes, leaving the durable record safe for held release.
 	processPoster, process := poster.(*processClaudeProviderPoster)
+	joined := false
 	if process {
 		// A proof that fails here precedes MarkHandoff, so it journals here.
 		prove := func() bool { return broker.Current(*envelope.BrokerEnvelope) }
@@ -147,6 +150,7 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		outcome, reserveErr := processPoster.reserve(content, func() bool {
 			return envelope.Deadline.After(h.now()) && broker != nil && prove()
 		}, true)
+		joined = outcome.Joined
 		if reserveErr != nil {
 			if outcome.Reason == claudeHoldReasonTurnActive {
 				delete(h.messages, envelope.MessageRef) // retry only this proven zero-write refusal
@@ -205,7 +209,11 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		})
 		return message.delivery
 	}
-	if broker.MarkDelivered(*envelope.BrokerEnvelope, h.now()) != nil {
+	var reasons []string
+	if joined {
+		reasons = []string{claudeNativePeerJoinedReason}
+	}
+	if broker.MarkDelivered(*envelope.BrokerEnvelope, h.now(), reasons...) != nil {
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{
 			Kind: agentdelivery.EventFail, MessageRef: envelope.MessageRef, WaiterRef: handoffRef,
 			Reason: "broker-delivery-persist-failed",
@@ -216,5 +224,8 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		Kind: agentdelivery.EventDeliver, MessageRef: envelope.MessageRef, WaiterRef: handoffRef,
 		FullFrameWritten: true, HelperReceipt: true,
 	})
+	if joined {
+		message.delivery.Reason = claudeNativePeerJoinedReason
+	}
 	return message.delivery
 }
