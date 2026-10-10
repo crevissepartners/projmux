@@ -66,7 +66,7 @@ func (s ProjectStore) Load(uid string) (Guidance, error) {
 		return Guidance{}, fmt.Errorf("read Project guidance: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return Guidance{}, fmt.Errorf("Project guidance %s is not a regular file", path)
+		return Guidance{}, fmt.Errorf("project guidance %s is not a regular file", path)
 	}
 	file, err := root.Open(name)
 	if err != nil {
@@ -78,7 +78,7 @@ func (s ProjectStore) Load(uid string) (Guidance, error) {
 		return Guidance{}, fmt.Errorf("read Project guidance: %w", err)
 	}
 	if len(content) > MaxSize {
-		return Guidance{}, fmt.Errorf("Project guidance %s exceeds %d bytes", path, MaxSize)
+		return Guidance{}, fmt.Errorf("project guidance %s exceeds %d bytes", path, MaxSize)
 	}
 	if len(bytes.TrimSpace(content)) == 0 {
 		return Guidance{Source: SourceOff}, nil
@@ -93,7 +93,7 @@ func (s ProjectStore) Save(uid string, text []byte) error {
 		return err
 	}
 	if len(text) > MaxSize {
-		return fmt.Errorf("Project guidance is %d bytes; the limit is %d", len(text), MaxSize)
+		return fmt.Errorf("project guidance is %d bytes; the limit is %d", len(text), MaxSize)
 	}
 	mode := state.PrivateFileMode
 	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
@@ -124,7 +124,7 @@ func (s ProjectStore) Delete(uid string) error {
 		return err
 	}
 	if info.IsDir() {
-		return fmt.Errorf("Project guidance %s is not a regular file", path)
+		return fmt.Errorf("project guidance %s is not a regular file", path)
 	}
 	return root.Remove(filepath.Base(path))
 }
