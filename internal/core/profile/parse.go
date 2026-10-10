@@ -9,6 +9,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
@@ -37,6 +38,7 @@ const (
 	keyEffort       = "effort"
 	keyRoles        = "roles"
 	keyProvider     = "provider"
+	keyProject      = "project"
 )
 
 // permissionsTable is the one table a profile may declare.
@@ -79,6 +81,7 @@ var permissionRule = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\(.+\))?$`)
 type Spec struct {
 	// Provider is the one Agent provider the profile is for, or "" for a
 	// provider-neutral profile.
+	Project      string
 	Provider     string
 	Instructions string
 	Model        string
@@ -381,7 +384,7 @@ func (p *parser) arraySpace() error {
 func knownKey(table, key string) bool {
 	switch table {
 	case "":
-		return slices.Contains([]string{keyProvider, keyInstructions, keyModel, keyEffort, keyRoles}, key)
+		return slices.Contains([]string{keyProject, keyProvider, keyInstructions, keyModel, keyEffort, keyRoles}, key)
 	case permissionsTable:
 		return slices.Contains([]string{keySandbox, keyApproval, keyAllow, keyDeny}, key)
 	}
@@ -409,6 +412,11 @@ func (p *parser) assign(spec *Spec, table, key string, val value) error {
 		return p.fail(ReasonValueInvalid, "%q is %q; want one of %s", qualified, val.str, strings.Join(set, ", "))
 	}
 	switch qualified {
+	case keyProject:
+		if err := projectlinks.ValidateProjectUID(val.str); err != nil {
+			return p.fail(ReasonValueInvalid, "%q is not a valid Project UID: %v", qualified, err)
+		}
+		spec.Project = val.str
 	case keyProvider:
 		if !IsProvider(val.str) {
 			return p.fail(ReasonProviderUnknown, "%q is %q; want one of %s", qualified, val.str, strings.Join(Providers(), ", "))

@@ -1417,6 +1417,7 @@ booleans, and inline tables. The file limit is 64 KiB.
 
 | Key | Value |
 | --- | --- |
+| `project` | Project UID (`proj-` followed by 26 lowercase base32 characters). Omitted, the profile is global |
 | `provider` | the Agent provider the profile is for: one of the ids `create agent --provider` accepts (`claude`, `codex`, `antigravity`), spelled exactly. Omitted, the profile is provider-neutral |
 | `instructions` | the name of stored instructions (`projmux instructions list`); the file must exist |
 | `model` | a Claude model alias or name, the same shape `create --model` accepts; `projmux agent models` lists suggestions, and names outside that list are accepted too |
@@ -1439,6 +1440,24 @@ approval = "on-request"
 allow = ["Bash(git status *)", "Read(./docs/**)"]
 deny = ["WebFetch(domain:example.com)"]
 ```
+
+`project` scopes a profile to that Registry Project. Explicit profile selection
+outside it refuses before creation with exit 2 (`profile-out-of-scope`), naming
+the profile and its Project UID. Role mapping considers only global profiles
+and profiles of the target Project. Resume and relaunch check the Agent's owning
+Project again; a hand edit that puts its recorded profile outside that scope
+refuses without changing the Agent. Project renames and root moves preserve the
+UID and therefore the scope.
+
+All profiles remain in one directory. Names and role claims are unique across
+global profiles and every Project. `profile set` cannot change an existing
+profile's scope (`profile-scope-changed`, exit 2); delete and recreate it to
+change the scope. `profile list` shows every profile with a final `SCOPE` column
+(`global` or the Project UID). `profile list --project <ref>` resolves a Registry
+Project name or UID and shows global profiles plus that Project's profiles.
+Invalid profiles remain visible without blocking valid ones. Older binaries
+reject the new `project` key as `profile-key-unknown`; other profiles still work.
+Deleting a Project does not delete its profiles.
 
 `provider` binds the profile to one provider. A create of any other provider
 -- `create agent --provider`, a `create <provider>` shortcut, a `role` label,

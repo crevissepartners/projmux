@@ -43,7 +43,7 @@ func runProfile(cmd *profileCommand, args ...string) (string, string, error) {
 func profileListRows(t *testing.T, stdout string) map[string][]string {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-	if len(lines) == 0 || strings.Join(strings.Fields(lines[0]), " ") != "NAME SOURCE PROVIDER INSTRUCTIONS MODEL EFFORT ROLES DIGEST VALID" {
+	if len(lines) == 0 || strings.Join(strings.Fields(lines[0]), " ") != "NAME SOURCE PROVIDER INSTRUCTIONS MODEL EFFORT ROLES DIGEST VALID SCOPE" {
 		t.Fatalf("list header = %q", stdout)
 	}
 	rows := map[string][]string{}
@@ -98,7 +98,7 @@ func TestProfileSetValidFileShowsIdenticalBytesAndListsUserSourceWithDigest(t *t
 		t.Fatal(err)
 	}
 	row := profileListRows(t, stdout)["reviewer"]
-	if !slices.Equal(row, []string{"reviewer", "user", "-", "reviewer", "opus", "high", "review", digest, "yes"}) {
+	if !slices.Equal(row, []string{"reviewer", "user", "-", "reviewer", "opus", "high", "review", digest, "yes", "global"}) {
 		t.Fatalf("list row = %q in %q", row, stdout)
 	}
 
@@ -232,7 +232,7 @@ func TestProfileEmptyConfigListsNothingAndReadonlyIsOnlyAUserFile(t *testing.T) 
 	}
 	rows := profileListRows(t, stdout)
 	readonly := rows["readonly"]
-	if len(rows) != 1 || len(readonly) != 9 || !slices.Equal(readonly[:7], []string{"readonly", "user", "-", "-", "-", "-", "-"}) ||
+	if len(rows) != 1 || len(readonly) != 10 || !slices.Equal(readonly[:7], []string{"readonly", "user", "-", "-", "-", "-", "-"}) ||
 		readonly[7] != profile.Digest([]byte(example)) || readonly[8] != "yes" {
 		t.Fatalf("list with a user readonly = %q", stdout)
 	}
@@ -265,7 +265,7 @@ func TestProfileListShowsAHandPlacedInvalidFileWithoutBlockingOthers(t *testing.
 	if len(rows) != 2 {
 		t.Fatalf("list = %q; want bad and good", stdout)
 	}
-	if bad := strings.Join(rows["bad"], " "); !strings.HasPrefix(bad, "bad user - - - - - sha256:") || !strings.HasSuffix(bad, "no ("+profile.ReasonValueInvalid+")") {
+	if bad := strings.Join(rows["bad"], " "); !strings.HasPrefix(bad, "bad user - - - - - sha256:") || !strings.HasSuffix(bad, "no ("+profile.ReasonValueInvalid+") global") {
 		t.Fatalf("bad row = %q", bad)
 	}
 	if good := rows["good"]; good[1] != "user" || good[6] != "review" || good[8] != "yes" {

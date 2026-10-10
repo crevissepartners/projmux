@@ -261,10 +261,10 @@ func TestProfileListShowsTheCombinationEachProfileNames(t *testing.T) {
 			t.Errorf("%s row = %q, want %q then a digest", name, row, want)
 		}
 	}
-	if got := strings.Join(rows["orphan"][8:], " "); got != "no ("+profile.ReasonInstructionsNotFound+")" {
+	if got := strings.Join(rows["orphan"][8:], " "); got != "no ("+profile.ReasonInstructionsNotFound+") global" {
 		t.Errorf("orphan validity = %q", got)
 	}
-	if got := strings.Join(rows["broken"][8:], " "); got != "no ("+profile.ReasonKeyUnknown+")" {
+	if got := strings.Join(rows["broken"][8:], " "); got != "no ("+profile.ReasonKeyUnknown+") global" {
 		t.Errorf("broken validity = %q", got)
 	}
 }

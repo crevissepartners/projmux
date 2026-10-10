@@ -439,7 +439,7 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 	if provider == aiModeClaude && !opts.promptPartsPrepared {
 		projectGuidance = ai.loadProjectGuidance(*project, candidate.Agent.Metadata.Annotations)
 	}
-	request := agentSettingsRequest{model: opts.Model, effort: opts.Effort, source: "resume"}
+	request := agentSettingsRequest{projectUID: project.Metadata.UID, model: opts.Model, effort: opts.Effort, source: "resume"}
 	if projectGuidance.active && projectGuidance.unavailable == nil {
 		request.projectGuidance = &projectGuidance.digest
 	}
@@ -464,9 +464,9 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 	var settings string
 	var policy codexappserver.ThreadPolicy
 	if provider == aiModeCodex {
-		_, policy, err = c.rebind.create.codexResumeProfile(annotations)
+		_, policy, err = c.rebind.create.codexResumeProfile(annotations, project.Metadata.UID)
 	} else {
-		_, _, settings, policy, err = ai.resumeProfileSettings(provider, annotations)
+		_, _, settings, policy, err = ai.resumeProfileSettings(provider, annotations, project.Metadata.UID)
 	}
 	if err != nil {
 		return processhost.Command{}, config, settingsPlan, err

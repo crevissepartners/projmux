@@ -38,6 +38,7 @@ type agentSettingsLaunch struct {
 // (profile; "" for none). The zero value asks nothing: the launch runs what
 // the layers resolve to now.
 type agentSettingsRequest struct {
+	projectUID    string
 	model, effort string
 	// instructions and profile are nil when not asked; a pointer to "" is an
 	// explicit none.
@@ -84,6 +85,14 @@ func (c *aiCommand) ResolveAgentSettingsRequest(provider string, annotations map
 // from the create command's home, where its profile policy is re-read too
 // (codexResumeProfile), and any other Agent through the resume launcher.
 func (r *agentRebinder) resolveSettings(provider string, annotations map[string]string, request agentSettingsRequest) (agentSettingsLaunch, error) {
+	// Even a launcher without layered settings must honor the recorded scope.
+	if name := annotations[coremetadata.AnnotationAgentProfile]; name != "" {
+		_, _, _, err := resolveRecordedProfile(r.create.homeDir, r.create.lookupEnv, name, request.projectUID)
+		if profile.ReasonOf(err) == profile.ReasonOutOfScope {
+			return agentSettingsLaunch{}, err
+		}
+	}
+
 	if provider == aiModeCodex {
 		return resolveAgentSettings(r.create.homeDir, r.create.lookupEnv, provider, annotations, request)
 	}
@@ -129,8 +138,8 @@ func (e *relaunchProfileError) Error() string {
 // resolveSwitchProfile reads the profile a relaunch switches to, by name, the
 // way a create resolves an explicit --profile, and refuses one for another
 // provider.
-func resolveSwitchProfile(homeDir func() (string, error), lookupEnv func(string) string, provider, name string) (profile.Profile, profile.Spec, error) {
-	_, loaded, spec, err := resolveRecordedProfile(homeDir, lookupEnv, name)
+func resolveSwitchProfile(homeDir func() (string, error), lookupEnv func(string) string, provider, name string, projectUID ...string) (profile.Profile, profile.Spec, error) {
+	_, loaded, spec, err := resolveRecordedProfile(homeDir, lookupEnv, name, projectUID...)
 	if err != nil {
 		var unavailable *profileResumeError
 		if errors.As(err, &unavailable) {
@@ -173,18 +182,18 @@ func resolveAgentSettings(homeDir func() (string, error), lookupEnv func(string)
 	recordedName := annotations[coremetadata.AnnotationAgentProfile]
 	switching := request.profile != nil && *request.profile != recordedName
 	if recordedName != "" {
-		_, loaded, spec, err := resolveRecordedProfile(homeDir, lookupEnv, recordedName)
+		_, loaded, spec, err := resolveRecordedProfile(homeDir, lookupEnv, recordedName, request.projectUID)
 		switch {
 		case err == nil:
 			in.Profile = settingsProfile(loaded, spec)
-		case !switching:
+		case !switching || profile.ReasonOf(err) == profile.ReasonOutOfScope:
 			return agentSettingsLaunch{}, err
 		}
 	}
 	if switching {
 		in.Switch, in.SwitchSource = true, request.source
 		if *request.profile != "" {
-			loaded, spec, err := resolveSwitchProfile(homeDir, lookupEnv, provider, *request.profile)
+			loaded, spec, err := resolveSwitchProfile(homeDir, lookupEnv, provider, *request.profile, request.projectUID)
 			if err != nil {
 				return agentSettingsLaunch{}, err
 			}

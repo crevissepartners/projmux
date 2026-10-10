@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -209,7 +210,21 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 		return selectedCreateProfile{}, fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
 	}
 	if name == "" {
-		if name, err = store.RoleProfile(role); err != nil {
+		entries, listErr := store.List()
+		if listErr != nil {
+			return selectedCreateProfile{}, listErr
+		}
+		projectUID := flags.profileProjectUID
+		for _, entry := range entries {
+			if entry.Project != "" && slices.Contains(entry.Roles, role) {
+				projectUID, err = c.profileCreateProject(spelling, flags)
+				if err != nil {
+					return selectedCreateProfile{}, err
+				}
+				break
+			}
+		}
+		if name, err = store.RoleProfile(role, projectUID); err != nil {
 			switch profile.ReasonOf(err) {
 			case profile.ReasonRoleClaimed:
 				return selectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass --profile none to create without a profile; nothing was created",
@@ -230,6 +245,15 @@ func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreat
 			return selectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, option, err))
 		}
 		return selectedCreateProfile{}, fmt.Errorf("%s %s: %w; nothing was created", spelling, option, err)
+	}
+	if spec.Project != "" {
+		projectUID, scopeErr := c.profileCreateProject(spelling, flags)
+		if scopeErr != nil {
+			return selectedCreateProfile{}, scopeErr
+		}
+		if err := profile.CheckProject(name, spec, projectUID); err != nil {
+			return selectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, option, err))
+		}
 	}
 	return selectedCreateProfile{name: name, option: option, source: source, loaded: loaded, spec: spec}, nil
 }
@@ -437,7 +461,7 @@ func (e *profileResumeError) Error() string {
 // way a create resolves an explicit --profile. A profile that is gone or that
 // `profile list` would mark invalid -- a role-claimed one included -- is a
 // profile-resume-unavailable refusal carrying the store's own reason.
-func resolveRecordedProfile(homeDir func() (string, error), lookupEnv func(string) string, name string) (config.Paths, profile.Profile, profile.Spec, error) {
+func resolveRecordedProfile(homeDir func() (string, error), lookupEnv func(string) string, name string, projectUID ...string) (config.Paths, profile.Profile, profile.Spec, error) {
 	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: name, reason: profile.ReasonNotFound,
@@ -450,6 +474,11 @@ func resolveRecordedProfile(homeDir func() (string, error), lookupEnv func(strin
 			reason = profile.ReasonValueInvalid
 		}
 		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: name, reason: reason, detail: err.Error()}
+	}
+	if len(projectUID) != 0 {
+		if err := profile.CheckProject(name, spec, projectUID[0]); err != nil {
+			return config.Paths{}, profile.Profile{}, profile.Spec{}, err
+		}
 	}
 	return paths, loaded, spec, nil
 }
@@ -469,12 +498,12 @@ func resolveRecordedProfile(homeDir func() (string, error), lookupEnv func(strin
 // An Agent without the annotation, and any other provider, get nothing, so
 // their resume argv stays byte-identical. A profile that is gone or invalid
 // is a profile-resume-unavailable refusal.
-func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]string) (name, digest, settings string, policy codexappserver.ThreadPolicy, err error) {
+func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]string, projectUID ...string) (name, digest, settings string, policy codexappserver.ThreadPolicy, err error) {
 	name = annotations[coremetadata.AnnotationAgentProfile]
 	if name == "" || (mode != aiModeClaude && mode != aiModeCodex) {
 		return "", "", "", codexappserver.ThreadPolicy{}, nil
 	}
-	paths, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name)
+	paths, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, projectUID...)
 	if err != nil {
 		return "", "", "", codexappserver.ThreadPolicy{}, err
 	}
@@ -507,12 +536,12 @@ func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]st
 // so its thread/resume request stays byte-identical. A profile that is gone or
 // invalid refuses with profile-resume-unavailable; there is no resume that
 // drops its permissions.
-func (c *createCommand) codexResumeProfile(annotations map[string]string) (agentResumeLaunch, codexappserver.ThreadPolicy, error) {
+func (c *createCommand) codexResumeProfile(annotations map[string]string, projectUID ...string) (agentResumeLaunch, codexappserver.ThreadPolicy, error) {
 	name := annotations[coremetadata.AnnotationAgentProfile]
 	if name == "" {
 		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, nil
 	}
-	_, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name)
+	_, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, projectUID...)
 	if err != nil {
 		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, err
 	}
@@ -589,4 +618,25 @@ func inheritedResumeProfile(registry *coremetadata.Registry, provider, conversat
 		coremetadata.AnnotationAgentProfile:       name,
 		coremetadata.AnnotationAgentProfileDigest: first[coremetadata.AnnotationAgentProfileDigest],
 	}, nil
+}
+
+// profileCreateProject resolves only when a scoped profile requires an owner.
+// Global-only creates retain their existing argv-only preflight ordering.
+func (c *createCommand) profileCreateProject(spelling string, flags resourceCreateFlags) (string, error) {
+	if flags.profileProjectUID != "" {
+		return flags.profileProjectUID, nil
+	}
+	scope, err := c.resolveCreateScope(spelling, flags, resourceCreateShape{split: true, provider: true})
+	if err != nil {
+		return "", err
+	}
+	registry, err := c.store.snapshot()
+	if err != nil {
+		return "", err
+	}
+	project, err := c.resolveProject(registry, scope)
+	if err != nil {
+		return "", MapMetadataError(err)
+	}
+	return project.Metadata.UID, nil
 }

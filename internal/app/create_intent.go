@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 	"io"
 	"maps"
 	"strings"
@@ -194,6 +195,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	}
 	var plan *intentAgentPlan
 	if provider != "" {
+		answerFlags.profileProjectUID = scope.rootUID
 		prepared, err := c.prepareIntentAgent(provider, answerFlags)
 		if err != nil {
 			return createdWindowRuntime{}, visibleCanonicalCreateError(err)
@@ -790,6 +792,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 }
 
 func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, intent agentPaneIntent, provider, launchDir string, flags resourceCreateFlags, stdout, stderr io.Writer) (createdPaneRuntime, error) {
+	flags.profileProjectUID = scope.rootUID
 	plan, err := c.prepareIntentAgent(provider, flags)
 	if err != nil {
 		return createdPaneRuntime{}, err
@@ -967,16 +970,29 @@ func (c *createCommand) prepareIntentAgent(provider string, flags resourceCreate
 // or invalid leaves the settings unlayered, so the launch refuses exactly as
 // it did before layers existed. The snapshot of new instructions content is
 // written here, inside the create's transaction.
-func (c *createCommand) resolvePickerSettings(provider string, inherited map[string]string) (agentSettingsLaunch, error) {
+func (c *createCommand) resolvePickerSettings(provider string, inherited map[string]string, projectUID ...string) (agentSettingsLaunch, error) {
+	request := agentSettingsRequest{}
+	if len(projectUID) != 0 {
+		request.projectUID = projectUID[0]
+	}
+	if name := inherited[coremetadata.AnnotationAgentProfile]; name != "" {
+		_, _, _, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, request.projectUID)
+		if profile.ReasonOf(err) == profile.ReasonOutOfScope {
+			return agentSettingsLaunch{}, err
+		}
+	}
 	annotations := withInheritedSettingSources(inherited, inherited)
 	var settings agentSettingsLaunch
 	var err error
 	if provider == aiModeCodex {
-		settings, err = resolveAgentSettings(c.homeDir, c.lookupEnv, provider, annotations, agentSettingsRequest{})
+		settings, err = resolveAgentSettings(c.homeDir, c.lookupEnv, provider, annotations, request)
 	} else if resolver, ok := c.resumes.(agentSettingsResolver); ok {
-		settings, err = resolver.ResolveAgentSettingsRequest(provider, annotations, agentSettingsRequest{})
+		settings, err = resolver.ResolveAgentSettingsRequest(provider, annotations, request)
 	}
 	if err != nil {
+		if profile.ReasonOf(err) == profile.ReasonOutOfScope {
+			return agentSettingsLaunch{}, err
+		}
 		return agentSettingsLaunch{}, nil
 	}
 	if settings = settings.writeSnapshot(); settings.snapshotErr != nil {
@@ -1106,8 +1122,11 @@ func (c *createCommand) openIntentAgent(
 	// instructions whose content changed launch with a new snapshot and the
 	// snapshot mode off. No model is inherited, so none is passed (U1).
 	var settings agentSettingsLaunch
+	if window, ok := working.Window(target.windowUID); ok {
+		flags.profileProjectUID = window.Metadata.OwnerUID()
+	}
 	if strings.TrimSpace(flags.resumeConversation) != "" {
-		if settings, err = c.resolvePickerSettings(provider, flags.resumeLaunchValues); err != nil {
+		if settings, err = c.resolvePickerSettings(provider, flags.resumeLaunchValues, flags.profileProjectUID); err != nil {
 			return intentAgentOpened{}, err
 		}
 		flags.resumeLaunchValues = settings.launchAnnotations(flags.resumeLaunchValues)
@@ -1136,7 +1155,7 @@ func (c *createCommand) openIntentAgent(
 		// exactly as `agent resume` re-reads the one an Agent records: its
 		// current policy rides thread/resume, and resumeLaunch carries the
 		// digest withResumedProfileDigest records on the new Agent.
-		resumeLaunch, nativePolicy, err = c.codexResumeProfile(flags.resumeLaunchValues)
+		resumeLaunch, nativePolicy, err = c.codexResumeProfile(flags.resumeLaunchValues, flags.profileProjectUID)
 		if err != nil {
 			return intentAgentOpened{}, err
 		}

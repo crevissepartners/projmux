@@ -14,6 +14,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
@@ -350,6 +351,7 @@ type agentResumePlan struct {
 // settingsRequest is what this rebind asks of the Agent's layers.
 func (p agentResumePlan) settingsRequest() agentSettingsRequest {
 	request := p.layerChanges
+	request.projectUID = p.projectUID
 	request.model, request.effort, request.source = p.modelOverride, p.effortOverride, p.settingSource()
 	return request
 }
@@ -631,7 +633,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		settings, err = r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest())
 		if err == nil {
 			// A relaunch that switches the profile resumes with the new one.
-			resumed, nativePolicy, err = r.create.codexResumeProfile(settings.launchAnnotations(plan.annotations))
+			resumed, nativePolicy, err = r.create.codexResumeProfile(settings.launchAnnotations(plan.annotations), plan.projectUID)
 		}
 		if err == nil {
 			nativeCtx, cancel := prepareNativeContext(context.Background())
@@ -675,7 +677,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			// refuses the resume exactly as it did before layers existed.
 			if resolved, resolveErr := r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest().withPromptParts(guidance, links)); resolveErr == nil {
 				settings = resolved.writeSnapshot()
-			} else if plan.layerChanges.changesLayers() {
+			} else if plan.layerChanges.changesLayers() || profile.ReasonOf(resolveErr) == profile.ReasonOutOfScope {
 				// A change to the layers is never launched without them.
 				err = resolveErr
 			}
