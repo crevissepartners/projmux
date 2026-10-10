@@ -1363,7 +1363,7 @@ var routes = []Route{
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
-			"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+			"projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create agent [--host tmux|process] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 			"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
@@ -1415,9 +1415,9 @@ var routes = []Route{
 				Summary:          "Create a Window below one Project, opening on a shell Pane or on one Agent; the runtime is materialized detached",
 				CanonicalSummary: "Create a Window opening on a shell Pane or one Agent",
 				Usage: []string{
-					"projmux create window [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+					"projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 				},
-				Notes:     []string{creatorFlagNote},
+				Notes:     []string{creatorFlagNote, "--host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task."},
 				Outputs:   receiptOutputModes,
 				Canonical: []string{"create window"},
 			},
@@ -1454,7 +1454,7 @@ var routes = []Route{
 					"projmux create agent [--host tmux|process] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]",
 				},
 				Notes: []string{
-					"--host defaults to tmux and keeps existing behavior. --host process owns one foreground Claude or Codex Agent without tmux; Antigravity is refused as process-provider-unsupported. It requires an exact Project or Window, and refuses fan-out, new Windows, Pane anchors, placement, interactive modes, and -o pane-id before creation.",
+					"--host defaults to tmux and keeps existing behavior. --host process owns one foreground Claude or Codex Agent without tmux; Antigravity is refused as process-provider-unsupported. It requires an exact Project or Window, and accepts --create-window --window <exact name> to ensure a virtual Window when absent (an existing name is reused). It refuses fan-out, Pane anchors, placement, interactive modes, and -o pane-id before creation.",
 					"Process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.",
 					"The owner stops its provider on stdin EOF: </dev/null or closed stdin (CI steps, cron, nohup, or a noninteractive shell's &) can end it immediately. Keep stdin open, for example: `d=$(mktemp -d); mkfifo \"$d/in\"; exec 3<>\"$d/in\"; projmux create agent --host process --provider claude --project alpha <\"$d/in\"; exec 3>&-; rm -r \"$d\"`.",
 					"Measured isolated CLI exits (exit always follows actual provider Wait, rather than the owner's signal):\n\n| Owner/provider ending | Graceful EOF-aware stub | Provider requiring TERM |\n| --- | --- | --- |\n| Owner stdin EOF, including /dev/null | 0 | 143 |\n| Owner INT or TERM | 0 | 128 + the provider's actual signal |\n| Provider exits itself | Its exit code (tested: 9) | 143 for SIGTERM |",

@@ -2303,7 +2303,7 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 		shape resourceCreateShape
 	}{
 		{node: "window", spelling: canonicalCreateWindow, args: []string{"window", "--project", "beta"},
-			shape: resourceCreateShape{initialProvider: true}},
+			shape: resourceCreateShape{initialProvider: true, host: true}},
 		{node: "pane", spelling: canonicalCreatePane, args: []string{"pane", "--project", "beta", "--window", "main"},
 			shape: resourceCreateShape{split: true}},
 	} {
@@ -2345,6 +2345,9 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 			fs.Var(&out.projects, "project", "")
 			if test.shape.initialProvider {
 				fs.String("provider", "", "")
+			}
+			if test.shape.host {
+				fs.String("host", "", "")
 			}
 			if test.shape.split {
 				fs.Var(&out.windows, "window", "")

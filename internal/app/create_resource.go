@@ -68,6 +68,7 @@ type resourceCreateFlags struct {
 	labels            repeatedFlag
 	name              string
 	host              string
+	processWindow     bool
 	placementSet      bool
 	provider          string
 	providerSet       bool
@@ -154,7 +155,7 @@ type resourceCreateFlags struct {
 // route that creates an Agent needs the provider. Keeping them grouped is what
 // stops `create window` from silently accepting `--placement`.
 type resourceCreateShape struct {
-	// host is registered only by canonical Agent creation.
+	// host is registered by canonical Agent and Window creation.
 	host bool
 	// split registers the Window fan-out and split-anchor surface:
 	// --window, --pane, --selector, --create-window, --placement.
@@ -741,10 +742,23 @@ func (f resourceCreateFlags) explicitTargetAuthority() bool {
 func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreateWindow
 
-	shape := resourceCreateShape{initialProvider: true}
+	shape := resourceCreateShape{initialProvider: true, host: true}
 	flags, err := parseResourceCreateFlags(spelling, args, stderr, shape)
 	if err != nil {
 		return err
+	}
+	if flags.host != "tmux" && flags.host != "process" {
+		return usageError(fmt.Sprintf("create window --host %q requires tmux or process", flags.host))
+	}
+	if flags.host == "process" {
+		if flags.provider == "" {
+			return usageError("process-window-provider-required: create window --host process requires --provider claude or codex; nothing was created")
+		}
+		if flags.provider != aiModeClaude && flags.provider != aiModeCodex {
+			return usageError("process-window-provider-unsupported: create window --host process requires Claude or Codex; nothing was created")
+		}
+		flags.processWindow = true
+		return c.runProcessAgentCLI(flags, stdout, stderr)
 	}
 	// The initial surface is an argv-only decision, so a misspelled provider and
 	// an interactive picker adapter are both refused before the Settings gate,
@@ -1365,6 +1379,9 @@ func (c *createCommand) planPaneTargets(
 		anchorUID, storedAnchor, err := c.resolveAnchor(registry, project, scope, match.UID, flags, spelling)
 		if err != nil {
 			return panePlan{}, err
+		}
+		if registry.IsVirtualWindow(match.UID) {
+			return panePlan{}, resourcegraph.ProcessCapabilityError{Action: resourcegraph.ProcessCreatePane, Anchor: true}
 		}
 		if _, _, err := c.processRuntime.admit(registry, anchorUID, resourcegraph.ProcessCreatePane); err != nil {
 			return panePlan{}, err

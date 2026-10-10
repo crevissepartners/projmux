@@ -29,7 +29,10 @@ import (
 // Typed callers and the CLI share this validated request. It contains no argv
 // parser, output selection, terminal handle, or inferred runtime authority.
 type processAgentCreateOptions struct {
-	Project, Window                                                    selector.Ref
+	Project, Window selector.Ref
+	// NewWindow requests shell-free creation. A matching Window reference ensures
+	// an existing exact name; an absent Window reference always creates a new one.
+	NewWindow                                                          *coremetadata.BootstrapWindow
 	Provider, Name, CWD, Model, Effort, Instructions, Profile, Persona string
 	// Creator is the bare Agent UID validated by parseResourceCreateFlags.
 	Creator          string
@@ -53,6 +56,8 @@ type processAgentCreateResult struct {
 	// Notices disclose optional prompt parts omitted by this launch.
 	Notices       []string
 	Created       createResult
+	createdWindow bool
+	outputWindow  bool
 	Binding       processhost.Binding
 	Handle        processOwnedHandle
 	Provider      string
@@ -75,6 +80,20 @@ func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentC
 	}
 	if opts.Project == (selector.Ref{}) && opts.Window == (selector.Ref{}) {
 		return processAgentCreateRequest{}, usageError("create agent --host process requires an exact Project or Window scope")
+	}
+	if opts.NewWindow != nil {
+		if opts.Project == (selector.Ref{}) || opts.Window.UID != "" || (opts.Window.Name != "" && opts.Window.Name != opts.NewWindow.Name) {
+			return processAgentCreateRequest{}, usageError("process-create-window-scope-invalid: a new Window requires an exact Project and a matching Window name")
+		}
+		if opts.NewWindow.Name != "" {
+			if err := coremetadata.ValidateName(opts.NewWindow.Name); err != nil {
+				return processAgentCreateRequest{}, MapMetadataError(err)
+			}
+		}
+		window := *opts.NewWindow
+		window.Labels = maps.Clone(window.Labels)
+		window.Panes = nil
+		opts.NewWindow = &window
 	}
 	if opts.Name != "" {
 		if err := coremetadata.ValidateName(opts.Name); err != nil {
@@ -320,6 +339,25 @@ func (c *createCommand) prepareProcessCreateLaunch(plan *processAgentCreatePlan,
 func resolveProcessCreateScope(reg coremetadata.Registry, opts processAgentCreateOptions) (coremetadata.Project, coremetadata.Window, error) {
 	var project coremetadata.Project
 	query := selector.Query{}
+	if opts.NewWindow != nil {
+		matches, err := selector.New(reg).ResolveProjects(selector.Query{Project: &opts.Project})
+		if err != nil {
+			return project, coremetadata.Window{}, err
+		}
+		if len(matches.Matches) != 1 {
+			return project, coremetadata.Window{}, usageError("process creation requires exactly one Project")
+		}
+		found, _ := reg.Project(matches.Matches[0].UID)
+		project = *found
+		if opts.Window.Name != "" {
+			for _, window := range reg.WindowsOf(project.Metadata.UID) {
+				if window.Metadata.Name == opts.Window.Name {
+					return project, window, nil
+				}
+			}
+		}
+		return project, coremetadata.Window{Metadata: coremetadata.ObjectMeta{Name: opts.NewWindow.Name}}, nil
+	}
 	if opts.Project != (selector.Ref{}) {
 		query.Project = &opts.Project
 	}
@@ -379,11 +417,18 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 		if provider == "" {
 			provider = aiModeClaude
 		}
-		agent, err := mutator.CreateAgent(reg, window.Metadata.UID, coremetadata.CreateAgentOptions{Name: opts.Name, Provider: provider, Labels: opts.Labels, Annotations: annotations, Workspace: plan.workspace, Activation: activationStateForPayload(opts.Payload), OperationID: operation})
-		if err != nil {
-			return err
+		agentOpts := coremetadata.CreateAgentOptions{Name: opts.Name, Provider: provider, Labels: opts.Labels, Annotations: annotations, Workspace: plan.workspace, Activation: activationStateForPayload(opts.Payload), OperationID: operation}
+		var agent coremetadata.Agent
+		var pane coremetadata.Pane
+		createdWindow := window.Metadata.UID == ""
+		if createdWindow {
+			window, agent, pane, err = mutator.CreateProcessWindow(reg, project.Metadata.UID, *opts.NewWindow, agentOpts, coremetadata.ProcessBinding{HostInstanceID: operation, Generation: generation, OperationID: operation})
+		} else {
+			agent, err = mutator.CreateAgent(reg, window.Metadata.UID, agentOpts)
+			if err == nil {
+				pane, err = mutator.AttachAgentPane(reg, agent.Metadata.UID, coremetadata.BootstrapPane{Name: derivedAgentPaneName(agent.Metadata.Name), CWD: plan.workspace.CWD, Labels: opts.Labels}, operation)
+			}
 		}
-		pane, err := mutator.AttachAgentPane(reg, agent.Metadata.UID, coremetadata.BootstrapPane{Name: derivedAgentPaneName(agent.Metadata.Name), CWD: plan.workspace.CWD, Labels: opts.Labels}, operation)
 		if err != nil {
 			return err
 		}
@@ -392,7 +437,7 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 		if err := mutator.ReserveProcessBinding(reg, metadataProcessBinding(binding)); err != nil {
 			return err
 		}
-		result = processAgentCreateResult{Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding, Provider: provider, creator: creator}
+		result = processAgentCreateResult{createdWindow: createdWindow, outputWindow: opts.NewWindow != nil && opts.Window == (selector.Ref{}), Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding, Provider: provider, creator: creator}
 		return nil
 	})
 	return result, MapMetadataError(err)
@@ -724,6 +769,13 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 		if result.Handle != nil && (!pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil) {
 			return processhost.ErrStale
 		}
+		if result.createdWindow {
+			window, ok := reg.Window(result.Binding.Window)
+			if !ok || !reg.IsVirtualWindow(window.Metadata.UID) || window.Spec.AnchorPaneRef != result.Binding.Pane || len(reg.PanesOf(window.Metadata.UID)) != 0 || len(reg.PanesOf(result.Binding.Agent)) != 1 || len(reg.AgentsOf(window.Metadata.UID)) != 1 {
+				return processhost.ErrStale
+			}
+			return c.store.mutator().DeleteWindow(reg, result.Binding.Window)
+		}
 		return c.store.mutator().DeleteAgent(reg, result.Binding.Agent)
 	})
 	if err != nil {
@@ -738,6 +790,9 @@ func processCreateCleanupError(result processAgentCreateResult, cause error) err
 		state = processCreateRuntimeOffline
 	}
 	text := fmt.Errorf("runtime=%s; remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux delete agent uid:%s: %w", state, result.Binding.Agent, result.Binding.Pane, result.Binding.Agent, result.Binding.Agent, cause)
+	if result.createdWindow {
+		text = fmt.Errorf("%w; remaining window uid:%s; inspect with projmux describe window uid:%s; cleanup: projmux delete window uid:%s", text, result.Binding.Window, result.Binding.Window, result.Binding.Window)
+	}
 	return newProcessCreateError(text, state, processCreateRemainingRefs(result))
 }
 
@@ -765,6 +820,13 @@ func processCLIRequest(flags resourceCreateFlags) (processAgentCreateRequest, cl
 		if err != nil {
 			return processAgentCreateRequest{}, mode, MapMetadataError(err)
 		}
+	}
+	if flags.createWindow {
+		opts.NewWindow = &coremetadata.BootstrapWindow{Name: opts.Window.Name, Labels: labels}
+	}
+	if flags.processWindow {
+		opts.NewWindow = &coremetadata.BootstrapWindow{Name: flags.name, Labels: labels}
+		opts.Name = ""
 	}
 	request, err := newProcessAgentCreateRequest(opts)
 	return request, mode, err
@@ -882,6 +944,11 @@ func (c *createCommand) writeProcessCreateResult(stdout, stderr io.Writer, mode 
 			return err
 		}
 	}
+	if result.outputWindow {
+		created := result.Created
+		created.kind, created.uid, created.name = coremetadata.KindWindow, result.Binding.Window, result.Created.windowName
+		return c.writeResults(stdout, canonicalCreateWindow, mode, coremetadata.KindWindow, []createResult{created})
+	}
 	return c.writeResults(stdout, canonicalCreateAgent, mode, coremetadata.KindAgent, []createResult{result.Created})
 }
 
@@ -913,5 +980,5 @@ func processWaitExit(snapshot processhost.Snapshot) error {
 }
 
 func processCreateUnsupportedScope(flags resourceCreateFlags) bool {
-	return len(flags.projects) > 1 || len(flags.windows) > 1 || len(flags.panes) > 0 || len(flags.selectors) > 0 || flags.createWindow || flags.allWindows || flags.placementSet || flags.cwdFrom != "" || flags.dialogueReplyOnly || flags.interactiveOnly
+	return len(flags.projects) > 1 || len(flags.windows) > 1 || len(flags.panes) > 0 || len(flags.selectors) > 0 || flags.allWindows || flags.placementSet || flags.cwdFrom != "" || flags.dialogueReplyOnly || flags.interactiveOnly
 }
