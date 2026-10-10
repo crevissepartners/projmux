@@ -395,6 +395,11 @@ func TestHostLostClaudePreparedDoesNotWeakenOrdinaryRetirement(t *testing.T) {
 func TestHostLostClaudePreparedFailedChildWithPriorHistoryRetries(t *testing.T) {
 	c, opts, store, a := hostLostPreparedFixture(t)
 	t.Setenv("PMX_TEST_DEFERRED_INTERNAL", "1")
+	// Reading the first frame fences exit behind durable child publication.
+	// An immediate exit can die before its kernel identity is recorded.
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "claude"), []byte("#!/bin/sh\nIFS= read -r frame\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		pane, _ := reg.Pane(a.Binding.PaneUID)
 		old := a.Binding
@@ -412,10 +417,12 @@ func TestHostLostClaudePreparedFailedChildWithPriorHistoryRetries(t *testing.T) 
 	}
 	first := opts
 	first.Prompt = processResumeFirstFrame{Kind: "user", Text: "first input"}
-	if result, err := c.resumeProcessAgent(ctx, processAgentResumeRequest{options: first}); err == nil {
-		result.fail(nil)
+	failed, startErr := c.resumeProcessAgent(ctx, processAgentResumeRequest{options: first})
+	if startErr == nil {
+		failed.fail(nil)
 		t.Fatal("fixture must fail after child birth")
 	}
+	t.Logf("child init failure: %v", startErr)
 	reg, err := store.LoadReadOnly()
 	if err != nil {
 		t.Fatal(err)
