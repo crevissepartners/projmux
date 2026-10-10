@@ -106,6 +106,68 @@ func TestProcessOwnerStopCauseSurvivesDetachedHandoff(t *testing.T) {
 	}
 }
 
+type processBlockedOwnerStderr struct {
+	entered, release, finished chan struct{}
+}
+
+func (w *processBlockedOwnerStderr) Write(p []byte) (int, error) {
+	close(w.entered)
+	<-w.release // An unread pipe blocks; this is deliberately not EPIPE.
+	close(w.finished)
+	return len(p), nil
+}
+
+func TestProcessOwnerStopBlockedStderrDoesNotBlockWait(t *testing.T) {
+	store, b := sessionBindingFixture(t, aiModeCodex)
+	h := newGenerationOwnedHandle(store, aiModeCodex, b)
+	ctx, recorder := newProcessOwnerStop(context.Background(), store.Path(), b)
+	w := &processBlockedOwnerStderr{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+	recorder.setStderr(w)
+	t.Cleanup(func() {
+		close(w.release)
+		select {
+		case <-w.finished:
+		case <-time.After(time.Second):
+			t.Error("stderr writer did not finish after release")
+		}
+	})
+	owner := &processAgentCreateResult{Binding: b, Handle: h, Provider: aiModeCodex, registryPath: store.Path(), stopRecorder: recorder}
+	finished := make(chan error, 1)
+	go func() {
+		_, err := owner.waitProcessAgent(ctx, func(processhost.Snapshot) error { return errors.New("synchronization failed") })
+		finished <- err
+	}()
+	select {
+	case err := <-finished:
+		if err == nil || h.stops.Load() != 1 {
+			t.Fatalf("err=%v stops=%d", err, h.stops.Load())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked stderr prevented Stop and actual Wait")
+	}
+	select {
+	case <-w.entered:
+	default:
+		t.Fatal("stderr was not attempted")
+	}
+	// Neither duplicate causes nor writer selection may wait on the stuck write.
+	updated := make(chan struct{})
+	go func() {
+		recorder.record(diagnostics.OwnerStopProviderExit)
+		recorder.setStderr(io.Discard)
+		close(updated)
+	}()
+	select {
+	case <-updated:
+	case <-time.After(time.Second):
+		t.Fatal("blocked stderr retained recorder mutex")
+	}
+	events, err := diagnostics.NewStore(filepath.Join(filepath.Dir(filepath.Dir(store.Path())), diagnostics.LogDirName, diagnostics.LogFileName)).Read()
+	if err != nil || len(events) != 1 || events[0].Code != "owner.stop.other" {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
 type processFailedStdin struct{}
 
 func (processFailedStdin) Read([]byte) (int, error) { return 0, errors.New("stdin read failed") }

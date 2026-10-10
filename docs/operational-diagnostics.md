@@ -878,6 +878,10 @@ output modes, including `-o none`; resource projections on stdout keep their
 existing shapes. CLI
 create/resume/relaunch owners and detached owners using the same lifecycle
 share this recording. Competing shutdown paths retain the first recorded
-cause. Journal and stderr writes are best-effort; failures do not change Stop
-or the provider's normal/abnormal classification. SIGKILL cannot be recorded
+cause. The supplementary stderr write gets a 25ms completion budget before
+Stop continues, so an unread full pipe cannot hold up provider shutdown. A
+write still blocked after that budget can finish later; at most one such
+write is attempted per owner generation. Journal and stderr writes are
+best-effort; failures do not change Stop or the provider's normal/abnormal
+classification. SIGKILL cannot be recorded
 by the killed owner. Older journal readers skip this new event.

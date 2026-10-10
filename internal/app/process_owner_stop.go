@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -56,16 +57,38 @@ func (r *processOwnerStopRecorder) record(reason diagnostics.OwnerStopReason) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.recorded {
+		r.mu.Unlock()
 		return
 	}
 	r.recorded = true
 	ppid := os.Getppid()
 	comm := processOwnerParentComm(ppid)
 	r.journal.RecordOwnerStop(diagnostics.OwnerStopRecord{Reason: reason, AgentUID: r.binding.Agent, PaneUID: r.binding.Pane, Generation: r.binding.Generation, OwnerPID: os.Getpid(), OwnerPPID: ppid, ParentComm: comm})
-	if r.stderr != nil {
-		_, _ = fmt.Fprintf(r.stderr, "agent owner stop: reason=%s agent=uid:%s pane=uid:%s generation=%s owner_pid=%d owner_ppid=%d parent_comm=%s\n", reason, r.binding.Agent, r.binding.Pane, r.binding.Generation, os.Getpid(), ppid, comm)
+	stderr := r.stderr
+	line := fmt.Sprintf("agent owner stop: reason=%s agent=uid:%s pane=uid:%s generation=%s owner_pid=%d owner_ppid=%d parent_comm=%s\n", reason, r.binding.Agent, r.binding.Pane, r.binding.Generation, os.Getpid(), ppid, comm)
+	r.mu.Unlock()
+	processWriteOwnerStopStderr(stderr, line)
+}
+
+// A holder may leave stderr as an unread, full pipe. Give the supplemental
+// line a short completion budget so it cannot prevent provider Stop. There
+// is at most one write goroutine per owner generation; a stuck writer lasts
+// only until its reader drains/closes or the owner process exits.
+func processWriteOwnerStopStderr(stderr io.Writer, line string) {
+	if stderr == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.WriteString(stderr, line)
+		close(done)
+	}()
+	timer := time.NewTimer(25 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
 	}
 }
 
