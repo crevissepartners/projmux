@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -152,12 +154,12 @@ func TestOpenAttachVirtualWindowStartsMissingServerRealTmux(t *testing.T) {
 			create.runtime.configPath = configPath
 			create.runtime.executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
 			verb.switcher.managedStopStore = store.store()
-			verb.switcher.materializeVirtualWindow = func(_ context.Context, uid string) error {
-				if err := create.materializeVirtualShell(uid); err != nil {
-					return err
+			verb.switcher.materializeVirtualWindow = func(_ context.Context, uid string) (virtualWindowShellMaterialization, error) {
+				result, err := create.materializeVirtualShellResult(uid)
+				if err == nil {
+					live["alpha"] = true
 				}
-				live["alpha"] = true
-				return nil
+				return result, err
 			}
 			if route == "open" {
 				_, _, err = runRoute(t, verb, "project", "uid:"+project.Metadata.UID)
@@ -183,5 +185,97 @@ func TestOpenAttachVirtualWindowStartsMissingServerRealTmux(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestVirtualWindowMaterializeExitAndFocusAgainRealTmux(t *testing.T) {
+	liveguard.RequireActive(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	server := startRealTmuxNameHandoffServer(t, ctx)
+	if out, err := server.tmux("new-session", "-d", "-s", "bootstrap", "tail", "-f", "/dev/null"); err != nil {
+		t.Fatalf("bootstrap: %v %s", err, out)
+	}
+	t.Cleanup(server.killServer)
+	server.seed(t)
+	root := filepath.Join(server.root, "project")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeResourceStore(t)
+	p, _ := store.registry.Project("prj-alpha")
+	p.Spec.Root = root
+	store.dirs[root] = true
+	project := virtualPrimaryProjectFixture(t, store)
+	windowUID := project.Spec.PrimaryWindowRef
+	processPane := store.registry.AgentsOf(windowUID)[0].Status.PaneRef
+	runner := shellTmuxExecRunner{env: func() []string { return server.environment }}
+	create, err := virtualWindowCreator(runner, func(string) string { return "" }, store.store(), server.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
+	create.runtime.executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
+	_, _, err = runRoute(t, create, "pane", "--project", "uid:"+project.Metadata.UID, "--window", "uid:"+windowUID, "--", "/bin/sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	window, _ := store.registry.Window(windowUID)
+	firstWindow, firstPane := window.Status.RuntimeID, window.Spec.AnchorPaneRef
+	anchor, _ := store.registry.WindowAnchor(windowUID)
+	if firstPane == processPane || store.registry.IsVirtualWindow(windowUID) {
+		t.Fatal("first materialization did not select the tmux anchor")
+	}
+	// Preserve the Project session while its last Pane in this Window exits.
+	if out, err := server.tmux("new-window", "-d", "-t", window.Status.RuntimeSessionID, "-n", "keeper", "tail", "-f", "/dev/null"); err != nil {
+		t.Fatalf("keeper: %v %s", err, out)
+	}
+	if out, err := server.tmux("send-keys", "-t", anchor.Status.Activation.RuntimeID, "exit", "Enter"); err != nil {
+		t.Fatalf("shell exit: %v %s", err, out)
+	}
+	for {
+		out, err := server.tmux("list-windows", "-a", "-F", "#{window_id}")
+		if err == nil && !slices.Contains(strings.Fields(out), firstWindow) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("shell exit did not remove its Window")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	reconcile := &resourceReconcileCommand{runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" }}
+	if err := reconcile.Run([]string{"resources", "--socket-path", server.socket}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	window, _ = store.registry.Window(windowUID)
+	if !store.registry.IsVirtualWindow(windowUID) || window.Spec.AnchorPaneRef != processPane || window.Status.RuntimeID != "" || window.Status.RuntimeSessionID != "" || window.Spec.DefaultShellPaneRef != "" {
+		t.Fatalf("last tmux exit did not restore virtual Window: %+v", window)
+	}
+	if _, present := store.registry.Pane(firstPane); present {
+		t.Fatal("exited shell metadata remains")
+	}
+	focus := newFocusCommand()
+	focus.runner, focus.lookupEnv, focus.loadRegistry = runner, func(string) string { return "" }, store.store().load
+	focus.materializeVirtualWindow = func(_ context.Context, uid, socket string) error {
+		if uid != windowUID || socket != server.socket {
+			t.Fatal("focus changed the Window or physical socket")
+		}
+		return create.materializeVirtualShell(uid)
+	}
+	coordinate, socket, err := focus.resolveUIDNavigation(ctx, focusOptions{NavKind: "window", NavRef: "uid:" + windowUID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	window, _ = store.registry.Window(windowUID)
+	panes, err := server.tmux("list-panes", "-t", window.Status.RuntimeID, "-F", "#{pane_id}")
+	if err != nil || len(strings.Fields(panes)) != 1 || window.Status.RuntimeID == firstWindow || window.Spec.AnchorPaneRef == processPane || window.Spec.DefaultShellPaneRef != window.Spec.AnchorPaneRef || store.registry.IsVirtualWindow(windowUID) || virtualTestPaneCount(store.registry, windowUID) != 2 || socket != server.socket || coordinate != "alpha:"+window.Status.RuntimeID {
+		t.Fatalf("second materialization: coordinate=%s socket=%s Window=%+v Panes=%q err=%v", coordinate, socket, window, panes, err)
+	}
+	if _, present := store.registry.Pane(processPane); !present {
+		t.Fatal("round trip removed the process Pane")
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

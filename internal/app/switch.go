@@ -140,7 +140,7 @@ type switchCommand struct {
 	cleanupKilledSession           func(string)
 	managedStopStore               *resourceStore
 	allowVirtualTerminal           bool
-	materializeVirtualWindow       func(context.Context, string) error
+	materializeVirtualWindow       func(context.Context, string) (virtualWindowShellMaterialization, error)
 	projectTopology                switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
@@ -255,12 +255,12 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		navigation:        newRegistryNavigationCommand(inttmux.ExecRunner{}),
 		managedStopStore:  newResourceStore(),
 	}
-	cmd.materializeVirtualWindow = func(ctx context.Context, uid string) error {
+	cmd.materializeVirtualWindow = func(ctx context.Context, uid string) (virtualWindowShellMaterialization, error) {
 		create, err := virtualWindowCreator(cmd.tmuxRunner, cmd.lookupEnv, cmd.managedStopStore, "")
 		if err != nil {
-			return err
+			return virtualWindowShellMaterialization{}, err
 		}
-		return create.materializeVirtualShell(uid)
+		return create.materializeVirtualShellResult(uid)
 	}
 	cmd.projectSessionPlan = func(ctx context.Context, request projectSessionRequest) error {
 		return cmd.ensureBootstrappedProjectSessionPlanned(ctx, request)

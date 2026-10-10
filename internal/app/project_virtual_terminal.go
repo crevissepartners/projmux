@@ -18,32 +18,29 @@ func terminalWindows(reg coremetadata.Registry, projectUID string) []coremetadat
 	return windows
 }
 
-func (c *switchCommand) prepareVirtualTerminalProject(ctx context.Context, target string) (bool, error) {
+func (c *switchCommand) prepareVirtualTerminalProject(ctx context.Context, target string) (virtualWindowShellMaterialization, error) {
 	if c.managedStopStore == nil || c.managedStopStore.load == nil {
-		return false, nil
+		return virtualWindowShellMaterialization{}, nil
 	}
 	reg, err := c.managedStopStore.load()
 	if err != nil {
-		return false, err
+		return virtualWindowShellMaterialization{}, err
 	}
 	project, found := reg.ProjectByRoot(cleanOptionalPath(target))
 	if !found || !reg.IsVirtualWindow(project.Spec.PrimaryWindowRef) || len(terminalWindows(reg, project.Metadata.UID)) > 0 {
-		return false, nil
+		return virtualWindowShellMaterialization{}, nil
 	}
 	trusted, err := c.authorizeProjectOpen(ctx, target)
 	if err != nil {
-		return false, errProjectTrustGate{err: err}
+		return virtualWindowShellMaterialization{}, errProjectTrustGate{err: err}
 	}
 	if !trusted {
-		return false, errProjectTrustDenied
+		return virtualWindowShellMaterialization{}, errProjectTrustDenied
 	}
 	if c.materializeVirtualWindow == nil {
-		return false, errors.New("open: virtual Window materializer is not configured")
+		return virtualWindowShellMaterialization{}, errors.New("open: virtual Window materializer is not configured")
 	}
-	if err := c.materializeVirtualWindow(ctx, project.Spec.PrimaryWindowRef); err != nil {
-		return false, err
-	}
-	return true, nil
+	return c.materializeVirtualWindow(ctx, project.Spec.PrimaryWindowRef)
 }
 
 // Only canonical open/attach set allowVirtualTerminal. Picker and sidebar
@@ -67,6 +64,8 @@ func (c *switchCommand) selectVirtualTerminalArrival(ctx context.Context, sessio
 	if len(windows) == 0 {
 		return errors.New("open: Project has no terminal Window after materialization")
 	}
+	// Canonical open/attach and Closed-Project topology activation use the app
+	// socket (newSwitchCommand wiring), never an inherited client socket.
 	target, err := tmuxSocketNameTarget(defaultAppSocket)
 	if err != nil {
 		return err

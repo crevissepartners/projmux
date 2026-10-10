@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -148,16 +150,17 @@ func TestOpenAttachAllVirtualProjectMaterializesPrimary(t *testing.T) {
 			project := virtualPrimaryProjectFixture(t, store)
 			create, _ := newTestResourceCreateCommand(t, store, newFakeTmux())
 			verb.switcher.managedStopStore = store.store()
-			verb.switcher.materializeVirtualWindow = func(ctx context.Context, uid string) error {
-				if err := create.materializeVirtualShell(uid); err != nil {
-					return err
+			verb.switcher.materializeVirtualWindow = func(ctx context.Context, uid string) (virtualWindowShellMaterialization, error) {
+				result, err := create.materializeVirtualShellResult(uid)
+				if err == nil {
+					live["alpha"] = true
 				}
-				live["alpha"] = true
-				return nil
+				return result, err
 			}
 			var err error
+			var stdout string
 			if route == "open" {
-				_, _, err = runRoute(t, verb, "project", "uid:"+project.Metadata.UID)
+				stdout, _, err = runRoute(t, verb, "project", "uid:"+project.Metadata.UID, "-o", "receipt")
 			} else {
 				attach := &attachCommand{store: store.store(), switcher: verb.switcher, lookupEnv: func(string) string { return "" }}
 				_, _, err = runRoute(t, attach, "project", "uid:"+project.Metadata.UID)
@@ -171,6 +174,35 @@ func TestOpenAttachAllVirtualProjectMaterializesPrimary(t *testing.T) {
 			}
 			if len(executor.calls) == 0 {
 				t.Fatal("no session handoff")
+			}
+			if route == "open" {
+				var receipt cli.OperationReceipt
+				if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+					t.Fatal(err)
+				}
+				if receipt.Target.UID != project.Metadata.UID || receipt.Effects.Identity != cli.IdentityCreated || receipt.Effects.Address != cli.AddressAllocated || receipt.Effects.Topology != cli.TopologyEstablished || receipt.Effects.DesiredState != cli.DesiredStateCreated || receipt.Effects.Runtime != cli.RuntimeMaterialized || receipt.Effects.Focus != cli.FocusMovedCurrentClient || receipt.Cardinality != (cli.ReceiptCardinality{Projects: 1, Windows: 1, Panes: 1}) || !reflect.DeepEqual(receipt.SelectedWindowUIDs, []string{window.Metadata.UID}) {
+					t.Fatalf("virtual open receipt=%+v", receipt)
+				}
+				shell, _ := store.registry.WindowDefaultShell(window.Metadata.UID)
+				want := []cli.ReceiptResource{
+					{Kind: "Project", UID: project.Metadata.UID, Name: project.Metadata.Name, Action: cli.ActionMaterialized},
+					{Kind: "Window", UID: window.Metadata.UID, Name: window.Metadata.Name, Action: cli.ActionMaterialized},
+					{Kind: "Pane", UID: shell.Metadata.UID, Name: shell.Metadata.Name, Action: cli.ActionCreated},
+				}
+				if !reflect.DeepEqual(receipt.AffectedUIDs, want) {
+					t.Fatalf("affected resources=%+v, want %+v", receipt.AffectedUIDs, want)
+				}
+				// Reopening the same now-real Window must not claim another creation.
+				stdout, _, err = runRoute(t, verb, "project", "uid:"+project.Metadata.UID, "-o", "receipt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal([]byte(stdout), &receipt); err != nil {
+					t.Fatal(err)
+				}
+				if receipt.Effects.Identity != cli.IdentityUnchanged || receipt.Effects.Address != cli.AddressUnchanged || receipt.Effects.Topology != cli.TopologyUnchanged || receipt.Effects.DesiredState != cli.DesiredStateUnchanged || receipt.Effects.Runtime != cli.RuntimeAlreadyLive || receipt.Cardinality != (cli.ReceiptCardinality{Projects: 1}) || len(receipt.AffectedUIDs) != 1 || len(receipt.SelectedWindowUIDs) != 0 || virtualTestPaneCount(store.registry, window.Metadata.UID) != 2 {
+					t.Fatalf("repeated open changed resources or creation receipt: %+v", receipt)
+				}
 			}
 		})
 	}

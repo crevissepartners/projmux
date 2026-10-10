@@ -65,7 +65,9 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 	if err := c.runtime.mirrorPane(ctx, paneID, pane); err != nil {
 		return "", err
 	}
-	window.Spec.AnchorPaneRef = pane.Metadata.UID
+	if _, err := mut.SetWindowAnchor(reg, windowUID, pane.Metadata.UID); err != nil {
+		return "", err
+	}
 	if _, err := mut.ObserveWindowRuntimeBinding(reg, windowUID, created.SessionID, windowID); err != nil {
 		return "", err
 	}
@@ -113,16 +115,30 @@ func virtualWindowCreator(runner tmuxCommandRunner, lookup func(string) string, 
 	return c, nil
 }
 
+type virtualWindowShellMaterialization struct {
+	Window  coremetadata.Window
+	Pane    coremetadata.Pane
+	Created bool
+}
+
 func (c *createCommand) materializeVirtualShell(windowUID string) error {
+	_, err := c.materializeVirtualShellResult(windowUID)
+	return err
+}
+
+// Return only this transaction's new shell, so navigation receipts never infer
+// their affected resources from a later Registry snapshot.
+func (c *createCommand) materializeVirtualShellResult(windowUID string) (virtualWindowShellMaterialization, error) {
+	var result virtualWindowShellMaterialization
 	reg, err := c.store.load()
 	if err != nil {
-		return err
+		return result, err
 	}
 	window, found := reg.Window(windowUID)
 	if !found {
-		return fmt.Errorf("materialize Window uid:%s: not in Registry", windowUID)
+		return result, fmt.Errorf("materialize Window uid:%s: not in Registry", windowUID)
 	}
-	return c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mut coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err = c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mut coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if !working.IsVirtualWindow(windowUID) {
 			return nil
 		}
@@ -144,7 +160,16 @@ func (c *createCommand) materializeVirtualShell(windowUID string) error {
 		if _, err := c.materializeVirtualPane(ctx, working, mut, ledger, *project, windowUID, pane, activation, nil); err != nil {
 			return err
 		}
-		_, _, err = mut.AdoptWindowDefaultShell(working, windowUID, pane.Metadata.UID)
-		return err
+		adopted, _, err := mut.AdoptWindowDefaultShell(working, windowUID, pane.Metadata.UID)
+		if err != nil {
+			return err
+		}
+		current, _ := working.Window(windowUID)
+		result = virtualWindowShellMaterialization{Window: current.Clone(), Pane: adopted, Created: true}
+		return nil
 	}, c.exactProjectOwnershipGuard(window.Metadata.OwnerUID()))
+	if err != nil {
+		return virtualWindowShellMaterialization{}, err
+	}
+	return result, nil
 }

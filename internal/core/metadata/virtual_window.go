@@ -144,3 +144,19 @@ func (m Mutator) ReturnAbsentTmuxWindowsToVirtual(reg *Registry, observed Runtim
 	*reg = next
 	return nil
 }
+
+// SetWindowAnchor selects an eligible Pane owned by this Window. It shares the
+// anchor writer that clears stale tmux projection when a Window becomes virtual.
+func (m Mutator) SetWindowAnchor(reg *Registry, windowUID, paneUID string) (Window, error) {
+	const op = "set window anchor"
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		return Window{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
+	}
+	if !reg.windowAnchorRefEligible(windowUID, paneUID) {
+		return Window{}, stateErr(op, ErrInvalidRegistry, "pane %q is not an eligible anchor of window %q", paneUID, windowUID)
+	}
+	reg.setWindowAnchor(windowUID, paneUID)
+	reg.UpdatedAt = m.clock()().UTC()
+	return window.Clone(), nil
+}

@@ -23,8 +23,8 @@ const (
 	canonicalStopProject  = "stop project"
 )
 
-// projectLifecycleVerb is the closed set of runtime lifecycle verbs that take a
-// Project and change nothing but the runtime and focus axes.
+// projectLifecycleVerb is the closed set of Project runtime lifecycle verbs.
+// Opening an all-virtual Project also declares its first shell Pane.
 type projectLifecycleVerb string
 
 const (
@@ -43,10 +43,9 @@ const (
 // three copies of the resolution and liveness half, which is precisely the half
 // that has to agree for the receipts to mean anything.
 //
-// None of them touches identity, address, topology, or desired state. That is
-// not an implementation detail -- it is the contract the receipt asserts, and
-// the reason `open project` is a different command from the picker that can
-// also create and replace Projects.
+// Project and Window identity are retained. Opening an all-virtual Project
+// creates one shell Pane; its receipt includes that child allocation as well
+// as the Project runtime and client movement.
 type projectLifecycleCommand struct {
 	verb     projectLifecycleVerb
 	store    *resourceStore
@@ -190,7 +189,7 @@ func (c *projectLifecycleCommand) execute(
 		if err != nil {
 			return cli.OperationReceipt{}, err
 		}
-		if materialized {
+		if materialized.Created {
 			live = true
 			runtime = cli.RuntimeMaterialized
 		}
@@ -204,7 +203,7 @@ func (c *projectLifecycleCommand) execute(
 			}
 			runtime = cli.RuntimeMaterialized
 		}
-		return c.receipt(cli.OperationOpenProject, target, runtime, cli.FocusMovedCurrentClient), nil
+		return c.receipt(cli.OperationOpenProject, target, runtime, cli.FocusMovedCurrentClient, materialized), nil
 
 	case projectLifecycleStop:
 		if !live {
@@ -263,13 +262,14 @@ func (c *projectLifecycleCommand) sessionLive(ctx context.Context, sessionName s
 	return true, &route, nil
 }
 
-// receipt renders the fixed lifecycle shape: the four desired-state axes are
-// unchanged by construction, and the Project is the only counted resource.
+// receipt preserves the existing lifecycle shape unless this invocation
+// allocated a virtual Window shell. That outcome includes its exact resources.
 func (c *projectLifecycleCommand) receipt(
 	operation cli.Operation,
 	target cli.ReceiptTarget,
 	runtime cli.RuntimeEffect,
 	focus cli.FocusEffect,
+	shells ...virtualWindowShellMaterialization,
 ) cli.OperationReceipt {
 	receipt := cli.NewReceipt(operation, target, cli.ReceiptEffects{
 		Identity:     cli.IdentityUnchanged,
@@ -281,6 +281,18 @@ func (c *projectLifecycleCommand) receipt(
 	})
 	action := cli.ReceiptAction(runtime)
 	receipt.Add("Project", target.UID, target.Name, action)
+	for _, shell := range shells {
+		if !shell.Created {
+			continue
+		}
+		receipt.Effects.Identity = cli.IdentityCreated
+		receipt.Effects.Address = cli.AddressAllocated
+		receipt.Effects.Topology = cli.TopologyEstablished
+		receipt.Effects.DesiredState = cli.DesiredStateCreated
+		receipt.SelectWindows(shell.Window.Metadata.UID)
+		receipt.Add("Window", shell.Window.Metadata.UID, shell.Window.Metadata.Name, cli.ActionMaterialized)
+		receipt.Add("Pane", shell.Pane.Metadata.UID, shell.Pane.Metadata.Name, cli.ActionCreated)
+	}
 	return receipt
 }
 

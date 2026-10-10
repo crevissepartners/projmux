@@ -1177,10 +1177,10 @@ Selectorless authority: `explicit-target` — the route or caller must name the 
 
 Allowed effects:
 
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
+- `identity=unchanged|created`
+- `address=unchanged|allocated`
+- `topology=unchanged|established`
+- `desired-state=unchanged|created`
 - `runtime=materialized|already-live`
 - `focus=attached-caller`
 - `cardinality=exact-one`
@@ -2187,10 +2187,10 @@ Selectorless authority: `explicit-target` — the route or caller must name the 
 
 Allowed effects:
 
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
+- `identity=unchanged|created`
+- `address=unchanged|allocated`
+- `topology=unchanged|established`
+- `desired-state=unchanged|created`
 - `runtime=unchanged|materialized`
 - `focus=moved-current-client`
 - `cardinality=exact-one`
@@ -2903,10 +2903,10 @@ Selectorless authority: `explicit-target` — the route or caller must name the 
 
 Allowed effects:
 
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
+- `identity=unchanged|created`
+- `address=unchanged|allocated`
+- `topology=unchanged|established`
+- `desired-state=unchanged|created`
 - `runtime=materialized|already-live`
 - `focus=moved-current-client`
 - `cardinality=exact-one`

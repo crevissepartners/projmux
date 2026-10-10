@@ -299,11 +299,11 @@ func startProjectEffects() *AllowedEffects {
 // spelling that materializes *and* navigates, which is exactly why it is not
 // `focus project`: Project focus never materializes, and open never replaces identity.
 func openProjectEffects() *AllowedEffects {
-	return runtimeEffectsOnly(
+	return virtualShellCreationEffects(runtimeEffectsOnly(
 		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
 		[]FocusEffect{FocusMovedCurrentClient},
 		CardinalityExactOne,
-	)
+	))
 }
 
 // stopProjectEffects ends the exact persistent session and nothing else. The
@@ -318,7 +318,7 @@ func stopProjectEffects() *AllowedEffects {
 }
 
 func attachProjectEffects() *AllowedEffects {
-	return allowedEffects(
+	return virtualShellCreationEffects(allowedEffects(
 		[]IdentityEffect{IdentityUnchanged},
 		[]AddressEffect{AddressUnchanged},
 		[]TopologyEffect{TopologyUnchanged},
@@ -326,7 +326,7 @@ func attachProjectEffects() *AllowedEffects {
 		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
 		[]FocusEffect{FocusAttachedCaller},
 		[]CardinalityEffect{CardinalityExactOne},
-	)
+	))
 }
 
 func focusResourceEffects() *AllowedEffects {
@@ -344,6 +344,17 @@ func focusResourceEffects() *AllowedEffects {
 func focusWindowEffects() *AllowedEffects {
 	effects := focusResourceEffects()
 	effects.Runtime = []RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized}
+	return virtualShellCreationEffects(effects)
+}
+
+// virtualShellCreationEffects includes the new child Pane identity, address,
+// owner edge and declaration allocated when a virtual Window needs a shell.
+// The selected Project and Window identities remain unchanged.
+func virtualShellCreationEffects(effects *AllowedEffects) *AllowedEffects {
+	effects.Identity = []IdentityEffect{IdentityUnchanged, IdentityCreated}
+	effects.Address = []AddressEffect{AddressUnchanged, AddressAllocated}
+	effects.Topology = []TopologyEffect{TopologyUnchanged, TopologyEstablished}
+	effects.DesiredState = []DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated}
 	return effects
 }
 
