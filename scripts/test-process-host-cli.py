@@ -14,6 +14,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
+    "virtual_window_lifecycle_cli_test.go",
     "process_agent_question_cli_test.go",
     "process_codex_steer_cli_test.go",
     "agent_relaunch_deferred_test.go",

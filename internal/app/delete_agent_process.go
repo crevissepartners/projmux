@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -284,10 +285,18 @@ func processWaitEvidence(receipt coremetadata.TerminationEvidence) string {
 func processDeleteSignature(registry coremetadata.Registry, plan deletePlan) string {
 	var b strings.Builder
 	b.WriteString(plan.signature())
-	for _, target := range plan.Targets {
-		agent, ok := registry.Agent(target.Match.UID)
+	if plan.Kind == coremetadata.KindWindow {
+		for _, target := range plan.Targets {
+			if window, ok := registry.Window(target.Match.UID); ok {
+				fmt.Fprintf(&b, "|window=%q,anchor=%q,shell=%q,session=%q,runtime=%q", window.Metadata.UID,
+					window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef, window.Status.RuntimeSessionID, window.Status.RuntimeID)
+			}
+		}
+	}
+	for _, uid := range processDeleteAgentUIDs(registry, plan) {
+		agent, ok := registry.Agent(uid)
 		if !ok {
-			fmt.Fprintf(&b, "|agent=%q:absent", target.Match.UID)
+			fmt.Fprintf(&b, "|agent=%q:absent", uid)
 			continue
 		}
 		fmt.Fprintf(&b, "|agent=%q,owner=%q,phase=%q,pane-ref=%q", agent.Metadata.UID, agent.Metadata.OwnerUID(), agent.Status.Phase, agent.Status.PaneRef)
@@ -314,9 +323,16 @@ func processTerminationSignature(receipt *coremetadata.TerminationEvidence) stri
 }
 
 func (d *processAgentDeleter) classifyPlan(registry coremetadata.Registry, plan deletePlan) ([]processDeleteTarget, error) {
+	if plan.Kind == coremetadata.KindWindow {
+		for _, target := range plan.Targets {
+			if !registry.IsVirtualWindow(target.Match.UID) {
+				return nil, processDeleteRefusal(processDeleteRefusedToken, "", "Window uid %q is no longer virtual; nothing was deleted", target.Match.UID)
+			}
+		}
+	}
 	targets := make([]processDeleteTarget, 0, len(plan.Targets))
-	for _, target := range plan.Targets {
-		classified, err := d.classify(registry, target.Match.UID)
+	for _, uid := range processDeleteAgentUIDs(registry, plan) {
+		classified, err := d.classify(registry, uid)
 		if err != nil {
 			return nil, err
 		}
@@ -373,6 +389,9 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 	approved := processDeleteSignature(registry, plan)
 	outcome := processDeleteOutcome{targets: final}
 	err = d.store.mutate(plan.Kind, plan.uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if current := buildDeletePlan(*working, plan.Kind, resolutionOf(plan)).signature(); current != plan.signature() {
+			return processDeleteRefusal(processDeleteRefusedToken, "", "the cascade plan changed between preflight and deletion; nothing was deleted")
+		}
 		if processDeleteSignature(*working, plan) != approved {
 			return processDeleteRefusal(processDeleteRefusedToken, "", "delete agent: process Agent evidence changed between preflight and deletion; nothing was deleted")
 		}
@@ -479,7 +498,7 @@ func (p deletePlan) uids() []string {
 }
 
 func (d *processAgentDeleter) record(outcome processDeleteOutcome, plan deletePlan, operationID string, stderr io.Writer) {
-	recordDeletion(d.store, newDeletionRecord(deletionOperationDeleteAgent, operationID, d.via, outcome.actor,
+	recordDeletion(d.store, newDeletionRecord(childDeletionOperation(plan.Kind), operationID, d.via, outcome.actor,
 		deletionTargetsOf(plan), outcome.affected), stderr)
 }
 
@@ -664,4 +683,149 @@ func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, 
 	}
 	_, err := io.WriteString(stdout, b.String())
 	return err
+}
+
+// processDeleteAgentUIDs includes the live owners removed by a virtual Window
+// cascade and the owner of a process Pane whose Agent is retained.
+func processDeleteAgentUIDs(reg coremetadata.Registry, plan deletePlan) []string {
+	var out []string
+	add := func(uid string) {
+		if !slices.Contains(out, uid) {
+			out = append(out, uid)
+		}
+	}
+	for _, target := range plan.Targets {
+		switch plan.Kind {
+		case coremetadata.KindAgent:
+			add(target.Match.UID)
+		case coremetadata.KindPane:
+			pane, ok := reg.Pane(target.Match.UID)
+			if ok && pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+				add(pane.Metadata.OwnerUID())
+			}
+		case coremetadata.KindWindow:
+			for _, agent := range reg.AgentsOf(target.Match.UID) {
+				for _, pane := range reg.PanesOf(agent.Metadata.UID) {
+					if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+						add(agent.Metadata.UID)
+						break
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+func isVirtualDeletePlan(reg coremetadata.Registry, plan deletePlan) bool {
+	if len(plan.Targets) == 0 {
+		return false
+	}
+	for _, target := range plan.Targets {
+		switch plan.Kind {
+		case coremetadata.KindWindow:
+			if !reg.IsVirtualWindow(target.Match.UID) {
+				return false
+			}
+			// Retained tmux rows of released Agents have no eligible anchor.
+			// Their removal is Registry-only; living tmux Panes are never closed.
+			continue
+		case coremetadata.KindPane:
+			pane, ok := reg.Pane(target.Match.UID)
+			if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+				return false
+			}
+		default:
+			return false
+		}
+		for _, child := range target.Descendants {
+			if child.Kind == coremetadata.KindPane {
+				pane, ok := reg.Pane(child.UID)
+				if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags deleteSocketFlags, dryRun, yes bool, stdout, stderr io.Writer) error {
+	if err := validateDeleteSocketFlags(spelling, flags); err != nil {
+		return err
+	}
+	d := c.processDeleter
+	if d == nil {
+		d = newProcessAgentDeleter()
+	}
+	d.store, d.via = c.store, c.deletionVia()
+	reg, err := c.store.load()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	targets, err := d.classifyPlan(reg, plan)
+	if err != nil {
+		return err
+	}
+	if dryRun {
+		return writeVirtualDeletePlan(stdout, spelling, plan, targets, true)
+	}
+	if plan.needsConfirmation() {
+		stops := 0
+		for _, target := range targets {
+			if target.Runtime == processDeleteRuntimeRunning {
+				stops++
+			}
+		}
+		prompt := fmt.Sprintf("%s will remove %d targets and %d cascade resources, stop %d running process Agents through their owner hosts, and wait for their exact Wait receipts", spelling, len(plan.Targets), plan.Cascades(), stops)
+		if err := c.confirm.confirm(yes, prompt, prompt+"; needs confirmation; re-run with --yes or --dry-run", stdout); err != nil {
+			return err
+		}
+	}
+	op, err := c.mintOperationID()
+	if err != nil {
+		return err
+	}
+	outcome, err := d.execute(context.Background(), plan, targets, func(working *coremetadata.Registry) DeletionActor {
+		return c.observeDeletionActor(tmuxTransport{}, working)
+	})
+	if err != nil {
+		return err
+	}
+	d.record(outcome, plan, op, stderr)
+	if err := writeVirtualDeletePlan(stdout, spelling, plan, outcome.targets, false); err != nil {
+		return err
+	}
+	receipt := childDeleteReceipt(plan.Kind, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, false)
+	for _, target := range outcome.targets {
+		if target.Runtime == processDeleteRuntimeStopped {
+			receipt.Effects.Runtime = cli.RuntimeStopped
+			break
+		}
+	}
+	if err := receipt.WriteHuman(stdout); err != nil {
+		return err
+	}
+	return flushDeleteResult(stdout)
+}
+
+func writeVirtualDeletePlan(stdout io.Writer, spelling string, plan deletePlan, targets []processDeleteTarget, dryRun bool) error {
+	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, dryRun, false); err != nil {
+		return err
+	}
+	for _, target := range targets {
+		var action string
+		switch target.Runtime {
+		case processDeleteRuntimeRunning:
+			action = fmt.Sprintf("would stop through owner host pid=%d and wait for its exact Wait receipt", target.HostPID)
+		case processDeleteRuntimeStopped:
+			action = "stopped through its owner host and confirmed its exact Wait receipt"
+		default:
+			action = "registry-only; no process was signaled and no tmux server was used"
+		}
+		if _, err := fmt.Fprintf(stdout, "  process-host agent uid=%s %s; runtime=%s evidence=%s owner-window=%s root=%s/%s\n", target.Agent, action, target.Runtime, target.Evidence, target.Window, strings.ToLower(string(target.RootKind)), target.RootUID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

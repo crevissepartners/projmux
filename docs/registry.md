@@ -13,6 +13,26 @@ kind still means `tmux`; the only other kind is `process`. Unknown kinds are
 refused with `runtime-kind-unsupported`. Read-only `get` and `describe` can
 consume migrated data without saving it. A successful mutation saves v5.
 
+## Virtual Window lifecycle
+
+A Window with an eligible process Pane as its anchor is virtual: it has no
+shell Pane or tmux Window binding. Eligible tmux Panes take anchor priority
+while any remain. Deleting or releasing the last tmux Pane returns the same
+Window to virtual in that Registry mutation, without opening another shell.
+When a previously bound tmux Window disappears outside Projmux, the next
+successful exact inventory makes the same transition. Living shells remain
+until they are explicitly closed.
+
+`ReturnAbsentTmuxWindowsToVirtual` intentionally permits retiring absent tmux Pane rows as an exception to “absence is not deletion authority”: its guards require a live Project physical session on the same exact socket and a complete inventory proving even the recorded Window runtime ID absent (confirmed loss of the exact server also proves the inventory empty for its previously recorded-live Project sessions).
+
+Deleting a virtual Window's last Pane or Agent also deletes the Window and
+its remaining descendants. The dry-run includes that Window cascade; the
+Project primary Window moves to an eligible sibling or becomes empty.
+`delete window uid:<uid>` on a virtual Window needs no tmux server and stops
+its process Agents through their existing owner-host Stop and Wait path.
+`reconcile` and `doctor` do not classify a virtual Window's absent tmux
+projection as drift or unrealized topology.
+
 ## Process evidence
 
 `get pane -o json` and `get panes -o json` expose the stored model. The same

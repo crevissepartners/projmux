@@ -91,6 +91,9 @@ func ClassifyDivergences(registry coremetadata.Registry, inventory Inventory) []
 			false, "ControlSession")
 	}
 	for _, node := range graph.Windows {
+		if registry.IsVirtualWindow(node.Window.Metadata.UID) && node.Runtime == nil && node.Class != ClassConflict {
+			continue
+		}
 		items = appendRegistryDivergence(items, "window:"+node.Window.Metadata.UID, node.Class, node.Status, node.Runtime,
 			windowFieldsDrifted(node.Window, node.Runtime, inventory), "Window")
 	}

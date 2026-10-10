@@ -918,3 +918,28 @@ func parseRows(output string, want int) [][]string {
 	}
 	return rows
 }
+
+// LiveWindowRuntimeIDs includes unmirrored Windows, so a missing uid mirror
+// cannot authorize retiring a living Window's desired topology.
+func (m Mirror) LiveWindowRuntimeIDs(ctx context.Context) (map[string]bool, error) {
+	out, err := m.run(ctx, "list-windows", "-a", "-F", "#{window_id}")
+	if err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for id := range strings.FieldsSeq(string(out)) {
+		ids[id] = true
+	}
+	return ids, nil
+}
+
+// LiveWindowRuntimeIDs answers from the same complete server snapshot.
+func (s ServerSnapshot) LiveWindowRuntimeIDs(context.Context) (map[string]bool, error) {
+	ids := map[string]bool{}
+	for _, session := range s.sessions {
+		for _, window := range session.legacy.Windows {
+			ids[window.RuntimeID] = true
+		}
+	}
+	return ids, nil
+}

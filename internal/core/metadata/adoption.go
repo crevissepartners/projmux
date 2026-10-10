@@ -210,6 +210,9 @@ func (b *BindingMatcher) MatchWindow(reg *Registry, projectUID, observedUID stri
 			windows := reg.WindowsOf(projectUID)
 			uids := make([]string, 0, len(windows))
 			for _, window := range windows {
+				if reg.IsVirtualWindow(window.Metadata.UID) {
+					continue
+				}
 				uids = append(uids, window.Metadata.UID)
 			}
 			return uids

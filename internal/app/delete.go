@@ -352,6 +352,10 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		return c.runProjectUnregister(verb, spelling, plan, resolution, actorRoute, *dryRun, *yes, stdout, stderr)
 	}
 
+	if isVirtualDeletePlan(registry, plan) {
+		return c.runVirtualDelete(spelling, plan, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, *dryRun, *yes, stdout, stderr)
+	}
+
 	// Process runtime Agents have no tmux half, so their route needs no server.
 	if isProcessAgentPlan(registry, plan) {
 		return c.runProcessAgentDelete(spelling, plan, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, *dryRun, *yes, stdout, stderr)
@@ -814,7 +818,51 @@ func buildDeletePlan(registry coremetadata.Registry, kind coremetadata.Kind, res
 			Descendants: cascadeOf(registry, kind, match.UID),
 		})
 	}
+	if kind == coremetadata.KindPane {
+		completeVirtualWindowCascades(registry, &plan)
+	}
 	return plan
+}
+
+// A selector may remove the last Panes together even when no individual
+// target is the last one yet. Preview that parent cascade on the final target.
+func completeVirtualWindowCascades(reg coremetadata.Registry, plan *deletePlan) {
+	removed := map[string]int{}
+	for i, target := range plan.Targets {
+		removed[target.Match.UID] = i
+		for _, child := range target.Descendants {
+			removed[child.UID] = i
+		}
+	}
+	for _, window := range reg.Windows {
+		uid := window.Metadata.UID
+		if _, included := removed[uid]; included || !reg.IsVirtualWindow(uid) {
+			continue
+		}
+		panes := reg.PanesOf(uid)
+		for _, agent := range reg.AgentsOf(uid) {
+			panes = append(panes, reg.PanesOf(agent.Metadata.UID)...)
+		}
+		last, complete := -1, true
+		for _, pane := range panes {
+			i, ok := removed[pane.Metadata.UID]
+			if !ok {
+				complete = false
+				break
+			}
+			last = max(last, i)
+		}
+		if !complete || last < 0 {
+			continue
+		}
+		out := &plan.Targets[last].Descendants
+		*out = append(*out, deleteDescendant{Kind: coremetadata.KindWindow, UID: uid, Name: window.Metadata.Name})
+		for _, agent := range reg.AgentsOf(uid) {
+			if _, included := removed[agent.Metadata.UID]; !included {
+				*out = append(*out, deleteDescendant{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID, Name: agent.Metadata.Name})
+			}
+		}
+	}
 }
 
 // cascadeOf returns the descendants one delete removes, in registry insertion
@@ -826,6 +874,9 @@ func buildDeletePlan(registry coremetadata.Registry, kind coremetadata.Kind, res
 //     are preserved.
 //   - a Pane is a leaf. Deleting an Agent's current managed Pane leaves the
 //     Agent itself alive as an Offline resource, so it is not a descendant.
+//
+// A virtual Window is removed with its final Pane or Agent; that parent and
+// any retained Agents are included in the cascade too.
 func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid string) []deleteDescendant {
 	var out []deleteDescendant
 	switch kind {
@@ -837,7 +888,9 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 	case coremetadata.KindWindow:
 		for _, agent := range registry.AgentsOf(uid) {
 			out = append(out, deleteDescendant{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID, Name: agent.Metadata.Name})
-			out = append(out, cascadeOf(registry, coremetadata.KindAgent, agent.Metadata.UID)...)
+			for _, pane := range registry.PanesOf(agent.Metadata.UID) {
+				out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
+			}
 		}
 		for _, pane := range registry.PanesOf(uid) {
 			out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
@@ -845,6 +898,16 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 	case coremetadata.KindAgent:
 		for _, pane := range registry.PanesOf(uid) {
 			out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
+		}
+	}
+	if windowUID := registry.VirtualWindowDeleteCascade(kind, uid); windowUID != "" {
+		window, _ := registry.Window(windowUID)
+		out = append(out, deleteDescendant{Kind: coremetadata.KindWindow, UID: windowUID, Name: window.Metadata.Name})
+		for _, sibling := range registry.AgentsOf(windowUID) {
+			if kind == coremetadata.KindAgent && sibling.Metadata.UID == uid {
+				continue
+			}
+			out = append(out, deleteDescendant{Kind: coremetadata.KindAgent, UID: sibling.Metadata.UID, Name: sibling.Metadata.Name})
 		}
 	}
 	return out
