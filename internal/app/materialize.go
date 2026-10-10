@@ -1467,6 +1467,7 @@ func (m *materializer) ensureSessionLaunching(
 	sessionName, runtimeCWD, firstWindowName string,
 	firstPane sessionFirstPaneActivation,
 	ledger *runtimeLedger,
+	firstCommand ...[]string,
 ) (intmux.NewSessionResult, superviseSpec, error) {
 	// Bind an existing invocation server to its physical socket before the
 	// printable declaration is built. A genuinely absent server remains the
@@ -1528,10 +1529,14 @@ func (m *materializer) ensureSessionLaunching(
 		}
 		if issued.valid() {
 			activation = issued
-			if startsFreshServer {
+			var command []string
+			if len(firstCommand) > 0 {
+				command = firstCommand[0]
+			}
+			if startsFreshServer && len(command) == 0 {
 				launch = m.supervisedLaunchOnFreshServer(activation)
 			} else {
-				launch = m.supervisedLaunch(ctx, activation, nil)
+				launch = m.supervisedLaunch(ctx, activation, command)
 			}
 		}
 	}

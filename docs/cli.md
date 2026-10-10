@@ -1545,7 +1545,7 @@ projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--prov
 
 --host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task.
 
-If the Project's primary Window is virtual, terminal open, attach, and Project picker selection are refused with virtual-primary-window before creating or moving a tmux session. Use process Agent controls; agent sessions project <project-ref> lists its conversations.
+A virtual Window materializes when it needs tmux. create agent, create pane, and agent relaunch --host tmux use the requested Pane as its first tmux Pane without adding a shell. focus window uid:<ref> opens one shell. open and attach use an existing terminal Window, or materialize the primary Window with one shell when all Windows are virtual. Project picker and sidebar selection retain the virtual-primary-window refusal until virtual navigation is supported. Process Pane actions retain their process capability refusals.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 

@@ -346,6 +346,7 @@ type agentResumePlan struct {
 	stoppedPane stoppedAgentPane
 	// retiredProcess is supplied only by host relaunch after exact supervisor Wait.
 	retiredProcess *processResumeCandidate
+	virtualWindow  bool
 }
 
 // settingsRequest is what this rebind asks of the Agent's layers.
@@ -427,7 +428,7 @@ func (p agentResumePlan) launchAnnotations() map[string]string {
 // of scope. So projmux checks everything it can see -- a ref exists, it names a
 // known provider, that provider is enabled, its conversation id is well formed,
 // its binary is installed -- and hands the rest to the provider's resume argv.
-func planAgentResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent) (agentResumePlan, error) {
+func planAgentResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent, retiringProcess ...bool) (agentResumePlan, error) {
 	name := agent.Metadata.Name
 
 	// (d) An Agent whose provider hook never ran has nothing to revive. This is
@@ -466,7 +467,7 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 	// A resumable Agent has already given its Pane up. A surviving paneRef means
 	// the registry disagrees with itself, and binding a second Pane would orphan
 	// the first, so this refuses rather than guessing which one is real.
-	if paneUID := strings.TrimSpace(agent.Status.PaneRef); paneUID != "" {
+	if paneUID := strings.TrimSpace(agent.Status.PaneRef); paneUID != "" && !(len(retiringProcess) == 1 && retiringProcess[0] && registry.IsVirtualWindow(agent.Metadata.OwnerUID())) {
 		if pane, ok := registry.Pane(paneUID); ok {
 			return agentResumePlan{}, fmt.Errorf(
 				"%s: agent/%s is %s but still owns managed pane/%s; refusing to bind a second managed Pane",
@@ -740,7 +741,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			return fmt.Errorf("%s: agent %q disappeared before the rebind ran", spelling, plan.agentUID)
 		}
 		if plan.retiredProcess != nil {
-			if err := retireProcessPaneForTmux(working, mutator, *plan.retiredProcess); err != nil {
+			if plan.virtualWindow {
+				if err := validateRetiredProcessForTmux(working, *plan.retiredProcess); err != nil {
+					return err
+				}
+			} else if err := retireProcessPaneForTmux(working, mutator, *plan.retiredProcess); err != nil {
 				return err
 			}
 			agent, _ = working.Agent(plan.agentUID)
@@ -865,18 +870,27 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			nameReason = attachReason
 		}
 
-		// Runtime phase, on the create routes' own materializer.
-		sessionName, err := r.create.ensureProjectRuntime(ctx, working, mutator, *project, operationID, ledger)
-		if err != nil {
-			return err
+		virtual := plan.retiredProcess != nil && plan.virtualWindow
+		if plan.retiredProcess != nil && plan.virtualWindow {
+			if err := mutator.DeletePane(working, plan.retiredProcess.Pane.Metadata.UID); err != nil {
+				return err
+			}
 		}
-		anchorPaneID, err := r.create.ensureAnchorPane(ctx, working, mutator, ledger, *project, sessionName, operationID, paneTarget{
-			windowUID:    plan.windowUID,
-			anchorUID:    plan.anchorUID,
-			storedAnchor: true,
-		})
-		if err != nil {
-			return err
+		// Runtime phase, on the create routes' own materializer.
+		var sessionName, anchorPaneID string
+		if !virtual {
+			sessionName, err = r.create.ensureProjectRuntime(ctx, working, mutator, *project, operationID, ledger)
+			if err != nil {
+				return err
+			}
+			anchorPaneID, err = r.create.ensureAnchorPane(ctx, working, mutator, ledger, *project, sessionName, operationID, paneTarget{
+				windowUID:    plan.windowUID,
+				anchorUID:    plan.anchorUID,
+				storedAnchor: true,
+			})
+			if err != nil {
+				return err
+			}
 		}
 		// A resume is a new materialization of the same Agent, so it issues a
 		// fresh generation. That is what makes a late receipt from the process
@@ -950,9 +964,16 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				return nativeLaunchError(spelling, nativeErr)
 			}
 		}
-		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir,
-			r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv), nil)
-		if paneID != "" {
+		if virtual {
+			pane.Spec.CWD = contextDir
+		}
+		var paneID string
+		if virtual {
+			paneID, err = r.create.materializeVirtualPane(ctx, working, mutator, ledger, *project, plan.windowUID, pane, activation, workLaunchArgv)
+		} else {
+			paneID, err = r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir, r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv), nil)
+		}
+		if paneID != "" && !virtual {
 			// The supervised child now runs and will want the Registry lock
 			// this transaction holds; create.outcome measures the rest of the hold.
 			markSupervisedSpawn(ctx)

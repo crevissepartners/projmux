@@ -1094,7 +1094,11 @@ func (f *fakeTmux) runKill(args []string) ([]byte, error) {
 // and 3.6 do. A fake that echoed a raw 0x1F would hide the parsing bug that
 // spelling exists to avoid.
 func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) string {
-	fields := strings.Split(format, tmuxRowSepFormat)
+	separator := tmuxRowSepFormat
+	if strings.Contains(format, focusFieldSeparator) {
+		separator = focusFieldSeparator
+	}
+	fields := strings.Split(format, separator)
 	out := make([]string, 0, len(fields))
 	for _, field := range fields {
 		token := strings.TrimSuffix(strings.TrimPrefix(field, "#{"), "}")
@@ -1103,6 +1107,8 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, session.id)
 		case token == "session_name" && session != nil:
 			out = append(out, session.name)
+		case token == "session_activity" || token == "session_attached":
+			out = append(out, "0")
 		case token == "window_id" && window != nil:
 			out = append(out, window.id)
 		case token == "window_index" && session != nil && window != nil:
@@ -1110,7 +1116,7 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 		case token == "window_name" && window != nil:
 			out = append(out, window.name)
 		case token == "window_active" && session != nil && window != nil:
-			if slices.Index(session.windows, window) == 0 {
+			if session.current == window.id || (session.current == "" && slices.Index(session.windows, window) == 0) {
 				out = append(out, "1")
 			} else {
 				out = append(out, "0")
@@ -1149,7 +1155,7 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, "")
 		}
 	}
-	return strings.Join(out, tmuxRowSepFormat)
+	return strings.Join(out, separator)
 }
 
 // scopedOption reads a projmux option from the narrowest scope the caller

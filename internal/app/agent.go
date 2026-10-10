@@ -405,8 +405,8 @@ func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQuery
 // resume plan and the Agent's effective workspace. It reads nothing but
 // registry and writes nothing, so `agent persona` can run it against a
 // predicted registry before it changes anything.
-func (c *agentCommand) prepareResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent) (agentResumePlan, error) {
-	plan, err := planAgentResume(spelling, registry, agent)
+func (c *agentCommand) prepareResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent, retiringProcess ...bool) (agentResumePlan, error) {
+	plan, err := planAgentResume(spelling, registry, agent, retiringProcess...)
 	if err != nil {
 		return agentResumePlan{}, err
 	}

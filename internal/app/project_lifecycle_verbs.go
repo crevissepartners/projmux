@@ -126,9 +126,9 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 		return fmt.Errorf("%s: the Project runtime executor is not configured", spelling)
 	}
 	if c.verb == projectLifecycleOpen {
-		if err := c.switcher.requireTerminalProject(root); err != nil {
-			return err
-		}
+		previous := c.switcher.allowVirtualTerminal
+		c.switcher.allowVirtualTerminal = true
+		defer func() { c.switcher.allowVirtualTerminal = previous }()
 	}
 	sessionName, err := c.switcher.resolveTargetSession(root)
 	if err != nil {
@@ -186,6 +186,14 @@ func (c *projectLifecycleCommand) execute(
 				spelling, project.Metadata.Name))
 		}
 		runtime := cli.RuntimeAlreadyLive
+		materialized, err := c.switcher.prepareVirtualTerminalProject(ctx, root)
+		if err != nil {
+			return cli.OperationReceipt{}, err
+		}
+		if materialized {
+			live = true
+			runtime = cli.RuntimeMaterialized
+		}
 		if live {
 			if err := c.switcher.openProjectSession(ctx, sessionName); err != nil {
 				return cli.OperationReceipt{}, err

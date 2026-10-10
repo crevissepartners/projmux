@@ -444,9 +444,12 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		}
 
 		// Runtime phase.
-		sessionName, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
-		if err != nil {
-			return err
+		var sessionName string
+		if len(windows) > 0 {
+			sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
+			if err != nil {
+				return err
+			}
 		}
 		for i := range windows {
 			if err := c.materializeWindow(ctx, working, mutator, ledger, project, sessionName, &windows[i]); err != nil {
@@ -454,14 +457,23 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			}
 		}
 		for _, work := range agents {
-			anchorPaneID, err := c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
-			if err != nil {
-				return err
+			var anchorPaneID string
+			if !work.target.virtual {
+				if sessionName == "" {
+					sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
+					if err != nil {
+						return err
+					}
+				}
+				anchorPaneID, err = c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
+				if err != nil {
+					return err
+				}
 			}
 			workWorkspace := workspace
 			workTitle := title
 			workLaunchArgv := launchArgv
-			if source == splitCWDFromPane {
+			if source == splitCWDFromPane && !work.target.virtual {
 				dir, notice := c.splitPaneLaunchDir(ctx, anchorPaneID, project.Spec.Root)
 				if notice != "" {
 					notices = append(notices, splitCWDNoticeLine(spelling, work.windowName, notice))
@@ -532,9 +544,13 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					return nativeLaunchError(spelling, nativeErr)
 				}
 			}
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD,
-				c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
-			if paneID != "" {
+			var paneID string
+			if work.target.virtual {
+				paneID, err = c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.target.windowUID, work.pane, work.activation, workLaunchArgv)
+			} else {
+				paneID, err = c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD, c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
+			}
+			if paneID != "" && !work.target.virtual {
 				// The supervised child now runs and will want the Registry lock
 				// this transaction holds; create.outcome measures the rest of the hold.
 				markSupervisedSpawn(ctx)
@@ -549,7 +565,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return err
 			}
-			c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
+			if !work.target.virtual {
+				c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
+			}
 			// The managed-pane options are what make this pane an agent pane to
 			// the statusbar, the attention tracker, and the notification
 			// pipeline. They are applied after the pane exists and before the

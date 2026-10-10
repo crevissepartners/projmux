@@ -55,9 +55,13 @@ func TestProcessVirtualWindowReservationAndRollback(t *testing.T) {
 					t.Fatalf("virtual topology materialized: %+v %v", topology, err)
 				}
 				_, err := command.planPaneTargets(store.registry, project, createScope{project: opts.Project}, resourceCreateFlags{windows: repeatedFlag{"uid:" + w.Metadata.UID}}, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, canonicalCreateAgent)
+				if err != nil {
+					t.Fatalf("virtual Window admission: %v", err)
+				}
+				_, err = command.planPaneTargets(store.registry, project, createScope{project: opts.Project}, resourceCreateFlags{windows: repeatedFlag{"uid:" + w.Metadata.UID}, panes: repeatedFlag{"uid:" + result.Binding.Pane}}, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, canonicalCreateAgent)
 				var capability resourcegraph.ProcessCapabilityError
 				if !errors.As(err, &capability) || capability.Action != resourcegraph.ProcessCreatePane {
-					t.Fatalf("virtual admission: %v", err)
+					t.Fatalf("explicit process Pane admission: %v", err)
 				}
 			}
 			if err := command.rollbackProcessAgent(&result); err != nil {

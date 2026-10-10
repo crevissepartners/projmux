@@ -240,6 +240,55 @@ func (c *focusCommand) resolveUIDNavigation(ctx context.Context, opts focusOptio
 		return "", fallbackSocket, focusUIDNoLiveRuntime(subject, "no owning Project in the Registry")
 	}
 
+	if opts.NavKind == "window" && window != nil && loaded.IsVirtualWindow(window.Metadata.UID) {
+		// Validate plain scope before creating a runtime for a UID request.
+		if projectRef != "" && !isUID(projectRef) {
+			expected := ""
+			if project.Status.Session != nil {
+				expected = strings.TrimSpace(project.Status.Session.Name)
+			}
+			if projectRef != expected {
+				return "", fallbackSocket, focusUIDScopeMismatch(subject, "--project %q is not its Project uid:%s session %q", projectRef, project.Metadata.UID, expected)
+			}
+		}
+		socket := fallbackSocket
+		if project.Status.Session != nil && project.Status.Session.SocketPath != "" {
+			socket = project.Status.Session.SocketPath
+		}
+		if opts.Socket != "" && filepath.Clean(opts.Socket) != filepath.Clean(socket) {
+			return "", socket, focusUIDScopeMismatch(subject, "explicit socket differs from Project socket")
+		}
+		serverRunner := c.runner
+		if socket != "" {
+			target, err := tmuxSocketPathTarget(socket)
+			if err != nil {
+				return "", socket, err
+			}
+			serverRunner = explicitTmuxRunner{runner: c.runner, target: target}
+		}
+		if _, err := serverRunner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}"); err != nil {
+			if isMissingTmuxServer(err) {
+				return "", socket, focusUIDNoLiveRuntime(subject, "tmux server is unavailable; run projmux attach project uid:%s to start it", project.Metadata.UID)
+			}
+			return "", socket, focusUIDNoLiveRuntime(subject, "tmux server could not be inspected: %v", err)
+		}
+		if c.materializeVirtualWindow == nil {
+			return "", socket, errors.New("focus: virtual Window materializer is not configured")
+		}
+		if err := c.materializeVirtualWindow(ctx, window.Metadata.UID, socket); err != nil {
+			return "", socket, err
+		}
+		loaded, err = c.loadRegistry()
+		if err != nil {
+			return "", socket, err
+		}
+		reg = &loaded
+		window, _ = reg.Window(window.Metadata.UID)
+		project, _ = reg.Project(project.Metadata.UID)
+		if window == nil || project == nil {
+			return "", socket, errors.New("focus: materialized ownership disappeared")
+		}
+	}
 	session := project.Status.Session
 	if session == nil || strings.TrimSpace(session.Name) == "" {
 		return "", fallbackSocket, focusUIDNoLiveRuntime(subject, "Project uid:%s records no status.session.name", project.Metadata.UID)

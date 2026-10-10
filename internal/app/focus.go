@@ -56,7 +56,8 @@ type focusCommand struct {
 	notifyStoreFn     func() (notifyStore, error)
 	// loadRegistry reads the resource Registry for a canonical request that
 	// carries a `uid:` selector. It is never called on the name path.
-	loadRegistry func() (coremetadata.Registry, error)
+	loadRegistry             func() (coremetadata.Registry, error)
+	materializeVirtualWindow func(context.Context, string, string) error
 }
 
 type focusOptions struct {
@@ -111,6 +112,13 @@ func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand 
 		homeDir:       os.UserHomeDir,
 		notifyStoreFn: defaultStatusNotifyStore,
 		loadRegistry:  loadResourceRegistry,
+	}
+	cmd.materializeVirtualWindow = func(ctx context.Context, uid, socket string) error {
+		create, err := virtualWindowCreator(cmd.runner, cmd.lookupEnv, nil, socket)
+		if err != nil {
+			return err
+		}
+		return create.materializeVirtualShell(uid)
 	}
 	cmd.notifierOnce = func(stderr io.Writer) focusNotifier {
 		// Reuse the existing notifier chain (WSL toast, notify-send, hook).
