@@ -297,7 +297,7 @@ func startProjectEffects() *AllowedEffects {
 
 // openProjectEffects is start plus the current-client move. It is the one
 // spelling that materializes *and* navigates, which is exactly why it is not
-// `focus project`: focus never materializes, and open never replaces identity.
+// `focus project`: Project focus never materializes, and open never replaces identity.
 func openProjectEffects() *AllowedEffects {
 	return runtimeEffectsOnly(
 		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
@@ -339,6 +339,12 @@ func focusResourceEffects() *AllowedEffects {
 		[]FocusEffect{FocusMovedCurrentClient},
 		[]CardinalityEffect{CardinalityExactOne},
 	)
+}
+
+func focusWindowEffects() *AllowedEffects {
+	effects := focusResourceEffects()
+	effects.Runtime = []RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized}
+	return effects
 }
 
 func switchProjectEffects() *AllowedEffects {
@@ -1685,11 +1691,11 @@ var routes = []Route{
 				Canonical: []string{"focus project"},
 			},
 			{
-				Effects:            focusResourceEffects(),
+				Effects:            focusWindowEffects(),
 				Name:               "window",
 				Invocation:         InvocationExplicit,
-				Summary:            "Move the current client to an already-live Window in an exact live root session; never materializes",
-				CanonicalSummary:   "Move the current client to a live Window",
+				Summary:            "Move the current client to a Window; a virtual Window uid materializes with one shell",
+				CanonicalSummary:   "Move the current client to a Window, materializing a virtual Window uid",
 				CanonicalSelfFirst: true,
 				Usage: []string{
 					"projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>] [--json]",
@@ -1697,7 +1703,7 @@ var routes = []Route{
 				},
 				Notes: []string{
 					"A plain `<ref>` is a live window name or `@id` and requires `--project`. `uid:<uid>` names a Registry Window, which resolves to its `status.runtimeID` inside its owning Project's session, so `--project` is optional; when given it must be that Project (`uid:` or its session name) or the route exits 2. `--project uid:<uid>` also works with a plain `<ref>`.",
-					"A `uid:` resolution uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. The resolved window must still be live.",
+					"A `uid:` resolution uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. A virtual Window uid materializes with one shell in its Project session before navigation. If that socket has no tmux server, focus refuses without materialization and directs the caller to attach the Project first. A plain window reference must already be live.",
 				},
 				Canonical: []string{"focus window"},
 			},

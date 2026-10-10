@@ -52,6 +52,7 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"attach-project-live", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"focus-project", "focus project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"focus-window", "focus window", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"focus-virtual-window", "focus window", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"focus-pane", "focus pane", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"switch-cancel", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusUnchanged, CardinalityUnchanged, nil},
 		{"switch-sidebar-cancel-restore", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusMovedCurrentClient, CardinalityExactOne, nil},
@@ -395,7 +396,7 @@ func TestCorrectedHandlerEffectsAreFixtureCovered(t *testing.T) {
 	for _, route := range []string{
 		"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity",
 		"start project", "open project", "stop project", "unregister project", "delete project",
-		"agent resume", "shell", "reconcile resources", "reconcile registry",
+		"agent resume", "shell", "reconcile resources", "reconcile registry", "focus window",
 		"switch", "runtime sessions", "runtime diagnostics", "window recent", "internal statusbar click", "internal session-popup open",
 		"internal agent-pane launch-default", "internal agent-pane picker", "internal focus",
 	} {

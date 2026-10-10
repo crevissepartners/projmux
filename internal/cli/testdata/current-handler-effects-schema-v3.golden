@@ -21,6 +21,7 @@ scenario=attach-project-offline route=attach project identity=unchanged address=
 scenario=attach-project-live route=attach project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=attached-caller cardinality=exact-one domain-effect=null
 scenario=focus-project route=focus project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=focus-window route=focus window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
+scenario=focus-virtual-window route=focus window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=focus-pane route=focus pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=switch-cancel route=switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 scenario=switch-sidebar-cancel-restore route=switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=moved-current-client cardinality=exact-one domain-effect=null
