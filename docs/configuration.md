@@ -1731,6 +1731,9 @@ file. A changed digest uses the new content, updates the annotation and turns
 provider prompt snapshots off; removed instructions remove the digest. An
 unchanged digest leaves the recorded snapshot mode alone.
 `agent relaunch -o json` reports `project-guidance-changed` in `relaunchReasons`.
+A Prepared Claude resume or relaunch freezes these instructions when its recipe
+is prepared. Changes made while it waits for the first input apply on the next
+resume or relaunch; the first input uses the prepared snapshot.
 
 Unreadable, non-regular or oversized files let the Agent start without Project
 instructions and emit `project-guidance-unavailable`. Existing digest annotations
