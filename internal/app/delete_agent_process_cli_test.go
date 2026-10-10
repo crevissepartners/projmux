@@ -14,6 +14,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -260,8 +261,10 @@ func testProcessDeleteRunningAgent(t *testing.T, provider string) {
 	if err := owner.wait(); err != nil || strings.Contains(owner.stderr.String(), "delete agent") {
 		t.Fatalf("owner after Stop: %v %s", err, owner.stderr.String())
 	}
-	if !strings.Contains(owner.stderr.String(), "was deleted by another process; nothing to clean up") &&
-		!strings.Contains(owner.stderr.String(), "was stopped by another process") && owner.stderr.Len() != 0 {
+	assertProcessOwnerStop(t, f.store.Path(), owner.stderr.String(), diagnostics.OwnerStopControl, owner.cmd.Process.Pid)
+	projectionStderr := processOwnerStderrProjection(t, owner.stderr.String(), diagnostics.OwnerStopControl)
+	if !strings.Contains(projectionStderr, "was deleted by another process; nothing to clean up") &&
+		!strings.Contains(projectionStderr, "was stopped by another process") && projectionStderr != "" {
 		t.Fatalf("owner notice: %q", owner.stderr.String())
 	}
 	f.requireDeleted(t, owner)

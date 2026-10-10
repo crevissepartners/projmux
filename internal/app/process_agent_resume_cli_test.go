@@ -20,6 +20,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
@@ -528,7 +529,9 @@ func TestProcessResumeOutputModesAndCodexEmptyReattachActualCLI(t *testing.T) {
 		if err != nil || readErr != nil {
 			t.Fatalf("mode %s Wait: %v %v %s", mode, err, readErr, stderr.String())
 		}
-		if mode == "none" && (len(rest) > 0 || stderr.Len() > 0) {
+		assertProcessOwnerStop(t, f.store.Path(), stderr.String(), diagnostics.OwnerStopStdinEOF, cmd.Process.Pid)
+		projectionStderr := processOwnerStderrProjection(t, stderr.String(), diagnostics.OwnerStopStdinEOF)
+		if mode == "none" && (len(rest) > 0 || projectionStderr != "") {
 			t.Fatalf("none displayed stdout=%s stderr=%s", rest, stderr.String())
 		}
 		if mode != "none" && !strings.Contains(stderr.String(), "runtime=process foreground=owned") {

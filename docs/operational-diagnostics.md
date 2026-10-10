@@ -873,7 +873,9 @@ The private journal includes `agent_uid`, `pane_uid`, `generation`, `owner_pid`,
 empty when unavailable (including systems without `/proc`). It is a clue about
 ancestry, not evidence of who sent a signal.
 
-The owner also writes one `agent owner stop: reason=...` line to stderr. CLI
+The owner also writes one `agent owner stop: reason=...` line to stderr in all
+output modes, including `-o none`; resource projections on stdout keep their
+existing shapes. CLI
 create/resume/relaunch owners and detached owners using the same lifecycle
 share this recording. Competing shutdown paths retain the first recorded
 cause. Journal and stderr writes are best-effort; failures do not change Stop

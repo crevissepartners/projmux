@@ -342,8 +342,10 @@ func TestProcessCreateProjectionAndRefusalsActualCLI(t *testing.T) {
 			if bytes.Contains(stdout.Bytes(), []byte("runtime=process foreground=owned")) || bytes.Contains(stdout.Bytes(), []byte("session_id")) {
 				t.Fatal("projection leaked ownership/provider")
 			}
+			assertProcessOwnerStop(t, f.store.Path(), stderr.String(), diagnostics.OwnerStopStdinEOF, cmd.Process.Pid)
+			projectionStderr := processOwnerStderrProjection(t, stderr.String(), diagnostics.OwnerStopStdinEOF)
 			if mode == "none" {
-				if stdout.Len() != 0 || stderr.Len() != 0 {
+				if stdout.Len() != 0 || projectionStderr != "" {
 					t.Fatalf("none output: %s %s", stdout.String(), stderr.String())
 				}
 				return
@@ -1259,7 +1261,7 @@ func assertProcessOwnerStop(t *testing.T, registryPath, stderr string, reason di
 	}
 	var stops []diagnostics.Event
 	for _, event := range events {
-		if event.Event == "agent.owner.stop" {
+		if event.Event == "agent.owner.stop" && event.OwnerPID == pid {
 			stops = append(stops, event)
 		}
 	}
@@ -1273,4 +1275,15 @@ func assertProcessOwnerStop(t *testing.T, registryPath, stderr string, reason di
 	if strings.Count(stderr, "agent owner stop:") != 1 || !strings.Contains(stderr, "reason="+string(reason)) {
 		t.Fatalf("owner stderr missing cause: %s", stderr)
 	}
+}
+
+// Projection contracts remain exact after validating the required diagnostic
+// line. Only this closed, shaped owner line may be removed from stderr.
+func processOwnerStderrProjection(t *testing.T, stderr string, reason diagnostics.OwnerStopReason) string {
+	t.Helper()
+	pattern := regexp.MustCompile(`(?m)^agent owner stop: reason=` + regexp.QuoteMeta(string(reason)) + ` agent=uid:agent-[a-z0-9-]+ pane=uid:pane-[a-z0-9-]+ generation=gen-[a-z0-9-]+ owner_pid=[1-9][0-9]* owner_ppid=[0-9]+ parent_comm=[A-Za-z0-9_.-]{0,64}\n`)
+	if len(pattern.FindAllString(stderr, -1)) != 1 {
+		t.Fatalf("expected one shaped %s stderr cause: %q", reason, stderr)
+	}
+	return pattern.ReplaceAllString(stderr, "")
 }

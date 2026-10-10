@@ -289,8 +289,10 @@ func TestProcessCodexCreateHooksAndOutputActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatalf("projection: %v %s", err, stderr.String())
 			}
+			assertProcessOwnerStop(t, f.store.Path(), stderr.String(), diagnostics.OwnerStopStdinEOF, cmd.Process.Pid)
+			projectionStderr := processOwnerStderrProjection(t, stderr.String(), diagnostics.OwnerStopStdinEOF)
 			if mode == "none" {
-				if stdout.Len() != 0 || stderr.Len() != 0 {
+				if stdout.Len() != 0 || projectionStderr != "" {
 					t.Fatal("none emitted output")
 				}
 				return
@@ -322,7 +324,7 @@ func TestProcessCodexCreateHooksAndOutputActualCLI(t *testing.T) {
 				t.Fatalf("projection %s bytes changed:\n%s", mode, normalized)
 			}
 			ownership := fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=owned\n", agent.Metadata.UID, agent.Status.PaneRef)
-			if stderr.String() != ownership {
+			if projectionStderr != ownership {
 				t.Fatalf("ownership bytes: %q", stderr.String())
 			}
 		})
