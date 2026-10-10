@@ -125,6 +125,11 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 	if c.switcher == nil {
 		return fmt.Errorf("%s: the Project runtime executor is not configured", spelling)
 	}
+	if c.verb == projectLifecycleOpen {
+		if err := c.switcher.requireTerminalProject(root); err != nil {
+			return err
+		}
+	}
 	sessionName, err := c.switcher.resolveTargetSession(root)
 	if err != nil {
 		return err

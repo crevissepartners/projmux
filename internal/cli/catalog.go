@@ -1417,7 +1417,7 @@ var routes = []Route{
 				Usage: []string{
 					"projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 				},
-				Notes:     []string{creatorFlagNote, "--host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task."},
+				Notes:     []string{creatorFlagNote, "--host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task.", "If the Project's primary Window is virtual, terminal open, attach, and Project picker selection are refused with virtual-primary-window before creating or moving a tmux session. Use process Agent controls; agent sessions project <project-ref> lists its conversations."},
 				Outputs:   receiptOutputModes,
 				Canonical: []string{"create window"},
 			},

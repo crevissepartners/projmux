@@ -434,8 +434,11 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 		}
 		creator.forAgent(reg, agent.Metadata.UID).annotatePane(reg, pane)
 		binding := processhost.Binding{Host: operation, Project: project.Metadata.UID, Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID, Generation: generation, Operation: operation}
-		if err := mutator.ReserveProcessBinding(reg, metadataProcessBinding(binding)); err != nil {
-			return err
+		// CreateProcessWindow reserves the binding atomically with its anchor.
+		if !createdWindow {
+			if err := mutator.ReserveProcessBinding(reg, metadataProcessBinding(binding)); err != nil {
+				return err
+			}
 		}
 		result = processAgentCreateResult{createdWindow: createdWindow, outputWindow: opts.NewWindow != nil && opts.Window == (selector.Ref{}), Created: createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name, projectName: project.Metadata.Name, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}, Binding: binding, Provider: provider, creator: creator}
 		return nil

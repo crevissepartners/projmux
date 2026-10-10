@@ -94,6 +94,9 @@ type projectTopologyMaterializeRequest struct {
 }
 
 func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionName string) error {
+	if err := c.requireTerminalProject(target); err != nil {
+		return err
+	}
 	exists, err := c.switchSessionExists(ctx, sessionName)
 	if err != nil {
 		return err
@@ -181,6 +184,9 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 }
 
 func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Context, request projectOpenRequest) (err error) {
+	if err := c.requireTerminalProject(request.Target); err != nil {
+		return err
+	}
 	trusted, err := c.authorizeProjectOpen(ctx, request.Target)
 	if err != nil {
 		return errProjectTrustGate{err: err}
@@ -211,6 +217,30 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 	}
 	err = c.continueProjectOpenRequest(ctx, request, opened)
 	return err
+}
+
+// Until virtual Windows can be materialized, opening their Project must not
+// create an empty tmux session or adopt a shell into the process anchor.
+func (c *switchCommand) requireTerminalProject(target string) error {
+	if c.managedStopStore == nil {
+		return nil
+	}
+	read := c.managedStopStore.snapshot
+	if read == nil {
+		read = c.managedStopStore.load
+	}
+	if read == nil {
+		return nil
+	}
+	reg, err := read()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	project, ok := reg.ProjectByRoot(cleanOptionalPath(target))
+	if !ok || !reg.IsVirtualWindow(project.Spec.PrimaryWindowRef) {
+		return nil
+	}
+	return usageError(fmt.Sprintf("virtual-primary-window: Project %s has a process-only primary Window; terminal opening is not available yet. Use process Agent controls; list its conversations with projmux agent sessions project uid:%s", project.Metadata.Name, project.Metadata.UID))
 }
 
 // validateSidebarProjectOpenRoute proves that the detached sidebar anchor is

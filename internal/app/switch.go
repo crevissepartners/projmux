@@ -1749,6 +1749,9 @@ func (c *switchCommand) resolveTargetSession(target string) (string, error) {
 
 func (c *switchCommand) openTarget(ctx context.Context, target string) error {
 	target = cleanOptionalPath(target)
+	if err := c.requireTerminalProject(target); err != nil {
+		return err
+	}
 	sessionName, err := c.resolveTargetSession(target)
 	if err != nil || sessionName == "" {
 		return err
@@ -1776,6 +1779,9 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 	target := cleanOptionalPath(plan.Selection)
 	if target == "" {
 		return nil
+	}
+	if err := c.requireTerminalProject(target); err != nil {
+		return err
 	}
 	sessionName := strings.TrimSpace(plan.SessionName)
 	if sessionName == "" {
