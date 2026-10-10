@@ -11,6 +11,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -26,6 +27,7 @@ const internalCodexProcessHostEnv = "PMX_INTERNAL_CODEX_PROCESS_HOST"
 // Only the owned host may issue this non-durable endpoint proof. No broker
 // epoch, Registry schema field or public route is allocated here.
 type codexProcessEndpoint struct {
+	stopRecorder   *processOwnerStopRecorder
 	binding        processhost.Binding
 	evidence       coremetadata.CodexProcessRouteEvidence
 	socket         string
@@ -109,7 +111,7 @@ func startProcessCodexConversation(ctx context.Context, host *processhost.Host, 
 	if err != nil {
 		return nil, err
 	}
-	endpoint := &codexProcessEndpoint{binding: launch.Binding, ownerMode: processOwnerMode(ctx), socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
+	endpoint := &codexProcessEndpoint{binding: launch.Binding, ownerMode: processOwnerMode(ctx), stopRecorder: processStopRecorder(ctx), socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
 	launch.Command.Env = processCodexLaunchEnv(launch, socket)
 	launch.Completion = &processhost.Completion{Cleanup: endpoint.close}
 	if transfer != nil {
@@ -124,6 +126,7 @@ func startProcessCodexConversation(ctx context.Context, host *processhost.Host, 
 		_ = endpoint.close(cleanup)
 		cancelCleanup()
 		if endpoint.handle != nil {
+			endpoint.stopRecorder.record(processContextStopReason(ctx))
 			_ = endpoint.handle.Stop(launch.Binding)
 			wait, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*localipc.Deadline)
 			defer cancel()
@@ -334,6 +337,9 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 				receipt = &value
 			}
 			return err
+		}
+		if r.Action == "stop" {
+			e.stopRecorder.record(diagnostics.OwnerStopControl)
 		}
 		return applyCodexForeground(ctx, e.handle, r)
 	})

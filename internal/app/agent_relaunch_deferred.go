@@ -48,7 +48,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 	if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed\n", record.Agent, record.Retired.Binding.PaneUID); err != nil {
 		return err
 	}
-	processStdinEOFTrigger(cancel)
+	processStartStdinEOF(ctx, cancel)
 	owned, err := claim.WaitPeer(ctx)
 	if err != nil {
 		if owned.Handle == nil && errors.Is(err, context.Canceled) {

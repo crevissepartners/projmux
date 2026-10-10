@@ -37,7 +37,7 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 	}
 	// The claim waits for its first input under the same EOF trigger; the owned
 	// Wait below does not start it again.
-	processStdinEOFTrigger(cancel)
+	processStartStdinEOF(ctx, cancel)
 	result, err := claim.WaitPeer(ctx)
 	if err != nil {
 		if result.Handle == nil && err == context.Canceled {

@@ -420,6 +420,7 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 		return fail(err)
 	}
 	launch := processhost.Launch{Binding: binding, Command: command, Spawned: processCodexCreateSpawn(owned.owner.registryPath, binding)}
+	ctx, owned.owner.stopRecorder = newProcessOwnerStop(ctx, owned.owner.registryPath, binding)
 	endpoint, err := startProcessCodexTransfer(ctx, host, launch, config, owned.owner.registryPath, transfer)
 	owned.owner.codexEndpoint = endpoint
 	if endpoint != nil && endpoint.handle != nil {

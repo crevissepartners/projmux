@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -133,7 +135,8 @@ func TestProcessOwnedWaitStopsAbandonedGenerationWithoutReceipt(t *testing.T) {
 				ctx, end := context.WithCancel(context.Background())
 				defer end()
 				done := make(chan error, 1)
-				go func() { done <- wait.run(ctx, end, nil, nil) }()
+				var stopStderr bytes.Buffer
+				go func() { done <- wait.run(ctx, end, nil, &stopStderr) }()
 
 				// The current generation survives its checks.
 				handle.awaitChecks(t, 2)
@@ -147,6 +150,7 @@ func TestProcessOwnedWaitStopsAbandonedGenerationWithoutReceipt(t *testing.T) {
 				case <-time.After(10 * time.Second):
 					t.Fatal("abandoned owner did not end")
 				}
+				assertProcessOwnerStop(t, store.Path(), stopStderr.String(), diagnostics.OwnerStopGeneration, os.Getpid())
 				if handle.stops.Load() != 1 {
 					t.Fatalf("provider stops=%d, want 1", handle.stops.Load())
 				}

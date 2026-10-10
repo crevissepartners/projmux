@@ -142,6 +142,8 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"window_uid", event.WindowUID},
 		{"pane_uid", event.PaneUID},
 		{"agent_uid", event.AgentUID},
+		{"generation", event.Generation},
+		{"parent_comm", event.ParentComm},
 		{"longest_lock_kind", event.LongestLockKind},
 		{"longest_lock_step", event.LongestLockStep},
 		{"dial_stage", event.DialStage},
@@ -149,6 +151,12 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		if field.value != "" {
 			parts = append(parts, field.name+"="+field.value)
 		}
+	}
+	if event.OwnerPID != 0 {
+		parts = append(parts, fmt.Sprintf("owner_pid=%d", event.OwnerPID))
+	}
+	if event.OwnerPPID != 0 {
+		parts = append(parts, fmt.Sprintf("owner_ppid=%d", event.OwnerPPID))
 	}
 	for _, count := range []struct {
 		name  string

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
@@ -46,14 +47,45 @@ func processOwnerMode(ctx context.Context) string {
 // processForegroundLifetime is the public CLI owner lifetime: stdin EOF plus
 // SIGINT or SIGTERM ends it. Each CLI path starts its EOF watch exactly once.
 func processForegroundLifetime() (context.Context, context.CancelFunc) {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	return (processOwnerLifetime{stdinEOF: processStdinEOFTrigger}).withContext(ctx), cancel
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case sig := <-signals:
+			reason := diagnostics.OwnerStopSIGINT
+			if sig == syscall.SIGTERM {
+				reason = diagnostics.OwnerStopSIGTERM
+			}
+			cancel(processStopCause(reason))
+		case <-ctx.Done():
+		}
+	}()
+	end := func() { cancel(processStopCause(diagnostics.OwnerStopOther)); signal.Stop(signals) }
+	eof := func(context.CancelFunc) {
+		processStdinEndTrigger(os.Stdin, func(reason diagnostics.OwnerStopReason) { cancel(processStopCause(reason)) })
+	}
+	// Preserve the signal/EOF origin through typed handoff contexts that detach
+	// cancellation but later bridge owner shutdown back into the owned lifetime.
+	return (processOwnerLifetime{stdinEOF: eof}).withContext(context.WithValue(ctx, processForegroundCauseKey{}, ctx)), end
 }
 
 // processStdinEOFTrigger is the public CLI trigger: EOF is owner shutdown.
 // Provider content never uses the owner's stdout.
 func processStdinEOFTrigger(end context.CancelFunc) {
-	go func() { _, _ = io.Copy(io.Discard, os.Stdin); end() }()
+	processStdinEndTrigger(os.Stdin, func(diagnostics.OwnerStopReason) { end() })
+}
+
+// A failed stdin read retains shutdown behavior but is not evidence of EOF.
+func processStdinEndTrigger(input io.Reader, end func(diagnostics.OwnerStopReason)) {
+	go func() {
+		_, err := io.Copy(io.Discard, input)
+		reason := diagnostics.OwnerStopStdinEOF
+		if err != nil {
+			reason = diagnostics.OwnerStopOther
+		}
+		end(reason)
+	}()
 }
 
 // processGenerationHandle is an owned Handle that asks its host's
@@ -131,8 +163,16 @@ type processOwnedWait struct {
 // run starts trigger with end, then owns the Wait until ctx ends or the child
 // exits.
 func (w processOwnedWait) run(ctx context.Context, end context.CancelFunc, trigger processOwnerTrigger, stderr io.Writer) error {
+	if w.owner.stopRecorder == nil {
+		_, w.owner.stopRecorder = newProcessOwnerStop(ctx, w.owner.registryPath, w.binding)
+	}
+	w.owner.stopRecorder.setStderr(stderr)
 	if trigger != nil {
-		trigger(end)
+		if _, ok := ctx.Value(processOwnerLifetimeKey{}).(processOwnerLifetime); ok {
+			processStartStdinEOF(ctx, end)
+		} else {
+			trigger(end)
+		}
 	}
 	snapshot, waitErr := w.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(w.changed, func(snapshot processhost.Snapshot) error {
 		if len(snapshot.Pending) > 0 {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -109,6 +110,7 @@ func TestProcessCreateActualCLIIsolated(t *testing.T) {
 			if agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil || agent.Status.LastTermination == nil {
 				t.Fatal("EOF lost actual Wait retirement")
 			}
+			assertProcessOwnerStop(t, store.Path(), stderr.String(), diagnostics.OwnerStopStdinEOF, cmd.Process.Pid)
 			// The recorded Wait projects the retired Agent offline, not unknown.
 			if described, err := exec.CommandContext(ctx, binary, "describe", "agent", agentRef).CombinedOutput(); err != nil || !regexp.MustCompile(`(?m)^Status: +offline$`).Match(described) {
 				t.Fatalf("retired Agent status: %v\n%s", err, described)
@@ -279,6 +281,11 @@ func TestProcessCreateOwnerSignalsActualCLI(t *testing.T) {
 			}
 			if signal != syscall.SIGKILL {
 				t.Logf("owner %s actual CLI exit=%d", signal, cmd.ProcessState.ExitCode())
+				reason := diagnostics.OwnerStopSIGINT
+				if signal == syscall.SIGTERM {
+					reason = diagnostics.OwnerStopSIGTERM
+				}
+				assertProcessOwnerStop(t, f.store.Path(), stderr.String(), reason, cmd.Process.Pid)
 			}
 			for {
 				current, _, probeErr := localipc.Process(birth.PID)
@@ -935,6 +942,11 @@ func TestProcessOwnerStopExit143RemainsResumableActualCLI(t *testing.T) {
 			if receipt == nil || receipt.Classification != coremetadata.TerminationNormal || receipt.ExitCode == nil || *receipt.ExitCode != 143 || receipt.Signal != "" {
 				t.Fatalf("owner TERM lost actual Wait or normal classification: %+v", receipt)
 			}
+			reason := diagnostics.OwnerStopStdinEOF
+			if explicit {
+				reason = diagnostics.OwnerStopControl
+			}
+			assertProcessOwnerStop(t, f.store.Path(), output.String(), reason, cmd.Process.Pid)
 			candidates := listResumableProcessAgents(reg, processResumeFilter{})
 			if agent.Status.Phase != coremetadata.PhaseOffline || len(candidates) != 1 || candidates[0].Agent.Metadata.UID != agentUID {
 				t.Fatalf("owner stop lost resumability: %+v agent=%+v", candidates, agent)
@@ -1233,5 +1245,32 @@ func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
 	waited = true
 	if err != nil {
 		t.Fatalf("owner died %v %s", err, stderr.String())
+	}
+}
+
+// assertProcessOwnerStop reads the same journal as diagnostics log. It rejects
+// both a missing cause and competing causes for this generation.
+func assertProcessOwnerStop(t *testing.T, registryPath, stderr string, reason diagnostics.OwnerStopReason, pid int) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(filepath.Dir(registryPath)), diagnostics.LogDirName, diagnostics.LogFileName)
+	events, err := diagnostics.NewStore(path).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stops []diagnostics.Event
+	for _, event := range events {
+		if event.Event == "agent.owner.stop" {
+			stops = append(stops, event)
+		}
+	}
+	if len(stops) != 1 {
+		t.Fatalf("owner causes=%+v, want one", stops)
+	}
+	got := stops[0]
+	if got.Code != "owner.stop."+string(reason) || got.AgentUID == "" || got.PaneUID == "" || got.Generation == "" || got.OwnerPID != pid || got.OwnerPPID <= 0 {
+		t.Fatalf("owner cause=%+v want %s pid=%d", got, reason, pid)
+	}
+	if strings.Count(stderr, "agent owner stop:") != 1 || !strings.Contains(stderr, "reason="+string(reason)) {
+		t.Fatalf("owner stderr missing cause: %s", stderr)
 	}
 }
