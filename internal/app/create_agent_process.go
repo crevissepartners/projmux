@@ -19,6 +19,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
@@ -69,6 +70,7 @@ type processAgentCreateResult struct {
 	creator       creatorRecord
 	// generationChecks spaces owned Wait generation checks; zero is the default.
 	generationChecks processGenerationSchedule
+	stopRecorder     *processOwnerStopRecorder
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
@@ -209,6 +211,7 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	}
 	path := intmetadata.PathFor(stateDir)
 	result.registryPath = path
+	ctx, result.stopRecorder = newProcessOwnerStop(ctx, path, result.Binding)
 	if notice := plan.flags.projectLinks.project.notice(result.Created.name); notice != "" {
 		result.Notices = append(result.Notices, notice)
 	}
@@ -543,6 +546,9 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 	if r.Handle == nil {
 		return processhost.Snapshot{}, errors.New("process host was not started")
 	}
+	if r.stopRecorder == nil {
+		_, r.stopRecorder = newProcessOwnerStop(ctx, r.registryPath, r.Binding)
+	}
 	type waitResult struct {
 		snapshot processhost.Snapshot
 		err      error
@@ -574,6 +580,11 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 		if abandoned != nil {
 			return result.snapshot, errors.Join(abandoned, failure, result.err)
 		}
+		reason := diagnostics.OwnerStopOther
+		if result.snapshot.Exit != nil {
+			reason = diagnostics.OwnerStopProviderExit
+		}
+		r.stopRecorder.record(reason)
 		return r.finishWait(result.snapshot, result.err, failure)
 	}
 	// subscribe precedes every Observe, so a change after Observe still wakes.
@@ -626,6 +637,13 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 			continue
 		}
 		if (ending || failure != nil || abandoned != nil) && cleanup == nil {
+			reason := diagnostics.OwnerStopOther
+			if abandoned != nil {
+				reason = diagnostics.OwnerStopGeneration
+			} else if ending {
+				reason = processContextStopReason(ctx)
+			}
+			r.stopRecorder.record(reason)
 			failure = errors.Join(failure, r.Handle.Stop(r.Binding))
 			cleanup = time.After(3*processhost.DefaultLimits().Grace + 2*processhost.DefaultLimits().Write)
 			lifetime, changed, coalesce, recheck, grace, check, checked = nil, nil, nil, nil, nil, nil, nil

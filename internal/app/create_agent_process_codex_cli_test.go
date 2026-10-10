@@ -17,7 +17,10 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 type processCodexCreateCLI struct{ processCreateCLI }
@@ -286,8 +289,10 @@ func TestProcessCodexCreateHooksAndOutputActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatalf("projection: %v %s", err, stderr.String())
 			}
+			assertProcessOwnerStop(t, f.store.Path(), stderr.String(), diagnostics.OwnerStopStdinEOF, cmd.Process.Pid)
+			projectionStderr := processOwnerStderrProjection(t, stderr.String(), diagnostics.OwnerStopStdinEOF)
 			if mode == "none" {
-				if stdout.Len() != 0 || stderr.Len() != 0 {
+				if stdout.Len() != 0 || projectionStderr != "" {
 					t.Fatal("none emitted output")
 				}
 				return
@@ -319,7 +324,7 @@ func TestProcessCodexCreateHooksAndOutputActualCLI(t *testing.T) {
 				t.Fatalf("projection %s bytes changed:\n%s", mode, normalized)
 			}
 			ownership := fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=owned\n", agent.Metadata.UID, agent.Status.PaneRef)
-			if stderr.String() != ownership {
+			if projectionStderr != ownership {
 				t.Fatalf("ownership bytes: %q", stderr.String())
 			}
 		})
@@ -405,6 +410,7 @@ func TestProcessCodexCreateActualWaitSignalsCLI(t *testing.T) {
 			if cmd.ProcessState.ExitCode() != want {
 				t.Fatalf("Wait code=%d want=%d: %v %s", cmd.ProcessState.ExitCode(), want, err, stderr.String())
 			}
+			assertProcessOwnerStop(t, f.store.Path(), stderr.String(), diagnostics.OwnerStopProviderExit, cmd.Process.Pid)
 		})
 	}
 }
@@ -484,5 +490,82 @@ func TestProcessCodexCreateGuidanceActualCLI(t *testing.T) {
 	waited = true
 	if err != nil {
 		t.Fatalf("Wait: %v %s", err, stderr.String())
+	}
+}
+
+func TestProcessCodexOwnerStopCausesActualCLI(t *testing.T) {
+	for _, reason := range []diagnostics.OwnerStopReason{diagnostics.OwnerStopSIGINT, diagnostics.OwnerStopSIGTERM, diagnostics.OwnerStopStdinEOF, diagnostics.OwnerStopControl} {
+		t.Run(string(reason), func(t *testing.T) {
+			f := newProcessCodexCreateCLI(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+			input, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := false
+			defer func() {
+				_ = input.Close()
+				if !waited {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			}()
+			line, err := bufio.NewReader(output).ReadString('\n')
+			if err != nil {
+				t.Fatalf("ownership: %v", err)
+			}
+			switch reason {
+			case diagnostics.OwnerStopSIGINT:
+				err = cmd.Process.Signal(syscall.SIGINT)
+			case diagnostics.OwnerStopSIGTERM:
+				err = cmd.Process.Signal(syscall.SIGTERM)
+			case diagnostics.OwnerStopStdinEOF:
+				err = input.Close()
+			case diagnostics.OwnerStopControl:
+				reg, e := f.store.LoadReadOnly()
+				if e != nil {
+					t.Fatal(e)
+				}
+				agent, _ := reg.Agent(strings.TrimPrefix(strings.Fields(line)[1], "uid:"))
+				pane, _ := reg.Pane(agent.Status.PaneRef)
+				session := pane.Status.ProcessSession
+				socket := processCodexHostSocket(f.store.Path(), pane.Metadata.UID, session.Binding.Generation)
+				identity, e := localipc.InspectOwnedSocket(socket)
+				if e != nil {
+					t.Fatal(e)
+				}
+				request := codexProcessExchange{Foreground: &processForegroundRequest{Authority: processhost.Authority{Binding: processSchemaBinding(session.Binding), Connection: session.ConnectionID, Session: session.ThreadID}, Action: "stop"}}
+				reply, e := callProcessForeground(ctx, socket, identity, pane.Status.Activation.Process.HostProcess, request)
+				if e != nil || !reply.Accepted {
+					t.Fatalf("stop reply=%+v err=%v", reply, e)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, output)
+			err = cmd.Wait()
+			waited = true
+			if err != nil {
+				t.Fatalf("owned shutdown: %v %s", err, stderr.String())
+			}
+			assertProcessOwnerStop(t, f.store.Path(), stderr.String(), reason, cmd.Process.Pid)
+			// The public diagnostics reader must expose the same cause and identity.
+			shown, e := exec.CommandContext(ctx, f.binary, "diagnostics", "log", "--component", "agent", "--tail", "50").CombinedOutput()
+			if e != nil || !bytes.Contains(shown, []byte("owner.stop."+string(reason))) || !bytes.Contains(shown, []byte("generation=")) || !bytes.Contains(shown, []byte("owner_ppid=")) {
+				t.Fatalf("diagnostics: %v %s", e, shown)
+			}
+		})
 	}
 }

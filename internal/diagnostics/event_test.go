@@ -9,7 +9,7 @@ import (
 func TestEventSchemaHasNoGenericOrSensitiveEscapeHatch(t *testing.T) {
 	t.Parallel()
 	typeOf := reflect.TypeFor[Event]()
-	want := []string{"At", "Level", "Component", "Event", "Result", "DurationMS", "RunID", "Version", "MuxBackend", "Command", "Subcommand", "Kind", "Message", "Operation", "Code", "Source", "Transition", "Disposition", "Provider", "Category", "Route", "AIKind", "AIResult", "ResourceResult", "Failure", "WindowCount", "PaneCount", "ShellRecipeCount", "AgentRecipeCount", "StartupRecipeCount", "ResumedCount", "SkippedCount", "ItemCount", "LockHeldMS", "Decision", "Classification", "WindowUID", "PaneUID", "AgentUID",
+	want := []string{"At", "Level", "Component", "Event", "Result", "DurationMS", "RunID", "Version", "MuxBackend", "Command", "Subcommand", "Kind", "Message", "Operation", "Code", "Source", "Transition", "Disposition", "Provider", "Category", "Route", "AIKind", "AIResult", "ResourceResult", "Failure", "WindowCount", "PaneCount", "ShellRecipeCount", "AgentRecipeCount", "StartupRecipeCount", "ResumedCount", "SkippedCount", "ItemCount", "LockHeldMS", "Decision", "Classification", "WindowUID", "PaneUID", "AgentUID", "Generation", "OwnerPID", "OwnerPPID", "ParentComm",
 		"WaitMS", "PhaseGuardMS", "PhaseFirstReconcileMS", "PhaseOperationMS", "PhaseSecondReconcileMS", "PhaseReproveMS", "PhaseStoreWriteMS", "SpawnToReleaseMS",
 		"StepKeymapMigrationMS", "StepHookFileMigrationMS", "StepRetiredFileReclaimMS", "StepRouteBindMS", "StepBellHookMigrationMS",
 		"StepConfigWriteMS", "StepKeySequenceRetireMS", "StepSourceFileMS", "StepRouteMarkerMS", "StepExhaustedReplayMS", "StepConvergeMS",

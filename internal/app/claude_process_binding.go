@@ -14,6 +14,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -78,6 +79,7 @@ type claudeProcessCheckResult struct {
 // The bounded exchange service belongs to one exact child lifetime. Published
 // fields are immutable after ready closes; each exchange is handled serially.
 type claudeProcessService struct {
+	stopRecorder           *processOwnerStopRecorder
 	registryPath           string
 	ownerMode              string
 	binding                processhost.Binding
@@ -234,6 +236,9 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		var admission processhost.TurnAdmission
 		var applyErr error
 		result := controlProcessForeground(bounded, peer, r, current, func() error {
+			if r.Action == "stop" {
+				s.stopRecorder.record(diagnostics.OwnerStopControl)
+			}
 			applyErr = applyClaudeForeground(bounded, s.handle, r, &admission)
 			return applyErr
 		})
@@ -564,6 +569,7 @@ func (s *claudeProcessService) rollback(ctx context.Context) error {
 	if s.handle == nil {
 		return closeErr
 	}
+	s.stopRecorder.record(processContextStopReason(ctx))
 	stopErr := s.handle.Stop(s.binding)
 	wait, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*localipc.Deadline)
 	defer cancel()
@@ -653,7 +659,7 @@ func prepareProcessClaude(ctx context.Context, launch processhost.Launch, regist
 	if err != nil {
 		return nil, err
 	}
-	service := &claudeProcessService{registryPath: registryPath, ownerMode: processOwnerMode(ctx), binding: launch.Binding, listener: listener, closeLease: closeLease, ready: make(chan struct{})}
+	service := &claudeProcessService{registryPath: registryPath, ownerMode: processOwnerMode(ctx), stopRecorder: processStopRecorder(ctx), binding: launch.Binding, listener: listener, closeLease: closeLease, ready: make(chan struct{})}
 	// Startup cancellation does not shorten the already owned child lifetime.
 	lifetime := context.WithoutCancel(ctx)
 	go service.serve(lifetime)

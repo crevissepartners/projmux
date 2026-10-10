@@ -421,6 +421,7 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 		}
 		return nil
 	}}
+	ctx, owned.owner.stopRecorder = newProcessOwnerStop(ctx, owned.owner.registryPath, binding)
 	handle, err := startProcessClaudeTransfer(ctx, host, processhost.Launch{Binding: binding, Command: command}, owned.owner.registryPath, transfer, operation+"-transfer", strings.Join(source.request.prompt, " "))
 	if handle != nil {
 		owned.Handle, owned.owner.Handle = handle, handle

@@ -859,3 +859,29 @@ derived from:
 A mean would destroy the second answer: twenty supervisors averaging forty
 minutes says nothing about the one that outlives every plausible bound. That is
 why the distribution is stored whole.
+
+## Headless owner shutdown
+
+`projmux diagnostics log --component agent --tail 50` shows one
+`agent.owner.stop` record for the first shutdown path of each owned process
+generation. `code` is one of `owner.stop.signal-sigint`,
+`owner.stop.signal-sigterm`, `owner.stop.stdin-eof`, `owner.stop.control-stop`,
+`owner.stop.generation-abandoned`, `owner.stop.provider-exit`, or
+`owner.stop.other` (including synchronization and launch cleanup failures).
+The private journal includes `agent_uid`, `pane_uid`, `generation`, `owner_pid`,
+`owner_ppid`, and `parent_comm`. The parent name is a bounded basename and is
+empty when unavailable (including systems without `/proc`). It is a clue about
+ancestry, not evidence of who sent a signal.
+
+The owner also writes one `agent owner stop: reason=...` line to stderr in all
+output modes, including `-o none`; resource projections on stdout keep their
+existing shapes. CLI
+create/resume/relaunch owners and detached owners using the same lifecycle
+share this recording. Competing shutdown paths retain the first recorded
+cause. The supplementary stderr write gets a 25ms completion budget before
+Stop continues, so an unread full pipe cannot hold up provider shutdown. A
+write still blocked after that budget can finish later; at most one such
+write is attempted per owner generation. Journal and stderr writes are
+best-effort; failures do not change Stop or the provider's normal/abnormal
+classification. SIGKILL cannot be recorded
+by the killed owner. Older journal readers skip this new event.

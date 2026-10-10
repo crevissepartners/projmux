@@ -295,6 +295,7 @@ func (c *agentCommand) processResumeResult(candidate processResumeCandidate, bin
 }
 
 func (r *processAgentResumeResult) startProcessResume(ctx context.Context, creator *createCommand, plan processhost.Command, config processhost.CodexConfig, frame processResumeFirstFrame) error {
+	ctx, r.owner.stopRecorder = newProcessOwnerStop(ctx, r.owner.registryPath, r.Binding)
 	// Relaunch also uses this start path. Capture its retired writer before
 	// child birth, while preserving an absent record checked by resume.
 	if r.owner.Provider == aiModeCodex && !r.attentionChecked {

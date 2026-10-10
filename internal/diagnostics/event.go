@@ -57,6 +57,11 @@ type Event struct {
 	WindowUID          string `json:"window_uid,omitempty"`
 	PaneUID            string `json:"pane_uid,omitempty"`
 	AgentUID           string `json:"agent_uid,omitempty"`
+	// Only agent.owner.stop carries these private owner identity fields.
+	Generation string `json:"generation,omitempty"`
+	OwnerPID   int    `json:"owner_pid,omitempty"`
+	OwnerPPID  int    `json:"owner_ppid,omitempty"`
+	ParentComm string `json:"parent_comm,omitempty"`
 	// WaitMS is how long one Registry lock acquisition waited; only
 	// registry.lock.acquisition carries it.
 	WaitMS *int64 `json:"wait_ms,omitempty"`
@@ -158,7 +163,7 @@ var (
 	// every other family.
 	allowedLevels     = stringSet("info", "warn", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", codexBrokerComponent)
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -329,6 +334,12 @@ func validateEventShape(event Event) error {
 	// the tmux.apply lifecycle.outcome refuses the apply breakdown fields.
 	if err := validateApplyBreakdown(event); err != nil {
 		return err
+	}
+	if event.Event == ownerStopEvent {
+		return validateOwnerStopEvent(event)
+	}
+	if event.Generation != "" || event.OwnerPID != 0 || event.OwnerPPID != 0 || event.ParentComm != "" {
+		return fmt.Errorf("owner stop fields on unrelated event")
 	}
 	if event.Event == codexBrokerRefusalEvent {
 		return validateCodexBrokerRefusalEvent(event)
