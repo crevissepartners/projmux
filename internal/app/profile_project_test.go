@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,6 +20,62 @@ import (
 
 const profileProjectP = "proj-aaaaaaaaaaaaaaaaaaaaaaaaaa"
 const profileProjectQ = "proj-bbbbbbbbbbbbbbbbbbbbbbbbba"
+
+func TestProjectProfilePreparedClaudeResumeRefusesWithoutChangingState(t *testing.T) {
+	for _, action := range []string{"prepare-again", "first-input"} {
+		t.Run(action, func(t *testing.T) {
+			c, opts, store, activation := hostLostPreparedFixture(t)
+			creator := c.rebind.create
+			paths, err := configPaths(creator.homeDir, creator.lookupEnv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profiles := profile.NewDefaultStore(paths)
+			entry, err := profiles.Write("scoped", []byte("provider = \"claude\"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+				agent, _ := reg.Agent(activation.Binding.AgentUID)
+				agent.Metadata.Annotations[coremetadata.AnnotationAgentProfile] = "scoped"
+				agent.Metadata.Annotations[coremetadata.AnnotationAgentProfileDigest] = entry.Digest
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.prepareOwnedClaudeResume(context.Background(), opts); err != nil {
+				t.Fatal(err)
+			}
+			path, _ := profiles.Path("scoped")
+			if err := os.WriteFile(path, []byte("project = \""+profileProjectQ+"\"\nprovider = \"claude\"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := c.readDeferredLaunch(activation.Binding.AgentUID)
+			if err != nil || prepared == nil {
+				t.Fatalf("prepared=%+v err=%v", prepared, err)
+			}
+			if action == "prepare-again" {
+				_, err = c.prepareOwnedClaudeResume(context.Background(), opts)
+			} else {
+				opts.Prompt = processResumeFirstFrame{Kind: "user", Text: "scope should refuse"}
+				_, err = c.resumeProcessAgent(context.Background(), processAgentResumeRequest{options: opts})
+			}
+			if profile.ReasonOf(err) != profile.ReasonOutOfScope || !strings.Contains(err.Error(), "scoped") || !strings.Contains(err.Error(), profileProjectQ) {
+				t.Fatalf("scope refusal=%v", err)
+			}
+			after, loadErr := store.LoadReadOnly()
+			pending, pendingErr := c.readDeferredLaunch(activation.Binding.AgentUID)
+			if loadErr != nil || pendingErr != nil || !reflect.DeepEqual(before, after) || !reflect.DeepEqual(prepared, pending) {
+				t.Fatalf("scope refusal changed Registry or Prepared: load=%v pending=%v", loadErr, pendingErr)
+			}
+		})
+	}
+}
 
 func profileProjectRegistry(t *testing.T, registry coremetadata.Registry) coremetadata.Registry {
 	t.Helper()

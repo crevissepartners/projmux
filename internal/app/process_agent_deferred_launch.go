@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
@@ -361,6 +362,18 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 		return candidate, record, err
 	}
 	if !replacement {
+		// A frozen launch preserves its settings, but the recorded profile's
+		// current Project scope still applies. Refuse before recovery can write
+		// the Registry or the prepared launch sidecar.
+		for _, annotations := range []map[string]string{candidate.Agent.Metadata.Annotations, record.NewAnnotations} {
+			if name := annotations[coremetadata.AnnotationAgentProfile]; name != "" {
+				creator := c.rebind.create
+				_, _, _, scopeErr := resolveRecordedProfile(creator.homeDir, creator.lookupEnv, name, candidate.Record.Binding.ProjectUID)
+				if profile.ReasonOf(scopeErr) == profile.ReasonOutOfScope {
+					return candidate, nil, scopeErr
+				}
+			}
+		}
 		if err = record.validatePermissionMode(); err != nil {
 			return candidate, nil, err
 		}
