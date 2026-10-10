@@ -16,6 +16,9 @@ const (
 	KeyNotifyProcessError            Key = "notify.process.error"
 )
 
+const KeyWindowHeadless Key = "window.status.headless"
+const KeyWindowOpenRequiresClient Key = "window.open.requires_client"
+
 const KeyInstallReplacementOtherDomains Key = "install.replacement.other_domains"
 
 const (

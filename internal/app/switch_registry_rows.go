@@ -467,7 +467,7 @@ func (c *switchCommand) writeRegistrySelectionPreview(ctx context.Context, stdou
 	}
 	for _, row := range rows {
 		line := registryNavigationIndent(row) + string(row.Kind) + " " + registryNavigationName(row) +
-			"  " + string(row.Status) + "  " + registryNavigationActionList(row) + "\n"
+			"  " + registryNavigationStatus(row, appLocale(c.homeDir, c.lookupEnv)) + "  " + registryNavigationActionList(row) + "\n"
 		if _, err := io.WriteString(stdout, line); err != nil {
 			return true, err
 		}

@@ -243,7 +243,7 @@ func (c *registryNavigationCommand) runProject(ctx context.Context, ui, projectU
 // happened would show a machine state that is no longer current.
 func (c *registryNavigationCommand) runActions(ctx context.Context, nav registryNavigationView, row registryview.Row, ui string, stdout, stderr io.Writer) (bool, error) {
 	socket := ""
-	if row.IsLive() {
+	if row.IsLive() || (row.Kind == registryview.RowKindWindow && row.Status == registryview.StatusVirtual && c.insideTmux()) {
 		socket = c.reader.socketPath(ctx)
 	}
 	for {
@@ -286,6 +286,13 @@ func (c *registryNavigationCommand) runActions(ctx context.Context, nav registry
 func (c *registryNavigationCommand) runFocus(row registryview.Row, socket string, stdout, stderr io.Writer) error {
 	if c.focus == nil {
 		return errors.New("registry navigation: the focus handler is not configured")
+	}
+	if row.Kind == registryview.RowKindWindow && row.Status == registryview.StatusVirtual {
+		args := []string{"window", "uid:" + row.UID}
+		if socket != "" {
+			args = append(args, "--socket", socket)
+		}
+		return c.focus.Run(args, stdout, stderr)
 	}
 	if row.Runtime == nil || strings.TrimSpace(row.Runtime.Target) == "" {
 		return fmt.Errorf("registry navigation: %s %s has no exact runtime coordinate", row.Kind, row.Name)
