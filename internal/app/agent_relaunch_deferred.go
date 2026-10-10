@@ -8,7 +8,6 @@ import (
 	"reflect"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
 // Only same-location Claude relaunch calls this consumer. Host transfer keeps
@@ -19,7 +18,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 		return err
 	}
 	// Acquire uses the same guard and identity checks as ordinary deferred resume.
-	claim, err := c.claimDeferredProcessAgent(ctx, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: record.Agent}}, true)
+	claim, err := c.claimDeferredProcessAgent(ctx, c.processRelaunchResumeOptions(record.Agent), true)
 	if err != nil {
 		return err
 	}
@@ -105,7 +104,7 @@ func (c *agentCommand) commitDeferredRelaunch(ctx context.Context, claim *deferr
 		return err
 	}
 	// A crash between these writes is repaired only by the exact old/new proof.
-	if err = c.reconcileDeferredLaunch(ctx, record); err != nil {
+	if err = c.reconcileDeferredLaunch(ctx, record, c.processResumeHostLost); err != nil {
 		return err
 	}
 	return c.reclaimDeferredInput(claim.record)
@@ -133,5 +132,5 @@ func (c *agentCommand) planDeferredRelaunchRecord(candidate processResumeCandida
 	}
 	command := launch.command
 	command.Env = nil
-	return &deferredLaunchRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Retired: *candidate.Record.Clone(), OldSpec: candidate.Agent.Spec, NewSpec: updated.Spec, OldAnnotations: candidate.Agent.Metadata.Annotations, NewAnnotations: updated.Metadata.Annotations, Command: command, Files: files, Model: recipe.restart.settings.resolution.New.Model.Value, Effort: recipe.restart.settings.resolution.New.Effort.Value}, nil
+	return &deferredLaunchRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Retired: *candidate.Record.Clone(), HostLost: candidate.HostLost, OldSpec: candidate.Agent.Spec, NewSpec: updated.Spec, OldAnnotations: candidate.Agent.Metadata.Annotations, NewAnnotations: updated.Metadata.Annotations, Command: command, Files: files, Model: recipe.restart.settings.resolution.New.Model.Value, Effort: recipe.restart.settings.resolution.New.Effort.Value}, nil
 }

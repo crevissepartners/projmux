@@ -13,7 +13,6 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -28,7 +27,7 @@ type processAgentResumeOptions struct {
 	Scope         processResumeScope
 	Prompt        processResumeFirstFrame
 	Model, Effort string
-	allowHostLost bool // Only explicit CLI resume opts in.
+	allowHostLost bool // Explicit CLI resume and private consumers opt in.
 	claim         *deferredProcessClaim
 }
 type processAgentResumeRequest struct{ options processAgentResumeOptions }
@@ -104,11 +103,11 @@ func (c *agentCommand) processResumeCandidate(request processAgentResumeRequest)
 	pane, _ := processResumePane(reg, uid)
 	alive := false
 	if pane != nil && pane.Status.Activation.Process != nil {
-		identity, _, e := localipc.Process(pane.Status.Activation.Process.HostProcess.PID)
+		identity, _, e := c.readProcessIdentity()(pane.Status.Activation.Process.HostProcess.PID)
 		alive = e == nil && identity == pane.Status.Activation.Process.HostProcess
 	}
 	if opts.allowHostLost && !alive && pane != nil && pane.Status.Activation.Process != nil {
-		if candidate, ok := hostLostResumeCandidate(reg, uid, localipc.Process); ok {
+		if candidate, ok := hostLostResumeCandidate(reg, uid, c.readProcessIdentity()); ok {
 			return candidate, nil
 		}
 	}
@@ -267,7 +266,7 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 		}
 		mutator := c.rebind.create.store.mutator()
 		if candidate.HostLost != nil {
-			if err := reserveHostLostResume(reg, candidate, metadataProcessBinding(binding), localipc.Process, mutator); err != nil {
+			if err := reserveHostLostResume(reg, candidate, metadataProcessBinding(binding), c.readProcessIdentity(), mutator); err != nil {
 				return err
 			}
 		} else if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(binding)); err != nil {

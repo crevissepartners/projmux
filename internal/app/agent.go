@@ -54,6 +54,9 @@ type agentCommand struct {
 	hostTransferResult  *agentHostTransferResult
 	// Private no-firstinput Resume preparation preserves the recorded recipe.
 	processResumePreparation bool
+	// Set only by explicit private Claude preparation on a per-call copy.
+	processResumeHostLost bool
+	processIdentity       processIdentityReader
 
 	processRuntime *processPaneRuntime
 
