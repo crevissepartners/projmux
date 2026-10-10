@@ -89,3 +89,11 @@ func reserveHostLostResume(reg *coremetadata.Registry, candidate processResumeCa
 	}
 	return mutator.ReserveProcessHostLostResume(reg, *candidate.HostLost, binding)
 }
+
+// A private reader seam keeps kernel absence races deterministic in unit tests.
+func (c *agentCommand) readProcessIdentity() processIdentityReader {
+	if c.processIdentity != nil {
+		return c.processIdentity
+	}
+	return localipc.Process
+}

@@ -32,6 +32,7 @@ type deferredLaunchRecord struct {
 	Model, Effort                  string
 	Attempt                        *deferredLaunchAttempt
 	Previous                       *deferredLaunchRecord
+	HostLost                       *coremetadata.ProcessActivation `json:",omitempty"`
 }
 
 type deferredLaunchAttempt struct {
@@ -213,14 +214,21 @@ func (record *deferredLaunchRecord) validateFiles() error {
 }
 
 func (record *deferredLaunchRecord) matches(candidate processResumeCandidate) bool {
-	return record.Agent == candidate.Agent.Metadata.UID && processResumeRecordEqual(&record.Retired, &candidate.Record) && reflect.DeepEqual(candidate.Agent.Spec, record.NewSpec) && reflect.DeepEqual(candidate.Agent.Metadata.Annotations, record.NewAnnotations)
+	return reflect.DeepEqual(record.HostLost, candidate.HostLost) && record.Agent == candidate.Agent.Metadata.UID && processResumeRecordEqual(&record.Retired, &candidate.Record) && reflect.DeepEqual(candidate.Agent.Spec, record.NewSpec) && reflect.DeepEqual(candidate.Agent.Metadata.Annotations, record.NewAnnotations)
 }
 
 // Called under the existing claim guard. Replay can finish only the exact
 // prepared old->new CAS, never overwrite an unrelated recipe or conversation.
 func (c *agentCommand) reconcileDeferredLaunch(ctx context.Context, record *deferredLaunchRecord) error {
+	return c.reconcileDeferredLaunchMode(ctx, record, false)
+}
+
+func (c *agentCommand) reconcileDeferredLaunchMode(ctx context.Context, record *deferredLaunchRecord, allowHostLost bool) error {
 	if record == nil {
 		return nil
+	}
+	if record.HostLost != nil && !allowHostLost {
+		return deferredRefused("host-lost prepared launch requires explicit opt-in")
 	}
 	if record.Previous != nil {
 		return c.reconcilePromptRelaunch(record)
@@ -234,7 +242,12 @@ func (c *agentCommand) reconcileDeferredLaunch(ctx context.Context, record *defe
 		}
 		pane, ambiguous := processResumePane(*reg, record.Agent)
 		agent, found := reg.Agent(record.Agent)
-		if ambiguous || !found || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !processResumeRecordEqual(pane.Status.ProcessSession, &record.Retired) || !coremetadata.MatchesProcessWait(record.Retired.Binding, pane.Status.LastTermination) {
+		if record.HostLost != nil {
+			candidate, ok := hostLostResumeCandidate(*reg, record.Agent, c.readProcessIdentity())
+			if !ok || !reflect.DeepEqual(candidate.HostLost, record.HostLost) || !processResumeRecordEqual(&candidate.Record, &record.Retired) {
+				return deferredRefused("host-lost prepared activation changed")
+			}
+		} else if ambiguous || !found || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !processResumeRecordEqual(pane.Status.ProcessSession, &record.Retired) || !coremetadata.MatchesProcessWait(record.Retired.Binding, pane.Status.LastTermination) {
 			return deferredRefused("prepared relaunch conversation changed")
 		}
 		if reflect.DeepEqual(agent.Spec, record.NewSpec) && reflect.DeepEqual(agent.Metadata.Annotations, record.NewAnnotations) {
@@ -268,7 +281,11 @@ func (c *agentCommand) prepareDeferredAttempt(candidate processResumeCandidate, 
 	}
 	agent, found := reg.Agent(record.Agent)
 	pane, ambiguous := processResumePane(reg, record.Agent)
-	if !found || ambiguous || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || !coremetadata.MatchesProcessWait(candidate.Record.Binding, pane.Status.LastTermination) || !coremetadata.MatchesProcessWait(candidate.Record.Binding, agent.Status.LastTermination) || !sourceRecipe.matches(candidate) || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, sourceRecipe.NewSpec) || !reflect.DeepEqual(agent.Metadata.Annotations, sourceRecipe.NewAnnotations) {
+	retired := found && !ambiguous && pane != nil && agent.Status.Phase == coremetadata.PhaseOffline && pane.Status.Activation.IsZero() && coremetadata.MatchesProcessWait(candidate.Record.Binding, pane.Status.LastTermination) && coremetadata.MatchesProcessWait(candidate.Record.Binding, agent.Status.LastTermination)
+	if candidate.HostLost != nil {
+		retired = found && !ambiguous && pane != nil && reflect.DeepEqual(pane.Status.Activation.Process, candidate.HostLost)
+	}
+	if !retired || !sourceRecipe.matches(candidate) || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, sourceRecipe.NewSpec) || !reflect.DeepEqual(agent.Metadata.Annotations, sourceRecipe.NewAnnotations) {
 		return deferredRefused("attempt source changed")
 	}
 	target, source := metadataProcessBinding(binding), candidate.Record.Binding
@@ -325,6 +342,8 @@ func (c *agentCommand) reconcileDeferredAttempt(record *deferredLaunchRecord) er
 		return err
 	}
 	record.Retired = *s.Clone()
+	// The new writer has actual Wait evidence; the lost activation is no longer its source.
+	record.HostLost = nil
 	return writeDeferredState(c.deferredStatePath("deferred-launches", record.Agent), record)
 }
 
@@ -366,7 +385,7 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 	if deferredLaunchDigest(current) != deferredLaunchDigest(record) {
 		return candidate, nil, deferredRefused("prepared launch changed")
 	}
-	if err = c.reconcileDeferredLaunch(ctx, record); err != nil {
+	if err = c.reconcileDeferredLaunchMode(ctx, record, opts.allowHostLost); err != nil {
 		return candidate, nil, err
 	}
 	request, err := newProcessAgentResumeRequest(opts)

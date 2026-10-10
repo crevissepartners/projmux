@@ -108,6 +108,10 @@ func (c *agentCommand) validateProcessRelaunch(reg coremetadata.Registry, target
 	if pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Provider != provider || processRelaunchConversation(pane.Status.ProcessSession) == "" {
 		return refuse(relaunchReasonNoConversation, "has no recorded process conversation")
 	}
+	if c.processResumeHostLost {
+		_, err := c.processResumeCandidate(processAgentResumeRequest{options: c.processRelaunchResumeOptions(target.Metadata.UID)})
+		return err
+	}
 	running := target.Status.Phase == coremetadata.PhaseRunning
 	if !running && target.Status.Phase != coremetadata.PhaseOffline {
 		return refuse(relaunchReasonNoConversation, "is not Running or Offline with a retired process conversation")
@@ -145,7 +149,7 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "has no owning Project")
 	}
 	restart := c.newAgentRestart(agentRelaunchSpelling, reg, target, provider, relaunchTokens, refuse)
-	restart.running, restart.paneUID = target.Status.Phase == coremetadata.PhaseRunning, pane.Metadata.UID
+	restart.running, restart.paneUID = target.Status.Phase == coremetadata.PhaseRunning && !c.processResumeHostLost, pane.Metadata.UID
 	ai, ok := c.ai.(*aiCommand)
 	if !ok {
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "process launcher is unavailable")
@@ -237,6 +241,16 @@ func (c *agentCommand) planProcessRelaunchLaunch(target coremetadata.Agent, pane
 
 func (c *agentCommand) stopProcessRelaunch(ctx context.Context, reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, restart *agentRestart) (processResumeCandidate, error) {
 	provider := pane.Status.ProcessSession.Provider
+	if c.processResumeHostLost {
+		candidate, err := c.processResumeCandidate(processAgentResumeRequest{options: c.processRelaunchResumeOptions(target.Metadata.UID)})
+		if err != nil {
+			return processResumeCandidate{}, err
+		}
+		if candidate.HostLost == nil || !reflect.DeepEqual(candidate.HostLost, pane.Status.Activation.Process) || !processResumeRecordEqual(&candidate.Record, pane.Status.ProcessSession) || !reflect.DeepEqual(candidate.Agent.Spec, target.Spec) || !reflect.DeepEqual(candidate.Agent.Metadata.Annotations, target.Metadata.Annotations) {
+			return processResumeCandidate{}, deferredRefused("host-lost preparation source changed")
+		}
+		return candidate, nil
+	}
 	if restart.running {
 		// Re-read recipe, ownership and interaction immediately before admission.
 		latest, e := c.loadRegistry()
@@ -560,4 +574,8 @@ func processRelaunchFirstFrame(prompt string) processResumeFirstFrame {
 		return processResumeFirstFrame{}
 	}
 	return processResumeFirstFrame{Kind: "user", Text: prompt}
+}
+
+func (c *agentCommand) processRelaunchResumeOptions(uid string) processAgentResumeOptions {
+	return processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: uid}, allowHostLost: c.processResumeHostLost}
 }

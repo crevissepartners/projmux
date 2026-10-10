@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -215,7 +216,16 @@ func (c *agentCommand) prepareOwnedClaudeResume(ctx context.Context, opts proces
 	// Empty overrides retain the recorded recipe through the samehost planner.
 	call := *c
 	call.processResumePreparation = opts.Model == "" && opts.Effort == ""
-	result, err := call.runOwnedProcessRelaunch(ctx, reg, candidate.Agent, agentRelaunchRequest{agentRef: "uid:" + candidate.Agent.Metadata.UID, model: opts.Model, effort: opts.Effort})
+	call.processResumeHostLost = opts.allowHostLost && candidate.HostLost != nil
+	source, found := reg.Agent(candidate.Agent.Metadata.UID)
+	sourcePane, ambiguous := processResumePane(reg, candidate.Agent.Metadata.UID)
+	if !found || ambiguous || sourcePane == nil || !processResumeRecordEqual(sourcePane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(source.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(source.Metadata.Annotations, candidate.Agent.Metadata.Annotations) || (candidate.HostLost != nil && !reflect.DeepEqual(sourcePane.Status.Activation.Process, candidate.HostLost)) {
+		return agentHostTransferResult{}, deferredRefused("preparation source changed")
+	}
+	result, err := call.runOwnedProcessRelaunch(ctx, reg, source.Clone(), agentRelaunchRequest{agentRef: "uid:" + candidate.Agent.Metadata.UID, model: opts.Model, effort: opts.Effort})
+	if err != nil && call.processResumeHostLost && !strings.HasPrefix(err.Error(), processResumeRefused+":") && !strings.HasPrefix(err.Error(), processResumeNotResumable+":") && !strings.HasPrefix(err.Error(), processResumeOwned+":") {
+		err = fmt.Errorf("%s: %w", processResumeRefused, err)
+	}
 	if err == nil {
 		result.Result.Action = "resume"
 	}
