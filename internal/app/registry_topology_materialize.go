@@ -225,7 +225,7 @@ func (plan *registryTopologyPlan) planWindow(ctx context.Context, runner tmuxCom
 		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window anchorPaneRef must resolve to an exact same-Window shell or managed Agent Pane")
 		return nil
 	}
-	if plan.processes.Declares(*anchor) {
+	if registry.IsVirtualWindow(window.Metadata.UID) || plan.processes.Declares(*anchor) {
 		// A process anchor cannot bootstrap a tmux Window.
 		return nil
 	}

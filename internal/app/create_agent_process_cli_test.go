@@ -943,3 +943,191 @@ func TestProcessOwnerStopExit143RemainsResumableActualCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessVirtualWindowActualCLI(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		for _, route := range []string{"agent", "window"} {
+			t.Run(provider+"/"+route, func(t *testing.T) {
+				var f processCreateCLI
+				if provider == "codex" {
+					f = newProcessCodexCreateCLI(t).processCreateCLI
+					path := filepath.Join(f.root, "codex-provider.py")
+					raw, _ := os.ReadFile(path)
+					raw = bytes.ReplaceAll(raw, []byte("p['model']"), []byte("p.get('model','stub-model')"))
+					raw = bytes.ReplaceAll(raw, []byte("p['config']['model_reasoning_effort']"), []byte("p.get('config',{}).get('model_reasoning_effort','low')"))
+					if err := os.WriteFile(path, raw, 0600); err != nil {
+						t.Fatal(err)
+					}
+
+				} else {
+					f = newProcessCreateCLI(t)
+				}
+				// A tmux sentinel records any accidental call; no tmux server is started.
+				trace := filepath.Join(f.root, "tmux-calls")
+				if err := os.WriteFile(filepath.Join(f.root, "tmux"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+trace+"'\nexit 1\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := f.store.UpdateConvergent(func(reg *coremetadata.Registry) error { return coremetadata.Mutator{}.DeleteWindow(reg, f.window) }); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				args := []string{"create", route, "--host", "process", "--provider", provider, "-p", "uid:" + f.project}
+				if route == "agent" {
+					args = append(args, "--create-window", "--window", "virtual", "--name", "owned")
+				} else {
+					args = append(args, "--name", "virtual")
+				}
+				args = append(args, "--", "initial task")
+				cmd := exec.CommandContext(ctx, f.binary, args...)
+				input, err := cmd.StdinPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				output, err := cmd.StdoutPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				if err = cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				waited := false
+				defer func() {
+					_ = input.Close()
+					if !waited {
+						_ = cmd.Process.Kill()
+						_ = cmd.Wait()
+					}
+				}()
+				line, err := bufio.NewReader(output).ReadString('\n')
+				if err != nil || !strings.Contains(line, "foreground=owned") {
+					t.Fatalf("ownership: %q %v %s", line, err, stderr.String())
+				}
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				windows := reg.WindowsOf(f.project)
+				if len(windows) != 1 || len(reg.Agents) != 1 {
+					t.Fatalf("unexpected resources: %+v", reg)
+				}
+				w := windows[0]
+				a := reg.Agents[0]
+				if !reg.IsVirtualWindow(w.Metadata.UID) || w.Spec.AnchorPaneRef != a.Status.PaneRef || w.Spec.DefaultShellPaneRef != "" || w.Status.RuntimeID != "" || w.Status.RuntimeSessionID != "" || len(reg.Panes) != 1 {
+					t.Fatalf("unexpected topology: %+v", reg)
+				}
+				if raw, _ := os.ReadFile(trace); len(raw) != 0 {
+					t.Fatalf("creation called tmux: %s", raw)
+				}
+				described, err := exec.CommandContext(ctx, f.binary, "describe", "window", "uid:"+w.Metadata.UID, "-o", "json").CombinedOutput()
+				if err != nil {
+					t.Fatalf("describe: %v %s", err, described)
+				}
+				var document map[string]any
+				if err = json.Unmarshal(described, &document); err != nil {
+					t.Fatal(err)
+				}
+				spec := document["spec"].(map[string]any)
+				if spec["anchorPaneRef"] != a.Status.PaneRef || spec["defaultShellPaneRef"] != nil {
+					t.Fatalf("describe spec: %s", described)
+				}
+				if status, ok := document["status"].(map[string]any); ok && (status["runtimeID"] != nil || status["runtimeSessionID"] != nil) {
+					t.Fatalf("describe status: %s", described)
+				}
+				// describe performs its own read-only tmux inventory. Creation was
+				// checked above; reset the sentinel to check foreground retirement.
+				_ = os.Remove(trace)
+				_ = input.Close()
+				err = cmd.Wait()
+				waited = true
+				if err != nil {
+					t.Fatalf("EOF: %v %s", err, stderr.String())
+				}
+				if raw, _ := os.ReadFile(trace); len(raw) != 0 {
+					t.Fatalf("tmux invoked: %s", raw)
+				}
+			})
+		}
+	}
+}
+
+func TestProcessVirtualWindowRollbackActualCLI(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(map[bool]string{false: "complete", true: "incomplete"}[broken], func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			run := "exit 7"
+			if broken {
+				run = "mkdir -p " + filepath.Join(f.root, "state", "projmux", terminationJournalFile) + "; exit 7"
+			}
+			f.config(t, "[hooks.post-create]\nruntime = \"process\"\nrun = "+fmt.Sprintf("%q", run)+"\n")
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			args := []string{"create", "window", "--host", "process", "--provider", "claude", "-p", "uid:" + f.project, "--name", "virtual"}
+			out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+			if err == nil || !bytes.Contains(out, []byte("process-post-create-hook-failed")) {
+				t.Fatalf("failure: %v %s", err, out)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if broken {
+				if len(reg.Windows) != 2 || len(reg.Agents) != 1 {
+					t.Fatalf("missing cleanup evidence: %s", out)
+				}
+				windowUID := reg.Agents[0].Metadata.OwnerUID()
+				if !bytes.Contains(out, []byte("remaining window uid:"+windowUID)) || !bytes.Contains(out, []byte("cleanup: projmux delete window uid:"+windowUID)) {
+					t.Fatalf("missing exact cleanup: %s", out)
+				}
+			} else if len(reg.Windows) != 1 || len(reg.Agents) != 0 || len(reg.Panes) != 1 || !bytes.Contains(out, []byte("remaining: none")) {
+				t.Fatalf("rollback left resources: %s %+v", out, reg)
+			}
+		})
+	}
+}
+
+func TestProcessVirtualWindowProviderRollbackActualCLI(t *testing.T) {
+	f := newProcessCodexCreateCLI(t)
+	before, _ := f.store.LoadReadOnly()
+	path := filepath.Join(f.root, "codex-provider.py")
+	raw, _ := os.ReadFile(path)
+	raw = bytes.Replace(raw, []byte("if method=='initialize':reply({'userAgent':'projmux/0.160.0'})"), []byte("if method=='initialize':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture init refusal'}})"), 1)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, f.binary, "create", "agent", "--host", "process", "--provider", "codex", "-p", "uid:"+f.project, "--create-window", "--window", "virtual").CombinedOutput()
+	reg, readErr := f.store.LoadReadOnly()
+	if err == nil || readErr != nil || len(reg.Windows) != len(before.Windows) || len(reg.Agents) != 0 || len(reg.Panes) != len(before.Panes) || !bytes.Contains(out, []byte("remaining: none")) {
+		t.Fatalf("provider rollback: %v %v %s", err, readErr, out)
+	}
+}
+
+func TestProcessVirtualWindowRefusalsActualCLI(t *testing.T) {
+	for _, provider := range []string{"", "shell"} {
+		t.Run(provider, func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			before, err := os.ReadFile(f.store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"create", "window", "--host", "process", "-p", "uid:" + f.project}
+			token := "process-window-provider-required"
+			if provider != "" {
+				args = append(args, "--provider", provider)
+				token = "process-window-provider-unsupported"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+			exit, ok := err.(*exec.ExitError)
+			after, readErr := os.ReadFile(f.store.Path())
+			if !ok || exit.ExitCode() != 2 || !bytes.Contains(out, []byte(token)) || readErr != nil || !bytes.Equal(before, after) {
+				t.Fatalf("refusal: %v %s", err, out)
+			}
+		})
+	}
+}

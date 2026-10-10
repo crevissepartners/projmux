@@ -15,7 +15,7 @@ const (
 	processCreateRuntimeUnknown processCreateRuntime = "unknown"
 )
 
-type processCreateRemaining struct{ Agent, Pane selector.Ref }
+type processCreateRemaining struct{ Agent, Pane, Window selector.Ref }
 
 // processCreateError describes cleanup evidence without parsing the CLI's
 // recovery text. None means no created resources remain; offline requires a
@@ -42,8 +42,12 @@ func newProcessCreateError(cause error, runtime processCreateRuntime, binding pr
 }
 
 func processCreateRemainingRefs(result processAgentCreateResult) processCreateRemaining {
-	return processCreateRemaining{
+	remaining := processCreateRemaining{
 		Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: result.Binding.Agent},
 		Pane:  selector.Ref{Kind: coremetadata.KindPane, UID: result.Binding.Pane},
 	}
+	if result.createdWindow {
+		remaining.Window = selector.Ref{Kind: coremetadata.KindWindow, UID: result.Binding.Window}
+	}
+	return remaining
 }
