@@ -9,6 +9,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 // registryNavigationView is the hierarchy picker's pure row model.
@@ -47,7 +48,7 @@ func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.
 				value = registryNavigationName(row)
 			}
 		case columnStatus:
-			value = string(row.Status)
+			value = registryNavigationStatus(row, locale)
 		case columnProgress:
 			value = registryNavigationProgress(row, locale, now)
 		case columnTermination:
@@ -61,6 +62,11 @@ func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.
 		}
 		return runtimeCell(value)
 	})
+}
+
+func registryNavigationStatus(row registryview.Row, locale i18n.Locale) string {
+	text, _ := i18n.NewLocalizer(locale).Text(i18n.KeyWindowHeadless)
+	return intrender.WindowStatus(row.Kind == registryview.RowKindWindow && row.Status == registryview.StatusVirtual, string(row.Status), text.String())
 }
 
 func registryNavigationProgress(row registryview.Row, locale i18n.Locale, now time.Time) string {
@@ -227,7 +233,7 @@ func (v registryNavigationView) rowByValue(value string) (registryview.Row, bool
 func (v registryNavigationView) actionEntries(row registryview.Row, socket string, insideTmux bool) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(v.locale)}
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfoLocale(v.locale, "Resource", registryNavigationSummary(row), row.Reason),
+		Label: settingsLabelInfoLocale(v.locale, "Resource", registryNavigationSummary(row, v.locale), row.Reason),
 		Value: settingsNoopValue,
 	})
 
@@ -242,6 +248,16 @@ func (v registryNavigationView) actionEntries(row registryview.Row, socket strin
 func (v registryNavigationView) actionEntry(row registryview.Row, action registryview.Action, socket string, insideTmux bool) intpickercompat.Entry {
 	switch action {
 	case registryview.ActionOpen:
+		if row.Kind == registryview.RowKindWindow && row.Status == registryview.StatusVirtual {
+			if !insideTmux {
+				text, _ := i18n.NewLocalizer(v.locale).Text(i18n.KeyWindowOpenRequiresClient)
+				return runtimeUnavailableAction(v.locale, "Open", text.String()+" · projmux attach project uid:"+registryNavigationProjectUID(v.view, row))
+			}
+			if strings.TrimSpace(socket) == "" {
+				return runtimeUnavailableAction(v.locale, "Open", "unavailable - the exact socket path could not be read from the server")
+			}
+			return intpickercompat.Entry{Label: settingsLabelLocale(v.locale, settingsGlyphOpen, settingsColorType, "Open", registryNavigationStatus(row, v.locale)), Value: navActionOpen}
+		}
 		target := registryNavigationRuntimeCell(row)
 		switch {
 		case row.Runtime == nil || strings.TrimSpace(row.Runtime.Target) == "":
@@ -298,8 +314,8 @@ func (v registryNavigationView) actionEntry(row registryview.Row, action registr
 }
 
 // registryNavigationSummary renders one row as `kind name (status)`.
-func registryNavigationSummary(row registryview.Row) string {
-	return string(row.Kind) + " " + registryNavigationName(row) + " (" + string(row.Status) + ")"
+func registryNavigationSummary(row registryview.Row, locale i18n.Locale) string {
+	return string(row.Kind) + " " + registryNavigationName(row) + " (" + registryNavigationStatus(row, locale) + ")"
 }
 
 // registryNavigationHeaderLine states which server the status column came from.

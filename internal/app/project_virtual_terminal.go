@@ -19,6 +19,11 @@ func terminalWindows(reg coremetadata.Registry, projectUID string) []coremetadat
 }
 
 func (c *switchCommand) prepareVirtualTerminalProject(ctx context.Context, target string) (virtualWindowShellMaterialization, error) {
+	return c.prepareVirtualTerminalProjectOnRoute(ctx, target, nil)
+}
+
+// Picker continuations reobserve their exact anchor after trust and before writes.
+func (c *switchCommand) prepareVirtualTerminalProjectOnRoute(ctx context.Context, target string, beforeMaterialize func(context.Context) error) (virtualWindowShellMaterialization, error) {
 	if c.managedStopStore == nil || c.managedStopStore.load == nil {
 		return virtualWindowShellMaterialization{}, nil
 	}
@@ -37,14 +42,19 @@ func (c *switchCommand) prepareVirtualTerminalProject(ctx context.Context, targe
 	if !trusted {
 		return virtualWindowShellMaterialization{}, errProjectTrustDenied
 	}
+	if beforeMaterialize != nil {
+		if err := beforeMaterialize(ctx); err != nil {
+			return virtualWindowShellMaterialization{}, err
+		}
+	}
 	if c.materializeVirtualWindow == nil {
 		return virtualWindowShellMaterialization{}, errors.New("open: virtual Window materializer is not configured")
 	}
 	return c.materializeVirtualWindow(ctx, project.Spec.PrimaryWindowRef)
 }
 
-// Only canonical open/attach set allowVirtualTerminal. Picker and sidebar
-// callers retain their admission until they acquire virtual navigation support.
+// Terminal entry points select an existing real Window when primary is virtual.
+// A process-only Project first prepares its primary through the same materializer.
 func (c *switchCommand) selectVirtualTerminalArrival(ctx context.Context, sessionName string) error {
 	if c.managedStopStore == nil || c.managedStopStore.load == nil {
 		return nil

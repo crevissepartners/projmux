@@ -56,7 +56,8 @@ const (
 type Action string
 
 const (
-	// ActionOpen moves the operator to an observed runtime object.
+	// ActionOpen moves the operator to a runtime object, materializing an
+	// intentional virtual Window through the existing focus route when needed.
 	ActionOpen Action = "open"
 	// ActionStart materializes the runtime of a logical resource. The row
 	// offers it; a separate command performs it.
@@ -78,6 +79,9 @@ const (
 	// ActionRuntime opens the Runtime diagnostics surface.
 	ActionRuntime Action = "runtime"
 )
+
+// StatusVirtual is an intentional process-only Window, independent of tmux observation.
+const StatusVirtual resourcegraph.Status = "virtual"
 
 // Row is one navigation row.
 //
@@ -122,7 +126,8 @@ type Row struct {
 	WorkingAgents  uint8                      `json:"workingAgents,omitempty"`
 	// Role is the Pane role, shell or agent.
 	Role string `json:"role,omitempty"`
-	// Status is the runtime overlay of this row on the exact observed host.
+	// Status is the runtime overlay on the exact observed host, or StatusVirtual
+	// for an intentional process-only Window.
 	Status resourcegraph.Status `json:"status"`
 	// Live and Active are independent read-time facts for Window rows. Active
 	// is exact window_active evidence, never an inference from stored metadata.
@@ -306,6 +311,17 @@ func rowID(uid string) string {
 // the same Registry render identically on every host and across a refresh.
 func Build(in Input) View {
 	b := &builder{graph: in.Graph, contexts: NewObservedContextProjector(in.Graph)}
+	// Reuse the metadata predicate on the exact resource snapshot carried by
+	// the graph; do not infer virtual state from absence or process liveness.
+	for _, node := range in.Graph.Windows {
+		b.registry.Windows = append(b.registry.Windows, node.Window)
+	}
+	for _, node := range in.Graph.Agents {
+		b.registry.Agents = append(b.registry.Agents, node.Agent)
+	}
+	for _, node := range in.Graph.Panes {
+		b.registry.Panes = append(b.registry.Panes, node.Pane)
+	}
 	b.projects()
 	b.candidates(in.Candidates)
 	b.runtimeLink()
@@ -319,6 +335,7 @@ func Build(in Input) View {
 }
 
 type builder struct {
+	registry coremetadata.Registry
 	graph    resourcegraph.Graph
 	contexts Projector
 	rows     []Row
@@ -426,6 +443,16 @@ func (b *builder) windows(project resourcegraph.ProjectNode, projectID string) {
 			continue
 		}
 		windowID := rowID(window.Window.Metadata.UID)
+		status := window.Status
+		actions := resourceActions(RowKindWindow, status, window.MissingRoot)
+		reason := statusReason(status, window.MissingRoot)
+		if b.registry.IsVirtualWindow(window.Window.Metadata.UID) {
+			status = StatusVirtual
+			if !window.MissingRoot {
+				reason = "a process anchor intentionally has no tmux Window"
+				actions = []Action{ActionOpen, ActionDelete}
+			}
+		}
 		counts := b.windowProgressCounts(window.Window.Metadata.UID)
 		b.rows = append(b.rows, Row{
 			Section:      SectionProjects,
@@ -437,13 +464,13 @@ func (b *builder) windows(project resourcegraph.ProjectNode, projectID string) {
 			Name:         window.Window.Metadata.Name,
 			Context:      b.contexts.For(coremetadata.KindWindow, window.Window.Metadata.UID),
 			Root:         root,
-			Status:       window.Status,
+			Status:       status,
 			Live:         window.Live,
 			Active:       window.Active,
 			MissingRoot:  window.MissingRoot,
 			Runtime:      window.Runtime,
-			Actions:      resourceActions(RowKindWindow, window.Status, window.MissingRoot),
-			Reason:       statusReason(window.Status, window.MissingRoot),
+			Actions:      actions,
+			Reason:       reason,
 			ActiveAgents: counts.active, ApprovalAgents: counts.approval, WorkingAgents: counts.working,
 		})
 		b.windowPanes(window.Window.Metadata.UID, windowID, root)

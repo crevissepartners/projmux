@@ -1757,6 +1757,9 @@ func (c *switchCommand) resolveTargetSession(target string) (string, error) {
 }
 
 func (c *switchCommand) openTarget(ctx context.Context, target string) error {
+	previous := c.allowVirtualTerminal
+	c.allowVirtualTerminal = true
+	defer func() { c.allowVirtualTerminal = previous }()
 	target = cleanOptionalPath(target)
 	if err := c.requireTerminalProject(target); err != nil {
 		return err
@@ -1764,13 +1767,6 @@ func (c *switchCommand) openTarget(ctx context.Context, target string) error {
 	sessionName, err := c.resolveTargetSession(target)
 	if err != nil || sessionName == "" {
 		return err
-	}
-	exists, err := c.switchSessionExists(ctx, sessionName)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return c.openProjectSession(ctx, sessionName)
 	}
 	return c.openProjectTarget(ctx, target, sessionName)
 }
@@ -1788,6 +1784,9 @@ func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string
 }
 
 func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, plan switchPlan) error {
+	previous := c.allowVirtualTerminal
+	c.allowVirtualTerminal = true
+	defer func() { c.allowVirtualTerminal = previous }()
 	target := cleanOptionalPath(plan.Selection)
 	if target == "" {
 		return nil
@@ -1809,6 +1808,9 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 		return err
 	}
 	if exists {
+		if _, err := c.prepareVirtualTerminalProjectOnRoute(ctx, target, c.virtualTerminalAnchorCheck(plan.Anchor)); err != nil {
+			return err
+		}
 		c.commitSidebarPreview(ctx)
 		if err := c.openProjectSession(ctx, sessionName); err != nil {
 			return err
@@ -1911,6 +1913,9 @@ func (c *switchCommand) lookupEnvValue(name string) string {
 }
 
 func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
+	previous := c.allowVirtualTerminal
+	c.allowVirtualTerminal = true
+	defer func() { c.allowVirtualTerminal = previous }()
 	fs := flag.NewFlagSet("switch sidebar-open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
@@ -1986,6 +1991,9 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		return err
 	}
 	if exists {
+		if _, err := c.prepareVirtualTerminalProjectOnRoute(ctx, openTarget, c.virtualTerminalAnchorCheck(anchorPane)); err != nil {
+			return err
+		}
 		return c.openProjectSession(ctx, openSession)
 	}
 	openErr := c.openSidebarClosedProject(ctx, openTarget, openSession, anchorPane, openMode)
@@ -2007,6 +2015,20 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	return fmt.Errorf("open selected project: %w", openErr)
 }
 
+// virtualTerminalAnchorCheck preserves the sidebar's exact route proof across
+// a trust dialog, when virtual navigation will create a shell.
+func (c *switchCommand) virtualTerminalAnchorCheck(anchor string) func(context.Context) error {
+	if strings.TrimSpace(anchor) == "" {
+		return nil
+	}
+	return func(ctx context.Context) error {
+		if c.validateProjectOpenRoute == nil {
+			return errors.New("project open route validator is not configured")
+		}
+		return c.validateProjectOpenRoute(ctx, anchor)
+	}
+}
+
 // openSidebarClosedProject opens one closed Project for the sidebar
 // continuation, re-adjudicating the startup mode that crossed the re-exec
 // boundary before it is acted on.
@@ -2025,6 +2047,9 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 // either a registered Project, which adjudication leaves on `continue`, or a
 // token this process must correct. `fresh` is never demoted.
 func (c *switchCommand) openSidebarClosedProject(ctx context.Context, target, sessionName, anchor string, mode projectStartupCandidate) error {
+	previous := c.allowVirtualTerminal
+	c.allowVirtualTerminal = true
+	defer func() { c.allowVirtualTerminal = previous }()
 	if mode.Kind == projectStartupKindTopology {
 		resolved, err := c.defaultProjectStartupMode(target)
 		if err != nil {
@@ -2033,7 +2058,7 @@ func (c *switchCommand) openSidebarClosedProject(ctx context.Context, target, se
 		mode = resolved
 	}
 	return c.authorizeAndContinueProjectOpenRequest(ctx, projectOpenRequest{
-		Target: target, SessionName: sessionName, Mode: mode, Anchor: anchor,
+		Target: target, SessionName: sessionName, Mode: mode, Anchor: anchor, PickerTerminal: true,
 	})
 }
 

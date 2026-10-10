@@ -78,6 +78,9 @@ type projectOpenRequest struct {
 	// client handoff differs, so the two verbs share one materializer instead of
 	// growing a second one that could drift on the half they agree about.
 	Detached bool
+	// PickerTerminal permits the sidebar continuation to prepare its virtual
+	// primary only after trust and exact popup-anchor validation.
+	PickerTerminal bool
 }
 
 type projectSessionRequest struct {
@@ -211,6 +214,11 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 			return err
 		}
 	}
+	if request.PickerTerminal && request.Mode.Kind != projectStartupKindNew {
+		if _, err := c.prepareVirtualTerminalProjectOnRoute(ctx, request.Target, c.virtualTerminalAnchorCheck(request.Anchor)); err != nil {
+			return err
+		}
+	}
 	if request.Mode.Kind == projectStartupKindNew && !c.openedRootIsHome(request.Target) {
 		err = c.continueProjectOpenRequest(ctx, request, openedProjectBootstrap{})
 		return err
@@ -224,8 +232,8 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 	return err
 }
 
-// Picker and sidebar entry points retain admission until their virtual
-// navigation support lands. Canonical open/attach prepare the terminal target.
+// Terminal entry points opt into shared virtual Window preparation.
+// Other startup callers retain their existing admission.
 func (c *switchCommand) requireTerminalProject(target string) error {
 	if c.allowVirtualTerminal {
 		return nil
