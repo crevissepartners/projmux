@@ -128,6 +128,9 @@ func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand)
 }
 
 func (r *processAgentResumeResult) writeResumeResult(creator *createCommand, stdout, stderr io.Writer, mode cli.OutputMode) error {
+	if err := writeSplitCWDNotices(stderr, r.owner.Notices); err != nil {
+		return err
+	}
 	if mode != cli.OutputModeNone {
 		ownership := stderr
 		if mode == cli.OutputModeDefault {

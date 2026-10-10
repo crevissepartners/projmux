@@ -201,14 +201,18 @@ func TestAgentGuidanceComposedSystemPromptFileGolden(t *testing.T) {
 	}
 	personaContent := []byte("PERSONA: you review diffs tersely.\n")
 	for _, test := range []struct {
-		name                     string
-		guidance, persona, rules bool
+		name                              string
+		guidance, persona, rules, project bool
 	}{
-		{"guidance", true, false, false},
-		{"guidance-persona", true, true, false},
-		{"guidance-rules", true, false, true},
-		{"guidance-persona-rules", true, true, true},
-		{"persona-rules", false, true, true},
+		{"guidance", true, false, false, false},
+		{"guidance-persona", true, true, false, false},
+		{"guidance-rules", true, false, true, false},
+		{"guidance-persona-rules", true, true, true, false},
+		{"persona-rules", false, true, true, false},
+		{"guidance-persona-project-rules", true, true, true, true},
+		{"persona-project-rules", false, true, true, true},
+		{"project", false, false, false, true},
+		{"guidance-project", true, false, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -237,6 +241,13 @@ func TestAgentGuidanceComposedSystemPromptFileGolden(t *testing.T) {
 				}
 				flags.personaLaunch = launch
 				parts = append(parts, personaContent)
+			}
+			if test.project {
+				text := []byte("PROJECT: use this Project's release checklist.\n")
+				if err := agentguidance.NewDefaultProjectStore(paths).Save(project.Metadata.UID, text); err != nil {
+					t.Fatal(err)
+				}
+				parts = append(parts, text)
 			}
 			if test.rules {
 				parts = append(parts, projectlinks.Render(linkRulesAlpha, projectlinks.ProjectOf(project)))

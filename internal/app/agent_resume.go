@@ -213,7 +213,7 @@ func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremeta
 	// A Claude Agent launched with its Project's label link rules gets the
 	// snapshot its digest annotation names, alone or after the persona in one
 	// composite file: Claude keeps only the last --append-system-prompt-file.
-	systemPromptFile, projectLinksUnavailable := c.resumeSystemPromptFile(mode, annotations, personaFile)
+	systemPromptFile, projectLinksUnavailable := c.resumeProjectSystemPromptFile(mode, annotations, personaFile)
 	// The agent guidance its digest annotation names goes in front of that
 	// file, in one composite, for the same reason.
 	systemPromptFile, agentGuidanceUnavailable := c.resumeGuidanceSystemPromptFile(mode, annotations, systemPromptFile)

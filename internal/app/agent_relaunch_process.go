@@ -79,6 +79,11 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 	if err != nil {
 		return err
 	}
+	if notice := recipe.links.project.notice(target.Metadata.Name); notice != "" {
+		if _, err := fmt.Fprintln(stderr, notice); err != nil {
+			return err
+		}
+	}
 	ctx, cancel, release := c.hostTransferLifetime()
 	defer release()
 	candidate, err := c.stopProcessRelaunch(ctx, reg, target, pane, request, recipe.restart)
@@ -232,7 +237,7 @@ func (c *agentCommand) planProcessRelaunchLaunch(target coremetadata.Agent, pane
 	planned := processResumeCandidate{Agent: target.Clone(), Pane: pane.Clone(), Record: *pane.Status.ProcessSession.Clone()}
 	planned.Agent.Metadata.Annotations = r.annotations
 	planned.Agent.Spec.Workspace = r.workspace
-	plan, config, _, err := c.planProcessResume(planned, processAgentResumeOptions{})
+	plan, config, _, err := c.planProcessResume(planned, processAgentResumeOptions{promptPartsPrepared: true})
 	if err != nil {
 		return processRelaunchLaunch{}, err
 	}

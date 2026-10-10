@@ -1,0 +1,25 @@
+PERSONA: you review diffs tersely.
+
+
+---
+
+PROJECT: use this Project's release checklist.
+
+
+---
+
+# Project label link rules
+
+These are this Project's label link rules. A label is a key and a value, written key=value. A label whose key has a rule below links to that rule's template with its placeholders replaced. Use these rules whenever you turn such a label into a link.
+
+Placeholders: {value} is the label value. {jira[N]} and {repo[N]} are the Nth Jira and Repo URL below, counting from 0; {jira} and {repo} are {jira[0]} and {repo[0]}. {<name>} is the named URL <name>. {project.uid}, {project.name} and {project.labels.<key>} are this Project's UID, name and the value of its label <key>. A URL is substituted with its trailing "/" removed; {value} and every {project.*} value are path-escaped. A rule whose template uses a Project label this Project does not have produces no link.
+
+Jira URLs:
+- {jira[0]} (also {jira}): https://jira.alpha.example.com
+
+Project variables (the values before path-escaping):
+- {project.uid}: "proj-vyp7l4eev42ocufusci2aybg3a"
+- {project.name}: "golden"
+
+Rules:
+- label key "jira": template {jira}/browse/{value}; example: jira=EXAMPLE-123 links to https://jira.alpha.example.com/browse/EXAMPLE-123

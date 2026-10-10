@@ -23,12 +23,13 @@ import (
 type processResumeFirstFrame struct{ Kind, Text string }
 type processResumeScope struct{ Project, Window selector.Ref }
 type processAgentResumeOptions struct {
-	Agent         selector.Ref
-	Scope         processResumeScope
-	Prompt        processResumeFirstFrame
-	Model, Effort string
-	allowHostLost bool // Explicit CLI resume and private consumers opt in.
-	claim         *deferredProcessClaim
+	Agent               selector.Ref
+	Scope               processResumeScope
+	Prompt              processResumeFirstFrame
+	Model, Effort       string
+	promptPartsPrepared bool // relaunch already froze its prompt-part recipe.
+	allowHostLost       bool // Explicit CLI resume and private consumers opt in.
+	claim               *deferredProcessClaim
 }
 type processAgentResumeRequest struct{ options processAgentResumeOptions }
 type processAgentResumeResult struct {
@@ -184,6 +185,9 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		removeHostLostLease(path, *candidate.HostLost)
 	}
 	result = c.processResumeResult(candidate, b, path)
+	if notice := settingsPlan.projectGuidance.notice(candidate.Agent.Metadata.Name); notice != "" {
+		result.owner.Notices = append(result.owner.Notices, notice)
+	}
 	result.previousAttention = previousAttention
 	result.attentionChecked = candidate.Record.Provider == aiModeCodex
 	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
@@ -431,7 +435,16 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 	if err != nil {
 		return processhost.Command{}, config, settingsPlan, err
 	}
-	settingsPlan, err = ai.ResolveAgentSettingsRequest(provider, candidate.Agent.Metadata.Annotations, agentSettingsRequest{model: opts.Model, effort: opts.Effort, source: "resume"})
+	var projectGuidance projectGuidanceLaunch
+	if provider == aiModeClaude && !opts.promptPartsPrepared {
+		projectGuidance = ai.loadProjectGuidance(*project, candidate.Agent.Metadata.Annotations)
+	}
+	request := agentSettingsRequest{model: opts.Model, effort: opts.Effort, source: "resume"}
+	if projectGuidance.active && projectGuidance.unavailable == nil {
+		request.projectGuidance = &projectGuidance.digest
+	}
+	settingsPlan, err = ai.ResolveAgentSettingsRequest(provider, candidate.Agent.Metadata.Annotations, request)
+	settingsPlan.projectGuidance = projectGuidance
 	if err != nil {
 		return processhost.Command{}, config, settingsPlan, err
 	}
@@ -442,7 +455,7 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 	if settingsPlan.snapshotErr != nil {
 		return processhost.Command{}, config, settingsPlan, settingsPlan.snapshotErr
 	}
-	annotations := settingsPlan.launchAnnotations(candidate.Agent.Metadata.Annotations)
+	annotations := projectGuidance.resumeLaunchAnnotations(settingsPlan.launchAnnotations(candidate.Agent.Metadata.Annotations))
 	model := settingsPlan.resolution.New.Model.Value
 	effort := annotations[coremetadata.AnnotationAgentEffort]
 	if err := requireLaunchOptions("agent resume", provider, model, effort, false, "nothing was changed"); err != nil {
@@ -463,7 +476,7 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 		if unavailable != nil {
 			return processhost.Command{}, config, settingsPlan, unavailable
 		}
-		instructions, err := ai.resumeSystemPromptFile(provider, annotations, persona)
+		instructions, err := ai.resumeProjectSystemPromptFile(provider, annotations, persona)
 		if err != nil {
 			return processhost.Command{}, config, settingsPlan, err
 		}
