@@ -49,3 +49,98 @@ func (m Mutator) CreateProcessWindow(reg *Registry, projectUID string, declared 
 	p, _ := reg.Pane(pane.Metadata.UID)
 	return w.Clone(), a.Clone(), p.Clone(), nil
 }
+
+// setWindowAnchor also retires the tmux projection when its last anchor leaves.
+func (r *Registry) setWindowAnchor(windowUID, paneUID string) {
+	window, ok := r.Window(windowUID)
+	if !ok {
+		return
+	}
+	window.Spec.AnchorPaneRef = paneUID
+	if r.IsVirtualWindow(windowUID) {
+		window.Spec.DefaultShellPaneRef = ""
+		window.Status.RuntimeSessionID = ""
+		window.Status.RuntimeID = ""
+		clearCondition(&window.Status.Conditions, ConditionMissingRuntime)
+	}
+}
+
+// VirtualWindowDeleteCascade predicts the Window removed with its last Pane.
+// It counts retained Pane rows too; deleting an unrelated Offline Agent cannot
+// remove another Agent's process Pane or an ineligible retained Pane.
+func (r Registry) VirtualWindowDeleteCascade(kind Kind, uid string) string {
+	var windowUID string
+	switch kind {
+	case KindPane:
+		pane, ok := r.Pane(uid)
+		if !ok {
+			return ""
+		}
+		windowUID, _ = paneWindowOwnerUID(r, *pane)
+	case KindAgent:
+		agent, ok := r.Agent(uid)
+		if !ok {
+			return ""
+		}
+		windowUID = agent.Metadata.OwnerUID()
+	default:
+		return ""
+	}
+	if !r.IsVirtualWindow(windowUID) {
+		return ""
+	}
+	removed := false
+	for _, pane := range r.Panes {
+		owner, ok := paneWindowOwnerUID(r, pane)
+		if !ok || owner != windowUID {
+			continue
+		}
+		if kind == KindPane && pane.Metadata.UID == uid || kind == KindAgent && pane.Metadata.OwnerUID() == uid {
+			removed = true
+			continue
+		}
+		return ""
+	}
+	if removed {
+		return windowUID
+	}
+	return ""
+}
+
+// ReturnAbsentTmuxWindowsToVirtual consumes a complete, successful inventory.
+// Only a previously bound tmux Window with a remaining eligible process Pane
+// can be retired. Live siblings and never-materialized topology stay intact.
+func (m Mutator) ReturnAbsentTmuxWindowsToVirtual(reg *Registry, observed RuntimeObservation) error {
+	next := reg.Clone()
+	for _, window := range reg.Windows {
+		uid := window.Metadata.UID
+		if window.Status.RuntimeID == "" || observed.BoundWindow(uid) {
+			continue
+		}
+		process, live := false, false
+		var absent []string
+		for _, pane := range reg.Panes {
+			owner, ok := paneWindowOwnerUID(*reg, pane)
+			if !ok || owner != uid {
+				continue
+			}
+			if pane.Spec.Runtime.EffectiveKind() == RuntimeProcess {
+				process = process || windowAnchorEligibility(*reg, uid, pane) == windowAnchorEligible
+			} else {
+				live = live || observed.BoundPane(pane.Metadata.UID)
+				absent = append(absent, pane.Metadata.UID)
+			}
+		}
+		if !process || live {
+			continue
+		}
+		for _, paneUID := range absent {
+			if err := m.DeletePane(&next, paneUID); err != nil {
+				return err
+			}
+		}
+		next.setWindowAnchor(uid, next.firstWindowAnchorPaneUID(uid))
+	}
+	*reg = next
+	return nil
+}

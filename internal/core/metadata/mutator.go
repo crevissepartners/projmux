@@ -732,7 +732,7 @@ func (m Mutator) ObserveRuntimeBindings(reg *Registry, observed RuntimeObservati
 	for i := range reg.Windows {
 		window := &reg.Windows[i]
 		if m.refreshRuntimeCondition(&window.Status.Conditions,
-			observed.BoundWindow(window.Metadata.UID),
+			observed.BoundWindow(window.Metadata.UID) || reg.IsVirtualWindow(window.Metadata.UID),
 			"no live tmux window mirrors window uid "+window.Metadata.UID, now) {
 			changed = true
 		}

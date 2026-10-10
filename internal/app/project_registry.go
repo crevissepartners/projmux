@@ -427,6 +427,22 @@ func (r *registryReconciler) reconcileGuarded(
 		inventory = snapshot
 	}
 	runtime := observeRuntime(ctx, inventory)
+	// Retire a disappeared mixed Window before ordinal adoption can attach an
+	// unrelated unmirrored tmux Window to its old desired shell recipe.
+	if runtime.Windows != nil && runtime.Panes != nil {
+		observed := runtime
+		observed.Windows = maps.Clone(runtime.Windows)
+		for _, window := range working.Windows {
+			project, ok := working.Project(window.Metadata.OwnerUID())
+			if !ok || !reconcileLive[r.projectPhysicalSessionName(*working, *project)] ||
+				project.Status.Session != nil && project.Status.Session.SocketPath != "" && project.Status.Session.SocketPath != r.passSocketPath() {
+				observed.Windows[window.Metadata.UID] = true
+			}
+		}
+		if err := returnAbsentProcessWindowProjection(ctx, working, mutator, inventory, observed, r.passSocketPath()); err != nil {
+			return err
+		}
+	}
 	binder := coremetadata.NewBindingMatcher(runtime)
 	if r.refuseForeign {
 		binder = coremetadata.NewRepairBindingMatcher(runtime)
@@ -458,8 +474,7 @@ func (r *registryReconciler) reconcileGuarded(
 	// there -- and, now that binding reapply exists, on a Window this very pass
 	// just reattached.
 	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseObserve)
-	r.observeRuntime(ctx, working, mutator, r.unwrittenPassSnapshot())
-	return nil
+	return r.observeRuntime(ctx, working, mutator, r.unwrittenPassSnapshot())
 }
 
 // observeRuntime is the runtime-observation step of one reconciliation pass.
@@ -490,21 +505,27 @@ func (r *registryReconciler) reconcileGuarded(
 // only when no write of ours has run since it was taken. It then answers both
 // inventories: re-reading them would repeat the same server-wide queries with
 // no write in between.
-func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, unwritten *intmetadata.ServerSnapshot) {
+func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, unwritten *intmetadata.ServerSnapshot) error {
 	processes := processDeclarations(*working, r.processes)
 	var inventory liveRuntimeInventory = r.mirror
 	if unwritten != nil {
 		inventory = unwritten
 	}
 	panes, paneErr := inventory.LivePaneUIDs(ctx)
+	windows, windowErr := inventory.LiveWindowUIDs(ctx)
+	if paneErr == nil && windowErr == nil {
+		if err := returnAbsentProcessWindowProjection(ctx, working, mutator, inventory, coremetadata.RuntimeObservation{Windows: windows, Panes: panes}, r.passSocketPath()); err != nil {
+			return err
+		}
+	}
 	if paneErr == nil {
 		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{processes: processes}))
 	}
-	windows, windowErr := inventory.LiveWindowUIDs(ctx)
 	if paneErr != nil || windowErr != nil {
-		return
+		return nil
 	}
 	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes, ProcessPanes: processPaneUIDs(*working, processes)})
+	return nil
 }
 
 // observedSession is one live tmux session the import step read but could not
@@ -1160,4 +1181,41 @@ func (r *registryReconciler) passSocketPath() string {
 // diffs the registry against.
 type livePaneInventory interface {
 	LivePaneUIDs(ctx context.Context) (map[string]bool, error)
+}
+
+// A complete uid inventory still cannot prove physical absence when both
+// mirrors were lost. Confirm the recorded Window handle is absent as well.
+func returnAbsentProcessWindowProjection(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, inventory liveRuntimeInventory, observed coremetadata.RuntimeObservation, socketPath string) error {
+	mixed := false
+	for _, pane := range reg.Panes {
+		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+			mixed = true
+			break
+		}
+	}
+	if !mixed {
+		return nil
+	}
+	runtime, ok := inventory.(interface {
+		LiveWindowRuntimeIDs(context.Context) (map[string]bool, error)
+	})
+	if !ok {
+		return nil
+	}
+	ids, err := runtime.LiveWindowRuntimeIDs(ctx)
+	if err != nil {
+		return nil
+	} // failed observations release nothing
+	protected := observed
+	protected.Windows = maps.Clone(observed.Windows)
+	if protected.Windows == nil {
+		return nil
+	}
+	for _, window := range reg.Windows {
+		project, ok := reg.Project(window.Metadata.OwnerUID())
+		if ids[window.Status.RuntimeID] || !ok || !coremetadata.SessionAbsenceAttributableTo(project.Status.Session, socketPath) {
+			protected.Windows[window.Metadata.UID] = true
+		}
+	}
+	return mut.ReturnAbsentTmuxWindowsToVirtual(reg, protected)
 }

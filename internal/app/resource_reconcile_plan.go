@@ -363,6 +363,9 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		// Promotion passes above stay Window-local; only an ordinary pass also
 		// lowers the live flag of Projects it did not select.
 		endedSessions = lowerEndedResourceProjectSessions(mutator, &after, before, scopedBefore, p.exactSocketPath, projectSessions)
+		if err := returnEndedProcessWindowsToVirtual(mutator, &after, endedSessions); err != nil {
+			return resourceReconcilePlan{}, err
+		}
 		if err := planResourceBoundMirrorDrift(ctx, recorder, after, reconciler); err != nil {
 			return resourceReconcilePlan{}, err
 		}
@@ -475,6 +478,9 @@ func planAbsentServerSessionLower(mutator coremetadata.Mutator, before coremetad
 	lowered := mutator.LowerProjectSessionsEndedOnServer(&after, socketPath, map[string]bool{})
 	if len(lowered) == 0 {
 		return resourceReconcilePlan{registry: before.Clone()}, 0, nil
+	}
+	if err := returnEndedProcessWindowsToVirtual(mutator, &after, lowered); err != nil {
+		return resourceReconcilePlan{}, 0, err
 	}
 	normalize := newPlanUIDNormalizerWithAllocations(before, after, nil)
 	items := describeLoweredProjectSessions(registryReconcileItems(before, after, normalize), lowered, normalize, func(project coremetadata.Project) string {
@@ -2035,3 +2041,19 @@ func joinResourcePlanRows(rows [][]string, escaped bool) string {
 }
 
 var _ intmetadata.Runner = (*resourcePlanTmuxRunner)(nil)
+
+// Exact session disappearance proves absence only for the Projects this pass
+// lowered. Other servers' and unbound Projects remain protected.
+func returnEndedProcessWindowsToVirtual(mut coremetadata.Mutator, reg *coremetadata.Registry, ended []coremetadata.Project) error {
+	selected := map[string]bool{}
+	for _, project := range ended {
+		selected[project.Metadata.UID] = true
+	}
+	bound := map[string]bool{}
+	for _, window := range reg.Windows {
+		if window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject || !selected[window.Metadata.OwnerUID()] {
+			bound[window.Metadata.UID] = true
+		}
+	}
+	return mut.ReturnAbsentTmuxWindowsToVirtual(reg, coremetadata.RuntimeObservation{Windows: bound})
+}

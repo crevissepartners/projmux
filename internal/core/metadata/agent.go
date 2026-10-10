@@ -329,17 +329,23 @@ func (r *Registry) firstWindowShellPaneUID(windowUID string) string {
 	return ""
 }
 
-// firstWindowAnchorPaneUID returns the first Pane in Registry insertion order
-// that windowAnchorEligibility admits for windowUID. Direct shell Panes and
-// managed Agent Panes qualify; a retained Agent Pane its owner no longer binds
-// is skipped rather than selected.
+// firstWindowAnchorPaneUID selects the first eligible tmux Pane in Registry
+// order, falling back to the first eligible process Pane. Retained Agent Panes
+// their owners no longer bind are skipped.
 func (r *Registry) firstWindowAnchorPaneUID(windowUID string) string {
+	process := ""
 	for _, pane := range r.Panes {
-		if windowAnchorEligibility(*r, windowUID, pane) == windowAnchorEligible {
+		if windowAnchorEligibility(*r, windowUID, pane) != windowAnchorEligible {
+			continue
+		}
+		if pane.Spec.Runtime.EffectiveKind() == RuntimeTmux {
 			return pane.Metadata.UID
 		}
+		if process == "" {
+			process = pane.Metadata.UID
+		}
 	}
-	return ""
+	return process
 }
 
 func mustAgent(reg *Registry, uid string) *Agent {
@@ -357,7 +363,7 @@ func (r *Registry) deletePane(uid string) bool {
 		r.releaseNames(uid)
 		for j := range r.Windows {
 			if r.Windows[j].Spec.AnchorPaneRef == uid {
-				r.Windows[j].Spec.AnchorPaneRef = r.firstWindowAnchorPaneUID(r.Windows[j].Metadata.UID)
+				r.setWindowAnchor(r.Windows[j].Metadata.UID, r.firstWindowAnchorPaneUID(r.Windows[j].Metadata.UID))
 			}
 			if r.Windows[j].Spec.DefaultShellPaneRef == uid {
 				r.Windows[j].Spec.DefaultShellPaneRef = r.firstWindowShellPaneUID(r.Windows[j].Metadata.UID)
@@ -377,14 +383,15 @@ func (r *Registry) deletePane(uid string) bool {
 // repairRetainedWindow closes the final-v2 lifecycle invariant after one or
 // more descendants have been removed. It preserves an existing eligible sibling
 // in deterministic Registry order and allocates a shell only when the retained
-// Window would otherwise have no eligible anchor Pane at all.
+// Window would otherwise have no eligible anchor Pane at all. Process anchors
+// retire the Window's tmux binding without allocating a replacement shell.
 func (m Mutator) repairRetainedWindow(reg *Registry, windowUID, operationID string, now time.Time) error {
 	window, ok := reg.Window(windowUID)
 	if !ok {
 		return nil
 	}
 	if anchor := reg.firstWindowAnchorPaneUID(windowUID); anchor != "" {
-		window.Spec.AnchorPaneRef = anchor
+		reg.setWindowAnchor(windowUID, anchor)
 		if shell := reg.firstWindowShellPaneUID(windowUID); shell != "" {
 			window.Spec.DefaultShellPaneRef = shell
 		} else {
@@ -399,21 +406,24 @@ func (m Mutator) repairRetainedWindow(reg *Registry, windowUID, operationID stri
 // releasedPaneUID and the caller's mutation left that Pane failing
 // windowAnchorEligibility. Any other anchor -- eligible or already corrupt --
 // and the optional default shell are left untouched, so consumers that refuse
-// a corrupt anchor keep refusing it. The replacement is preferred when it is
-// eligible, otherwise the first eligible Pane in Registry order, otherwise the
-// default-shell close. Ineligible Pane rows are never removed.
+// a corrupt anchor keep refusing it. An eligible preferred tmux Pane retains
+// the existing handoff behavior; otherwise selection follows tmux-first order,
+// then process, then the default-shell close. Ineligible rows are retained.
 func (m Mutator) moveAnchorOffReleasedPane(reg *Registry, windowUID, releasedPaneUID, preferred, operationID string, now time.Time) error {
 	window, ok := reg.Window(windowUID)
 	if !ok || releasedPaneUID == "" || window.Spec.AnchorPaneRef != releasedPaneUID ||
 		reg.windowAnchorRefEligible(windowUID, releasedPaneUID) {
 		return nil
 	}
+	anchor := reg.firstWindowAnchorPaneUID(windowUID)
 	if preferred != "" && reg.windowAnchorRefEligible(windowUID, preferred) {
-		window.Spec.AnchorPaneRef = preferred
-		return nil
+		pane, _ := reg.Pane(preferred)
+		if pane.Spec.Runtime.EffectiveKind() == RuntimeTmux || anchor == "" {
+			anchor = preferred
+		}
 	}
-	if anchor := reg.firstWindowAnchorPaneUID(windowUID); anchor != "" {
-		window.Spec.AnchorPaneRef = anchor
+	if anchor != "" {
+		reg.setWindowAnchor(windowUID, anchor)
 		return nil
 	}
 	return m.anchorWindowOnDefaultShell(reg, windowUID, operationID, now)
@@ -452,6 +462,9 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 	if !ok {
 		return stateErr(op, ErrInvalidRegistry, "pane %q has no exact owning Window", paneUID)
 	}
+	if window := reg.VirtualWindowDeleteCascade(KindPane, paneUID); window != "" {
+		return m.DeleteWindow(reg, window)
+	}
 	ownerUID := pane.Metadata.OwnerUID()
 	ownerKind := pane.Metadata.OwnerRef.Kind
 	now := m.clock()().UTC()
@@ -489,6 +502,9 @@ func (m Mutator) DeleteAgent(reg *Registry, agentUID string) error {
 		return stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
 	}
 	windowUID := agent.Metadata.OwnerUID()
+	if window := reg.VirtualWindowDeleteCascade(KindAgent, agentUID); window != "" {
+		return m.DeleteWindow(reg, window)
+	}
 	before := reg.Clone()
 	now := m.clock()().UTC()
 	for _, pane := range reg.PanesOf(agentUID) {

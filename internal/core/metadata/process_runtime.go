@@ -35,6 +35,7 @@ func (m Mutator) ReserveProcessBinding(reg *Registry, binding ProcessBinding) er
 	// AttachAgentPane establishes the ownership relation as Running. A
 	// foreground reservation remains Pending until its child actually exists.
 	owner.Status.Phase = PhasePending
+	next.setWindowAnchor(binding.WindowUID, next.firstWindowAnchorPaneUID(binding.WindowUID))
 	return m.commitProcessRegistry(reg, next)
 }
 
