@@ -357,11 +357,24 @@ func TestVirtualWindowDeleteWaitsForOwnedProcess(t *testing.T) {
 			if kind == "pane" {
 				uid = paneUID
 			}
-			if err := c.Run([]string{kind, "uid:" + uid, "--dry-run"}, io.Discard, io.Discard); err != nil || probe.stops != 0 {
+			var output bytes.Buffer
+			if err := c.Run([]string{kind, "uid:" + uid, "--dry-run"}, &output, io.Discard); err != nil || probe.stops != 0 {
 				t.Fatalf("preview err=%v stops=%d", err, probe.stops)
 			}
-			if err := c.Run([]string{kind, "uid:" + uid, "--yes"}, io.Discard, io.Discard); err != nil {
+			if !strings.Contains(output.String(), "would stop through owner host") || !strings.Contains(output.String(), "runtime=running") || !strings.Contains(output.String(), "exact Wait receipt") {
+				t.Fatalf("preview hides process stop: %s", &output)
+			}
+			output.Reset()
+			confirmation := c.Run([]string{kind, "uid:" + uid}, &output, io.Discard)
+			if confirmation == nil || probe.stops != 0 || !strings.Contains(confirmation.Error(), "stop 1 running process Agents") || !strings.Contains(confirmation.Error(), "exact Wait receipts") {
+				t.Fatalf("confirmation hides process stop: err=%v stops=%d", confirmation, probe.stops)
+			}
+			output.Reset()
+			if err := c.Run([]string{kind, "uid:" + uid, "--yes"}, &output, io.Discard); err != nil {
 				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), "receipt operation=delete."+kind+" ") || !strings.Contains(output.String(), " runtime=stopped focus=") || !strings.Contains(output.String(), "process-host agent uid=") || !strings.Contains(output.String(), "exact Wait receipt; runtime=stopped") {
+				t.Fatalf("result hides process stop or receipt: %s", &output)
 			}
 			if _, exists := reg.Window(windowUID); exists || probe.stops != 1 {
 				t.Fatalf("delete exists=%v stops=%d", exists, probe.stops)
@@ -428,5 +441,41 @@ func TestVirtualWindowDeleteRejectsProjectionRace(t *testing.T) {
 	requireProcessDeleteToken(t, err, processDeleteRefusedToken)
 	if len(store.registry.Windows) != 1 || len(store.registry.Agents) != 1 || len(store.registry.Panes) != 1 {
 		t.Fatal("projection race deleted resources")
+	}
+}
+
+func TestVirtualWindowDeleteRejectsCascadeRace(t *testing.T) {
+	for _, kind := range []string{"window", "pane", "agent"} {
+		t.Run(kind, func(t *testing.T) {
+			store := realTmuxNameHandoffRegistry(t, t.TempDir(), "virtual", false)
+			addVirtualLifecycleProcess(t, store)
+			if err := store.mutator().DeletePane(&store.registry, "pan-name-handoff"); err != nil {
+				t.Fatal(err)
+			}
+			c := newTestDeleteCommand(store, false, false, nil)
+			c.windows, c.panes = nil, nil
+			c.actorRunner = &virtualDeleteForbiddenTmuxRunner{}
+			c.lookupEnv = func(string) string { return "" }
+			c.processDeleter = &processAgentDeleter{alive: func(coremetadata.ProcessIdentity) bool { return false }}
+			update := c.store.update
+			c.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+				if _, err := store.mutator().CreateAgent(&store.registry, "win-name-handoff", coremetadata.CreateAgentOptions{Name: "unapproved", Provider: "codex"}); err != nil {
+					return coremetadata.Registry{}, err
+				}
+				return update(fn)
+			}
+			uid := "win-name-handoff"
+			switch kind {
+			case "pane":
+				uid = store.registry.Agents[0].Status.PaneRef
+			case "agent":
+				uid = store.registry.Agents[0].Metadata.UID
+			}
+			err := c.Run([]string{kind, "uid:" + uid, "--yes"}, io.Discard, io.Discard)
+			requireProcessDeleteToken(t, err, processDeleteRefusedToken)
+			if len(store.registry.Windows) != 1 || len(store.registry.Agents) != 2 || len(store.registry.Panes) != 1 {
+				t.Fatal("cascade race deleted unapproved resources")
+			}
+		})
 	}
 }

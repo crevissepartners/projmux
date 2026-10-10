@@ -389,6 +389,9 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 	approved := processDeleteSignature(registry, plan)
 	outcome := processDeleteOutcome{targets: final}
 	err = d.store.mutate(plan.Kind, plan.uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if current := buildDeletePlan(*working, plan.Kind, resolutionOf(plan)).signature(); current != plan.signature() {
+			return processDeleteRefusal(processDeleteRefusedToken, "", "the cascade plan changed between preflight and deletion; nothing was deleted")
+		}
 		if processDeleteSignature(*working, plan) != approved {
 			return processDeleteRefusal(processDeleteRefusedToken, "", "delete agent: process Agent evidence changed between preflight and deletion; nothing was deleted")
 		}
@@ -765,10 +768,17 @@ func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags
 		return err
 	}
 	if dryRun {
-		return writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, true, false)
+		return writeVirtualDeletePlan(stdout, spelling, plan, targets, true)
 	}
 	if plan.needsConfirmation() {
-		if err := c.confirm.confirm(yes, fmt.Sprintf("%s will remove %d targets and %d cascade resources", spelling, len(plan.Targets), plan.Cascades()), spelling+" needs confirmation; re-run with --yes or --dry-run", stdout); err != nil {
+		stops := 0
+		for _, target := range targets {
+			if target.Runtime == processDeleteRuntimeRunning {
+				stops++
+			}
+		}
+		prompt := fmt.Sprintf("%s will remove %d targets and %d cascade resources, stop %d running process Agents through their owner hosts, and wait for their exact Wait receipts", spelling, len(plan.Targets), plan.Cascades(), stops)
+		if err := c.confirm.confirm(yes, prompt, prompt+"; needs confirmation; re-run with --yes or --dry-run", stdout); err != nil {
 			return err
 		}
 	}
@@ -783,8 +793,39 @@ func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags
 		return err
 	}
 	d.record(outcome, plan, op, stderr)
-	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, false, false); err != nil {
+	if err := writeVirtualDeletePlan(stdout, spelling, plan, outcome.targets, false); err != nil {
+		return err
+	}
+	receipt := childDeleteReceipt(plan.Kind, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, false)
+	for _, target := range outcome.targets {
+		if target.Runtime == processDeleteRuntimeStopped {
+			receipt.Effects.Runtime = cli.RuntimeStopped
+			break
+		}
+	}
+	if err := receipt.WriteHuman(stdout); err != nil {
 		return err
 	}
 	return flushDeleteResult(stdout)
+}
+
+func writeVirtualDeletePlan(stdout io.Writer, spelling string, plan deletePlan, targets []processDeleteTarget, dryRun bool) error {
+	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, dryRun, false); err != nil {
+		return err
+	}
+	for _, target := range targets {
+		var action string
+		switch target.Runtime {
+		case processDeleteRuntimeRunning:
+			action = fmt.Sprintf("would stop through owner host pid=%d and wait for its exact Wait receipt", target.HostPID)
+		case processDeleteRuntimeStopped:
+			action = "stopped through its owner host and confirmed its exact Wait receipt"
+		default:
+			action = "registry-only; no process was signaled and no tmux server was used"
+		}
+		if _, err := fmt.Fprintf(stdout, "  process-host agent uid=%s %s; runtime=%s evidence=%s owner-window=%s root=%s/%s\n", target.Agent, action, target.Runtime, target.Evidence, target.Window, strings.ToLower(string(target.RootKind)), target.RootUID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

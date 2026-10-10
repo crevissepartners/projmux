@@ -23,6 +23,8 @@ When a previously bound tmux Window disappears outside Projmux, the next
 successful exact inventory makes the same transition. Living shells remain
 until they are explicitly closed.
 
+`ReturnAbsentTmuxWindowsToVirtual` intentionally permits retiring absent tmux Pane rows as an exception to “absence is not deletion authority”: its guards require a live Project physical session on the same exact socket and a complete inventory proving even the recorded Window runtime ID absent (confirmed loss of the exact server also proves the inventory empty for its previously recorded-live Project sessions).
+
 Deleting a virtual Window's last Pane or Agent also deletes the Window and
 its remaining descendants. The dry-run includes that Window cascade; the
 Project primary Window moves to an eligible sibling or becomes empty.
