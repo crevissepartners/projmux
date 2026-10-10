@@ -404,7 +404,7 @@ func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAge
 		if err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(project.Spec, plan.project.Spec) || window.Metadata.UID != plan.window.Metadata.UID {
+		if project.Metadata.UID != plan.project.Metadata.UID || !reflect.DeepEqual(project.Spec, plan.project.Spec) || window.Metadata.UID != plan.window.Metadata.UID {
 			return errors.New("process creation scope changed during preparation")
 		}
 		mutator := c.store.mutator()

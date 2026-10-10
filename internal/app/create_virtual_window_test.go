@@ -73,6 +73,51 @@ func TestProcessVirtualWindowReservationAndRollback(t *testing.T) {
 	}
 }
 
+func TestProcessVirtualWindowRejectsReplacedProject(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	command, _ := newTestAgentCreateCommand(t, store, tmux)
+	opts := processAgentCreateOptions{Project: selector.Ref{Kind: coremetadata.KindProject, Name: "alpha"}, Window: selector.Ref{Kind: coremetadata.KindWindow, Name: "virtual"}, NewWindow: &coremetadata.BootstrapWindow{Name: "virtual"}, Provider: aiModeCodex}
+	project, _, err := resolveProcessCreateScope(store.registry, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range store.registry.WindowsOf(project.Metadata.UID) {
+		if err := store.mutator().DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project, window, err := resolveProcessCreateScope(store.registry, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := processAgentCreatePlan{project: project, window: window, workspace: coremetadata.AgentWorkspace{CWD: project.Spec.Root}, flags: resourceCreateFlags{provider: aiModeCodex}}
+	if err := store.mutator().DeleteProject(&store.registry, project.Metadata.UID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{Root: project.Spec.Root, Name: project.Metadata.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range replacement.Windows {
+		if err := store.mutator().DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, _ := store.registry.Project(replacement.Project.Metadata.UID)
+	if current.Metadata.UID == project.Metadata.UID || !reflect.DeepEqual(current.Spec, project.Spec) {
+		t.Fatal("fixture must replace the Project UID while preserving its Spec")
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	before := store.registry.Clone()
+	_, err = command.reserveProcessAgent(context.Background(), plan, opts, "op-replaced", "gen-replaced")
+	if err == nil || !strings.Contains(err.Error(), "scope changed") || !reflect.DeepEqual(before, store.registry) || len(tmux.calls) != 0 {
+		t.Fatalf("replaced Project reservation was not safely refused: %v", err)
+	}
+}
+
 func TestProcessWindowProviderRefusedBeforeWrite(t *testing.T) {
 	for _, provider := range []string{"", "shell", "antigravity"} {
 		t.Run(provider, func(t *testing.T) {
