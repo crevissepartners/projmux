@@ -800,7 +800,7 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	// helper's kernel PID/start identity. It must not reserve or write.
 	content, _ := json.Marshal(claudeProviderCoordinationContent{Kind: "projmux-coordination", MessageRef: envelope.MessageRef})
 	admitted, err := forged.exchange(string(content), "reserve", claudeProviderPostOutcome{})
-	if err != nil || admitted {
+	if err != nil || admitted.Admitted {
 		t.Fatal("forged helper admitted", admitted, err)
 	}
 	after, _ = target.handle.Observe(target.binding)
@@ -976,5 +976,81 @@ func TestClaudeProcessRollbackPreservesBoundedCleanupErrors(t *testing.T) {
 	service := &claudeProcessService{handle: f.handle, binding: binding, closeLease: func(context.Context) error { return closeErr }}
 	if err := service.rollback(context.Background()); !errors.Is(err, closeErr) || !errors.Is(err, processhost.ErrStale) {
 		t.Fatalf("cleanup/Stop/Wait failure lost: %v", err)
+	}
+}
+
+func TestClaudeProcessNativePeerJoinsExactRunningTarget(t *testing.T) {
+	source := newProcessClaudeFixture(t, nil)
+	sourceProof := source.proof(t)
+	target := newProcessClaudeFixtureAt(t, nil, source.path)
+	targetProof := target.proof(t)
+	source.turn(t, "source-bound", "ordinary")
+	source.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+	target.turn(t, "running", "hold")
+	before := target.wait(t, func(s processhost.Snapshot) bool { return s.Session != "" && s.State == "ready" && s.Turn == "running" })
+	reg, err := source.store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceRoute, reason := processClaudeRouteResolver(source.path, sourceProof)(reg, source.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	targetRoute, reason := processClaudeRouteResolver(target.path, targetProof)(reg, target.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	envelope := dialogueForRoute("message-process-native-join", targetRoute, time.Now().UTC())
+	envelope.BrokerEnvelope.Source = publicMessageRoute(sourceRoute)
+	store := messagestore.NewStore(filepath.Dir(filepath.Dir(source.path)))
+	if _, _, err = store.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
+		t.Fatal(err)
+	}
+	coordTarget, _ := claudeTargetForRoute(targetRoute)
+	request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: coordTarget, Envelope: &envelope}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	response, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
+	if err != nil || response.Delivery.State != agentdelivery.StateDelivered || response.Delivery.Reason != claudeNativePeerJoinedReason {
+		t.Fatal("native peer not joined", response, err)
+	}
+	after := target.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
+	if after.Turn != before.Turn || after.Session != before.Session || after.PID != before.PID || after.Pending[0].Turn != before.Turn {
+		t.Fatal("native turn attribution changed", after)
+	}
+	currentProof := target.proof(t)
+	if currentProof.Process != targetProof.Process || currentProof.Session != targetProof.Session {
+		t.Fatal("registration stopped or replaced")
+	}
+	record, _, err := store.Get(envelope.MessageRef)
+	if err != nil || record.Delivery.Reason != claudeNativePeerJoinedReason {
+		t.Fatal("joined reason not durable", record, err)
+	}
+	// Duplicate submit returns its existing receipt and does not write again.
+	again, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
+	if err != nil || again.Delivery != response.Delivery {
+		t.Fatal("duplicate changed native receipt", again, err)
+	}
+	answerProcessEndpointQuestion(t, target)
+	target.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
+	events, _, _ := target.handle.Events(target.binding, 0)
+	results := 0
+	joined := 0
+	for _, e := range events {
+		if e.Kind == "turn-result" {
+			results++
+			if e.Turn != before.Turn {
+				t.Fatal("result assigned to peer operation", e)
+			}
+		}
+		if e.Kind == "peer-message-joined" {
+			joined++
+			if e.Turn != before.Turn {
+				t.Fatal(e)
+			}
+		}
+	}
+	if results != 1 || joined != 1 {
+		t.Fatalf("result=%d joined=%d", results, joined)
 	}
 }

@@ -24,6 +24,7 @@ type claudeProviderPostOutcome struct {
 	FullFrameWritten bool
 	WroteAny         bool
 	Reason           string
+	Joined           bool
 }
 
 func (o claudeProviderPostOutcome) Ambiguous() bool {

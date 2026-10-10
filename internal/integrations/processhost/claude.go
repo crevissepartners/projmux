@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -215,6 +216,11 @@ var (
 	ErrClaudeEventLimit = fmt.Errorf("claude turn holds its critical event limit: %w", ErrBusy)
 )
 
+type claudePeerReservation struct {
+	turn  string
+	bytes int
+}
+
 // Turn origins. A provider turn is one Claude opened itself after the session
 // was bound; a message turn is a reserved peer handoff.
 const (
@@ -256,7 +262,8 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 	if err := p.admitLocked(ctx, a); err != nil {
 		return TurnAdmission{}, err
 	}
-	if operation == "" || len(operation) > 256 || p.usedTurns[operation] {
+	_, peerReserved := p.joinedMessages[operation]
+	if operation == "" || len(operation) > 256 || p.usedTurns[operation] || peerReserved {
 		return TurnAdmission{}, ErrStale
 	}
 	if p.activeCriticalLocked() >= p.host.limits.Events {
@@ -393,19 +400,51 @@ var ErrClaudeTurnActive = fmt.Errorf("claude turn active: %w", ErrBusy)
 // Only the host's verified helper boundary may call it. No provider write is
 // performed here; the reservation remains visible if that boundary disappears.
 func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn string) error {
+	_, err := p.reserveClaudeMessage(ctx, a, turn, 0, false)
+	return err
+}
+
+// ReserveClaudePeerMessage admits a native peer write. Unlike the turn-opening
+// ReserveClaudeMessage primitive, it can join a visibly open bound turn. The
+// serialized content bytes share the operator input budget; nothing is written
+// to provider stdin here. A busy refusal proves zero native writes.
+func (p *Handle) ReserveClaudePeerMessage(ctx context.Context, a Authority, operation string, contentBytes int) (TurnAdmission, error) {
+	return p.reserveClaudeMessage(ctx, a, operation, contentBytes, true)
+}
+
+func (p *Handle) reserveClaudeMessage(ctx context.Context, a Authority, turn string, contentBytes int, join bool) (TurnAdmission, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.admitLocked(ctx, a); err != nil {
-		return err
+		return TurnAdmission{}, err
 	}
-	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] {
-		return ErrStale
+	_, reserved := p.joinedMessages[turn]
+	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] || reserved {
+		return TurnAdmission{}, ErrStale
+	}
+	if contentBytes < 0 {
+		return TurnAdmission{}, ErrStale
 	}
 	if p.turn != "" {
-		return ErrClaudeTurnActive
+		if !join || p.joinRefusalLocked(true) != nil || p.messageReservation != "" || len(p.requests) > 0 || len(p.joined) >= ClaudeJoinedInputs || contentBytes > ClaudeJoinedInputBytes-p.joinedBytes || len(p.joinedMessages) >= ClaudeJoinedInputs {
+			return TurnAdmission{}, ErrClaudeTurnActive
+		}
+		if p.activeCriticalLocked() >= p.host.limits.Events {
+			return TurnAdmission{}, ErrClaudeTurnActive
+		}
+		p.fenceOperationLocked(turn)
+		if p.joinedMessages == nil {
+			p.joinedMessages = make(map[string]claudePeerReservation)
+		}
+		p.joinedMessages[turn] = claudePeerReservation{turn: p.turn, bytes: contentBytes}
+		p.joined = append(p.joined, turn)
+		p.joinedBytes += contentBytes
+		raw, _ := json.Marshal(map[string]any{"operation": turn, "origin": p.turnOrigin, "index": len(p.joined)})
+		p.emitLocked("peer-message-joined", raw, nil)
+		return TurnAdmission{Joined: true, Turn: p.turn, Origin: p.turnOrigin}, nil
 	}
 	if p.activeCriticalLocked() >= p.host.limits.Events {
-		return ErrClaudeEventLimit
+		return TurnAdmission{}, ErrClaudeEventLimit
 	}
 	p.beginTurnLocked(turn, TurnOriginMessage)
 	p.carriedJoined = nil
@@ -413,7 +452,7 @@ func (p *Handle) ReserveClaudeMessage(ctx context.Context, a Authority, turn str
 	p.messageOutcomeRecorded = false
 	p.startMessageReservationTimerLocked(turn)
 	p.emitLocked("message-reserved", nil, nil)
-	return nil
+	return TurnAdmission{Turn: turn, Origin: TurnOriginMessage}, nil
 }
 
 // FinishClaudeMessage records a proven write outcome, never provider completion.
@@ -427,8 +466,28 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 	if err := p.admitLocked(ctx, a); err != nil {
 		return err
 	}
-	if !p.usedTurns[turn] || turn == "" || written && uncertain {
+	_, joinedReservation := p.joinedMessages[turn]
+	if (!p.usedTurns[turn] && !joinedReservation) || turn == "" || written && uncertain {
 		return ErrStale
+	}
+	if reservation, found := p.joinedMessages[turn]; found {
+		delete(p.joinedMessages, turn)
+		kind := "peer-message-handed-off"
+		if uncertain {
+			kind = "peer-message-handoff-unknown"
+		}
+		if !written && !uncertain {
+			kind = "peer-message-prewrite-refused"
+			p.joined = slices.DeleteFunc(p.joined, func(op string) bool { return op == turn })
+			p.carriedJoined = slices.DeleteFunc(p.carriedJoined, func(op string) bool { return op == turn })
+			p.unattributed = slices.DeleteFunc(p.unattributed, func(op string) bool { return op == turn })
+			if p.turn == reservation.turn {
+				p.joinedBytes -= reservation.bytes
+			}
+		}
+		raw, _ := json.Marshal(map[string]any{"operation": turn, "admittedTurn": reservation.turn})
+		p.emitTurnLocked(kind, raw, nil, reservation.turn)
+		return nil
 	}
 	// The stream can complete before the helper reports its write outcome.
 	if p.turn != turn || p.messageOutcomeRecorded {

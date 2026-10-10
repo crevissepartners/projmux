@@ -263,7 +263,7 @@ func claudeCoordinationCallPossiblyDispatched(err error) bool {
 type claudeDialogueBroker interface {
 	Current(coremessage.Envelope) bool
 	MarkHandoff(coremessage.Envelope) error
-	MarkDelivered(coremessage.Envelope, time.Time) error
+	MarkDelivered(coremessage.Envelope, time.Time, ...string) error
 	CommitReply(coremessage.Envelope, coremessage.Envelope) (bool, error)
 }
 
@@ -438,12 +438,19 @@ func claudeHandoffPeer(registry coremetadata.Registry, agentUID string) diagnost
 	return diagnostics.ClaudeHandoffPeerUnknown
 }
 
-func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, observedAt time.Time) error {
+func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, observedAt time.Time, reasons ...string) error {
+	reason := ""
+	if len(reasons) > 0 {
+		if len(reasons) != 1 || reasons[0] != claudeNativePeerJoinedReason {
+			return errors.New("invalid Claude delivery reason")
+		}
+		reason = reasons[0]
+	}
 	if err := envelope.Validate(); err != nil {
 		return err
 	}
 	record, _, err := b.pushStore.ApplyMatching(envelope, "claude-coordination", coremessage.Event{Kind: coremessage.EventDeliver,
-		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: observedAt.UTC()})
+		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: reason, ObservedAt: observedAt.UTC()})
 	if err != nil {
 		return err
 	}
