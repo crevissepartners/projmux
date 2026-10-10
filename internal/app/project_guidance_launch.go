@@ -16,11 +16,11 @@ const projectGuidanceReasonUnavailable = "project-guidance-unavailable"
 // so every create, resume and replay reads and records the same Project ownership.
 // It is independent of both global guidance and link rules being enabled.
 type projectGuidanceLaunch struct {
-	active                         bool
-	store                          agentguidance.ProjectStore
-	recorded, digest, snapshotPath string
-	text                           []byte
-	unavailable                    error
+	active           bool
+	store            agentguidance.ProjectStore
+	recorded, digest string
+	text             []byte
+	unavailable      error
 }
 
 func (c *aiCommand) loadProjectGuidance(project coremetadata.Project, recorded map[string]string) projectGuidanceLaunch {
@@ -47,7 +47,7 @@ func (c *aiCommand) loadProjectGuidance(project coremetadata.Project, recorded m
 		launch.unavailable = err
 		return launch
 	}
-	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, guidance.Text
+	launch.digest, launch.text = snapshot.Digest, guidance.Text
 	return launch
 }
 
