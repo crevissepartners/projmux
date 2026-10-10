@@ -55,9 +55,8 @@ func TestIsVirtualWindowRequiresEligibleProcessAnchor(t *testing.T) {
 	if reg.IsVirtualWindow(uid) || reg.IsVirtualWindow("missing") {
 		t.Fatal("shell/missing is virtual")
 	}
-	window, _ := reg.Window(uid)
 	agent, pane := attachFixtureAgent(t, m, &reg, uid, "op")
-	window, _ = reg.Window(uid)
+	window, _ := reg.Window(uid)
 	window.Spec.AnchorPaneRef = pane
 	p, _ := reg.Pane(pane)
 	p.Spec.Runtime.Kind = RuntimeProcess
