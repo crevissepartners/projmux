@@ -96,6 +96,9 @@ const (
 	// name is repeated here only so the layer is declared in this one table,
 	// and a test holds the two equal.
 	ProjectLinksDirName = "project-links"
+
+	// ProjectGuidanceDirName is owned by agentguidance.ProjectStore.
+	ProjectGuidanceDirName = "project-guidance"
 )
 
 // settingItems is the declaration. Adding a setting file is adding its path
@@ -130,6 +133,7 @@ var settingItems = []SettingItem{
 	declareDir(PersonasDirName, LayerCentral),
 	declareDir(ProfilesDirName, LayerCentral),
 	declareDir(ProjectLinksDirName, LayerCentral),
+	declareDir(ProjectGuidanceDirName, LayerCentral),
 	// The global lifecycle hook scripts (post-create, post-attach,
 	// pre-create) are the hook contract, which is product behavior.
 	declareDir(HooksDirName, LayerCentral),

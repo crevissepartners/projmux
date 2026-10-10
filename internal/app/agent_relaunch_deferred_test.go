@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
@@ -343,6 +344,65 @@ func TestDeferredClaudeRelaunchWaitsWithoutChildActualCLI(t *testing.T) {
 			}
 			recovered.finish(t)
 		})
+	}
+}
+
+func TestDeferredClaudeProjectGuidanceStaysFrozenUntilFirstInputActualCLI(t *testing.T) {
+	f := deferredRelaunchFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
+	deferredReady(t, ctx, f, first.ref)
+	first.shutdown(t)
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := agentguidance.NewDefaultProjectStore(paths)
+	prepared := []byte("Project instruction captured when preparing the recipe.\n")
+	if err = store.Save(f.project, prepared); err != nil {
+		t.Fatal(err)
+	}
+	run := deferredRelaunchCLI(t, ctx, f, first.ref)
+	uid := strings.TrimPrefix(first.ref, "uid:")
+	frozen, err := deferredFixtureCommand(f).readDeferredLaunch(uid)
+	if err != nil || frozen == nil {
+		t.Fatal("prepared recipe missing", err)
+	}
+	index := slices.Index(frozen.Command.Args, "--append-system-prompt-file")
+	if index < 0 || index+1 >= len(frozen.Command.Args) {
+		t.Fatal("prepared instructions missing", frozen.Command.Args)
+	}
+	before, err := os.ReadFile(frozen.Command.Args[index+1])
+	if err != nil || !bytes.Contains(before, prepared) {
+		t.Fatal("prepared Project instructions missing", err)
+	}
+	run.finish(t) // Release the claimant; the prepared recipe remains durable.
+	changed := []byte("Project instruction changed after preparation.\n")
+	if err = store.Save(f.project, changed); err != nil {
+		t.Fatal(err)
+	}
+	resumed := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "first input"})
+	deferredReady(t, ctx, f, first.ref)
+	resumed.shutdown(t)
+	argv := deferredArgv(t, f)
+	last := argv[len(argv)-1][1:]
+	want := append(append([]string{}, frozen.Command.Args...), "--resume", frozen.Retired.SessionID)
+	if !reflect.DeepEqual(last, want) {
+		t.Fatalf("first input replaced prepared command: got %q want %q", last, want)
+	}
+	after, err := os.ReadFile(last[index+1])
+	if err != nil || !bytes.Equal(before, after) || bytes.Contains(after, changed) {
+		t.Fatal("first input replaced prepared instruction bytes", err)
+	}
+	reg := mustRegistry(t, f)
+	agent, _ := reg.Agent(uid)
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentProjectGuidanceDigest] != agentguidance.Digest(prepared) {
+		t.Fatal("first input replaced prepared Project digest")
+	}
+	texts := deferredWireTexts(t, f)
+	if texts[len(texts)-1] != "first input" {
+		t.Fatal("first input was not launched", texts)
 	}
 }
 

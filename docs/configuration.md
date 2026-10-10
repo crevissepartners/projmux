@@ -1666,7 +1666,8 @@ To turn the guidance off, leave the file empty (`: > agent-guidance.md`). To
 use your own text, write it to the file. To go back to the default, delete
 the file. The file is at most 64 KiB.
 
-- The guidance, the instructions and the Project's label link rules reach Claude
+- The guidance, the instructions, optional Project common instructions and the
+  Project's label link rules reach Claude
   as one `--append-system-prompt-file`, in that order, each present only when
   the Agent has it and separated by a `---` line, because Claude keeps only
   the last file it is given.
@@ -1687,7 +1688,8 @@ the file. The file is at most 64 KiB.
   recorded.
 - A Codex Agent receives the guidance on a fresh create that starts its own
   thread (a create with a prompt): the guidance, a short paragraph projmux
-  writes for that Agent, the instructions and the Project's label link rules
+  writes for that Agent, the instructions, Project common instructions and the
+  Project's label link rules
   go to that thread as its developer instructions, in that order, each
   present only when the Agent has it and separated by the same `---` line,
   and the Agent records the guidance digest. The paragraph gives the Agent
@@ -1706,13 +1708,47 @@ the file. The file is at most 64 KiB.
 The guidance and the files composed from it are content-addressed below the
 state directory, in `agent-guidance/`.
 
+### Project common instructions
+
+Each Project can add common instructions in
+`<config dir>/project-guidance/<project-uid>.md`. The UID keeps the file attached
+to the same Project when its name or root changes. Missing or whitespace-only
+files add nothing; other content is used verbatim, up to 64 KiB. There is no
+editing CLI or automatic cleanup when a Project is deleted.
+
+Claude tmux and process launches receive one file in this order: global agent
+guidance → persona instructions → Project common instructions → Project label
+link rules. Codex fresh creates use the same order in developer instructions,
+with the existing identity paragraph after global guidance. Turning global
+guidance off leaves Project instructions enabled and omits that identity paragraph.
+No Project instructions means the previous launch bytes remain unchanged.
+
+The launch stores a content-addressed snapshot below the state directory's
+`project-guidance/` and records `projmux.io/project-guidance-digest` on the Agent.
+Running Agents keep their current prompt. Claude create, resume, relaunch,
+Continue topology replay and resume-picker launches read the current Project
+file. A changed digest uses the new content, updates the annotation and turns
+provider prompt snapshots off; removed instructions remove the digest. An
+unchanged digest leaves the recorded snapshot mode alone.
+`agent relaunch -o json` reports `project-guidance-changed` in `relaunchReasons`.
+A Prepared Claude resume or relaunch freezes these instructions when its recipe
+is prepared. Changes made while it waits for the first input apply on the next
+resume or relaunch; the first input uses the prepared snapshot.
+
+Unreadable, non-regular or oversized files let the Agent start without Project
+instructions and emit `project-guidance-unavailable`. Existing digest annotations
+are preserved on this failure so a later readable launch can recover. Other
+prompt layers remain enabled. Claude reply-only launches omit this layer.
+Codex existing threads keep their original developer instructions: only a fresh
+create receives new Project instructions.
+
 ## Setting Layers
 
 Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/`, `project-guidance/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except

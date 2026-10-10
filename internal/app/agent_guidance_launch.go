@@ -45,12 +45,13 @@ var _ codexAgentGuidancePlanner = (*aiCommand)(nil)
 // instructions and no annotation.
 //
 // The guidance is the first part of the one --append-system-prompt-file a
-// Claude launch passes: guidance, then the persona, then the Project's label
+// Claude launch passes: guidance, then the persona, Project common instructions,
+// then the Project's label
 // link rules, each part present only when the launch has it and the parts
 // joined by projectlinks.CompositeSeparator. A Codex fresh create sends it
 // the same way as the thread's developer instructions
 // (codexDeveloperInstructions): guidance, then the Agent's identity paragraph
-// (codexAgentIdentity), then the persona and the rules. The identity goes
+// (codexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
 type agentGuidanceLaunch struct {
 	active bool

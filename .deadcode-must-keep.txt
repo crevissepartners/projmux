@@ -145,6 +145,8 @@ Placeholders	Project link rule API of internal/core/projectlinks, retained for t
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
 PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
+ProjectStore.Delete	Project common-instruction API of internal/core/agentguidance, retained for consumers that remove per-Project instruction files; the CLI has no editing command.
+ProjectStore.Save	Project common-instruction API of internal/core/agentguidance, retained for consumers that edit per-Project instruction files; the CLI has no editing command.
 PromptLineWithCursor	Default-theme cursor prompt entry point retained as the picker prompt seam over QueryWithCursorAndTheme.
 ProviderOptIn	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 QualificationResult.Validate	Phase 0 strict generation qualification consistency check is retained for installed receipts.

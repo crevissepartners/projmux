@@ -17,8 +17,10 @@ import (
 // means the launch is not layered and reads the Agent's annotations as they
 // are.
 type agentSettingsLaunch struct {
-	layered    bool
-	resolution agentsettings.Resolution
+	// projectGuidance is recorded with an ordinary process resume reservation.
+	projectGuidance projectGuidanceLaunch
+	layered         bool
+	resolution      agentsettings.Resolution
 	// instructionsErr is why the instructions the layers ask for cannot be
 	// read now (resolution.InstructionsUnavailable names them).
 	instructionsErr error
@@ -47,7 +49,7 @@ type agentSettingsRequest struct {
 	// Project's label link rules this launch passes (withPromptParts), nil
 	// when it passes none of its own. They change no layer; the resolver
 	// only reports that they differ from the recorded ones.
-	guidance, linkRules *string
+	guidance, projectGuidance, linkRules *string
 }
 
 // changesLayers reports a request that changes the layers themselves rather
@@ -101,6 +103,9 @@ func (r *agentRebinder) resolveSettings(provider string, annotations map[string]
 func (q agentSettingsRequest) withPromptParts(guidance agentGuidanceLaunch, links projectLinksLaunch) agentSettingsRequest {
 	if guidance.active && guidance.unavailable == nil {
 		q.guidance = &guidance.digest
+	}
+	if links.project.active && links.project.unavailable == nil {
+		q.projectGuidance = &links.project.digest
 	}
 	if links.active && links.unavailable == nil {
 		q.linkRules = &links.digest
@@ -195,7 +200,7 @@ func resolveAgentSettings(homeDir func() (string, error), lookupEnv func(string)
 	if request.effort != "" {
 		in.Effort = &agentsettings.Override{Value: request.effort, Source: request.source}
 	}
-	in.Guidance, in.LinkRules = request.guidance, request.linkRules
+	in.Guidance, in.ProjectGuidance, in.LinkRules = request.guidance, request.projectGuidance, request.linkRules
 	var store persona.Store
 	var storeErr error
 	if paths, err := configPaths(homeDir, lookupEnv); err == nil {
@@ -326,6 +331,9 @@ func agentSettingsInstructionsWord(name string) string {
 // (O-1). An item left with no layer at all (no profile, no override) keeps
 // neither value nor source.
 func (l agentSettingsLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
+	if err := l.projectGuidance.record(registry, mutator, agentUID); err != nil {
+		return err
+	}
 	if !l.layered {
 		return nil
 	}

@@ -713,3 +713,6 @@ const AnnotationAgentDialogueReplyOnly = "projmux.io/dialogue-reply-only"
 // DialogueReplyOnlyOn is the one value AnnotationAgentDialogueReplyOnly
 // carries.
 const DialogueReplyOnlyOn = "on"
+
+// AnnotationAgentProjectGuidanceDigest records the Project instructions used at launch.
+const AnnotationAgentProjectGuidanceDigest = "projmux.io/project-guidance-digest"

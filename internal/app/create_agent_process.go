@@ -50,6 +50,8 @@ type processOwnedHandle interface {
 }
 
 type processAgentCreateResult struct {
+	// Notices disclose optional prompt parts omitted by this launch.
+	Notices       []string
 	Created       createResult
 	Binding       processhost.Binding
 	Handle        processOwnedHandle
@@ -188,6 +190,9 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	}
 	path := intmetadata.PathFor(stateDir)
 	result.registryPath = path
+	if notice := plan.flags.projectLinks.project.notice(result.Created.name); notice != "" {
+		result.Notices = append(result.Notices, notice)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return result, err
@@ -864,6 +869,9 @@ func submitProcessInitialPrompt(ctx context.Context, result processAgentCreateRe
 }
 
 func (c *createCommand) writeProcessCreateResult(stdout, stderr io.Writer, mode cli.OutputMode, result processAgentCreateResult) error {
+	if err := writeSplitCWDNotices(stderr, result.Notices); err != nil {
+		return err
+	}
 	if mode != cli.OutputModeNone {
 		ownership := stderr
 		if mode == cli.OutputModeDefault {

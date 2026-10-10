@@ -245,7 +245,7 @@ func (c *agentCommand) planHostProcessClaudeLaunch(recipe processRelaunchRecipe)
 	if unavailable != nil {
 		return processhost.Command{}, settings, unavailable
 	}
-	instructions, err := ai.resumeSystemPromptFile(aiModeClaude, annotations, persona)
+	instructions, err := ai.resumeProjectSystemPromptFile(aiModeClaude, annotations, persona)
 	if err != nil {
 		return processhost.Command{}, settings, err
 	}

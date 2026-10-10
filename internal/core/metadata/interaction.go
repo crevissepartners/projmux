@@ -467,6 +467,32 @@ func (m Mutator) SetAgentGuidance(reg *Registry, agentUID, digest string) (Agent
 	return agent.Clone(), nil
 }
 
+// SetAgentProjectGuidance records the digest and disables the stale provider prompt snapshot.
+func (m Mutator) SetAgentProjectGuidance(reg *Registry, agentUID, digest string) (Agent, error) {
+	const op = "set Project guidance"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	digest = strings.TrimSpace(digest)
+	recorded, hasRecorded := agent.Metadata.Annotations[AnnotationAgentProjectGuidanceDigest]
+	sameDigest := hasRecorded && recorded == digest || !hasRecorded && digest == ""
+	if sameDigest && agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot] == SystemPromptSnapshotOff {
+		return agent.Clone(), nil
+	}
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	if digest == "" {
+		delete(agent.Metadata.Annotations, AnnotationAgentProjectGuidanceDigest)
+	} else {
+		agent.Metadata.Annotations[AnnotationAgentProjectGuidanceDigest] = digest
+	}
+	agent.Metadata.Annotations[AnnotationAgentSystemPromptSnapshot] = SystemPromptSnapshotOff
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // SetAgentActivation records bounded launch acknowledgement metadata.
 func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentActivationState, source, reason string) (Agent, error) {
 	const op = "set agent activation"

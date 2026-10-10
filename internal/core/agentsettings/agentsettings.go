@@ -73,6 +73,9 @@ const (
 	// ReasonGuidanceChanged is agent guidance whose current digest differs
 	// from the recorded one: guidance added, edited or turned off.
 	ReasonGuidanceChanged = "guidance-changed"
+
+	// ReasonProjectGuidanceChanged is a changed Project common-instruction digest.
+	ReasonProjectGuidanceChanged = "project-guidance-changed"
 	// ReasonLinkRulesChanged is Project label link rules whose current digest
 	// differs from the recorded one: rules added, edited or removed.
 	ReasonLinkRulesChanged = "link-rules-changed"
@@ -146,8 +149,9 @@ type Input struct {
 	// them at all -- another provider or lane, or they cannot be read now --
 	// and then they give no reason. They are not items: nothing overrides
 	// them, and the launch reads them itself.
-	Guidance  *string
-	LinkRules *string
+	Guidance        *string
+	ProjectGuidance *string
+	LinkRules       *string
 }
 
 // switches reports whether in replaces the profile the Agent records.
@@ -313,6 +317,9 @@ func Resolve(in Input) Resolution {
 	}
 	if in.Guidance != nil && *in.Guidance != a[metadata.AnnotationAgentGuidanceDigest] {
 		out.Reasons = append(out.Reasons, ReasonGuidanceChanged)
+	}
+	if in.ProjectGuidance != nil && *in.ProjectGuidance != a[metadata.AnnotationAgentProjectGuidanceDigest] {
+		out.Reasons = append(out.Reasons, ReasonProjectGuidanceChanged)
 	}
 	if in.LinkRules != nil && *in.LinkRules != a[metadata.AnnotationAgentProjectLinkRulesDigest] {
 		out.Reasons = append(out.Reasons, ReasonLinkRulesChanged)
