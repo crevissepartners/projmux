@@ -104,7 +104,7 @@ func (c *agentCommand) commitDeferredRelaunch(ctx context.Context, claim *deferr
 		return err
 	}
 	// A crash between these writes is repaired only by the exact old/new proof.
-	if err = c.reconcileDeferredLaunchMode(ctx, record, c.processResumeHostLost); err != nil {
+	if err = c.reconcileDeferredLaunch(ctx, record, c.processResumeHostLost); err != nil {
 		return err
 	}
 	return c.reclaimDeferredInput(claim.record)

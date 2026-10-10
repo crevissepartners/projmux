@@ -219,11 +219,7 @@ func (record *deferredLaunchRecord) matches(candidate processResumeCandidate) bo
 
 // Called under the existing claim guard. Replay can finish only the exact
 // prepared old->new CAS, never overwrite an unrelated recipe or conversation.
-func (c *agentCommand) reconcileDeferredLaunch(ctx context.Context, record *deferredLaunchRecord) error {
-	return c.reconcileDeferredLaunchMode(ctx, record, false)
-}
-
-func (c *agentCommand) reconcileDeferredLaunchMode(ctx context.Context, record *deferredLaunchRecord, allowHostLost bool) error {
+func (c *agentCommand) reconcileDeferredLaunch(ctx context.Context, record *deferredLaunchRecord, allowHostLost bool) error {
 	if record == nil {
 		return nil
 	}
@@ -385,7 +381,7 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 	if deferredLaunchDigest(current) != deferredLaunchDigest(record) {
 		return candidate, nil, deferredRefused("prepared launch changed")
 	}
-	if err = c.reconcileDeferredLaunchMode(ctx, record, opts.allowHostLost); err != nil {
+	if err = c.reconcileDeferredLaunch(ctx, record, opts.allowHostLost); err != nil {
 		return candidate, nil, err
 	}
 	request, err := newProcessAgentResumeRequest(opts)

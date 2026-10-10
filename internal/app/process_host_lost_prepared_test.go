@@ -181,7 +181,7 @@ func TestHostLostClaudePreparedOptInAndDigest(t *testing.T) {
 		t.Fatal("reuse changed digest", err)
 	}
 	// Even direct sidecar consumers require opt-in; old records omit the field.
-	if err = c.reconcileDeferredLaunch(context.Background(), record); err == nil {
+	if err = c.reconcileDeferredLaunch(context.Background(), record, false); err == nil {
 		t.Fatal("implicit reconciliation accepted host-lost")
 	}
 	opts.allowHostLost = false
