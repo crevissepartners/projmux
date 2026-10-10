@@ -76,7 +76,7 @@ func hostRelaunchResult(recipe processRelaunchRecipe, target coremetadata.Agent,
 
 // Process evidence is retained until the successful tmux rebind transaction.
 // Its exact Wait and old recipe are checked again inside that transaction.
-func retireProcessPaneForTmux(reg *coremetadata.Registry, mut coremetadata.Mutator, old processResumeCandidate) error {
+func validateRetiredProcessForTmux(reg *coremetadata.Registry, old processResumeCandidate) error {
 	pane, present := reg.Pane(old.Pane.Metadata.UID)
 	agent, found := reg.Agent(old.Agent.Metadata.UID)
 	if !present || !found || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != old.Pane.Metadata.UID ||
@@ -85,7 +85,14 @@ func retireProcessPaneForTmux(reg *coremetadata.Registry, mut coremetadata.Mutat
 		!coremetadata.MatchesProcessWait(old.Record.Binding, pane.Status.LastTermination) || !coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
 		return errors.New("agent relaunch: retired process source changed before tmux rebind")
 	}
-	return mut.DeletePane(reg, pane.Metadata.UID)
+	return nil
+}
+
+func retireProcessPaneForTmux(reg *coremetadata.Registry, mut coremetadata.Mutator, old processResumeCandidate) error {
+	if err := validateRetiredProcessForTmux(reg, old); err != nil {
+		return err
+	}
+	return mut.DeletePane(reg, old.Pane.Metadata.UID)
 }
 
 func (c *agentCommand) moveProcessToTmux(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, refuse func(string, string) error, stdout, stderr io.Writer) error {
@@ -106,14 +113,18 @@ func (c *agentCommand) moveProcessToTmux(reg coremetadata.Registry, target corem
 	predicted := reg.Clone()
 	predictedAgent, _ := predicted.Agent(target.Metadata.UID)
 	predictedAgent.Status.Phase = coremetadata.PhaseOffline
-	if err := c.store.mutator().DeletePane(&predicted, pane.Metadata.UID); err != nil {
-		return err
+	virtual := reg.IsVirtualWindow(target.Metadata.OwnerUID())
+	if !virtual {
+		if err := c.store.mutator().DeletePane(&predicted, pane.Metadata.UID); err != nil {
+			return err
+		}
 	}
 	predictedAgent, _ = predicted.Agent(target.Metadata.UID)
-	plan, err := c.prepareResume(agentRelaunchSpelling, predicted, predictedAgent)
+	plan, err := c.prepareResume(agentRelaunchSpelling, predicted, predictedAgent, virtual)
 	if err != nil {
 		return refuse(relaunchReasonNoConversation, err.Error())
 	}
+	plan.virtualWindow = virtual
 	plan.modelOverride, plan.effortOverride, plan.overrideSource = request.model, request.effort, coremetadata.SettingSourceRelaunch
 	plan.layerChanges = request.settings()
 	result := hostRelaunchResult(recipe, target, *pane, request, "process")

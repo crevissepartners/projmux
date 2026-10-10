@@ -56,7 +56,8 @@ type focusCommand struct {
 	notifyStoreFn     func() (notifyStore, error)
 	// loadRegistry reads the resource Registry for a canonical request that
 	// carries a `uid:` selector. It is never called on the name path.
-	loadRegistry func() (coremetadata.Registry, error)
+	loadRegistry             func() (coremetadata.Registry, error)
+	materializeVirtualWindow func(context.Context, string, string) error
 }
 
 type focusOptions struct {
@@ -68,7 +69,8 @@ type focusOptions struct {
 	URI    string
 	JSON   bool
 	// ExactOnly is set by the canonical `focus <kind>` routes. Those routes
-	// move the client to an already-live exact-one target, so a session
+	// move the client to an exact-one live target after any virtual Window
+	// materialization, so a session
 	// fallback match and a window/pane coordinate that does not resolve are
 	// both "not resolved" (exit 2) rather than a degraded success. The legacy
 	// `focus --target` spelling leaves it false and keeps its fallbacks.
@@ -112,6 +114,13 @@ func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand 
 		notifyStoreFn: defaultStatusNotifyStore,
 		loadRegistry:  loadResourceRegistry,
 	}
+	cmd.materializeVirtualWindow = func(ctx context.Context, uid, socket string) error {
+		create, err := virtualWindowCreator(cmd.runner, cmd.lookupEnv, nil, socket)
+		if err != nil {
+			return err
+		}
+		return create.materializeVirtualShell(uid)
+	}
 	cmd.notifierOnce = func(stderr io.Writer) focusNotifier {
 		// Reuse the existing notifier chain (WSL toast, notify-send, hook).
 		ai := newAICommand()
@@ -128,9 +137,9 @@ var focusKinds = []string{"project", "window", "pane"}
 //
 // It accepts two spellings that share one dispatch: the legacy
 // `focus --target SESSION[:WINDOW[.PANE]]` coordinate, and the canonical
-// `focus <kind> <ref>` navigation. Neither one ever creates a tmux session,
-// window, or pane: focus only redirects an already attached client, so an
-// offline target is a not-resolved exit rather than an implicit materialization.
+// `focus <kind> <ref>` navigation. A canonical virtual Window UID materializes
+// with one shell on an existing server. Other targets require live runtime;
+// an absent server refuses before materialization with an attach suggestion.
 func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	c.stdout = stdout
 	c.stderr = stderr
@@ -446,7 +455,7 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 // Every lookup here is a read: list-windows and list-panes only report the live
 // inventory. A reference that matches nothing, or matches more than one live
 // resource, is a not-resolved exit rather than a create, which is what keeps
-// `focus` free of materialization at the Window and Pane levels too.
+// the name path free of materialization at the Window and Pane levels too.
 func (c *focusCommand) resolveNavigationTarget(ctx context.Context, socket string, opts focusOptions) (string, error) {
 	if opts.NavKind == "" || opts.NavKind == "project" {
 		return opts.Target, nil

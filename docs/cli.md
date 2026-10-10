@@ -1177,10 +1177,10 @@ Selectorless authority: `explicit-target` — the route or caller must name the 
 
 Allowed effects:
 
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
+- `identity=unchanged|created`
+- `address=unchanged|allocated`
+- `topology=unchanged|established`
+- `desired-state=unchanged|created`
 - `runtime=materialized|already-live`
 - `focus=attached-caller`
 - `cardinality=exact-one`
@@ -1545,7 +1545,7 @@ projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--prov
 
 --host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task.
 
-If the Project's primary Window is virtual, terminal open, attach, and Project picker selection are refused with virtual-primary-window before creating or moving a tmux session. Use process Agent controls; agent sessions project <project-ref> lists its conversations.
+A virtual Window materializes when it needs tmux. create agent, create pane, and agent relaunch --host tmux use the requested Pane as its first tmux Pane without adding a shell. focus window uid:<ref> opens one shell. open and attach use an existing terminal Window, or materialize the primary Window with one shell when all Windows are virtual. Project picker and sidebar selection retain the virtual-primary-window refusal until virtual navigation is supported. Process Pane actions retain their process capability refusals.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
@@ -2151,7 +2151,7 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux focus project`](#projmux-focus-project) | Move the current client to an already-live Project; never materializes |
-| [`projmux focus window`](#projmux-focus-window) | Move the current client to an already-live Window in an exact live root session; never materializes |
+| [`projmux focus window`](#projmux-focus-window) | Move the current client to a Window; a virtual Window uid materializes with one shell |
 | [`projmux focus pane`](#projmux-focus-pane) | Move the current client to an already-live Pane in an exact live root session; never materializes |
 
 Canonical spelling: `projmux focus project`, `projmux focus window`, `projmux focus pane`
@@ -2181,17 +2181,17 @@ projmux focus project <ref> [--socket <path>] [--client <tty>] [--source <source
 
 ### `projmux focus window`
 
-Move the current client to an already-live Window in an exact live root session; never materializes
+Move the current client to a Window; a virtual Window uid materializes with one shell
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 Allowed effects:
 
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
-- `runtime=unchanged`
+- `identity=unchanged|created`
+- `address=unchanged|allocated`
+- `topology=unchanged|established`
+- `desired-state=unchanged|created`
+- `runtime=unchanged|materialized`
 - `focus=moved-current-client`
 - `cardinality=exact-one`
 - `domain-effect=null`
@@ -2203,7 +2203,7 @@ projmux focus window uid:<uid> [--project <ref> | -p <ref>] [--socket <path>] [-
 
 A plain `<ref>` is a live window name or `@id` and requires `--project`. `uid:<uid>` names a Registry Window, which resolves to its `status.runtimeID` inside its owning Project's session, so `--project` is optional; when given it must be that Project (`uid:` or its session name) or the route exits 2. `--project uid:<uid>` also works with a plain `<ref>`.
 
-A `uid:` resolution uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. The resolved window must still be live.
+A `uid:` resolution uses the Project's recorded socket; an explicit `--socket` naming another server exits 2. A virtual Window uid materializes with one shell in its Project session before navigation. If that socket has no tmux server, focus refuses without materialization and directs the caller to attach the Project first. A plain window reference must already be live.
 
 ### `projmux focus pane`
 
@@ -2903,10 +2903,10 @@ Selectorless authority: `explicit-target` — the route or caller must name the 
 
 Allowed effects:
 
-- `identity=unchanged`
-- `address=unchanged`
-- `topology=unchanged`
-- `desired-state=unchanged`
+- `identity=unchanged|created`
+- `address=unchanged|allocated`
+- `topology=unchanged|established`
+- `desired-state=unchanged|created`
 - `runtime=materialized|already-live`
 - `focus=moved-current-client`
 - `cardinality=exact-one`

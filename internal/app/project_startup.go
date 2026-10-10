@@ -94,6 +94,11 @@ type projectTopologyMaterializeRequest struct {
 }
 
 func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionName string) error {
+	if c.allowVirtualTerminal {
+		if _, err := c.prepareVirtualTerminalProject(ctx, target); err != nil {
+			return err
+		}
+	}
 	if err := c.requireTerminalProject(target); err != nil {
 		return err
 	}
@@ -219,9 +224,12 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 	return err
 }
 
-// Until virtual Windows can be materialized, opening their Project must not
-// create an empty tmux session or adopt a shell into the process anchor.
+// Picker and sidebar entry points retain admission until their virtual
+// navigation support lands. Canonical open/attach prepare the terminal target.
 func (c *switchCommand) requireTerminalProject(target string) error {
+	if c.allowVirtualTerminal {
+		return nil
+	}
 	if c.managedStopStore == nil {
 		return nil
 	}
@@ -624,6 +632,11 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 }
 
 func (c *switchCommand) openProjectSession(ctx context.Context, sessionName string) error {
+	if c.allowVirtualTerminal {
+		if err := c.selectVirtualTerminalArrival(ctx, sessionName); err != nil {
+			return err
+		}
+	}
 	// A detached sidebar continuation carries an exact client but no inherited
 	// TMUX routing. Its final handoff must address the same app socket the
 	// ordinary Registry materializer just converged. Interactive/first-use opens

@@ -139,6 +139,8 @@ type switchCommand struct {
 	sidebarOriginAnchorInvalidated bool
 	cleanupKilledSession           func(string)
 	managedStopStore               *resourceStore
+	allowVirtualTerminal           bool
+	materializeVirtualWindow       func(context.Context, string) (virtualWindowShellMaterialization, error)
 	projectTopology                switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
@@ -252,6 +254,13 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		startupNotices:    newProjectStartupNoticeSink(inttmux.ExecRunner{}),
 		navigation:        newRegistryNavigationCommand(inttmux.ExecRunner{}),
 		managedStopStore:  newResourceStore(),
+	}
+	cmd.materializeVirtualWindow = func(ctx context.Context, uid string) (virtualWindowShellMaterialization, error) {
+		create, err := virtualWindowCreator(cmd.tmuxRunner, cmd.lookupEnv, cmd.managedStopStore, "")
+		if err != nil {
+			return virtualWindowShellMaterialization{}, err
+		}
+		return create.materializeVirtualShellResult(uid)
 	}
 	cmd.projectSessionPlan = func(ctx context.Context, request projectSessionRequest) error {
 		return cmd.ensureBootstrappedProjectSessionPlanned(ctx, request)
@@ -1767,6 +1776,9 @@ func (c *switchCommand) openTarget(ctx context.Context, target string) error {
 }
 
 func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string) error {
+	previous := c.allowVirtualTerminal
+	c.allowVirtualTerminal = true
+	defer func() { c.allowVirtualTerminal = previous }()
 	target = cleanOptionalPath(target)
 	sessionName, err := c.resolveTargetSession(target)
 	if err != nil || sessionName == "" {

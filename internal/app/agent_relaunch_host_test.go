@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
 func TestRelaunchHostGrammar(t *testing.T) {
@@ -238,6 +239,63 @@ func hostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, str
 	reg, _ = f.store.LoadReadOnly()
 	currentAgent, _ := reg.Agent(agent.Metadata.UID)
 	return f, currentAgent.Clone(), oldUID, socket
+}
+
+func TestVirtualWindowClaudeHostMoveActualCLI(t *testing.T) {
+	liveguard.RequireActive(t)
+	f := processResumeCLIFixture(t, aiModeClaude)
+	tmuxDir := filepath.Join(f.root, "virtual-tmux")
+	if err := os.MkdirAll(tmuxDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", tmuxDir)
+	socket := filepath.Join(tmuxDir, fmt.Sprintf("tmux-%d", os.Getuid()), "projmux")
+	t.Cleanup(func() { _ = exec.Command("tmux", "-S", socket, "kill-server").Run() })
+	script := "#!/bin/sh\n" + processFixtureExports(f.root) + "if [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nexec sleep 300\n"
+	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	hostCLIOutput(t, f, "config", "apply")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	defer cancel()
+	owner := startResumeCLIInvocation(t, ctx, f, []string{"create", "agent", "--host", "process", "--provider", "claude", "--profile", "none", "--project", "uid:" + f.project, "--create-window", "--window", "virtual-host", "--name", "virtual-host-agent", "--", "first task"})
+	old := awaitProcessResumeRecord(t, ctx, f, owner.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	owner.shutdown(t)
+	before, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := before.Agent(strings.TrimPrefix(owner.ref, "uid:"))
+	if agent == nil {
+		t.Fatal("Agent missing")
+	}
+	windowUID := agent.Metadata.OwnerUID()
+	if !before.IsVirtualWindow(windowUID) {
+		t.Fatal("source is not virtual")
+	}
+	var result agentRelaunchResult
+	if err := json.Unmarshal(hostCLIOutput(t, f, "agent", "relaunch", owner.ref, "--host", "tmux", "--yes", "-o", "json"), &result); err != nil {
+		t.Fatal(err)
+	}
+	after, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	window, _ := after.Window(windowUID)
+	if window == nil || after.IsVirtualWindow(windowUID) || window.Spec.DefaultShellPaneRef != "" {
+		t.Fatalf("Window=%+v", window)
+	}
+	panes, err := exec.Command("tmux", "-S", socket, "list-panes", "-t", window.Status.RuntimeID, "-F", "#{pane_id}").Output()
+	if err != nil || len(strings.Fields(string(panes))) != 1 {
+		t.Fatalf("tmux Panes=%q %v", panes, err)
+	}
+	current, _ := after.Agent(agent.Metadata.UID)
+	if current.Status.PaneRef != result.NewPaneUID || current.Status.SessionRef.ConversationID() != old.SessionID || window.Spec.AnchorPaneRef != result.NewPaneUID || virtualTestPaneCount(after, windowUID) != 1 {
+		t.Fatalf("result=%+v Agent=%+v", result, current)
+	}
+	if _, found := after.Pane(old.Binding.PaneUID); found {
+		t.Fatal("retired process Pane remains")
+	}
 }
 
 func TestProcessHostRetirementCASRetainsEvidenceOnMismatch(t *testing.T) {

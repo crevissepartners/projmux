@@ -1147,9 +1147,12 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		}
 
 		// Runtime phase.
-		sessionName, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
-		if err != nil {
-			return err
+		var sessionName string
+		if len(windows) > 0 {
+			sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
+			if err != nil {
+				return err
+			}
 		}
 		for i := range windows {
 			if err := c.materializeWindow(ctx, working, mutator, ledger, project, sessionName, &windows[i]); err != nil {
@@ -1157,6 +1160,23 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			}
 		}
 		for _, work := range panes {
+			if work.target.virtual {
+				paneID, err := c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.target.windowUID, work.pane, work.activation, flags.payload)
+				if err != nil {
+					return err
+				}
+				if _, _, err := mutator.AdoptWindowDefaultShell(working, work.target.windowUID, work.pane.Metadata.UID); err != nil {
+					return err
+				}
+				results = append(results, createResult{kind: coremetadata.KindPane, uid: work.pane.Metadata.UID, name: work.pane.Metadata.Name, paneID: paneID, projectName: project.Metadata.Name, windowName: work.windowName, windowUID: work.target.windowUID})
+				continue
+			}
+			if sessionName == "" {
+				sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
+				if err != nil {
+					return err
+				}
+			}
 			anchorPaneID, err := c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
 			if err != nil {
 				return err
@@ -1238,6 +1258,7 @@ type paneTarget struct {
 	windowUID    string
 	anchorUID    string
 	storedAnchor bool
+	virtual      bool
 }
 
 // panePlan is the preflight result of a `create pane` fan-out.
@@ -1380,13 +1401,13 @@ func (c *createCommand) planPaneTargets(
 		if err != nil {
 			return panePlan{}, err
 		}
-		if registry.IsVirtualWindow(match.UID) {
-			return panePlan{}, resourcegraph.ProcessCapabilityError{Action: resourcegraph.ProcessCreatePane, Anchor: true}
+		virtual := registry.IsVirtualWindow(match.UID) && storedAnchor
+		if !virtual {
+			if _, _, err := c.processRuntime.admit(registry, anchorUID, resourcegraph.ProcessCreatePane); err != nil {
+				return panePlan{}, err
+			}
 		}
-		if _, _, err := c.processRuntime.admit(registry, anchorUID, resourcegraph.ProcessCreatePane); err != nil {
-			return panePlan{}, err
-		}
-		plan.targets = append(plan.targets, paneTarget{windowUID: match.UID, anchorUID: anchorUID, storedAnchor: storedAnchor})
+		plan.targets = append(plan.targets, paneTarget{windowUID: match.UID, anchorUID: anchorUID, storedAnchor: storedAnchor, virtual: virtual})
 	}
 	return plan, nil
 }
@@ -1398,7 +1419,16 @@ func (c *createCommand) processAnchorAdmission(scope createScope, flags resource
 	if c.processRuntime == nil {
 		return nil
 	}
+	var virtualAnchors map[string]string
 	return func(registry coremetadata.Registry) error {
+		if virtualAnchors == nil {
+			virtualAnchors = make(map[string]string)
+			for _, window := range registry.Windows {
+				if registry.IsVirtualWindow(window.Metadata.UID) {
+					virtualAnchors[window.Metadata.UID] = window.Spec.AnchorPaneRef
+				}
+			}
+		}
 		if len(processPaneUIDs(registry, c.processRuntime.inventory())) == 0 {
 			return nil
 		}
@@ -1406,10 +1436,17 @@ func (c *createCommand) processAnchorAdmission(scope createScope, flags resource
 		if err != nil {
 			return nil
 		}
-		_, err = c.planPaneTargets(registry, project, scope, flags, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling)
+		plan, err := c.planPaneTargets(registry, project, scope, flags, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling)
 		var capability resourcegraph.ProcessCapabilityError
 		if errors.As(err, &capability) {
 			return err
+		}
+		for _, target := range plan.targets {
+			// A Window admitted for a split cannot turn into a process anchor
+			// while waiting for the Registry lock and gain creation authority.
+			if target.virtual && virtualAnchors[target.windowUID] != target.anchorUID {
+				return resourcegraph.ProcessCapabilityError{Action: resourcegraph.ProcessCreatePane, Anchor: true}
+			}
 		}
 		// Preserve ordinary tmux validation order and its route errors. Only the
 		// process capability refusal belongs to this earlier admission stage.
@@ -1872,7 +1909,7 @@ func (c *createCommand) ensureProjectRuntime(
 		return "", fmt.Errorf("create: inspect Project runtime %q: %w", sessionName, err)
 	}
 	if !exists {
-		windows := working.WindowsOf(project.Metadata.UID)
+		windows := terminalWindows(*working, project.Metadata.UID)
 		if len(windows) > 0 {
 			if _, ok := working.WindowDefaultShell(windows[0].Metadata.UID); !ok {
 				if _, _, err := mutator.EnsureWindowDefaultShell(working, windows[0].Metadata.UID, c.shell, operationID); err != nil {
@@ -1934,7 +1971,7 @@ func (c *createCommand) ensureProjectRuntime(
 // that Window under its Registry name. A Project with no Window has nothing to
 // adopt, and the blank name keeps tmux's default.
 func initialWindowName(registry *coremetadata.Registry, projectUID string) string {
-	windows := registry.WindowsOf(projectUID)
+	windows := terminalWindows(*registry, projectUID)
 	if len(windows) == 0 {
 		return ""
 	}
@@ -1946,7 +1983,7 @@ func initialWindowName(registry *coremetadata.Registry, projectUID string) strin
 // launched under its own generation like any other Pane this create starts.
 func (c *createCommand) initialPaneActivation(registry *coremetadata.Registry, mutator coremetadata.Mutator, projectUID, operationID string) sessionFirstPaneActivation {
 	return func() (superviseSpec, error) {
-		windows := registry.WindowsOf(projectUID)
+		windows := terminalWindows(*registry, projectUID)
 		if len(windows) == 0 {
 			return superviseSpec{}, nil
 		}
@@ -1969,7 +2006,7 @@ func (c *createCommand) initialPaneActivation(registry *coremetadata.Registry, m
 // activation is the generation the Pane was launched under; its %N is recorded
 // once the Pane is claimed.
 func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coremetadata.Registry, mutator coremetadata.Mutator, project coremetadata.Project, created intmux.NewSessionResult, activation superviseSpec, ledger *runtimeLedger) error {
-	windows := registry.WindowsOf(project.Metadata.UID)
+	windows := terminalWindows(*registry, project.Metadata.UID)
 	if len(windows) == 0 {
 		return nil
 	}

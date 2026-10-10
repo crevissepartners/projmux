@@ -45,13 +45,16 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"start-project-offline", "start project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
 		{"start-project-live", "start project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusUnchanged, CardinalityExactOne, nil},
 		{"open-project-offline", "open project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"open-virtual-primary-shell", "open project", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"open-project-live", "open project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"stop-project-detached", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusUnchanged, CardinalityExactOne, nil},
 		{"stop-project-attached-fallback", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"attach-virtual-primary-shell", "attach project", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"attach-project-offline", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"attach-project-live", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"focus-project", "focus project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"focus-window", "focus window", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"focus-virtual-window", "focus window", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"focus-pane", "focus pane", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"switch-cancel", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusUnchanged, CardinalityUnchanged, nil},
 		{"switch-sidebar-cancel-restore", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusMovedCurrentClient, CardinalityExactOne, nil},
@@ -394,8 +397,8 @@ func TestCorrectedHandlerEffectsAreFixtureCovered(t *testing.T) {
 	}
 	for _, route := range []string{
 		"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity",
-		"start project", "open project", "stop project", "unregister project", "delete project",
-		"agent resume", "shell", "reconcile resources", "reconcile registry",
+		"start project", "open project", "attach project", "stop project", "unregister project", "delete project",
+		"agent resume", "shell", "reconcile resources", "reconcile registry", "focus window",
 		"switch", "runtime sessions", "runtime diagnostics", "window recent", "internal statusbar click", "internal session-popup open",
 		"internal agent-pane launch-default", "internal agent-pane picker", "internal focus",
 	} {
@@ -439,6 +442,9 @@ type handlerEffectAnchor struct {
 func TestCorrectedHandlerEffectsKeepSourceAndTestAnchors(t *testing.T) {
 	t.Parallel()
 	anchors := []handlerEffectAnchor{
+		{"focus window", "virtual_window_materialize.go", "func (c *createCommand) materializeVirtualShell", "virtual_window_materialize_test.go", "TestFocusVirtualWindowMaterializesAndProcessPaneStillRefuses"},
+		{"open project", "virtual_window_materialize.go", "func (c *createCommand) materializeVirtualShell", "virtual_window_materialize_test.go", "TestOpenAttachAllVirtualProjectMaterializesPrimary"},
+		{"attach project", "virtual_window_materialize.go", "func (c *createCommand) materializeVirtualShell", "virtual_window_materialize_test.go", "TestOpenAttachAllVirtualProjectMaterializesPrimary"},
 		{"create window", "create_resource.go", "func (c *createCommand) runResourceWindow", "create_agent_test.go", "TestExactProjectCreateWindowUsesAppRouteDespiteStaleInheritedPane"},
 		{"create pane", "create_resource.go", "func (c *createCommand) runResourcePane", "window_anchor_consumers_test.go", "TestAnchorAwareCreatePaneAndAgentUseExactLiveShellAnchorDetached"},
 		{"create agent", "create_agent.go", "func (c *createCommand) runResourceAgent", "create_agent_test.go", "TestCreateAgentAndProviderShortcutsShareScopedEqualization"},

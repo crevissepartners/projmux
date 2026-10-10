@@ -38,7 +38,7 @@ func virtualPrimaryProjectFixture(t *testing.T, store *fakeResourceStore) coreme
 
 func TestVirtualPrimaryProjectRefusesTerminalNavigation(t *testing.T) {
 	for _, live := range []bool{false, true} {
-		for _, route := range []string{"open", "attach", "popup-selection", "sidebar-selection", "sidebar-continuation"} {
+		for _, route := range []string{"popup-selection", "sidebar-selection", "sidebar-continuation"} {
 			t.Run(route+map[bool]string{false: "/offline", true: "/live"}[live], func(t *testing.T) {
 				sessions := map[string]bool{}
 				if live {
@@ -49,14 +49,9 @@ func TestVirtualPrimaryProjectRefusesTerminalNavigation(t *testing.T) {
 				switcher := command.switcher
 				switcher.managedStopStore = store.store()
 				before := store.registry.Clone()
-				var stdout, stderr bytes.Buffer
+				var stdout bytes.Buffer
 				var err error
 				switch route {
-				case "open":
-					err = command.Run([]string{"project", "uid:" + project.Metadata.UID}, &stdout, &stderr)
-				case "attach":
-					attach := &attachCommand{store: store.store(), switcher: switcher, lookupEnv: func(string) string { return "" }}
-					err = attach.Run([]string{"project", "uid:" + project.Metadata.UID}, &stdout, &stderr)
 				case "popup-selection", "sidebar-selection":
 					ui := switchUIPopup
 					if route == "sidebar-selection" {
