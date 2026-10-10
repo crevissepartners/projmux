@@ -316,7 +316,8 @@ func (c *agentCommand) reconcileDeferredAttempt(record *deferredLaunchRecord) er
 		return nil
 	}
 	history := a.Source.History
-	if history == nil || a.Source.TurnID != "" || len(a.Source.Pending) > 0 {
+	// Host-lost reservation always starts fresh history for the lost binding.
+	if record.HostLost != nil || history == nil || a.Source.TurnID != "" || len(a.Source.Pending) > 0 {
 		history = &coremetadata.ProcessResumeHistory{Binding: a.Source.Binding, SessionID: a.Source.SessionID, InterruptedTurnID: a.Source.TurnID, Expired: a.Source.Pending}
 	}
 	if a.Source.Provider != aiModeClaude || a.Source.Binding.AgentUID != record.Agent || a.Target.AgentUID != record.Agent || a.Target.PaneUID != a.Source.Binding.PaneUID || a.Target.ProjectUID != a.Source.Binding.ProjectUID || a.Target.WindowUID != a.Source.Binding.WindowUID || s.Binding != a.Target || s.Provider != aiModeClaude || s.SessionID != a.Source.SessionID || s.SessionID != record.Retired.SessionID || s.ConnectionID != a.Target.OperationID || !reflect.DeepEqual(s.History, history) || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || s.ResumeState != coremetadata.ProcessResumable || !coremetadata.MatchesProcessWait(s.Binding, pane.Status.LastTermination) || !coremetadata.MatchesProcessWait(s.Binding, agent.Status.LastTermination) || !coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
@@ -338,7 +339,11 @@ func (c *agentCommand) reconcileDeferredAttempt(record *deferredLaunchRecord) er
 		return err
 	}
 	record.Retired = *s.Clone()
-	// The new writer has actual Wait evidence; the lost activation is no longer its source.
+	// The failed host-lost attempt is fully retired. Future replay uses this
+	// writer's actual Wait rather than the prior host-lost history witness.
+	if record.HostLost != nil {
+		record.Attempt = nil
+	}
 	record.HostLost = nil
 	return writeDeferredState(c.deferredStatePath("deferred-launches", record.Agent), record)
 }

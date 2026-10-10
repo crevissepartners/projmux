@@ -391,3 +391,87 @@ func TestHostLostClaudePreparedDoesNotWeakenOrdinaryRetirement(t *testing.T) {
 		t.Fatal("ordinary preparation gained host-lost witness", err)
 	}
 }
+
+func TestHostLostClaudePreparedFailedChildWithPriorHistoryRetries(t *testing.T) {
+	c, opts, store, a := hostLostPreparedFixture(t)
+	t.Setenv("PMX_TEST_DEFERRED_INTERNAL", "1")
+	if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
+		pane, _ := reg.Pane(a.Binding.PaneUID)
+		old := a.Binding
+		old.Generation, old.OperationID, old.HostInstanceID = "older-generation", "older-operation", "older-host"
+		pane.Status.ProcessSession.TurnID, pane.Status.ProcessSession.Pending = "", nil
+		pane.Status.ProcessSession.History = &coremetadata.ProcessResumeHistory{Binding: old, SessionID: "session", InterruptedTurnID: "older-turn"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := c.prepareOwnedClaudeResume(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	first := opts
+	first.Prompt = processResumeFirstFrame{Kind: "user", Text: "first input"}
+	if result, err := c.resumeProcessAgent(ctx, processAgentResumeRequest{options: first}); err == nil {
+		result.fail(nil)
+		t.Fatal("fixture must fail after child birth")
+	}
+	reg, err := store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(a.Binding.PaneUID)
+	s := pane.Status.ProcessSession
+	if s.Binding == a.Binding || !coremetadata.MatchesProcessWait(s.Binding, pane.Status.LastTermination) || s.History == nil || s.History.Binding != a.Binding || s.SessionID != "session" {
+		t.Fatal("failed child did not retain actual Wait and lost source history", s, pane.Status.LastTermination)
+	}
+	for range 3 {
+		prepared, err := c.prepareOwnedClaudeResume(ctx, opts)
+		if err != nil {
+			t.Fatal("actual failed writer cannot prepare retry", err)
+		}
+		if prepared.Prepared == nil || prepared.Prepared.Conversation != "session" {
+			t.Fatal("retry lost conversation", prepared)
+		}
+	}
+	root := os.Getenv("HOME")
+	trace := filepath.Join(root, "retry-wire.json")
+	script := filepath.Join(root, "retry-provider.py")
+	source := fmt.Sprintf(`import sys,json
+open(%q,'w').write(json.dumps(sys.argv))
+for line in sys.stdin:
+ frame=json.loads(line)
+ if frame.get('type')=='user':
+  open(%q,'a').write('\n'+json.dumps(frame))
+  print(json.dumps({'type':'system','subtype':'init','session_id':'session'}),flush=True)
+  print(json.dumps({'type':'result','subtype':'success','session_id':'session'}),flush=True)
+`, trace, trace)
+	if err := os.WriteFile(script, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "claude"), []byte("#!/bin/sh\nexec python3 -u "+script+" \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	first.Prompt.Text = "retry input exact"
+	result, err := c.resumeProcessAgent(ctx, processAgentResumeRequest{options: first})
+	if err != nil {
+		t.Fatal("prepared retry did not start", err)
+	}
+	defer func() {
+		end, stop := context.WithCancel(context.Background())
+		stop()
+		_, _ = result.owner.waitProcessAgent(end, nil)
+	}()
+	raw, err := os.ReadFile(trace)
+	if err != nil || !bytes.Contains(raw, []byte("--resume")) || !bytes.Contains(raw, []byte("session")) || !bytes.Contains(raw, []byte(first.Prompt.Text)) {
+		t.Fatal("retry did not use same session and input", string(raw), err)
+	}
+	reg, err = store.LoadReadOnly()
+	pane, _ = reg.Pane(a.Binding.PaneUID)
+	if err != nil || pane.Status.ProcessSession.SessionID != "session" {
+		t.Fatal("retry replaced conversation", err)
+	}
+	if record, err := c.readDeferredLaunch(a.Binding.AgentUID); err != nil || record != nil {
+		t.Fatal("retry did not consume Prepared", err)
+	}
+}
