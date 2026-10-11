@@ -56,7 +56,7 @@ func (c *Client) Capabilities(ctx context.Context, input CapabilitiesRequest) (c
 		}
 		agent, err := agentcatalog.ResolveAgent(registry, input.Agent)
 		if err != nil {
-			return core.Capabilities{}, resourceRefusal(err)
+			return core.Capabilities{}, resourceRefusal(selectorInputError(err, "CapabilitiesRequest.Agent"))
 		}
 		id, err := agentcatalog.AgentProvider(agent)
 		if err != nil {

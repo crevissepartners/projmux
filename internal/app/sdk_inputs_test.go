@@ -84,3 +84,70 @@ func TestNotificationSDKInputFieldRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestSDKSelectorParserFieldRefusals(t *testing.T) {
+	_, c := sdkResourceFixture(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		field string
+		call  func() error
+	}{
+		{"ResourceSelector.Project", func() error {
+			_, err := c.ListResources(ctx, core.KindWindow, projmux.ResourceSelector{Project: "uid:"})
+			return err
+		}},
+		{"ResourceSelector.Windows", func() error {
+			_, err := c.ListResources(ctx, core.KindWindow, projmux.ResourceSelector{Windows: []string{"uid:"}})
+			return err
+		}},
+		{"ResourceSelector.Panes", func() error {
+			_, err := c.ListResources(ctx, core.KindPane, projmux.ResourceSelector{Panes: []string{"uid:"}})
+			return err
+		}},
+		{"core.Ref.Value", func() error { _, err := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: "uid:"}); return err }},
+		{"ListProfiles projectRef", func() error { _, err := c.ListProfiles(ctx, "uid:"); return err }},
+		{"CapabilitiesRequest.Agent", func() error { _, err := c.Capabilities(ctx, projmux.CapabilitiesRequest{Agent: "uid:"}); return err }},
+		{"ListQuestions agentRef", func() error { _, err := c.ListQuestions(ctx, "uid:"); return err }},
+		{"AnswerQuestionRequest.Agent", func() error {
+			_, err := c.AnswerQuestion(ctx, projmux.AnswerQuestionRequest{Agent: "uid:"})
+			return err
+		}},
+		{"ListApprovals agentRef", func() error { _, err := c.ListApprovals(ctx, "uid:"); return err }},
+		{"AnswerApprovalRequest.Agent", func() error {
+			_, err := c.AnswerApproval(ctx, projmux.AnswerApprovalRequest{Agent: "uid:"})
+			return err
+		}},
+		{"ReviewApprovalRequest.Agent", func() error {
+			_, err := c.ReviewApproval(ctx, projmux.ReviewApprovalRequest{Agent: "uid:"})
+			return err
+		}},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			err := tc.call()
+			var refusal *projmux.Refusal
+			want := "parse selector: " + tc.field + ` "uid:" requires a uid after "uid:"`
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid || refusal.Error() != want {
+				t.Fatalf("SDK=%v want=%s", err, want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		kind        core.Kind
+		input       projmux.ResourceSelector
+		cli         []string
+		sdk, detail string
+	}{
+		{core.KindWindow, projmux.ResourceSelector{Windows: []string{" "}}, []string{"windows", "--window", " "}, "ResourceSelector.Windows", "requires a value"},
+		{core.KindAgent, projmux.ResourceSelector{Labels: []string{"broken"}}, []string{"agents", "--selector", "broken"}, "ResourceSelector.Labels", `"broken" must be key=value`},
+		{core.KindWindow, projmux.ResourceSelector{Labels: []string{"--selector"}}, []string{"windows", "--selector", "--selector"}, "ResourceSelector.Labels", `"--selector" must be key=value`},
+		{core.KindWindow, projmux.ResourceSelector{Labels: []string{"=--window"}}, []string{"windows", "--selector", "=--window"}, "ResourceSelector.Labels", `"=--window" has an empty key`},
+	} {
+		_, err := c.ListResources(ctx, tc.kind, tc.input)
+		var refusal *projmux.Refusal
+		var out, stderr bytes.Buffer
+		cliErr := newGetCommand().Run(tc.cli, &out, &stderr)
+		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid || refusal.Error() != "parse selector: "+tc.sdk+" "+tc.detail || cliErr == nil || !IsUsageError(cliErr) || !strings.HasSuffix(cliErr.Error(), tc.detail) || !strings.Contains(cliErr.Error(), "--") {
+			t.Fatalf("SDK=%v CLI=%v", err, cliErr)
+		}
+	}
+}

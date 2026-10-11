@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"github.com/crevissepartners/projmux/internal/services/approvals"
@@ -150,5 +151,22 @@ func TestSDKResourceNonRegistryErrorsRemainOrdinary(t *testing.T) {
 		if got := resourceRefusal(err); got != err {
 			t.Fatalf("%v changed to %v", err, got)
 		}
+	}
+}
+
+func TestSelectorInputErrorPreservesResolutionAndCause(t *testing.T) {
+	for _, err := range []error{
+		context.Canceled,
+		&selector.SelectorError{Op: "resolve agent", Detail: `--agent "missing" matched nothing`, Want: selector.CardinalityExactOne, Got: 0},
+		&selector.SelectorError{Op: "resolve window", Detail: `--window "main" matched too many`, Want: selector.CardinalityExactOne, Got: 2},
+	} {
+		if got := selectorInputError(err, "core.Ref.Value"); got != err {
+			t.Fatalf("changed non-parser error: %v", got)
+		}
+	}
+	_, err := selector.ParseLabel("--selector")
+	got := selectorInputError(err, "ResourceSelector.Labels")
+	if err.Error() != `parse selector: --selector "--selector" must be key=value` || got.Error() != `parse selector: ResourceSelector.Labels "--selector" must be key=value` {
+		t.Fatalf("original=%v mapped=%v", err, got)
 	}
 }

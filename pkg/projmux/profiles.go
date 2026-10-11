@@ -86,7 +86,7 @@ func profileRefusal(err error) error {
 	}
 	var project *profiles.ProjectError
 	if errors.As(err, &project) {
-		return resourceRefusal(project.Err)
+		return resourceRefusal(selectorInputError(project.Err, "ListProfiles projectRef"))
 	}
 	return err
 }
