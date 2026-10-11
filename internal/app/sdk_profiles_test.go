@@ -193,7 +193,7 @@ func TestProfileSDKRefusalParity(t *testing.T) {
 		}
 		sdkErr := c.DeleteProfile(ctx, name, false)
 		_, cliErr := profileCLI(cmd, nil, "delete", name)
-		if profileCode(t, sdkErr) != projmux.CodeProfileConfirmationRequired || cliErr.Error() != sdkErr.Error() || !IsUsageError(cliErr) {
+		if profileCode(t, sdkErr) != projmux.CodeProfileConfirmationRequired || sdkErr.Error() != fmt.Sprintf("DeleteProfile confirm must be true for %q; nothing was deleted", name) || !IsUsageError(cliErr) {
 			t.Fatalf("confirmation %v %v", sdkErr, cliErr)
 		}
 	}

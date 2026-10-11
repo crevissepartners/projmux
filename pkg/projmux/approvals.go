@@ -27,6 +27,13 @@ const (
 	CodePermissionDecisionUnavailable Code = "permission-decision-unavailable"
 	CodeOperatorClientInvalid         Code = "operator-client-invalid"
 	CodePermissionControlUnavailable  Code = "permission-control-unavailable"
+	// Native approval transport refusals preserve fencing and input failure kinds.
+	CodeControlStaleEpoch       Code = "stale-epoch"
+	CodeControlStaleBinding     Code = "stale-binding"
+	CodeControlUnavailable      Code = "unavailable"
+	CodeControlInvalidFrame     Code = "invalid-frame"
+	CodeControlAmbiguousRequest Code = "ambiguous-request"
+	CodeControlUnsafeDecision   Code = "unsafe-decision"
 )
 
 // ApprovalControl provides an isolated exact Agent control seam. It must reject
@@ -177,11 +184,26 @@ func (c *Client) ReviewApproval(ctx context.Context, input ReviewApprovalRequest
 func approvalRefusal(err error) error {
 	var failure *approvals.Failure
 	if errors.As(err, &failure) {
-		return &Refusal{Code: Code(failure.Code), message: err.Error()}
+		message := err.Error()
+		switch Code(failure.Code) {
+		case CodeOperatorClientInvalid:
+			if detail, ok := strings.CutPrefix(message, "agent approval answer --via: "); ok {
+				message = "AnswerApprovalRequest.Via: " + detail
+			}
+		case CodePermissionProviderUnsupported:
+			message = "Agent provider does not support approval requests; want claude or codex"
+		}
+		return &Refusal{Code: Code(failure.Code), message: message}
 	}
 	var control *agentcontrol.Refusal
 	if errors.As(err, &control) {
-		return &Refusal{Code: Code(control.Code), message: err.Error()}
+		code := Code(control.Code)
+		switch code {
+		case CodeControlStaleEpoch, CodeControlStaleBinding, CodeControlUnavailable, CodeControlInvalidFrame, CodeControlAmbiguousRequest, CodeControlUnsafeDecision:
+		default:
+			code = CodePermissionControlUnavailable
+		}
+		return &Refusal{Code: code, message: err.Error()}
 	}
 	var binding *agentcontrol.BindingError
 	if errors.As(err, &binding) {

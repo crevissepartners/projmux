@@ -29,6 +29,9 @@ const ReadFencePoll = 2 * time.Millisecond
 const FenceDir = "codex-authority-fences"
 const ControlDir = "agent-control"
 
+// AuthorityControlPlane marks an active exact native provider control binding.
+const AuthorityControlPlane = "provider-control-plane"
+
 var ErrNotSent = errors.New("exact Agent control request was not sent")
 
 type notSentError struct{ err error }
@@ -180,7 +183,7 @@ func Resolve(registry coremetadata.Registry, agent coremetadata.Agent, live Live
 	if !observed || live.RuntimeID != pane.Status.Activation.RuntimeID || live.PaneUID != pane.Metadata.UID || live.ThreadID != threadID {
 		return refusal("live Pane identity no longer matches the activation")
 	}
-	if live.Authority != "provider-control-plane" || strings.TrimSpace(live.Epoch) == "" {
+	if live.Authority != AuthorityControlPlane || strings.TrimSpace(live.Epoch) == "" {
 		reason := strings.TrimSpace(live.Reason)
 		if reason == "" {
 			reason = "not-ready"

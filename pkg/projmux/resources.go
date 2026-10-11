@@ -50,10 +50,10 @@ func (c *Client) ListResources(ctx context.Context, kind core.Kind, input Resour
 		return core.ResourceList{}, resourceRefusal(err)
 	}
 	if kind == core.KindProject && len(input.Windows) > 0 {
-		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "flag provided but not defined: -window"}
+		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "ResourceSelector.Windows is not supported for Project lists"}
 	}
 	if kind != core.KindPane && len(input.Panes) > 0 {
-		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "flag provided but not defined: -pane"}
+		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "ResourceSelector.Panes is supported only for Pane lists"}
 	}
 	query, err := resourceQuery(input)
 	if err != nil {

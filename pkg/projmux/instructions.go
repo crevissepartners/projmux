@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -30,6 +28,9 @@ type Options struct {
 	// StateDir is the absolute projmux state directory itself. Empty captures
 	// HOME/XDG defaults at construction; no Registry path or writer is exposed.
 	StateDir string
+	// UsageStateDir is the absolute saved usage directory. Empty uses StateDir/usage.
+	// PROJMUX_USAGE_STATE_DIR is a CLI override and is never read by the SDK.
+	UsageStateDir string
 	// SocketPath selects one exact tmux server. Empty observes the app socket
 	// named projmux for resource reads. ObserveRuntime instead selects no server
 	// when empty. TMUX is never used.
@@ -64,7 +65,7 @@ func NewClient(options Options) (*Client, error) {
 		return nil, err
 	}
 	pathsErr := err
-	for _, override := range []struct{ name, path string }{{"ConfigDir", options.ConfigDir}, {"StateDir", options.StateDir}, {"SocketPath", options.SocketPath}} {
+	for _, override := range []struct{ name, path string }{{"ConfigDir", options.ConfigDir}, {"StateDir", options.StateDir}, {"SocketPath", options.SocketPath}, {"UsageStateDir", options.UsageStateDir}} {
 		if override.path != "" && !filepath.IsAbs(override.path) {
 			return nil, fmt.Errorf("%s must be absolute", override.name)
 		}
@@ -80,15 +81,11 @@ func NewClient(options Options) (*Client, error) {
 	if options.SocketPath != "" {
 		transport = resourcegraph.Transport{Kind: resourcegraph.TransportSocketPath, Value: filepath.Clean(options.SocketPath), Source: resourcegraph.TransportSourceSocketPath}
 	}
-	usageOverride := strings.TrimSpace(os.Getenv("PROJMUX_USAGE_STATE_DIR"))
-	if options.StateDir != "" {
-		usageOverride = ""
-	}
 	var dispatcher questions.Dispatcher
 	if options.QuestionDispatcher != nil {
 		dispatcher = publicQuestionDispatcher{options.QuestionDispatcher}
 	}
-	return &Client{approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, usageOverride), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	return &Client{approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

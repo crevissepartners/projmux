@@ -175,7 +175,7 @@ func TestSettingsSDKRefusalParity(t *testing.T) {
 		_, err := c.SetConfig(context.Background(), tc.u)
 		_, ce := settingsCLI(cmd, tc.u.Key, tc.args...)
 		var r *projmux.Refusal
-		if !errors.As(err, &r) || r.Code != projmux.CodeConfigValueInvalid || ce == nil || err.Error() != ce.Error() || !IsUsageError(ce) {
+		if !errors.As(err, &r) || r.Code != projmux.CodeConfigValueInvalid || ce == nil || sdkSettingMessageMismatch(err, ce) || !IsUsageError(ce) {
 			t.Fatalf("refusal %+v %v %v", tc.u, err, ce)
 		}
 		if !reflect.DeepEqual(before, settingsFiles(t, p)) {
@@ -334,7 +334,7 @@ func TestNotificationsSDKCLIParity(t *testing.T) {
 		ce := cmd.runList(args, &out, &stderr)
 		_, err := c.ListNotifications(context.Background(), f)
 		var r *projmux.Refusal
-		if !errors.As(err, &r) || ce == nil || err.Error() != ce.Error() || !IsUsageError(ce) {
+		if !errors.As(err, &r) || ce == nil || (r.Code != projmux.CodeNotificationLimitInvalid && err.Error() != ce.Error() || r.Code == projmux.CodeNotificationLimitInvalid && err.Error() != "NotificationFilter.Limit must be >= 0") || !IsUsageError(ce) {
 			t.Fatalf("filter refusal %v %v", err, ce)
 		}
 	}

@@ -56,7 +56,14 @@ func (c *Client) AckNotifications(ctx context.Context, a core.NotificationAck) (
 func notificationRefusal(err error) error {
 	var input *notifications.InputError
 	if errors.As(err, &input) {
-		return &Refusal{Code: Code(input.Code), message: err.Error()}
+		message := err.Error()
+		switch Code(input.Code) {
+		case CodeNotificationLimitInvalid:
+			message = "NotificationFilter.Limit must be >= 0"
+		case CodeNotificationAckInvalid:
+			message = "NotificationAck requires a non-empty ID or All=true with an empty ID"
+		}
+		return &Refusal{Code: Code(input.Code), message: message}
 	}
 	if errors.Is(err, notify.ErrNotFound) {
 		return &Refusal{Code: CodeNotificationNotFound, message: err.Error()}

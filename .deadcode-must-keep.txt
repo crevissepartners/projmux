@@ -380,6 +380,7 @@ runShellSourceSites	Closed run-shell source site ledger; the package source swee
 runtimeMutationPlan.withoutEffects	Effect-free plan projection retained as the property-test seam that pins guarded, ordered, idempotent runtime mutation.
 saveCentralAINewWindowMode	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
+settingsInputMessage	SDK input-only error prefix renderer; called by the public SetConfig path and covered by SDK settings refusal parity.
 settingsRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.

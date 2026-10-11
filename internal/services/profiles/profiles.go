@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	storemetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/resources"
 )
 
 // Service resolves explicit paths per operation, without global state.
@@ -80,7 +81,7 @@ func (s Service) List(ctx context.Context, projectRef string) ([]Info, error) {
 		}
 		registry, err := storemetadata.NewDefaultStore(paths).LoadReadOnly()
 		if err != nil {
-			return nil, &ProjectError{err}
+			return nil, &ProjectError{&resources.Failure{Code: "registry-unavailable", Cause: err}}
 		}
 		query := selector.Query{Project: &ref}
 		resolved, err := selector.New(registry).ResolveProjects(query)

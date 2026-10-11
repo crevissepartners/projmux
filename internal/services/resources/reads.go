@@ -34,10 +34,9 @@ func Classify(err error) error {
 	if errors.As(err, &f) {
 		return err
 	}
-	code := "registry-unavailable"
+	code := "selector-invalid"
 	var s *selector.SelectorError
 	if errors.As(err, &s) {
-		code = "selector-invalid"
 		if s.Want != "" {
 			if s.Got == 0 {
 				code = "resource-not-found"
@@ -45,12 +44,17 @@ func Classify(err error) error {
 				code = "selector-ambiguous"
 			}
 		}
+	} else {
+		return err
 	}
 	return &Failure{Code: code, Cause: err}
 }
 func Load(paths config.Paths) (metadata.Registry, error) {
 	r, e := store.NewDefaultStore(paths).LoadDegradedReadOnly()
-	return r, Classify(e)
+	if e != nil {
+		return r, &Failure{Code: "registry-unavailable", Cause: e}
+	}
+	return r, nil
 }
 
 // Snapshot binds selection and ephemeral context to one observation.

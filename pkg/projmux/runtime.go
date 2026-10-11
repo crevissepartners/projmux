@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
@@ -47,7 +48,11 @@ func (c *Client) ObserveRuntime(ctx context.Context, input RuntimeRequest) (core
 	// explicit name overrides Options.SocketPath rather than conflicting with it.
 	transport, err := runtimeservice.ResolveTransport(request)
 	if err != nil {
-		return core.RuntimeReport{}, &Refusal{Code: CodeRuntimeRequestInvalid, message: fmt.Sprintf("get runtime %s: %s", input.Kind, err)}
+		message := "RuntimeRequest.SocketName and SocketPath are mutually exclusive"
+		if strings.TrimSpace(input.SocketName) == "" || strings.TrimSpace(input.SocketPath) == "" {
+			message = fmt.Sprintf("RuntimeRequest.SocketPath must be absolute, got %q", strings.TrimSpace(input.SocketPath))
+		}
+		return core.RuntimeReport{}, &Refusal{Code: CodeRuntimeRequestInvalid, message: message}
 	}
 	if transport.Kind == resourcegraph.TransportNone && c.runtimeSocketPath != "" {
 		transport, err = runtimeservice.ResolveTransport(resourcegraph.TransportRequest{SocketPath: c.runtimeSocketPath})

@@ -32,7 +32,12 @@ type Request struct {
 	Options, Indexes, Texts []string
 }
 type AnswerResult struct{ QuestionID, AgentUID, AgentName string }
-type Failure struct{ Code, Message string }
+type Failure struct {
+	Code, Message string
+	Cause         error
+}
+
+func (e *Failure) Unwrap() error { return e.Cause }
 
 func (e *Failure) Error() string            { return e.Message }
 func (e *Failure) MetadataUsageError() bool { return true }
@@ -208,7 +213,9 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 			}
 			selections, err := Selections(request, view.Prompts)
 			if err != nil {
-				return AnswerResult{}, refuse(questionReasonInvalidAnswer, err.Error())
+				failure := Refuse(request.Spelling, agent, questionReasonInvalidAnswer, err.Error()).(*Failure)
+				failure.Cause = err
+				return AnswerResult{}, failure
 			}
 			if err = dispatcher.AnswerExactProcessQuestion(ctx, agent.Metadata.UID, view.QuestionID, selections); err != nil {
 				return AnswerResult{}, err
@@ -244,7 +251,9 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 	}
 	selections, err := Selections(request, questions)
 	if err != nil {
-		return AnswerResult{}, refuse(questionReasonInvalidAnswer, err.Error())
+		failure := Refuse(request.Spelling, agent, questionReasonInvalidAnswer, err.Error()).(*Failure)
+		failure.Cause = err
+		return AnswerResult{}, failure
 	}
 	var answers map[string]string
 	if record.Provider == "codex" {
@@ -342,6 +351,11 @@ func StoreRefusal(err error) (string, string) {
 	}
 }
 
+// SelectionError preserves CLI syntax while naming typed selection fields for SDK callers.
+type SelectionError struct{ Message, InputMessage string }
+
+func (e *SelectionError) Error() string { return e.Message }
+
 // agentQuestionSelections folds the --option, --index, and --text occurrences
 // into one Selection per question. Each occurrence is <question-number>=<value>
 // with a 1-based question number.
@@ -352,15 +366,15 @@ func Selections(request Request, questions []agentquestion.Question) (map[int]ag
 		index, err := strconv.Atoi(strings.TrimSpace(number))
 		if !ok || err != nil || index < 1 {
 			if flagName == "text" {
-				return 0, "", fmt.Errorf("--text is not <question-number>=<value>")
+				return 0, "", &SelectionError{Message: "--text is not <question-number>=<value>", InputMessage: "Text requires a positive Question number"}
 			}
-			return 0, "", fmt.Errorf("--%s %q is not <question-number>=<value>", flagName, raw)
+			return 0, "", &SelectionError{Message: fmt.Sprintf("--%s %q is not <question-number>=<value>", flagName, raw), InputMessage: "Option or Index requires a positive Question number"}
 		}
 		if index > len(questions) {
 			if flagName == "text" {
-				return 0, "", fmt.Errorf("--text names question %d; this question set has %d", index, len(questions))
+				return 0, "", &SelectionError{Message: fmt.Sprintf("--text names question %d; this question set has %d", index, len(questions)), InputMessage: fmt.Sprintf("Text names Question %d; this question set has %d", index, len(questions))}
 			}
-			return 0, "", fmt.Errorf("--%s %q names question %d; this question set has %d", flagName, raw, index, len(questions))
+			return 0, "", &SelectionError{Message: fmt.Sprintf("--%s %q names question %d; this question set has %d", flagName, raw, index, len(questions)), InputMessage: fmt.Sprintf("Option or Index names Question %d; this question set has %d", index, len(questions))}
 		}
 		return index - 1, value, nil
 	}
@@ -380,7 +394,7 @@ func Selections(request Request, questions []agentquestion.Question) (map[int]ag
 		}
 		position, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || position < 1 || position > len(questions[index].Options) {
-			return nil, fmt.Errorf("--index %q: question %d has options 1-%d", raw, index+1, len(questions[index].Options))
+			return nil, &SelectionError{Message: fmt.Sprintf("--index %q: question %d has options 1-%d", raw, index+1, len(questions[index].Options)), InputMessage: fmt.Sprintf("Index for Question %d must be between 1 and %d", index+1, len(questions[index].Options))}
 		}
 		selection := selections[index]
 		selection.Labels = append(selection.Labels, questions[index].Options[position-1].Label)
@@ -393,7 +407,7 @@ func Selections(request Request, questions []agentquestion.Question) (map[int]ag
 		}
 		selection := selections[index]
 		if selection.HasText {
-			return nil, fmt.Errorf("question %d takes one --text", index+1)
+			return nil, &SelectionError{Message: fmt.Sprintf("question %d takes one --text", index+1), InputMessage: fmt.Sprintf("Question %d accepts one Text selection", index+1)}
 		}
 		selection.Text, selection.HasText = text, true
 		selections[index] = selection

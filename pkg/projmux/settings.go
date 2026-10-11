@@ -3,6 +3,7 @@ package projmux
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/crevissepartners/projmux/internal/services/settings"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -46,7 +47,25 @@ func publicConfig(v settings.Value) core.ConfigValue {
 func settingsRefusal(err error) error {
 	var input *settings.InputError
 	if errors.As(err, &input) {
-		return &Refusal{Code: Code(input.Code), message: err.Error()}
+		return &Refusal{Code: Code(input.Code), message: settingsInputMessage(err.Error())}
 	}
 	return err
+}
+
+// Translate only generated input prefixes; quoted caller values stay intact.
+func settingsInputMessage(message string) string {
+	for _, p := range []struct{ cli, sdk string }{
+		{"config providers --enable", "ConfigUpdate.Provider"},
+		{"config providers --disable", "ConfigUpdate.Provider"},
+		{"config locale --set", "ConfigUpdate.Locale"},
+		{"config agent-questions --answering", "ConfigUpdate.Answering"},
+		{"config agent-approvals --answering", "ConfigUpdate.Answering"},
+		{"config agent-questions --window", "ConfigUpdate.Window"},
+		{"config agent-approvals --window", "ConfigUpdate.Window"},
+	} {
+		if detail, ok := strings.CutPrefix(message, p.cli); ok {
+			return p.sdk + detail
+		}
+	}
+	return message
 }

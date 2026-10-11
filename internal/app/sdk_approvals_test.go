@@ -203,7 +203,7 @@ func TestApprovalSDKRefusalParity(t *testing.T) {
 			_, _, cliErr := runRoute(t, f.command, "approval", "answer", codexPermissionAgentRef, test.id, "--allow", "--via", test.via)
 			_, err := client.AnswerApproval(context.Background(), projmux.AnswerApprovalRequest{Agent: codexPermissionAgentRef, RequestID: test.id, Allow: true, Via: test.via})
 			var refusal *projmux.Refusal
-			if cliErr == nil || !errors.As(err, &refusal) || refusal.Code != test.code || err.Error() != cliErr.Error() || publicRouteArgvExitCode(cliErr) != 2 || len(f.reviews()) != 0 {
+			if cliErr == nil || !errors.As(err, &refusal) || refusal.Code != test.code || (test.code != projmux.CodeOperatorClientInvalid && err.Error() != cliErr.Error() || test.code == projmux.CodeOperatorClientInvalid && !strings.HasPrefix(err.Error(), "AnswerApprovalRequest.Via: ")) || publicRouteArgvExitCode(cliErr) != 2 || len(f.reviews()) != 0 {
 				t.Fatalf("refusal mismatch cli=%v sdk=%v code=%+v", cliErr, err, refusal)
 			}
 		})
@@ -360,7 +360,7 @@ func TestApprovalSDKStoreRefusalParity(t *testing.T) {
 			cliErr := cmd.runPermissionApproval([]string{"answer", "reader", id, "--allow"}, &out, &stderr)
 			_, err := client.AnswerApproval(context.Background(), projmux.AnswerApprovalRequest{Agent: "reader", RequestID: id, Allow: true})
 			var refusal *projmux.Refusal
-			if cliErr == nil || !errors.As(err, &refusal) || refusal.Code != test.code || cliErr.Error() != err.Error() || publicRouteArgvExitCode(cliErr) != 2 {
+			if cliErr == nil || !errors.As(err, &refusal) || refusal.Code != test.code || (test.code != projmux.CodePermissionProviderUnsupported && cliErr.Error() != err.Error() || test.code == projmux.CodePermissionProviderUnsupported && err.Error() != "Agent provider does not support approval requests; want claude or codex") || publicRouteArgvExitCode(cliErr) != 2 {
 				t.Fatalf("store refusal differs cli=%v sdk=%v refusal=%+v", cliErr, err, refusal)
 			}
 		})

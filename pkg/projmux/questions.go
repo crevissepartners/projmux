@@ -110,7 +110,7 @@ func (c *Client) AnswerQuestion(ctx context.Context, input AnswerQuestionRequest
 	}
 	request := questions.Request{Spelling: "agent question answer", QuestionID: input.QuestionID}
 	if len(input.Selections) == 0 {
-		return core.QuestionAnswerResult{}, &Refusal{Code: CodeQuestionInvalidAnswer, message: "agent question answer requires at least one --option, --index, or --text"}
+		return core.QuestionAnswerResult{}, &Refusal{Code: CodeQuestionInvalidAnswer, message: "AnswerQuestionRequest.Selections requires at least one selection with Option, Index, or Text"}
 	}
 	for _, v := range input.Selections {
 		n := 0
@@ -148,7 +148,12 @@ func questionRefusal(err error) error {
 	}
 	var failure *questions.Failure
 	if errors.As(err, &failure) {
-		return &Refusal{Code: Code(failure.Code), message: failure.Error()}
+		message := failure.Error()
+		var selection *questions.SelectionError
+		if errors.As(failure, &selection) {
+			message = "AnswerQuestionRequest.Selections: " + selection.InputMessage
+		}
+		return &Refusal{Code: Code(failure.Code), message: message}
 	}
 	return err
 }
