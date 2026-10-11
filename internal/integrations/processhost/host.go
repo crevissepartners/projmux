@@ -95,6 +95,7 @@ type Launch struct {
 	Completion               *Completion
 	Spawned                  *SpawnCallback
 	TurnCompleted            *TurnCompletion
+	JoinConsumed             *JoinConsumption
 	provider                 string
 	adapter                  adapterConfig
 	resume                   *SessionRecord
@@ -107,6 +108,10 @@ type Launch struct {
 // is cleared. Notify runs asynchronously outside host locks and never writes
 // provider input; its pointer belongs to the immutable launch identity.
 type TurnCompletion struct{ Notify func(Binding) }
+
+// JoinConsumption observes space freed in Claude's joined input budget. Notify
+// runs asynchronously outside host locks, with the exact immutable binding.
+type JoinConsumption struct{ Notify func(Binding) }
 
 // SpawnCallback publishes exact child birth before provider initialization.
 // The pointer is launch identity; retries retain it and never publish twice.
@@ -138,6 +143,8 @@ type Handle struct {
 	providerTurns          uint64
 	joined                 []string
 	joinedBytes            int
+	joinedBudget           map[string]claudeJoinedInput
+	claudeModelMessage     string
 	joinedMessages         map[string]claudePeerReservation
 	carriedJoined          []string
 	unattributed           []string
