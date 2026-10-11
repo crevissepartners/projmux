@@ -56,6 +56,8 @@ make install
 | `cmd/projmux` | Binary entrypoint; CLI wiring only. |
 | `internal/app` | Command implementations and app wiring. |
 | `internal/cli` | Canonical command catalog, help, output, and receipts. |
+| `pkg/projmux` | Experimental v0 public Go SDK; instructions API and public result/refusal types. |
+| `internal/services` | Transport-independent execution shared by CLI and SDK. |
 | `internal/core` | Product rules and state that are testable without tmux. |
 | `internal/config` | Config files and saved settings. |
 | `internal/integrations` | Adapters: tmux, AI agents, hooks, metadata, session state. |

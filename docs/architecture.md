@@ -13,7 +13,7 @@
 
 ## Layers
 
-Every package below `cmd/` and every top-level directory under `internal/` sits
+Every package below `cmd/` and `pkg/`, and every top-level directory under `internal/`, sits
 in one layer. A package may import its own layer and the layers below it. The
 `Imports` column is the measured set of other top-level directories each one
 imports in non-test code (`go list -f '{{.Imports}}' ./...`), not a wish list.
@@ -22,6 +22,8 @@ imports in non-test code (`go list -f '{{.Imports}}' ./...`), not a wish list.
 | --- | --- | --- | --- |
 | Entry | `cmd/projmux` | Binary entrypoint. Records the run in the diagnostics journal and hands the arguments to `internal/app`. | app, cli, diagnostics, version |
 | Application | `internal/app` | Command implementations: parses each route, reads config and state, calls core rules and integration adapters, and renders through `internal/cli` and `internal/ui`. | every directory except testutil and tools |
+| SDK | `pkg/projmux` | Experimental v0 public Go instruction API; immutable paths, public results and typed refusals. | config, core, services |
+| Services | `internal/services` | Transport-independent instruction execution and profile-use deletion guards, shared by CLI and SDK. | config, core |
 | UI | `internal/ui` | Native picker model, input handling, and row and preview rendering for popups and the sidebar. | core, i18n, theme |
 | Integrations | `internal/integrations` | Adapters to the outside world: tmux, the Registry file and its tmux mirror, AI agent providers and their local transports, lifecycle hooks, and procfs resource collection. | config, core, diagnostics, state, theme, version |
 | Core | `internal/core` | Product rules and state transitions that are testable without tmux: the resource model, naming, the resolved resource graph, the controller plan, candidates, pins, sessions, messages, and usage. Core does not shell out. | aiprovider, config, integrations (one known exception, below), state, version |
@@ -36,7 +38,7 @@ imports in non-test code (`go list -f '{{.Imports}}' ./...`), not a wish list.
 | Leaf | `internal/systemstatus` | Host CPU and memory samples for the status bar. | — |
 | Leaf | `internal/version` | Release version string. | — |
 | Test support | `internal/testutil` | Test-only helpers. Product code never imports them. | integrations |
-| Build tools | `internal/tools` | Build-time generators (`make docs`, `make notices`). Not part of the shipped binary. | cli |
+| Build tools | `internal/tools` | Build-time generators and SDK boundary checker (`make docs`, `make notices`, `make test-sdk-boundary`). Not part of the shipped binary. | cli |
 
 `TestRepoMapsListEveryTopLevelInternalDirectory` in `internal/tools/gendocs`
 fails when this table misses a top-level `internal/` directory or `cmd/projmux`,
@@ -58,6 +60,8 @@ counts the optional `docs/repo-layout.local.md` table.
   that imports an integration. The direction is not enforced by a test.
 - The repository's Go test suites under `test/` import core and integrations
   directly.
+
+The instruction slice follows `internal/app/personacmd` → `internal/services/instructions` and `pkg/projmux` → that same service. SDK implementation dependencies and public type signatures are checked by `make test-sdk-boundary`; SDK consumers never import `internal/` types.
 
 ### Main flows
 
