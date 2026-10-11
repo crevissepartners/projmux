@@ -214,7 +214,7 @@ func TestProfileSDKRefusalParity(t *testing.T) {
 		if ref == "uid:" {
 			want = projmux.CodeSelectorInvalid
 		}
-		if profileCode(t, sdkErr) != want || cliErr.Error() != sdkErr.Error() {
+		if profileCode(t, sdkErr) != want || sdkSelectorMessageMismatch(sdkErr, cliErr, "--project", "ListProfiles projectRef") {
 			t.Fatalf("project %v %v", sdkErr, cliErr)
 		}
 	}

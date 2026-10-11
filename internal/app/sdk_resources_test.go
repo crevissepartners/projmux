@@ -109,7 +109,7 @@ func TestResourceSDKRefusalParity(t *testing.T) {
 		cliErr := cmd.Run([]string{strings.ToLower(string(test.ref.Kind)), test.ref.Value, "-o", "json"}, &out, &stderr)
 		_, err := c.GetResource(context.Background(), test.ref)
 		var refusal *projmux.Refusal
-		if !errors.As(err, &refusal) || refusal.Code != test.code || cliErr == nil || cliErr.Error() != refusal.Error() || out.Len() != 0 || !IsUsageError(cliErr) {
+		if !errors.As(err, &refusal) || refusal.Code != test.code || cliErr == nil || sdkSelectorMessageMismatch(refusal, cliErr, "--"+strings.ToLower(string(test.ref.Kind)), "core.Ref.Value") || out.Len() != 0 || !IsUsageError(cliErr) {
 			t.Fatalf("CLI=%v SDK=%v expected %s", cliErr, err, test.code)
 		}
 	}

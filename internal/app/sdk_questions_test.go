@@ -440,7 +440,7 @@ func TestQuestionSDKSelectionRefusals(t *testing.T) {
 		cliErr := f.cmd.runQuestion([]string{"list", ref, "-o", "json"}, &out, &stderr)
 		_, sdkErr := f.client.ListQuestions(context.Background(), ref)
 		var refusal *projmux.Refusal
-		if !errors.As(sdkErr, &refusal) || cliErr == nil || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != 2 {
+		if !errors.As(sdkErr, &refusal) || cliErr == nil || sdkSelectorMessageMismatch(sdkErr, cliErr, "--agent", "ListQuestions agentRef") || exitCodeOf(cliErr) != 2 {
 			t.Fatalf("ref %s CLI=%v SDK=%v", ref, cliErr, sdkErr)
 		}
 	}

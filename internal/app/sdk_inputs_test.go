@@ -151,3 +151,13 @@ func TestSDKSelectorParserFieldRefusals(t *testing.T) {
 		}
 	}
 }
+
+// The input parser diagnostics are the Task 4 exception to CLI text parity.
+// All non-parser text, including resolution recovery, remains byte identical.
+func sdkSelectorMessageMismatch(sdkErr, cliErr error, flag, field string) bool {
+	detail, parsed := strings.CutPrefix(cliErr.Error(), "parse selector: "+flag+" ")
+	if parsed {
+		return sdkErr.Error() != "parse selector: "+field+" "+detail
+	}
+	return sdkErr.Error() != cliErr.Error()
+}
