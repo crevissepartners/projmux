@@ -856,3 +856,77 @@ func TestStoreMigratesLegacyLastCollectString(t *testing.T) {
 func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
+
+func TestManagerHistoryUsesAppendTime(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"collect", "apply"} {
+		for _, model := range []string{"claude", "codex"} {
+			t.Run(path+"/"+model, func(t *testing.T) {
+				t.Parallel()
+
+				started := mustTime(t, "2026-10-11T11:00:00Z")
+				finished := started.Add(500 * time.Millisecond)
+				observed := started.Add(400 * time.Millisecond)
+				if model == "codex" {
+					// Codex rate-limit events carry an earlier event timestamp.
+					observed = started.Add(-time.Minute)
+				}
+				snaps := []Snapshot{
+					{Model: model, Window: Window5h, Pct: 9, UpdatedAt: observed},
+					{Model: model, Window: WindowWeekly, Pct: 57, UpdatedAt: observed},
+					{Model: model, Window: Window5h, Bucket: "future", Pct: 80, UpdatedAt: started.Add(time.Hour)},
+				}
+				store := NewStore(t.TempDir())
+				registry := NewRegistry()
+				if err := registry.Register(&countingAdapter{name: model, snaps: snaps}); err != nil {
+					t.Fatal(err)
+				}
+				clockCalls := 0
+				manager := NewManager(registry, store, func() time.Time {
+					clockCalls++
+					if clockCalls == 1 {
+						return started
+					}
+					// Advance the clock without sleeping: the walk/commit has ended.
+					return finished
+				})
+				var err error
+				if path == "collect" {
+					_, err = manager.Collect(context.Background())
+				} else {
+					_, err = manager.ApplySnapshots(model, snaps)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Read beyond even the rejected timestamp so a reader's future
+				// filter cannot hide a wrongly persisted future point.
+				points, err := store.ReadHistory(HistoryFilter{
+					Provider: model, Metric: "usage.percent", Now: started.Add(2 * time.Hour),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(points) != 2 {
+					t.Fatalf("history = %+v, want 5h and weekly observations only", points)
+				}
+				want := map[string]float64{string(Window5h): 9, string(WindowWeekly): 57}
+				for _, point := range points {
+					pct, ok := want[point.Window]
+					if !ok || point.Value != pct || point.Bucket != "" || !point.ObservedAt.Equal(observed) {
+						t.Fatalf("history point = %+v, want original %s observation at %v", point, point.Window, observed)
+					}
+					delete(want, point.Window)
+				}
+				state, err := store.LoadState()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !state.LastCollect[model].Equal(started) {
+					t.Fatalf("last_collect = %v, want unchanged start time %v", state.LastCollect[model], started)
+				}
+			})
+		}
+	}
+}

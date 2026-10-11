@@ -129,7 +129,8 @@ func (m *Manager) ApplySnapshots(model string, snapshots []Snapshot) ([]Snapshot
 	if err != nil {
 		return nil, err
 	}
-	if historyErr := m.store.AppendHistory(usageHistoryPoints(fresh), now); historyErr != nil {
+	// Validate observation timestamps against append time, after the state commit.
+	if historyErr := m.store.AppendHistory(usageHistoryPoints(fresh), m.now().UTC()); historyErr != nil {
 		return SortedSnapshots(merged), fmt.Errorf("%w: %w", ErrHistoryWrite, historyErr)
 	}
 	return SortedSnapshots(merged), nil
@@ -273,7 +274,9 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 		for _, result := range results {
 			fresh = append(fresh, result.snaps...)
 		}
-		if historyErr := m.store.AppendHistory(usageHistoryPoints(fresh), now); historyErr != nil {
+		// Adapters can timestamp snapshots after the walk starts (e.g. after
+		// Claude's network call). Only timestamps beyond append time are future.
+		if historyErr := m.store.AppendHistory(usageHistoryPoints(fresh), m.now().UTC()); historyErr != nil {
 			errs = append(errs, fmt.Errorf("%w: %w", ErrHistoryWrite, historyErr))
 		}
 	}
