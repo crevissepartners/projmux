@@ -65,3 +65,24 @@ func TestExternalResourceConsumer(t *testing.T) {
 	// Concrete public fields remain usable without importing an internal package.
 	_ = core.Agent{Metadata: core.ObjectMeta{UID: "agent-example"}, Status: core.AgentStatus{SessionRef: &core.AgentSessionRef{Codex: &core.CodexSessionRef{ThreadID: "thread"}}}}
 }
+
+func TestExternalRuntimeConsumer(t *testing.T) {
+	root := t.TempDir()
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []core.RuntimeObjectKind{core.RuntimeSessions, core.RuntimeWindows, core.RuntimePanes} {
+		var report core.RuntimeReport
+		report, err = c.ObserveRuntime(context.Background(), projmux.RuntimeRequest{Kind: kind})
+		if err != nil || report.Transport.Kind != "none" || report.Items == nil || len(report.Unavailable) == 0 {
+			t.Fatalf("%+v %v", report, err)
+		}
+	}
+	_, err = c.ObserveRuntime(context.Background(), projmux.RuntimeRequest{Kind: core.RuntimeSessions, SocketPath: "relative"})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeRuntimeRequestInvalid {
+		t.Fatal(err)
+	}
+	_ = core.RuntimeRow{Resource: &core.RuntimeResource{UID: "pane-example"}, Conflicts: []core.RuntimeConflict{{Targets: []string{"%1"}}}}
+}

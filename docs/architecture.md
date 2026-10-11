@@ -22,8 +22,8 @@ imports in non-test code (`go list -f '{{.Imports}}' ./...`), not a wish list.
 | --- | --- | --- | --- |
 | Entry | `cmd/projmux` | Binary entrypoint. Records the run in the diagnostics journal and hands the arguments to `internal/app`. | app, cli, diagnostics, version |
 | Application | `internal/app` | Command implementations: parses each route, reads config and state, calls core rules and integration adapters, and renders through `internal/cli` and `internal/ui`. | every directory except testutil and tools |
-| SDK | `pkg/projmux` | Experimental v0 public Go instructions and resource-read API; immutable paths, explicit public resource types and typed refusals. | config, core, services |
-| Services | `internal/services` | Transport-independent instruction execution and resource reading, shared by CLI and SDK. | config, core, integrations |
+| SDK | `pkg/projmux` | Experimental v0 public Go instruction, resource-read and runtime observation API; immutable paths, explicit public resource types and typed refusals. | config, core, services |
+| Services | `internal/services` | Transport-independent instruction execution, resource reading and runtime observation, shared by CLI and SDK. | config, core, integrations |
 | UI | `internal/ui` | Native picker model, input handling, and row and preview rendering for popups and the sidebar. | core, i18n, theme |
 | Integrations | `internal/integrations` | Adapters to the outside world: tmux, the Registry file and its tmux mirror, AI agent providers and their local transports, lifecycle hooks, and procfs resource collection. | config, core, diagnostics, state, theme, version |
 | Core | `internal/core` | Product rules and state transitions that are testable without tmux: the resource model, naming, the resolved resource graph, the controller plan, candidates, pins, sessions, messages, and usage. Core does not shell out. | aiprovider, config, integrations (one known exception, below), state, version |
@@ -62,6 +62,8 @@ counts the optional `docs/repo-layout.local.md` table.
   directly.
 
 The instruction slice follows `internal/app/personacmd` → `internal/services/instructions` and `pkg/projmux` → that same service. Resource reads share `internal/services/resources` for Registry loading, selector resolution/cardinality, graph context, and Agent defaults. `pkg/projmux/core` defines independent JSON types and has only standard-library dependencies. SDK implementation dependencies and public type signatures are checked by `make test-sdk-boundary`; SDK consumers never import `internal/` types.
+
+Runtime inventory reads share `internal/services/runtime` for exact transport validation, read-only Registry/inventory joining and JSON projection. `ObserveRuntime` accepts sessions/windows/panes and explicit socket routing; absent routing makes no tmux calls. The CLI retains inherited TMUX routing. Public runtime types mirror the CLI JSON and never expose internal graph types.
 
 ### Main flows
 

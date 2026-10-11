@@ -61,3 +61,16 @@ func ExampleClient_ListResources() {
 		fmt.Println(agent.Metadata.UID, agent.Status.Phase)
 	}
 }
+
+func ExampleClient_ObserveRuntime() {
+	client, err := projmux.NewClient(projmux.Options{StateDir: "/absolute/state/projmux"})
+	if err != nil {
+		panic(err)
+	}
+	report, err := client.ObserveRuntime(context.Background(), projmux.RuntimeRequest{Kind: core.RuntimePanes, SocketPath: "/absolute/tmux.sock"})
+	if err != nil {
+		panic(err)
+	}
+	_ = report.Items
+	_ = report.Unavailable
+}

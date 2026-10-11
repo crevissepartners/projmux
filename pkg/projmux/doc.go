@@ -4,7 +4,7 @@
 // notes and compile your consumer against the selected version before upgrading.
 //
 // The SDK exposes stored instructions and read-only Project, Window, Pane,
-// and Agent resource lists and descriptions. Public resource types live in
+// and Agent resource lists and descriptions, plus runtime inventories. Public resource types live in
 // pkg/projmux/core and mirror CLI JSON, including list-only context. The CLI and SDK execute
 // the same internal service and retain the existing personas/<name>.md format,
 // case-sensitive names, 64 KiB limit and private filesystem permissions.
@@ -12,8 +12,9 @@
 // NewClient(Options{}) captures HOME/XDG_CONFIG_HOME/XDG_STATE_HOME defaults
 // exactly as the CLI does. Options{ConfigDir: "/absolute/path/projmux"} instead
 // overrides that configuration directory. StateDir overrides the captured
-// state directory. SocketPath chooses an exact tmux server; empty observes the
-// projmux app socket, without reading the active TMUX context. No method changes
+// state directory. SocketPath chooses an exact tmux server; when empty, resource
+// reads observe the projmux app socket and runtime reads observe no server.
+// Neither reads the active TMUX context. No method changes
 // global environment variables. Instructions live in ConfigDir/personas; deletion
 // checks user profiles in ConfigDir/profiles, including invalid profiles that
 // still name those instructions. Instruction methods never open the Registry or provider processes. Resource
@@ -31,4 +32,9 @@
 // Instruction filesystem failures remain
 // ordinary errors; rejected names, sizes, missing files and in-use instructions
 // are *Refusal values with machine-readable Code fields.
+// ObserveRuntime reads sessions, windows or panes on one exact server and mirrors
+// get runtime JSON. Its route is RuntimeRequest, then an explicit Options.SocketPath,
+// then none (zero tmux calls). It does not inherit TMUX or use the app socket.
+// Missing servers return RuntimeReport.Unavailable; invalid requests return a
+// Refusal with CodeRuntimeRequestInvalid. Runtime results own all nested data.
 package projmux
