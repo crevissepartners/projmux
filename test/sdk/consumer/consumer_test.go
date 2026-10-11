@@ -126,3 +126,34 @@ func TestExternalAgentCatalogConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExternalProfileConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(t.TempDir(), "config")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var written core.ProfileWriteResult
+	written, err = c.WriteProfile(ctx, "reader", []byte("model = \"opus\""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []core.ProfileInfo
+	list, err = c.ListProfiles(ctx, "")
+	if err != nil || len(list) != 1 || list[0].Digest != written.Digest || list[0].Provider != "-" {
+		t.Fatalf("list %+v %v", list, err)
+	}
+	var content core.ProfileContent
+	content, err = c.ReadProfile(ctx, "reader")
+	if err != nil || string(content.Content) != "model = \"opus\"" {
+		t.Fatalf("read %+v %v", content, err)
+	}
+	err = c.DeleteProfile(ctx, "reader", false)
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProfileConfirmationRequired {
+		t.Fatal(err)
+	}
+	if err = c.DeleteProfile(ctx, "reader", true); err != nil {
+		t.Fatal(err)
+	}
+}

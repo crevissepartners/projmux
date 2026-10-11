@@ -32,7 +32,7 @@ type Options struct {
 	CodexModelLister func(context.Context) ([]string, error)
 }
 
-// Client executes public instruction and read-only operations. It owns no background work and needs
+// Client executes public instruction, profile, and read-only operations. It owns no background work and needs
 // no Close. Its paths are immutable; methods may be called concurrently. Writes
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
@@ -77,7 +77,7 @@ func NewClient(options Options) (*Client, error) {
 	}}, paths: paths, pathsErr: pathsErr, transport: transport, runtimeSocketPath: options.SocketPath, codexModelLister: options.CodexModelLister}, nil
 }
 
-// Code is a machine-readable refusal reason. Instruction codes retain CLI
+// Code is a machine-readable refusal reason. Instruction and profile codes retain CLI
 // reason tokens; resource codes classify the existing CLI failure kinds.
 type Code string
 

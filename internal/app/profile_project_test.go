@@ -252,10 +252,11 @@ func TestProjectProfileCodexRecordedAndSwitchScope(t *testing.T) {
 
 func TestProfileListScopesAndProjectReferenceFilter(t *testing.T) {
 	cmd, _ := newProfileTestCommand(t, "")
-	store, err := cmd.store()
+	storePaths, err := cmd.service().Paths()
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := profile.NewDefaultStore(storePaths)
 	for name, content := range map[string]string{"global": "", "p": "project = \"" + profileProjectP + "\"", "q": "project = \"" + profileProjectQ + "\""} {
 		if _, err := store.Write(name, []byte(content)); err != nil {
 			t.Fatal(err)

@@ -88,3 +88,18 @@ func ExampleClient_Models() {
 	fmt.Println(models.Provider, models.AcceptsUnlisted)
 	// Output: claude true
 }
+
+func ExampleClient_WriteProfile() {
+	client, err := projmux.NewClient(projmux.Options{ConfigDir: "/absolute/path/projmux"})
+	if err != nil {
+		return
+	}
+	ctx := context.Background()
+	_, err = client.WriteProfile(ctx, "reviewer", []byte("provider = \"claude\"\nmodel = \"opus\"\n"))
+	if err != nil {
+		return
+	}
+	_, _ = client.ListProfiles(ctx, "")
+	_, _ = client.ReadProfile(ctx, "reviewer")
+	_ = client.DeleteProfile(ctx, "reviewer", true)
+}
