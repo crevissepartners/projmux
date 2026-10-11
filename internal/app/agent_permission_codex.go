@@ -1,16 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
+	approvalservice "github.com/crevissepartners/projmux/internal/services/approvals"
 	"io"
 	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -37,35 +38,19 @@ const codexPermissionListNote = "note: a request may already have been answered 
 //
 // The values ever sent are therefore accept, decline, and cancel.
 func codexPermissionDecision(allow bool, offered []codexappserver.ApprovalDecision) (codexappserver.ApprovalDecision, bool) {
-	candidates := []codexappserver.ApprovalDecision{codexappserver.DecisionDecline, codexappserver.DecisionCancel}
-	if allow {
-		candidates = []codexappserver.ApprovalDecision{codexappserver.DecisionAccept}
-	}
-	for _, decision := range candidates {
-		if slices.Contains(offered, decision) {
-			return decision, true
-		}
-	}
-	return "", false
+	return approvalservice.Decision(allow, offered)
 }
 
 // codexPermissionDecisionEffect is the short effect of a sent decision, as the
 // answer line and the list print it.
 func codexPermissionDecisionEffect(decision codexappserver.ApprovalDecision) string {
-	switch decision {
-	case codexappserver.DecisionDecline:
-		return "the turn continues"
-	case codexappserver.DecisionCancel:
-		return "the turn stops"
-	default:
-		return ""
-	}
+	return approvalservice.DecisionEffect(decision)
 }
 
 // codexPermissionAuditReason is how an answer's audit line carries the
 // decision actually sent, in the existing Reason field: "decision=<value>".
 func codexPermissionAuditReason(decision codexappserver.ApprovalDecision) string {
-	return "decision=" + string(decision)
+	return approvalservice.AuditReason(decision)
 }
 
 // codexPermissionApproval is runPermissionApproval for a Codex Agent. The
@@ -95,85 +80,19 @@ func (c *agentCommand) codexPermissionApproval(request agentPermissionRequest, r
 	if codexProcessHookObservationOnly(c.lookupEnv) {
 		return fmt.Errorf("%s: %w", request.spelling, processhost.ErrStale)
 	}
-
-	answering := c.permissionAnswering()
-	if request.action == "answer" && answering != config.AgentApprovalAnsweringProjmux {
-		return refuse(permissionReasonAnsweringOff, "cannot be answered from projmux while agent-approval-answering is claude; run `projmux config agent-approvals --answering projmux` first, or answer in the Codex TUI or with `projmux agent approval review`")
-	}
-	binding, err := c.bindAgentControl(codexPermissionCapabilitySpelling, registry, agent)
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpApprovals})
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	if err := response.Error(); err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, addOpenCodexBindingRecovery(err, binding))
-	}
+	service := c.approvalService()
 	if request.action == "list" {
-		return c.listCodexPermissionRequests(request, agent, answering, response.Approvals, stdout)
-	}
-
-	matches := slices.DeleteFunc(slices.Clone(response.Approvals), func(p agentPendingApproval) bool { return p.RequestID != request.requestID })
-	switch len(matches) {
-	case 0:
-		return refuse(permissionReasonNotPending, fmt.Sprintf("has no pending approval request %q; it was already answered (the first answer wins) or never existed", request.requestID))
-	case 1:
-	default:
-		return refuse(permissionReasonNotPending, fmt.Sprintf("approval request id %q is ambiguous across raw request ids; answer it with `projmux agent approval review %s`", request.requestID, agent.Metadata.Name))
-	}
-	pending := matches[0]
-	decision, ok := codexPermissionDecision(request.allow, pending.Decisions)
-	if !ok {
-		want := "accept"
-		if !request.allow {
-			want = "decline or cancel"
+		_, pending, err := service.Pending(context.Background(), registry, agent)
+		if err != nil {
+			return fmt.Errorf("%s: %w", request.spelling, err)
 		}
-		return refuse(permissionReasonDecisionUnavailable, fmt.Sprintf("approval request %q (%s) does not offer %s; answer it with `projmux agent approval review %s`", request.requestID, pending.Kind, want, agent.Metadata.Name))
+		return c.listCodexPermissionRequests(request, agent, c.permissionAnswering(), pending, stdout)
 	}
-
-	event, word := agentapproval.AuditDenied, agentapproval.StateDenied
-	if request.allow {
-		event, word = agentapproval.AuditAllowed, agentapproval.StateAllowed
-	}
-	store, err := c.openApprovalStore()
+	result, err := service.AnswerCodex(context.Background(), approvalRequest(request), registry, agent)
 	if err != nil {
-		return fmt.Errorf("%s: %w; approval request %q is still waiting", request.spelling, err, request.requestID)
+		return err
 	}
-	line := agentapproval.AuditLine{
-		Event: event, RequestID: pending.RequestID, AgentUID: agent.Metadata.UID, PaneUID: binding.Identity.PaneUID,
-		ToolName: string(pending.Kind), Input: codexPermissionSummary(pending), Via: request.via, Reason: codexPermissionAuditReason(decision),
-	}
-	if err := store.AppendAnswerAudit(line); err != nil {
-		return fmt.Errorf("%s: %w; approval request %q is still waiting", request.spelling, err, request.requestID)
-	}
-	// The line is on disk. A failed send is compensated with an uncommitted
-	// line only when the decision is confirmed not to have reached Codex;
-	// otherwise the provider may or may not have taken it, and the line stays
-	// alone, erring on the side of recording an answer that did not land.
-	reviewed, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpReview, RequestKey: pending.RequestID, Decision: string(decision)})
-	err = callErr
-	if err == nil {
-		if refusal := reviewed.Error(); refusal != nil {
-			err = addOpenCodexBindingRecovery(refusal, binding)
-		}
-	}
-	if err != nil {
-		if !codexReviewNotDelivered(callErr, reviewed) {
-			return fmt.Errorf("%s: %w; the decision may or may not have reached Codex", request.spelling, err)
-		}
-		if auditErr := store.AppendUncommittedAudit(line, agentapproval.UncommittedSendFailed); auditErr != nil {
-			return fmt.Errorf("%s: %w; the decision did not reach Codex, so the answer did not take effect, but the audit log keeps its %s line: %w", request.spelling, err, event, auditErr)
-		}
-		return fmt.Errorf("%s: %w; the decision did not reach Codex, so the answer did not take effect; its %s audit line is followed by an uncommitted line", request.spelling, err, event)
-	}
-	detail := "decision " + string(decision)
-	if effect := codexPermissionDecisionEffect(decision); effect != "" {
-		detail += "; " + effect
-	}
-	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s (%s)\n", pending.RequestID, word, agent.Metadata.Name, detail)
-	return err
+	return writePermissionServiceAnswer(request, result, stdout, io.Discard)
 }
 
 // codexReviewNotDelivered reports whether a failed approval-review call is
@@ -195,83 +114,29 @@ func (c *agentCommand) codexPermissionApproval(request agentPermissionRequest, r
 // unsafe-decision before the claim. response-indeterminate, timeout,
 // response-too-large, and any unknown code may follow the send.
 func codexReviewNotDelivered(callErr error, reviewed agentControlResponse) bool {
-	if callErr != nil {
-		var fence *exactAgentControlBindingError
-		return errors.As(callErr, &fence) || errors.Is(callErr, errAgentControlNotSent)
-	}
-	if reviewed.OK {
-		return false
-	}
-	switch reviewed.Code {
-	case "stale-epoch", "stale-binding", "unavailable", "invalid-frame", "ambiguous-request", "unsafe-decision":
-		return true
-	default:
-		return false
-	}
+	return approvalservice.ReviewNotDelivered(callErr, agentcontrol.Response(reviewed))
 }
 
 func (c *agentCommand) listCodexPermissionRequests(request agentPermissionRequest, agent coremetadata.Agent, answering config.AgentApprovalAnswering, approvals []agentPendingApproval, stdout io.Writer) error {
-	counts := map[string]int{}
-	for _, p := range approvals {
-		counts[p.RequestID]++
+	result, err := c.approvalService().ProjectCodex(agent, answering, approvals)
+	if err != nil {
+		return fmt.Errorf("%s: %w", request.spelling, err)
 	}
-	result := agentPermissionList{Provider: aiModeCodex, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Answering: string(answering), Requests: []agentPermissionRecord{}}
-	for _, p := range approvals {
-		details, err := codexPermissionDetails(p)
-		if err != nil {
-			return fmt.Errorf("%s: %w", request.spelling, err)
-		}
-		record := agentPermissionRecord{ID: p.RequestID, State: agentapproval.StateWaiting, ToolName: string(p.Kind), ToolInput: details, ambiguous: counts[p.RequestID] > 1}
-		if !record.ambiguous {
-			if _, ok := codexPermissionDecision(true, p.Decisions); ok {
-				record.Answers = append(record.Answers, "allow")
-			}
-			if decision, ok := codexPermissionDecision(false, p.Decisions); ok {
-				record.Answers = append(record.Answers, "deny")
-				record.DenyDecision = string(decision)
-			}
-		}
-		answerable := len(record.Answers) > 0
-		record.Answerable = &answerable
-		result.Requests = append(result.Requests, record)
-	}
-	if request.json {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetEscapeHTML(false)
-		return encoder.Encode(result)
-	}
-	return writeAgentPermissionList(stdout, result, c.clock())
+	return c.writePermissionServiceList(request, result, stdout)
 }
 
 // codexPermissionDetails is a pending approval's kind-specific details as the
 // list's toolInput: every field but the request id and kind, which the record
 // already carries as id and toolName.
 func codexPermissionDetails(p agentPendingApproval) (json.RawMessage, error) {
-	data, err := json.Marshal(p)
-	if err != nil {
-		return nil, err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return nil, err
-	}
-	delete(fields, "requestId")
-	delete(fields, "kind")
-	return json.Marshal(fields)
+	return approvalservice.Details(p)
 }
 
 // codexPermissionSummary is the bounded audit input of a Codex answer: the
 // command text of a command approval, and otherwise only the detail key names.
 // The store bounds it again to agentapproval.MaxInputSummaryRunes.
 func codexPermissionSummary(p agentPendingApproval) string {
-	if p.Kind == codexappserver.ApprovalCommand && strings.TrimSpace(p.Command) != "" {
-		return p.Command
-	}
-	details, err := codexPermissionDetails(p)
-	if err != nil {
-		return ""
-	}
-	return agentapproval.InputSummary(string(p.Kind), details)
+	return approvalservice.Summary(p)
 }
 
 // codexPermissionAnswersText is the text list's answer column for one Codex

@@ -102,6 +102,11 @@ func allowedImplementation(p packageData) bool {
 	}
 	switch p.ImportPath {
 	case module + "/pkg/projmux/core",
+		module + "/internal/services/approvals",
+		module + "/internal/core/operatorclient",
+		module + "/internal/integrations/agentcontrol",
+		module + "/internal/integrations/agents/agentapproval",
+		module + "/internal/core/codexgeneration",
 		module + "/internal/services/questions",
 		module + "/internal/integrations/processquestions",
 		module + "/internal/integrations/processhost",

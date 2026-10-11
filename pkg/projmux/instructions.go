@@ -21,6 +21,8 @@ import (
 // ConfigDir is the projmux directory itself, not its XDG parent. Profiles used
 // to guard Delete live in ConfigDir too. No method changes global environment.
 type Options struct {
+	// ApprovalControl overrides the exact existing Codex approval transport.
+	ApprovalControl ApprovalControl
 	// QuestionDispatcher overrides only the existing process question transport.
 	QuestionDispatcher QuestionDispatcher
 
@@ -43,6 +45,7 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	approvalControl    ApprovalControl
 	questionDispatcher questions.Dispatcher
 	usageDir           string
 	instructions       instructions.Service
@@ -85,7 +88,7 @@ func NewClient(options Options) (*Client, error) {
 	if options.QuestionDispatcher != nil {
 		dispatcher = publicQuestionDispatcher{options.QuestionDispatcher}
 	}
-	return &Client{questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, usageOverride), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	return &Client{approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, usageOverride), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

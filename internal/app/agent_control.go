@@ -5,17 +5,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"io"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -24,7 +22,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
-	localstate "github.com/crevissepartners/projmux/internal/state"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -65,26 +62,12 @@ type tmuxAgentControlBindingLookup struct {
 // that cannot be proven to be one exact six-field frame. Control callers use
 // this boundary before resolving the private app-server route, so malformed or
 // ambiguous output can never become a partial identity or a control write.
-type agentControlBindingFrameError struct {
-	Reason     string
-	FieldCount int
-}
-
-func (e *agentControlBindingFrameError) Error() string {
-	if e.FieldCount > 0 {
-		return fmt.Sprintf("live Codex control binding is malformed: %s (%d fields, want 6)", e.Reason, e.FieldCount)
-	}
-	return "live Codex control binding is malformed: " + e.Reason
-}
+type agentControlBindingFrameError = agentcontrol.FrameError
 
 // exactAgentControlBindingError is the typed Registry/live-activation refusal.
 // Its text remains the public recovery prefix consumed by the CLI while
 // errors.As can distinguish an identity refusal from transport failure.
-type exactAgentControlBindingError struct{ Reason string }
-
-func (e *exactAgentControlBindingError) Error() string {
-	return "exact Agent native control unavailable: " + e.Reason
-}
+type exactAgentControlBindingError = agentcontrol.BindingError
 
 // parseAgentControlBindingFrame accepts only the two separator spellings tmux
 // has emitted for this contract: the literal octal spelling used by tmux 3.4
@@ -92,30 +75,8 @@ func (e *exactAgentControlBindingError) Error() string {
 // deliberately does not perform general escape decoding. Apart from the one
 // command-output line ending, field bytes are returned unchanged.
 func parseAgentControlBindingFrame(out []byte) (agentControlLive, error) {
-	frame := string(out)
-	if before, ok := strings.CutSuffix(frame, "\n"); ok {
-		frame = before
-		frame = strings.TrimSuffix(frame, "\r")
-	}
-	if strings.ContainsAny(frame, "\r\n") {
-		return agentControlLive{}, &agentControlBindingFrameError{Reason: "multiple output lines"}
-	}
-	hasEscaped := strings.Contains(frame, tmuxRowSepFormat)
-	hasRaw := strings.Contains(frame, tmuxRowSep)
-	if hasEscaped && hasRaw {
-		return agentControlLive{}, &agentControlBindingFrameError{Reason: "mixed separator spellings"}
-	}
-	separator := tmuxRowSepFormat
-	if hasRaw {
-		separator = tmuxRowSep
-	} else if !hasEscaped {
-		return agentControlLive{}, &agentControlBindingFrameError{Reason: "separator is missing", FieldCount: 1}
-	}
-	fields := strings.Split(frame, separator)
-	if len(fields) != 6 {
-		return agentControlLive{}, &agentControlBindingFrameError{Reason: "field count is not exact", FieldCount: len(fields)}
-	}
-	return agentControlLive{RuntimeID: fields[0], PaneUID: fields[1], ThreadID: fields[2], Authority: fields[3], Epoch: fields[4], Reason: fields[5]}, nil
+	live, err := agentcontrol.ParseFrame(out)
+	return agentControlLive(live), err
 }
 
 func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string) (agentControlLive, bool, error) {
@@ -139,7 +100,7 @@ func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string
 // waits for an in-flight authority transition to complete. It only bounds how
 // often the wait re-tests the kernel lock; the wait itself ends at the caller's
 // control deadline.
-const codexAuthorityFenceReadPoll = 2 * time.Millisecond
+const codexAuthorityFenceReadPoll = agentcontrol.ReadFencePoll
 
 // codexAuthorityFenceAcquirer takes the exact per-Pane authority fence and
 // returns its release. It is the seam that lets admission tests drive one exact
@@ -160,41 +121,7 @@ type codexAuthorityFenceAcquirer func(context.Context, string) (func(), error)
 // cannot reach a settled snapshot inside the control budget refuses with a
 // reason instead of stalling `projmux agent turn` behind a wedged transition.
 func acquireCodexAuthorityReadFenceIn(ctx context.Context, stateDir, paneUID string) (func(), error) {
-	path, err := codexAuthorityFencePathIn(stateDir, paneUID)
-	if err != nil {
-		return nil, err
-	}
-	// #nosec G304 -- codexAuthorityFencePathIn returns the private state
-	// directory plus a digest of the Registry-authenticated Pane uid.
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, localstate.PrivateFileMode)
-	if err != nil {
-		return nil, fmt.Errorf("open Codex authority fence: %w", err)
-	}
-	localstate.RepairPrivateFile(path)
-	for {
-		lockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if lockErr == nil {
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-					_ = file.Close()
-				})
-			}, nil
-		}
-		if !errors.Is(lockErr, syscall.EWOULDBLOCK) && !errors.Is(lockErr, syscall.EAGAIN) {
-			_ = file.Close()
-			return nil, fmt.Errorf("lock Codex authority fence: %w", lockErr)
-		}
-		timer := time.NewTimer(codexAuthorityFenceReadPoll)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			_ = file.Close()
-			return nil, fmt.Errorf("wait for a settled Codex authority transition: %w", ctx.Err())
-		case <-timer.C:
-		}
-	}
+	return agentcontrol.AcquireReadFence(ctx, stateDir, paneUID)
 }
 
 // readSettledAgentControlBinding samples the live tmux binding under the
@@ -237,78 +164,8 @@ type exactAgentControlBinding struct {
 }
 
 func resolveExactAgentControlBinding(registry coremetadata.Registry, agent coremetadata.Agent, live agentControlLive, observed bool, stateDir string) (exactAgentControlBinding, error) {
-	refusal := func(reason string) (exactAgentControlBinding, error) {
-		return exactAgentControlBinding{}, &exactAgentControlBindingError{Reason: reason}
-	}
-	if agent.Spec.Provider != aiModeCodex {
-		return refusal("the selected Agent is not Codex")
-	}
-	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" {
-		return refusal("the selected Agent has no current Running Pane")
-	}
-	pane, ok := registry.Pane(agent.Status.PaneRef)
-	if !ok || pane.Metadata.OwnerUID() != agent.Metadata.UID || pane.Status.Activation.AgentUID != agent.Metadata.UID {
-		return refusal("Agent to Pane ownership is not exact")
-	}
-	threadID := ""
-	if pane.Status.Activation.Codex != nil {
-		threadID = strings.TrimSpace(pane.Status.Activation.Codex.ThreadID)
-	}
-	if threadID == "" || pane.Status.Activation.Generation == "" || pane.Status.Activation.RuntimeID == "" {
-		return refusal("activation generation or Codex thread identity is missing")
-	}
-	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
-		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Valid() {
-		return refusal(codexNativeReasonLegacyEndpointMissing)
-	}
-	durableThreadID := strings.TrimSpace(agent.Status.SessionRef.Codex.ThreadID)
-	if durableThreadID == "" || durableThreadID != threadID {
-		return refusal("durable Codex thread does not match the Pane activation")
-	}
-	endpoint := *agent.Status.SessionRef.Codex.Endpoint
-	if agent.Status.SessionRef.Codex.Lifecycle != nil &&
-		!agent.Status.SessionRef.Codex.Lifecycle.ValidFor(&endpoint) {
-		return refusal("durable endpoint lifecycle is invalid")
-	}
-	if pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() ||
-		!pane.Status.Activation.Codex.Authority.Endpoint().Same(endpoint) {
-		return refusal("live activation authority does not match the durable endpoint generation")
-	}
-	if !observed || live.RuntimeID != pane.Status.Activation.RuntimeID || live.PaneUID != pane.Metadata.UID || live.ThreadID != threadID {
-		return refusal("live Pane identity no longer matches the activation")
-	}
-	if live.Authority != codexAuthorityControlPlane || strings.TrimSpace(live.Epoch) == "" {
-		reason := strings.TrimSpace(live.Reason)
-		if reason == "" {
-			reason = "not-ready"
-		}
-		return refusal("the native connection epoch is unavailable (" + reason + "); Open Codex")
-	}
-	window, ok := registry.Window(agent.Metadata.OwnerUID())
-	if !ok {
-		return refusal("owning Window is missing")
-	}
-	project, ok := registry.Project(window.Metadata.OwnerUID())
-	if !ok {
-		return refusal("owning Project is missing")
-	}
-	lifecycle, durable, authorized := resourceAgentLifecycleProjectionInput(
-		registry, agent, pane.Metadata.UID, live.RuntimeID, agent.EffectiveInteraction(time.Now()).Kind,
-	)
-	consumer := codexgeneration.ProjectConsumers(lifecycle, codexgeneration.RuntimeMutationInput{
-		DurableEndpoint: agent.Status.SessionRef.Codex.Endpoint,
-		StoredAuthority: pane.Status.Activation.Codex.Authority, PresentedAuthority: pane.Status.Activation.Codex.Authority,
-		TargetRuntimeID: pane.Status.Activation.RuntimeID, EventRuntimeID: live.RuntimeID,
-	}, true)
-	if !durable || !authorized || consumer.Effect != codexgeneration.MutationSemanticEffect ||
-		!consumer.Endpoint.Same(endpoint) || consumer.Fence == "" {
-		return refusal("canonical generation consumer fence is unavailable")
-	}
-	return exactAgentControlBinding{
-		Identity: codexLifecycleIdentity{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: pane.Status.Activation.RuntimeID, Generation: pane.Status.Activation.Generation, ThreadID: threadID},
-		Endpoint: endpoint, Epoch: live.Epoch, StateDir: stateDir, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID,
-		Fence: consumer.Fence,
-	}, nil
+	binding, err := agentcontrol.Resolve(registry, agent, agentcontrol.Live(live), observed, stateDir)
+	return exactAgentControlBinding{Identity: codexLifecycleIdentity(binding.Identity), Endpoint: binding.Endpoint, Epoch: binding.Epoch, StateDir: binding.StateDir, ProjectUID: binding.ProjectUID, WindowUID: binding.WindowUID, Fence: binding.Fence}, err
 }
 
 func (c *agentCommand) resolveControlBinding(spelling, ref string) (exactAgentControlBinding, error) {
@@ -656,13 +513,10 @@ func (c *agentCommand) runApproval(args []string, stdout, stderr io.Writer) erro
 	if open {
 		return c.focusExactCodex(binding, stdout, stderr)
 	}
-	response, err = c.callControl(binding, agentControlRequest{Operation: agentControlOpReview, RequestKey: pending.RequestID, Decision: string(decision)})
-	if err != nil {
+	if err = c.approvalService().Review(context.Background(), serviceApprovalBinding(binding), pending, string(decision)); err != nil {
 		return err
 	}
-	if err := response.Error(); err != nil {
-		return addOpenCodexBindingRecovery(err, binding)
-	}
+
 	_, err = fmt.Fprintf(stdout, "approval resolved request=%s decision=%s\n", safeApprovalDetail(pending.RequestID), safeApprovalDetail(string(decision)))
 	return err
 }
@@ -698,28 +552,7 @@ func (c *agentCommand) revalidateControlConsumerFence(binding exactAgentControlB
 	if err != nil {
 		return &exactAgentControlBindingError{Reason: "canonical generation consumer Registry read failed"}
 	}
-	agent, ok := registry.Agent(binding.Identity.AgentUID)
-	if !ok {
-		return &exactAgentControlBindingError{Reason: "canonical generation consumer Agent is missing"}
-	}
-	pane, ok := registry.Pane(binding.Identity.PaneUID)
-	if !ok || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil {
-		return &exactAgentControlBindingError{Reason: "canonical generation consumer Pane authority is missing"}
-	}
-	lifecycle, durable, authorized := resourceAgentLifecycleProjectionInput(
-		registry, *agent, binding.Identity.PaneUID, binding.Identity.RuntimeID, agent.EffectiveInteraction(time.Now()).Kind,
-	)
-	authority := pane.Status.Activation.Codex.Authority
-	consumer := codexgeneration.ProjectConsumers(lifecycle, codexgeneration.RuntimeMutationInput{
-		DurableEndpoint: agent.Status.SessionRef.Codex.Endpoint,
-		StoredAuthority: authority, PresentedAuthority: authority,
-		TargetRuntimeID: pane.Status.Activation.RuntimeID, EventRuntimeID: binding.Identity.RuntimeID,
-	}, true)
-	if !durable || !authorized || consumer.Effect != codexgeneration.MutationSemanticEffect ||
-		!consumer.Endpoint.Same(binding.Endpoint) || consumer.Fence == "" || consumer.Fence != binding.Fence {
-		return &exactAgentControlBindingError{Reason: "canonical generation consumer fence is stale"}
-	}
-	return nil
+	return agentcontrol.ValidateConsumer(registry, serviceApprovalBinding(binding))
 }
 
 func (c *agentCommand) controlTimeoutValue() time.Duration {

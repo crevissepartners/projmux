@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"io"
 	"strings"
 
@@ -155,14 +156,5 @@ func writeAgentCapabilityProjection(stdout io.Writer, projection agentCapability
 }
 
 func requireStaticNativeAgentCapability(spelling string, agent coremetadata.Agent) error {
-	action := strings.ReplaceAll(strings.TrimPrefix(strings.TrimSpace(spelling), "agent "), " ", ".")
-	metadata, ok := aiprovider.Lookup(agent.Spec.Provider)
-	if !ok {
-		return fmt.Errorf("%s unavailable: agent/%s has unsupported provider %q", spelling, agent.Metadata.Name, agent.Spec.Provider)
-	}
-	_, cell, ok := aiprovider.LookupAgentCapability(action, metadata.ID)
-	if !ok || cell.Mode != aiprovider.SupportNativeExact {
-		return fmt.Errorf("%s unavailable: agent/%s provider %s does not support native exact control", spelling, agent.Metadata.Name, metadata.ID)
-	}
-	return nil
+	return agentcontrol.RequireCapability(spelling, agent)
 }

@@ -1,10 +1,9 @@
 package app
 
 import (
-	"crypto/sha256"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -12,7 +11,7 @@ import (
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
-const codexAuthorityFenceDir = "codex-authority-fences"
+const codexAuthorityFenceDir = agentcontrol.FenceDir
 
 // acquireCodexAuthorityFence serializes the native authority transition with
 // the complete provider-hook semantic write set for one resource Pane. The
@@ -67,14 +66,7 @@ func (c *aiCommand) codexAuthorityFencePath(paneUID string) (string, error) {
 // contend on the same kernel lock; restating the digest or the directory on
 // either side would silently split them into two independent fences.
 func codexAuthorityFencePathIn(stateDir, paneUID string) (string, error) {
-	path, err := codexAuthorityFenceFileIn(stateDir, paneUID)
-	if err != nil {
-		return "", err
-	}
-	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
-		return "", fmt.Errorf("create Codex authority fence directory: %w", err)
-	}
-	return path, nil
+	return agentcontrol.FencePath(stateDir, paneUID)
 }
 
 // codexAuthorityFenceFileIn derives the fence file without creating anything.
@@ -85,10 +77,5 @@ func codexAuthorityFencePathIn(stateDir, paneUID string) (string, error) {
 // own question. Every other caller goes through codexAuthorityFencePathIn, so
 // the digest and the directory name are still stated once.
 func codexAuthorityFenceFileIn(stateDir, paneUID string) (string, error) {
-	paneUID = strings.TrimSpace(paneUID)
-	if paneUID == "" {
-		return "", fmt.Errorf("codex authority fence requires pane uid")
-	}
-	digest := sha256.Sum256([]byte(paneUID))
-	return filepath.Join(stateDir, codexAuthorityFenceDir, fmt.Sprintf("%x.lock", digest)), nil
+	return agentcontrol.FenceFile(stateDir, paneUID)
 }

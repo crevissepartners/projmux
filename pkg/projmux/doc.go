@@ -95,4 +95,18 @@
 // pending questions into the stored list. Options.QuestionDispatcher is a
 // public-type transport override for isolated fixtures and must be safe for
 // concurrent calls. An accepted process answer is never automatically retried.
+//
+// ListApprovals returns agent approval list -o json's exact display projection;
+// encode with a plain JSON Encoder and SetEscapeHTML(false). AnswerApproval
+// shares allow/deny mapping, answering policy, channel validation (default cli),
+// audit-before-send, first-answer-wins and uncertain-delivery handling. Process
+// Agents retain the CLI store path; native Codex uses existing exact control.
+// ReviewApproval takes one offered decision instead of a picker. Like CLI review,
+// it bypasses answering policy and adds no answer audit lines. It does not focus
+// a window, start a provider or add permission choices. Options.ApprovalControl
+// overrides the fenced native transport for fixtures; implementations must honor
+// cancellation, reject stale exact identities and support concurrent requests.
+// Store sync failures after commit are returned as successful receipts with a
+// Warning; callers must not send a second answer. Context cancellation before
+// admission changes nothing, while an admitted answer may already have landed.
 package projmux
