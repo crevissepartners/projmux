@@ -44,3 +44,34 @@ func loadCentralAgentApprovalAnswering(homeDir func() (string, error), lookupEnv
 func loadCentralAgentApprovalWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string) int {
 	return settings.LoadCentralAgentApprovalWindowSeconds(homeDir, lookupEnv)
 }
+
+func saveCentralAgentQuestionAnswering(homeDir func() (string, error), lookupEnv func(string) string, way config.AgentQuestionAnswering) (config.AgentQuestionAnswering, error) {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return "", err
+	}
+	return settings.SaveQuestionAnswering(paths, way)
+}
+func saveCentralAgentQuestionWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string, seconds int) error {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return err
+	}
+	return settings.SaveQuestionWindow(paths, seconds)
+}
+
+func saveCentralAgentApprovalAnswering(homeDir func() (string, error), lookupEnv func(string) string, way config.AgentApprovalAnswering) error {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return err
+	}
+	return settings.SaveApprovalAnswering(paths, way)
+}
+
+func saveCentralAgentApprovalWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string, seconds int) error {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return err
+	}
+	return settings.SaveApprovalWindow(paths, seconds)
+}

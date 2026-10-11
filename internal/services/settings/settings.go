@@ -268,7 +268,15 @@ func KnownAgentApprovalAnswering(value string) (config.AgentApprovalAnswering, e
 }
 
 // Service executes only the four existing central settings at captured paths.
-type Service struct{ Paths func() (config.Paths, error) }
+type Service struct {
+	Paths func() (config.Paths, error)
+	// Optional policy writers let fronts retain their central settings adapters.
+	// Nil writers use the same file services directly at the captured paths.
+	QuestionAnswering func(config.AgentQuestionAnswering) (config.AgentQuestionAnswering, error)
+	QuestionWindow    func(int) error
+	ApprovalAnswering func(config.AgentApprovalAnswering) error
+	ApprovalWindow    func(int) error
+}
 type ProviderState struct {
 	ID      string
 	Enabled bool
@@ -429,17 +437,33 @@ func (s Service) Set(ctx context.Context, u Update) (Value, error) {
 		_, err = SaveLocale(filepath.Join(p.ConfigDir, "config.toml"), u.Locale)
 	case "agent-questions":
 		if u.Answering != nil {
-			_, err = SaveQuestionAnswering(p, question)
+			if s.QuestionAnswering != nil {
+				_, err = s.QuestionAnswering(question)
+			} else {
+				_, err = SaveQuestionAnswering(p, question)
+			}
 		}
 		if err == nil && u.Window != nil {
-			err = SaveQuestionWindow(p, seconds)
+			if s.QuestionWindow != nil {
+				err = s.QuestionWindow(seconds)
+			} else {
+				err = SaveQuestionWindow(p, seconds)
+			}
 		}
 	case "agent-approvals":
 		if u.Answering != nil {
-			err = SaveApprovalAnswering(p, approval)
+			if s.ApprovalAnswering != nil {
+				err = s.ApprovalAnswering(approval)
+			} else {
+				err = SaveApprovalAnswering(p, approval)
+			}
 		}
 		if err == nil && u.Window != nil {
-			err = SaveApprovalWindow(p, seconds)
+			if s.ApprovalWindow != nil {
+				err = s.ApprovalWindow(seconds)
+			} else {
+				err = SaveApprovalWindow(p, seconds)
+			}
 		}
 	}
 	if err != nil {

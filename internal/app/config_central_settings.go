@@ -98,7 +98,7 @@ func (c *configCommand) runAgentQuestions(args []string, stdout, stderr io.Write
 	if set["window"] {
 		update.Window = window
 	}
-	result, err := (settings.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}).Set(context.Background(), update)
+	result, err := c.centralPolicyService().Set(context.Background(), update)
 	if err != nil {
 		return err
 	}
@@ -151,10 +151,26 @@ func (c *configCommand) runAgentApprovals(args []string, stdout, stderr io.Write
 	if set["window"] {
 		update.Window = window
 	}
-	result, err := (settings.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}).Set(context.Background(), update)
+	result, err := c.centralPolicyService().Set(context.Background(), update)
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(stdout, "answering %s window %s\n", result.Answering, result.Window)
 	return err
+}
+
+// centralPolicyService keeps every front on the central save adapters while
+// sharing validation and write ordering with the SDK service.
+func (c *configCommand) centralPolicyService() settings.Service {
+	return settings.Service{
+		Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) },
+		QuestionAnswering: func(way config.AgentQuestionAnswering) (config.AgentQuestionAnswering, error) {
+			return saveCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv, way)
+		},
+		QuestionWindow: func(seconds int) error { return saveCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv, seconds) },
+		ApprovalAnswering: func(way config.AgentApprovalAnswering) error {
+			return saveCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv, way)
+		},
+		ApprovalWindow: func(seconds int) error { return saveCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv, seconds) },
+	}
 }

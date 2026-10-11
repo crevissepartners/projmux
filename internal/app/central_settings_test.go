@@ -11,7 +11,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
-	"github.com/crevissepartners/projmux/internal/services/settings"
 )
 
 // centralSettingsTestHome returns the only inputs the central settings take:
@@ -296,19 +295,4 @@ func TestCentralSettingsReadNoFrontSetting(t *testing.T) {
 	if reads := recorder.take(); len(reads) != 1 {
 		t.Fatalf("probe front read recorded %d reads, want 1", len(reads))
 	}
-}
-
-func saveCentralAgentQuestionAnswering(homeDir func() (string, error), lookupEnv func(string) string, way config.AgentQuestionAnswering) (config.AgentQuestionAnswering, error) {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return "", err
-	}
-	return settings.SaveQuestionAnswering(paths, way)
-}
-func saveCentralAgentQuestionWindowSeconds(homeDir func() (string, error), lookupEnv func(string) string, seconds int) error {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return err
-	}
-	return settings.SaveQuestionWindow(paths, seconds)
 }
