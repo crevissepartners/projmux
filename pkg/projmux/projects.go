@@ -79,14 +79,19 @@ func projectRefusal(err error) error {
 	message := f.Error()
 	switch Code(f.Code) {
 	case CodeProjectRootInvalid:
+		// Only generated leading syntax is rewritten. A caller's quoted path may
+		// itself contain CLI-looking words and must retain those exact bytes.
+		if strings.HasPrefix(message, "create project requires --root ") {
+			message = strings.Replace(message, "create project requires --root ", "create project requires Root ", 1)
+		} else if strings.HasPrefix(message, "create project: --root ") {
+			message = strings.Replace(message, "create project: --root ", "create project: Root ", 1)
+		}
 		message = "CreateProjectRequest.Root: " + message
 	case CodeResourceNameInvalid, CodeResourceNameConflict, CodeResourceNameExhausted:
 		message = "CreateProjectRequest.Name: " + message
 	case CodeResourceLabelInvalid:
 		message = "CreateProjectRequest.Labels: " + message
 	}
-	// Replace syntax owned by the CLI, preserving caller values in quotes.
-	message = strings.Replace(message, "create project requires --root ", "create project requires Root ", 1)
-	message = strings.Replace(message, "create project: --root ", "create project: Root ", 1)
+
 	return &Refusal{Code: Code(f.Code), message: message}
 }
