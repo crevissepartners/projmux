@@ -31,7 +31,7 @@ const (
 	permissionReasonNotPending = "permission-not-pending"
 	// permissionReasonExpired: the answer window ended; Claude Code's own
 	// prompt decides.
-	permissionReasonExpired = "permission-expired"
+	permissionReasonExpired = approvals.ReasonExpired
 	// permissionReasonAnsweringOff: agent-approval-answering is not projmux.
 	permissionReasonAnsweringOff = "permission-answering-off"
 	// permissionReasonProviderUnsupported: the Agent is neither a Claude nor
@@ -295,5 +295,8 @@ func permissionAnswerError(request agentPermissionRequest, err error) error {
 
 // permissionStoreRefusal maps a store refusal onto its reason token.
 func permissionStoreRefusal(err error) (string, string) {
+	if errors.Is(err, agentapproval.ErrExpired) {
+		return permissionReasonExpired, "expired; Claude Code's own prompt decides it"
+	}
 	return approvals.StoreRefusal(err)
 }

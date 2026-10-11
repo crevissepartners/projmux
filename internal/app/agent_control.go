@@ -96,12 +96,6 @@ func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string
 	return live, true, nil
 }
 
-// codexAuthorityFenceReadPoll is the retry step used while an admission read
-// waits for an in-flight authority transition to complete. It only bounds how
-// often the wait re-tests the kernel lock; the wait itself ends at the caller's
-// control deadline.
-const codexAuthorityFenceReadPoll = agentcontrol.ReadFencePoll
-
 // codexAuthorityFenceAcquirer takes the exact per-Pane authority fence and
 // returns its release. It is the seam that lets admission tests drive one exact
 // writer/reader interleaving instead of racing for it.

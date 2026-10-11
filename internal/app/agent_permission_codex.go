@@ -16,11 +16,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-// codexPermissionCapabilitySpelling is the capability cell `agent approval
-// list|answer` ride on for a Codex Agent: they are the non-interactive face of
-// approval.review and bind exactly as it does.
-const codexPermissionCapabilitySpelling = "agent approval review"
-
 // codexPermissionListNote is the caveat a Codex text list ends with.
 const codexPermissionListNote = "note: a request may already have been answered in the Codex TUI or with `projmux agent approval review`; the first answer wins. " +
 	"`agent approval answer` --allow sends accept (allow once); --deny sends decline (the turn continues) when offered, otherwise cancel (the turn stops); nothing runs either way. " +
