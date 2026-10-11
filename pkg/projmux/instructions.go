@@ -43,10 +43,6 @@ type Client struct {
 	transport         resourcegraph.Transport
 	runtimeSocketPath string
 	codexModelLister  func(context.Context) ([]string, error)
-	// CodexModelLister overrides the same bounded model reader the CLI uses.
-	// Nil uses the existing default app-server endpoint. The callback must honor
-	// context cancellation and return suggestion order without starting a daemon.
-	CodexModelLister func(context.Context) ([]string, error)
 }
 
 // NewClient captures paths without creating directories or changing the process
