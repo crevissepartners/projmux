@@ -119,5 +119,8 @@
 // CLI JSON projection and operation receipt. Registry writes finish atomically
 // after admission; canceled requests before admission write nothing. Encode
 // Projection and Receipt with json.MarshalIndent(value, "", "  ") followed by
-// a newline to match the CLI. HOME and SHELL are captured by NewClient.
+// a newline to match the CLI. Internal helpers capture HOME and SHELL at
+// NewClient construction. Options.HomeDir overrides session naming only;
+// Options.DefaultShell overrides the CLI-compatible shell input. Neither
+// changes the environment or the configuration/state path defaults.
 package projmux

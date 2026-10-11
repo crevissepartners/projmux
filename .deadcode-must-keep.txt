@@ -22,6 +22,7 @@ Binding.valid	Internal processhost implementation retained for owned-process and
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
 BuildSwitchPickerItems	Backend-neutral switch picker row builder retained as the test seam over the live switchPickerItem projection.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
+CaptureProjectDefaults	Captured defaults for the external v0 SDK NewClient; verified by explicit overrides, construction-time environment isolation and the SDK environment-reference guard.
 Catalog.Keys	Whole-catalog key enumeration retained as the test seam that pins the shipped default catalog key coverage.
 Catalog.LocaleKeys	Per-locale key enumeration retained as the test seam that pins the shipped catalog per-locale coverage.
 Catalog.MissingFallbackKeys	Fallback-locale projection of MissingLocaleKeys retained as the test seam that pins required-key coverage of the shipped catalog.
