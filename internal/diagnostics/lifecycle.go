@@ -4,17 +4,19 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 )
 
-// Operation is the closed set of state-changing runtime lifecycles.
-type Operation string
+// Operation preserves the diagnostics spelling of the shared lifecycle type.
+type Operation = lifecycle.Operation
 
 const (
-	OperationSessionCreate Operation = "session.create"
-	OperationSessionAttach Operation = "session.attach"
-	OperationSessionSwitch Operation = "session.switch"
-	OperationSessionKill   Operation = "session.kill"
-	OperationTmuxApply     Operation = "tmux.apply"
+	OperationSessionCreate Operation = lifecycle.OperationSessionCreate
+	OperationSessionAttach Operation = lifecycle.OperationSessionAttach
+	OperationSessionSwitch Operation = lifecycle.OperationSessionSwitch
+	OperationSessionKill   Operation = lifecycle.OperationSessionKill
+	OperationTmuxApply     Operation = lifecycle.OperationTmuxApply
 )
 
 // AllowedCodes returns the closed safe lifecycle-code inventory for typed
