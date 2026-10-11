@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 239 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 243 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -77,6 +77,7 @@ projmux <command> [args...]
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux instructions`](#projmux-instructions) | canonical | List, show, edit, set, and delete Agent instruction files |
 | [`projmux profile`](#projmux-profile) | canonical | List, show, set, and delete named Agent profiles |
+| [`projmux link-rules`](#projmux-link-rules) | canonical | Show, replace, and delete one Project's label link rules |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and Agents |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
@@ -3180,6 +3181,112 @@ Allowed effects:
 ```
 projmux profile delete <name> --yes
 ```
+
+## `projmux link-rules`
+
+Show, replace, and delete one Project's label link rules
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux link-rules show <project-ref> [-o text|json]
+projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]
+projmux link-rules delete <project-ref> [-o text|json]
+```
+
+Project refs are explicit names or uid:<project>; the Project must be registered. Set reads the stored JSON format (urls is a map), atomically replaces the whole file, and --dry-run previews the same validation without writing. Delete is idempotent. JSON lists are always arrays; unreadable files are refused rather than shown as empty rules.
+
+Validation refusals carry invalid-link-rules, a field, and a reason (exit 2). Stored file read refusals carry link-rules-unreadable (exit 1). These commands never contact tmux or change Agents.
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux link-rules show`](#projmux-link-rules-show) | Show rules, example links, placeholders, and Project variables |
+| [`projmux link-rules set`](#projmux-link-rules-set) | Validate and replace rules from stored-format JSON; omitted input reads stdin |
+| [`projmux link-rules delete`](#projmux-link-rules-delete) | Delete the rule file and show the resulting empty rules |
+
+Canonical spelling: `projmux link-rules show`, `projmux link-rules set`, `projmux link-rules delete`
+
+### `projmux link-rules show`
+
+Show rules, example links, placeholders, and Project variables
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux link-rules show <project-ref> [-o text|json]
+```
+
+Output modes (`-o`): `json`
+
+### `projmux link-rules set`
+
+Validate and replace rules from stored-format JSON; omitted input reads stdin
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]
+```
+
+Output modes (`-o`): `json`
+
+### `projmux link-rules delete`
+
+Delete the rule file and show the resulting empty rules
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux link-rules delete <project-ref> [-o text|json]
+```
+
+Output modes (`-o`): `json`
 
 ## `projmux pin`
 

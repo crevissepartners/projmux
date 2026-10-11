@@ -56,21 +56,21 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 37 {
-		t.Fatalf("public route count = %d, want 37", public)
+	if public != 38 {
+		t.Fatalf("public route count = %d, want 38", public)
 	}
 	if hidden != 2 {
 		t.Fatalf("hidden route count = %d, want 2", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical: 30,
+		DispositionCanonical: 31,
 		DispositionShortcut:  7,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     30,
+		DispositionCanonical:     31,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 1,
 		DispositionInternal:      1,

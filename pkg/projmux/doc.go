@@ -5,7 +5,8 @@
 //
 // The SDK exposes stored instructions and read-only Project, Window, Pane,
 // and Agent resource lists and descriptions, runtime inventories, Agent capabilities,
-// provider model suggestions, stored profile list/read/write/delete, central settings,
+// provider model suggestions, stored profile list/read/write/delete, Project link rule
+// read/write (including dry-run)/delete, central settings,
 // saved usage snapshots/history, notification list/ack, and Agent question list/answer. Public resource types live in
 // pkg/projmux/core and mirror CLI JSON, including list-only context. The CLI and SDK execute
 // the same internal service and retain the existing personas/<name>.md format,
@@ -123,4 +124,11 @@
 // NewClient construction. Options.HomeDir overrides session naming only;
 // Options.DefaultShell overrides the CLI-compatible shell input. Neither
 // changes the environment or the configuration/state path defaults.
+
+// ReadProjectLinkRules, WriteProjectLinkRules and DeleteProjectLinkRules require an
+// explicit registered Project name or uid: ref and never contact tmux or providers.
+// The store format is ConfigDir/project-links/<uid>.json; result JSON includes
+// examples, placeholders and Project variables. LinkRulesRefusal carries Code,
+// Field and Reason for invalid rules or unreadable files; other storage errors
+// remain ordinary errors. Dry runs check the same encoded size as writes.
 package projmux

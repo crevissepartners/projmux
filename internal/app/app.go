@@ -147,6 +147,7 @@ type App struct {
 	persona      *personacmd.Command
 	instructions *personacmd.Command
 	profile      *profileCommand
+	linkRules    *linkRulesCommand
 	internal     *internalCommand
 	rebind       *rebindCommand
 	reconcile    *resourceReconcileCommand
@@ -430,6 +431,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		persona:            newPersonaCommand("persona", os.UserHomeDir, os.Getenv, os.Stdin, hookcmd.DefaultEditorRunner),
 		instructions:       newPersonaCommand("instructions", os.UserHomeDir, os.Getenv, os.Stdin, hookcmd.DefaultEditorRunner),
 		profile:            newProfileCommand(),
+		linkRules:          newLinkRulesCommand(),
 		internal:           internalCmd,
 		rebind:             newRebindCommand(),
 		reconcile:          reconcileCmd,
@@ -564,6 +566,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"persona":      a.persona,
 		"instructions": a.instructions,
 		"profile":      a.profile,
+		"link-rules":   a.linkRules,
 		"pin": legacyRouteGate{
 			name: "pin", target: a.pin, allowedFirst: []string{"project"},
 			replacement: func([]string) string { return "`projmux pin project ...`" },

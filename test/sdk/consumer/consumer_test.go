@@ -268,3 +268,28 @@ func TestExternalProjectConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProjectLinkRulesPublicContract(t *testing.T) {
+	client, err := projmux.NewClient(projmux.Options{ConfigDir: t.TempDir(), StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty isolated Registry: every entrypoint exposes the same typed missing-Project refusal.
+	for _, call := range []func() error{
+		func() error { _, e := client.ReadProjectLinkRules(context.Background(), "absent"); return e },
+		func() error {
+			_, e := client.WriteProjectLinkRules(context.Background(), "absent", core.ProjectLinkRules{URLs: map[string]string{}, Links: []core.ProjectLink{}}, true)
+			return e
+		},
+		func() error { _, e := client.DeleteProjectLinkRules(context.Background(), "absent"); return e },
+	} {
+		var refusal *projmux.Refusal
+		if err := call(); !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound {
+			t.Fatalf("missing Project: %v", err)
+		}
+	}
+	var result core.ProjectLinkRulesResult
+	var refusal *projmux.LinkRulesRefusal
+	_ = result
+	_ = refusal
+}

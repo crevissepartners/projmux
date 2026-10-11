@@ -187,6 +187,7 @@ var flagParseShapeExclusions = map[string]flagParseShapeExclusion{
 	"instructions set":     {run: true, reason: flagParseShapeOperand},
 	"instructions show":    {run: true, reason: flagParseShapeOperand},
 	"label":                {run: true, reason: flagParseShapeVerbDispatch},
+	"link-rules":           {run: true, reason: flagParseShapeVerbDispatch},
 	"notification":         {run: true, reason: flagParseShapeVerbDispatch},
 	"open":                 {run: true, reason: flagParseShapeVerbDispatch},
 	"pin":                  {run: true, reason: flagParseShapeLegacy},

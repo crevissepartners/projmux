@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
 	"github.com/crevissepartners/projmux/internal/services/agentcatalog"
 	"github.com/crevissepartners/projmux/internal/services/profiles"
+	linkservice "github.com/crevissepartners/projmux/internal/services/projectlinks"
 	"github.com/crevissepartners/projmux/internal/services/questions"
 	"github.com/crevissepartners/projmux/internal/services/settings"
 	savedusage "github.com/crevissepartners/projmux/internal/services/usage"
@@ -29,6 +30,8 @@ import (
 func TestPublicResourceFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
 		{reflect.TypeFor[receipt.OperationReceipt](), reflect.TypeFor[core.OperationReceipt]()},
+
+		{reflect.TypeFor[linkservice.Result](), reflect.TypeFor[core.ProjectLinkRulesResult]()},
 		{reflect.TypeFor[approvals.List](), reflect.TypeFor[core.ApprovalList]()},
 		{reflect.TypeFor[agentcontrol.PendingApproval](), reflect.TypeFor[core.PendingApproval]()},
 		{reflect.TypeFor[questions.List](), reflect.TypeFor[core.QuestionList]()},
