@@ -9,6 +9,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/resources"
 )
 
 // The live-tmux observation the Window and Pane status read is derived from.
@@ -78,72 +79,9 @@ func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLoo
 		if reader != nil && reader.processes != nil {
 			inventory.Processes = reader.processes(context.Background(), registry).Clone()
 		}
-		graph := resourcegraph.Resolve(registry, inventory)
-		return resourceReadSnapshot{
-			runtime:    graphRuntimeObservation(graph),
-			contexts:   registryview.NewObservedContextProjector(graph),
-			navigation: resourceNavigationRows(graph),
-		}
+		snapshot := resources.BuildSnapshot(registry, inventory)
+		return resourceReadSnapshot{runtime: snapshot.Runtime, contexts: snapshot.Contexts, navigation: snapshot.Navigation}
 	}
-}
-
-// graphRuntimeObservation carries the graph's own row statuses into the
-// selector observation, so STATUS and ACTIONS are read from one judgement.
-//
-// A bool set of live uids cannot say "this could not be observed", which is how
-// an unreadable machine used to print as offline beside an action list that
-// knew better. Unknown rows are named explicitly, and the Project sessions are
-// marked observed so a Project's status comes from the same graph rather than
-// from its stored session projection. A graph resolved with no transport marks
-// every runtime-bearing row unknown, which is the truthful answer when no
-// observation could be taken at all.
-func graphRuntimeObservation(graph resourcegraph.Graph) coremetadata.RuntimeObservation {
-	observed := coremetadata.RuntimeObservation{
-		ProcessPanes:     make(map[string]bool),
-		Windows:          make(map[string]bool),
-		Panes:            make(map[string]bool),
-		Sessions:         make(map[string]bool),
-		SessionsObserved: true,
-		Unobserved:       make(map[string]bool),
-	}
-	mark := func(set map[string]bool, uid string, status resourcegraph.Status) {
-		switch status {
-		case resourcegraph.StatusLive:
-			set[uid] = true
-		case resourcegraph.StatusUnknown:
-			observed.Unobserved[uid] = true
-		}
-	}
-	for _, node := range graph.Projects {
-		mark(observed.Sessions, node.Project.Metadata.UID, node.Status)
-	}
-	for _, node := range graph.Windows {
-		mark(observed.Windows, node.Window.Metadata.UID, node.Status)
-	}
-	for _, node := range graph.Panes {
-		mark(observed.Panes, node.Pane.Metadata.UID, node.Status)
-		if node.Process != nil {
-			observed.ProcessPanes[node.Pane.Metadata.UID] = true
-		}
-	}
-	for _, node := range graph.Agents {
-		if node.Status == resourcegraph.StatusUnknown {
-			observed.Unobserved[node.Agent.Metadata.UID] = true
-		}
-	}
-	return observed
-}
-
-// resourceNavigationRows indexes the existing action projector without changing
-// its row set/order or re-deriving policy from selector status.
-func resourceNavigationRows(graph resourcegraph.Graph) map[string]registryview.Row {
-	rows := map[string]registryview.Row{}
-	for _, row := range registryview.Build(registryview.Input{Graph: graph}).Rows {
-		if row.UID != "" {
-			rows[row.UID] = row
-		}
-	}
-	return rows
 }
 
 // defaultRuntimeLookup is the production seam: the same tmux identity mirror

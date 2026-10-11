@@ -10,41 +10,68 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/services/instructions"
 )
 
-// Options selects the instruction store. ConfigDir is the absolute projmux
-// configuration directory itself (not its XDG parent). Empty uses the CLI's
-// HOME/XDG defaults, captured by NewClient. Explicit paths never read or change
-// environment variables. Profiles used to guard Delete live in ConfigDir too.
-type Options struct{ ConfigDir string }
+// Options selects captured HOME/XDG defaults and explicit path overrides.
+// ConfigDir is the projmux directory itself, not its XDG parent. Profiles used
+// to guard Delete live in ConfigDir too. No method changes global environment.
+type Options struct {
+	ConfigDir string
+	// StateDir is the absolute projmux state directory itself. Empty captures
+	// HOME/XDG defaults at construction; no Registry path or writer is exposed.
+	StateDir string
+	// SocketPath selects one exact tmux server. Empty observes the app socket
+	// named projmux, as CLI resource reads do outside tmux. TMUX is never used.
+	SocketPath string
+}
 
 // Client executes instruction operations. It owns no background work and needs
 // no Close. Its paths are immutable; methods may be called concurrently. Writes
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
-type Client struct{ instructions instructions.Service }
+type Client struct {
+	instructions instructions.Service
+	paths        config.Paths
+	pathsErr     error
+	transport    resourcegraph.Transport
+}
 
 // NewClient captures paths without creating directories or changing the process
 // environment. An explicit ConfigDir must be absolute.
 func NewClient(options Options) (*Client, error) {
-	var paths config.Paths
-	if options.ConfigDir == "" {
-		var err error
-		paths, err = config.DefaultPathsFromEnv()
-		if err != nil {
-			return nil, err
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil && options.ConfigDir == "" && options.StateDir == "" {
+		return nil, err
+	}
+	pathsErr := err
+	for _, override := range []struct{ name, path string }{{"ConfigDir", options.ConfigDir}, {"StateDir", options.StateDir}, {"SocketPath", options.SocketPath}} {
+		if override.path != "" && !filepath.IsAbs(override.path) {
+			return nil, fmt.Errorf("%s must be absolute", override.name)
 		}
-	} else {
-		if !filepath.IsAbs(options.ConfigDir) {
-			return nil, fmt.Errorf("ConfigDir must be absolute")
-		}
+	}
+	if options.ConfigDir != "" {
 		paths.ConfigDir = filepath.Clean(options.ConfigDir)
 	}
-	return &Client{instructions: instructions.Service{Paths: func() (config.Paths, error) { return paths, nil }}}, nil
+	if options.StateDir != "" {
+		paths.StateDir = filepath.Clean(options.StateDir)
+		pathsErr = nil
+	}
+	transport := resourcegraph.Transport{Kind: resourcegraph.TransportSocketName, Value: "projmux", Source: resourcegraph.TransportSourceAppSocket}
+	if options.SocketPath != "" {
+		transport = resourcegraph.Transport{Kind: resourcegraph.TransportSocketPath, Value: filepath.Clean(options.SocketPath), Source: resourcegraph.TransportSourceSocketPath}
+	}
+	return &Client{instructions: instructions.Service{Paths: func() (config.Paths, error) {
+		if paths.ConfigDir == "" {
+			return config.Paths{}, err
+		}
+		return paths, nil
+	}}, paths: paths, pathsErr: pathsErr, transport: transport}, nil
 }
 
-// Code is a machine-readable refusal reason, retaining the CLI reason tokens.
+// Code is a machine-readable refusal reason. Instruction codes retain CLI
+// reason tokens; resource codes classify the existing CLI failure kinds.
 type Code string
 
 const (

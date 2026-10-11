@@ -194,7 +194,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "sums Project usage rows for the Project view",
 	},
 	{
-		File: "internal/app/runtime_observation.go", Func: "graphRuntimeObservation",
+		File: "internal/services/resources/reads.go", Func: "BuildSnapshot",
 		Source: "Graph", Verdict: rootKindProjectOnly,
 		Why: "carries observed Project session status into the selector, which renders Project STATUS only; a ControlSession has no selector Project row",
 	},

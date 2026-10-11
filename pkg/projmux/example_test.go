@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/crevissepartners/projmux/pkg/projmux"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
 func ExampleClient() {
@@ -40,4 +41,23 @@ func ExampleClient() {
 	// Output:
 	// Review carefully.
 	// persona-not-found
+}
+
+func ExampleClient_ListResources() {
+	client, err := projmux.NewClient(projmux.Options{StateDir: "/absolute/state/projmux", SocketPath: "/absolute/tmux.sock"})
+	if err != nil {
+		panic(err)
+	}
+	list, err := client.ListResources(context.Background(), core.KindAgent, projmux.ResourceSelector{Project: "project/example", Labels: []string{"role=reviewer"}})
+	if err != nil {
+		var refusal *projmux.Refusal
+		if errors.As(err, &refusal) {
+			fmt.Println(refusal.Code)
+		}
+		return
+	}
+	for _, resource := range list.Items {
+		agent := resource.(core.AgentView)
+		fmt.Println(agent.Metadata.UID, agent.Status.Phase)
+	}
 }

@@ -72,8 +72,9 @@ projmux/
 
 - `cmd/projmux` contains only CLI wiring.
 - `internal/app` implements the commands and wires the other packages together.
-- `pkg/projmux` exposes the experimental v0 instruction SDK; package documentation defines paths, cancellation and compatibility.
-- `internal/services/instructions` is the execution service shared by CLI and SDK.
+- `pkg/projmux` exposes the experimental v0 instruction and resource-read SDK; package documentation defines paths, cancellation and compatibility.
+- `pkg/projmux/core` defines public Project, Window, Pane, Agent and list projection types without internal imports.
+- `internal/services/instructions` and `internal/services/resources` are execution services shared by CLI and SDK.
 - `internal/tools/sdkboundary` checks implementation imports and public signatures with compiler export data.
 - `test/sdk` contains independent consumer and boundary fixture modules (`GOWORK=off`).
 - `internal/cli` owns the canonical command catalog, help, output, and receipts.

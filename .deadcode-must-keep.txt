@@ -7,6 +7,11 @@
 # mandatory. This file suppresses only its exact, reason-bearing symbols when
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
+Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+AgentInteraction.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+AgentProgress.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+AgentWorkspace.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AggregateTeardownEvents	Pure multi-event teardown authority is called by the product path and retained for lifecycle decision proofs.
 All	Closed provider-registry projection retained as the test seam that pins the live aiprovider registry create-shortcut and picker-order contract.
 AuditGoStringLiteralsInDir	Directory walker of the hardcoded-string governance audit; its subject is the live repository source, so the guard is test-entered by design rather than a retired product path.
@@ -22,8 +27,11 @@ Catalog.MissingFallbackKeys	Fallback-locale projection of MissingLocaleKeys reta
 ClassifySchemaVersion	Ambient-environment entry point of ClassifySchemaVersionWith retained as the test seam that pins fail-closed registry schema classification.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 Client.DeleteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
+Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.ListInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
+Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
+Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.WriteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -142,14 +150,19 @@ NewWithConfig	Credential and endpoint injection constructor retained as the only
 NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
 NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 NextWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
+Observe	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ObserveFrontReads	Test hook of the settings layer seam; the settings layer guard installs it to count front-layer reads per public route, and production never installs an observer.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
 OperatorOrigin	The operator-origin constructor is the one sanctioned way to build operator input; no product path in this build calls it until an in-process operator client sender lands, and TestNoProductPathBuildsAnOperatorOrigin pins that its callers are only the listed producers.
+Pane.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+PaneActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 Placeholders	Project link rule API of internal/core/projectlinks, retained for the web backend that lists the placeholders a template may use; no in-tree caller until that backend lands.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
 PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
+Project.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ProjectStore.Delete	Project common-instruction API of internal/core/agentguidance, retained for consumers that remove per-Project instruction files; the CLI has no editing command.
 ProjectStore.Save	Project common-instruction API of internal/core/agentguidance, retained for consumers that edit per-Project instruction files; the CLI has no editing command.
 PromptLineWithCursor	Default-theme cursor prompt entry point retained as the picker prompt seam over QueryWithCursorAndTheme.
@@ -199,9 +212,11 @@ StringAuditFinding.IsCandidate	Candidate predicate of the governance string audi
 SurfaceSites	Closed unshown-result site inventory; the C-1 committed-result sweep fails until every site is recorded by a registered call site.
 TeardownEventKinds	Closed teardown event vocabulary retained as the test seam that pins the teardown decision table totality.
 TeardownObservations	The closed teardown-observation catalog is called by the product path and retained for authority proofs.
+TerminationEvidence.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
+Window.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
@@ -289,7 +304,9 @@ processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt p
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processUserDeliveryAcceptance	Retained typed receipt validation for the planned foreign-owned Codex deliverProcessUserInput consumer rejects missing or malformed actual Mode/Operation/TurnID without replay or fallback.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+publicResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
+readKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 refusal	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
@@ -297,6 +314,8 @@ removeExactResidualSocket	Test-only installed qualification helper retained for 
 renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.
 renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
 renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
+resourceQuery	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+resourceRefusal	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 runShellOutputLedger	Closed run-shell producer ledger; the C-1 no-overlay contract is enforced by sweeping shipped generated config against it.
 runShellSourceSites	Closed run-shell source site ledger; the package source sweep fails until a new producer is registered here.
