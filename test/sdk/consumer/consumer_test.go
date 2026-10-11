@@ -203,3 +203,22 @@ func TestExternalSettingsUsageNotificationsConsumer(t *testing.T) {
 		t.Fatalf("%d %v", count, err)
 	}
 }
+
+func TestExternalQuestionConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(t.TempDir(), "config"), StateDir: filepath.Join(t.TempDir(), "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list core.QuestionList
+	list, err = c.ListQuestions(context.Background(), "absent")
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound || len(list.Questions) != 0 {
+		t.Fatalf("%+v %v", list, err)
+	}
+	option := "yes"
+	var answer core.QuestionAnswerResult
+	answer, err = c.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "absent", QuestionID: "question-0000000000000001", Selections: []core.QuestionSelection{{Question: 1, Option: &option}}})
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound || answer.QuestionID != "" {
+		t.Fatalf("%+v %v", answer, err)
+	}
+}

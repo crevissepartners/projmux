@@ -6,7 +6,7 @@
 // The SDK exposes stored instructions and read-only Project, Window, Pane,
 // and Agent resource lists and descriptions, runtime inventories, Agent capabilities,
 // provider model suggestions, stored profile list/read/write/delete, central settings,
-// saved usage snapshots/history, and notification list/ack. Public resource types live in
+// saved usage snapshots/history, notification list/ack, and Agent question list/answer. Public resource types live in
 // pkg/projmux/core and mirror CLI JSON, including list-only context. The CLI and SDK execute
 // the same internal service and retain the existing personas/<name>.md format,
 // case-sensitive names, 64 KiB limit and private filesystem permissions.
@@ -81,4 +81,18 @@
 // runs. Encode notification lists with the same indentation as resource results.
 // Invalid filters, invalid ack inputs and missing ids are typed Refusal values;
 // filesystem and cancellation errors remain ordinary errors.
+//
+// ListQuestions requires an explicit Agent name or uid: reference and returns
+// agent question list -o json's stored and exact process question display data.
+// Encode it with a plain JSON Encoder with SetEscapeHTML(false), without indent.
+// AnswerQuestion accepts repeated core.QuestionSelection values (1-based
+// question/option numbers; exactly one Option, Index or Text pointer per value).
+// Empty Text is preserved. CLI question refusal tokens are typed Code values.
+// Secret answers are refused like the CLI; opaque provider request tokens are
+// never exposed. Running process Agents use the existing exact host dispatcher;
+// other Agents use the existing question store. These methods never create a
+// provider or infer an active Pane. Querying a running host can reconcile its
+// pending questions into the stored list. Options.QuestionDispatcher is a
+// public-type transport override for isolated fixtures and must be safe for
+// concurrent calls. An accepted process answer is never automatically retried.
 package projmux

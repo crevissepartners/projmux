@@ -14,12 +14,16 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/services/instructions"
+	"github.com/crevissepartners/projmux/internal/services/questions"
 )
 
 // Options selects captured HOME/XDG defaults and explicit path overrides.
 // ConfigDir is the projmux directory itself, not its XDG parent. Profiles used
 // to guard Delete live in ConfigDir too. No method changes global environment.
 type Options struct {
+	// QuestionDispatcher overrides only the existing process question transport.
+	QuestionDispatcher QuestionDispatcher
+
 	ConfigDir string
 	// StateDir is the absolute projmux state directory itself. Empty captures
 	// HOME/XDG defaults at construction; no Registry path or writer is exposed.
@@ -39,13 +43,14 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
-	usageDir          string
-	instructions      instructions.Service
-	paths             config.Paths
-	pathsErr          error
-	transport         resourcegraph.Transport
-	runtimeSocketPath string
-	codexModelLister  func(context.Context) ([]string, error)
+	questionDispatcher questions.Dispatcher
+	usageDir           string
+	instructions       instructions.Service
+	paths              config.Paths
+	pathsErr           error
+	transport          resourcegraph.Transport
+	runtimeSocketPath  string
+	codexModelLister   func(context.Context) ([]string, error)
 }
 
 // NewClient captures paths without creating directories or changing the process
@@ -76,7 +81,11 @@ func NewClient(options Options) (*Client, error) {
 	if options.StateDir != "" {
 		usageOverride = ""
 	}
-	return &Client{usageDir: defaultUsageDir(paths.StateDir, usageOverride), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	var dispatcher questions.Dispatcher
+	if options.QuestionDispatcher != nil {
+		dispatcher = publicQuestionDispatcher{options.QuestionDispatcher}
+	}
+	return &Client{questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, usageOverride), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

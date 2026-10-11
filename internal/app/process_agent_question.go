@@ -13,121 +13,25 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
 )
 
-// ExactProcessQuestion contains only question display data, never a writable
-// provider token. Policy is captured at admission; Delivery names its transport.
-type ExactProcessQuestion struct {
-	QuestionID string                   `json:"questionID"`
-	Policy     string                   `json:"policy"`
-	Delivery   string                   `json:"delivery"`
-	CanAnswer  bool                     `json:"canAnswer"`
-	Prompts    []agentquestion.Question `json:"prompts"`
-	State      agentquestion.State      `json:"state"`
-	Deadline   *time.Time               `json:"deadline,omitempty"`
-}
-
-// ProcessQuestionDispatcher uses the same Registry and host sockets as commands.
-// An empty path resolves production paths; fixtures supply their isolated path.
+type ExactProcessQuestion = processquestions.ExactQuestion
 type ProcessQuestionDispatcher struct{ RegistryPath string }
 
-func ReadExactProcessQuestions(ctx context.Context, agentUID string) ([]ExactProcessQuestion, error) {
-	result, err := (ProcessQuestionDispatcher{}).call(ctx, agentUID, "", nil)
-	return result.Questions, err
+func ReadExactProcessQuestions(ctx context.Context, uid string) ([]ExactProcessQuestion, error) {
+	return processquestions.ReadExactProcessQuestions(ctx, uid)
 }
-func AnswerExactProcessQuestion(ctx context.Context, agentUID, questionID string, selections map[int]agentquestion.Selection) error {
-	if questionID == "" || len(selections) == 0 {
-		return agentquestion.ErrInvalidAnswer
-	}
-	_, err := (ProcessQuestionDispatcher{}).call(ctx, agentUID, questionID, selections)
-	return err
+func AnswerExactProcessQuestion(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) error {
+	return processquestions.AnswerExactProcessQuestion(ctx, uid, id, selections)
 }
 func (d ProcessQuestionDispatcher) ReadExactProcessQuestions(ctx context.Context, uid string) ([]ExactProcessQuestion, error) {
-	if d.RegistryPath == "" {
-		return ReadExactProcessQuestions(ctx, uid)
-	}
-	result, err := d.call(ctx, uid, "", nil)
-	return result.Questions, err
+	return (processquestions.Dispatcher{RegistryPath: d.RegistryPath}).ReadExactProcessQuestions(ctx, uid)
 }
 func (d ProcessQuestionDispatcher) AnswerExactProcessQuestion(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) error {
-	if id == "" || len(selections) == 0 {
-		return agentquestion.ErrInvalidAnswer
-	}
-	if d.RegistryPath == "" {
-		return AnswerExactProcessQuestion(ctx, uid, id, selections)
-	}
-	_, err := d.call(ctx, uid, id, selections)
-	return err
-}
-func (d ProcessQuestionDispatcher) call(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) (processForegroundResult, error) {
-	path := d.RegistryPath
-	if path == "" {
-		paths, err := config.DefaultPathsFromEnv()
-		if err != nil {
-			return processForegroundResult{}, err
-		}
-		path = intmetadata.PathFor(paths.StateDir)
-	}
-	reg, err := intmetadata.NewStore(path).LoadDegradedReadOnly()
-	if err != nil {
-		return processForegroundResult{}, err
-	}
-	agent, ok := reg.Agent(uid)
-	if !ok || agent.Status.Phase != coremetadata.PhaseRunning {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	pane, ok := reg.Pane(agent.Status.PaneRef)
-	if !ok || pane.Status.Activation.Process == nil {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	activation := *pane.Status.Activation.Process
-	binding := processSchemaBinding(activation.Binding)
-	view := processHostObservation{Binding: binding, Provider: agent.Spec.Provider, Host: activation.HostProcess, Child: activation.Child, State: "ready"}
-	record := pane.Status.ProcessSession
-	session := ""
-	connection := ""
-	if record != nil {
-		session = record.SessionID
-		if agent.Spec.Provider == aiModeCodex {
-			session = record.ThreadID
-		}
-		connection = record.ConnectionID
-	}
-	if !processObservationMatches(reg, binding, view) || !exactQuestionSessionMatches(reg, binding, agent.Spec.Provider, session, connection) {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	socket := processHostSocket(agent.Spec.Provider, path, binding.Pane, binding.Generation)
-	inode, err := localipc.InspectOwnedSocket(socket)
-	if err != nil {
-		return processForegroundResult{}, err
-	}
-	request := &processQuestionRequest{Binding: binding, QuestionID: id, Selections: selections}
-	var envelope any = claudeProcessCheck{Questions: request}
-	if agent.Spec.Provider == aiModeCodex {
-		envelope = codexProcessExchange{Questions: request}
-	} else if agent.Spec.Provider != aiModeClaude {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	result, err := callProcessForeground(ctx, socket, inode, activation.HostProcess, envelope)
-	if err != nil {
-		return processForegroundResult{}, err
-	} // uncertain writes are never retried
-	current, err := intmetadata.NewStore(path).LoadDegradedReadOnly()
-	next, exists := current.Pane(binding.Pane)
-	afterInode, inodeErr := localipc.InspectOwnedSocket(socket)
-	if err != nil || !exists || next.Status.Activation.Process == nil || *next.Status.Activation.Process != activation || !processObservationMatches(current, binding, view) || !exactQuestionSessionMatches(current, binding, agent.Spec.Provider, session, connection) || inodeErr != nil || afterInode != inode {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	if !result.Accepted {
-		if result.InvalidAnswer {
-			return processForegroundResult{}, agentquestion.ErrInvalidAnswer
-		}
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	return result, nil
+	return (processquestions.Dispatcher{RegistryPath: d.RegistryPath}).AnswerExactProcessQuestion(ctx, uid, id, selections)
 }
 
 // Callbacks are local to the owning host and keyed by the complete immutable
@@ -396,19 +300,7 @@ func captureExactQuestions(provider string, b processhost.Binding, snap processh
 // Conversation identity is checked on the reader and again against the host's
 // live snapshot. A Registry observation cannot retarget a provider conversation.
 func exactQuestionSessionMatches(reg coremetadata.Registry, b processhost.Binding, provider, session, connection string) bool {
-	a, ok := reg.Agent(b.Agent)
-	p, found := reg.Pane(b.Pane)
-	if !ok || !found || a.Status.Phase != coremetadata.PhaseRunning || a.Status.SessionRef == nil || a.Status.SessionRef.Provider != provider || p.Status.ProcessSession == nil || session == "" || connection == "" {
-		return false
-	}
-	record := p.Status.ProcessSession
-	if record.Binding != metadataProcessBinding(b) || record.Provider != provider || record.ConnectionID != connection {
-		return false
-	}
-	if provider == aiModeClaude {
-		return a.Status.SessionRef.Claude != nil && a.Status.SessionRef.Claude.SessionID == session && record.SessionID == session
-	}
-	return provider == aiModeCodex && a.Status.SessionRef.Codex != nil && a.Status.SessionRef.Codex.ThreadID == session && record.ThreadID == session
+	return processquestions.SessionMatches(reg, b, provider, session, connection)
 }
 func currentExactQuestionSession(path string, b processhost.Binding, snap processhost.Snapshot) error {
 	reg, err := intmetadata.NewStore(path).LoadDegradedReadOnly()

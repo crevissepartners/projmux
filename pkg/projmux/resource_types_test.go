@@ -12,8 +12,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/runtimediag"
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
 	"github.com/crevissepartners/projmux/internal/services/agentcatalog"
 	"github.com/crevissepartners/projmux/internal/services/profiles"
+	"github.com/crevissepartners/projmux/internal/services/questions"
 	"github.com/crevissepartners/projmux/internal/services/settings"
 	savedusage "github.com/crevissepartners/projmux/internal/services/usage"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -23,6 +25,8 @@ import (
 // New fields in any reachable internal struct fail until the public model follows.
 func TestPublicResourceFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
+		{reflect.TypeFor[questions.List](), reflect.TypeFor[core.QuestionList]()},
+		{reflect.TypeFor[processquestions.ExactQuestion](), reflect.TypeFor[core.ExactQuestion]()},
 		{reflect.TypeFor[usage.Snapshot](), reflect.TypeFor[core.UsageSnapshot]()},
 		{reflect.TypeFor[usage.MetricPoint](), reflect.TypeFor[core.UsageMetricPoint]()},
 		{reflect.TypeFor[usage.BackoffState](), reflect.TypeFor[core.BackoffState]()},
@@ -78,7 +82,7 @@ func compareResourceShape(t *testing.T, a, b reflect.Type, seen map[[2]reflect.T
 		n := 0
 		for i := 0; i < a.NumField(); i++ {
 			f := a.Field(i)
-			if !f.IsExported() {
+			if !f.IsExported() || f.Tag.Get("json") == "-" {
 				continue
 			}
 			n++
