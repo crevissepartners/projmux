@@ -8,7 +8,7 @@ import (
 
 // requireClaudeLeaseDirRemoved fails t when the Claude activation lease
 // directory of t's own activation still exists once every cleanup registered
-// after this call has run. claudeActivationLeaseDir lives under a fixed /tmp
+// after this call has run. claudeadapter.ActivationLeaseDir lives under a fixed /tmp
 // root, so a test that leaves a socket in it leaks one /tmp/pmx-ce-* entry
 // per run that no TempDir cleanup ever reaches.
 //

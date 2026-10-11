@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"os/signal"
@@ -127,7 +128,7 @@ func (r *processAgentCreateResult) checkGeneration(ctx context.Context, handle p
 	if errors.Is(err, processhost.ErrStale) {
 		return err
 	}
-	touchProcessLeaseDir(claudeActivationLeaseDir(r.registryPath, r.Binding.Pane, r.Binding.Generation), time.Now())
+	touchProcessLeaseDir(claudeadapter.ActivationLeaseDir(r.registryPath, r.Binding.Pane, r.Binding.Generation), time.Now())
 	return err
 }
 

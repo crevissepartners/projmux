@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,7 +121,7 @@ func newClaudeCoordinationTestFixture(t *testing.T) *claudeCoordinationTestFixtu
 	}
 	root := shortTempDomain(t)
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state"))
-	requireClaudeLeaseDirRemoved(t, func() string { return claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration) })
+	requireClaudeLeaseDirRemoved(t, func() string { return claudeadapter.ActivationLeaseDir(registryPath, h.paneUID, h.envGeneration) })
 	store := intmetadata.NewStore(registryPath)
 	if _, err := store.Update(func(reg *coremetadata.Registry) error { *reg = h.registry.Clone(); return nil }); err != nil {
 		t.Fatal(err)
@@ -129,18 +130,18 @@ func newClaudeCoordinationTestFixture(t *testing.T) *claudeCoordinationTestFixtu
 	if reason != "" {
 		t.Fatal(reason)
 	}
-	target, ok := claudeTargetForRoute(route)
+	target, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		t.Fatal("exact Claude target unavailable")
 	}
-	listener, err := localipc.Listen(claudeCoordinationSocket(registryPath, target))
+	listener, err := localipc.Listen(claudeadapter.CoordinationSocket(registryPath, target))
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := startClaudeCoordinationServerWithPoster(listener, route, func() bool { return true }, nil, nil)
 	t.Cleanup(func() {
 		server.Close()
-		_ = os.RemoveAll(claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
+		_ = os.RemoveAll(claudeadapter.ActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
 	})
 	return &claudeCoordinationTestFixture{registryPath: registryPath, route: route, target: target, server: server,
 		sessionID: authority.SessionID, paneUID: h.paneUID, generation: h.envGeneration}
@@ -150,7 +151,7 @@ func (f *claudeCoordinationTestFixture) call(t *testing.T, request claudeCoordin
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, f.registryPath, f.route, request)
+	response, err := requestClaudeCoordination(ctx, f.registryPath, f.route, request)
 	if err != nil {
 		t.Fatal(err)
 	}

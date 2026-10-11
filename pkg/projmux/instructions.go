@@ -26,9 +26,13 @@ type Options struct {
 	// named projmux for resource reads. ObserveRuntime instead selects no server
 	// when empty. TMUX is never used.
 	SocketPath string
+	// CodexModelLister overrides the same bounded model reader the CLI uses.
+	// Nil uses the existing default app-server endpoint. The callback must honor
+	// context cancellation and return suggestion order without starting a daemon.
+	CodexModelLister func(context.Context) ([]string, error)
 }
 
-// Client executes instruction operations. It owns no background work and needs
+// Client executes public instruction and read-only operations. It owns no background work and needs
 // no Close. Its paths are immutable; methods may be called concurrently. Writes
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
@@ -38,6 +42,7 @@ type Client struct {
 	pathsErr          error
 	transport         resourcegraph.Transport
 	runtimeSocketPath string
+	codexModelLister  func(context.Context) ([]string, error)
 }
 
 // NewClient captures paths without creating directories or changing the process
@@ -69,7 +74,7 @@ func NewClient(options Options) (*Client, error) {
 			return config.Paths{}, err
 		}
 		return paths, nil
-	}}, paths: paths, pathsErr: pathsErr, transport: transport, runtimeSocketPath: options.SocketPath}, nil
+	}}, paths: paths, pathsErr: pathsErr, transport: transport, runtimeSocketPath: options.SocketPath, codexModelLister: options.CodexModelLister}, nil
 }
 
 // Code is a machine-readable refusal reason. Instruction codes retain CLI

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -220,7 +221,7 @@ func TestProcessOwnedWaitRenewsLeaseDirectory(t *testing.T) {
 	root := t.TempDir()
 	path := intmetadata.PathFor(root)
 	b := processhost.Binding{Host: "op", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "generation", Operation: "op"}
-	dir := claudeActivationLeaseDir(path, b.Pane, b.Generation)
+	dir := claudeadapter.ActivationLeaseDir(path, b.Pane, b.Generation)
 	requireClaudeLeaseDirRemoved(t, func() string { return dir })
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)

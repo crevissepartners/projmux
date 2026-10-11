@@ -74,3 +74,17 @@ func ExampleClient_ObserveRuntime() {
 	_ = report.Items
 	_ = report.Unavailable
 }
+
+func ExampleClient_Capabilities() {
+	client, _ := projmux.NewClient(projmux.Options{})
+	capabilities, _ := client.Capabilities(context.Background(), projmux.CapabilitiesRequest{Provider: "claude"})
+	fmt.Println(capabilities.Provider, capabilities.Agent == nil)
+	// Output: claude true
+}
+
+func ExampleClient_Models() {
+	client, _ := projmux.NewClient(projmux.Options{})
+	models, _ := client.Models(context.Background(), "claude")
+	fmt.Println(models.Provider, models.AcceptsUnlisted)
+	// Output: claude true
+}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ func TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite(t *testing.T) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := inspectClaudeSocket(path)
+	identity, err := claudeadapter.InspectSocket(path)
 	if err != nil {
 		t.Fatal(err)
 	}

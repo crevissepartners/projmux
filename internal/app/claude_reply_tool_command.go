@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"path/filepath"
@@ -79,10 +80,10 @@ func runClaudeReplyTool(args []string, stdout io.Writer) error {
 		input, session, err := readClaudeReplyToolInput(os.Stdin)
 		registry, route, routeErr := claudeReplyToolRoute(os.Getenv)
 		if err == nil && routeErr == nil {
-			target, _ := claudeTargetForRoute(route)
+			target, _ := claudeadapter.TargetForRoute(route)
 			if session == target.Authority.SessionID {
 				ctx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
-				response, callErr := callClaudeCoordination(ctx, registry, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "tool-prepare", Target: target, SessionID: session, ToolInput: &input})
+				response, callErr := requestClaudeCoordination(ctx, registry, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "tool-prepare", Target: target, SessionID: session, ToolInput: &input})
 				cancel()
 				if callErr == nil && response.Kind == "tool-permitted" && response.ToolResult != nil && claudeReplyMarkerPattern.MatchString(response.ToolResult.Marker) {
 					decision = map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": map[string]any{"command": response.ToolResult.Marker, "timeout": 5000, "run_in_background": false}}}
@@ -102,9 +103,9 @@ func runClaudeReplyTool(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	target, _ := claudeTargetForRoute(route)
+	target, _ := claudeadapter.TargetForRoute(route)
 	ctx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
-	response, err := callClaudeCoordination(ctx, registry, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "tool-consume", Target: target, SessionID: target.Authority.SessionID, ToolMarker: marker})
+	response, err := requestClaudeCoordination(ctx, registry, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "tool-consume", Target: target, SessionID: target.Authority.SessionID, ToolMarker: marker})
 	cancel()
 	if err != nil || response.Kind != "tool-permitted" || response.ToolResult == nil || response.ToolResult.Policy == nil {
 		return errClaudeReplyTool

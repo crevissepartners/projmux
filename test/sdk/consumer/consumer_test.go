@@ -104,3 +104,25 @@ func TestExternalConsumerModuleExcludesCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalAgentCatalogConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{CodexModelLister: func(context.Context) ([]string, error) { return []string{"fixture-model"}, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capabilities core.Capabilities
+	capabilities, err = c.Capabilities(context.Background(), projmux.CapabilitiesRequest{Provider: "claude"})
+	if err != nil || capabilities.Provider != "claude" || len(capabilities.Capabilities) == 0 {
+		t.Fatalf("%+v %v", capabilities, err)
+	}
+	var models core.ModelSuggestions
+	models, err = c.Models(context.Background(), "codex")
+	if err != nil || len(models.Models) != 1 || models.Models[0] != "fixture-model" || !models.AcceptsUnlisted {
+		t.Fatalf("%+v %v", models, err)
+	}
+	_, err = c.Capabilities(context.Background(), projmux.CapabilitiesRequest{Provider: "unknown"})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProviderInvalid {
+		t.Fatal(err)
+	}
+}

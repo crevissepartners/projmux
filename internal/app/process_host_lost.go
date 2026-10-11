@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"os"
 	"syscall"
 
@@ -59,7 +60,7 @@ func hostLostResumeCandidate(reg coremetadata.Registry, uid string, read process
 
 // Remove only the empty directory we inspected, never residual sockets/files.
 func removeHostLostLease(registryPath string, a coremetadata.ProcessActivation) {
-	path := claudeActivationLeaseDir(registryPath, a.Binding.PaneUID, a.Binding.Generation)
+	path := claudeadapter.ActivationLeaseDir(registryPath, a.Binding.PaneUID, a.Binding.Generation)
 	before, err := os.Lstat(path)
 	if err != nil || !before.IsDir() || before.Mode().Perm() != 0700 || before.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
 		return

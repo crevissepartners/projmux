@@ -303,3 +303,39 @@ func TestCLIInvalidNameDoesNotReadInput(t *testing.T) {
 type panicReader struct{}
 
 func (panicReader) Read([]byte) (int, error) { panic("invalid name read input") }
+
+func TestAgentCatalogCopiesAndCancellation(t *testing.T) {
+	models := []string{"one", "two"}
+	calls := 0
+	c, err := projmux.NewClient(projmux.Options{CodexModelLister: func(context.Context) ([]string, error) { calls++; return models, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := c.Models(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Models[0] = "changed"
+	second, err := c.Models(context.Background(), "codex")
+	if err != nil || second.Models[0] != "one" || models[0] != "one" {
+		t.Fatalf("models alias: %+v %v", second, err)
+	}
+	a, err := c.Capabilities(context.Background(), projmux.CapabilitiesRequest{Provider: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Capabilities[0].Action = "changed"
+	b, err := c.Capabilities(context.Background(), projmux.CapabilitiesRequest{Provider: "claude"})
+	if err != nil || b.Capabilities[0].Action == "changed" {
+		t.Fatalf("capabilities alias: %+v %v", b, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := calls
+	if _, err = c.Models(ctx, "codex"); !errors.Is(err, context.Canceled) || calls != before {
+		t.Fatalf("cancel started lister: %d %v", calls, err)
+	}
+	if _, err = c.Capabilities(ctx, projmux.CapabilitiesRequest{Agent: "uid:missing"}); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}

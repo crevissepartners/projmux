@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net"
 	"os"
 
@@ -137,7 +138,7 @@ func TestClaudeDialogueObservedToolCannotGrantOrForgeCommitEvidence(t *testing.T
 
 func TestAgentCapabilitiesClaudeUnqualifiedRecoveryUsesCurrentPublicProfile(t *testing.T) {
 	fixture, _, _ := currentDialogueProfileFixture(t)
-	path := claudeLeaseSocket(fixture.registryPath, fixture.route.PaneUID, fixture.route.Generation, fixture.target.Authority.RegistrationGeneration)
+	path := claudeadapter.LeaseSocket(fixture.registryPath, fixture.route.PaneUID, fixture.route.Generation, fixture.target.Authority.RegistrationGeneration)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)

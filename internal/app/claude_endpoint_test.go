@@ -169,7 +169,7 @@ func newClaudeEndpointTestFixture(t testing.TB) *claudeEndpointTestFixture {
 	if reason != claudeRegistrationProceed {
 		t.Fatalf("valid SessionStart refused: %s", reason)
 	}
-	leaseDir = claudeActivationLeaseDir(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation)
+	leaseDir = claudeadapter.ActivationLeaseDir(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation)
 	if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		return intmetadata.DefaultMutator().BeginClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration.Authority)
 	}); err != nil {
@@ -267,7 +267,7 @@ func TestClaudeEndpointReadyExitInvalidated(t *testing.T) {
 	if reason != "" || !probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
 		t.Fatal("exact registration not ready")
 	}
-	assertNoClaudeSecretResidue(t, claudeActivationLeaseDir(f.bootstrap.RegistryPath, route.PaneUID, route.Generation), []string{f.bootstrap.Token, f.bootstrap.Socket})
+	assertNoClaudeSecretResidue(t, claudeadapter.ActivationLeaseDir(f.bootstrap.RegistryPath, route.PaneUID, route.Generation), []string{f.bootstrap.Token, f.bootstrap.Socket})
 	before, _ := os.ReadFile(f.bootstrap.RegistryPath)
 	for range 3 {
 		if !probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
@@ -293,7 +293,7 @@ func TestClaudeEndpointReadyExitInvalidated(t *testing.T) {
 	if _, reason := f.route(t); reason == "" || probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
 		t.Fatal("exited activation remained eligible")
 	}
-	leasePath := claudeLeaseSocket(f.bootstrap.RegistryPath, route.PaneUID, route.Generation, f.bootstrap.Registration.Authority.RegistrationGeneration)
+	leasePath := claudeadapter.LeaseSocket(f.bootstrap.RegistryPath, route.PaneUID, route.Generation, f.bootstrap.Registration.Authority.RegistrationGeneration)
 	if _, err := os.Lstat(filepath.Dir(leasePath)); !os.IsNotExist(err) {
 		t.Fatal("helper files survived exit")
 	}
@@ -364,11 +364,11 @@ func TestClaudeCoordinationSocketReplacementInvalidatesWithoutRemovingReplacemen
 	if reason != "" || !probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
 		t.Fatal("exact registration not ready")
 	}
-	target, ok := claudeTargetForRoute(route)
+	target, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		t.Fatal("exact coordination target unavailable")
 	}
-	path := claudeCoordinationSocket(f.bootstrap.RegistryPath, target)
+	path := claudeadapter.CoordinationSocket(f.bootstrap.RegistryPath, target)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -457,13 +457,13 @@ func TestClaudeEndpointSocketGuardsAndPrivatePeer(t *testing.T) {
 	if err := os.Symlink(f.bootstrap.Socket, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inspectClaudeSocket(link); err == nil {
+	if _, err := claudeadapter.InspectSocket(link); err == nil {
 		t.Fatal("symlink socket accepted")
 	}
 	if err := os.Chmod(f.bootstrap.Socket, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inspectClaudeSocket(f.bootstrap.Socket); err == nil {
+	if _, err := claudeadapter.InspectSocket(f.bootstrap.Socket); err == nil {
 		t.Fatal("open socket mode accepted")
 	}
 	if err := os.Chmod(f.bootstrap.Socket, 0o600); err != nil {
@@ -483,7 +483,7 @@ func TestClaudeEndpointSocketGuardsAndPrivatePeer(t *testing.T) {
 	if reason != "" {
 		t.Fatal(reason)
 	}
-	lease := claudeLeaseSocket(f.bootstrap.RegistryPath, route.PaneUID, route.Generation, r.Authority.RegistrationGeneration)
+	lease := claudeadapter.LeaseSocket(f.bootstrap.RegistryPath, route.PaneUID, route.Generation, r.Authority.RegistrationGeneration)
 	if err := os.Mkdir(filepath.Dir(lease), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +529,7 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := claudeLeaseSocket(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation, f.bootstrap.Registration.Authority.RegistrationGeneration)
+	lease := claudeadapter.LeaseSocket(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation, f.bootstrap.Registration.Authority.RegistrationGeneration)
 	if err := os.Mkdir(filepath.Dir(lease), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +544,7 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 	}
 	target := claudeCoordinationTarget{AgentUID: f.bootstrap.AgentUID, PaneUID: f.bootstrap.PaneUID,
 		Generation: f.bootstrap.Generation, Provider: aiModeClaude, Authority: f.bootstrap.Registration.Authority}
-	coordinationPath := claudeCoordinationSocket(f.bootstrap.RegistryPath, target)
+	coordinationPath := claudeadapter.CoordinationSocket(f.bootstrap.RegistryPath, target)
 	coordination, err := localipc.Listen(coordinationPath)
 	if err != nil {
 		t.Fatal(err)
@@ -613,12 +613,12 @@ func TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement(t *testin
 	// The coordination sockets live under /tmp, where the probe measures.
 	socketreuse.SkipIfReplacementCollapses(t, "/tmp", localipc.InspectOwnedSocket)
 	f := newClaudeEndpointTestFixture(t)
-	dir := claudeActivationLeaseDir(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation)
+	dir := claudeadapter.ActivationLeaseDir(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	lease := claudeLeaseSocket(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation,
+	lease := claudeadapter.LeaseSocket(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation,
 		f.bootstrap.Registration.Authority.RegistrationGeneration)
 	readiness, err := net.ListenUnix("unix", &net.UnixAddr{Name: lease, Net: "unix"})
 	if err != nil {
@@ -631,7 +631,7 @@ func TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement(t *testin
 	}
 	target := claudeCoordinationTarget{AgentUID: f.bootstrap.AgentUID, PaneUID: f.bootstrap.PaneUID,
 		Generation: f.bootstrap.Generation, Provider: aiModeClaude, Authority: f.bootstrap.Registration.Authority}
-	coordinationPath := claudeCoordinationSocket(f.bootstrap.RegistryPath, target)
+	coordinationPath := claudeadapter.CoordinationSocket(f.bootstrap.RegistryPath, target)
 	coordination, err := localipc.Listen(coordinationPath)
 	if err != nil {
 		t.Fatal(err)

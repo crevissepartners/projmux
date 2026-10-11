@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,7 +133,7 @@ func testProcessObservationExactPeerReadOnly(t *testing.T, provider string) {
 	stop := processForegroundRequest{Action: "stop", Authority: processhost.Authority{Binding: binding, Session: snap.Session, Connection: snap.Connection}}
 	var mixed any = claudeProcessCheck{Observe: &binding, Foreground: &stop}
 	if provider == "codex" {
-		socket = filepath.Join(claudeActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
+		socket = filepath.Join(claudeadapter.ActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
 		mixed = codexProcessExchange{Observe: &binding, Foreground: &stop}
 	}
 	identity, err := localipc.InspectOwnedSocket(socket)
@@ -253,7 +254,7 @@ func TestClaudeProcessObservationHostReadDeadlineKeepsUnknown(t *testing.T) {
 	}
 	pane.Status.Activation.Process.HostProcess = host
 	path := filepath.Join(t.TempDir(), "registry.json")
-	socket := filepath.Join(claudeActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
+	socket := filepath.Join(claudeadapter.ActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
 	listener, closeLease, err := listenProcessHost(socket)
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +388,7 @@ func TestProcessObservationUnresponsiveHostsShareShortReadBudget(t *testing.T) {
 	reg.Panes = reg.Panes[1:]
 	for _, current := range reg.Panes {
 		binding := processSchemaBinding(current.Status.Activation.Process.Binding)
-		socket := filepath.Join(claudeActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
+		socket := filepath.Join(claudeadapter.ActivationLeaseDir(path, binding.Pane, binding.Generation), "codex-host.sock")
 		listener, closeLease, err := listenProcessHost(socket)
 		if err != nil {
 			t.Fatal(err)

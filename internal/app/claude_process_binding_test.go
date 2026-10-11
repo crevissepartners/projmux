@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"path/filepath"
@@ -574,10 +575,10 @@ func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T
 		if _, _, err := store.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
 			t.Fatal(err)
 		}
-		target, _ := claudeTargetForRoute(pair.target)
+		target, _ := claudeadapter.TargetForRoute(pair.target)
 		request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &envelope}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		response, err := callClaudeCoordination(ctx, left.path, pair.target, request)
+		response, err := requestClaudeCoordination(ctx, left.path, pair.target, request)
 		cancel()
 		if err != nil || response.Delivery.State != agentdelivery.StateDelivered {
 			t.Fatalf("direction%d receipt: %+v %v", i, response, err)
@@ -619,7 +620,7 @@ func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T
 			t.Fatalf("durable direction%d receipt: %+v %v", i, record, err)
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		duplicate, err := callClaudeCoordination(ctx, left.path, pair.target, request)
+		duplicate, err := requestClaudeCoordination(ctx, left.path, pair.target, request)
 		cancel()
 		if err != nil || duplicate.Delivery.State != agentdelivery.StateDelivered {
 			t.Fatalf("duplicate receipt: %+v %v", duplicate, err)
@@ -627,7 +628,7 @@ func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T
 		stale := request
 		stale.Target.Generation = "old-generation"
 		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
-		_, err = callClaudeCoordination(ctx, left.path, pair.target, stale)
+		_, err = requestClaudeCoordination(ctx, left.path, pair.target, stale)
 		cancel()
 		if err == nil {
 			t.Fatal("stale target admitted")
@@ -769,10 +770,10 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	if _, _, err := store.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
 		t.Fatal(err)
 	}
-	coordTarget, _ := claudeTargetForRoute(targetRoute)
+	coordTarget, _ := claudeadapter.TargetForRoute(targetRoute)
 	request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: coordTarget, Envelope: &envelope}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	response, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
+	response, err := requestClaudeCoordination(ctx, source.path, targetRoute, request)
 	cancel()
 	if err != nil || response.Delivery.State != agentdelivery.StateHeld || response.Delivery.Reason != claudeHoldReasonTurnActive {
 		t.Fatal("busy not held", response, err)
@@ -783,7 +784,7 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 	}
 	// Repeated busy checks must remain retryable and preserve the same active turn.
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-	response, err = callClaudeCoordination(ctx, source.path, targetRoute, request)
+	response, err = requestClaudeCoordination(ctx, source.path, targetRoute, request)
 	cancel()
 	if err != nil || response.Delivery.State != agentdelivery.StateHeld {
 		t.Fatalf("second busy: %+v %v", response, err)
@@ -814,7 +815,7 @@ func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
 		}
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-	response, err = callClaudeCoordination(ctx, source.path, targetRoute, request)
+	response, err = requestClaudeCoordination(ctx, source.path, targetRoute, request)
 	cancel()
 	if err != nil || response.Delivery.State != agentdelivery.StateDelivered {
 		t.Fatalf("busy not retryable after result: %+v %v", response, err)
@@ -1006,11 +1007,11 @@ func TestClaudeProcessNativePeerJoinsExactRunningTarget(t *testing.T) {
 	if _, _, err = store.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
 		t.Fatal(err)
 	}
-	coordTarget, _ := claudeTargetForRoute(targetRoute)
+	coordTarget, _ := claudeadapter.TargetForRoute(targetRoute)
 	request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: coordTarget, Envelope: &envelope}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
+	response, err := requestClaudeCoordination(ctx, source.path, targetRoute, request)
 	if err != nil || response.Delivery.State != agentdelivery.StateDelivered || response.Delivery.Reason != claudeNativePeerJoinedReason {
 		t.Fatal("native peer not joined", response, err)
 	}
@@ -1027,7 +1028,7 @@ func TestClaudeProcessNativePeerJoinsExactRunningTarget(t *testing.T) {
 		t.Fatal("joined reason not durable", record, err)
 	}
 	// Duplicate submit returns its existing receipt and does not write again.
-	again, err := callClaudeCoordination(ctx, source.path, targetRoute, request)
+	again, err := requestClaudeCoordination(ctx, source.path, targetRoute, request)
 	if err != nil || again.Delivery != response.Delivery {
 		t.Fatal("duplicate changed native receipt", again, err)
 	}

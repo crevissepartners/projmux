@@ -18,7 +18,7 @@ import (
 // claudeFrozenFrameProviderVersion is deliberately a single exact version,
 // not a version family. A different running Claude must complete the isolated
 // qualification canary before this constant can move.
-const claudeFrozenFrameProviderVersion = "2.1.263"
+const claudeFrozenFrameProviderVersion = claudeadapter.FrozenFrameProviderVersion
 
 type claudeProviderPostOutcome struct {
 	FullFrameWritten bool
@@ -150,7 +150,7 @@ func (p *liveClaudeProviderPoster) Post(content string, fence func() bool) (clau
 	if !current() {
 		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
-	identity, err := inspectClaudeSocket(p.socket)
+	identity, err := claudeadapter.InspectSocket(p.socket)
 	if err != nil || identity != p.socketIdentity {
 		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
@@ -164,7 +164,7 @@ func (p *liveClaudeProviderPoster) Post(content string, fence func() bool) (clau
 	if err != nil || peer != p.process || !current() {
 		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
-	identity, err = inspectClaudeSocket(p.socket)
+	identity, err = claudeadapter.InspectSocket(p.socket)
 	if err != nil || identity != p.socketIdentity || !current() {
 		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
