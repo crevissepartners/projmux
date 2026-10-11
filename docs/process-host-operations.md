@@ -85,6 +85,11 @@ operations, bytes, and model message. This is request-boundary evidence, not an
 input-specific acknowledgement: a write racing the CLI's queue fold can enter
 the following request instead. The queue remains bounded; the host preserves
 unconfirmed and uncertain joins rather than assuming their consumption.
+Events for consumed joins with confirmed writes become completed history even
+within the running turn: they no longer count against event admission and can
+be evicted with the existing `stream-gap` marker. Unconsumed or uncertain joins,
+pending requests, and turn transitions remain protected. Answered or expired
+control history still counts against the running turn's event limit.
 Claude's own inbound peer policy still applies; host delivery does not override
 it.
 

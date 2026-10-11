@@ -208,6 +208,9 @@ type Event struct {
 	Raw                       json.RawMessage
 	Request                   *Request
 	Exit                      *Exit
+	// Completed Claude join history can be evicted within its original turn.
+	// This retention metadata is private and never changes the public event.
+	completedJoinHistory bool
 }
 
 func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
@@ -761,7 +764,7 @@ func (p *Handle) trimCriticalLocked() {
 		index := -1
 		for i, event := range p.critical {
 			if event.Kind == "process-exited" || event.Kind == "stream-gap" ||
-				(p.turn != "" && event.Turn == p.turn) {
+				(p.turn != "" && event.Turn == p.turn && !event.completedJoinHistory) {
 				continue
 			}
 			if event.Request != nil {
@@ -783,7 +786,7 @@ func (p *Handle) trimCriticalLocked() {
 func (p *Handle) activeCriticalLocked() int {
 	count := 0
 	for _, event := range p.critical {
-		if p.turn != "" && event.Turn == p.turn {
+		if p.turn != "" && event.Turn == p.turn && !event.completedJoinHistory {
 			count++
 		}
 	}
@@ -797,6 +800,7 @@ func (p *Handle) emitLocked(kind string, raw []byte, request *Request) {
 func (p *Handle) emitTurnLocked(kind string, raw []byte, request *Request, turn string) {
 	p.seq++
 	event := Event{Binding: p.launch.Binding, Session: p.session, Connection: p.connection, Turn: turn, Sequence: p.seq, Kind: kind, Raw: bytes.Clone(raw), Request: request, Exit: p.exit}
+	event.completedJoinHistory = kind == "joined-inputs-consumed"
 	p.changedLocked()
 	if kind != "output" && kind != "provider-event" {
 		p.critical = append(p.critical, event)

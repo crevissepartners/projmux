@@ -260,6 +260,23 @@ func (p *Handle) consumeClaudeJoinsLocked(message string) {
 		return
 	}
 	p.joinedBytes -= freed
+	// Retire only evidence for writes confirmed before this boundary. Pending
+	// and uncertain handoffs, requests, and turn transitions remain protected.
+	for i := range p.critical {
+		event := &p.critical[i]
+		if event.Turn != p.turn || event.Request != nil {
+			continue
+		}
+		switch event.Kind {
+		case "input-joined", "peer-message-joined", "peer-message-handed-off":
+			var input struct {
+				Operation string `json:"operation"`
+			}
+			if json.Unmarshal(event.Raw, &input) == nil && slices.Contains(consumed, input.Operation) {
+				event.completedJoinHistory = true
+			}
+		}
+	}
 	raw, _ := json.Marshal(map[string]any{"operations": consumed, "bytes": freed, "modelMessage": message})
 	p.emitLocked("joined-inputs-consumed", raw, nil)
 	if callback := p.launch.JoinConsumed; callback != nil && callback.Notify != nil {
