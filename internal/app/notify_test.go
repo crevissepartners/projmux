@@ -2484,3 +2484,15 @@ func notifyLivePaneRows(rows ...[]string) []byte {
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
 }
+
+func TestNotifySidebarClearAllPreservesErrorPrefix(t *testing.T) {
+	t.Parallel()
+	failure := errors.New("fixture write failure")
+	store := &stubNotifyStore{ackErr: failure, listEntries: []notify.Notification{{ID: "n", Text: "saved", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}}}
+	cmd := newCmd(store)
+	cmd.native = &recordingNotifyNativePicker{results: []intpicker.Result{{Key: "ctrl-x", Value: notifySidebarGroupValue("pane\x00\x00main\x00")}, {Key: "enter", Value: notifySidebarClearAllConfirm}}}
+	err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != "clear all notifications: fixture write failure" || !errors.Is(err, failure) {
+		t.Fatalf("clear error = %v", err)
+	}
+}

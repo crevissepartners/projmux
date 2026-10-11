@@ -425,3 +425,18 @@ func TestSettingsUsageNotificationsSDKIsolationAndCancellation(t *testing.T) {
 		t.Fatal("SDK changed environment")
 	}
 }
+
+func TestNotificationsSDKAckAllStorageErrorParity(t *testing.T) {
+	client, _, paths := settingsClient(t, t.TempDir())
+	store := notify.NewDefaultStore(paths)
+	// A directory at the queue file makes both readers fail before any write.
+	if err := os.MkdirAll(store.Path(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newCmd(store)
+	cliErr := cmd.Run([]string{"ack", "--all"}, &bytes.Buffer{}, &bytes.Buffer{})
+	_, sdkErr := client.AckNotifications(context.Background(), core.NotificationAck{All: true})
+	if cliErr == nil || sdkErr == nil || cliErr.Error() != sdkErr.Error() || !strings.HasPrefix(cliErr.Error(), "ack all notifications: ") {
+		t.Fatalf("CLI = %v SDK = %v", cliErr, sdkErr)
+	}
+}

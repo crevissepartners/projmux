@@ -374,7 +374,7 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		if !confirmed {
 			return nil
 		}
-		removed, err := notificationService.Ack(context.Background(), store, "", true)
+		removed, err := store.AckAll()
 		if err != nil {
 			return fmt.Errorf("clear all notifications: %w", err)
 		}
@@ -1556,7 +1556,7 @@ func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Wr
 			printAckUsage()
 			return usageError(route + " --all does not accept positional arguments")
 		}
-		removed, err := store.AckAll()
+		removed, err := notificationService.Ack(context.Background(), store, "", true)
 		if err != nil {
 			return err
 		}
