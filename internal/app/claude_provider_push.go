@@ -18,7 +18,7 @@ import (
 // claudeFrozenFrameProviderVersion is deliberately a single exact version,
 // not a version family. A different running Claude must complete the isolated
 // qualification canary before this constant can move.
-const claudeFrozenFrameProviderVersion = "2.1.263"
+const claudeFrozenFrameProviderVersion = claudeadapter.FrozenFrameProviderVersion
 
 type claudeProviderPostOutcome struct {
 	FullFrameWritten bool

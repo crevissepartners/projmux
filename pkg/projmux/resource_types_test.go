@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/runtimediag"
+	"github.com/crevissepartners/projmux/internal/services/agentcatalog"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 	"reflect"
 	"testing"
@@ -14,7 +15,7 @@ import (
 // Check the full JSON field graph, not just the currently populated fixture.
 // New fields in any reachable internal struct fail until the public model follows.
 func TestPublicResourceFieldCoverage(t *testing.T) {
-	for _, pair := range [][2]reflect.Type{{reflect.TypeFor[metadata.Project](), reflect.TypeFor[core.Project]()}, {reflect.TypeFor[metadata.Window](), reflect.TypeFor[core.Window]()}, {reflect.TypeFor[metadata.Pane](), reflect.TypeFor[core.Pane]()}, {reflect.TypeFor[metadata.Agent](), reflect.TypeFor[core.Agent]()}, {reflect.TypeFor[runtimediag.Report](), reflect.TypeFor[core.RuntimeReport]()}} {
+	for _, pair := range [][2]reflect.Type{{reflect.TypeFor[metadata.Project](), reflect.TypeFor[core.Project]()}, {reflect.TypeFor[metadata.Window](), reflect.TypeFor[core.Window]()}, {reflect.TypeFor[metadata.Pane](), reflect.TypeFor[core.Pane]()}, {reflect.TypeFor[metadata.Agent](), reflect.TypeFor[core.Agent]()}, {reflect.TypeFor[runtimediag.Report](), reflect.TypeFor[core.RuntimeReport]()}, {reflect.TypeFor[agentcatalog.Capabilities](), reflect.TypeFor[core.Capabilities]()}, {reflect.TypeFor[agentcatalog.ModelSuggestions](), reflect.TypeFor[core.ModelSuggestions]()}} {
 		compareResourceShape(t, pair[0], pair[1], map[[2]reflect.Type]bool{})
 		source := reflect.New(pair[0]).Elem()
 		fillResourceFields(source)

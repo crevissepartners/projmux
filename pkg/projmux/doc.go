@@ -4,7 +4,8 @@
 // notes and compile your consumer against the selected version before upgrading.
 //
 // The SDK exposes stored instructions and read-only Project, Window, Pane,
-// and Agent resource lists and descriptions, plus runtime inventories. Public resource types live in
+// and Agent resource lists and descriptions, runtime inventories, Agent capabilities,
+// and provider model suggestions. Public resource types live in
 // pkg/projmux/core and mirror CLI JSON, including list-only context. The CLI and SDK execute
 // the same internal service and retain the existing personas/<name>.md format,
 // case-sensitive names, 64 KiB limit and private filesystem permissions.
@@ -37,4 +38,13 @@
 // then none (zero tmux calls). It does not inherit TMUX or use the app socket.
 // Missing servers return RuntimeReport.Unavailable; invalid requests return a
 // Refusal with CodeRuntimeRequestInvalid. Runtime results own all nested data.
+// Capabilities selects one provider or an explicit Agent name/uid with
+// CapabilitiesRequest. Agent results include current Registry evidence and, for
+// Claude, bounded reads of Projmux's local registration helper. These reads do
+// not submit provider operations; LiveVerified stays false. Models defaults to
+// Claude's static suggestions; Codex attaches to the existing default endpoint
+// with the CLI's 15-second bound and never starts/configures its daemon.
+// CodeModelsUnavailable and CodeModelsTimeout refusals distinguish failed reads from
+// expired deadlines. A custom Options.CodexModelLister must honor its context,
+// remain read-only, and be safe for concurrent calls.
 package projmux

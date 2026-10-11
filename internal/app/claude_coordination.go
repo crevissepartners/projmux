@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"net"
 	"os"
@@ -28,7 +29,7 @@ import (
 )
 
 const (
-	claudeCoordinationVersion            = 5
+	claudeCoordinationVersion            = claudeadapter.CoordinationVersion
 	claudeProviderFrameMaxBytes          = 8 << 10
 	claudeCoordinationHookTimeout        = 5 * time.Second
 	priorClaudeCoordinationManagedMarker = "projmux-managed:claude-coordination:v1"
