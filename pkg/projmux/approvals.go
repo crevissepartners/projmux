@@ -27,6 +27,13 @@ const (
 	CodePermissionDecisionUnavailable Code = "permission-decision-unavailable"
 	CodeOperatorClientInvalid         Code = "operator-client-invalid"
 	CodePermissionControlUnavailable  Code = "permission-control-unavailable"
+	// Native approval transport refusals preserve fencing and input failure kinds.
+	CodeControlStaleEpoch       Code = "stale-epoch"
+	CodeControlStaleBinding     Code = "stale-binding"
+	CodeControlUnavailable      Code = "unavailable"
+	CodeControlInvalidFrame     Code = "invalid-frame"
+	CodeControlAmbiguousRequest Code = "ambiguous-request"
+	CodeControlUnsafeDecision   Code = "unsafe-decision"
 )
 
 // ApprovalControl provides an isolated exact Agent control seam. It must reject
@@ -56,7 +63,7 @@ func (c *Client) approvalService() approvals.Service {
 		return v
 	}, Control: control}
 }
-func (c *Client) approvalAgent(ctx context.Context, ref, spelling string) (metadata.Registry, metadata.Agent, error) {
+func (c *Client) approvalAgent(ctx context.Context, ref, spelling, field string) (metadata.Registry, metadata.Agent, error) {
 	if err := ctx.Err(); err != nil {
 		return metadata.Registry{}, metadata.Agent{}, err
 	}
@@ -69,7 +76,7 @@ func (c *Client) approvalAgent(ctx context.Context, ref, spelling string) (metad
 	}
 	agent, err := questions.ResolveAgent(reg, ref)
 	if err != nil {
-		return reg, agent, resourceRefusal(err)
+		return reg, agent, resourceRefusal(selectorInputError(err, field))
 	}
 	if spelling == "agent approval review" {
 		if err := agentcontrol.RequireCapability(spelling, agent); err != nil {
@@ -86,7 +93,7 @@ func processApproval(reg metadata.Registry, agent metadata.Agent) bool {
 
 // ListApprovals reads one explicit Agent's waiting requests. It never starts a provider.
 func (c *Client) ListApprovals(ctx context.Context, agentRef string) (core.ApprovalList, error) {
-	reg, agent, err := c.approvalAgent(ctx, agentRef, "agent approval list")
+	reg, agent, err := c.approvalAgent(ctx, agentRef, "agent approval list", "ListApprovals agentRef")
 	if err != nil {
 		return core.ApprovalList{}, err
 	}
@@ -125,7 +132,7 @@ func (c *Client) AnswerApproval(ctx context.Context, input AnswerApprovalRequest
 	if err := approvals.ValidateVia("agent approval answer", via); err != nil {
 		return core.ApprovalReceipt{}, approvalRefusal(err)
 	}
-	reg, agent, err := c.approvalAgent(ctx, input.Agent, "agent approval answer")
+	reg, agent, err := c.approvalAgent(ctx, input.Agent, "agent approval answer", "AnswerApprovalRequest.Agent")
 	if err != nil {
 		return core.ApprovalReceipt{}, err
 	}
@@ -151,7 +158,7 @@ func (c *Client) AnswerApproval(ctx context.Context, input AnswerApprovalRequest
 // It follows native exact review, including its independence from answering policy
 // and lack of answer audit lines. It never focuses a window or widens offered choices.
 func (c *Client) ReviewApproval(ctx context.Context, input ReviewApprovalRequest) (core.ApprovalReceipt, error) {
-	reg, agent, err := c.approvalAgent(ctx, input.Agent, "agent approval review")
+	reg, agent, err := c.approvalAgent(ctx, input.Agent, "agent approval review", "ReviewApprovalRequest.Agent")
 	if err != nil {
 		return core.ApprovalReceipt{}, err
 	}
@@ -177,11 +184,26 @@ func (c *Client) ReviewApproval(ctx context.Context, input ReviewApprovalRequest
 func approvalRefusal(err error) error {
 	var failure *approvals.Failure
 	if errors.As(err, &failure) {
-		return &Refusal{Code: Code(failure.Code), message: err.Error()}
+		message := err.Error()
+		switch Code(failure.Code) {
+		case CodeOperatorClientInvalid:
+			if detail, ok := strings.CutPrefix(message, "agent approval answer --via: "); ok {
+				message = "AnswerApprovalRequest.Via: " + detail
+			}
+		case CodePermissionProviderUnsupported:
+			message = "Agent provider does not support approval requests; want claude or codex"
+		}
+		return &Refusal{Code: Code(failure.Code), message: message}
 	}
 	var control *agentcontrol.Refusal
 	if errors.As(err, &control) {
-		return &Refusal{Code: Code(control.Code), message: err.Error()}
+		code := Code(control.Code)
+		switch code {
+		case CodeControlStaleEpoch, CodeControlStaleBinding, CodeControlUnavailable, CodeControlInvalidFrame, CodeControlAmbiguousRequest, CodeControlUnsafeDecision:
+		default:
+			code = CodePermissionControlUnavailable
+		}
+		return &Refusal{Code: code, message: err.Error()}
 	}
 	var binding *agentcontrol.BindingError
 	if errors.As(err, &binding) {

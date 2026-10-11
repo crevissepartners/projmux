@@ -24,6 +24,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
@@ -42,7 +43,7 @@ const (
 	aiPaneCodexDeclaredOption  = "@projmux_codex_native_declared"
 
 	codexAuthorityPending      = "pending"
-	codexAuthorityControlPlane = "provider-control-plane"
+	codexAuthorityControlPlane = agentcontrol.AuthorityControlPlane
 	codexAuthorityInvalidating = "invalidating"
 	codexAuthorityHook         = "provider-hook"
 

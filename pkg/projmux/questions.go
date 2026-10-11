@@ -58,7 +58,7 @@ func (c *Client) questionService() questions.Service {
 		Dispatcher: dispatcher,
 	}
 }
-func (c *Client) questionAgent(ctx context.Context, ref, spelling string) (metadata.Agent, error) {
+func (c *Client) questionAgent(ctx context.Context, ref, spelling, field string) (metadata.Agent, error) {
 	if err := ctx.Err(); err != nil {
 		return metadata.Agent{}, err
 	}
@@ -71,7 +71,7 @@ func (c *Client) questionAgent(ctx context.Context, ref, spelling string) (metad
 	}
 	agent, err := questions.ResolveAgent(reg, ref)
 	if err != nil {
-		return metadata.Agent{}, resourceRefusal(err)
+		return metadata.Agent{}, resourceRefusal(selectorInputError(err, field))
 	}
 	if err = questions.ValidateProvider(spelling, agent); err != nil {
 		return metadata.Agent{}, questionRefusal(err)
@@ -83,7 +83,7 @@ func (c *Client) questionAgent(ctx context.Context, ref, spelling string) (metad
 // list -o json. A running process Agent queries its existing host; it never
 // starts a provider. Reading may reconcile questions in the existing store.
 func (c *Client) ListQuestions(ctx context.Context, agentRef string) (core.QuestionList, error) {
-	agent, err := c.questionAgent(ctx, agentRef, "agent question list")
+	agent, err := c.questionAgent(ctx, agentRef, "agent question list", "ListQuestions agentRef")
 	if err != nil {
 		return core.QuestionList{}, err
 	}
@@ -104,13 +104,13 @@ func (c *Client) ListQuestions(ctx context.Context, agentRef string) (core.Quest
 // A canceled context before admission changes nothing. An accepted write is
 // never retried, including when its delivery outcome is uncertain.
 func (c *Client) AnswerQuestion(ctx context.Context, input AnswerQuestionRequest) (core.QuestionAnswerResult, error) {
-	agent, err := c.questionAgent(ctx, input.Agent, "agent question answer")
+	agent, err := c.questionAgent(ctx, input.Agent, "agent question answer", "AnswerQuestionRequest.Agent")
 	if err != nil {
 		return core.QuestionAnswerResult{}, err
 	}
 	request := questions.Request{Spelling: "agent question answer", QuestionID: input.QuestionID}
 	if len(input.Selections) == 0 {
-		return core.QuestionAnswerResult{}, &Refusal{Code: CodeQuestionInvalidAnswer, message: "agent question answer requires at least one --option, --index, or --text"}
+		return core.QuestionAnswerResult{}, &Refusal{Code: CodeQuestionInvalidAnswer, message: "AnswerQuestionRequest.Selections requires at least one selection with Option, Index, or Text"}
 	}
 	for _, v := range input.Selections {
 		n := 0
@@ -148,7 +148,12 @@ func questionRefusal(err error) error {
 	}
 	var failure *questions.Failure
 	if errors.As(err, &failure) {
-		return &Refusal{Code: Code(failure.Code), message: failure.Error()}
+		message := failure.Error()
+		var selection *questions.SelectionError
+		if errors.As(failure, &selection) {
+			message = "AnswerQuestionRequest.Selections: " + selection.InputMessage
+		}
+		return &Refusal{Code: Code(failure.Code), message: message}
 	}
 	return err
 }

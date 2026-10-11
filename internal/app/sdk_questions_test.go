@@ -191,7 +191,7 @@ func TestQuestionSDKRefusalParity(t *testing.T) {
 			cliErr := f.cmd.runQuestion(append([]string{"answer", "reader", id}, args...), &out, &stderr)
 			_, sdkErr := f.client.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "reader", QuestionID: id, Selections: sel})
 			var refusal *projmux.Refusal
-			if !errors.As(sdkErr, &refusal) || refusal.Code != test.code || cliErr == nil || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != 2 || out.Len() != 0 {
+			if !errors.As(sdkErr, &refusal) || refusal.Code != test.code || cliErr == nil || (test.name != "invalid index" && cliErr.Error() != sdkErr.Error() || test.name == "invalid index" && sdkErr.Error() != "AnswerQuestionRequest.Selections: Index for Question 1 must be between 1 and 3") || exitCodeOf(cliErr) != 2 || out.Len() != 0 {
 				t.Fatalf("CLI %v SDK %v refusal %+v", cliErr, sdkErr, refusal)
 			}
 		})
@@ -440,7 +440,7 @@ func TestQuestionSDKSelectionRefusals(t *testing.T) {
 		cliErr := f.cmd.runQuestion([]string{"list", ref, "-o", "json"}, &out, &stderr)
 		_, sdkErr := f.client.ListQuestions(context.Background(), ref)
 		var refusal *projmux.Refusal
-		if !errors.As(sdkErr, &refusal) || cliErr == nil || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != 2 {
+		if !errors.As(sdkErr, &refusal) || cliErr == nil || sdkSelectorMessageMismatch(sdkErr, cliErr, "--agent", "ListQuestions agentRef") || exitCodeOf(cliErr) != 2 {
 			t.Fatalf("ref %s CLI=%v SDK=%v", ref, cliErr, sdkErr)
 		}
 	}

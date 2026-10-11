@@ -71,11 +71,10 @@ func copyUsage(source, target any) error {
 	return json.Unmarshal(b, target)
 }
 
-// defaultUsageDir captures the CLI override at construction, unless an explicit
-// StateDir selects that client's independent root.
+// defaultUsageDir resolves only captured state paths and the explicit SDK override.
 func defaultUsageDir(stateDir, override string) string {
 	if override != "" {
-		return override
+		return filepath.Clean(override)
 	}
 	return filepath.Join(stateDir, "usage")
 }

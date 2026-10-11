@@ -37,7 +37,7 @@ func (c *Client) Capabilities(ctx context.Context, input CapabilitiesRequest) (c
 		return core.Capabilities{}, &Refusal{Code: CodeCapabilitiesRequestInvalid, message: "agent capabilities requires an explicit Agent reference or provider"}
 	}
 	if strings.TrimSpace(input.Provider) != "" && strings.TrimSpace(input.Agent) != "" {
-		return core.Capabilities{}, &Refusal{Code: CodeCapabilitiesRequestInvalid, message: "agent capabilities accepts an Agent reference or --provider, not both"}
+		return core.Capabilities{}, &Refusal{Code: CodeCapabilitiesRequestInvalid, message: "CapabilitiesRequest requires exactly one of Agent or Provider"}
 	}
 	var projection agentcatalog.Capabilities
 	if strings.TrimSpace(input.Provider) != "" {
@@ -56,7 +56,7 @@ func (c *Client) Capabilities(ctx context.Context, input CapabilitiesRequest) (c
 		}
 		agent, err := agentcatalog.ResolveAgent(registry, input.Agent)
 		if err != nil {
-			return core.Capabilities{}, resourceRefusal(err)
+			return core.Capabilities{}, resourceRefusal(selectorInputError(err, "CapabilitiesRequest.Agent"))
 		}
 		id, err := agentcatalog.AgentProvider(agent)
 		if err != nil {

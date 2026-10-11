@@ -91,7 +91,7 @@ func TestAgentCatalogSDKRefusalParity(t *testing.T) {
 		cliErr := cmd.Run(test.args, &out, &stderr)
 		_, sdkErr := client.Capabilities(context.Background(), test.request)
 		var refusal *projmux.Refusal
-		if !errors.As(sdkErr, &refusal) || refusal.Code != test.code || cliErr == nil || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != 2 || out.Len() != 0 {
+		if !errors.As(sdkErr, &refusal) || refusal.Code != test.code || cliErr == nil || (test.code != projmux.CodeCapabilitiesRequestInvalid && sdkSelectorMessageMismatch(sdkErr, cliErr, "--agent", "CapabilitiesRequest.Agent") || test.code == projmux.CodeCapabilitiesRequestInvalid && sdkErr.Error() != "CapabilitiesRequest requires exactly one of Agent or Provider") || exitCodeOf(cliErr) != 2 || out.Len() != 0 {
 			t.Fatalf("%v CLI=%v SDK=%v code=%v", test.args, cliErr, sdkErr, refusal)
 		}
 	}

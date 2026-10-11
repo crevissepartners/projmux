@@ -153,19 +153,20 @@ func TestRuntimeSDKRefusalParity(t *testing.T) {
 	_, _ = sdkResourceFixture(t)
 	c := runtimeSDKClient(t, "")
 	for _, test := range []struct {
-		req  projmux.RuntimeRequest
-		args []string
+		req     projmux.RuntimeRequest
+		args    []string
+		message string
 	}{
-		{projmux.RuntimeRequest{Kind: core.RuntimeSessions, SocketPath: "relative"}, []string{"sessions", "--socket-path", "relative"}},
-		{projmux.RuntimeRequest{Kind: core.RuntimeWindows, SocketName: "one", SocketPath: "/absolute/two"}, []string{"windows", "--socket", "one", "--socket-path", "/absolute/two"}},
-		{projmux.RuntimeRequest{}, nil},
-		{projmux.RuntimeRequest{Kind: "unsupported"}, []string{"unsupported"}},
+		{projmux.RuntimeRequest{Kind: core.RuntimeSessions, SocketPath: "relative"}, []string{"sessions", "--socket-path", "relative"}, `RuntimeRequest.SocketPath must be absolute, got "relative"`},
+		{projmux.RuntimeRequest{Kind: core.RuntimeWindows, SocketName: "one", SocketPath: "/absolute/two"}, []string{"windows", "--socket", "one", "--socket-path", "/absolute/two"}, "RuntimeRequest.SocketName and SocketPath are mutually exclusive"},
+		{projmux.RuntimeRequest{}, nil, ""},
+		{projmux.RuntimeRequest{Kind: "unsupported"}, []string{"unsupported"}, ""},
 	} {
 		var out, stderr bytes.Buffer
 		cliErr := newGetCommand().runRuntime(test.args, &out, &stderr)
 		_, sdkErr := c.ObserveRuntime(context.Background(), test.req)
 		var refusal *projmux.Refusal
-		if !errors.As(sdkErr, &refusal) || refusal.Code != projmux.CodeRuntimeRequestInvalid || cliErr == nil || cliErr.Error() != refusal.Error() || !IsUsageError(cliErr) || out.Len() != 0 {
+		if !errors.As(sdkErr, &refusal) || refusal.Code != projmux.CodeRuntimeRequestInvalid || cliErr == nil || (test.message == "" && cliErr.Error() != refusal.Error() || test.message != "" && refusal.Error() != test.message) || !IsUsageError(cliErr) || out.Len() != 0 {
 			t.Fatalf("CLI=%v SDK=%v", cliErr, sdkErr)
 		}
 	}

@@ -3,6 +3,7 @@ package projmux
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/profile"
@@ -81,11 +82,11 @@ func profileRefusal(err error) error {
 	}
 	var confirmation *profiles.ConfirmationError
 	if errors.As(err, &confirmation) {
-		return &Refusal{Code: CodeProfileConfirmationRequired, Name: confirmation.Name, message: err.Error()}
+		return &Refusal{Code: CodeProfileConfirmationRequired, Name: confirmation.Name, message: fmt.Sprintf("DeleteProfile confirm must be true for %q; nothing was deleted", confirmation.Name)}
 	}
 	var project *profiles.ProjectError
 	if errors.As(err, &project) {
-		return resourceRefusal(project.Err)
+		return resourceRefusal(selectorInputError(project.Err, "ListProfiles projectRef"))
 	}
 	return err
 }

@@ -33,7 +33,10 @@
 // Registry failures are *Refusal values; context cancellation stays ordinary.
 // Instruction filesystem failures remain
 // ordinary errors; rejected names, sizes, missing files and in-use instructions
-// are *Refusal values with machine-readable Code fields.
+// are *Refusal values with machine-readable Code fields. SDK input validation
+// names Go fields rather than CLI flags. Native approval refusals have declared
+// CodeControl constants for stale bindings, unavailable control and unsafe inputs;
+// unknown native refusal codes use CodePermissionControlUnavailable.
 // ObserveRuntime reads sessions, windows or panes on one exact server and mirrors
 // get runtime JSON. Its route is RuntimeRequest, then an explicit Options.SocketPath,
 // then none (zero tmux calls). It does not inherit TMUX or use the app socket.
@@ -69,8 +72,9 @@
 // GetUsageHistory shares agent usage --history's retained metric reader. Neither
 // collects usage or starts providers. Existing private-permission repair and
 // history locking remain. Snapshot/history contents and collection metadata
-// are never written. PROJMUX_USAGE_STATE_DIR is captured at construction when
-// StateDir is empty; an explicit StateDir always selects StateDir/usage.
+// are never written. Options.UsageStateDir explicitly selects the saved usage
+// directory; empty uses the captured StateDir/usage. PROJMUX_USAGE_STATE_DIR
+// is a CLI override only and does not affect SDK clients.
 // UsageCache includes sorted snapshots, per-provider timestamps/backoff,
 // unsupported providers and cache mtime. Encode history with a plain JSON
 // Encoder (without indent) to match agent usage --history --json.

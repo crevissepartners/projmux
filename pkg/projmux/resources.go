@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -50,10 +51,10 @@ func (c *Client) ListResources(ctx context.Context, kind core.Kind, input Resour
 		return core.ResourceList{}, resourceRefusal(err)
 	}
 	if kind == core.KindProject && len(input.Windows) > 0 {
-		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "flag provided but not defined: -window"}
+		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "ResourceSelector.Windows is not supported for Project lists"}
 	}
 	if kind != core.KindPane && len(input.Panes) > 0 {
-		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "flag provided but not defined: -pane"}
+		return core.ResourceList{}, &Refusal{Code: CodeSelectorInvalid, message: "ResourceSelector.Panes is supported only for Pane lists"}
 	}
 	query, err := resourceQuery(input)
 	if err != nil {
@@ -109,7 +110,7 @@ func (c *Client) GetResource(ctx context.Context, input core.Ref) (core.Resource
 	}
 	ref, err := selector.ParseRef(metadata.Kind(input.Kind), input.Value)
 	if err != nil {
-		return nil, resourceRefusal(err)
+		return nil, resourceRefusal(selectorInputError(err, "core.Ref.Value"))
 	}
 	var query selector.Query
 	switch input.Kind {
@@ -142,28 +143,28 @@ func resourceQuery(input ResourceSelector) (selector.Query, error) {
 	if input.Project != "" {
 		ref, err := selector.ParseRef(metadata.KindProject, input.Project)
 		if err != nil {
-			return query, err
+			return query, selectorInputError(err, "ResourceSelector.Project")
 		}
 		query.Project = &ref
 	}
 	for _, raw := range input.Windows {
 		ref, err := selector.ParseRef(metadata.KindWindow, raw)
 		if err != nil {
-			return query, err
+			return query, selectorInputError(err, "ResourceSelector.Windows")
 		}
 		query.Windows = append(query.Windows, ref)
 	}
 	for _, raw := range input.Panes {
 		ref, err := selector.ParseRef(metadata.KindPane, raw)
 		if err != nil {
-			return query, err
+			return query, selectorInputError(err, "ResourceSelector.Panes")
 		}
 		query.Panes = append(query.Panes, ref)
 	}
 	for _, raw := range input.Labels {
 		label, err := selector.ParseLabel(raw)
 		if err != nil {
-			return query, err
+			return query, selectorInputError(err, "ResourceSelector.Labels")
 		}
 		query.Labels = append(query.Labels, label)
 	}
@@ -210,4 +211,20 @@ func publicResource(registry metadata.Registry, kind metadata.Kind, uid string) 
 
 func readKind(k core.Kind) bool {
 	return k == core.KindProject || k == core.KindWindow || k == core.KindPane || k == core.KindAgent
+}
+
+// selectorInputError changes only parser-generated input syntax. Resolution and
+// recovery messages, and caller values quoted in the detail, retain their text.
+func selectorInputError(err error, field string) error {
+	var input *selector.SelectorError
+	if !errors.As(err, &input) || input.Op != "parse selector" {
+		return err
+	}
+	flag, detail, ok := strings.Cut(input.Detail, " ")
+	if !ok || !strings.HasPrefix(flag, "--") {
+		return err
+	}
+	rendered := *input
+	rendered.Detail = field + " " + detail
+	return &rendered
 }
