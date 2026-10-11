@@ -20,6 +20,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/resources"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	"golang.org/x/term"
 )
@@ -403,23 +404,7 @@ func (f *resourceQueryFlags) unmatchedTargetRefs(registry coremetadata.Registry)
 // resolveQuery runs the kind's resolution pipeline without enforcing a
 // cardinality.
 func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query selector.Query) (selector.Resolution, error) {
-	observed := f.runtime.observation()
-	resolver := selector.NewObserved(registry, observed)
-	if f.contexts != nil {
-		resolver = selector.NewObservedWithContext(registry, observed, *f.contexts)
-	}
-	switch f.kind {
-	case coremetadata.KindProject:
-		return resolver.ResolveProjects(query)
-	case coremetadata.KindWindow:
-		return resolver.ResolveWindows(query)
-	case coremetadata.KindPane:
-		return resolver.ResolvePanes(query)
-	case coremetadata.KindAgent:
-		return resolver.ResolveAgents(query)
-	default:
-		return selector.Resolution{}, fmt.Errorf("no resolution pipeline for kind %q", f.kind)
-	}
+	return resources.Resolve(registry, f.runtime.observation(), f.contexts, f.kind, query)
 }
 
 // resolve runs the kind's resolution pipeline and enforces the declared
@@ -496,7 +481,7 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 		return selector.Resolution{}, err
 	}
 	target := selector.Target{Verb: verb, Kind: f.kind, List: list}
-	if err := selector.Enforce(target, selector.DescribeSelector(query), resolution); err != nil {
+	if err := resources.Enforce(target, query, resolution); err != nil {
 		return selector.Resolution{}, err
 	}
 	return resolution, nil
@@ -635,37 +620,7 @@ func (p resourceJSONProjection) MarshalJSON() ([]byte, error) {
 
 // resourceFor returns the stored resource and its metadata block for one uid.
 func resourceFor(registry coremetadata.Registry, kind coremetadata.Kind, uid string) (any, coremetadata.ObjectMeta, bool) {
-	switch kind {
-	case coremetadata.KindProject:
-		if project, ok := registry.Project(uid); ok {
-			return *project, project.Metadata, true
-		}
-	case coremetadata.KindWindow:
-		if window, ok := registry.Window(uid); ok {
-			return *window, window.Metadata, true
-		}
-	case coremetadata.KindPane:
-		if pane, ok := registry.Pane(uid); ok {
-			return *pane, pane.Metadata, true
-		}
-	case coremetadata.KindAgent:
-		if agent, ok := registry.Agent(uid); ok {
-			projected := agent.Clone()
-			if projected.Spec.Workspace.IsZero() {
-				if window, ok := registry.Window(projected.Metadata.OwnerUID()); ok {
-					if project, ok := registry.Project(window.Metadata.OwnerUID()); ok {
-						projected.Spec.Workspace.CWD = project.Spec.Root
-					}
-				}
-			}
-			projected.Status.Interaction = projected.EffectiveInteraction(time.Now())
-			if projected.Status.Activation.State == "" {
-				projected.Status.Activation.State = coremetadata.ActivationNotRequested
-			}
-			return projected, projected.Metadata, true
-		}
-	}
-	return nil, coremetadata.ObjectMeta{}, false
+	return resources.ResourceFor(registry, kind, uid)
 }
 
 // resourceRef renders the `kind/<metadata.name>` reference of one match.

@@ -21,6 +21,7 @@ import (
 // Anything else in those packages must use Command or CommandContext, so a
 // tmux command client always gets the UTF-8 client flag.
 var nonTmuxSpawnSites = map[string]string{
+	"internal/tools/sdkboundary.checkPackage": "build-time compiler export-data query: GO list -deps -export only; the tmux dependency path is an allowlist string, not a tmux invocation",
 	// projmux's own executable or its helper routes
 	"internal/app.launchAgentMessageRelease":              "own executable: internal message release route",
 	"internal/app.startCodexLifecycleObserverProcess":     "own executable: Codex lifecycle observer route",

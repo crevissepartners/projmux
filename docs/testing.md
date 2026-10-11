@@ -403,3 +403,16 @@ configuration roots, exact bytes, private permissions, names, limits, missing
 files, filesystem failures and profile use refusals. They also test client path
 isolation and cancellation before mutation admission. Existing CLI tests retain
 its output, reason and exit classification contracts.
+
+Resource SDK parity is checked by `TestResourceSDKCLIParity` in `internal/app`
+under the live-machine guard: all four kinds, list envelopes and singular
+descriptions, explicit scope combinations, labels and empty results. The SDK
+results use the same indented JSON encoder and final newline as CLI stdout.
+`TestResourceSDKRefusalParity` and `TestResourceSDKMissingRegistryParity` pair
+the existing CLI failure messages and exit classes with SDK typed refusals.
+`TestResourceSDKDeepCopy` checks caller-owned results and client isolation.
+`TestPublicResourceFieldCoverage` walks the entire reachable JSON field graph
+and checks populated and zero-value serialization, so a new internal field
+cannot silently disappear from public results. The external consumer also
+compiles resource reads with `GOWORK=off`; the boundary checker separately
+requires `pkg/projmux/core` to depend only on standard-library packages.

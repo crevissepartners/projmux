@@ -35,6 +35,10 @@ func main() {
 }
 
 func check(path string) error {
+	return checkPackage(path, path == module+"/pkg/projmux/core")
+}
+
+func checkPackage(path string, pureCore bool) error {
 	goBinary := os.Getenv("GO")
 	if goBinary == "" {
 		goBinary = "go"
@@ -66,7 +70,7 @@ func check(path string) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if name != path && !allowedImplementation(data[name]) {
+		if name != path && (pureCore && !data[name].Standard || !allowedImplementation(data[name])) {
 			return fmt.Errorf("SDK implementation import is not allowed: %q", name)
 		}
 	}
@@ -89,7 +93,7 @@ func check(path string) error {
 	return nil
 }
 
-// The list includes only the current instruction service and its measured
+// The list includes only the instruction and resource read services and their measured
 // support dependencies. Compiler-classified standard library packages are
 // allowed separately. Nothing is allowed by an internal directory prefix.
 func allowedImplementation(p packageData) bool {
@@ -97,7 +101,29 @@ func allowedImplementation(p packageData) bool {
 		return true
 	}
 	switch p.ImportPath {
-	case module + "/pkg/projmux",
+	case module + "/pkg/projmux/core",
+		module + "/internal/services/resources",
+		module + "/internal/version",
+		module + "/internal/cli",
+		module + "/internal/core/agentprogress",
+		module + "/internal/core/aicapability",
+		module + "/internal/core/candidates",
+		module + "/internal/core/layout",
+		module + "/internal/core/lifecycle",
+		module + "/internal/core/resources",
+		module + "/internal/core/terminaltext",
+		module + "/internal/diagnostics",
+		module + "/internal/integrations/agents/codexappserver",
+		module + "/internal/integrations/agents/localipc",
+		module + "/internal/integrations/hooks",
+		module + "/internal/integrations/metadata",
+		module + "/internal/integrations/mux",
+		module + "/internal/integrations/procfsresources",
+		module + "/internal/integrations/tmux",
+		module + "/internal/integrations/tmuxexec",
+		module + "/internal/integrations/tmuxopts",
+		module + "/internal/theme",
+		module + "/pkg/projmux",
 		module + "/internal/services/instructions",
 		module + "/internal/core/metadata",
 		module + "/internal/core/persona",
@@ -109,7 +135,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/config",
 		module + "/internal/state",
 		module + "/internal/aiprovider",
-		"golang.org/x/sys/unix":
+		"golang.org/x/sys/unix", "golang.org/x/term", "golang.org/x/mod/semver", "github.com/spf13/cobra", "github.com/spf13/pflag":
 		return true
 	}
 	return false

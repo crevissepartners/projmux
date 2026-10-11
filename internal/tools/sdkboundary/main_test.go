@@ -64,3 +64,17 @@ func TestBoundaryFixtures(t *testing.T) {
 		})
 	}
 }
+
+func TestPureCoreBoundary(t *testing.T) {
+	root, err := filepath.Abs("../../../test/sdk/testdata/boundary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	t.Setenv("GOWORK", "off")
+	for _, name := range []string{"signature", "field", "method", "generic"} {
+		if err := checkPackage(module+"/sdk-boundary-fixture/"+name, true); err == nil || !strings.Contains(err.Error(), "SDK implementation import is not allowed") {
+			t.Fatalf("pure core accepted %s: %v", name, err)
+		}
+	}
+}

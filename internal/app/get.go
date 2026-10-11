@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/resources"
 )
 
 // canonicalGetPane is the canonical route spelling whose output catalog owns
@@ -110,7 +111,7 @@ func loadResourceRegistry() (coremetadata.Registry, error) {
 	if err != nil {
 		return coremetadata.Registry{}, fmt.Errorf("resolve projmux state paths: %w", err)
 	}
-	return intmetadata.NewDefaultStore(paths).LoadDegradedReadOnly()
+	return resources.Load(paths)
 }
 
 // snapshotResourceRegistry is the stricter read required by a reconciliation

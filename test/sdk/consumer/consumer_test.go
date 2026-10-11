@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/pkg/projmux"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
 func TestExternalInstructionsConsumer(t *testing.T) {
@@ -38,4 +39,29 @@ func TestExternalInstructionsConsumer(t *testing.T) {
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeNotFound {
 		t.Fatalf("typed refusal %T %v", err, err)
 	}
+}
+
+func TestExternalResourceConsumer(t *testing.T) {
+	root := t.TempDir()
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state"), SocketPath: filepath.Join(root, "absent.sock")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Version() == "" {
+		t.Fatal("empty version")
+	}
+	for _, kind := range []core.Kind{core.KindProject, core.KindWindow, core.KindPane, core.KindAgent} {
+		var list core.ResourceList
+		list, err = c.ListResources(context.Background(), kind, projmux.ResourceSelector{})
+		if err != nil || list.Items == nil || len(list.Items) != 0 {
+			t.Fatalf("%s: %+v %v", kind, list, err)
+		}
+		_, err = c.GetResource(context.Background(), core.Ref{Kind: kind, Value: "uid:missing"})
+		var refusal *projmux.Refusal
+		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound {
+			t.Fatalf("%s: %v", kind, err)
+		}
+	}
+	// Concrete public fields remain usable without importing an internal package.
+	_ = core.Agent{Metadata: core.ObjectMeta{UID: "agent-example"}, Status: core.AgentStatus{SessionRef: &core.AgentSessionRef{Codex: &core.CodexSessionRef{ThreadID: "thread"}}}}
 }
