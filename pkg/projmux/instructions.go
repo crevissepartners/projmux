@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -37,6 +39,7 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	usageDir          string
 	instructions      instructions.Service
 	paths             config.Paths
 	pathsErr          error
@@ -69,7 +72,11 @@ func NewClient(options Options) (*Client, error) {
 	if options.SocketPath != "" {
 		transport = resourcegraph.Transport{Kind: resourcegraph.TransportSocketPath, Value: filepath.Clean(options.SocketPath), Source: resourcegraph.TransportSourceSocketPath}
 	}
-	return &Client{instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	usageOverride := strings.TrimSpace(os.Getenv("PROJMUX_USAGE_STATE_DIR"))
+	if options.StateDir != "" {
+		usageOverride = ""
+	}
+	return &Client{usageDir: defaultUsageDir(paths.StateDir, usageOverride), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

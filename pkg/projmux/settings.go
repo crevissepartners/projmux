@@ -1,0 +1,52 @@
+package projmux
+
+import (
+	"context"
+	"errors"
+
+	"github.com/crevissepartners/projmux/internal/services/settings"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
+)
+
+const (
+	CodeConfigKeyInvalid   Code = "config-key-invalid"
+	CodeConfigValueInvalid Code = "config-value-invalid"
+)
+
+// GetConfig reads one public central setting. Providers and policies retain
+// the CLI's default-on-read-error behavior; locale parse errors are returned.
+func (c *Client) GetConfig(ctx context.Context, key core.ConfigKey) (core.ConfigValue, error) {
+	v, err := (settings.Service{Paths: c.instructions.Paths}).Get(ctx, string(key))
+	if err != nil {
+		return core.ConfigValue{}, settingsRefusal(err)
+	}
+	return publicConfig(v), nil
+}
+
+// SetConfig writes the same files as config providers/locale/agent-questions/
+// agent-approvals. Cancellation before admission writes nothing. Policy writes
+// finish once admitted; the two policy files are not a multi-file transaction.
+func (c *Client) SetConfig(ctx context.Context, u core.ConfigUpdate) (core.ConfigValue, error) {
+	v, err := (settings.Service{Paths: c.instructions.Paths}).Set(ctx, settings.Update{Key: string(u.Key), Provider: u.Provider, Enabled: u.Enabled, Locale: u.Locale, Answering: u.Answering, Window: u.Window})
+	if err != nil {
+		return core.ConfigValue{}, settingsRefusal(err)
+	}
+	return publicConfig(v), nil
+}
+func publicConfig(v settings.Value) core.ConfigValue {
+	out := core.ConfigValue{Key: core.ConfigKey(v.Key), Locale: v.Locale, Source: v.Source, Answering: v.Answering, Window: v.Window}
+	if v.Providers != nil {
+		out.Providers = make([]core.ProviderState, len(v.Providers))
+		for i, p := range v.Providers {
+			out.Providers[i] = core.ProviderState(p)
+		}
+	}
+	return out
+}
+func settingsRefusal(err error) error {
+	var input *settings.InputError
+	if errors.As(err, &input) {
+		return &Refusal{Code: Code(input.Code), message: err.Error()}
+	}
+	return err
+}

@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	notificationService "github.com/crevissepartners/projmux/internal/services/notifications"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -286,15 +287,8 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	if *ui == "sidebar" && *live {
 		return usageError("get notifications --ui=sidebar cannot be combined with --live")
 	}
-	for _, s := range severities {
-		if err := notify.ValidateSeverity(s); err != nil {
-			return usageError(err.Error())
-		}
-	}
-	for _, s := range sources {
-		if err := notify.ValidateSource(s); err != nil {
-			return usageError(err.Error())
-		}
+	if err := notificationService.Validate(notificationService.FilterOptions{Severities: severities, Sources: sources, Limit: *limit}); err != nil {
+		return err
 	}
 
 	store, err := c.requireStore()
@@ -311,14 +305,9 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 	// sidebar above, a TUI surface, follows the operator's locale.
 	locale := i18n.FallbackLocale
 
-	entries, err := store.List()
+	entries, err := notificationService.List(context.Background(), store, notificationService.FilterOptions{Severities: severities, Sources: sources, Limit: *limit})
 	if err != nil {
-		return fmt.Errorf("list notifications: %w", err)
-	}
-
-	entries = filterEntries(entries, severities, sources)
-	if *limit > 0 && len(entries) > *limit {
-		entries = entries[:*limit]
+		return err
 	}
 
 	if *asJSON {
@@ -1567,9 +1556,9 @@ func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Wr
 			printAckUsage()
 			return usageError(route + " --all does not accept positional arguments")
 		}
-		removed, err := store.AckAll()
+		removed, err := notificationService.Ack(context.Background(), store, "", true)
 		if err != nil {
-			return fmt.Errorf("ack all notifications: %w", err)
+			return err
 		}
 		_, err = fmt.Fprintf(stdout, "ack %d notification(s)\n", removed)
 		return err
@@ -1584,11 +1573,8 @@ func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Wr
 		printAckUsage()
 		return usageError(route + " requires a non-empty <id> argument")
 	}
-	if err := store.Ack(id); err != nil {
-		if errors.Is(err, notify.ErrNotFound) {
-			return fmt.Errorf("ack notification: %w", err)
-		}
-		return fmt.Errorf("ack notification: %w", err)
+	if _, err := notificationService.Ack(context.Background(), store, id, false); err != nil {
+		return err
 	}
 	_, err = fmt.Fprintf(stdout, "ack %s\n", id)
 	return err
@@ -1597,37 +1583,7 @@ func (c *notifyCommand) runAck(route string, args []string, stdout, stderr io.Wr
 // --- helpers -----------------------------------------------------------------
 
 func filterEntries(entries []notify.Notification, severities, sources []string) []notify.Notification {
-	if len(severities) == 0 && len(sources) == 0 {
-		return entries
-	}
-	sevSet := toSet(severities)
-	srcSet := toSet(sources)
-	out := make([]notify.Notification, 0, len(entries))
-	for _, e := range entries {
-		if len(sevSet) > 0 {
-			if _, ok := sevSet[e.Severity]; !ok {
-				continue
-			}
-		}
-		if len(srcSet) > 0 {
-			if _, ok := srcSet[e.Source]; !ok {
-				continue
-			}
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
-func toSet(values []string) map[string]struct{} {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make(map[string]struct{}, len(values))
-	for _, v := range values {
-		out[v] = struct{}{}
-	}
-	return out
+	return notificationService.Filter(entries, severities, sources)
 }
 
 // writeNotifyTable renders a tab-aligned table: ID  AGE  SEV  SRC  TARGET  TEXT.

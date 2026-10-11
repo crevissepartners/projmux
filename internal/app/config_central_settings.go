@@ -1,13 +1,14 @@
 package app
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 )
 
 // runLocale answers `config locale [--set <value>]`.
@@ -86,89 +87,27 @@ func (c *configCommand) runAgentQuestions(args []string, stdout, stderr io.Write
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-	var way config.AgentQuestionAnswering
-	if set["answering"] {
-		parsed, err := knownAgentQuestionAnswering(*answering)
-		if err != nil {
-			return err
-		}
-		way = parsed
+	if !set["answering"] && !set["window"] {
+		_, err := fmt.Fprintf(stdout, "answering %s window %s\n", loadCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv), agentQuestionWindowWord(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)))
+		return err
 	}
-	var seconds int
-	if set["window"] {
-		if strings.TrimSpace(*window) == "" {
-			return usageError("config agent-questions --window requires a value: " + agentQuestionWindowSpellings())
-		}
-		parsed, err := parseAgentQuestionWindow(*window)
-		if err != nil {
-			return usageError(fmt.Sprintf("config agent-questions --window: invalid window %q; want %s", *window, agentQuestionWindowSpellings()))
-		}
-		seconds = parsed
-	}
-
+	update := settings.Update{Key: "agent-questions"}
 	if set["answering"] {
-		if _, err := saveCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv, way); err != nil {
-			return err
-		}
+		update.Answering = answering
 	}
 	if set["window"] {
-		if err := saveCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv, seconds); err != nil {
-			return err
-		}
+		update.Window = window
 	}
-	// Report what the hook will read, not what was asked for.
-	_, err := fmt.Fprintf(stdout, "answering %s window %s\n",
-		loadCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv),
-		agentQuestionWindowWord(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)))
+	result, err := c.centralPolicyService().Set(context.Background(), update)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "answering %s window %s\n", result.Answering, result.Window)
 	return err
 }
 
-// knownAgentQuestionAnswering resolves one operator-typed answering way,
-// refusing any word other than the two ways.
-func knownAgentQuestionAnswering(value string) (config.AgentQuestionAnswering, error) {
-	known := []config.AgentQuestionAnswering{config.AgentQuestionAnsweringClaude, config.AgentQuestionAnsweringProjmux}
-	names := make([]string, 0, len(known))
-	for _, way := range known {
-		names = append(names, string(way))
-	}
-	if strings.TrimSpace(value) == "" {
-		return "", usageError("config agent-questions --answering requires a way: " + strings.Join(names, ", "))
-	}
-	typed := config.AgentQuestionAnswering(strings.ToLower(strings.TrimSpace(value)))
-	for _, way := range known {
-		if typed == way {
-			return way, nil
-		}
-	}
-	return "", usageError(fmt.Sprintf("config agent-questions --answering: unknown way %q; known ways: %s", value, strings.Join(names, ", ")))
-}
-
-func agentQuestionWindowSpellings() string {
-	return fmt.Sprintf("%d..%d seconds or %s", config.MinAgentQuestionWindowSeconds, config.MaxAgentQuestionWindowSeconds, config.AgentQuestionWindowUnlimitedWord)
-}
-
-// parseAgentQuestionWindow reads one `--window` value: the unlimited word, or
-// whole seconds in config.MinAgentQuestionWindowSeconds..
-// config.MaxAgentQuestionWindowSeconds.
-func parseAgentQuestionWindow(raw string) (int, error) {
-	text := strings.TrimSpace(raw)
-	if strings.EqualFold(text, config.AgentQuestionWindowUnlimitedWord) {
-		return config.UnlimitedAgentQuestionWindowSeconds, nil
-	}
-	seconds, err := strconv.Atoi(text)
-	if err != nil || seconds < config.MinAgentQuestionWindowSeconds || seconds > config.MaxAgentQuestionWindowSeconds {
-		return 0, fmt.Errorf("agent question window %q must be %d..%d seconds", raw, config.MinAgentQuestionWindowSeconds, config.MaxAgentQuestionWindowSeconds)
-	}
-	return seconds, nil
-}
-
 // agentQuestionWindowWord prints a window the way `--window` accepts it.
-func agentQuestionWindowWord(seconds int) string {
-	if seconds == config.UnlimitedAgentQuestionWindowSeconds {
-		return config.AgentQuestionWindowUnlimitedWord
-	}
-	return strconv.Itoa(seconds)
-}
+func agentQuestionWindowWord(seconds int) string { return settings.AgentQuestionWindowWord(seconds) }
 
 // runAgentApprovals answers `config agent-approvals [--answering <way>]
 // [--window <seconds>]`.
@@ -201,57 +140,37 @@ func (c *configCommand) runAgentApprovals(args []string, stdout, stderr io.Write
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
-	var way config.AgentApprovalAnswering
-	if set["answering"] {
-		parsed, err := knownAgentApprovalAnswering(*answering)
-		if err != nil {
-			return err
-		}
-		way = parsed
+	if !set["answering"] && !set["window"] {
+		_, err := fmt.Fprintf(stdout, "answering %s window %s\n", loadCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv), fmt.Sprint(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)))
+		return err
 	}
-	var seconds int
-	if set["window"] {
-		spellings := fmt.Sprintf("%d..%d seconds", config.MinAgentApprovalWindowSeconds, config.MaxAgentApprovalWindowSeconds)
-		parsed, err := strconv.Atoi(strings.TrimSpace(*window))
-		if err != nil || parsed < config.MinAgentApprovalWindowSeconds || parsed > config.MaxAgentApprovalWindowSeconds {
-			return usageError(fmt.Sprintf("config agent-approvals --window: invalid window %q; want %s", *window, spellings))
-		}
-		seconds = parsed
-	}
-
+	update := settings.Update{Key: "agent-approvals"}
 	if set["answering"] {
-		if err := saveCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv, way); err != nil {
-			return err
-		}
+		update.Answering = answering
 	}
 	if set["window"] {
-		if err := saveCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv, seconds); err != nil {
-			return err
-		}
+		update.Window = window
 	}
-	// Report what the hook will read, not what was asked for.
-	_, err := fmt.Fprintf(stdout, "answering %s window %d\n",
-		loadCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv),
-		loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv))
+	result, err := c.centralPolicyService().Set(context.Background(), update)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "answering %s window %s\n", result.Answering, result.Window)
 	return err
 }
 
-// knownAgentApprovalAnswering resolves one operator-typed answering way,
-// refusing any word other than the two ways.
-func knownAgentApprovalAnswering(value string) (config.AgentApprovalAnswering, error) {
-	known := []config.AgentApprovalAnswering{config.AgentApprovalAnsweringClaude, config.AgentApprovalAnsweringProjmux}
-	names := make([]string, 0, len(known))
-	for _, way := range known {
-		names = append(names, string(way))
+// centralPolicyService keeps every front on the central save adapters while
+// sharing validation and write ordering with the SDK service.
+func (c *configCommand) centralPolicyService() settings.Service {
+	return settings.Service{
+		Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) },
+		QuestionAnswering: func(way config.AgentQuestionAnswering) (config.AgentQuestionAnswering, error) {
+			return saveCentralAgentQuestionAnswering(c.homeDir, c.lookupEnv, way)
+		},
+		QuestionWindow: func(seconds int) error { return saveCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv, seconds) },
+		ApprovalAnswering: func(way config.AgentApprovalAnswering) error {
+			return saveCentralAgentApprovalAnswering(c.homeDir, c.lookupEnv, way)
+		},
+		ApprovalWindow: func(seconds int) error { return saveCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv, seconds) },
 	}
-	if strings.TrimSpace(value) == "" {
-		return "", usageError("config agent-approvals --answering requires a way: " + strings.Join(names, ", "))
-	}
-	typed := config.AgentApprovalAnswering(strings.ToLower(strings.TrimSpace(value)))
-	for _, way := range known {
-		if typed == way {
-			return way, nil
-		}
-	}
-	return "", usageError(fmt.Sprintf("config agent-approvals --answering: unknown way %q; known ways: %s", value, strings.Join(names, ", ")))
 }

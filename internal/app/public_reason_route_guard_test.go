@@ -124,7 +124,7 @@ var publicReasonExceptions = map[string]publicReasonException{
 	// Text that is not a route.
 	`internal/app/agent_activation_binding.go "tmux"`:                 {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
 	`internal/app/attach.go "runtime attach fallback"`:                {reason: "the route `runtime attach` followed by the name of its --fallback flag"},
-	`internal/app/config_central_settings.go "agent question window"`: {reason: publicReasonNotARoute + ": the agent question window setting"},
+	`internal/services/settings/settings.go "agent question window"`:  {reason: publicReasonNotARoute + ": the agent question window setting"},
 	`internal/app/create.go "agent pane"`:                             {reason: publicReasonNotARoute + ": the agent pane intent invariant"},
 	`internal/app/create_agent.go "tmux"`:                             {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
 	`internal/app/registry_recovery.go "reconcile registry checksum"`: {reason: "the route `reconcile registry` followed by English (`checksum guards require --source`)"},
@@ -722,6 +722,14 @@ func publicReasonProblems(sites []publicReasonSite, exceptions map[string]public
 func TestPublicRouteReasonsNameCatalogRoutes(t *testing.T) {
 	t.Parallel()
 	pkgs := flagParseGuardLoadRepo(t, filepath.Join("..", ".."))
+	// Settings and queue errors moved into shared execution services. Keep their
+	// public route spellings under this guard at the new ownership boundary.
+	for i := range pkgs {
+		switch pkgs[i].importPath {
+		case flagParseGuardModule + "/internal/services/settings", flagParseGuardModule + "/internal/services/notifications", flagParseGuardModule + "/internal/services/usage":
+			pkgs[i].scan = true
+		}
+	}
 	eval, problems := newFlagSetNameEval(pkgs)
 	sites, collectProblems := publicReasonCollect(pkgs, eval)
 	checked, used := publicReasonProblems(sites, publicReasonExceptions)

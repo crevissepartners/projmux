@@ -27,6 +27,7 @@ import (
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	usageService "github.com/crevissepartners/projmux/internal/services/usage"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -167,7 +168,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		if *window != "all" {
 			filter.Window = *window
 		}
-		points, err := usage.NewStore(stateDir).ReadHistory(filter)
+		points, err := usageService.History(context.Background(), stateDir, filter)
 		if err != nil {
 			return err
 		}
@@ -538,19 +539,12 @@ func (c *Command) CachedState() (usage.State, []UnsupportedProvider, time.Time, 
 	if err != nil {
 		return usage.State{}, nil, time.Time{}, err
 	}
-	state, err := mgr.LoadState()
-	if err != nil {
-		return usage.State{}, nil, time.Time{}, err
-	}
-	state = filterUsageStateByModels(state, modelScope)
+	// Cache mtime is best-effort, as before service extraction. A supplied
+	// manager can read its own state even when the ambient cache path is absent.
+	file, _ := c.SnapshotCacheFile()
 	unsupported := c.unsupportedUsageProviders("all", false)
-	var cacheMTime time.Time
-	if file, err := c.SnapshotCacheFile(); err == nil {
-		if info, statErr := os.Stat(file); statErr == nil {
-			cacheMTime = info.ModTime()
-		}
-	}
-	return state, unsupported, cacheMTime, nil
+	result, err := usageService.Cached(context.Background(), mgr.LoadState, file, modelScope, unsupported)
+	return result.State, result.Unsupported, result.ModTime, err
 }
 
 // SnapshotCacheFile is the snapshot cache file the usage store reads and
@@ -637,11 +631,7 @@ func aiAgentProvidersToUsageModels(agents []config.AIAgentProvider) []string {
 // UnsupportedProvider describes an enabled AI agent whose usage cannot be
 // reported (no supported adapter). Rendered as a one-line note by the table
 // form and the statusbar usage popup.
-type UnsupportedProvider struct {
-	Model  string
-	Label  string
-	Reason string
-}
+type UnsupportedProvider = usageService.UnsupportedProvider
 
 func (c *Command) unsupportedUsageProviders(model string, explicitModel bool) []UnsupportedProvider {
 	model = strings.ToLower(strings.TrimSpace(model))
@@ -746,29 +736,7 @@ func accountUsageSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 }
 
 func filterUsageStateByModels(state usage.State, models []string) usage.State {
-	allowed := usageModelSet(models)
-	if len(allowed) == 0 {
-		return usage.State{
-			LastCollect: map[string]time.Time{},
-			Backoff:     map[string]usage.BackoffState{},
-		}
-	}
-	out := usage.State{
-		Snapshots:   accountUsageSnapshots(filterSnapshotsByModels(state.Snapshots, models)),
-		LastCollect: map[string]time.Time{},
-		Backoff:     map[string]usage.BackoffState{},
-	}
-	for name, value := range state.LastCollect {
-		if allowed[strings.ToLower(strings.TrimSpace(name))] {
-			out.LastCollect[name] = value
-		}
-	}
-	for name, value := range state.Backoff {
-		if allowed[strings.ToLower(strings.TrimSpace(name))] {
-			out.Backoff[name] = value
-		}
-	}
-	return out
+	return usageService.FilterState(state, models)
 }
 
 func usageModelSet(models []string) map[string]bool {

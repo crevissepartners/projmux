@@ -1,13 +1,14 @@
 package app
 
 import (
-	"errors"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 )
 
 // runProviders answers `config providers [--enable <id> | --disable <id>]`.
@@ -45,13 +46,16 @@ func (c *configCommand) runProviders(args []string, stdout, stderr io.Writer) er
 
 	switch {
 	case set["enable"]:
-		return c.setProvider(*enable, "--enable", true, stdout)
+		return c.setProvider(*enable, true, stdout)
 	case set["disable"]:
-		return c.setProvider(*disable, "--disable", false, stdout)
+		return c.setProvider(*disable, false, stdout)
 	default:
-		enabled := aiEnabledAgents(c.homeDir, c.lookupEnv)
-		for _, provider := range config.KnownAIAgentProviders() {
-			if _, err := fmt.Fprintln(stdout, aiProviderStatusLine(provider, aiEnabledAgentsContains(enabled, provider))); err != nil {
+		result, err := (settings.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}).Get(context.Background(), "providers")
+		if err != nil {
+			return err
+		}
+		for _, p := range result.Providers {
+			if _, err := fmt.Fprintln(stdout, aiProviderStatusLine(config.AIAgentProvider(p.ID), p.Enabled)); err != nil {
 				return err
 			}
 		}
@@ -59,24 +63,19 @@ func (c *configCommand) runProviders(args []string, stdout, stderr io.Writer) er
 	}
 }
 
-func (c *configCommand) setProvider(value, flagName string, enabled bool, stdout io.Writer) error {
-	if strings.TrimSpace(value) == "" {
-		return usageError(fmt.Sprintf("config providers %s requires a provider id: %s", flagName, knownAIProviderList()))
-	}
-	provider, err := knownAIProvider(value)
-	if err != nil {
-		return usageError(fmt.Sprintf("config providers %s: unknown provider %q; known providers: %s", flagName, value, knownAIProviderList()))
-	}
-	if err := setAIEnabledAgent(c.homeDir, c.lookupEnv, provider, enabled); err != nil {
-		return err
-	}
-	// Report what a later launch will read, not what was asked for.
-	_, current, err := readAIEnabledAgentsPolicy(c.homeDir, c.lookupEnv)
+func (c *configCommand) setProvider(value string, enabled bool, stdout io.Writer) error {
+	result, err := (settings.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}).Set(context.Background(), settings.Update{Key: "providers", Provider: value, Enabled: enabled})
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stdout, aiProviderStatusLine(provider, aiEnabledAgentsContains(current, provider)))
-	return err
+	provider, _ := settings.KnownAIProvider(value)
+	for _, p := range result.Providers {
+		if p.ID == string(provider) {
+			_, err := fmt.Fprintln(stdout, aiProviderStatusLine(provider, p.Enabled))
+			return err
+		}
+	}
+	return nil
 }
 
 func aiProviderStatusLine(provider config.AIAgentProvider, enabled bool) string {
@@ -86,25 +85,10 @@ func aiProviderStatusLine(provider config.AIAgentProvider, enabled bool) string 
 	return string(provider) + " disabled"
 }
 
-func knownAIProviderList() string {
-	known := config.KnownAIAgentProviders()
-	names := make([]string, 0, len(known))
-	for _, provider := range known {
-		names = append(names, string(provider))
-	}
-	return strings.Join(names, ", ")
-}
-
-var errUnknownAIProvider = errors.New("unknown AI agent provider")
-
 // knownAIProvider resolves one operator-typed provider id against the set the
 // enabled-providers policy governs.
 func knownAIProvider(value string) (config.AIAgentProvider, error) {
-	normalized := config.NormalizeAIEnabledAgents([]string{value})
-	if len(normalized) != 1 {
-		return "", fmt.Errorf("%w: %s", errUnknownAIProvider, value)
-	}
-	return normalized[0], nil
+	return settings.KnownAIProvider(value)
 }
 
 // readAIEnabledAgentsPolicy reads the enabled-providers file strictly. Unlike
@@ -116,16 +100,7 @@ func knownAIProvider(value string) (config.AIAgentProvider, error) {
 // file is authoritative even when it names nothing, so disabling every provider
 // persists as "none enabled" rather than falling back to the default.
 func readAIEnabledAgentsPolicy(homeDir func() (string, error), lookupEnv func(string) string) (string, []config.AIAgentProvider, error) {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return "", nil, err
-	}
-	path := paths.AIEnabledAgentsFile()
-	current, err := config.LoadAIEnabledAgentsFile(path)
-	if err != nil {
-		return "", nil, err
-	}
-	return path, current, nil
+	return settings.ReadAIEnabledAgentsPolicy(homeDir, lookupEnv)
 }
 
 // setAIEnabledAgent is the one write path of the enabled-providers policy. The
@@ -137,24 +112,5 @@ func readAIEnabledAgentsPolicy(homeDir func() (string, error), lookupEnv func(st
 // does not freeze the shipped default into a file that a later release's new
 // provider would then be missing from.
 func setAIEnabledAgent(homeDir func() (string, error), lookupEnv func(string) string, provider config.AIAgentProvider, enabled bool) error {
-	path, current, err := readAIEnabledAgentsPolicy(homeDir, lookupEnv)
-	if err != nil {
-		return err
-	}
-	if aiEnabledAgentsContains(current, provider) == enabled {
-		return nil
-	}
-	members := map[config.AIAgentProvider]bool{}
-	for _, agent := range current {
-		members[agent] = true
-	}
-	members[provider] = enabled
-
-	next := make([]config.AIAgentProvider, 0, len(config.DefaultAIEnabledAgents))
-	for _, agent := range config.KnownAIAgentProviders() {
-		if members[agent] {
-			next = append(next, agent)
-		}
-	}
-	return config.SaveAIEnabledAgentsFile(path, next)
+	return settings.SetAIEnabledAgent(homeDir, lookupEnv, provider, enabled)
 }

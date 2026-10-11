@@ -157,3 +157,49 @@ func TestExternalProfileConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExternalSettingsUsageNotificationsConsumer(t *testing.T) {
+	root := t.TempDir()
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var value core.ConfigValue
+	value, err = c.SetConfig(ctx, core.ConfigUpdate{Key: core.ConfigLocale, Locale: "ko-KR"})
+	if err != nil || value.Locale != "ko-KR" {
+		t.Fatalf("%+v %v", value, err)
+	}
+	value, err = c.GetConfig(ctx, core.ConfigLocale)
+	if err != nil || value.Locale != "ko-KR" {
+		t.Fatalf("%+v %v", value, err)
+	}
+	_, err = c.SetConfig(ctx, core.ConfigUpdate{Key: core.ConfigProviders, Provider: "not-a-provider"})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeConfigValueInvalid {
+		t.Fatal(err)
+	}
+	var cache core.UsageCache
+	cache, err = c.GetUsage(ctx)
+	if err != nil || len(cache.Snapshots) != 0 {
+		t.Fatalf("%+v %v", cache, err)
+	}
+	var points []core.UsageMetricPoint
+	points, err = c.GetUsageHistory(ctx, core.UsageHistoryFilter{})
+	if err != nil || points == nil || len(points) != 0 {
+		t.Fatalf("%+v %v", points, err)
+	}
+	var notifications []core.Notification
+	notifications, err = c.ListNotifications(ctx, core.NotificationFilter{})
+	if err != nil || notifications == nil || len(notifications) != 0 {
+		t.Fatalf("%+v %v", notifications, err)
+	}
+	_, err = c.AckNotifications(ctx, core.NotificationAck{ID: "missing"})
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeNotificationNotFound {
+		t.Fatal(err)
+	}
+	count, err := c.AckNotifications(ctx, core.NotificationAck{All: true})
+	if err != nil || count != 0 {
+		t.Fatalf("%d %v", count, err)
+	}
+}
