@@ -61,7 +61,14 @@ func (c *linkRulesCommand) Run(args []string, stdout, stderr io.Writer) error {
 		operands = operands[:1]
 	}
 	if len(operands) != 1 {
-		printRouteUsage(stderr, "link-rules "+verb)
+		switch verb {
+		case "show":
+			printRouteUsage(stderr, "link-rules show")
+		case "set":
+			printRouteUsage(stderr, "link-rules set")
+		case "delete":
+			printRouteUsage(stderr, "link-rules delete")
+		}
 		return usageError("link-rules " + verb + " requires exactly one <project-ref>")
 	}
 	var out service.Result

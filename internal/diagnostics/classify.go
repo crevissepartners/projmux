@@ -68,6 +68,7 @@ var commandRules = map[string]commandRule{
 	"open":            {subcommands: stringSet("project")},
 	"persona":         {subcommands: stringSet("list", "show", "edit", "set", "delete")},
 	"profile":         {subcommands: stringSet("list", "show", "set", "delete")},
+	"link-rules":      {subcommands: stringSet("show", "set", "delete"), changing: stringSet("set", "delete")},
 	"rebind":          {subcommands: stringSet("project")},
 	"reconcile":       {subcommands: stringSet("resources", "registry")},
 	"rename":          {subcommands: stringSet("project", "window", "pane", "agent"), aliases: pluralAliases("project", "window", "pane", "agent")},
