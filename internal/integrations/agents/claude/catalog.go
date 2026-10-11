@@ -36,44 +36,68 @@ func CoordinationEligible(path string, route coremetadata.AgentRouteRef) bool {
 	return ClassifyCoordinationEligibility(path, route) == ProbeReady
 }
 
-// The read-only subset of the helper wire protocol; other response fields are ignored.
-type claudeCoordinationRequest struct {
-	Version   int                      `json:"version"`
-	Operation string                   `json:"operation"`
-	Target    claudeCoordinationTarget `json:"target"`
-}
-type claudeCoordinationResponse struct {
-	Version         int    `json:"version"`
-	Kind            string `json:"kind"`
-	Reason          string `json:"reason,omitempty"`
-	ProviderVersion string `json:"providerVersion,omitempty"`
-	Ambiguous       bool   `json:"ambiguous,omitempty"`
-	AutoResend      bool   `json:"autoResend"`
-}
-type claudeSocketIdentity struct {
-	device uint64
-	inode  uint64
-	owner  uint32
-	mode   os.FileMode
+// CoordinationRequest and CoordinationResponse define the helper wire schema.
+// App-owned payload types stay parameters; read probes decode unused payloads as JSON.
+
+type CoordinationRequest[Observation, Envelope, Qualification, ToolInput, ReplyEnvelope any] struct {
+	Observation      *Observation       `json:"observation,omitempty"`
+	Version          int                `json:"version"`
+	Operation        string             `json:"operation"`
+	Target           CoordinationTarget `json:"target"`
+	SessionID        string             `json:"sessionId,omitempty"`
+	Envelope         *Envelope          `json:"envelope,omitempty"`
+	MessageRef       string             `json:"messageRef,omitempty"`
+	AssistantMessage string             `json:"assistantMessage,omitempty"`
+	ReplyEnvelope    *ReplyEnvelope     `json:"replyEnvelope,omitempty"`
+	StopHookActive   bool               `json:"stopHookActive,omitempty"`
+	Qualification    *Qualification     `json:"qualification,omitempty"`
+	QualificationRef string             `json:"qualificationRef,omitempty"`
+	ToolInput        *ToolInput         `json:"toolInput,omitempty"`
+	ToolMarker       string             `json:"toolMarker,omitempty"`
+	ExplicitOptIn    bool               `json:"explicitOptIn,omitempty"`
 }
 
-func inspectClaudeSocket(path string) (claudeSocketIdentity, error) {
+type CoordinationResponse[ToolEvidence, Qualification, ToolResult, Delivery, ReplyDelivery any] struct {
+	ToolEvidence     []ToolEvidence `json:"toolEvidence,omitempty"`
+	ProfileEvidence  *Qualification `json:"profileEvidence,omitempty"`
+	Version          int            `json:"version"`
+	Kind             string         `json:"kind"`
+	Delivery         Delivery       `json:"delivery,omitzero"`
+	ReplyRef         string         `json:"replyRef,omitempty"`
+	ReplyCreated     bool           `json:"replyCreated,omitempty"`
+	ReplyDelivery    *ReplyDelivery `json:"replyDelivery,omitempty"`
+	Reason           string         `json:"reason,omitempty"`
+	QualificationRef string         `json:"qualificationRef,omitempty"`
+	ProviderVersion  string         `json:"providerVersion,omitempty"`
+	Ambiguous        bool           `json:"ambiguous,omitempty"`
+	ToolResult       *ToolResult    `json:"toolResult,omitempty"`
+	AutoResend       bool           `json:"autoResend"`
+}
+
+type SocketIdentity struct {
+	Device uint64
+	Inode  uint64
+	Owner  uint32
+	Mode   os.FileMode
+}
+
+func InspectSocket(path string) (SocketIdentity, error) {
 	refused := errors.New("claude socket is unavailable")
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return claudeSocketIdentity{}, refused
+		return SocketIdentity{}, refused
 	}
-	var first claudeSocketIdentity
+	var first SocketIdentity
 	for current := path; ; current = filepath.Dir(current) {
 		info, err := os.Lstat(current)
 		if err != nil || (info.Mode()&os.ModeSymlink != 0 && !trustedDarwinTempAlias(current)) {
-			return claudeSocketIdentity{}, refused
+			return SocketIdentity{}, refused
 		}
 		if current == path {
 			stat, ok := info.Sys().(*syscall.Stat_t)
 			if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || int64(stat.Uid) != int64(os.Getuid()) {
-				return claudeSocketIdentity{}, refused
+				return SocketIdentity{}, refused
 			}
-			first = claudeSocketIdentity{device: uint64(stat.Dev), inode: stat.Ino, owner: stat.Uid, mode: info.Mode()}
+			first = SocketIdentity{Device: uint64(stat.Dev), Inode: stat.Ino, Owner: stat.Uid, Mode: info.Mode()}
 		}
 		if current == filepath.Dir(current) {
 			break
@@ -81,15 +105,15 @@ func inspectClaudeSocket(path string) (claudeSocketIdentity, error) {
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return claudeSocketIdentity{}, refused
+		return SocketIdentity{}, refused
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || int64(stat.Uid) != int64(os.Getuid()) {
-		return claudeSocketIdentity{}, refused
+		return SocketIdentity{}, refused
 	}
-	last := claudeSocketIdentity{device: uint64(stat.Dev), inode: stat.Ino, owner: stat.Uid, mode: info.Mode()}
+	last := SocketIdentity{Device: uint64(stat.Dev), Inode: stat.Ino, Owner: stat.Uid, Mode: info.Mode()}
 	if last != first {
-		return claudeSocketIdentity{}, refused
+		return SocketIdentity{}, refused
 	}
 	return last, nil
 }
@@ -105,7 +129,7 @@ func trustedDarwinTempAlias(path string) bool {
 // This is Projmux's own private readiness socket, never the provider address.
 // It can be derived from nonsecret exact registration identity without storing
 // either socket path in Registry or printing it in a capability projection.
-func claudeActivationLeaseDir(registryPath, paneUID, generation string) string {
+func ActivationLeaseDir(registryPath, paneUID, generation string) string {
 	digest := sha256.Sum256([]byte(registryPath + "\x00" + paneUID + "\x00" + generation))
 	// Both supported operating systems provide /tmp. A fixed short root avoids
 	// Darwin's long per-user TMPDIR exceeding sun_path and makes the creator,
@@ -113,12 +137,12 @@ func claudeActivationLeaseDir(registryPath, paneUID, generation string) string {
 	return filepath.Join("/tmp", "pmx-ce-"+hex.EncodeToString(digest[:16]))
 }
 
-func claudeLeaseSocket(registryPath, paneUID, generation, registrationGeneration string) string {
+func LeaseSocket(registryPath, paneUID, generation, registrationGeneration string) string {
 	digest := sha256.Sum256([]byte(registrationGeneration))
-	return filepath.Join(claudeActivationLeaseDir(registryPath, paneUID, generation), hex.EncodeToString(digest[:16])+".sock")
+	return filepath.Join(ActivationLeaseDir(registryPath, paneUID, generation), hex.EncodeToString(digest[:16])+".sock")
 }
 
-type claudeCoordinationTarget struct {
+type CoordinationTarget struct {
 	AgentUID   string                          `json:"agentUID"`
 	PaneUID    string                          `json:"paneUID"`
 	Generation string                          `json:"generation"`
@@ -126,54 +150,54 @@ type claudeCoordinationTarget struct {
 	Authority  coremetadata.ClaudeAuthorityRef `json:"authority"`
 }
 
-func claudeTargetForRoute(route coremetadata.AgentRouteRef) (claudeCoordinationTarget, bool) {
+func TargetForRoute(route coremetadata.AgentRouteRef) (CoordinationTarget, bool) {
 	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 	if !ok || !authority.Valid() || !route.Same(route) {
-		return claudeCoordinationTarget{}, false
+		return CoordinationTarget{}, false
 	}
-	return claudeCoordinationTarget{AgentUID: route.AgentUID, PaneUID: route.PaneUID, Generation: route.Generation,
+	return CoordinationTarget{AgentUID: route.AgentUID, PaneUID: route.PaneUID, Generation: route.Generation,
 		Provider: "claude", Authority: authority}, true
 }
 
-// claudeCoordinationSocket is derived only from the exact stable activation
+// CoordinationSocket is derived only from the exact stable activation
 // and its typed Claude authority. Names, tmux runtime IDs, provider titles,
 // vendor locators, and tokens never enter this address.
-func claudeCoordinationSocket(registryPath string, target claudeCoordinationTarget) string {
+func CoordinationSocket(registryPath string, target CoordinationTarget) string {
 	identity, _ := json.Marshal(target)
 	digest := sha256.Sum256(identity)
-	return claudeActivationLeaseDir(registryPath, target.PaneUID, target.Generation) + "/coord-" + hex.EncodeToString(digest[:12]) + ".sock"
+	return ActivationLeaseDir(registryPath, target.PaneUID, target.Generation) + "/coord-" + hex.EncodeToString(digest[:12]) + ".sock"
 }
 
-func callClaudeCoordination(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, request claudeCoordinationRequest) (claudeCoordinationResponse, error) {
-	target, ok := claudeTargetForRoute(route)
+func CallCoordination[O, E, Q, I, B, T, R, D, RD any](ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, request CoordinationRequest[O, E, Q, I, B]) (CoordinationResponse[T, Q, R, D, RD], error) {
+	target, ok := TargetForRoute(route)
 	if !ok || request.Target != target {
-		return claudeCoordinationResponse{}, errors.New("claude coordination route is stale")
+		return CoordinationResponse[T, Q, R, D, RD]{}, errors.New("claude coordination route is stale")
 	}
-	path := claudeCoordinationSocket(registryPath, target)
+	path := CoordinationSocket(registryPath, target)
 	dialer := net.Dialer{Timeout: localipc.DialTimeout}
 	connection, err := dialer.DialContext(ctx, "unix", path)
 	if err != nil {
-		return claudeCoordinationResponse{}, errors.New("claude coordination call failed")
+		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{}
 	}
 	defer connection.Close()
 	unixConnection, ok := connection.(*net.UnixConn)
 	if !ok {
-		return claudeCoordinationResponse{}, errors.New("claude coordination call failed")
+		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{}
 	}
 	peer, _, err := localipc.PeerProcess(unixConnection)
 	if err != nil || peer != target.Authority.LeaseProcess {
-		return claudeCoordinationResponse{}, errors.New("claude coordination call failed")
+		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{}
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
 	if err := localipc.WriteJSON(connection, request); err != nil {
-		return claudeCoordinationResponse{}, errors.New("claude coordination call failed")
+		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{PossiblyDispatched: true}
 	}
 	_ = unixConnection.CloseWrite()
-	var response claudeCoordinationResponse
+	var response CoordinationResponse[T, Q, R, D, RD]
 	if err := localipc.ReadJSON(connection, &response); err != nil || response.Version != CoordinationVersion {
-		return claudeCoordinationResponse{}, errors.New("claude coordination call failed")
+		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{PossiblyDispatched: true}
 	}
 	return response, nil
 }
@@ -212,8 +236,8 @@ func ClassifyRegistrationLease(registryPath string, route coremetadata.AgentRout
 			return ProbeStale
 		}
 	}
-	path := claudeLeaseSocket(registryPath, route.PaneUID, route.Generation, authority.RegistrationGeneration)
-	if _, err := inspectClaudeSocket(path); err != nil {
+	path := LeaseSocket(registryPath, route.PaneUID, route.Generation, authority.RegistrationGeneration)
+	if _, err := InspectSocket(path); err != nil {
 		return ProbeStale
 	}
 	// Dial only Projmux's readiness helper. Never connect to the provider inbox;
@@ -239,13 +263,13 @@ func ClassifyRegistrationLease(registryPath string, route coremetadata.AgentRout
 	if ready[0] != 1 {
 		return ProbeStale
 	}
-	target, ok := claudeTargetForRoute(route)
+	target, ok := TargetForRoute(route)
 	if !ok {
 		return ProbeStale
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), LeaseCoordinationProbeTimeout)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
+	response, err := CallCoordination[json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage](ctx, registryPath, route, CoordinationRequest[json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage]{
 		Version: CoordinationVersion, Operation: "probe", Target: target,
 	})
 	if err != nil {
@@ -258,7 +282,7 @@ func ClassifyRegistrationLease(registryPath string, route coremetadata.AgentRout
 }
 
 // claudeCoordinationCallOutcome classifies a failed coordination call by its own
-// bound: callClaudeCoordination arms the connection with the context deadline.
+// bound: CallCoordination arms the connection with the context deadline.
 func claudeCoordinationCallOutcome(ctx context.Context) ProbeOutcome {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return ProbeUnanswered
@@ -270,13 +294,13 @@ func ClassifyCoordinationEligibility(registryPath string, route coremetadata.Age
 	if lease := ClassifyRegistrationLease(registryPath, route); lease != ProbeReady {
 		return lease
 	}
-	target, ok := claudeTargetForRoute(route)
+	target, ok := TargetForRoute(route)
 	if !ok {
 		return ProbeStale
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), CoordinationEligibilityTimeout)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
+	response, err := CallCoordination[json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage](ctx, registryPath, route, CoordinationRequest[json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage]{
 		Version: CoordinationVersion, Operation: "eligibility", Target: target,
 	})
 	if err != nil {
@@ -290,4 +314,12 @@ func ClassifyCoordinationEligibility(registryPath string, route coremetadata.Age
 		return ProbeReady
 	}
 	return ProbeUnqualified
+}
+
+type CoordinationCallError struct{ PossiblyDispatched bool }
+
+func (CoordinationCallError) Error() string { return "claude coordination call failed" }
+func (t CoordinationTarget) Matches(route coremetadata.AgentRouteRef) bool {
+	expected, ok := TargetForRoute(route)
+	return ok && t == expected
 }

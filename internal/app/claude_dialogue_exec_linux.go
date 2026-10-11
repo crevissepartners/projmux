@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"os/exec"
@@ -184,13 +185,13 @@ func runClaudeDialogueObserver(args []string, stdout io.Writer) error {
 		if err := lookup(); err != nil {
 			return err
 		}
-		target, ok := claudeTargetForRoute(route)
+		target, ok := claudeadapter.TargetForRoute(route)
 		if !ok {
 			return errClaudeReplyTool
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
 		defer cancel()
-		response, err := callClaudeCoordination(ctx, os.Getenv(internalClaudeRegistryPathEnv), route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "profile-observe", Target: target, Observation: observation})
+		response, err := requestClaudeCoordination(ctx, os.Getenv(internalClaudeRegistryPathEnv), route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "profile-observe", Target: target, Observation: observation})
 		if err != nil || response.Kind != "profile-observed" {
 			return errClaudeReplyTool
 		}

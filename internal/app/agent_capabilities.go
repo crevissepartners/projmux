@@ -18,8 +18,6 @@ import (
 
 type agentCapabilityProjectionEntry = agentcatalog.Capability
 type agentCapabilityProjection = agentcatalog.Capabilities
-type agentCapabilityAgent = agentcatalog.Agent
-type agentCapabilityRuntime = agentcatalog.Runtime
 type agentCapabilityCoordination = agentcatalog.Coordination
 
 func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) error {
@@ -109,9 +107,6 @@ var (
 
 func projectStaticAgentCapabilities(provider aiprovider.ID) agentCapabilityProjection {
 	return agentcatalog.Static(provider)
-}
-func projectExactAgentCapabilities(registry coremetadata.Registry, agent coremetadata.Agent, provider aiprovider.ID) agentCapabilityProjection {
-	return agentcatalog.Exact(registry, agent, provider)
 }
 
 func exactAgentActivationReason(registry coremetadata.Registry, agent coremetadata.Agent) string {

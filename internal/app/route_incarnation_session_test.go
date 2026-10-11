@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net"
 	"strings"
 	"testing"
@@ -317,7 +318,7 @@ func TestAgentMessageReplyMirrorsSessionIncarnation(t *testing.T) {
 
 func callFixtureSocketDirect(t *testing.T, f *claudeCoordinationTestFixture, request claudeCoordinationRequest) claudeCoordinationResponse {
 	t.Helper()
-	connection, err := net.DialTimeout("unix", claudeCoordinationSocket(f.registryPath, f.target), time.Second)
+	connection, err := net.DialTimeout("unix", claudeadapter.CoordinationSocket(f.registryPath, f.target), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +365,7 @@ func TestReplacedClaudeHelperWritesNothingEvenWithSessionIncarnation(t *testing.
 				replaced.FullIncarnation() == f.route.FullIncarnation() {
 				t.Fatal("fixture does not isolate the authority fence from the incarnation predicate")
 			}
-			replacedTarget, ok := claudeTargetForRoute(replaced)
+			replacedTarget, ok := claudeadapter.TargetForRoute(replaced)
 			if !ok {
 				t.Fatal("replaced target unavailable")
 			}

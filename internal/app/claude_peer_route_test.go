@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"path/filepath"
 	"testing"
 	"time"
@@ -135,10 +136,10 @@ func TestClaudeProcessHelperDeliversProcessCodexSource(t *testing.T) {
 	if _, _, err := store.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
 		t.Fatal(err)
 	}
-	target, _ := claudeTargetForRoute(f.claudeRoute)
+	target, _ := claudeadapter.TargetForRoute(f.claudeRoute)
 	request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &envelope}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	response, err := callClaudeCoordination(ctx, f.codex.path, f.claudeRoute, request)
+	response, err := requestClaudeCoordination(ctx, f.codex.path, f.claudeRoute, request)
 	cancel()
 	if err != nil || response.Delivery.State != agentdelivery.StateDelivered {
 		t.Fatalf("receipt: %+v %v", response, err)

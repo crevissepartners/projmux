@@ -149,7 +149,7 @@ func claudeRegistrationLeaseServes(t *testing.T, registryPath string, route core
 // after every helper registered later has exited.
 func cleanupClaudeAdmissionLeaseDir(t *testing.T, bootstrap claudeEndpointBootstrap) string {
 	t.Helper()
-	dir := claudeActivationLeaseDir(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation)
+	dir := claudeadapter.ActivationLeaseDir(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
@@ -190,10 +190,10 @@ func claudeAdmissionResidue(t *testing.T, bootstrap claudeEndpointBootstrap) []s
 	}
 	authority := bootstrap.Registration.Authority
 	authority.LeaseProcess = process
-	lease := claudeLeaseSocket(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation, authority.RegistrationGeneration)
+	lease := claudeadapter.LeaseSocket(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation, authority.RegistrationGeneration)
 	target := claudeCoordinationTarget{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID,
 		Generation: bootstrap.Generation, Provider: aiModeClaude, Authority: authority}
-	return []string{lease, lease + ".json", claudeCoordinationSocket(bootstrap.RegistryPath, target)}
+	return []string{lease, lease + ".json", claudeadapter.CoordinationSocket(bootstrap.RegistryPath, target)}
 }
 
 func assertClaudeAdmissionResidue(t *testing.T, paths []string, present bool) {

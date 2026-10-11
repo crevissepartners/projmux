@@ -449,7 +449,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		return route
 	}
 	first := getRoute()
-	assertNoClaudeSecretResidue(t, claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration), []string{private.Token, private.Socket})
+	assertNoClaudeSecretResidue(t, claudeadapter.ActivationLeaseDir(registryPath, h.paneUID, h.envGeneration), []string{private.Token, private.Socket})
 	providerIdentity := first.Authority().(coremetadata.ClaudeAuthorityRef).Process
 	if actual, parent, err := claudeadapter.Process(private.PID); err != nil || actual != providerIdentity || parent != cmd.Process.Pid {
 		t.Fatal("provider did not match supervisor's exact child")
@@ -458,7 +458,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	messageStore := messagestore.NewStore(filepath.Dir(filepath.Dir(registryPath)))
 	qualify := func(route coremetadata.AgentRouteRef, command string) {
 		t.Helper()
-		target, ok := claudeTargetForRoute(route)
+		target, ok := claudeadapter.TargetForRoute(route)
 		if !ok {
 			t.Fatal("exact target unavailable")
 		}
@@ -478,7 +478,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: original.Deadline, BrokerEnvelope: &original}
 		_, _ = writeControl.WriteString(command + "\n")
 		ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
-		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		response, callErr := requestClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "qualify", Target: target, Envelope: &challenge, Qualification: ptrQualification(exactQualificationEvidence(route, time.Now().UTC())), ExplicitOptIn: true})
 		cancel()
 		if callErr != nil || response.Kind != "qualification-pending" {
@@ -487,7 +487,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		assertProviderReceipt(t, reader, "qualification", claudeQualificationMarkerPrefix)
 		waitLine(t, reader, "qualification-explicit-returned\n")
 		ctx, cancel = context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
-		status, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		status, callErr := requestClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "qualification-status", Target: target, QualificationRef: response.QualificationRef})
 		cancel()
 		if callErr != nil || status.Kind != "qualification-qualified" {
@@ -568,7 +568,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 
 	send := func(route coremetadata.AgentRouteRef, ref, command string, sourceOverride ...coremetadata.AgentRouteRef) {
 		t.Helper()
-		target, ok := claudeTargetForRoute(route)
+		target, ok := claudeadapter.TargetForRoute(route)
 		if !ok {
 			t.Fatal("exact target unavailable")
 		}
@@ -588,7 +588,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: public.Deadline, BrokerEnvelope: &public}
 		_, _ = writeControl.WriteString(command + "\n")
 		ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
-		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		response, callErr := requestClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "submit", Target: target, Envelope: &privateEnvelope})
 		cancel()
 		if callErr != nil || response.Delivery.State != agentdelivery.StateDelivered {
@@ -611,9 +611,9 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	if first.Same(second) || probeClaudeRegistrationLease(registryPath, first) {
 		t.Fatal("replacement inherited the old registration")
 	}
-	target, _ := claudeTargetForRoute(second)
+	target, _ := claudeadapter.TargetForRoute(second)
 	ctx, cancel := context.WithTimeout(context.Background(), claudeEndpointProcessWaitTimeout)
-	unqualified, callErr := callClaudeCoordination(ctx, registryPath, second, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+	unqualified, callErr := requestClaudeCoordination(ctx, registryPath, second, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "submit", Target: target, Envelope: ptrCoordination(dialogueForRoute("pre-ready", second, time.Now().UTC()))})
 	cancel()
 	// Delivery no longer waits for the replacement to qualify, so this reaches
@@ -760,7 +760,7 @@ func ptrCoordination(value claudeCoordinationEnvelope) *claudeCoordinationEnvelo
 
 func dialogueForRoute(ref string, route coremetadata.AgentRouteRef, now time.Time) claudeCoordinationEnvelope {
 	envelope := dialogueEnvelope(ref, now.Add(time.Minute))
-	envelope.Target, _ = claudeTargetForRoute(route)
+	envelope.Target, _ = claudeadapter.TargetForRoute(route)
 	envelope.BrokerEnvelope.Target = publicMessageRoute(route)
 	return envelope
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"os"
 	"reflect"
 	"strings"
@@ -91,7 +92,7 @@ func replaceClaudeServerWithCoordinationResponse(t *testing.T, fixture *claudeCo
 ) <-chan error {
 	t.Helper()
 	fixture.server.Close()
-	listener, err := localipc.Listen(claudeCoordinationSocket(fixture.registryPath, fixture.target))
+	listener, err := localipc.Listen(claudeadapter.CoordinationSocket(fixture.registryPath, fixture.target))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +578,7 @@ func TestLiveClaudeAdapterDistinguishesPreDispatchWriteZeroFromMissingHelperResp
 	}
 
 	fixture.server.Close()
-	listener, err := localipc.Listen(claudeCoordinationSocket(fixture.registryPath, fixture.target))
+	listener, err := localipc.Listen(claudeadapter.CoordinationSocket(fixture.registryPath, fixture.target))
 	if err != nil {
 		t.Fatal(err)
 	}

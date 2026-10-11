@@ -98,7 +98,7 @@ func watchClaudeActivationLeases(ctx context.Context, spec superviseSpec, record
 }
 
 func reapDeadClaudeLeases(spec superviseSpec) {
-	dir := claudeActivationLeaseDir(spec.RegistryPath, spec.PaneUID, spec.Generation)
+	dir := claudeadapter.ActivationLeaseDir(spec.RegistryPath, spec.PaneUID, spec.Generation)
 	if !privateClaudeLeaseDir(dir) {
 		return
 	}
@@ -115,7 +115,7 @@ func reapDeadClaudeLeases(spec superviseSpec) {
 		if !ok {
 			continue
 		}
-		socket := claudeLeaseSocket(spec.RegistryPath, spec.PaneUID, spec.Generation, receipt.Authority.RegistrationGeneration)
+		socket := claudeadapter.LeaseSocket(spec.RegistryPath, spec.PaneUID, spec.Generation, receipt.Authority.RegistrationGeneration)
 		if path != socket+".json" {
 			continue
 		}
@@ -131,12 +131,12 @@ func reapDeadClaudeLeases(spec superviseSpec) {
 		if err != nil {
 			continue
 		}
-		if _, err := inspectClaudeSocket(socket); err == nil {
+		if _, err := claudeadapter.InspectSocket(socket); err == nil {
 			_ = os.Remove(socket)
 		}
 		target := claudeCoordinationTarget{AgentUID: receipt.AgentUID, PaneUID: receipt.PaneUID, Generation: receipt.Generation,
 			Provider: aiModeClaude, Authority: receipt.Authority}
-		if coordination := claudeCoordinationSocket(spec.RegistryPath, target); filepath.Dir(coordination) == dir {
+		if coordination := claudeadapter.CoordinationSocket(spec.RegistryPath, target); filepath.Dir(coordination) == dir {
 			_ = localipc.RemoveOwnedSocket(coordination, receipt.CoordinationSocket)
 		}
 		_ = os.Remove(path)

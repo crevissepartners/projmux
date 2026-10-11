@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -314,7 +313,7 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 			return matched, diagnostics.ClaudeRegistrationSessionIDEmbedsLocator
 		}
 	}
-	if _, err := inspectClaudeSocket(socket); err != nil {
+	if _, err := claudeadapter.InspectSocket(socket); err != nil {
 		return matched, diagnostics.ClaudeRegistrationMessagingSocket
 	}
 	nonce := make([]byte, 24)
@@ -576,74 +575,6 @@ func claudeHelperProducerMatches(bootstrap claudeEndpointBootstrap, parentPID in
 	return err == nil && provider == bootstrap.Registration.Authority.Process
 }
 
-type claudeSocketIdentity struct {
-	device uint64
-	inode  uint64
-	owner  uint32
-	mode   os.FileMode
-}
-
-func inspectClaudeSocket(path string) (claudeSocketIdentity, error) {
-	refused := errors.New("claude socket is unavailable")
-	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return claudeSocketIdentity{}, refused
-	}
-	var first claudeSocketIdentity
-	for current := path; ; current = filepath.Dir(current) {
-		info, err := os.Lstat(current)
-		if err != nil || (info.Mode()&os.ModeSymlink != 0 && !trustedDarwinTempAlias(current)) {
-			return claudeSocketIdentity{}, refused
-		}
-		if current == path {
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || int64(stat.Uid) != int64(os.Getuid()) {
-				return claudeSocketIdentity{}, refused
-			}
-			first = claudeSocketIdentity{device: uint64(stat.Dev), inode: stat.Ino, owner: stat.Uid, mode: info.Mode()}
-		}
-		if current == filepath.Dir(current) {
-			break
-		}
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return claudeSocketIdentity{}, refused
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || int64(stat.Uid) != int64(os.Getuid()) {
-		return claudeSocketIdentity{}, refused
-	}
-	last := claudeSocketIdentity{device: uint64(stat.Dev), inode: stat.Ino, owner: stat.Uid, mode: info.Mode()}
-	if last != first {
-		return claudeSocketIdentity{}, refused
-	}
-	return last, nil
-}
-
-func trustedDarwinTempAlias(path string) bool {
-	if runtime.GOOS != "darwin" || (path != "/tmp" && path != "/var") {
-		return false
-	}
-	target, err := os.Readlink(path)
-	return err == nil && (target == "/private"+path || target == "private"+path)
-}
-
-// This is Projmux's own private readiness socket, never the provider address.
-// It can be derived from nonsecret exact registration identity without storing
-// either socket path in Registry or printing it in a capability projection.
-func claudeActivationLeaseDir(registryPath, paneUID, generation string) string {
-	digest := sha256.Sum256([]byte(registryPath + "\x00" + paneUID + "\x00" + generation))
-	// Both supported operating systems provide /tmp. A fixed short root avoids
-	// Darwin's long per-user TMPDIR exceeding sun_path and makes the creator,
-	// hook, supervisor, and read-only client independent of inherited TMPDIR.
-	return filepath.Join("/tmp", "pmx-ce-"+hex.EncodeToString(digest[:16]))
-}
-
-func claudeLeaseSocket(registryPath, paneUID, generation, registrationGeneration string) string {
-	digest := sha256.Sum256([]byte(registrationGeneration))
-	return filepath.Join(claudeActivationLeaseDir(registryPath, paneUID, generation), hex.EncodeToString(digest[:16])+".sock")
-}
-
 func privateClaudeLeaseDir(path string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
@@ -662,7 +593,7 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 	if spec.AgentUID == "" || spec.Generation == "" || exactActivationRegistryPath(spec.RegistryPath) != nil {
 		return
 	}
-	dir := claudeActivationLeaseDir(spec.RegistryPath, spec.PaneUID, spec.Generation)
+	dir := claudeadapter.ActivationLeaseDir(spec.RegistryPath, spec.PaneUID, spec.Generation)
 	if !privateClaudeLeaseDir(dir) {
 		return
 	}
@@ -674,10 +605,10 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 		name := entry.Name()
 		if strings.HasSuffix(name, ".sock.json") {
 			path := filepath.Join(dir, name)
-			if receipt, ok := readClaudeLeaseOwner(path, spec); ok && path == claudeLeaseSocket(spec.RegistryPath, spec.PaneUID, spec.Generation, receipt.Authority.RegistrationGeneration)+".json" {
+			if receipt, ok := readClaudeLeaseOwner(path, spec); ok && path == claudeadapter.LeaseSocket(spec.RegistryPath, spec.PaneUID, spec.Generation, receipt.Authority.RegistrationGeneration)+".json" {
 				target := claudeCoordinationTarget{AgentUID: receipt.AgentUID, PaneUID: receipt.PaneUID, Generation: receipt.Generation,
 					Provider: aiModeClaude, Authority: receipt.Authority}
-				if coordination := claudeCoordinationSocket(spec.RegistryPath, target); filepath.Dir(coordination) == dir {
+				if coordination := claudeadapter.CoordinationSocket(spec.RegistryPath, target); filepath.Dir(coordination) == dir {
 					_ = localipc.RemoveOwnedSocket(coordination, receipt.CoordinationSocket)
 				}
 				_ = os.Remove(path)
@@ -692,7 +623,7 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		if _, err := inspectClaudeSocket(path); err == nil {
+		if _, err := claudeadapter.InspectSocket(path); err == nil {
 			_ = os.Remove(path)
 		}
 	}
@@ -842,11 +773,11 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if !bootstrap.Registration.Authority.Valid() {
 		return diagnostics.ClaudeRegistrationAuthorityInvalid
 	}
-	socketIdentity, err := inspectClaudeSocket(bootstrap.Socket)
+	socketIdentity, err := claudeadapter.InspectSocket(bootstrap.Socket)
 	if err != nil {
 		return diagnostics.ClaudeRegistrationMessagingSocket
 	}
-	leasePath := claudeLeaseSocket(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation, bootstrap.Registration.Authority.RegistrationGeneration)
+	leasePath := claudeadapter.LeaseSocket(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation, bootstrap.Registration.Authority.RegistrationGeneration)
 	if err := os.Mkdir(filepath.Dir(leasePath), 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
@@ -869,13 +800,13 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if os.Chmod(leasePath, 0o600) != nil {
 		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
-	leaseIdentity, err := inspectClaudeSocket(leasePath)
+	leaseIdentity, err := claudeadapter.InspectSocket(leasePath)
 	if err != nil {
 		return diagnostics.ClaudeRegistrationLeaseUnavailable
 	}
 	coordinationTarget := claudeCoordinationTarget{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID,
 		Generation: bootstrap.Generation, Provider: aiModeClaude, Authority: bootstrap.Registration.Authority}
-	coordinationListener, err := localipc.Listen(claudeCoordinationSocket(bootstrap.RegistryPath, coordinationTarget))
+	coordinationListener, err := localipc.Listen(claudeadapter.CoordinationSocket(bootstrap.RegistryPath, coordinationTarget))
 	if err != nil {
 		return diagnostics.ClaudeRegistrationCoordinationListener
 	}
@@ -902,14 +833,14 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 		return diagnostics.ClaudeRegistrationRegistryUnreadable
 	}
 	expectedRoute, routeReason := resolveRoute(initial, bootstrap.AgentUID)
-	if routeReason != "" || !coordinationTarget.matches(expectedRoute) {
+	if routeReason != "" || !coordinationTarget.Matches(expectedRoute) {
 		return diagnostics.ClaudeRegistrationRouteMismatch
 	}
 	identityCurrent := func() bool {
 		if bootstrap.ProcessProof != nil && !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
 			return false
 		}
-		if observed, err := inspectClaudeSocket(leasePath); err != nil || observed != leaseIdentity {
+		if observed, err := claudeadapter.InspectSocket(leasePath); err != nil || observed != leaseIdentity {
 			return false
 		}
 		if observed, err := localipc.InspectOwnedSocket(coordinationListener.Path); err != nil || observed != coordinationIdentity {
@@ -919,7 +850,7 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 		if err != nil || actual != bootstrap.Registration.Authority.Process {
 			return false
 		}
-		observed, err := inspectClaudeSocket(bootstrap.Socket)
+		observed, err := claudeadapter.InspectSocket(bootstrap.Socket)
 		if err != nil || observed != socketIdentity {
 			return false
 		}
@@ -1114,7 +1045,7 @@ func classifyClaudeRegistrationLease(registryPath string, route coremetadata.Age
 }
 
 // claudeCoordinationCallOutcome classifies a failed coordination call by its own
-// bound: callClaudeCoordination arms the connection with the context deadline.
+// bound: claudeadapter.CallCoordination arms the connection with the context deadline.
 func claudeCoordinationCallOutcome(ctx context.Context) claudeProbeOutcome {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return claudeProbeUnanswered
@@ -1131,3 +1062,5 @@ func probeClaudeCoordinationEligibility(registryPath string, route coremetadata.
 func classifyClaudeCoordinationEligibility(registryPath string, route coremetadata.AgentRouteRef) claudeProbeOutcome {
 	return claudeadapter.ClassifyCoordinationEligibility(registryPath, route)
 }
+
+type claudeSocketIdentity = claudeadapter.SocketIdentity

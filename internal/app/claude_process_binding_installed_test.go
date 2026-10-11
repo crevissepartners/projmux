@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -202,13 +203,13 @@ func TestInstalledProcessClaudeBinding(t *testing.T) {
 		if _, _, err := ms.PutAccepted(*envelope.BrokerEnvelope, "claude-coordination"); err != nil {
 			t.Fatal(err)
 		}
-		target, _ := claudeTargetForRoute(targetRoute)
+		target, _ := claudeadapter.TargetForRoute(targetRoute)
 		request := claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &envelope}
 		if pair.target == f {
 			endpointTools.Store(3)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		response, err := callClaudeCoordination(ctx, f.path, targetRoute, request)
+		response, err := requestClaudeCoordination(ctx, f.path, targetRoute, request)
 		cancel()
 		if err != nil || response.Delivery.State != agentdelivery.StateDelivered {
 			t.Fatalf("native direction%d receipt=%+v err=%v", i, response, err)
@@ -244,7 +245,7 @@ func TestInstalledProcessClaudeBinding(t *testing.T) {
 		}
 		before := calls.Load()
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		duplicate, err := callClaudeCoordination(ctx, f.path, targetRoute, request)
+		duplicate, err := requestClaudeCoordination(ctx, f.path, targetRoute, request)
 		cancel()
 		if err != nil || duplicate.Delivery.State != agentdelivery.StateDelivered {
 			t.Fatal("native duplicate receipt", err)

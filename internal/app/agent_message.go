@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"slices"
@@ -167,7 +168,7 @@ type agentMessageClaudeAdapter interface {
 type liveAgentMessageClaudeAdapter struct{}
 
 func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (agentdelivery.Delivery, error) {
-	target, ok := claudeTargetForRoute(route)
+	target, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		return agentdelivery.Delivery{}, errors.New("claude target authority is unavailable")
 	}
@@ -183,7 +184,7 @@ func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath st
 	}
 	callCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	response, err := callClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
+	response, err := requestClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &private,
 	})
 	if err != nil {
@@ -201,13 +202,13 @@ func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath st
 }
 
 func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, messageRef string) (agentdelivery.Delivery, error) {
-	target, ok := claudeTargetForRoute(route)
+	target, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		return agentdelivery.Delivery{}, errors.New("claude target authority is unavailable")
 	}
 	callCtx, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
-	response, err := callClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
+	response, err := requestClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "status", Target: target, MessageRef: messageRef,
 	})
 	if err != nil {
@@ -312,7 +313,7 @@ type claudeSendRender struct{ frameBytes, contentBytes int }
 // frame is at least that envelope, which carries the full durable route; the
 // v2 self frame without replyAction can fall below it.
 func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (claudeSendRender, error) {
-	target, _ := claudeTargetForRoute(route)
+	target, _ := claudeadapter.TargetForRoute(route)
 	private := claudePrivateCoordinationEnvelope(target, envelope)
 	executables := []string{""}
 	executable := os.Executable

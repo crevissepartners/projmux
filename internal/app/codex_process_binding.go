@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net"
 	"os"
 	"strings"
@@ -18,7 +19,7 @@ import (
 )
 
 func processCodexHostSocket(registryPath, pane, generation string) string {
-	return claudeActivationLeaseDir(registryPath, pane, generation) + "/codex-host.sock"
+	return claudeadapter.ActivationLeaseDir(registryPath, pane, generation) + "/codex-host.sock"
 }
 
 const internalCodexProcessBindingEnv = "PMX_INTERNAL_CODEX_PROCESS_BINDING"

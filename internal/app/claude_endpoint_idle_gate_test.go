@@ -129,13 +129,13 @@ func replaceClaudeEndpointAuthority(t *testing.T, f *claudeEndpointTestFixture) 
 
 func callClaudeEndpointCoordinationProbe(t *testing.T, f *claudeEndpointTestFixture, route coremetadata.AgentRouteRef) (claudeCoordinationResponse, error) {
 	t.Helper()
-	target, ok := claudeTargetForRoute(route)
+	target, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		t.Fatal("exact coordination target unavailable")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	return callClaudeCoordination(ctx, f.bootstrap.RegistryPath, route, claudeCoordinationRequest{
+	return requestClaudeCoordination(ctx, f.bootstrap.RegistryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "probe", Target: target,
 	})
 }

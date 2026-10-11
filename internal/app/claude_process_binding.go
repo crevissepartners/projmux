@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net"
 	"os"
 	"path/filepath"
@@ -857,7 +858,7 @@ func claudeProcessHookObservationOnly() bool {
 }
 
 func processClaudeHostSocket(registryPath, pane, generation string) string {
-	return claudeActivationLeaseDir(registryPath, pane, generation) + "/host.sock"
+	return claudeadapter.ActivationLeaseDir(registryPath, pane, generation) + "/host.sock"
 }
 
 // discoverProcessClaudeProof only reads a host the Registry's exact provider

@@ -166,7 +166,7 @@ os.execv(binary,[binary,'internal','claude-endpoint-register'])
 		t.Fatal("public SessionStart identity did not match exact activation registration")
 	}
 	assertNoClaudeSecretResidue(t, root, []string{private.Token, private.Socket})
-	assertNoClaudeSecretResidue(t, claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration), []string{private.Token, private.Socket})
+	assertNoClaudeSecretResidue(t, claudeadapter.ActivationLeaseDir(registryPath, h.paneUID, h.envGeneration), []string{private.Token, private.Socket})
 	upstreamLocatorObserved := assertClaudeConfigMessagingResidue(t, providerConfig, []string{private.Token, private.Socket})
 	select {
 	case err := <-done:
@@ -220,7 +220,7 @@ os.execv(binary,[binary,'internal','claude-endpoint-register'])
 			t.Fatal(err)
 		}
 		_, reason := coremetadata.ResolveAgentRoute(reg, h.agentUID)
-		_, statErr := os.Lstat(claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
+		_, statErr := os.Lstat(claudeadapter.ActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
 		if reason != "" && os.IsNotExist(statErr) {
 			break
 		}
@@ -300,7 +300,7 @@ func countClaudeToolUse(value any) int {
 
 func TestClaudeEndpointLeasePathFitsSupportedUnixSockets(t *testing.T) {
 	t.Setenv("TMPDIR", "/var/folders/"+strings.Repeat("long", 30)+"/T")
-	path := claudeLeaseSocket("/very/long/creator/metadata/registry.json", "pane", "generation", "registration")
+	path := claudeadapter.LeaseSocket("/very/long/creator/metadata/registry.json", "pane", "generation", "registration")
 	if len(path) >= 104 {
 		t.Fatal("helper locator exceeds supported Darwin sun_path")
 	}

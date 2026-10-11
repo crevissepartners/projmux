@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"path/filepath"
@@ -115,7 +116,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 		}
 		return errors.New(refusal)
 	}
-	coordinationTarget, ok := claudeTargetForRoute(route)
+	coordinationTarget, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		return fmt.Errorf("%s: exact Claude route is unavailable", spelling)
 	}
@@ -162,7 +163,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	}
 	deadline := time.Now().Add(timeout)
 	callCtx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
-	response, callErr := callClaudeCoordination(callCtx, c.messagePaths.registryPath, route, claudeCoordinationRequest{
+	response, callErr := requestClaudeCoordination(callCtx, c.messagePaths.registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "qualify", Target: coordinationTarget,
 		Qualification: &evidence, Envelope: &privateChallenge, ExplicitOptIn: true,
 	})
@@ -170,7 +171,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	if valid := callErr == nil; valid {
 		response, valid = validateClaudeQualificationResponse(response, "", "")
 		if !valid {
-			callErr = claudeCoordinationCallError{possiblyDispatched: true}
+			callErr = claudeCoordinationCallError{PossiblyDispatched: true}
 		}
 	}
 	if callErr != nil {
@@ -203,7 +204,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 		callCtx, cancel = context.WithTimeout(context.Background(), localipc.Deadline)
 		previousKind := response.Kind
 		expectedRef := response.QualificationRef
-		response, callErr = callClaudeCoordination(callCtx, c.messagePaths.registryPath, route, claudeCoordinationRequest{
+		response, callErr = requestClaudeCoordination(callCtx, c.messagePaths.registryPath, route, claudeCoordinationRequest{
 			Version: claudeCoordinationVersion, Operation: "qualification-status", Target: coordinationTarget,
 			QualificationRef: expectedRef,
 		})
@@ -211,7 +212,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 		if valid := callErr == nil; valid {
 			response, valid = validateClaudeQualificationResponse(response, expectedRef, previousKind)
 			if !valid {
-				callErr = claudeCoordinationCallError{possiblyDispatched: true}
+				callErr = claudeCoordinationCallError{PossiblyDispatched: true}
 			}
 		}
 		if callErr != nil {
@@ -277,13 +278,13 @@ func validateClaudeQualificationResponse(response claudeCoordinationResponse, ex
 }
 
 func readCurrentClaudeDialogueEvidence(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef) (claudeQualificationEvidence, error) {
-	target, ok := claudeTargetForRoute(route)
+	target, ok := claudeadapter.TargetForRoute(route)
 	if !ok {
 		return claudeQualificationEvidence{}, errors.New("exact Claude route is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "profile-evidence", Target: target})
+	response, err := requestClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "profile-evidence", Target: target})
 	if err != nil || response.Version != claudeCoordinationVersion || response.Kind != "profile-evidence" || response.ProfileEvidence == nil {
 		return claudeQualificationEvidence{}, errors.New("current reply-only observer evidence is unavailable")
 	}

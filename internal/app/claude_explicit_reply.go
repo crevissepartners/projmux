@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"strings"
 	"time"
 
@@ -61,14 +62,14 @@ func claudeProviderLineage(read func(int) (coremetadata.ProcessIdentity, int, er
 func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string,
 	source coremetadata.AgentRouteRef, reply coremessage.Envelope,
 ) (string, bool, error) {
-	target, ok := claudeTargetForRoute(source)
+	target, ok := claudeadapter.TargetForRoute(source)
 	if !ok {
 		return "", false, coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid,
 			"the reply source route names no Claude coordination target")
 	}
 	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, registryPath, source, claudeCoordinationRequest{
+	response, err := requestClaudeCoordination(ctx, registryPath, source, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "explicit-reply", Target: target,
 		SessionID: target.Authority.SessionID, ReplyEnvelope: &reply,
 	})

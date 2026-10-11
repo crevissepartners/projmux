@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
 	"os/exec"
@@ -278,7 +279,7 @@ func TestProcessResumeActualCLIRoundTrip(t *testing.T) {
 			foreground := &processForegroundRequest{Authority: processhost.Authority{Binding: processSchemaBinding(old.Binding), Connection: old.ConnectionID, Session: old.SessionID}, Action: "turn", Operation: "old-generation-must-not-write", Prompt: "must not write"}
 			if provider == aiModeCodex {
 				foreground.Authority.Session = old.ThreadID
-				socket = claudeActivationLeaseDir(f.store.Path(), current.Binding.PaneUID, current.Binding.Generation) + "/codex-host.sock"
+				socket = claudeadapter.ActivationLeaseDir(f.store.Path(), current.Binding.PaneUID, current.Binding.Generation) + "/codex-host.sock"
 				request = codexProcessExchange{Foreground: foreground}
 			} else {
 				request = claudeProcessCheck{Foreground: foreground}
@@ -565,7 +566,7 @@ func TestProcessResumePreSpawnFailureCanRetryActualCLI(t *testing.T) {
 			command := New().agent
 			const generation = "test-unspawned-resume"
 			command.rebind.create.newGeneration = func() (string, error) { return generation, nil }
-			lease := claudeActivationLeaseDir(f.store.Path(), old.Binding.PaneUID, generation)
+			lease := claudeadapter.ActivationLeaseDir(f.store.Path(), old.Binding.PaneUID, generation)
 			file, err := os.OpenFile(lease, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err != nil {
 				t.Fatal(err)

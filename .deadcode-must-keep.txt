@@ -315,7 +315,6 @@ processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt p
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processUserDeliveryAcceptance	Retained typed receipt validation for the planned foreign-owned Codex deliverProcessUserInput consumer rejects missing or malformed actual Mode/Operation/TurnID without replay or fallback.
 projectClaudeCoordinationEligibilityAt	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.
-projectExactAgentCapabilities	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 publicResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.

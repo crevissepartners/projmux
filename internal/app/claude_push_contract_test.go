@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"net"
 	"os"
 	"path/filepath"
@@ -144,7 +145,7 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 			target := fixture.target
 			test.mutate(&target)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_, err := callClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
+			_, err := requestClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
 				Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &exactEnvelope,
 			})
 			cancel()
@@ -164,11 +165,11 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 		if err := os.Chmod(path, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		identity, err := inspectClaudeSocket(path)
+		identity, err := claudeadapter.InspectSocket(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		identity.inode++ // exact endpoint identity was replaced before the push.
+		identity.Inode++ // exact endpoint identity was replaced before the push.
 		live := &liveClaudeProviderPoster{socket: path, token: "nonsecret-test-token", socketIdentity: identity,
 			process: fixture.target.Authority.Process, current: func() bool { return true }}
 		outcome, err := live.Post("marker", nil)
@@ -315,7 +316,7 @@ func TestClaudeCoordinationV1ThroughV4HelpersCannotReceiveV5Traffic(t *testing.T
 	fixture := newClaudeCoordinationTestFixture(t)
 	for _, version := range []int{1, 2, 3, 4} {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		response, err := callClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
+		response, err := requestClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
 			Version: version, Operation: "submit", Target: fixture.target,
 		})
 		cancel()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"strings"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func TestAgentMessageSendExitCodeFollowsReceiptStateForEveryDeliveryState(t *tes
 		}
 		// The same envelope with a live deadline is valid, so the deadline is
 		// what the live adapter refused.
-		target, ok := claudeTargetForRoute(f.route)
+		target, ok := claudeadapter.TargetForRoute(f.route)
 		if !ok {
 			t.Fatal("exact Claude target unavailable")
 		}

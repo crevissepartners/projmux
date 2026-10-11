@@ -39,37 +39,6 @@ const (
 	claudeCoordinationBoundaryCommand    = "exec projmux internal claude-message-boundary >/dev/null 2>&1 # " + claudeCoordinationManagedMarker
 )
 
-type claudeCoordinationTarget struct {
-	AgentUID   string                          `json:"agentUID"`
-	PaneUID    string                          `json:"paneUID"`
-	Generation string                          `json:"generation"`
-	Provider   string                          `json:"provider"`
-	Authority  coremetadata.ClaudeAuthorityRef `json:"authority"`
-}
-
-func claudeTargetForRoute(route coremetadata.AgentRouteRef) (claudeCoordinationTarget, bool) {
-	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
-	if !ok || !authority.Valid() || !route.Same(route) {
-		return claudeCoordinationTarget{}, false
-	}
-	return claudeCoordinationTarget{AgentUID: route.AgentUID, PaneUID: route.PaneUID, Generation: route.Generation,
-		Provider: aiModeClaude, Authority: authority}, true
-}
-
-func (t claudeCoordinationTarget) matches(route coremetadata.AgentRouteRef) bool {
-	expected, ok := claudeTargetForRoute(route)
-	return ok && t == expected
-}
-
-// claudeCoordinationSocket is derived only from the exact stable activation
-// and its typed Claude authority. Names, tmux runtime IDs, provider titles,
-// vendor locators, and tokens never enter this address.
-func claudeCoordinationSocket(registryPath string, target claudeCoordinationTarget) string {
-	identity, _ := json.Marshal(target)
-	digest := sha256.Sum256(identity)
-	return claudeActivationLeaseDir(registryPath, target.PaneUID, target.Generation) + "/coord-" + hex.EncodeToString(digest[:12]) + ".sock"
-}
-
 type claudeCoordinationSource struct {
 	Kind      string `json:"kind"`
 	Trust     string `json:"trust"`
@@ -98,7 +67,7 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 	if e.BrokerEnvelope != nil && e.BrokerEnvelope.Operator() {
 		authority = coremessage.OperatorAuthority()
 	}
-	if e.Version != claudeCoordinationVersion || !validCoordinationRef(e.MessageRef) || !e.Target.matches(route) ||
+	if e.Version != claudeCoordinationVersion || !validCoordinationRef(e.MessageRef) || !e.Target.Matches(route) ||
 		e.Source != claudeCoordinationSourceOf(authority) || e.Deadline.IsZero() {
 		return false
 	}
@@ -117,41 +86,6 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 	payload, err := json.Marshal(e)
 	return err == nil && len(payload)+1 <= claudeProviderFrameMaxBytes && e.Deadline.After(now) &&
 		!e.Deadline.After(now.Add(coremessage.MaxTTL))
-}
-
-type claudeCoordinationRequest struct {
-	Observation      *claudeDialogueObservation   `json:"observation,omitempty"`
-	Version          int                          `json:"version"`
-	Operation        string                       `json:"operation"`
-	Target           claudeCoordinationTarget     `json:"target"`
-	SessionID        string                       `json:"sessionId,omitempty"`
-	Envelope         *claudeCoordinationEnvelope  `json:"envelope,omitempty"`
-	MessageRef       string                       `json:"messageRef,omitempty"`
-	AssistantMessage string                       `json:"assistantMessage,omitempty"`
-	ReplyEnvelope    *coremessage.Envelope        `json:"replyEnvelope,omitempty"`
-	StopHookActive   bool                         `json:"stopHookActive,omitempty"`
-	Qualification    *claudeQualificationEvidence `json:"qualification,omitempty"`
-	QualificationRef string                       `json:"qualificationRef,omitempty"`
-	ToolInput        *claudeReplyToolInput        `json:"toolInput,omitempty"`
-	ToolMarker       string                       `json:"toolMarker,omitempty"`
-	ExplicitOptIn    bool                         `json:"explicitOptIn,omitempty"`
-}
-
-type claudeCoordinationResponse struct {
-	ToolEvidence     []claudeDialogueToolEvidence `json:"toolEvidence,omitempty"`
-	ProfileEvidence  *claudeQualificationEvidence `json:"profileEvidence,omitempty"`
-	Version          int                          `json:"version"`
-	Kind             string                       `json:"kind"`
-	Delivery         agentdelivery.Delivery       `json:"delivery,omitzero"`
-	ReplyRef         string                       `json:"replyRef,omitempty"`
-	ReplyCreated     bool                         `json:"replyCreated,omitempty"`
-	ReplyDelivery    *coremessage.Delivery        `json:"replyDelivery,omitempty"`
-	Reason           string                       `json:"reason,omitempty"`
-	QualificationRef string                       `json:"qualificationRef,omitempty"`
-	ProviderVersion  string                       `json:"providerVersion,omitempty"`
-	Ambiguous        bool                         `json:"ambiguous,omitempty"`
-	ToolResult       *claudeReplyToolResult       `json:"toolResult,omitempty"`
-	AutoResend       bool                         `json:"autoResend"`
 }
 
 // claudeReplyReservation is this helper's in-memory hold on one original's
@@ -250,15 +184,9 @@ type claudeCoordinationServer struct {
 	done     chan struct{}
 }
 
-type claudeCoordinationCallError struct {
-	possiblyDispatched bool
-}
-
-func (claudeCoordinationCallError) Error() string { return "claude coordination call failed" }
-
 func claudeCoordinationCallPossiblyDispatched(err error) bool {
 	var callErr claudeCoordinationCallError
-	return errors.As(err, &callErr) && callErr.possiblyDispatched
+	return errors.As(err, &callErr) && callErr.PossiblyDispatched
 }
 
 type claudeDialogueBroker interface {
@@ -498,7 +426,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(localipc.Deadline))
 	var request claudeCoordinationRequest
-	if localipc.ReadJSON(conn, &request) != nil || request.Version != claudeCoordinationVersion || !request.Target.matches(s.route) || !s.current() {
+	if localipc.ReadJSON(conn, &request) != nil || request.Version != claudeCoordinationVersion || !request.Target.Matches(s.route) || !s.current() {
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "stale"})
 		return
 	}
@@ -638,40 +566,6 @@ func (s *claudeCoordinationServer) Close() {
 	}
 }
 
-func callClaudeCoordination(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, request claudeCoordinationRequest) (claudeCoordinationResponse, error) {
-	target, ok := claudeTargetForRoute(route)
-	if !ok || request.Target != target {
-		return claudeCoordinationResponse{}, errors.New("claude coordination route is stale")
-	}
-	path := claudeCoordinationSocket(registryPath, target)
-	dialer := net.Dialer{Timeout: localipc.DialTimeout}
-	connection, err := dialer.DialContext(ctx, "unix", path)
-	if err != nil {
-		return claudeCoordinationResponse{}, claudeCoordinationCallError{}
-	}
-	defer connection.Close()
-	unixConnection, ok := connection.(*net.UnixConn)
-	if !ok {
-		return claudeCoordinationResponse{}, claudeCoordinationCallError{}
-	}
-	peer, _, err := localipc.PeerProcess(unixConnection)
-	if err != nil || peer != target.Authority.LeaseProcess {
-		return claudeCoordinationResponse{}, claudeCoordinationCallError{}
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = connection.SetDeadline(deadline)
-	}
-	if err := localipc.WriteJSON(connection, request); err != nil {
-		return claudeCoordinationResponse{}, claudeCoordinationCallError{possiblyDispatched: true}
-	}
-	_ = unixConnection.CloseWrite()
-	var response claudeCoordinationResponse
-	if err := localipc.ReadJSON(connection, &response); err != nil || response.Version != claudeCoordinationVersion {
-		return claudeCoordinationResponse{}, claudeCoordinationCallError{possiblyDispatched: true}
-	}
-	return response, nil
-}
-
 func resolveCurrentClaudeCoordinationActivation(registryPath, paneUID, generation string) (coremetadata.AgentRouteRef, bool) {
 	if exactActivationRegistryPath(registryPath) != nil {
 		return coremetadata.AgentRouteRef{}, false
@@ -710,13 +604,21 @@ func runClaudeMessageBoundaryInput(args []string, _ io.Reader, getenv func(strin
 		return nil
 	}
 	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
-	target, targetOK := claudeTargetForRoute(route)
+	target, targetOK := claudeadapter.TargetForRoute(route)
 	if !ok || !targetOK {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
 	defer cancel()
-	_, _ = callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+	_, _ = requestClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "user-prompt", Target: target, SessionID: authority.SessionID})
 	return nil
 }
+
+type claudeCoordinationTarget = claudeadapter.CoordinationTarget
+type claudeCoordinationRequest = claudeadapter.CoordinationRequest[claudeDialogueObservation, claudeCoordinationEnvelope, claudeQualificationEvidence, claudeReplyToolInput, coremessage.Envelope]
+type claudeCoordinationResponse = claudeadapter.CoordinationResponse[claudeDialogueToolEvidence, claudeQualificationEvidence, claudeReplyToolResult, agentdelivery.Delivery, coremessage.Delivery]
+type claudeCoordinationCallError = claudeadapter.CoordinationCallError
+
+// Bind app payload types to the adapter protocol without another transport implementation.
+var requestClaudeCoordination = claudeadapter.CallCoordination[claudeDialogueObservation, claudeCoordinationEnvelope, claudeQualificationEvidence, claudeReplyToolInput, coremessage.Envelope, claudeDialogueToolEvidence, claudeReplyToolResult, agentdelivery.Delivery, coremessage.Delivery]

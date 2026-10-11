@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"os"
 	"strings"
 	"testing"
@@ -412,7 +413,7 @@ func TestAgentMessageSendFramePrecheckCoversEveryPrivateEnvelopeSizeRefusal(t *t
 	now := time.Now().UTC()
 
 	// Production-length refs, UIDs, session and times around the body.
-	fixtureTarget, ok := claudeTargetForRoute(f.route)
+	fixtureTarget, ok := claudeadapter.TargetForRoute(f.route)
 	if !ok {
 		t.Fatal("exact Claude target unavailable")
 	}
@@ -523,7 +524,7 @@ func TestAgentMessageSendFramePrecheckCoversEveryPrivateEnvelopeSizeRefusal(t *t
 	// The swept size rule is the real valid() check, and the CLI reports the
 	// smallest IPC-refused body of the sharpest family with its frame size.
 	route := f.route
-	private, _ := claudeTargetForRoute(route)
+	private, _ := claudeadapter.TargetForRoute(route)
 	const ref = "message-precheck-ipc-boundary"
 	for units := 0; units <= coremessage.MaxPayloadBytes; units++ {
 		payload := strings.Repeat("<", units) + strings.Repeat("x", coremessage.MaxPayloadBytes-units)

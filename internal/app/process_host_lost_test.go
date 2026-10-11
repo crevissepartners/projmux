@@ -4,6 +4,7 @@ import (
 	"errors"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"os"
 	"path/filepath"
@@ -141,7 +142,7 @@ func TestHostLostLeaseRemovesOnlyEmptyPrivateDirectory(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			_, a := hostLostFixture(t)
 			path := filepath.Join(t.TempDir(), "registry.json")
-			dir := claudeActivationLeaseDir(path, a.Binding.PaneUID, a.Binding.Generation)
+			dir := claudeadapter.ActivationLeaseDir(path, a.Binding.PaneUID, a.Binding.Generation)
 			t.Cleanup(func() { _ = os.RemoveAll(dir) })
 			if kind == "symlink" {
 				if err := os.Symlink(t.TempDir(), dir); err != nil {
