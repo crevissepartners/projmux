@@ -39,7 +39,7 @@ func check(path string) error {
 	if goBinary == "" {
 		goBinary = "go"
 	}
-	command := exec.Command(goBinary, "list", "-deps", "-export", "-json", path) // #nosec G204 -- build-time checker; GO selects the operator's compiler and argv contains no shell program
+	command := exec.Command(goBinary, "list", "-deps", "-export", "-json", path) // #nosec G204 G702 -- build-time tool: operator selects GO and one package argument; no shell interpolation or product request input
 	command.Stderr = os.Stderr
 	output, err := command.Output()
 	if err != nil {
