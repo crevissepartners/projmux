@@ -15,20 +15,8 @@ import (
 
 const CodeInvalidLinkRules Code = "invalid-link-rules"
 const CodeLinkRulesUnreadable Code = "link-rules-unreadable"
+const CodeLinkRulesConfirmationRequired Code = "link-rules-confirmation-required"
 
-// LinkRulesRefusal identifies an invalid rule field or an unreadable stored file.
-// Filesystem write/delete errors and cancellation remain ordinary errors.
-type LinkRulesRefusal struct {
-	Code          Code
-	Field, Reason string
-}
-
-func (e *LinkRulesRefusal) Error() string {
-	if e.Field != "" {
-		return string(e.Code) + ": " + e.Field + ": " + e.Reason
-	}
-	return string(e.Code) + ": " + e.Reason
-}
 func (c *Client) linkRulesService() service.Service {
 	return service.Service{Paths: c.instructions.Paths, RegistryPaths: func() (config.Paths, error) { return c.paths, c.pathsErr }}
 }
@@ -54,8 +42,9 @@ func (c *Client) WriteProjectLinkRules(ctx context.Context, projectRef string, r
 
 // DeleteProjectLinkRules removes even an unreadable file. Missing files are
 // already deleted. The result is the Project's empty rules and available variables.
-func (c *Client) DeleteProjectLinkRules(ctx context.Context, projectRef string) (core.ProjectLinkRulesResult, error) {
-	out, err := c.linkRulesService().Delete(ctx, projectRef)
+// It requires confirm=true, equivalent to CLI --yes; false deletes nothing.
+func (c *Client) DeleteProjectLinkRules(ctx context.Context, projectRef string, confirm bool) (core.ProjectLinkRulesResult, error) {
+	out, err := c.linkRulesService().Delete(ctx, projectRef, confirm)
 	return publicLinkRules(out), linkRulesRefusal(err, "DeleteProjectLinkRules projectRef")
 }
 func linkRulesRefusal(err error, field string) error {
@@ -64,7 +53,11 @@ func linkRulesRefusal(err error, field string) error {
 	}
 	var refusal *service.Refusal
 	if errors.As(err, &refusal) {
-		return &LinkRulesRefusal{Code: Code(refusal.Code), Field: refusal.Field, Reason: refusal.Reason}
+		message := refusal.Error()
+		if refusal.Code == service.CodeConfirmationRequired {
+			message = "DeleteProjectLinkRules confirm must be true; nothing was deleted"
+		}
+		return &Refusal{Code: Code(refusal.Code), Field: refusal.Field, Reason: refusal.Reason, message: message}
 	}
 	var project *service.ProjectError
 	if errors.As(err, &project) {

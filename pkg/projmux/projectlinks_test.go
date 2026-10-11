@@ -55,9 +55,21 @@ func TestSDKProjectLinkRules(t *testing.T) {
 	if err != nil || got.Links[0].Example != "https://github.com/example/pull/ABC-123" {
 		t.Fatalf("read %+v %v", got, err)
 	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.DeleteProjectLinkRules(ctx, "sample", false)
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeLinkRulesConfirmationRequired || refusal.Field != "confirm" || refusal.Reason == "" || strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("SDK confirmation vocabulary: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("unconfirmed delete changed file: %v", err)
+	}
 	invalid := core.ProjectLinkRules{Links: []core.ProjectLink{{LabelKey: "x", Template: "https://example.com/missing"}}}
 	_, err = c.WriteProjectLinkRules(ctx, "sample", invalid, false)
-	var refusal *projmux.LinkRulesRefusal
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeInvalidLinkRules || refusal.Field != "links[0].template" || refusal.Reason != "must contain {value}" {
 		t.Fatalf("refusal %v", err)
 	}
@@ -77,7 +89,7 @@ func TestSDKProjectLinkRules(t *testing.T) {
 		t.Fatalf("read %v", err)
 	}
 	for range 2 {
-		out, err := c.DeleteProjectLinkRules(ctx, "sample")
+		out, err := c.DeleteProjectLinkRules(ctx, "sample", true)
 		if err != nil {
 			t.Fatal(err)
 		}

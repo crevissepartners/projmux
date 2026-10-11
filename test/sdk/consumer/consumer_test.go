@@ -281,7 +281,7 @@ func TestProjectLinkRulesPublicContract(t *testing.T) {
 			_, e := client.WriteProjectLinkRules(context.Background(), "absent", core.ProjectLinkRules{URLs: map[string]string{}, Links: []core.ProjectLink{}}, true)
 			return e
 		},
-		func() error { _, e := client.DeleteProjectLinkRules(context.Background(), "absent"); return e },
+		func() error { _, e := client.DeleteProjectLinkRules(context.Background(), "absent", true); return e },
 	} {
 		var refusal *projmux.Refusal
 		if err := call(); !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound {
@@ -289,7 +289,7 @@ func TestProjectLinkRulesPublicContract(t *testing.T) {
 		}
 	}
 	var result core.ProjectLinkRulesResult
-	var refusal *projmux.LinkRulesRefusal
+	var refusal *projmux.Refusal
 	_ = result
 	_ = refusal
 }

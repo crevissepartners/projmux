@@ -166,7 +166,6 @@ Ledger.Commands	Test-only installed qualification API retained for semantic comm
 Ledger.DistinctOperations	Test-only installed qualification API retained for content-free command reporting.
 Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
 Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
-LinkRulesRefusal.Error	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 ListLinesWithScrollbar	Default-rows entry point of ListLinesWithScrollbarRows retained as the scrollbar thumb geometry seam.
 Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.

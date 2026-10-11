@@ -46,9 +46,13 @@ func (c *linkRulesCommand) Run(args []string, stdout, stderr io.Writer) error {
 	output := fs.String("o", "text", "output format: text or json")
 	var file string
 	var dryRun bool
+	var yes bool
 	if verb == "set" {
 		fs.StringVar(&file, "file", "", "read stored-format JSON from this file; - reads stdin")
 		fs.BoolVar(&dryRun, "dry-run", false, "validate and preview without writing")
+	}
+	if verb == "delete" {
+		fs.BoolVar(&yes, "yes", false, "confirm the deletion")
 	}
 	operands, err := parseLinkRulesArgs(fs, args[1:])
 	if err != nil {
@@ -77,7 +81,7 @@ func (c *linkRulesCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "show":
 		out, err = c.service().Read(context.Background(), operands[0])
 	case "delete":
-		out, err = c.service().Delete(context.Background(), operands[0])
+		out, err = c.service().Delete(context.Background(), operands[0], yes)
 	case "set":
 		var source io.Reader = c.stdin
 		if source == nil {
@@ -141,8 +145,13 @@ func linkRulesError(err error) error {
 		return MapMetadataError(project.Err)
 	}
 	var refusal *service.Refusal
-	if errors.As(err, &refusal) && refusal.Code == service.CodeInvalid {
-		return usageError(refusal.Error())
+	if errors.As(err, &refusal) {
+		if refusal.Code == service.CodeConfirmationRequired {
+			return usageError("link-rules delete requires --yes; nothing was deleted")
+		}
+		if refusal.Code == service.CodeInvalid {
+			return usageError(refusal.Error())
+		}
 	}
 	return err
 }

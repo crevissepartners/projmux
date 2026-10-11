@@ -21,6 +21,7 @@ import (
 const ExampleValue = "ABC-123"
 const CodeInvalid = "invalid-link-rules"
 const CodeUnreadable = "link-rules-unreadable"
+const CodeConfirmationRequired = "link-rules-confirmation-required"
 
 // Refusal carries a validation field and reason, or an unreadable file reason.
 type Refusal struct {
@@ -42,7 +43,7 @@ type ProjectError struct{ Err error }
 func (e *ProjectError) Error() string { return e.Err.Error() }
 func (e *ProjectError) Unwrap() error { return e.Err }
 
-// Result retains the web response vocabulary; lists are always non-null.
+// Result describes rules, examples and Project variables; lists are always non-null.
 type Result struct {
 	Project          string     `json:"project"`
 	Jira             []string   `json:"jira"`
@@ -143,10 +144,13 @@ func (s Service) Write(ctx context.Context, ref string, rules links.Rules, dryRu
 	out.DryRun = dryRun
 	return out, nil
 }
-func (s Service) Delete(ctx context.Context, ref string) (Result, error) {
+func (s Service) Delete(ctx context.Context, ref string, confirm bool) (Result, error) {
 	store, target, err := s.target(ctx, ref)
 	if err != nil {
 		return Result{}, err
+	}
+	if !confirm {
+		return Result{}, &Refusal{Code: CodeConfirmationRequired, Field: "confirm", Reason: "must be true; nothing was deleted"}
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -176,7 +180,7 @@ func validationRefusal(err error) error {
 	return err
 }
 
-// Check reproduces the web preflight using the store's normalized encoding.
+// Check validates rules and bounds the exact normalized storage encoding.
 func Check(rules links.Rules) error {
 	if err := rules.Validate(); err != nil {
 		return err

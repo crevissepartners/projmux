@@ -3202,10 +3202,10 @@ Allowed effects:
 ```
 projmux link-rules show <project-ref> [-o text|json]
 projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]
-projmux link-rules delete <project-ref> [-o text|json]
+projmux link-rules delete <project-ref> --yes [-o text|json]
 ```
 
-Project refs are explicit names or uid:<project>; the Project must be registered. Set reads the stored JSON format (urls is a map), atomically replaces the whole file, and --dry-run previews the same validation without writing. Delete is idempotent. JSON lists are always arrays; unreadable files are refused rather than shown as empty rules.
+Project refs are explicit names or uid:<project>; the Project must be registered. Set reads the stored JSON format (urls is a map), atomically replaces the whole file, and --dry-run previews the same validation without writing. Delete requires --yes and is idempotent. JSON lists are always arrays; unreadable files are refused rather than shown as empty rules.
 
 Validation refusals carry invalid-link-rules, a field, and a reason (exit 2). Stored file read refusals carry link-rules-unreadable (exit 1). These commands never contact tmux or change Agents.
 
@@ -3283,7 +3283,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux link-rules delete <project-ref> [-o text|json]
+projmux link-rules delete <project-ref> --yes [-o text|json]
 ```
 
 Output modes (`-o`): `json`

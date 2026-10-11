@@ -69,8 +69,21 @@ func TestLinkRulesRoundTripDryRunAndDelete(t *testing.T) {
 	if string(bytes[len(bytes)-1:]) != "\n" {
 		t.Fatal("store encoding changed")
 	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Delete(ctx, "sample", false)
+	var confirmation *Refusal
+	if !errors.As(err, &confirmation) || confirmation.Code != CodeConfirmationRequired {
+		t.Fatalf("confirmation: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("unconfirmed deletion changed file: %v", err)
+	}
 	for range 2 {
-		empty, err := s.Delete(ctx, "sample")
+		empty, err := s.Delete(ctx, "sample", true)
 		if err != nil || len(empty.Links) != 0 {
 			t.Fatalf("delete %+v %v", empty, err)
 		}
@@ -124,7 +137,7 @@ func TestLinkRulesRefusalsPreserveFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Delete(ctx, "uid:"+uid); err != nil {
+	if _, err = s.Delete(ctx, "uid:"+uid, true); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -132,7 +145,7 @@ func TestLinkRulesProjectAndCancellation(t *testing.T) {
 	s, uid, paths := fixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	for _, call := range []func() error{func() error { _, e := s.Read(ctx, "uid:"+uid); return e }, func() error { _, e := s.Write(ctx, "uid:"+uid, sampleRules(), false); return e }, func() error { _, e := s.Delete(ctx, "uid:"+uid); return e }} {
+	for _, call := range []func() error{func() error { _, e := s.Read(ctx, "uid:"+uid); return e }, func() error { _, e := s.Write(ctx, "uid:"+uid, sampleRules(), false); return e }, func() error { _, e := s.Delete(ctx, "uid:"+uid, true); return e }} {
 		if err := call(); !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancel %v", err)
 		}
@@ -147,8 +160,8 @@ func TestLinkRulesProjectAndCancellation(t *testing.T) {
 		}
 	}
 }
-func TestLinkRulesWebProjectionParity(t *testing.T) {
-	// Golden response from web/dev webProjectLinkRulesOf for this exact input.
+func TestLinkRulesProjectionContract(t *testing.T) {
+	// Fixed response contract for sorted URLs, examples and Project variables.
 	target := links.Project{UID: "proj-aaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "a b", Labels: map[string]string{"z": "z/z", "a": "a b"}}
 	rules := links.Rules{URLs: map[string]string{"z": "https://z.example/", "a": "https://a.example/"}, Links: []links.Link{{LabelKey: "doc", Template: "{a}/{project.name}/{project.labels.z}/{value}"}}}
 	got := Project(target, rules)

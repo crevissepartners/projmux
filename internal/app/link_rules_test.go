@@ -88,7 +88,7 @@ func TestLinkRulesCLISDKRoundTrip(t *testing.T) {
 		t.Fatalf("text %s %v", human, err)
 	}
 	for range 2 {
-		raw, err := runLinkRules(c, "delete", "sample", "-o", "json")
+		raw, err := runLinkRules(c, "delete", "sample", "--yes", "-o", "json")
 		if err != nil || strings.Contains(raw, "null") {
 			t.Fatalf("delete %s %v", raw, err)
 		}
@@ -122,11 +122,19 @@ func TestLinkRulesCLIRefusals(t *testing.T) {
 	if err := os.WriteFile(path, []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	_, err = runLinkRules(c, "delete", "sample")
+	if !IsUsageError(err) || !strings.Contains(err.Error(), "requires --yes") {
+		t.Fatalf("unconfirmed delete: %v", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || string(after) != "broken" {
+		t.Fatalf("unconfirmed delete changed broken file: %v", readErr)
+	}
 	_, err = runLinkRules(c, "show", "sample")
 	if err == nil || IsUsageError(err) || !strings.Contains(err.Error(), "link-rules-unreadable") {
 		t.Fatalf("broken %v", err)
 	}
-	if _, err := runLinkRules(c, "delete", "sample"); err != nil {
+	if _, err := runLinkRules(c, "delete", "sample", "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{}, {"oops"}, {"show"}, {"show", "sample", "extra"}, {"show", "sample", "-o", "yaml"}, {"delete", "sample", "--dry-run"}} {
@@ -146,6 +154,15 @@ func TestLinkRulesCLITerminatorPreservesDryRun(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("terminator bypassed dry-run: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("existing rules sentinel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.stdin = strings.NewReader(cliLinkRulesInput)
+	_, err = runLinkRules(c, "set", "--dry-run", "--", "sample", "--dry-run=false")
+	after, readErr := os.ReadFile(path)
+	if err == nil || readErr != nil || string(after) != "existing rules sentinel" {
+		t.Fatalf("terminator changed existing rules: %v %v", err, readErr)
 	}
 	// A -- supplied as a string flag's value is not a terminator.
 	_, err = runLinkRules(c, "show", "-o", "--", "sample", "--unknown")

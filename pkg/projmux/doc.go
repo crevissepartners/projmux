@@ -128,7 +128,9 @@
 // ReadProjectLinkRules, WriteProjectLinkRules and DeleteProjectLinkRules require an
 // explicit registered Project name or uid: ref and never contact tmux or providers.
 // The store format is ConfigDir/project-links/<uid>.json; result JSON includes
-// examples, placeholders and Project variables. LinkRulesRefusal carries Code,
-// Field and Reason for invalid rules or unreadable files; other storage errors
+// examples, placeholders and Project variables. DeleteProjectLinkRules requires
+// confirm=true (CLI --yes); false returns CodeLinkRulesConfirmationRequired without
+// deleting. Refusal carries Code plus optional Field and Reason for invalid rules,
+// confirmation refusals or unreadable files; other storage errors
 // remain ordinary errors. Dry runs check the same encoded size as writes.
 package projmux
