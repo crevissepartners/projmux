@@ -135,3 +135,21 @@ func TestLinkRulesCLIRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestLinkRulesCLITerminatorPreservesDryRun(t *testing.T) {
+	c, _, _, path := linkRulesFixture(t)
+	// A flag-shaped filename after -- must never disable dry-run or read stdin.
+	c.stdin = strings.NewReader(cliLinkRulesInput)
+	_, err := runLinkRules(c, "set", "--dry-run", "--", "sample", "--dry-run=false")
+	if err == nil {
+		t.Fatal("flag-shaped filename was interpreted as a flag instead of opened")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("terminator bypassed dry-run: %v", err)
+	}
+	// A -- supplied as a string flag's value is not a terminator.
+	_, err = runLinkRules(c, "show", "-o", "--", "sample", "--unknown")
+	if !IsUsageError(err) || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("flag value consumed as terminator: %v", err)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
@@ -154,15 +155,25 @@ func parseLinkRulesArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 		if args[0] == "--" {
 			return append(operands, args[1:]...), nil
 		}
-		if err := fs.Parse(args); err != nil {
+		if args[0] == "-" || !strings.HasPrefix(args[0], "-") {
+			operands = append(operands, args[0])
+			args = args[1:]
+			continue
+		}
+		// Parse one flag with its value so FlagSet cannot consume a later
+		// terminator and hide it from the interspersed-operand loop.
+		count := 1
+		name, _, inline := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(args[0], "-"), "-"), "=")
+		if defined := fs.Lookup(name); defined != nil && !inline {
+			boolean, ok := defined.Value.(interface{ IsBoolFlag() bool })
+			if (!ok || !boolean.IsBoolFlag()) && len(args) > 1 {
+				count = 2
+			}
+		}
+		if err := fs.Parse(args[:count]); err != nil {
 			return nil, flagParseError(err)
 		}
-		rest := fs.Args()
-		if len(rest) == 0 {
-			break
-		}
-		operands = append(operands, rest[0])
-		args = rest[1:]
+		args = args[count:]
 	}
 	return operands, nil
 }
