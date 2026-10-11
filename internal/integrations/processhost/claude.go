@@ -183,8 +183,8 @@ func (p *Handle) writeLocked(ctx context.Context, frame any) error {
 	return err
 }
 
-// A running turn takes a bounded number of joined operator inputs. A single
-// input keeps the frame limit enforced by writeLocked.
+// A running turn bounds joins without consumption evidence. Operator and native
+// peer inputs share this budget; each stdin frame also obeys writeLocked's limit.
 const (
 	ClaudeJoinedInputs     = 8
 	ClaudeJoinedInputBytes = 256 << 10
@@ -219,6 +219,69 @@ var (
 type claudePeerReservation struct {
 	turn  string
 	bytes int
+}
+
+type claudeJoinedInput struct {
+	bytes   int
+	written bool
+}
+
+func (p *Handle) trackClaudeJoinLocked(operation string, size int, written bool) {
+	if p.joinedBudget == nil {
+		p.joinedBudget = make(map[string]claudeJoinedInput)
+	}
+	p.joinedBudget[operation] = claudeJoinedInput{bytes: size, written: written}
+	p.joined = append(p.joined, operation)
+	p.joinedBytes += size
+}
+
+// A fresh model response start on this session is the observed boundary of the
+// next model request, where the CLI folds queued inputs in. Only writes confirmed
+// before this boundary count as consumed. Pending/uncertain native handoffs stay
+// charged; a late finish must wait for another boundary in its admitted turn.
+func (p *Handle) consumeClaudeJoinsLocked(message string) {
+	if message == "" || message == p.claudeModelMessage {
+		return
+	}
+	p.claudeModelMessage = message
+	var consumed []string
+	freed := 0
+	p.joined = slices.DeleteFunc(p.joined, func(operation string) bool {
+		input := p.joinedBudget[operation]
+		if !input.written {
+			return false
+		}
+		consumed = append(consumed, operation)
+		freed += input.bytes
+		delete(p.joinedBudget, operation)
+		return true
+	})
+	if len(consumed) == 0 {
+		return
+	}
+	p.joinedBytes -= freed
+	// Retire only evidence for writes confirmed before this boundary. Pending
+	// and uncertain handoffs, requests, and turn transitions remain protected.
+	for i := range p.critical {
+		event := &p.critical[i]
+		if event.Turn != p.turn || event.Request != nil {
+			continue
+		}
+		switch event.Kind {
+		case "input-joined", "peer-message-joined", "peer-message-handed-off":
+			var input struct {
+				Operation string `json:"operation"`
+			}
+			if json.Unmarshal(event.Raw, &input) == nil && slices.Contains(consumed, input.Operation) {
+				event.completedJoinHistory = true
+			}
+		}
+	}
+	raw, _ := json.Marshal(map[string]any{"operations": consumed, "bytes": freed, "modelMessage": message})
+	p.emitLocked("joined-inputs-consumed", raw, nil)
+	if callback := p.launch.JoinConsumed; callback != nil && callback.Notify != nil {
+		go callback.Notify(p.launch.Binding)
+	}
 }
 
 // Turn origins. A provider turn is one Claude opened itself after the session
@@ -287,8 +350,7 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 			}
 			return TurnAdmission{}, err
 		}
-		p.joined = append(p.joined, operation)
-		p.joinedBytes += len(prompt)
+		p.trackClaudeJoinLocked(operation, len(prompt), true)
 		raw, _ := json.Marshal(map[string]any{"operation": operation, "origin": p.turnOrigin, "index": len(p.joined)})
 		p.emitLocked("input-joined", raw, nil)
 		return TurnAdmission{Joined: true, Turn: p.turn, Origin: p.turnOrigin}, nil
@@ -341,6 +403,7 @@ func (p *Handle) joinRefusalLocked(join bool) error {
 func (p *Handle) beginTurnLocked(turn, origin string) {
 	p.turn, p.turnOrigin, p.turnOpen = turn, origin, false
 	p.joined, p.joinedBytes, p.unattributed = nil, 0, nil
+	p.joinedBudget, p.claudeModelMessage = nil, ""
 	p.rememberTurnLocked(turn)
 	p.changedLocked()
 }
@@ -352,6 +415,7 @@ func (p *Handle) endTurnLocked() {
 	p.carriedJoined = p.joined
 	p.turn, p.turnOrigin, p.turnOpen = "", "", false
 	p.joined, p.joinedBytes, p.unattributed = nil, 0, nil
+	p.joinedBudget, p.claudeModelMessage = nil, ""
 	p.changedLocked()
 }
 
@@ -437,8 +501,7 @@ func (p *Handle) reserveClaudeMessage(ctx context.Context, a Authority, turn str
 			p.joinedMessages = make(map[string]claudePeerReservation)
 		}
 		p.joinedMessages[turn] = claudePeerReservation{turn: p.turn, bytes: contentBytes}
-		p.joined = append(p.joined, turn)
-		p.joinedBytes += contentBytes
+		p.trackClaudeJoinLocked(turn, contentBytes, false)
 		raw, _ := json.Marshal(map[string]any{"operation": turn, "origin": p.turnOrigin, "index": len(p.joined)})
 		p.emitLocked("peer-message-joined", raw, nil)
 		return TurnAdmission{Joined: true, Turn: p.turn, Origin: p.turnOrigin}, nil
@@ -476,6 +539,12 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 		if uncertain {
 			kind = "peer-message-handoff-unknown"
 		}
+		if written && p.turn == reservation.turn {
+			if input, found := p.joinedBudget[turn]; found {
+				input.written = true
+				p.joinedBudget[turn] = input
+			}
+		}
 		if !written && !uncertain {
 			kind = "peer-message-prewrite-refused"
 			p.joined = slices.DeleteFunc(p.joined, func(op string) bool { return op == turn })
@@ -483,6 +552,7 @@ func (p *Handle) FinishClaudeMessage(ctx context.Context, a Authority, turn stri
 			p.unattributed = slices.DeleteFunc(p.unattributed, func(op string) bool { return op == turn })
 			if p.turn == reservation.turn {
 				p.joinedBytes -= reservation.bytes
+				delete(p.joinedBudget, turn)
 			}
 		}
 		raw, _ := json.Marshal(map[string]any{"operation": turn, "admittedTurn": reservation.turn})
@@ -648,11 +718,13 @@ func (p *Handle) expireLocked() {
 
 func (p *Handle) consume(raw []byte) error {
 	var frame struct {
-		Type      string `json:"type"`
-		Subtype   string `json:"subtype"`
-		Session   string `json:"session_id"`
-		RequestID string `json:"request_id"`
-		Request   struct {
+		Type          string          `json:"type"`
+		Subtype       string          `json:"subtype"`
+		Session       string          `json:"session_id"`
+		RequestID     string          `json:"request_id"`
+		Event         json.RawMessage `json:"event"`
+		ParentToolUse json.RawMessage `json:"parent_tool_use_id"`
+		Request       struct {
 			Subtype string          `json:"subtype"`
 			Tool    string          `json:"tool_name"`
 			Input   json.RawMessage `json:"input"`
@@ -783,6 +855,18 @@ func (p *Handle) consume(raw []byte) error {
 		p.emitLocked("provider-event", raw, nil)
 	case "stream_event", "assistant", "user", "tool_progress", "tool_use_summary":
 		p.providerTurnFrameLocked()
+		if frame.Type == "stream_event" && frame.Session != "" && frame.Session == p.session &&
+			(len(frame.ParentToolUse) == 0 || bytes.Equal(bytes.TrimSpace(frame.ParentToolUse), []byte("null"))) {
+			var event struct {
+				Type    string `json:"type"`
+				Message struct {
+					ID string `json:"id"`
+				} `json:"message"`
+			}
+			if json.Unmarshal(frame.Event, &event) == nil && event.Type == "message_start" {
+				p.consumeClaudeJoinsLocked(event.Message.ID)
+			}
+		}
 		p.emitLocked("output", raw, nil)
 	default:
 		p.emitLocked("provider-event", raw, nil)

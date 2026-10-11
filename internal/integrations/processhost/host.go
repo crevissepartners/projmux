@@ -95,6 +95,7 @@ type Launch struct {
 	Completion               *Completion
 	Spawned                  *SpawnCallback
 	TurnCompleted            *TurnCompletion
+	JoinConsumed             *JoinConsumption
 	provider                 string
 	adapter                  adapterConfig
 	resume                   *SessionRecord
@@ -107,6 +108,10 @@ type Launch struct {
 // is cleared. Notify runs asynchronously outside host locks and never writes
 // provider input; its pointer belongs to the immutable launch identity.
 type TurnCompletion struct{ Notify func(Binding) }
+
+// JoinConsumption observes space freed in Claude's joined input budget. Notify
+// runs asynchronously outside host locks, with the exact immutable binding.
+type JoinConsumption struct{ Notify func(Binding) }
 
 // SpawnCallback publishes exact child birth before provider initialization.
 // The pointer is launch identity; retries retain it and never publish twice.
@@ -138,6 +143,8 @@ type Handle struct {
 	providerTurns          uint64
 	joined                 []string
 	joinedBytes            int
+	joinedBudget           map[string]claudeJoinedInput
+	claudeModelMessage     string
 	joinedMessages         map[string]claudePeerReservation
 	carriedJoined          []string
 	unattributed           []string
@@ -201,6 +208,9 @@ type Event struct {
 	Raw                       json.RawMessage
 	Request                   *Request
 	Exit                      *Exit
+	// Completed Claude join history can be evicted within its original turn.
+	// This retention metadata is private and never changes the public event.
+	completedJoinHistory bool
 }
 
 func (h *Host) Start(ctx context.Context, launch Launch) (*Handle, error) {
@@ -754,7 +764,7 @@ func (p *Handle) trimCriticalLocked() {
 		index := -1
 		for i, event := range p.critical {
 			if event.Kind == "process-exited" || event.Kind == "stream-gap" ||
-				(p.turn != "" && event.Turn == p.turn) {
+				(p.turn != "" && event.Turn == p.turn && !event.completedJoinHistory) {
 				continue
 			}
 			if event.Request != nil {
@@ -776,7 +786,7 @@ func (p *Handle) trimCriticalLocked() {
 func (p *Handle) activeCriticalLocked() int {
 	count := 0
 	for _, event := range p.critical {
-		if p.turn != "" && event.Turn == p.turn {
+		if p.turn != "" && event.Turn == p.turn && !event.completedJoinHistory {
 			count++
 		}
 	}
@@ -790,6 +800,7 @@ func (p *Handle) emitLocked(kind string, raw []byte, request *Request) {
 func (p *Handle) emitTurnLocked(kind string, raw []byte, request *Request, turn string) {
 	p.seq++
 	event := Event{Binding: p.launch.Binding, Session: p.session, Connection: p.connection, Turn: turn, Sequence: p.seq, Kind: kind, Raw: bytes.Clone(raw), Request: request, Exit: p.exit}
+	event.completedJoinHistory = kind == "joined-inputs-consumed"
 	p.changedLocked()
 	if kind != "output" && kind != "provider-event" {
 		p.critical = append(p.critical, event)

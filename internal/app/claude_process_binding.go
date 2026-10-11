@@ -595,6 +595,14 @@ func processClaudeTurnCompletion() *processhost.TurnCompletion {
 	}}
 }
 
+// Model request consumption can free a join slot before a turn ever completes.
+// Wake the same held-message release used by the turn result.
+func processClaudeJoinConsumption() *processhost.JoinConsumption {
+	return &processhost.JoinConsumption{Notify: func(binding processhost.Binding) {
+		processClaudeHeldRelease().releaseIfHeld(binding.Agent)
+	}}
+}
+
 // startProcessClaude binds the foreground owner to exact ownership transactions.
 // The caller allocates the reservation and chooses launch policy.
 func startProcessClaude(ctx context.Context, host *processhost.Host, launch processhost.Launch, registryPath string, resume *processClaudeResumeLaunch) (*processhost.Handle, error) {
@@ -608,6 +616,7 @@ func startProcessClaude(ctx context.Context, host *processhost.Host, launch proc
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
 	launch.TurnCompleted = processClaudeTurnCompletion()
+	launch.JoinConsumed = processClaudeJoinConsumption()
 	if resume != nil {
 		launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 			service.publishChild(handle)
@@ -640,6 +649,7 @@ func startProcessClaudeTransfer(ctx context.Context, host *processhost.Host, lau
 	launch.Command.Env = processClaudeLaunchEnv(launch, registryPath, service.listener.Unix.Addr().String())
 	launch.Completion = &processhost.Completion{Cleanup: service.close}
 	launch.TurnCompleted = processClaudeTurnCompletion()
+	launch.JoinConsumed = processClaudeJoinConsumption()
 	launch.Spawned = &processhost.SpawnCallback{Publish: func(ctx context.Context, handle *processhost.Handle) error {
 		service.publishChild(handle)
 		return service.launchErr

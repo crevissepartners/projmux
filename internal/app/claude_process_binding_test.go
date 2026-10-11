@@ -1054,3 +1054,101 @@ func TestClaudeProcessNativePeerJoinsExactRunningTarget(t *testing.T) {
 		t.Fatalf("result=%d joined=%d", results, joined)
 	}
 }
+
+// Consumption must wake an expired release window while the same turn runs.
+func TestClaudeProcessConsumptionRestartsAnEndedHeldRelease(t *testing.T) {
+	// The process fixture comes first: it shortens TMPDIR for its sockets, and
+	// the test's temporary root is fixed by the first TempDir call.
+	process := newProcessClaudeFixture(t, func(root, binary string) processhost.Command {
+		script := strings.Replace(processClaudeProviderFixture, "if prompt.startswith('joined'):", "if prompt=='model-boundary':\n   emit({'type':'stream_event','session_id':'process-session','event':{'type':'message_start','message':{'id':'next-model'}}});continue\n  if prompt.startswith('joined'):", 1)
+		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Env: os.Environ(), Dir: root}
+	})
+	process.proof(t)
+	hold := newHoldFixture(t)
+	hold.setInteraction(t, coremetadata.InteractionIdle)
+	hold.installFakeSleep()
+	alias := &heldListerAlias{store: hold.store, from: process.binding.Agent, to: hold.claudeUID, listed: make(chan int, 16)}
+	launched := make(chan string, 16)
+	previous := processClaudeHeldRelease
+	t.Cleanup(func() { processClaudeHeldRelease = previous })
+	processClaudeHeldRelease = func() heldMessageRelease {
+		return heldMessageRelease{store: func() (agentMessageHeldLister, error) { return alias, nil },
+			launch: func(agentUID string) error { launched <- agentUID; return nil }}
+	}
+	awaitListed := func(want int) {
+		t.Helper()
+		select {
+		case got := <-alias.listed:
+			if got != want {
+				t.Fatalf("turn result listed %d held records, want %d", got, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("turn result did not wake the held-message release")
+		}
+	}
+
+	process.turn(t, "result-nothing-held", "ordinary")
+	awaitListed(0)
+
+	// Held by a busy turn, with a deadline past the release window.
+	ref := "message-consumption-wake"
+	hold.putHeld(t, ref, hold.now, hold.now.Add(time.Hour), claudeHoldReasonTurnActive)
+	hold.adapter.busy = 1000
+	if err := hold.cmd.releaseHeldMessages(hold.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	var waited time.Duration
+	for _, wait := range hold.waits {
+		waited += wait
+	}
+	if got := hold.delivery(t, ref); got.State != coremessage.StateHeld || waited < agentMessageReleaseRetryWindow {
+		t.Fatalf("release window did not end with the record held: %+v after %s", got, waited)
+	}
+	select {
+	case agentUID := <-launched:
+		t.Fatalf("a result with nothing held launched a release for %s", agentUID)
+	default:
+	}
+	hold.adapter.busy = 0
+	submitted := len(hold.adapter.submits)
+
+	process.turn(t, "endless", "hold")
+	running := process.wait(t, func(s processhost.Snapshot) bool {
+		events, _, err := process.handle.Events(process.binding, 0)
+		if err != nil {
+			return false
+		}
+		for _, event := range events {
+			if event.Turn == "endless" && event.Kind == "output" && bytes.Contains(event.Raw, []byte("holding")) {
+				return true
+			}
+		}
+		return false
+	})
+	authority := processhost.Authority{Binding: process.binding, Connection: running.Connection, Session: running.Session}
+	if _, err := process.handle.UserInput(context.Background(), authority, "joined-boundary", "model-boundary"); err != nil {
+		t.Fatal(err)
+	}
+	awaitListed(1)
+	select {
+	case agentUID := <-launched:
+		if agentUID != process.binding.Agent {
+			t.Fatalf("release launched for %s, want the turn's Agent %s", agentUID, process.binding.Agent)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("held record did not launch a release")
+	}
+	if err := hold.cmd.releaseHeldMessages(hold.claudeUID); err != nil {
+		t.Fatal(err)
+	}
+	if got := hold.delivery(t, ref); got.State != coremessage.StateDelivered {
+		t.Fatalf("woken release did not deliver the held record: %+v", got)
+	}
+	running, _ = process.handle.Observe(process.binding)
+	if running.Turn != "endless" {
+		t.Fatal("consumption closed the turn", running)
+	}
+	if got := hold.adapter.submits[submitted:]; len(got) != 1 || got[0] != ref {
+		t.Fatalf("woken release submits %v, want exactly %s", got, ref)
+	}
+}

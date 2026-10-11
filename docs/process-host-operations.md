@@ -68,12 +68,28 @@ not that Claude followed or replied to the message.
 Pending permission/question controls, an interrupt, a turn not yet visibly
 open, a pending/expired message handoff, or a full joined-input/event budget
 keep peer messages `held target-turn-active` with zero native writes. Held
-messages resume automatically after the turn ends and expire at their existing
-deadline. Partial or uncertain writes are never retried. Native peer admission
-and operator input share the same limit of 8 joined inputs and 262144 bytes
+messages resume automatically when consumption frees join capacity or after
+the turn ends, and expire at their existing deadline. Partial or uncertain
+writes are never retried. Native peer admission and operator input share the
+same limit of 8 joins without consumption evidence and 262144 bytes
 (serialized coordination content for peers, prompt content for operator input).
 A proved zero-write peer failure releases its budget without ending the
 running turn; a missing or uncertain handoff retains admission evidence.
+After a confirmed write (stdin return for operator input, helper finish for
+peers), a new root `stream_event` `message_start` on the same session and turn
+releases that join's count and bytes. Other output and a repeated start for
+the same model message and subagent starts do not release capacity. A finish arriving after that
+boundary waits for the next model request; a finish after the turn ends does
+not charge or free another turn. `joined-inputs-consumed` records the released
+operations, bytes, and model message. This is request-boundary evidence, not an
+input-specific acknowledgement: a write racing the CLI's queue fold can enter
+the following request instead. The queue remains bounded; the host preserves
+unconfirmed and uncertain joins rather than assuming their consumption.
+Events for consumed joins with confirmed writes become completed history even
+within the running turn: they no longer count against event admission and can
+be evicted with the existing `stream-gap` marker. Unconsumed or uncertain joins,
+pending requests, and turn transitions remain protected. Answered or expired
+control history still counts against the running turn's event limit.
 Claude's own inbound peer policy still applies; host delivery does not override
 it.
 
@@ -87,7 +103,7 @@ written and exit status 1, when:
 | Reason | When |
 | --- | --- |
 | `control-pending` | A permission or question in the running turn is unanswered; answer it first |
-| `joined-input-limit` | The running turn already holds 8 joined inputs or 262144 bytes of them |
+| `joined-input-limit` | The running turn holds 8 joins without consumption evidence or 262144 bytes of them |
 | `turn-not-open` | Claude has not yet visibly started the admitted turn |
 | `message-handoff-pending` | A peer message turn is reserved and Claude has not yet visibly started it |
 | `message-handoff-expired` | A peer message handoff never reported its outcome and Claude never visibly started the turn |
