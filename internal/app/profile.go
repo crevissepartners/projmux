@@ -1,21 +1,19 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/crevissepartners/projmux/internal/app/hookcmd"
 	"github.com/crevissepartners/projmux/internal/app/personacmd"
 	"github.com/crevissepartners/projmux/internal/config"
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
-	"github.com/crevissepartners/projmux/internal/core/selector"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/profiles"
 )
 
 // profileCommand implements `projmux profile list|show|set|delete`.
@@ -45,25 +43,11 @@ func newPersonaCommand(noun string, homeDir func() (string, error), lookupEnv fu
 		editorRunner, stdin)
 }
 
-// store is the profile store a write goes through. Without HOME or an
-// absolute XDG home it returns the missing-HOME reason and writes nothing.
-func (c *profileCommand) store() (profile.Store, error) {
-	paths, err := savedSettingsPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return profile.Store{}, err
+func (c *profileCommand) service() profiles.Service {
+	return profiles.Service{
+		Paths:         func() (config.Paths, error) { return savedSettingsPaths(c.homeDir, c.lookupEnv) },
+		RegistryPaths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) },
 	}
-	return profile.NewDefaultStore(paths), nil
-}
-
-// readStore is the profile store a read goes through: without HOME or an
-// absolute XDG home there are no user profiles to read, so it is the
-// unavailable store: it lists no profile and touches no file.
-func (c *profileCommand) readStore() (profile.Store, error) {
-	store, err := c.store()
-	if isMissingHome(err) {
-		return profile.NewUnavailableStore(err), nil
-	}
-	return store, err
 }
 
 // Run dispatches `projmux profile <verb>`.
@@ -116,64 +100,18 @@ func (c *profileCommand) runList(args []string, stdout, stderr io.Writer) error 
 		printRouteUsage(stderr, "profile list")
 		return usageError("profile list does not accept positional arguments")
 	}
-	store, err := c.readStore()
+	entries, err := c.service().List(context.Background(), *projectRef)
 	if err != nil {
+		var project *profiles.ProjectError
+		if errors.As(err, &project) {
+			return MapMetadataError(project.Err)
+		}
 		return err
-	}
-	entries, err := store.List()
-	if err != nil {
-		return err
-	}
-	projectUID := ""
-	if *projectRef != "" {
-		ref, err := selector.ParseRef(coremetadata.KindProject, *projectRef)
-		if err != nil {
-			return MapMetadataError(err)
-		}
-		paths, err := configPaths(c.homeDir, c.lookupEnv)
-		if err != nil {
-			return err
-		}
-		registry, err := intmetadata.NewDefaultStore(paths).LoadReadOnly()
-		if err != nil {
-			return MapMetadataError(err)
-		}
-		query := selector.Query{Project: &ref}
-		resolved, err := selector.New(registry).ResolveProjects(query)
-		if err != nil {
-			return MapMetadataError(err)
-		}
-		if err := selector.Enforce(selector.Target{Verb: selector.VerbGet, Kind: coremetadata.KindProject}, selector.DescribeSelector(query), resolved); err != nil {
-			return MapMetadataError(err)
-		}
-		projectUID = resolved.Matches[0].UID
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tSOURCE\tPROVIDER\tINSTRUCTIONS\tMODEL\tEFFORT\tROLES\tDIGEST\tVALID\tSCOPE")
-	// An item the profile does not name -- a provider-neutral profile's
-	// provider included -- and every item of a file that does not parse is
-	// "-". An invalid profile that parses still shows what it names.
-	cell := func(value string) string {
-		if value == "" {
-			return "-"
-		}
-		return value
-	}
 	for _, entry := range entries {
-		if projectUID != "" && !profile.VisibleInProject(entry.Project, projectUID) {
-			continue
-		}
-		scope := entry.Project
-		if scope == "" {
-			scope = "global"
-		}
-		valid := "yes"
-		if !entry.Valid {
-			valid = "no (" + entry.Reason + ")"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", entry.Name, entry.Source,
-			cell(entry.Provider), cell(entry.Instructions), cell(entry.Model), cell(entry.Effort),
-			cell(strings.Join(entry.Roles, ",")), cell(entry.Digest), valid, scope)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", entry.Name, entry.Source, entry.Provider, entry.Instructions, entry.Model, entry.Effort, entry.Roles, entry.Digest, entry.Valid, entry.Scope)
 	}
 	return tw.Flush()
 }
@@ -190,11 +128,7 @@ func (c *profileCommand) runShow(args []string, stdout, stderr io.Writer) error 
 		printRouteUsage(stderr, "profile show")
 		return usageError("profile show requires exactly one <name>")
 	}
-	store, err := c.readStore()
-	if err != nil {
-		return err
-	}
-	loaded, err := store.Load(operands[0])
+	loaded, err := c.service().Read(context.Background(), operands[0])
 	if err != nil {
 		return profileRefusal("profile show", err)
 	}
@@ -251,11 +185,7 @@ func (c *profileCommand) runSet(args []string, stdout, stderr io.Writer) error {
 		}
 		return profileRefusal("profile set", err)
 	}
-	store, err := c.store()
-	if err != nil {
-		return fmt.Errorf("profile set: %w", err)
-	}
-	entry, err := store.Write(name, content)
+	entry, err := c.service().Write(context.Background(), name, content)
 	if err != nil {
 		return profileRefusal("profile set", err)
 	}
@@ -277,17 +207,11 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 		return usageError("profile delete requires exactly one <name>")
 	}
 	name := operands[0]
-	if err := profile.ValidateName(name); err != nil {
-		return profileRefusal("profile delete", err)
-	}
-	if !*yes {
-		return usageError(fmt.Sprintf("profile delete %s requires --yes; nothing was deleted", name))
-	}
-	store, err := c.store()
-	if err != nil {
-		return fmt.Errorf("profile delete: %w", err)
-	}
-	if err := store.Delete(name); err != nil {
+	if err := c.service().Delete(context.Background(), name, *yes); err != nil {
+		var confirmation *profiles.ConfirmationError
+		if errors.As(err, &confirmation) {
+			return usageError(err.Error())
+		}
 		return profileRefusal("profile delete", err)
 	}
 	_, err = fmt.Fprintf(stdout, "deleted profile %s\n", name)

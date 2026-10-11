@@ -5,7 +5,7 @@
 //
 // The SDK exposes stored instructions and read-only Project, Window, Pane,
 // and Agent resource lists and descriptions, runtime inventories, Agent capabilities,
-// and provider model suggestions. Public resource types live in
+// provider model suggestions, and stored profile list/read/write/delete. Public resource types live in
 // pkg/projmux/core and mirror CLI JSON, including list-only context. The CLI and SDK execute
 // the same internal service and retain the existing personas/<name>.md format,
 // case-sensitive names, 64 KiB limit and private filesystem permissions.
@@ -47,4 +47,13 @@
 // CodeModelsUnavailable and CodeModelsTimeout refusals distinguish failed reads from
 // expired deadlines. A custom Options.CodexModelLister must honor its context,
 // remain read-only, and be safe for concurrent calls.
+//
+// Profile types live in core. ListProfiles returns the CLI table cells verbatim,
+// including "-" blanks, and optionally resolves one explicit Project name/uid:.
+// ReadProfile preserves raw TOML bytes. WriteProfile keeps the existing validation,
+// scope immutability, role claims, size limit and private permissions. DeleteProfile
+// requires confirm=true (CLI --yes); it performs no running-Agent usage check.
+// Profile store refusals retain profile.ReasonOf tokens as Code; a missing
+// confirmation returns CodeProfileConfirmationRequired. Other filesystem errors
+// stay ordinary. No profile operation applies settings to an Agent.
 package projmux
