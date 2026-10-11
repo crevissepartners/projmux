@@ -42,7 +42,7 @@ func Refuse(spelling string, agent coremetadata.Agent, reason, detail string) er
 func ValidateProvider(spelling string, agent coremetadata.Agent) error {
 	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
 	if provider != "claude" && provider != "codex" {
-		return Refuse(spelling, agent, questionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; the question channel applies only to Claude and Codex", agent.Spec.Provider))
+		return Refuse(spelling, agent, ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; the question channel applies only to Claude and Codex", agent.Spec.Provider))
 	}
 	return nil
 }
@@ -61,8 +61,8 @@ const (
 	questionReasonAnsweredElsewhere = "question-answered-elsewhere"
 	// questionReasonInvalidAnswer: the answer does not fit the question set.
 	questionReasonInvalidAnswer = "question-invalid-answer"
-	// questionReasonProviderUnsupported: the Agent is not a supported Agent.
-	questionReasonProviderUnsupported = "question-provider-unsupported"
+	// ReasonProviderUnsupported: the Agent is not a supported Agent.
+	ReasonProviderUnsupported = "question-provider-unsupported"
 	// questionReasonSecretNativeOnly: a secret answer cannot travel in argv.
 	questionReasonSecretNativeOnly = "question-secret-native-only"
 )

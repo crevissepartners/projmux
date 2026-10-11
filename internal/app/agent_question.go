@@ -34,7 +34,7 @@ const (
 	// questionReasonInvalidAnswer: the answer does not fit the question set.
 	questionReasonInvalidAnswer = "question-invalid-answer"
 	// questionReasonProviderUnsupported: the Agent is not a supported Agent.
-	questionReasonProviderUnsupported = "question-provider-unsupported"
+	questionReasonProviderUnsupported = questions.ReasonProviderUnsupported
 	// questionReasonSecretNativeOnly: a secret answer cannot travel in argv.
 	questionReasonSecretNativeOnly = "question-secret-native-only"
 )
@@ -77,6 +77,10 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, agent.Metadata.Name, detail, reason))
 	}
 	if err := questions.ValidateProvider(request.spelling, agent); err != nil {
+		var refusal *questions.Failure
+		if errors.As(err, &refusal) && refusal.Code == questionReasonProviderUnsupported {
+			return usageError(refusal.Error())
+		}
 		return MapMetadataError(err)
 	}
 	switch request.action {
@@ -322,9 +326,6 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 	_, err = fmt.Fprintf(stdout, "%s answered for agent/%s\n", result.QuestionID, result.AgentName)
 	return err
 }
-func agentQuestionSelections(request agentQuestionRequest, prompts []agentquestion.Question) (map[int]agentquestion.Selection, error) {
-	return questions.Selections(questionRequest(request), prompts)
-}
 func questionRecordRefusal(record agentquestion.Record) (string, string) {
 	return questions.RecordRefusal(record)
 }
@@ -332,4 +333,15 @@ func questionClosedAsking(record agentquestion.Record) string { return questions
 func questionStateRefusal(state agentquestion.State) (string, string) {
 	return questions.StateRefusal(state)
 }
-func questionStoreRefusal(err error) (string, string) { return questions.StoreRefusal(err) }
+func questionStoreRefusal(err error) (string, string) {
+	switch {
+	case errors.Is(err, agentquestion.ErrNotPending):
+		return questionStateRefusal(agentquestion.StateAnswered)
+	case errors.Is(err, agentquestion.ErrExpired):
+		return questionStateRefusal(agentquestion.StateExpired)
+	case errors.Is(err, agentquestion.ErrClosed):
+		return questionStateRefusal(agentquestion.StateClosed)
+	default:
+		return questions.StoreRefusal(err)
+	}
+}
