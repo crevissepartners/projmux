@@ -222,3 +222,25 @@ func TestExternalQuestionConsumer(t *testing.T) {
 		t.Fatalf("%+v %v", answer, err)
 	}
 }
+
+func TestExternalApprovalConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(t.TempDir(), "config"), StateDir: filepath.Join(t.TempDir(), "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list core.ApprovalList
+	list, err = c.ListApprovals(context.Background(), "absent")
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound || len(list.Requests) != 0 {
+		t.Fatal(list, err)
+	}
+	var receipt core.ApprovalReceipt
+	receipt, err = c.AnswerApproval(context.Background(), projmux.AnswerApprovalRequest{Agent: "absent", RequestID: "7", Allow: true})
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound || receipt.RequestID != "" {
+		t.Fatal(receipt, err)
+	}
+	receipt, err = c.ReviewApproval(context.Background(), projmux.ReviewApprovalRequest{Agent: "absent", RequestID: "7", Decision: core.OfferedDecision("accept")})
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound || receipt.RequestID != "" {
+		t.Fatal(receipt, err)
+	}
+}

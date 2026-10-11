@@ -13,6 +13,13 @@ func TestImplementationAllowlist(t *testing.T) {
 		want     bool
 	}{
 		{"context", true, true},
+		{module + "/internal/core/operatorclient", false, true},
+		{module + "/internal/services/approvals", false, true},
+		{module + "/internal/integrations/agentcontrol", false, true},
+		{module + "/internal/integrations/agents/agentapproval", false, true},
+		{module + "/internal/core/codexgeneration", false, true},
+		{module + "/internal/services/approvals/escape", false, false},
+		{module + "/internal/integrations/agentcontrol/escape", false, false},
 		{module + "/internal/services/settings", false, true},
 		{module + "/internal/services/usage", false, true},
 		{module + "/internal/services/notifications", false, true},

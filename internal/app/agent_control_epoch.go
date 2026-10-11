@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"reflect"
 	"slices"
 	"strings"
@@ -58,30 +59,9 @@ type agentControlResponse struct {
 	TurnID       string                   `json:"turnId,omitempty"`
 }
 
-type agentControlAvailability struct {
-	Start     bool `json:"start"`
-	Steer     bool `json:"steer"`
-	Interrupt bool `json:"interrupt"`
-	Review    bool `json:"review"`
-}
+type agentControlAvailability = agentcontrol.Availability
 
-type agentPendingApproval struct {
-	RequestID       string                            `json:"requestId"`
-	Kind            codexappserver.ApprovalKind       `json:"kind"`
-	ThreadID        string                            `json:"threadId"`
-	TurnID          string                            `json:"turnId"`
-	ItemID          string                            `json:"itemId"`
-	ApprovalID      *string                           `json:"approvalId,omitempty"`
-	Command         string                            `json:"command,omitempty"`
-	CWD             string                            `json:"cwd,omitempty"`
-	NetworkHost     string                            `json:"networkHost,omitempty"`
-	NetworkProtocol string                            `json:"networkProtocol,omitempty"`
-	RequestCWD      string                            `json:"requestCwd,omitempty"`
-	Reason          string                            `json:"reason,omitempty"`
-	GrantRoot       *string                           `json:"grantRoot,omitempty"`
-	Permissions     json.RawMessage                   `json:"permissions,omitempty"`
-	Decisions       []codexappserver.ApprovalDecision `json:"decisions"`
-}
+type agentPendingApproval = agentcontrol.PendingApproval
 
 type codexControlEpoch struct {
 	mu          sync.Mutex

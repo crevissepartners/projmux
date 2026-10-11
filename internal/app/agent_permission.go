@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/approvals"
 	"io"
 	"slices"
 	"strings"
@@ -12,7 +14,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 )
@@ -30,7 +31,7 @@ const (
 	permissionReasonNotPending = "permission-not-pending"
 	// permissionReasonExpired: the answer window ended; Claude Code's own
 	// prompt decides.
-	permissionReasonExpired = "permission-expired"
+	permissionReasonExpired = approvals.ReasonExpired
 	// permissionReasonAnsweringOff: agent-approval-answering is not projmux.
 	permissionReasonAnsweringOff = "permission-answering-off"
 	// permissionReasonProviderUnsupported: the Agent is neither a Claude nor
@@ -95,6 +96,9 @@ func (c *agentCommand) runPermissionApproval(args []string, stdout, stderr io.Wr
 	agent := found.Clone()
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, agent.Metadata.Name, detail, reason))
+	}
+	if err := approvals.ValidateProvider(request.spelling, agent); err != nil {
+		return MapMetadataError(err)
 	}
 	switch provider := coremetadata.NormalizeProvider(agent.Spec.Provider); provider {
 	case aiModeClaude:
@@ -164,8 +168,8 @@ func parseAgentPermissionArgs(args []string, stderr io.Writer) (agentPermissionR
 			return agentPermissionRequest{}, usageError(request.spelling + " requires exactly one of --allow or --deny")
 		}
 		request.allow = allow
-		if !agentapproval.ValidVia(request.via) {
-			return agentPermissionRequest{}, usageError(fmt.Sprintf("%s --via: %v; want %s, %s, or an operator client name", request.spelling, operatorclient.Validate(request.via), agentapproval.ViaPopup, agentapproval.ViaCLI))
+		if err := approvals.ValidateVia(request.spelling, request.via); err != nil {
+			return agentPermissionRequest{}, MapMetadataError(err)
 		}
 	}
 	return request, nil
@@ -232,30 +236,11 @@ type agentPermissionRecord struct {
 const agentPermissionListNote = "note: a request may already have been answered in Claude Code's own prompt; the first answer wins\n"
 
 func (c *agentCommand) listPermissionRequests(request agentPermissionRequest, agent coremetadata.Agent, answering config.AgentApprovalAnswering, stdout io.Writer) error {
-	store, err := c.openApprovalStore()
+	result, err := c.approvalService().ListStore(context.Background(), agent)
 	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
+		return err
 	}
-	records, err := store.List(agent.Metadata.UID)
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	result := agentPermissionList{Provider: aiModeClaude, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Answering: string(answering), Requests: []agentPermissionRecord{}}
-	for _, record := range records {
-		if record.State != agentapproval.StateWaiting {
-			continue
-		}
-		result.Requests = append(result.Requests, agentPermissionRecord{
-			ID: record.ID, State: record.State, ToolName: record.ToolName, AgentType: record.AgentType,
-			ToolInput: record.ToolInput, CreatedAt: record.CreatedAt, Deadline: record.Deadline,
-		})
-	}
-	if request.json {
-		encoder := json.NewEncoder(stdout)
-		encoder.SetEscapeHTML(false)
-		return encoder.Encode(result)
-	}
-	return writeAgentPermissionList(stdout, result, c.clock())
+	return c.writePermissionServiceList(request, result, stdout)
 }
 
 func writeAgentPermissionList(out io.Writer, result agentPermissionList, now time.Time) error {
@@ -292,28 +277,11 @@ func writeAgentPermissionList(out io.Writer, result agentPermissionList, now tim
 // lands, and a refusal changes nothing. An answer whose record took effect
 // but whose directory sync failed succeeds with one warning line on stderr.
 func (c *agentCommand) answerPermissionRequest(request agentPermissionRequest, agent coremetadata.Agent, refuse func(string, string) error, stdout, stderr io.Writer) error {
-	store, err := c.openApprovalStore()
+	result, err := c.approvalService().AnswerStore(context.Background(), approvalRequest(request), agent)
 	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	answered, err := store.Answer(request.requestID, agent.Metadata.UID, request.allow, request.via)
-	var warning error
-	if errors.Is(err, agentapproval.ErrCommittedNotSynced) {
-		warning, err = err, nil
-	}
-	if err != nil {
-		if reason, detail := permissionStoreRefusal(err); reason != "" {
-			return refuse(reason, fmt.Sprintf("permission request %q %s", request.requestID, detail))
-		}
-		return permissionAnswerError(request, err)
-	}
-	if _, err := fmt.Fprintf(stdout, "%s %s for agent/%s\n", answered.ID, answered.State, agent.Metadata.Name); err != nil {
 		return err
 	}
-	if warning != nil {
-		fmt.Fprintf(stderr, "%s: warning: %v; permission request %q is %s and needs no second answer\n", request.spelling, warning, answered.ID, answered.State)
-	}
-	return nil
+	return writePermissionServiceAnswer(request, result, stdout, stderr)
 }
 
 // permissionAnswerError spells a store failure of a Claude answer that is not
@@ -322,34 +290,13 @@ func (c *agentCommand) answerPermissionRequest(request agentPermissionRequest, a
 // that line with an uncommitted line, unless ErrUncommittedAudit says it could
 // not. Either way the request is still waiting.
 func permissionAnswerError(request agentPermissionRequest, err error) error {
-	event := agentapproval.AuditDenied
-	if request.allow {
-		event = agentapproval.AuditAllowed
-	}
-	switch {
-	case errors.Is(err, agentapproval.ErrAudit):
-		return fmt.Errorf("%s: %w; permission request %q is still waiting", request.spelling, err, request.requestID)
-	case errors.Is(err, agentapproval.ErrUncommittedAudit):
-		return fmt.Errorf("%s: %w; permission request %q is still waiting, and the audit log keeps its %s line for this answer that did not take effect", request.spelling, err, request.requestID, event)
-	case errors.Is(err, agentapproval.ErrNotCommitted):
-		return fmt.Errorf("%s: %w; permission request %q is still waiting; its %s audit line is followed by an uncommitted line", request.spelling, err, request.requestID, event)
-	default:
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
+	return approvals.AnswerError(approvalRequest(request), err)
 }
 
 // permissionStoreRefusal maps a store refusal onto its reason token.
 func permissionStoreRefusal(err error) (string, string) {
-	switch {
-	case errors.Is(err, agentapproval.ErrNotFound):
-		return permissionReasonNotFound, "does not exist"
-	case errors.Is(err, agentapproval.ErrNotPending):
-		return permissionReasonNotPending, "is already answered; the first answer wins"
-	case errors.Is(err, agentapproval.ErrExpired):
+	if errors.Is(err, agentapproval.ErrExpired) {
 		return permissionReasonExpired, "expired; Claude Code's own prompt decides it"
-	case errors.Is(err, agentapproval.ErrClosed):
-		return permissionReasonNotPending, "was closed: answered in Claude Code's own prompt, or its hook ended"
-	default:
-		return "", ""
 	}
+	return approvals.StoreRefusal(err)
 }

@@ -1,17 +1,14 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -19,7 +16,7 @@ import (
 )
 
 const (
-	agentControlDirName      = "agent-control"
+	agentControlDirName      = agentcontrol.ControlDir
 	agentControlMaxFrame     = localipc.MaxFrameBytes
 	agentControlDeadline     = localipc.Deadline
 	agentControlDialTimeout  = localipc.DialTimeout
@@ -127,7 +124,7 @@ func (s *codexControlServer) Close() error {
 // dial, or the request frame failed, so the server never saw the request.
 // Every failure from the write onward may have reached the server and is not
 // marked.
-var errAgentControlNotSent = errors.New("exact Agent control request was not sent")
+var errAgentControlNotSent = agentcontrol.ErrNotSent
 
 // agentControlNotSentError carries a failure unchanged in its text while
 // errors.Is also matches errAgentControlNotSent.
@@ -139,44 +136,11 @@ func (e *agentControlNotSentError) Unwrap() []error { return []error{e.err, errA
 func agentControlNotSent(err error) error { return &agentControlNotSentError{err: err} }
 
 func callCodexControl(ctx context.Context, stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
-	path, err := agentControlSocketPath(stateDir, endpoint, identity)
-	if err != nil {
-		return agentControlResponse{}, agentControlNotSent(err)
+	r, err := agentcontrol.Call(ctx, stateDir, endpoint, agentcontrol.Identity(identity), agentcontrol.Request{Operation: request.Operation, Identity: agentcontrol.Identity(request.Identity), Epoch: request.Epoch, Text: request.Text, RequestKey: request.RequestKey, Decision: request.Decision}, hasTrailingJSON)
+	if errors.Is(err, errAgentControlNotSent) {
+		err = agentControlNotSent(err)
 	}
-	dialer := net.Dialer{Timeout: agentControlDialTimeout}
-	conn, err := dialer.DialContext(ctx, "unix", path)
-	if err != nil {
-		return agentControlResponse{}, agentControlNotSent(fmt.Errorf("native Codex control endpoint unavailable: %w", err))
-	}
-	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	} else {
-		_ = conn.SetDeadline(time.Now().Add(agentControlDeadline))
-	}
-	var requestPayload bytes.Buffer
-	if err := json.NewEncoder(&requestPayload).Encode(request); err != nil || requestPayload.Len() > agentControlMaxFrame {
-		return agentControlResponse{}, agentControlNotSent(errors.New("native Codex control request exceeds the bounded frame"))
-	}
-	if _, err := conn.Write(requestPayload.Bytes()); err != nil {
-		return agentControlResponse{}, fmt.Errorf("write native Codex control request: %w", err)
-	}
-	if unixConn, ok := conn.(*net.UnixConn); ok {
-		_ = unixConn.CloseWrite()
-	}
-	payload, err := io.ReadAll(io.LimitReader(conn, agentControlMaxFrame+1))
-	if err != nil || len(payload) > agentControlMaxFrame {
-		return agentControlResponse{}, errors.New("native Codex control response exceeds the bounded frame")
-	}
-	var response agentControlResponse
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	if err := decoder.Decode(&response); err != nil {
-		return agentControlResponse{}, fmt.Errorf("read native Codex control response: %w", err)
-	}
-	if hasTrailingJSON(decoder) {
-		return agentControlResponse{}, errors.New("read native Codex control response: trailing frame data")
-	}
-	return response, nil
+	return agentControlResponse(r), err
 }
 
 func hasTrailingJSON(decoder *json.Decoder) bool {
@@ -186,23 +150,7 @@ func hasTrailingJSON(decoder *json.Decoder) bool {
 }
 
 func agentControlSocketPath(stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity) (string, error) {
-	stateDir = filepath.Clean(stateDir)
-	if stateDir == "." || !filepath.IsAbs(stateDir) || !endpoint.Valid() || !identity.valid() {
-		return "", errors.New("exact Agent control requires an absolute state directory and durable endpoint/thread identity")
-	}
-	// The local control address is stable for one durable endpoint/thread and
-	// deliberately excludes PaneActivation.Generation. That activation epoch
-	// fences writes inside the request, but it is not app-server route identity
-	// and cannot retarget an Agent when admission-current changes.
-	sum := sha256.Sum256([]byte(endpoint.StateDomainID + "\x00" + endpoint.EndpointGenerationID + "\x00" +
-		identity.AgentUID + "\x00" + identity.PaneUID + "\x00" + identity.ThreadID))
-	name := "control-" + hex.EncodeToString(sum[:12]) + ".sock"
-	dir := filepath.Join(stateDir, agentControlDirName)
-	path := filepath.Join(dir, name)
-	if len(path) > agentControlMaxSocketLen {
-		return "", errors.New("exact Agent control socket path exceeds the platform-safe bound")
-	}
-	return path, nil
+	return agentcontrol.SocketPath(stateDir, endpoint, agentcontrol.Identity(identity))
 }
 
 func prepareAgentControlSocket(path string) error {
