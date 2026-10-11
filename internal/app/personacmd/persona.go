@@ -5,6 +5,7 @@ package personacmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/services/instructions"
 )
 
 // Command implements `projmux persona list|show|edit|set|delete`.
@@ -64,6 +66,14 @@ func (c *Command) store() (persona.Store, error) {
 		return persona.Store{}, err
 	}
 	return persona.NewDefaultStore(paths), nil
+}
+
+func (c *Command) service() (instructions.Service, error) {
+	paths, err := c.paths()
+	if err != nil {
+		return instructions.Service{}, err
+	}
+	return instructions.Service{Paths: func() (config.Paths, error) { return paths, nil }}, nil
 }
 
 // Run dispatches `projmux persona <verb>`.
@@ -155,11 +165,11 @@ func (c *Command) runList(args []string, stdout, stderr io.Writer) error {
 		printPersonaUsage(stderr, c.spelling()+" list")
 		return &coremetadata.InputError{Detail: c.spelling() + " list does not accept positional arguments"}
 	}
-	store, err := c.store()
+	service, err := c.service()
 	if err != nil {
 		return err
 	}
-	entries, err := store.List()
+	entries, err := service.List(context.Background())
 	if err != nil {
 		return err
 	}
@@ -176,11 +186,11 @@ func (c *Command) runShow(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	store, err := c.store()
+	service, err := c.service()
 	if err != nil {
 		return err
 	}
-	loaded, err := store.Load(name)
+	loaded, err := service.Read(context.Background(), name)
 	if err != nil {
 		return Refusal(c.spelling()+" show", err)
 	}
@@ -252,11 +262,11 @@ func (c *Command) runSet(args []string, stdout, stderr io.Writer) error {
 		}
 		return Refusal(c.spelling()+" set", err)
 	}
-	store, err := c.store()
+	service, err := c.service()
 	if err != nil {
 		return err
 	}
-	entry, err := store.Write(name, content)
+	entry, err := service.Write(context.Background(), name, content)
 	if err != nil {
 		return Refusal(c.spelling()+" set", err)
 	}
@@ -284,51 +294,38 @@ func (c *Command) runDelete(args []string, stdout, stderr io.Writer) error {
 	if !*yes {
 		return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" delete %s requires --yes; nothing was deleted", name)}
 	}
-	store, err := c.store()
+	service, err := c.service()
 	if err != nil {
 		return err
 	}
-	users, err := c.instructionsUsers(store, name)
+	err = service.Delete(context.Background(), name)
+	var check *instructions.UsageCheckError
+	if errors.As(err, &check) {
+		return fmt.Errorf(c.spelling()+" delete %s: %w; nothing was deleted", name, check.Err)
+	}
+	var used *instructions.InUseError
+	if errors.As(err, &used) {
+		users := instructionsUsersText(used.Users)
+		return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" delete %s: %s: %s %s %q; point each at other instructions with `projmux profile set <name>`, or remove it with `projmux profile delete <name> --yes`; nothing was deleted", name, profile.ReasonInstructionsInUse, users, c.spelling(), name)}
+	}
 	if err != nil {
-		return fmt.Errorf(c.spelling()+" delete %s: %w; nothing was deleted", name, err)
-	}
-	if users != "" {
-		return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" delete %s: %s: %s %s %q; point each at other instructions with `projmux profile set <name>`, or remove it with `projmux profile delete <name> --yes`; nothing was deleted",
-			name, profile.ReasonInstructionsInUse, users, c.spelling(), name)}
-	}
-	if err := store.Delete(name); err != nil {
 		return Refusal(c.spelling()+" delete", err)
 	}
+
 	_, err = fmt.Fprintf(stdout, "deleted %s %s\n", c.spelling(), name)
 	return err
 }
 
-// instructionsUsers returns the user profiles, valid or not, that name the
-// stored instructions called name, as the subject and verb of a refusal
-// (`profile "a" names`, `profiles "a", "b" name`), or "" when none does: deleting them
-// would leave every such profile invalid, and with it every create and resume
-// that applies it. Instructions that do not exist name no users; the delete
-// reports them missing.
-func (c *Command) instructionsUsers(store persona.Store, name string) (string, error) {
-	if _, err := store.Load(name); err != nil {
-		return "", nil
-	}
-	paths, err := c.paths()
-	if err != nil {
-		return "", err
-	}
-	users, err := profile.NewDefaultStore(paths).ProfilesUsingInstructions(name)
-	if err != nil || len(users) == 0 {
-		return "", err
-	}
+// instructionsUsersText renders the CLI's historical profile refusal subject.
+func instructionsUsersText(users []string) string {
 	quoted := make([]string, 0, len(users))
 	for _, user := range users {
 		quoted = append(quoted, fmt.Sprintf("%q", user))
 	}
 	if len(users) == 1 {
-		return "profile " + quoted[0] + " names", nil
+		return "profile " + quoted[0] + " names"
 	}
-	return "profiles " + strings.Join(quoted, ", ") + " name", nil
+	return "profiles " + strings.Join(quoted, ", ") + " name"
 }
 
 // runEdit opens the persona in $EDITOR (then $VISUAL), creating it when it

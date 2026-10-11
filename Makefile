@@ -148,7 +148,7 @@ deadcode-contract:
 vet:
 	$(GO) vet ./...
 
-test: deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards
+test: test-sdk-boundary deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards
 	$(GO) test ./...
 
 # Build this checkout and exercise the process fixtures through a copied CLI.
@@ -268,3 +268,7 @@ security-policy: security-tools
 
 security-contract: security-tools
 	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" test/security-contract.sh
+
+.PHONY: test-sdk-boundary
+test-sdk-boundary:
+	GO="$(GO)" bash scripts/test-sdk-boundary.sh

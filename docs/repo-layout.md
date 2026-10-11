@@ -40,6 +40,8 @@ projmux/
       tmuxexec/
       tmuxopts/
     platformkeys/
+    services/
+      instructions/
     state/
     systemstatus/
     testutil/
@@ -47,12 +49,15 @@ projmux/
     tools/
       gendocs/
       gennotices/
+      sdkboundary/
     ui/
       picker/
       pickercompat/
       projmuxpicker/
       render/
     version/
+  pkg/
+    projmux/
   docs/
   npm/
   scripts/
@@ -60,12 +65,17 @@ projmux/
     integration/
     e2e/
     install/
+    sdk/
 ```
 
 ## Notes
 
 - `cmd/projmux` contains only CLI wiring.
 - `internal/app` implements the commands and wires the other packages together.
+- `pkg/projmux` exposes the experimental v0 instruction SDK; package documentation defines paths, cancellation and compatibility.
+- `internal/services/instructions` is the execution service shared by CLI and SDK.
+- `internal/tools/sdkboundary` checks implementation imports and public signatures with compiler export data.
+- `test/sdk` contains independent consumer and boundary fixture modules (`GOWORK=off`).
 - `internal/cli` owns the canonical command catalog, help, output, and receipts.
 - `internal/core` contains product behavior that should be testable without tmux.
 - `internal/aiprovider` is the AI provider registry: IDs, names, binaries, and capability flags.
