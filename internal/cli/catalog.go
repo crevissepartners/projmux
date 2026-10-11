@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	core "github.com/crevissepartners/projmux/internal/core/receipt"
 	"slices"
 	"strings"
 )
@@ -16,58 +17,58 @@ type Disposition string
 // than promises that every invocation mutates: preflight refusal is always a
 // zero-effect outcome, and conditional routes such as create project may
 // create or reuse the same schema-v3 graph.
-type IdentityEffect string
-type AddressEffect string
-type TopologyEffect string
-type DesiredStateEffect string
-type RuntimeEffect string
-type FocusEffect string
+type IdentityEffect = core.IdentityEffect
+type AddressEffect = core.AddressEffect
+type TopologyEffect = core.TopologyEffect
+type DesiredStateEffect = core.DesiredStateEffect
+type RuntimeEffect = core.RuntimeEffect
+type FocusEffect = core.FocusEffect
 type CardinalityEffect string
 
 const (
-	IdentityUnchanged IdentityEffect = "unchanged"
-	IdentityCreated   IdentityEffect = "created"
-	IdentityReused    IdentityEffect = "reused"
-	IdentityRemoved   IdentityEffect = "removed"
-	IdentityReplaced  IdentityEffect = "replaced"
+	IdentityUnchanged = core.IdentityUnchanged
+	IdentityCreated   = core.IdentityCreated
+	IdentityReused    = core.IdentityReused
+	IdentityRemoved   = core.IdentityRemoved
+	IdentityReplaced  = core.IdentityReplaced
 )
 
 const (
-	AddressUnchanged AddressEffect = "unchanged"
-	AddressAllocated AddressEffect = "allocated"
-	AddressRenamed   AddressEffect = "renamed"
-	AddressReleased  AddressEffect = "released"
+	AddressUnchanged = core.AddressUnchanged
+	AddressAllocated = core.AddressAllocated
+	AddressRenamed   = core.AddressRenamed
+	AddressReleased  = core.AddressReleased
 )
 
 const (
-	TopologyUnchanged   TopologyEffect = "unchanged"
-	TopologyEstablished TopologyEffect = "established"
-	TopologyReparented  TopologyEffect = "reparented"
-	TopologyRemoved     TopologyEffect = "removed"
-	TopologyReplaced    TopologyEffect = "replaced"
+	TopologyUnchanged   = core.TopologyUnchanged
+	TopologyEstablished = core.TopologyEstablished
+	TopologyReparented  = core.TopologyReparented
+	TopologyRemoved     = core.TopologyRemoved
+	TopologyReplaced    = core.TopologyReplaced
 )
 
 const (
-	DesiredStateUnchanged DesiredStateEffect = "unchanged"
-	DesiredStateCreated   DesiredStateEffect = "created"
-	DesiredStateReused    DesiredStateEffect = "reused"
-	DesiredStateRemoved   DesiredStateEffect = "removed"
-	DesiredStateReplaced  DesiredStateEffect = "replaced"
+	DesiredStateUnchanged = core.DesiredStateUnchanged
+	DesiredStateCreated   = core.DesiredStateCreated
+	DesiredStateReused    = core.DesiredStateReused
+	DesiredStateRemoved   = core.DesiredStateRemoved
+	DesiredStateReplaced  = core.DesiredStateReplaced
 )
 
 const (
-	RuntimeUnchanged    RuntimeEffect = "unchanged"
-	RuntimeMaterialized RuntimeEffect = "materialized"
-	RuntimeAlreadyLive  RuntimeEffect = "already-live"
-	RuntimeReparented   RuntimeEffect = "reparented"
-	RuntimeStopped      RuntimeEffect = "stopped"
-	RuntimePreserved    RuntimeEffect = "preserved"
+	RuntimeUnchanged    = core.RuntimeUnchanged
+	RuntimeMaterialized = core.RuntimeMaterialized
+	RuntimeAlreadyLive  = core.RuntimeAlreadyLive
+	RuntimeReparented   = core.RuntimeReparented
+	RuntimeStopped      = core.RuntimeStopped
+	RuntimePreserved    = core.RuntimePreserved
 )
 
 const (
-	FocusUnchanged          FocusEffect = "unchanged"
-	FocusMovedCurrentClient FocusEffect = "moved-current-client"
-	FocusAttachedCaller     FocusEffect = "attached-caller"
+	FocusUnchanged          = core.FocusUnchanged
+	FocusMovedCurrentClient = core.FocusMovedCurrentClient
+	FocusAttachedCaller     = core.FocusAttachedCaller
 )
 
 const (
@@ -94,9 +95,9 @@ const creatorFlagNote = "`--creator uid:<agent>` declares the Agent that created
 // DomainEffectKind is the closed extension discriminant for effects outside
 // the Projmux resource graph. Phase 0 introduces only the downstream delivery
 // seam; it does not add a send route, reducer, receipt, or provider adapter.
-type DomainEffectKind string
+type DomainEffectKind = core.DomainEffectKind
 
-const DomainEffectAgentDelivery DomainEffectKind = "agent-delivery"
+const DomainEffectAgentDelivery = core.DomainEffectAgentDelivery
 
 var domainEffectKinds = []DomainEffectKind{DomainEffectAgentDelivery}
 

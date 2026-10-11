@@ -33,6 +33,7 @@ Client.AnswerQuestion	Public v0 Agent question SDK entrypoint/adapter or preserv
 Client.Bind	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Capabilities	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
+Client.CreateProject	Public v0 Project registration SDK entrypoint; verified by SDK/CLI byte parity, write-free reuse and GOWORK=off external consumer tests.
 Client.DeleteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.DeleteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -352,6 +353,7 @@ processUserDeliveryAcceptance	Retained typed receipt validation for the planned 
 profileRefusal	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 projectClaudeCoordinationEligibilityAt	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+projectRefusal	Public v0 Project registration refusal adapter; verified by typed refusal and CLI failure parity tests.
 publicApprovalControl.Bind	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 publicApprovalControl.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 publicConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.

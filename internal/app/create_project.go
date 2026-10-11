@@ -6,11 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // canonicalCreateProject is the explicit Project bootstrap route.
@@ -62,14 +62,10 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	target := strings.TrimSpace(*root)
-	if target == "" {
-		return usageError(fmt.Sprintf("%s requires --root <absolute-path>", spelling))
+	target, err := mutations.ProjectRoot(*root)
+	if err != nil {
+		return MapMetadataError(err)
 	}
-	if !filepath.IsAbs(target) {
-		return usageError(fmt.Sprintf("%s: --root %q must be absolute", spelling, target))
-	}
-	target = filepath.Clean(target)
 
 	if c == nil || c.store == nil || c.store.updateConvergent == nil {
 		return fmt.Errorf("create: the resource-backed create routes are not configured")
@@ -79,25 +75,10 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 		return err
 	}
 
-	var result coremetadata.RegisterProjectResult
-	// updateConvergent is the write-free half of the repeat contract: registering
-	// an already-registered root produces an identical Registry, and an identical
-	// Registry is not written.
-	if _, _, err := c.store.updateConvergent(func(working *coremetadata.Registry) error {
-		registered, err := reuseOrRegisterProject(working, c.store.mutator(), coremetadata.RegisterProjectOptions{
-			Root:         target,
-			Name:         *name,
-			Labels:       labelMapping,
-			DefaultShell: c.shell,
-			SessionName:  c.registerSessionName(target),
-			OperationID:  operationID,
-		})
-		if err != nil {
-			return err
-		}
-		result = registered
-		return nil
-	}); err != nil {
+	result, err := mutations.RegisterProject(context.Background(), projectMutationStore(c.store), coremetadata.RegisterProjectOptions{
+		Root: target, Name: *name, Labels: labelMapping, DefaultShell: c.shell, SessionName: c.registerSessionName(target), OperationID: operationID,
+	})
+	if err != nil {
 		return MapMetadataError(err)
 	}
 
@@ -114,133 +95,23 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 	}}, registerProjectReceipt(result))
 }
 
-// registerProjectReceipt is the conditional half of the Project bootstrap.
-//
-// Registration has two outcomes that used to print the same word. A new root
-// creates a Project, its canonical Window, and that Window's shell; the exact
-// same root a second time creates nothing at all and writes zero Registry
-// bytes. The receipt reports which of the two happened and names the bootstrap
-// Window and Pane either way, because "what did that call leave behind" was not
-// answerable from `project/<name> created`.
 func registerProjectReceipt(result coremetadata.RegisterProjectResult) cli.OperationReceipt {
-	effects := cli.ReceiptEffects{
-		Identity:     cli.IdentityCreated,
-		Address:      cli.AddressAllocated,
-		Topology:     cli.TopologyEstablished,
-		DesiredState: cli.DesiredStateCreated,
-		Runtime:      cli.RuntimeUnchanged,
-		Focus:        cli.FocusUnchanged,
-	}
-	action := cli.ActionCreated
-	if result.Reused {
-		effects.Identity = cli.IdentityReused
-		effects.Address = cli.AddressUnchanged
-		effects.Topology = cli.TopologyUnchanged
-		effects.DesiredState = cli.DesiredStateReused
-		action = cli.ActionReused
-	}
-	receipt := cli.NewReceipt(cli.OperationCreateProject, cli.ReceiptTarget{
-		Kind: string(coremetadata.KindProject),
-		UID:  result.Project.Metadata.UID,
-		Name: result.Project.Metadata.Name,
-	}, effects)
-	receipt.Add(string(coremetadata.KindProject), result.Project.Metadata.UID, result.Project.Metadata.Name, action)
-	for _, window := range result.Windows {
-		receipt.Add(string(coremetadata.KindWindow), window.Metadata.UID, window.Metadata.Name, action)
-		receipt.SelectWindows(window.Metadata.UID)
-	}
-	for _, pane := range result.Panes {
-		receipt.Add(string(coremetadata.KindPane), pane.Metadata.UID, pane.Metadata.Name, action)
-	}
-	return receipt
+	return cli.OperationReceipt(mutations.ProjectReceipt(result))
 }
-
-// registerSessionName projects the persistent session name a Project root maps
-// onto. It records a projection, not a runtime: nothing is started here.
 func (c *createCommand) registerSessionName(root string) string {
 	if c == nil || c.sessionNameFor == nil {
 		return ""
 	}
 	return strings.TrimSpace(c.sessionNameFor(root))
 }
-
-// registerProjectRoot is the shared explicit-bootstrap seam.
-//
-// It answers the question the sidebar's candidate open asks -- "which Project is
-// this exact path, registering it if none is" -- with the same transaction and
-// the same idempotence the `create project` route uses, so there is one
-// registration implementation rather than a UI-flavored copy.
-//
-// It hands back the whole registered Project rather than only its uid because the
-// open flow mirrors identity onto the session it is about to mint, and the
-// identity mirror is uid *and* name. Narrowing the result to a uid here would
-// force the caller to re-read the Registry for the other half of an identity this
-// transaction already resolved.
-func registerProjectRoot(ctx context.Context, store *resourceStore, shell string, sessionNameFor func(string) string, root string) (coremetadata.Project, bool, error) {
-	_ = ctx
-	root = filepath.Clean(strings.TrimSpace(root))
-	if root == "" || !filepath.IsAbs(root) {
-		return coremetadata.Project{}, false, fmt.Errorf("register project root: %q must be an absolute path", root)
+func projectMutationStore(store *resourceStore) mutations.Store {
+	if store == nil {
+		return mutations.Store{}
 	}
-	if store == nil || store.updateConvergent == nil || store.mutator == nil {
-		return coremetadata.Project{}, false, fmt.Errorf("register project root: the resource store is not configured")
-	}
-	operationID, err := newCreateOperationID()
-	if err != nil {
-		return coremetadata.Project{}, false, err
-	}
-	sessionName := ""
-	if sessionNameFor != nil {
-		sessionName = strings.TrimSpace(sessionNameFor(root))
-	}
-	var result coremetadata.RegisterProjectResult
-	if _, _, err := store.updateConvergent(func(working *coremetadata.Registry) error {
-		registered, err := reuseOrRegisterProject(working, store.mutator(), coremetadata.RegisterProjectOptions{
-			Root:         root,
-			DefaultShell: shell,
-			SessionName:  sessionName,
-			OperationID:  operationID,
-		})
-		if err != nil {
-			return err
-		}
-		result = registered
-		return nil
-	}); err != nil {
-		return coremetadata.Project{}, false, MapMetadataError(err)
-	}
-	return result.Project, !result.Reused, nil
+	return mutations.Store{Update: store.update, UpdateConvergent: store.updateConvergent, Mutator: store.mutator}
 }
-
-// reuseOrRegisterProject answers an already-registered root from the Registry and
-// registers only a root no Project claims.
-//
-// The lookup has to come first because registration validates the directory, and a
-// Project whose spec.root has since disappeared is still a Project. Without this,
-// re-opening a Project whose directory was moved away would fail at registration
-// -- reporting the wrong problem, and reporting it before the surface that owns
-// MissingRoot remediation gets a chance to.
-func reuseOrRegisterProject(working *coremetadata.Registry, mutator coremetadata.Mutator, opts coremetadata.RegisterProjectOptions) (coremetadata.RegisterProjectResult, error) {
-	if existing, ok := working.ProjectByRoot(opts.Root); ok {
-		if err := coremetadata.ValidateExplicitNameReuse("register project", coremetadata.KindProject, existing.Metadata, opts.Name); err != nil {
-			return coremetadata.RegisterProjectResult{}, err
-		}
-		windows := working.WindowsOf(existing.Metadata.UID)
-		// The reuse branch reports the Panes too. Without them the repeat
-		// receipt would list fewer resources than the first call for an
-		// identical graph, which is the same "reuse looks different from what it
-		// reused" defect one level down.
-		var panes []coremetadata.Pane
-		for _, window := range windows {
-			panes = append(panes, working.PanesOf(window.Metadata.UID)...)
-		}
-		return coremetadata.RegisterProjectResult{
-			Project:     existing.Clone(),
-			Windows:     windows,
-			Panes:       panes,
-			Reused:      true,
-			OperationID: opts.OperationID,
-		}, nil
-	}
-	return mutator.RegisterProject(working, opts)
+func registerProjectRoot(ctx context.Context, store *resourceStore, shell string, sessionNameFor func(string) string, root string) (coremetadata.Project, bool, error) {
+	// CLI historically completes sidebar bootstrap irrespective of caller cancellation.
+	result, created, err := mutations.RegisterProjectRoot(context.WithoutCancel(ctx), projectMutationStore(store), shell, sessionNameFor, root)
+	return result, created, MapMetadataError(err)
 }

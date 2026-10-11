@@ -20,6 +20,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"github.com/crevissepartners/projmux/internal/services/resources"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	"golang.org/x/term"
@@ -59,7 +60,7 @@ func newResourceStore() *resourceStore {
 			if err != nil {
 				return coremetadata.Registry{}, false, fmt.Errorf("resolve projmux state paths: %w", err)
 			}
-			return intmetadata.NewDefaultStore(paths).UpdateConvergent(fn)
+			return mutations.NewStore(intmetadata.PathFor(paths.StateDir)).UpdateConvergent(fn)
 		},
 	}
 }
@@ -69,7 +70,7 @@ func newResourceStore() *resourceStore {
 // inherited environment, which may belong to a tmux server started under a
 // different XDG state root.
 func resourceStoreAtPath(path string) *resourceStore {
-	store := intmetadata.NewStore(path)
+	store := mutations.NewStore(path)
 	return &resourceStore{
 		updateConvergent: store.UpdateConvergent,
 	}
@@ -118,7 +119,7 @@ func updateResourceRegistry(fn func(*coremetadata.Registry) error) (coremetadata
 	if err != nil {
 		return coremetadata.Registry{}, fmt.Errorf("resolve projmux state paths: %w", err)
 	}
-	return intmetadata.NewDefaultStore(paths).Update(fn)
+	return mutations.NewStore(intmetadata.PathFor(paths.StateDir)).Update(fn)
 }
 
 // mutate applies one registry transaction over an already-preflighted uid set.

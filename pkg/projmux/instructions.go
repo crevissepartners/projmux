@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/sessions"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -41,11 +44,13 @@ type Options struct {
 	CodexModelLister func(context.Context) ([]string, error)
 }
 
-// Client executes public instruction, profile, and read-only operations. It owns no background work and needs
+// Client executes public instruction, profile, resource registration and read operations. It owns no background work and needs
 // no Close. Its paths are immutable; methods may be called concurrently. Writes
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	projectShell       string
+	projectSessionName func(string) string
 	approvalControl    ApprovalControl
 	questionDispatcher questions.Dispatcher
 	usageDir           string
@@ -85,7 +90,9 @@ func NewClient(options Options) (*Client, error) {
 	if options.QuestionDispatcher != nil {
 		dispatcher = publicQuestionDispatcher{options.QuestionDispatcher}
 	}
-	return &Client{approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	home, _ := os.UserHomeDir()
+	namer := sessions.NewNamer(home)
+	return &Client{projectShell: strings.TrimSpace(os.Getenv("SHELL")), projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

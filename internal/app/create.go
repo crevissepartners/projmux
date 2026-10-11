@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // createKinds lists the resource kinds `create` implements, in help order.
@@ -303,11 +302,7 @@ func (c *createCommand) selectRuntimeAuthority(explicit bool) {
 // newCreateOperationID mints the id that labels one create transaction and its
 // created-resource ledger.
 func newCreateOperationID() (string, error) {
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("create: read operation id entropy: %w", err)
-	}
-	return "op-" + hex.EncodeToString(buf), nil
+	return mutations.NewOperationID()
 }
 
 // Run dispatches one `create <kind|provider>` invocation.

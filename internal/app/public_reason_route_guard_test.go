@@ -726,7 +726,7 @@ func TestPublicRouteReasonsNameCatalogRoutes(t *testing.T) {
 	// public route spellings under this guard at the new ownership boundary.
 	for i := range pkgs {
 		switch pkgs[i].importPath {
-		case flagParseGuardModule + "/internal/services/settings", flagParseGuardModule + "/internal/services/notifications", flagParseGuardModule + "/internal/services/usage":
+		case flagParseGuardModule + "/internal/services/mutations", flagParseGuardModule + "/internal/services/settings", flagParseGuardModule + "/internal/services/notifications", flagParseGuardModule + "/internal/services/usage":
 			pkgs[i].scan = true
 		}
 	}
