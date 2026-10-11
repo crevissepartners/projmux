@@ -244,3 +244,27 @@ func TestExternalApprovalConsumer(t *testing.T) {
 		t.Fatal(receipt, err)
 	}
 }
+
+func TestExternalProjectConsumer(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	client, err := projmux.NewClient(projmux.Options{StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := core.CreateProjectRequest{Root: t.TempDir(), Name: "library-project", Labels: []string{"team=consumer"}}
+	var result core.CreateProjectResult
+	result, err = client.CreateProject(context.Background(), req)
+	if err != nil || !result.Created || result.Reused || result.Receipt.Operation != core.OperationCreateProject || len(result.Windows) != 1 || len(result.Panes) != 1 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	result.Project.Metadata.Labels["team"] = "caller-only"
+	result, err = client.CreateProject(context.Background(), req)
+	if err != nil || result.Created || !result.Reused || result.Project.Metadata.Labels["team"] != "consumer" {
+		t.Fatalf("%+v %v", result, err)
+	}
+	_, err = client.CreateProject(context.Background(), core.CreateProjectRequest{Root: "relative"})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectRootInvalid {
+		t.Fatal(err)
+	}
+}

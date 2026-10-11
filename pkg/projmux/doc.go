@@ -113,4 +113,14 @@
 // Store sync failures after commit are returned as successful receipts with a
 // Warning; callers must not send a second answer. Context cancellation before
 // admission changes nothing, while an admitted answer may already have landed.
+//
+// CreateProject registers or reuses an explicit absolute root with the CLI
+// bootstrap rules, without materializing a runtime. Its result exposes the
+// CLI JSON projection and operation receipt. Registry writes finish atomically
+// after admission; canceled requests before admission write nothing. Encode
+// Projection and Receipt with json.MarshalIndent(value, "", "  ") followed by
+// a newline to match the CLI. Internal helpers capture HOME and SHELL at
+// NewClient construction. Options.HomeDir overrides session naming only;
+// Options.DefaultShell overrides the CLI-compatible shell input. Neither
+// changes the environment or the configuration/state path defaults.
 package projmux

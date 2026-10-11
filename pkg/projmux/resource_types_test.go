@@ -3,6 +3,7 @@ package projmux_test
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"github.com/crevissepartners/projmux/internal/services/approvals"
 	"reflect"
@@ -27,6 +28,7 @@ import (
 // New fields in any reachable internal struct fail until the public model follows.
 func TestPublicResourceFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
+		{reflect.TypeFor[receipt.OperationReceipt](), reflect.TypeFor[core.OperationReceipt]()},
 		{reflect.TypeFor[approvals.List](), reflect.TypeFor[core.ApprovalList]()},
 		{reflect.TypeFor[agentcontrol.PendingApproval](), reflect.TypeFor[core.PendingApproval]()},
 		{reflect.TypeFor[questions.List](), reflect.TypeFor[core.QuestionList]()},

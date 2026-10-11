@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/sessions"
 	"path/filepath"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/services/instructions"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"github.com/crevissepartners/projmux/internal/services/questions"
 )
 
@@ -23,6 +25,13 @@ type Options struct {
 	ApprovalControl ApprovalControl
 	// QuestionDispatcher overrides only the existing process question transport.
 	QuestionDispatcher QuestionDispatcher
+
+	// DefaultShell overrides the captured, whitespace-trimmed SHELL value used
+	// as the CLI-compatible registration input. Empty captures the default.
+	DefaultShell string
+	// HomeDir overrides the captured home used for session naming. It must be
+	// absolute; it does not change ConfigDir or StateDir defaults.
+	HomeDir string
 
 	ConfigDir string
 	// StateDir is the absolute projmux state directory itself. Empty captures
@@ -41,11 +50,13 @@ type Options struct {
 	CodexModelLister func(context.Context) ([]string, error)
 }
 
-// Client executes public instruction, profile, and read-only operations. It owns no background work and needs
+// Client executes public instruction, profile, resource registration and read operations. It owns no background work and needs
 // no Close. Its paths are immutable; methods may be called concurrently. Writes
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	projectShell       string
+	projectSessionName func(string) string
 	approvalControl    ApprovalControl
 	questionDispatcher questions.Dispatcher
 	usageDir           string
@@ -65,7 +76,7 @@ func NewClient(options Options) (*Client, error) {
 		return nil, err
 	}
 	pathsErr := err
-	for _, override := range []struct{ name, path string }{{"ConfigDir", options.ConfigDir}, {"StateDir", options.StateDir}, {"SocketPath", options.SocketPath}, {"UsageStateDir", options.UsageStateDir}} {
+	for _, override := range []struct{ name, path string }{{"HomeDir", options.HomeDir}, {"ConfigDir", options.ConfigDir}, {"StateDir", options.StateDir}, {"SocketPath", options.SocketPath}, {"UsageStateDir", options.UsageStateDir}} {
 		if override.path != "" && !filepath.IsAbs(override.path) {
 			return nil, fmt.Errorf("%s must be absolute", override.name)
 		}
@@ -85,7 +96,9 @@ func NewClient(options Options) (*Client, error) {
 	if options.QuestionDispatcher != nil {
 		dispatcher = publicQuestionDispatcher{options.QuestionDispatcher}
 	}
-	return &Client{approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	defaults := mutations.CaptureProjectDefaults(options.DefaultShell, options.HomeDir)
+	namer := sessions.NewNamer(defaults.HomeDir)
+	return &Client{projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

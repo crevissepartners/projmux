@@ -97,14 +97,14 @@ func TestProjectLifecycleReceiptsMatchTheDecidedEffectMatrix(t *testing.T) {
 		operation Operation
 		effects   ReceiptEffects
 	}{
-		{OperationStartProject, ReceiptEffects{IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusUnchanged}},
-		{OperationOpenProject, ReceiptEffects{IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusMovedCurrentClient}},
-		{OperationAttachProject, ReceiptEffects{IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusAttachedCaller}},
-		{OperationFocusProject, ReceiptEffects{IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient}},
-		{OperationStopProject, ReceiptEffects{IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusUnchanged}},
-		{OperationUnregisterProject, ReceiptEffects{IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimePreserved, FocusUnchanged}},
-		{OperationRecreateProject, ReceiptEffects{IdentityReplaced, AddressReleased, TopologyReplaced, DesiredStateReplaced, RuntimeMaterialized, FocusMovedCurrentClient}},
-		{OperationCreateProject, ReceiptEffects{IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeUnchanged, FocusUnchanged}},
+		{OperationStartProject, ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: RuntimeMaterialized, Focus: FocusUnchanged}},
+		{OperationOpenProject, ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: RuntimeMaterialized, Focus: FocusMovedCurrentClient}},
+		{OperationAttachProject, ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: RuntimeMaterialized, Focus: FocusAttachedCaller}},
+		{OperationFocusProject, ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: RuntimeUnchanged, Focus: FocusMovedCurrentClient}},
+		{OperationStopProject, ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: RuntimeStopped, Focus: FocusUnchanged}},
+		{OperationUnregisterProject, ReceiptEffects{Identity: IdentityRemoved, Address: AddressReleased, Topology: TopologyRemoved, DesiredState: DesiredStateRemoved, Runtime: RuntimePreserved, Focus: FocusUnchanged}},
+		{OperationRecreateProject, ReceiptEffects{Identity: IdentityReplaced, Address: AddressReleased, Topology: TopologyReplaced, DesiredState: DesiredStateReplaced, Runtime: RuntimeMaterialized, Focus: FocusMovedCurrentClient}},
+		{OperationCreateProject, ReceiptEffects{Identity: IdentityCreated, Address: AddressAllocated, Topology: TopologyEstablished, DesiredState: DesiredStateCreated, Runtime: RuntimeUnchanged, Focus: FocusUnchanged}},
 	}
 	seen := make(map[ReceiptEffects]Operation, len(rows))
 	for _, row := range rows {
@@ -137,7 +137,7 @@ func TestReceiptJSONProjectionIsStableAndCollectionsAreNeverNull(t *testing.T) {
 
 	receipt := NewReceipt(OperationCreateProject,
 		ReceiptTarget{Kind: "Project", UID: "prj-a", Name: "alpha"},
-		ReceiptEffects{IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeUnchanged, FocusUnchanged})
+		ReceiptEffects{Identity: IdentityCreated, Address: AddressAllocated, Topology: TopologyEstablished, DesiredState: DesiredStateCreated, Runtime: RuntimeUnchanged, Focus: FocusUnchanged})
 	receipt.Add("Project", "prj-a", "alpha", ActionCreated)
 	receipt.Add("Window", "win-a", "main", ActionCreated)
 	receipt.Add("Pane", "pan-a", "shell", ActionCreated)
@@ -191,7 +191,7 @@ func TestReceiptHumanLineUsesTheSameVocabularyAsHelp(t *testing.T) {
 
 	receipt := NewReceipt(OperationOpenProject,
 		ReceiptTarget{Kind: "Project", UID: "prj-a", Name: "alpha"},
-		ReceiptEffects{IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusMovedCurrentClient})
+		ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: RuntimeMaterialized, Focus: FocusMovedCurrentClient})
 	receipt.Add("Project", "prj-a", "alpha", ActionMaterialized)
 
 	line := receipt.HumanLine()
