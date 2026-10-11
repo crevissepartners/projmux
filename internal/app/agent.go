@@ -21,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/questions"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
@@ -129,7 +130,8 @@ type agentCommand struct {
 	personaStore func() (persona.Store, error)
 	// questionStore opens the AskUserQuestion answer store `agent question`
 	// reads and settles; nil refuses.
-	questionStore func() (*agentquestion.Store, error)
+	questionDispatcher questions.Dispatcher
+	questionStore      func() (*agentquestion.Store, error)
 	// questionAnswering reads the central agent-question-answering setting
 	// controls admission and list policy; existing waiting delivery survives
 	// setting changes. Legacy per-Agent annotations have no effect.

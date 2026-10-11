@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
+	"github.com/crevissepartners/projmux/internal/services/questions"
 )
 
 // Refusal reason tokens of `agent question`. Like the persona tokens they are
@@ -65,21 +65,19 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	resolution, err := request.flags.resolve(selector.VerbTopic, false, registry)
+	query, err := request.flags.query()
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	found, ok := registry.Agent(resolution.Matches[0].UID)
-	if !ok {
-		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", request.spelling, resolution.Matches[0].UID)
+	agent, err := questions.SelectAgent(registry, query, request.spelling)
+	if err != nil {
+		return MapMetadataError(err)
 	}
-	agent := found.Clone()
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, agent.Metadata.Name, detail, reason))
 	}
-	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
-	if provider != aiModeClaude && provider != aiModeCodex {
-		return refuse(questionReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; the question channel applies only to Claude and Codex", agent.Spec.Provider))
+	if err := questions.ValidateProvider(request.spelling, agent); err != nil {
+		return MapMetadataError(err)
 	}
 	switch request.action {
 	case "enable":
@@ -208,61 +206,28 @@ type agentQuestionOption struct {
 	Description string `json:"description,omitempty"`
 }
 
+func (c *agentCommand) questionService() questions.Service {
+	dispatcher := c.questionDispatcher
+	if dispatcher == nil {
+		dispatcher = processquestions.Dispatcher{RegistryPath: c.messagePaths.registryPath}
+	}
+	return questions.Service{OpenStore: c.openQuestionStore, LoadRegistry: c.loadRegistry, Answering: c.questionAnswering, Dispatcher: dispatcher}
+}
 func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremetadata.Agent, stdout io.Writer) error {
-	store, err := c.openQuestionStore()
+	projection, err := c.questionService().List(context.Background(), agent)
 	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
+		return MapMetadataError(err)
 	}
-	records, err := store.List(agent.Metadata.UID)
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	result := agentQuestionList{AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Channel: "off", Questions: []agentQuestionView{}}
-	result.Policy = "native"
-	if questionAnsweredByProjmux(agent, c.questionAnswering) {
-		result.Channel = "on"
-		result.Policy = "projmux"
-	}
-	reg, err := c.loadRegistry()
+	var result agentQuestionList
+	raw, err := json.Marshal(projection)
 	if err != nil {
 		return err
 	}
-	process := false
-	if pane, ok := reg.Pane(agent.Status.PaneRef); ok {
-		process = pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess
+	if err = json.Unmarshal(raw, &result); err != nil {
+		return err
 	}
-	if process && agent.Status.Phase == coremetadata.PhaseRunning {
-		result.ExactQuestions, err = (ProcessQuestionDispatcher{RegistryPath: c.messagePaths.registryPath}).ReadExactProcessQuestions(context.Background(), agent.Metadata.UID)
-		if err != nil {
-			return err
-		}
-		records, err = store.List(agent.Metadata.UID)
-		if err != nil {
-			return err
-		}
-	}
-	for _, record := range records {
-		questions, err := record.ParsedQuestions()
-		if err != nil {
-			continue
-		}
-		view := agentQuestionView{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers, Delivery: "held-question", CanAnswer: record.State == agentquestion.StateWaiting, asking: questionClosedAsking(record)}
-		if process && agent.Status.Phase != coremetadata.PhaseRunning {
-			view.CanAnswer = false
-		}
-		for i, question := range questions {
-			// Claude always takes free text, as its popup and BuildAnswers do;
-			// Codex takes it only when the question sets isOther.
-			prompt := agentQuestionPrompt{Number: i + 1, ID: question.ID, Header: question.Header, Question: question.Question, MultiSelect: question.MultiSelect, IsOther: record.Provider != "codex" || question.IsOther, IsSecret: question.IsSecret}
-			for j, option := range question.Options {
-				prompt.Options = append(prompt.Options, agentQuestionOption{Number: j + 1, Label: option.Label, Description: option.Description})
-			}
-			if question.IsSecret {
-				delete(view.Answers, question.ID)
-			}
-			view.Prompts = append(view.Prompts, prompt)
-		}
-		result.Questions = append(result.Questions, view)
+	for i := range result.Questions {
+		result.Questions[i].asking = projection.Questions[i].Asking
 	}
 	if request.json {
 		encoder := json.NewEncoder(stdout)
@@ -285,7 +250,6 @@ func (c *agentCommand) listQuestions(request agentQuestionRequest, agent coremet
 	}
 	return writeAgentQuestionList(stdout, result, c.clock())
 }
-
 func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Time) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "agent/%s question channel %s\n", result.AgentName, result.Channel)
@@ -347,224 +311,25 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 	return err
 }
 
-// answerQuestion validates one answer against the recorded question set and
-// settles the record under the store lock.
-func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coremetadata.Agent, refuse func(string, string) error, stdout io.Writer) error {
-	if !agentquestion.ValidID(request.questionID) {
-		return refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.questionID))
-	}
-	reg, err := c.loadRegistry()
+func questionRequest(r agentQuestionRequest) questions.Request {
+	return questions.Request{Spelling: r.spelling, QuestionID: r.questionID, Options: r.options, Indexes: r.indexes, Texts: r.texts}
+}
+func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coremetadata.Agent, _ func(string, string) error, stdout io.Writer) error {
+	result, err := c.questionService().Answer(context.Background(), questionRequest(request), agent)
 	if err != nil {
-		return err
+		return MapMetadataError(err)
 	}
-	if pane, ok := reg.Pane(agent.Status.PaneRef); ok && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
-		dispatcher := ProcessQuestionDispatcher{RegistryPath: c.messagePaths.registryPath}
-		views, err := dispatcher.ReadExactProcessQuestions(context.Background(), agent.Metadata.UID)
-		if err != nil {
-			return err
-		}
-		for _, view := range views {
-			if view.QuestionID != request.questionID {
-				continue
-			}
-			if !view.CanAnswer {
-				return refuse(questionReasonNotPending, "question is no longer waiting")
-			}
-			for _, q := range view.Prompts {
-				if q.IsSecret {
-					return refuse(questionReasonSecretNativeOnly, "secret answers require masked typed delivery")
-				}
-			}
-			selections, err := agentQuestionSelections(request, view.Prompts)
-			if err != nil {
-				return refuse(questionReasonInvalidAnswer, err.Error())
-			}
-			if err = dispatcher.AnswerExactProcessQuestion(context.Background(), agent.Metadata.UID, view.QuestionID, selections); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(stdout, "%s answered for agent/%s\n", view.QuestionID, agent.Metadata.Name)
-			return err
-		}
-		return refuse(questionReasonNotFound, "has no current exact question")
-	}
-	store, err := c.openQuestionStore()
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	record, found, err := store.Get(request.questionID)
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	if !found || record.AgentUID != agent.Metadata.UID {
-		return refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.questionID))
-	}
-	if reason, detail := questionRecordRefusal(record); reason != "" {
-		return refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))
-	}
-	questions, err := record.ParsedQuestions()
-	if err != nil {
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	if record.Provider == "codex" {
-		for _, question := range questions {
-			if question.IsSecret {
-				return refuse(questionReasonSecretNativeOnly, "has a secret answer; answer it in the Codex window instead of passing it on the command line")
-			}
-		}
-	}
-	selections, err := agentQuestionSelections(request, questions)
-	if err != nil {
-		return refuse(questionReasonInvalidAnswer, err.Error())
-	}
-	var answers map[string]string
-	if record.Provider == "codex" {
-		answers, err = agentquestion.BuildCodexAnswers(questions, selections)
-	} else {
-		answers, err = agentquestion.BuildAnswers(questions, selections)
-	}
-	if err != nil {
-		return refuse(questionReasonInvalidAnswer, err.Error())
-	}
-	answered, err := store.Answer(record.ID, agent.Metadata.UID, answers)
-	if errors.Is(err, agentquestion.ErrClosed) {
-		// The record closed after the read above; describe it as it closed.
-		if current, found, getErr := store.Get(record.ID); getErr == nil && found {
-			if reason, detail := questionRecordRefusal(current); reason != "" {
-				return refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))
-			}
-		}
-	}
-	if err != nil {
-		if reason, detail := questionStoreRefusal(err); reason != "" {
-			return refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))
-		}
-		return fmt.Errorf("%s: %w", request.spelling, err)
-	}
-	_, err = fmt.Fprintf(stdout, "%s answered for agent/%s\n", answered.ID, agent.Metadata.Name)
+	_, err = fmt.Fprintf(stdout, "%s answered for agent/%s\n", result.QuestionID, result.AgentName)
 	return err
 }
-
+func agentQuestionSelections(request agentQuestionRequest, prompts []agentquestion.Question) (map[int]agentquestion.Selection, error) {
+	return questions.Selections(questionRequest(request), prompts)
+}
 func questionRecordRefusal(record agentquestion.Record) (string, string) {
-	if record.State == agentquestion.StateClosed && record.Disposition == "answered-elsewhere" {
-		return questionReasonAnsweredElsewhere, "was already answered in Codex's own input surface"
-	}
-	reason, detail := questionStateRefusal(record.State)
-	if asking := questionClosedAsking(record); reason == questionReasonClosed && asking != "" {
-		detail = fmt.Sprintf("%s (%s); %s", detail, record.Disposition, asking)
-	}
-	return reason, detail
+	return questions.RecordRefusal(record)
 }
-
-// questionClosedAsking says whether the provider still asks a closed record's
-// question in its own prompt. It is empty for any other record, and for a
-// closed one without a reason this release knows.
-func questionClosedAsking(record agentquestion.Record) string {
-	if record.State != agentquestion.StateClosed {
-		return ""
-	}
-	asks, known := agentquestion.ProviderStillAsks(record.Disposition)
-	if !known {
-		return ""
-	}
-	provider, surface := "Claude Code", "its own prompt"
-	if record.Provider == "codex" {
-		provider, surface = "Codex", "its own input surface"
-	}
-	if asks {
-		return provider + " still asks it in " + surface
-	}
-	return provider + " no longer asks it"
-}
-
-// questionStateRefusal is the refusal for a record that cannot take an answer.
+func questionClosedAsking(record agentquestion.Record) string { return questions.ClosedAsking(record) }
 func questionStateRefusal(state agentquestion.State) (string, string) {
-	switch state {
-	case agentquestion.StateWaiting:
-		return "", ""
-	case agentquestion.StateAnswered:
-		return questionReasonNotPending, "is already answered"
-	case agentquestion.StateExpired:
-		return questionReasonExpired, "expired; Claude Code asked it in its own prompt"
-	default:
-		return questionReasonClosed, "was closed before an answer arrived"
-	}
+	return questions.StateRefusal(state)
 }
-
-// questionStoreRefusal maps a store refusal onto its reason token.
-func questionStoreRefusal(err error) (string, string) {
-	switch {
-	case errors.Is(err, agentquestion.ErrNotFound):
-		return questionReasonNotFound, "does not exist"
-	case errors.Is(err, agentquestion.ErrNotPending):
-		return questionStateRefusal(agentquestion.StateAnswered)
-	case errors.Is(err, agentquestion.ErrExpired):
-		return questionStateRefusal(agentquestion.StateExpired)
-	case errors.Is(err, agentquestion.ErrClosed):
-		return questionStateRefusal(agentquestion.StateClosed)
-	case errors.Is(err, agentquestion.ErrAnsweredElsewhere):
-		return questionReasonAnsweredElsewhere, "was already answered in Codex's own input surface"
-	case errors.Is(err, agentquestion.ErrInvalidAnswer):
-		return questionReasonInvalidAnswer, err.Error()
-	default:
-		return "", ""
-	}
-}
-
-// agentQuestionSelections folds the --option, --index, and --text occurrences
-// into one Selection per question. Each occurrence is <question-number>=<value>
-// with a 1-based question number.
-func agentQuestionSelections(request agentQuestionRequest, questions []agentquestion.Question) (map[int]agentquestion.Selection, error) {
-	selections := map[int]agentquestion.Selection{}
-	split := func(flagName, raw string) (int, string, error) {
-		number, value, ok := strings.Cut(raw, "=")
-		index, err := strconv.Atoi(strings.TrimSpace(number))
-		if !ok || err != nil || index < 1 {
-			if flagName == "text" {
-				return 0, "", fmt.Errorf("--text is not <question-number>=<value>")
-			}
-			return 0, "", fmt.Errorf("--%s %q is not <question-number>=<value>", flagName, raw)
-		}
-		if index > len(questions) {
-			if flagName == "text" {
-				return 0, "", fmt.Errorf("--text names question %d; this question set has %d", index, len(questions))
-			}
-			return 0, "", fmt.Errorf("--%s %q names question %d; this question set has %d", flagName, raw, index, len(questions))
-		}
-		return index - 1, value, nil
-	}
-	for _, raw := range request.options {
-		index, label, err := split("option", raw)
-		if err != nil {
-			return nil, err
-		}
-		selection := selections[index]
-		selection.Labels = append(selection.Labels, label)
-		selections[index] = selection
-	}
-	for _, raw := range request.indexes {
-		index, value, err := split("index", raw)
-		if err != nil {
-			return nil, err
-		}
-		position, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || position < 1 || position > len(questions[index].Options) {
-			return nil, fmt.Errorf("--index %q: question %d has options 1-%d", raw, index+1, len(questions[index].Options))
-		}
-		selection := selections[index]
-		selection.Labels = append(selection.Labels, questions[index].Options[position-1].Label)
-		selections[index] = selection
-	}
-	for _, raw := range request.texts {
-		index, text, err := split("text", raw)
-		if err != nil {
-			return nil, err
-		}
-		selection := selections[index]
-		if selection.HasText {
-			return nil, fmt.Errorf("question %d takes one --text", index+1)
-		}
-		selection.Text, selection.HasText = text, true
-		selections[index] = selection
-	}
-	return selections, nil
-}
+func questionStoreRefusal(err error) (string, string) { return questions.StoreRefusal(err) }
