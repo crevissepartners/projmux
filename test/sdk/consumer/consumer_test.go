@@ -3,7 +3,9 @@ package consumer_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/pkg/projmux"
@@ -85,4 +87,20 @@ func TestExternalRuntimeConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = core.RuntimeRow{Resource: &core.RuntimeResource{UID: "pane-example"}, Conflicts: []core.RuntimeConflict{{Targets: []string{"%1"}}}}
+}
+
+// The consumer runs with GOWORK=off and -mod=readonly. Its module files must
+// describe a library consumer without CLI framework requirements or checksums.
+func TestExternalConsumerModuleExcludesCLI(t *testing.T) {
+	for _, name := range []string{"go.mod", "go.sum"} {
+		content, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, dependency := range []string{"github.com/spf13/cobra", "github.com/spf13/pflag"} {
+			if strings.Contains(string(content), dependency+" ") {
+				t.Errorf("%s contains CLI dependency %s", name, dependency)
+			}
+		}
+	}
 }

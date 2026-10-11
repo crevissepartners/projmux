@@ -14,7 +14,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/core/resources"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -219,7 +218,7 @@ type Client struct {
 	postCreate      postCreateRunner
 	lifecycle       lifecycleHookRunner
 	socket          string
-	diagnostics     *diagnostics.LifecycleRecorder
+	diagnostics     LifecycleDiagnostics
 	persistent      PersistentSessionCreator
 }
 
@@ -255,9 +254,9 @@ func (c *Client) PreparePersistentSessionCreate(ctx context.Context, sessionName
 	if operationMarker == "" {
 		return PersistentSessionCreateRequest{}, false, errors.New("create tmux session with result: private operation marker is required")
 	}
-	c.markLifecycle(diagnostics.OperationSessionCreate)
+	c.markLifecycle(lifecycle.OperationSessionCreate)
 	if err := c.runPreCreate(ctx, sessionName, projectCWD, "persistent"); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return PersistentSessionCreateRequest{}, false, err
 	}
 	sessionEnv := c.projectSessionEnv(projectCWD)
@@ -279,7 +278,7 @@ func (c *Client) CompletePersistentSessionCreate(ctx context.Context, request Pe
 	operationMarker := strings.TrimSpace(request.Environment[createOperationEnvironment])
 	c.runPostCreate(ctx, request.SessionName, request.ProjectCWD, "persistent", result.PaneID)
 	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return err
 	}
 	return nil
@@ -288,13 +287,21 @@ func (c *Client) CompletePersistentSessionCreate(ctx context.Context, request Pe
 // AbortPersistentSessionCreate closes diagnostics after Prepare succeeded but
 // the app-owned plan failed before Complete could own the terminal result.
 func (c *Client) AbortPersistentSessionCreate() {
-	c.failLifecycle(diagnostics.OperationSessionCreate)
+	c.failLifecycle(lifecycle.OperationSessionCreate)
+}
+
+// LifecycleDiagnostics records the typed operations the tmux client owns.
+// The command boundary owns coalescing, storage, and the terminal outcome.
+// Keeping this seam below diagnostics avoids linking CLI policy into readers.
+type LifecycleDiagnostics interface {
+	Mark(lifecycle.Operation)
+	Fail(lifecycle.Operation)
 }
 
 // WithLifecycleDiagnostics attaches the process-scoped, coalescing runtime
 // recorder. The client only marks typed operations; the app command boundary
 // owns the single terminal outcome.
-func WithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) ClientOption {
+func WithLifecycleDiagnostics(recorder LifecycleDiagnostics) ClientOption {
 	return func(c *Client) { c.diagnostics = recorder }
 }
 
@@ -692,12 +699,12 @@ func (c *Client) EnsureSessionWithEnvironmentResultAt(ctx context.Context, sessi
 		return intmux.NewSessionResult{Created: false}, nil
 	}
 	if c.persistent == nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return intmux.NewSessionResult{}, errors.New("create tmux persistent session: typed mutation executor is required")
 	}
 	result, err := c.persistent(ctx, request)
 	if err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return result, fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
@@ -717,12 +724,12 @@ func (c *Client) FinalizeSessionStartup(ctx context.Context, result intmux.NewSe
 		return nil
 	}
 	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return err
 	}
 	c.runStartupCommand(ctx, sessionName, cwd, "persistent", result.PaneID)
 	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return err
 	}
 	return nil
@@ -763,17 +770,17 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 	if strings.TrimSpace(cwd) == "" {
 		return errSessionCWDRequired
 	}
-	c.markLifecycle(diagnostics.OperationSessionCreate)
+	c.markLifecycle(lifecycle.OperationSessionCreate)
 
 	if err := c.runPreCreate(ctx, sessionName, cwd, "ephemeral"); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return err
 	}
 
 	sessionEnv := c.projectSessionEnv(cwd)
 	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
 	if err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+		c.failLifecycle(lifecycle.OperationSessionCreate)
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
@@ -974,16 +981,16 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 		action = "switch"
 	}
 	if inside {
-		c.markLifecycle(diagnostics.OperationSessionSwitch)
+		c.markLifecycle(lifecycle.OperationSessionSwitch)
 	} else {
-		c.markLifecycle(diagnostics.OperationSessionAttach)
+		c.markLifecycle(lifecycle.OperationSessionAttach)
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", command...); err != nil {
 		if inside {
-			c.failLifecycle(diagnostics.OperationSessionSwitch)
+			c.failLifecycle(lifecycle.OperationSessionSwitch)
 		} else {
-			c.failLifecycle(diagnostics.OperationSessionAttach)
+			c.failLifecycle(lifecycle.OperationSessionAttach)
 		}
 		return fmt.Errorf("%s tmux session %q: %w", action, sessionName, err)
 	}
@@ -1026,16 +1033,16 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 		command = []string{"attach-session", "-t", target}
 	}
 	if inside {
-		c.markLifecycle(diagnostics.OperationSessionSwitch)
+		c.markLifecycle(lifecycle.OperationSessionSwitch)
 	} else {
-		c.markLifecycle(diagnostics.OperationSessionAttach)
+		c.markLifecycle(lifecycle.OperationSessionAttach)
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", command...); err != nil {
 		if inside {
-			c.failLifecycle(diagnostics.OperationSessionSwitch)
+			c.failLifecycle(lifecycle.OperationSessionSwitch)
 		} else {
-			c.failLifecycle(diagnostics.OperationSessionAttach)
+			c.failLifecycle(lifecycle.OperationSessionAttach)
 		}
 		return fmt.Errorf("%s tmux target %q: %w", action, target, err)
 	}
@@ -1081,10 +1088,10 @@ func (c *Client) SwitchClient(ctx context.Context, sessionName string) error {
 	if strings.TrimSpace(sessionName) == "" {
 		return errSessionNameRequired
 	}
-	c.markLifecycle(diagnostics.OperationSessionSwitch)
+	c.markLifecycle(lifecycle.OperationSessionSwitch)
 
 	if _, err := c.runner.Run(ctx, "tmux", "switch-client", "-t", exactSessionTarget(sessionName)); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionSwitch)
+		c.failLifecycle(lifecycle.OperationSessionSwitch)
 		return fmt.Errorf("switch tmux client to session %q: %w", sessionName, err)
 	}
 
@@ -1096,23 +1103,23 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 	if strings.TrimSpace(sessionName) == "" {
 		return errSessionNameRequired
 	}
-	c.markLifecycle(diagnostics.OperationSessionKill)
+	c.markLifecycle(lifecycle.OperationSessionKill)
 
 	if _, err := c.runner.Run(ctx, "tmux", "kill-session", "-t", exactSessionTarget(sessionName)); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionKill)
+		c.failLifecycle(lifecycle.OperationSessionKill)
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 
 	return nil
 }
 
-func (c *Client) markLifecycle(operation diagnostics.Operation) {
+func (c *Client) markLifecycle(operation lifecycle.Operation) {
 	if c.diagnostics != nil {
 		c.diagnostics.Mark(operation)
 	}
 }
 
-func (c *Client) failLifecycle(operation diagnostics.Operation) {
+func (c *Client) failLifecycle(operation lifecycle.Operation) {
 	if c.diagnostics != nil {
 		c.diagnostics.Fail(operation)
 	}

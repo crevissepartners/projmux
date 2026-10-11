@@ -20,6 +20,11 @@ func TestImplementationAllowlist(t *testing.T) {
 		{module + "/internal/services/runtime/escape", false, false},
 		{"golang.org/x/sys/unix", false, true},
 		{module + "/internal/app", false, false},
+		{module + "/internal/cli", false, false},
+		{module + "/internal/diagnostics", false, false},
+		{"github.com/spf13/cobra", false, false},
+		{"github.com/spf13/pflag", false, false},
+		{"golang.org/x/term", false, true},
 		{module + "/internal/app/personacmd", false, false},
 		{module + "/internal/web/fixture", false, false},
 		{module + "/internal/core/future", false, false},
@@ -44,6 +49,9 @@ func TestBoundaryFixtures(t *testing.T) {
 		want string
 	}{
 		{"good", ""},
+		{"cli", `SDK implementation import is not allowed: "github.com/crevissepartners/projmux/internal/cli"`},
+		{"cobra", `SDK implementation import is not allowed: "github.com/spf13/cobra"`},
+		{"pflag", `SDK implementation import is not allowed: "github.com/spf13/pflag"`},
 		{"app", `SDK implementation import is not allowed: "github.com/crevissepartners/projmux/internal/app/personacmd"`},
 		{"web", `SDK implementation import is not allowed: "github.com/crevissepartners/projmux/internal/web/fixture"`},
 		{"signature", "internal type leaks from"},

@@ -106,7 +106,6 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/services/runtime",
 		module + "/internal/core/runtimediag",
 		module + "/internal/version",
-		module + "/internal/cli",
 		module + "/internal/core/agentprogress",
 		module + "/internal/core/aicapability",
 		module + "/internal/core/candidates",
@@ -114,7 +113,6 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/core/lifecycle",
 		module + "/internal/core/resources",
 		module + "/internal/core/terminaltext",
-		module + "/internal/diagnostics",
 		module + "/internal/integrations/agents/codexappserver",
 		module + "/internal/integrations/agents/localipc",
 		module + "/internal/integrations/hooks",
@@ -137,7 +135,10 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/config",
 		module + "/internal/state",
 		module + "/internal/aiprovider",
-		"golang.org/x/sys/unix", "golang.org/x/term", "golang.org/x/mod/semver", "github.com/spf13/cobra", "github.com/spf13/pflag":
+		"golang.org/x/sys/unix", "golang.org/x/mod/semver":
+		return true
+	case "golang.org/x/term":
+		// Project hook trust uses terminal detection; this is not CLI dispatch.
 		return true
 	}
 	return false
