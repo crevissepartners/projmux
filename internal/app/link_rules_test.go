@@ -155,6 +155,9 @@ func TestLinkRulesCLITerminatorPreservesDryRun(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("terminator bypassed dry-run: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte("existing rules sentinel"), 0600); err != nil {
 		t.Fatal(err)
 	}
