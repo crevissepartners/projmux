@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +17,7 @@ import (
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -200,6 +203,8 @@ type questionDispatchStub struct {
 	uid, id    string
 	selections []core.QuestionSelection
 	calls      int
+	answerErr  error
+	listErr    error
 }
 
 func (d *questionDispatchStub) ListQuestions(ctx context.Context, uid string) ([]core.ExactQuestion, error) {
@@ -208,7 +213,7 @@ func (d *questionDispatchStub) ListQuestions(ctx context.Context, uid string) ([
 	}
 	d.calls++
 	d.uid = uid
-	return d.views, nil
+	return d.views, d.listErr
 }
 func (d *questionDispatchStub) AnswerQuestion(ctx context.Context, uid, id string, s []core.QuestionSelection) error {
 	if err := ctx.Err(); err != nil {
@@ -217,7 +222,7 @@ func (d *questionDispatchStub) AnswerQuestion(ctx context.Context, uid, id strin
 	d.uid = uid
 	d.id = id
 	d.selections = s
-	return nil
+	return d.answerErr
 }
 
 type internalQuestionStub struct{ stub *questionDispatchStub }
@@ -246,7 +251,7 @@ func (d internalQuestionStub) AnswerExactProcessQuestion(ctx context.Context, ui
 	return d.stub.AnswerQuestion(ctx, uid, id, out)
 }
 func TestQuestionSDKProcessParity(t *testing.T) {
-	for _, mode := range []string{"option", "index", "text", "secret", "not-pending", "missing"} {
+	for _, mode := range []string{"option", "index", "text", "secret", "not-pending", "missing", "host-invalid", "host-invalid-wrapped"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newSDKQuestionFixture(t, true)
 			view := core.ExactQuestion{QuestionID: f.record.ID, Policy: "native", Delivery: "process-exact-question", CanAnswer: true, State: core.QuestionWaiting, Prompts: []core.ProviderQuestion{{ID: "p", Question: "A < B?", IsOther: true, Options: []core.ProviderQuestionOption{{Label: "yes"}, {Label: "no"}}}}}
@@ -258,6 +263,13 @@ func TestQuestionSDKProcessParity(t *testing.T) {
 			}
 			cliStub := &questionDispatchStub{views: []core.ExactQuestion{view}}
 			sdkStub := &questionDispatchStub{views: []core.ExactQuestion{view}}
+			if mode == "host-invalid" || mode == "host-invalid-wrapped" {
+				cliStub.answerErr = agentquestion.ErrInvalidAnswer
+				if mode == "host-invalid-wrapped" {
+					cliStub.answerErr = fmt.Errorf("host: %w", agentquestion.ErrInvalidAnswer)
+				}
+				sdkStub.answerErr = cliStub.answerErr
+			}
 			if mode == "missing" {
 				cliStub.views = nil
 				sdkStub.views = nil
@@ -293,7 +305,11 @@ func TestQuestionSDKProcessParity(t *testing.T) {
 			_, sdkErr := c.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "reader", QuestionID: view.QuestionID, Selections: []core.QuestionSelection{selection}})
 			if cliErr != nil || sdkErr != nil {
 				var refusal *projmux.Refusal
-				if cliErr == nil || !errors.As(sdkErr, &refusal) || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != 2 {
+				wantExit := 2
+				if cliStub.answerErr != nil {
+					wantExit = 1
+				}
+				if cliErr == nil || !errors.As(sdkErr, &refusal) || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != wantExit || (cliStub.answerErr != nil && refusal.Code != projmux.CodeQuestionInvalidAnswer) {
 					t.Fatalf("CLI %v SDK %v", cliErr, sdkErr)
 				}
 			} else if cliStub.id != sdkStub.id || cliStub.uid != sdkStub.uid || !reflect.DeepEqual(cliStub.selections, sdkStub.selections) {
@@ -433,6 +449,51 @@ func TestQuestionSDKSelectionRefusals(t *testing.T) {
 		var refusal *projmux.Refusal
 		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeQuestionInvalidAnswer {
 			t.Fatal(err)
+		}
+	}
+}
+
+// Transport failures do not imply a question's final state and must retain
+// their original error identity, text, and CLI runtime exit code.
+func TestQuestionSDKProcessRuntimeErrors(t *testing.T) {
+	for _, sentinel := range []error{processhost.ErrStale, context.Canceled, context.DeadlineExceeded, io.EOF, os.ErrNotExist} {
+		for _, wrapped := range []bool{false, true} {
+			for _, action := range []string{"list", "answer"} {
+				t.Run(fmt.Sprintf("%s/wrapped=%t/%s", sentinel, wrapped, action), func(t *testing.T) {
+					f := newSDKQuestionFixture(t, true)
+					hostErr := sentinel
+					if wrapped {
+						hostErr = fmt.Errorf("host: %w", sentinel)
+					}
+					view := core.ExactQuestion{QuestionID: f.record.ID, CanAnswer: true, State: core.QuestionWaiting, Prompts: []core.ProviderQuestion{{ID: "p", Question: "Choose", Options: []core.ProviderQuestionOption{{Label: "yes"}}}}}
+					stub := &questionDispatchStub{views: []core.ExactQuestion{view}}
+					if action == "list" {
+						stub.listErr = hostErr
+					} else {
+						stub.answerErr = hostErr
+					}
+					f.cmd.questionDispatcher = internalQuestionStub{stub}
+					client, err := projmux.NewClient(projmux.Options{StateDir: f.state, ConfigDir: t.TempDir(), QuestionDispatcher: stub})
+					if err != nil {
+						t.Fatal(err)
+					}
+					var out, stderr bytes.Buffer
+					args := []string{action, "reader"}
+					var sdkErr error
+					if action == "answer" {
+						args = append(args, view.QuestionID, "--option", "1=yes")
+						_, sdkErr = client.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "reader", QuestionID: view.QuestionID, Selections: []core.QuestionSelection{{Question: 1, Option: ptr("yes")}}})
+					} else {
+						args = append(args, "-o", "json")
+						_, sdkErr = client.ListQuestions(context.Background(), "reader")
+					}
+					cliErr := f.cmd.runQuestion(args, &out, &stderr)
+					var refusal *projmux.Refusal
+					if !errors.Is(cliErr, sentinel) || !errors.Is(sdkErr, sentinel) || errors.As(sdkErr, &refusal) || cliErr.Error() != sdkErr.Error() || exitCodeOf(cliErr) != 1 || out.Len() != 0 {
+						t.Fatalf("CLI %v SDK %v refusal %+v", cliErr, sdkErr, refusal)
+					}
+				})
+			}
 		}
 	}
 }

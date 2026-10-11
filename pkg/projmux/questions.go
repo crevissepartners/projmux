@@ -141,6 +141,11 @@ func (c *Client) AnswerQuestion(ctx context.Context, input AnswerQuestionRequest
 	return core.QuestionAnswerResult{QuestionID: result.QuestionID, AgentUID: result.AgentUID, AgentName: result.AgentName}, questionRefusal(err)
 }
 func questionRefusal(err error) error {
+	// The host can reject a validated choice when its live question changes.
+	// Preserve the CLI transport error text while exposing its refusal code.
+	if errors.Is(err, agentquestion.ErrInvalidAnswer) {
+		return &Refusal{Code: CodeQuestionInvalidAnswer, message: err.Error()}
+	}
 	var failure *questions.Failure
 	if errors.As(err, &failure) {
 		return &Refusal{Code: Code(failure.Code), message: failure.Error()}
