@@ -30,6 +30,7 @@ Client.DeleteInstructions	Public v0 instruction SDK entrypoint or its typed-refu
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.ListInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+Client.ObserveRuntime	Public v0 runtime SDK entrypoint retained for external modules; checked by runtime parity, cancellation, field coverage and external consumer tests.
 Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.WriteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
@@ -144,6 +145,7 @@ NewClean	Test-only installed qualification API retained for canonical clean-root
 NewClient	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
+NewReader	Runtime SDK production reader wiring retained for external ObserveRuntime consumers; covered by CLI parity and external consumer tests.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
 NewWithConfig	Credential and endpoint injection constructor retained as the only seam that exercises the live Claude usage adapter without real credentials.

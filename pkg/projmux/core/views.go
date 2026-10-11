@@ -1,6 +1,6 @@
 package core
 
-// Ref is a CLI resource reference, such as "uid:agent-..." or "agent/name".
+// Ref is a CLI resource reference, such as "uid:agent-..." or "reader".
 type Ref struct {
 	Kind  Kind
 	Value string

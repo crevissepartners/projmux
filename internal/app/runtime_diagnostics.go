@@ -2,13 +2,13 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -97,7 +97,7 @@ func (r *runtimeDiagnosticsReader) transport(req runtimeTransportRequest) (resou
 	if r.lookupEnv != nil {
 		inherited = r.lookupEnv("TMUX")
 	}
-	return resourcegraph.ResolveTransport(resourcegraph.TransportRequest{
+	return runtimeservice.ResolveTransport(resourcegraph.TransportRequest{
 		SocketName:    req.socket,
 		SocketPath:    req.socketPath,
 		InheritedTMUX: inherited,
@@ -132,21 +132,11 @@ func (r *runtimeDiagnosticsReader) viewTransport() (resourcegraph.Transport, err
 
 // resolve takes one observation of the exact host and joins it to the Registry.
 func (r *runtimeDiagnosticsReader) resolve(ctx context.Context, transport resourcegraph.Transport) (resourcegraph.Graph, error) {
-	if r.loadRegistry == nil {
-		return resourcegraph.Graph{}, errors.New("runtime diagnostics registry reader is not configured")
-	}
-	registry, err := r.loadRegistry()
+	graph, err := (runtimeservice.Reader{LoadRegistry: r.loadRegistry, Observe: r.observe, Processes: r.processes}).Resolve(ctx, transport)
 	if err != nil {
 		return resourcegraph.Graph{}, MapMetadataError(err)
 	}
-	if r.observe == nil {
-		return resourcegraph.Graph{}, errors.New("runtime diagnostics observer is not configured")
-	}
-	inventory := r.observe(ctx, transport)
-	if r.processes != nil {
-		inventory.Processes = r.processes(ctx, registry).Clone()
-	}
-	return resourcegraph.Resolve(registry, inventory), nil
+	return graph, nil
 }
 
 // socketPath asks the observed server for its own `#{socket_path}`.

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
-	"github.com/crevissepartners/projmux/internal/core/runtimediag"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 )
 
 // runtimeReadKinds lists the object kinds `get runtime` projects, in help order.
@@ -79,7 +79,7 @@ func (c *getCommand) runRuntime(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	report := runtimediag.Project(graph, kind)
+	report := runtimeservice.Project(graph, kind)
 	switch mode {
 	case cli.OutputModeNone:
 		return nil

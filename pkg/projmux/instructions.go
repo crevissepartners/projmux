@@ -23,7 +23,8 @@ type Options struct {
 	// HOME/XDG defaults at construction; no Registry path or writer is exposed.
 	StateDir string
 	// SocketPath selects one exact tmux server. Empty observes the app socket
-	// named projmux, as CLI resource reads do outside tmux. TMUX is never used.
+	// named projmux for resource reads. ObserveRuntime instead selects no server
+	// when empty. TMUX is never used.
 	SocketPath string
 }
 
@@ -32,10 +33,11 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
-	instructions instructions.Service
-	paths        config.Paths
-	pathsErr     error
-	transport    resourcegraph.Transport
+	instructions      instructions.Service
+	paths             config.Paths
+	pathsErr          error
+	transport         resourcegraph.Transport
+	runtimeSocketPath string
 }
 
 // NewClient captures paths without creating directories or changing the process
@@ -67,7 +69,7 @@ func NewClient(options Options) (*Client, error) {
 			return config.Paths{}, err
 		}
 		return paths, nil
-	}}, paths: paths, pathsErr: pathsErr, transport: transport}, nil
+	}}, paths: paths, pathsErr: pathsErr, transport: transport, runtimeSocketPath: options.SocketPath}, nil
 }
 
 // Code is a machine-readable refusal reason. Instruction codes retain CLI

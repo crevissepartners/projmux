@@ -66,24 +66,26 @@ func TestRawTmuxTransportHasOneProductionOwner(t *testing.T) {
 		})
 	}
 
-	for _, name := range []string{
-		"agent_interaction.go",
-		"agent_review.go",
-		"binding_convergence.go",
-		"delete_transport.go",
-		"resource_mutation_mirror.go",
-		"resource_reconcile.go",
-		"registry_recovery.go",
-		"runtime_diagnostics.go",
+	for _, owner := range []struct{ name, resolver string }{
+		{"agent_interaction.go", "resourcegraph.ResolveTransport("},
+		{"agent_review.go", "resourcegraph.ResolveTransport("},
+		{"binding_convergence.go", "resourcegraph.ResolveTransport("},
+		{"delete_transport.go", "resourcegraph.ResolveTransport("},
+		{"resource_mutation_mirror.go", "resourcegraph.ResolveTransport("},
+		{"resource_reconcile.go", "resourcegraph.ResolveTransport("},
+		{"registry_recovery.go", "resourcegraph.ResolveTransport("},
+		{"runtime_diagnostics.go", "runtimeservice.ResolveTransport("},
+		{"../services/runtime/observe.go", "resourcegraph.ResolveTransport("},
 	} {
-		source, err := os.ReadFile(filepath.Clean(name))
+		source, err := os.ReadFile(filepath.Clean(owner.name))
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %s: %v", owner.name, err)
 		}
-		if !strings.Contains(string(source), "resourcegraph.ResolveTransport(") {
-			t.Errorf("%s does not project raw routing through resourcegraph.ResolveTransport", name)
+		if !strings.Contains(string(source), owner.resolver) {
+			t.Errorf("%s does not project raw routing through %s", owner.name, owner.resolver)
 		}
 	}
+
 }
 
 func TestInheritedRawTransportAdaptersPreserveNoneBehavior(t *testing.T) {
