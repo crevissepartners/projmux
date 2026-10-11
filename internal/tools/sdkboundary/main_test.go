@@ -13,6 +13,11 @@ func TestImplementationAllowlist(t *testing.T) {
 		want     bool
 	}{
 		{"context", true, true},
+		{module + "/internal/services/settings", false, true},
+		{module + "/internal/services/usage", false, true},
+		{module + "/internal/services/notifications", false, true},
+		{module + "/internal/core/usage/adapters/claude", false, false},
+		{module + "/internal/core/usage/adapters/codex", false, false},
 		{module + "/pkg/projmux", false, true},
 		{module + "/internal/services/instructions", false, true},
 		{module + "/internal/services/runtime", false, true},

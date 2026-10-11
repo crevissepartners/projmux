@@ -5,7 +5,8 @@
 //
 // The SDK exposes stored instructions and read-only Project, Window, Pane,
 // and Agent resource lists and descriptions, runtime inventories, Agent capabilities,
-// provider model suggestions, and stored profile list/read/write/delete. Public resource types live in
+// provider model suggestions, stored profile list/read/write/delete, central settings,
+// saved usage snapshots/history, and notification list/ack. Public resource types live in
 // pkg/projmux/core and mirror CLI JSON, including list-only context. The CLI and SDK execute
 // the same internal service and retain the existing personas/<name>.md format,
 // case-sensitive names, 64 KiB limit and private filesystem permissions.
@@ -56,4 +57,28 @@
 // Profile store refusals retain profile.ReasonOf tokens as Code; a missing
 // confirmation returns CodeProfileConfirmationRequired. Other filesystem errors
 // stay ordinary. No profile operation applies settings to an Agent.
+//
+// GetConfig and SetConfig cover providers, locale, agent-questions and
+// agent-approvals only. ConfigUpdate's nil policy pointers preserve existing
+// values; question Window accepts "unlimited", approval Window does not. The
+// files and validators are shared with the CLI; no config apply or tmux write
+// follows. Config refusal codes classify invalid keys and values. Policy values
+// are validated together, but the two-file write is not a transaction.
+//
+// GetUsage shares the statusbar cache reader and enabled-provider scope;
+// GetUsageHistory shares agent usage --history's retained metric reader. Neither
+// collects usage or starts providers. Existing private-permission repair and
+// history locking remain. Snapshot/history contents and collection metadata
+// are never written. PROJMUX_USAGE_STATE_DIR is captured at construction when
+// StateDir is empty; an explicit StateDir always selects StateDir/usage.
+// UsageCache includes sorted snapshots, per-provider timestamps/backoff,
+// unsupported providers and cache mtime. Encode history with a plain JSON
+// Encoder (without indent) to match agent usage --history --json.
+//
+// ListNotifications applies the saved queue's severity/source/limit filters;
+// AckNotifications removes one id or all entries under the existing store lock.
+// Queue results own their maps. No attention read, reconcile, push, or sidebar
+// runs. Encode notification lists with the same indentation as resource results.
+// Invalid filters, invalid ack inputs and missing ids are typed Refusal values;
+// filesystem and cancellation errors remain ordinary errors.
 package projmux

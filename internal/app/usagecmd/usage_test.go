@@ -2571,3 +2571,27 @@ func TestHUDVisibilityPreferencesFallBackToTheCentralDefaults(t *testing.T) {
 		t.Fatalf("TUI values did not win over central: providers=%v codex=%v", prefs.providers, prefs.windows["codex"])
 	}
 }
+
+func TestCachedStateKeepsBestEffortCachePathProbe(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv(StateDirEnvVar, "")
+	store := usage.NewStore(t.TempDir())
+	now := time.Now().UTC()
+	if err := store.SaveState(usage.State{Snapshots: []usage.Snapshot{{Model: "claude", Window: usage.Window5h, Pct: 12, UpdatedAt: now}}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := New(func() time.Time { return now })
+	cmd.managerFn = func([]string) (*usage.Manager, error) {
+		t.Fatal("cached reader used collecting manager")
+		return nil, nil
+	}
+	cmd.readOnlyManagerFn = func([]string) (*usage.Manager, error) {
+		return usage.NewManager(usage.NewRegistry(), store, func() time.Time { return now }), nil
+	}
+	state, _, mtime, err := cmd.CachedState()
+	if err != nil || len(state.Snapshots) != 1 || !mtime.IsZero() {
+		t.Fatalf("cache path probe changed state read: %+v %v %v", state, mtime, err)
+	}
+}

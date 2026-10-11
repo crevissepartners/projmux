@@ -3,21 +3,32 @@ package projmux_test
 import (
 	"bytes"
 	"encoding/json"
-	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/profile"
-	"github.com/crevissepartners/projmux/internal/core/runtimediag"
-	"github.com/crevissepartners/projmux/internal/services/agentcatalog"
-	"github.com/crevissepartners/projmux/internal/services/profiles"
-	"github.com/crevissepartners/projmux/pkg/projmux/core"
 	"reflect"
 	"testing"
 	"time"
+
+	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/core/runtimediag"
+	"github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/services/agentcatalog"
+	"github.com/crevissepartners/projmux/internal/services/profiles"
+	"github.com/crevissepartners/projmux/internal/services/settings"
+	savedusage "github.com/crevissepartners/projmux/internal/services/usage"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
 // Check the full JSON field graph, not just the currently populated fixture.
 // New fields in any reachable internal struct fail until the public model follows.
 func TestPublicResourceFieldCoverage(t *testing.T) {
-	for _, pair := range [][2]reflect.Type{{reflect.TypeFor[profiles.WriteResult](), reflect.TypeFor[core.ProfileWriteResult]()}, {reflect.TypeFor[profiles.Info](), reflect.TypeFor[core.ProfileInfo]()}, {reflect.TypeFor[profile.Profile](), reflect.TypeFor[core.ProfileContent]()}, {reflect.TypeFor[metadata.Project](), reflect.TypeFor[core.Project]()}, {reflect.TypeFor[metadata.Window](), reflect.TypeFor[core.Window]()}, {reflect.TypeFor[metadata.Pane](), reflect.TypeFor[core.Pane]()}, {reflect.TypeFor[metadata.Agent](), reflect.TypeFor[core.Agent]()}, {reflect.TypeFor[runtimediag.Report](), reflect.TypeFor[core.RuntimeReport]()}, {reflect.TypeFor[agentcatalog.Capabilities](), reflect.TypeFor[core.Capabilities]()}, {reflect.TypeFor[agentcatalog.ModelSuggestions](), reflect.TypeFor[core.ModelSuggestions]()}} {
+	for _, pair := range [][2]reflect.Type{
+		{reflect.TypeFor[usage.Snapshot](), reflect.TypeFor[core.UsageSnapshot]()},
+		{reflect.TypeFor[usage.MetricPoint](), reflect.TypeFor[core.UsageMetricPoint]()},
+		{reflect.TypeFor[usage.BackoffState](), reflect.TypeFor[core.BackoffState]()},
+		{reflect.TypeFor[notify.Notification](), reflect.TypeFor[core.Notification]()},
+		{reflect.TypeFor[savedusage.UnsupportedProvider](), reflect.TypeFor[core.UnsupportedUsageProvider]()},
+		{reflect.TypeFor[settings.Value](), reflect.TypeFor[core.ConfigValue]()}, {reflect.TypeFor[profiles.WriteResult](), reflect.TypeFor[core.ProfileWriteResult]()}, {reflect.TypeFor[profiles.Info](), reflect.TypeFor[core.ProfileInfo]()}, {reflect.TypeFor[profile.Profile](), reflect.TypeFor[core.ProfileContent]()}, {reflect.TypeFor[metadata.Project](), reflect.TypeFor[core.Project]()}, {reflect.TypeFor[metadata.Window](), reflect.TypeFor[core.Window]()}, {reflect.TypeFor[metadata.Pane](), reflect.TypeFor[core.Pane]()}, {reflect.TypeFor[metadata.Agent](), reflect.TypeFor[core.Agent]()}, {reflect.TypeFor[runtimediag.Report](), reflect.TypeFor[core.RuntimeReport]()}, {reflect.TypeFor[agentcatalog.Capabilities](), reflect.TypeFor[core.Capabilities]()}, {reflect.TypeFor[agentcatalog.ModelSuggestions](), reflect.TypeFor[core.ModelSuggestions]()}} {
 		compareResourceShape(t, pair[0], pair[1], map[[2]reflect.Type]bool{})
 		source := reflect.New(pair[0]).Elem()
 		fillResourceFields(source)
