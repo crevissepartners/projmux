@@ -8,7 +8,7 @@ import (
 )
 
 // TestRouteCoverageHasExactlyOneDispositionAndNoOrphans audits the final tree:
-// 37 public canonical/shortcut roots, the hidden internal namespace, and the
+// 38 public canonical/shortcut roots, the hidden internal namespace, and the
 // hidden deprecated `persona` root. Retired compatibility roots are absent
 // rather than represented as dispatchable tombstones. The tallies count the
 // built-in route table; every top-level route, extensions included, must still
