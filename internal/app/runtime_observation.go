@@ -43,13 +43,7 @@ import (
 //     "nothing is live", which is what is actually true of a machine with no
 //     tmux server.
 
-// liveRuntimeInventory is the mirrored-uid inventory seam of the observation.
-// It is the read half of the existing tmux identity mirror; nothing here
-// writes, re-mirrors, or adopts a uid onto a live tmux object.
-type liveRuntimeInventory interface {
-	LiveWindowUIDs(ctx context.Context) (map[string]bool, error)
-	LivePaneUIDs(ctx context.Context) (map[string]bool, error)
-}
+
 
 // runtimeLookup returns the invocation's live-tmux observation. It is memoized,
 // so a route that resolves several times -- delete's per-ref unmatched probe,
@@ -102,25 +96,7 @@ func tmuxRuntimeLookup(inventory liveRuntimeInventory) runtimeLookup {
 	})
 }
 
-// observeRuntime takes one live-tmux observation.
-//
-// The two reads are independent: a failure of one leaves that half empty rather
-// than discarding the other, because a Pane whose tmux pane is provably gone is
-// still offline even if the window inventory could not be read.
-func observeRuntime(ctx context.Context, inventory liveRuntimeInventory) coremetadata.RuntimeObservation {
-	if inventory == nil {
-		return coremetadata.RuntimeObservation{}
-	}
-	windows, err := inventory.LiveWindowUIDs(ctx)
-	if err != nil {
-		windows = nil
-	}
-	panes, err := inventory.LivePaneUIDs(ctx)
-	if err != nil {
-		panes = nil
-	}
-	return coremetadata.RuntimeObservation{Windows: windows, Panes: panes}
-}
+
 
 // observation resolves a possibly-nil lookup into a snapshot. A nil lookup is
 // the empty observation, which is the same fail-closed reading a failed query

@@ -1,0 +1,1111 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/candidates"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/pins"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+)
+
+// registryReconciler brings the resource registry up to date with the machine
+// before a mutation route resolves its selectors.
+//
+// This exists because a `--project <name>` selector has nothing to resolve
+// against until something registers Projects. Reconciliation is a mutation-route
+// concern only: the read verbs keep LoadReadOnly and must never create the
+// registry for an operator who has not run a mutation.
+//
+// Order is load bearing.
+//
+//  1. Import live tmux sessions first. A session that predates the resource
+//     model carries the operator's real Windows and Panes, and importing it is
+//     what preserves that topology while recording the observed Window display
+//     names. Registering the same root from discovery first would create a
+//     default one-Window topology, and the importer would then adopt *that*
+//     bootstrap Window instead of representing the tmux windows the operator
+//     actually has.
+//  2. Register the remaining selectable workdirs with the bootstrap topology.
+//  3. Observe roots and refresh the live session projection.
+//  4. Reapply the tmux bindings of every live session the import step could not
+//     resolve to a Project root. This runs after step 3 on purpose: it resolves
+//     a session through the Project<->session name edge, and step 3 is what
+//     settles that edge.
+//  5. Observe live tmux and record why any Window or Pane lost its runtime,
+//     then release every Agent whose managed Pane no longer exists in tmux.
+//
+// Nothing here renumbers or merges an existing Project: first registration wins
+// and names stay stable. Nothing here re-identifies a Window or a Pane either:
+// steps 1 and 4 may mint a new object, but no existing uid is ever changed,
+// merged, or reassigned, and nothing is ever deleted or pruned.
+type registryReconciler struct {
+	processes resourcegraph.ProcessInventory
+
+	// discoverRoots returns the selectable workdirs, already absolute.
+	discoverRoots func() ([]string, error)
+	// liveSessions returns the live tmux session-name set. A machine with no
+	// tmux server yields an empty set rather than an error.
+	liveSessions func(ctx context.Context) (map[string]bool, error)
+	// observeLegacy reads one live session's pre-v2 naming state together with
+	// the tmux ids the migration must mirror its allocated uids onto.
+	observeLegacy func(ctx context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error)
+	// observeServer, when set, reads every live session's legacy state and the
+	// mirrored-uid inventories in one server-wide snapshot per pass. The
+	// production observeLegacy answers from that snapshot, and the pre-pass
+	// runtime observation reads it, so an unrelated open session costs no tmux
+	// query of its own. Nil keeps the per-session and per-inventory reads.
+	observeServer func(ctx context.Context) (intmetadata.ServerSnapshot, error)
+	// inPass is true only while reconcileGuarded runs; passSnapshot is taken
+	// and kept only then. It is taken before the pass writes anything and
+	// dropped when the pass ends.
+	inPass       bool
+	passSnapshot *intmetadata.ServerSnapshot
+	// passSnapshotWrites is the shared guarded-write count when passSnapshot
+	// was taken; passSnapshotCounted is false when there is no shared counter.
+	passSnapshotWrites  uint64
+	passSnapshotCounted bool
+	// mirror writes allocated identity back onto live tmux objects.
+	mirror intmetadata.Mirror
+	// Runtime identity writes enter the shared printable mutation executor.
+	// The generic metadata adapter remains the read inventory only.
+	mirrorProject func(context.Context, string, coremetadata.Project) error
+	mirrorWindow  func(context.Context, string, coremetadata.Window) error
+	mirrorPane    func(context.Context, string, string, coremetadata.Pane) error
+	// typedMirror is the production executor behind the three mirror writers,
+	// kept so a transaction owner can share its route identity scope with it.
+	typedMirror *runtimeMutationMetadataMirror
+	// shell is the configured shell path; its basename seeds default Window and
+	// Pane names.
+	shell string
+	// sessionNameFor maps a Project root onto its persistent tmux session name.
+	sessionNameFor func(root string) string
+	// refuseForeign is enabled only by the public repair planner. It keeps an
+	// unknown live uid observable and untouched; lifecycle convergence retains
+	// the historical mint-and-rebind behavior.
+	refuseForeign bool
+	// refusedSessions is always writable. The public repair planner pre-populates
+	// it from the server-wide Project inventory; lifecycle/create reconciliation
+	// can then quarantine a per-session observation without turning one unrelated
+	// refusal into a panic or a transaction-wide failure.
+	refusedSessions map[string]bool
+	// refusedSessionDivergence carries the classifier result that caused the
+	// quarantine. Reporting reads this value instead of inferring a second D4
+	// wrapper from a string key.
+	refusedSessionDivergence map[string]resourcegraph.Divergence
+	// refusedSessionReasons is the operator-facing half of the typed refusal.
+	// Keeping it beside the divergence prevents report construction from trying
+	// to reconstruct authority from a session name after the fact.
+	refusedSessionReasons map[string]string
+	// exactProjects is populated only by the public repair planner. It carries
+	// a known Registry Project UID already mirrored on a live session so a
+	// stale project-path anchor after rebind can be repaired without treating
+	// the old path as a new Project identity candidate.
+	exactProjects map[string]string
+	// targetLiveOnly keeps the public exact-socket repair scoped to resources
+	// observed on that server.
+	targetLiveOnly            bool
+	approvedOrphanImport      bool
+	atomicAuthorshipPromotion bool
+	// sessionSocketPath answers the exact absolute socket path of the server
+	// this pass observes, as its route verified it, for the live session
+	// projections the pass records. It is read at write time because a create
+	// transaction may bind that path only when its new-session starts the
+	// server. Nil or "" records the server as unknown.
+	sessionSocketPath func() string
+	// linkError carries a canonical launch promotion failure out of the
+	// per-Pane walk. Hook-only/legacy best-effort linkage remains non-fatal, but
+	// a composite authorship transaction cannot turn allocator or validation
+	// failure into a successful no-op.
+	linkError error
+}
+
+// passServerSnapshot returns this pass's server snapshot, taking it on first
+// use. It is nil when the reconciler has no server-wide observer or the
+// snapshot failed; callers then read per session exactly as before.
+//
+// The snapshot answers every read of one pass that would otherwise repeat the
+// same server state before anything was written: the pre-pass runtime
+// observation and each live session's legacy observation. Writes of the pass
+// go through the typed mirror, whose guards re-read their exact targets before
+// writing, so no write is authorized by the snapshot alone.
+func (r *registryReconciler) passServerSnapshot(ctx context.Context) *intmetadata.ServerSnapshot {
+	if r.observeServer == nil || !r.inPass {
+		return nil
+	}
+	if r.passSnapshot == nil {
+		writes, counted := r.sharedGuardedWrites()
+		snapshot, err := r.observeServer(ctx)
+		if err != nil {
+			return nil
+		}
+		r.passSnapshot = &snapshot
+		r.passSnapshotWrites, r.passSnapshotCounted = writes, counted
+	}
+	return r.passSnapshot
+}
+
+// sharedGuardedWrites is the guarded-write count of the transaction scope the
+// typed mirror writes through. Every tmux write this reconciler issues goes
+// through that mirror, so an unchanged count means this pass wrote nothing.
+func (r *registryReconciler) sharedGuardedWrites() (uint64, bool) {
+	if r.typedMirror == nil || r.typedMirror.scope == nil {
+		return 0, false
+	}
+	return r.typedMirror.scope.GuardedWrites, true
+}
+
+// unwrittenPassSnapshot returns this pass's snapshot only when it provably
+// still describes the server as far as this process is concerned: it was
+// taken under a shared guarded-write counter and no guarded write of ours has
+// run since. Otherwise it is nil and the caller reads tmux.
+func (r *registryReconciler) unwrittenPassSnapshot() *intmetadata.ServerSnapshot {
+	if r.passSnapshot == nil || !r.passSnapshotCounted {
+		return nil
+	}
+	if writes, counted := r.sharedGuardedWrites(); !counted || writes != r.passSnapshotWrites {
+		return nil
+	}
+	return r.passSnapshot
+}
+
+func (r *registryReconciler) useTypedMirror(typed runtimeMutationMetadataMirror) {
+	r.typedMirror = &typed
+	r.mirrorProject = typed.MirrorProject
+	r.mirrorWindow = typed.MirrorWindow
+	r.mirrorPane = typed.MirrorPane
+}
+
+// shareRouteIdentityScope makes the typed mirror writers run inside scope's
+// runtime-mutation transactions: their route guards reuse scope's open identity
+// cache, and their writes pass through scope's guarded-write seam. A reconciler
+// with injected (non-typed) writers is left unchanged.
+func (r *registryReconciler) shareRouteIdentityScope(scope *materializer) {
+	if r == nil || r.typedMirror == nil {
+		return
+	}
+	typed := *r.typedMirror
+	typed.scope = scope
+	r.useTypedMirror(typed)
+}
+
+// initializeRefusalBookkeeping preserves the constructor invariant for test and
+// planner factories that inject a reconciler literal. Production constructors
+// already initialize every map, but the planner is a public fault-containment
+// boundary and must not trust an injected factory to do so.
+func (r *registryReconciler) initializeRefusalBookkeeping() {
+	if r.refusedSessions == nil {
+		r.refusedSessions = map[string]bool{}
+	}
+	if r.refusedSessionDivergence == nil {
+		r.refusedSessionDivergence = map[string]resourcegraph.Divergence{}
+	}
+	if r.refusedSessionReasons == nil {
+		r.refusedSessionReasons = map[string]string{}
+	}
+	if r.exactProjects == nil {
+		r.exactProjects = map[string]string{}
+	}
+}
+
+func (r *registryReconciler) refuseSession(name string, divergence resourcegraph.Divergence, reason string) {
+	r.initializeRefusalBookkeeping()
+	r.linkError = nil
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	r.refusedSessions[name] = true
+	if divergence.Valid() {
+		r.refusedSessionDivergence[name] = divergence
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		r.refusedSessionReasons[name] = reason
+	}
+}
+
+func (r *registryReconciler) writeProjectMirror(ctx context.Context, sessionName string, project coremetadata.Project) error {
+	if r.mirrorProject == nil {
+		return errors.New("registry reconciler: typed Project mirror executor is required")
+	}
+	return r.mirrorProject(ctx, sessionName, project)
+}
+
+func (r *registryReconciler) writeWindowMirror(ctx context.Context, target string, window coremetadata.Window) error {
+	if r.mirrorWindow == nil {
+		return errors.New("registry reconciler: typed Window mirror executor is required")
+	}
+	return r.mirrorWindow(ctx, target, window)
+}
+
+func (r *registryReconciler) writePaneMirror(ctx context.Context, target, windowUID string, pane coremetadata.Pane) error {
+	if r.mirrorPane == nil {
+		return errors.New("registry reconciler: typed Pane mirror executor is required")
+	}
+	return r.mirrorPane(ctx, target, windowUID, pane)
+}
+
+// reconcile applies one reconciliation pass to the working registry copy.
+//
+// It runs inside the caller's registry transaction, so a later failure in the
+// same operation discards everything it did: a pre-create hook refusal leaves
+// the registry file byte-identical even though reconciliation ran first.
+func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string) error {
+	return r.reconcileGuarded(ctx, working, mutator, operationID, nil)
+}
+
+// reconcileGuarded uses two deliberately independent probes: liveSessions
+// supplies the reconciler's name snapshot, then guard inventories full session
+// identity and carries the selected stable $N when it exists. They are not one
+// atomic tmux snapshot. Safety comes from removing the selected name from the
+// earlier set before import: whether the name disappeared, appeared, or was
+// replaced between either probe and a later write, it can feed neither
+// importLiveSessions nor the unresolved set passed to reapplyUnresolvedBindings.
+// The create operation subsequently re-inventories ownership and leases the
+// exact $N itself.
+func (r *registryReconciler) reconcileGuarded(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	guard createPreReconcile,
+) error {
+	r.initializeRefusalBookkeeping()
+	// One server snapshot per pass, never carried across passes: the second
+	// pass of a create runs after the create's own writes.
+	r.inPass, r.passSnapshot = true, nil
+	defer func() { r.inPass, r.passSnapshot = false, nil }()
+	// Inside a config-apply binding transaction the live reads below are its
+	// observation and the import and binding steps its commit; elsewhere these
+	// marks do nothing.
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseObserve)
+	live, err := r.liveSessions(ctx)
+	if err != nil {
+		return err
+	}
+	reconcileLive := live
+	if guard != nil {
+		selected, err := guard(ctx, working.Clone(), mutator, operationID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(selected.Name) != "" {
+			reconcileLive = maps.Clone(live)
+			delete(reconcileLive, selected.Name)
+		}
+	}
+
+	// One pre-pass observation, shared by both binding steps. It answers exactly
+	// one question -- which registry uids are already the binding of some live
+	// tmux object -- so adoption can decline to steal one. It is read before
+	// anything in this pass writes, which is what makes "already bound" mean
+	// "bound before we got here".
+	var inventory liveRuntimeInventory = r.mirror
+	if snapshot := r.passServerSnapshot(ctx); snapshot != nil {
+		inventory = snapshot
+	}
+	runtime := observeRuntime(ctx, inventory)
+	// Retire a disappeared mixed Window before ordinal adoption can attach an
+	// unrelated unmirrored tmux Window to its old desired shell recipe.
+	if runtime.Windows != nil && runtime.Panes != nil {
+		observed := runtime
+		observed.Windows = maps.Clone(runtime.Windows)
+		for _, window := range working.Windows {
+			project, ok := working.Project(window.Metadata.OwnerUID())
+			if !ok || !reconcileLive[r.projectPhysicalSessionName(*working, *project)] ||
+				project.Status.Session != nil && project.Status.Session.SocketPath != "" && project.Status.Session.SocketPath != r.passSocketPath() {
+				observed.Windows[window.Metadata.UID] = true
+			}
+		}
+		if err := returnAbsentProcessWindowProjection(ctx, working, mutator, inventory, observed, r.passSocketPath()); err != nil {
+			return err
+		}
+	}
+	binder := coremetadata.NewBindingMatcher(runtime)
+	if r.refuseForeign {
+		binder = coremetadata.NewRepairBindingMatcher(runtime)
+	}
+	if r.approvedOrphanImport {
+		binder = coremetadata.NewApprovedOrphanBindingMatcher(runtime)
+	}
+
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseCommit)
+	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, reconcileLive, binder)
+	if err != nil {
+		return err
+	}
+	if err := mutator.ObserveProjectRoots(working); err != nil {
+		return err
+	}
+	if err := r.refreshSessionProjections(working, mutator, live); err != nil {
+		return err
+	}
+	r.reapplyUnresolvedBindings(ctx, working, mutator, operationID, unresolved, binder)
+	if r.linkError != nil {
+		return r.linkError
+	}
+	// Last on purpose. The two binding steps are what mirror a Window's and a
+	// Pane's uid onto their tmux objects, so observing before they ran would
+	// diff the registry against an inventory that does not yet carry the uids
+	// this same pass wrote: it would offline an Agent the instant it was
+	// imported and stamp a MissingRuntime condition on a Window that is plainly
+	// there -- and, now that binding reapply exists, on a Window this very pass
+	// just reattached.
+	markApplyLockPhase(ctx, diagnostics.ApplyLockPhaseObserve)
+	return r.observeRuntime(ctx, working, mutator, r.unwrittenPassSnapshot())
+}
+
+// observeRuntime is the runtime-observation step of one reconciliation pass.
+//
+// It reads the live tmux inventory once and puts it to two uses: projecting the
+// lifecycle of every managed Pane whose runtime object died, and recording why a
+// Window or Pane lost that object. Both are inventory diffs against the same
+// snapshot, so the two can never disagree about which panes are still bound.
+//
+// The projection runs first and shares its whole transition body with the
+// standalone one-shot in lifecycle_reconcile.go, so a mutation route and a
+// pane-exit hook cannot classify the same death differently.
+//
+// This is what makes convergence hook-free. The pane-exit hooks are an
+// optimization for the read verbs, which never reconcile; with every hook
+// disabled the next mutation route still runs this pass and still reaches the
+// same answer, because nothing here needs to be told what died -- it compares
+// the registry to the machine.
+//
+// It fails closed, per inventory. A tmux query that errors -- no server
+// running, a server that refuses the command -- records nothing and releases
+// nothing and reports no error, which is the same tolerance reconcile already
+// extends to an absent server. Rewriting the registry from an inventory we
+// could not read would condition every Window and offline every managed Agent
+// on a machine whose tmux server simply is not up.
+//
+// unwritten, when non-nil, is this pass's pre-pass server snapshot, handed in
+// only when no write of ours has run since it was taken. It then answers both
+// inventories: re-reading them would repeat the same server-wide queries with
+// no write in between.
+func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, unwritten *intmetadata.ServerSnapshot) error {
+	processes := processDeclarations(*working, r.processes)
+	var inventory liveRuntimeInventory = r.mirror
+	if unwritten != nil {
+		inventory = unwritten
+	}
+	panes, paneErr := inventory.LivePaneUIDs(ctx)
+	windows, windowErr := inventory.LiveWindowUIDs(ctx)
+	if paneErr == nil && windowErr == nil {
+		if err := returnAbsentProcessWindowProjection(ctx, working, mutator, inventory, coremetadata.RuntimeObservation{Windows: windows, Panes: panes}, r.passSocketPath()); err != nil {
+			return err
+		}
+	}
+	if paneErr == nil {
+		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, nil, lifecycleDirtyEvent{processes: processes}))
+	}
+	if paneErr != nil || windowErr != nil {
+		return nil
+	}
+	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes, ProcessPanes: processPaneUIDs(*working, processes)})
+	return nil
+}
+
+// observedSession is one live tmux session the import step read but could not
+// turn into a Project source, kept so the binding-repair step can reuse the
+// observation instead of paying for it twice.
+type observedSession struct {
+	name       string
+	projectUID string
+	legacy     coremetadata.LegacySession
+	targets    intmetadata.LegacyTargets
+}
+
+// importLiveSessions seeds resources from the tmux sessions that predate the
+// resource model, in a deterministic session-name order, and reattaches the
+// ones whose resources already exist.
+//
+// It returns the sessions it did not handle. Those are exactly the sessions
+// with no usable `@projmux_project_path`: the anchor is written only at session
+// creation, so every session that predates it -- which on a long-lived machine
+// is most of them -- lands here with nothing to import from. They are the input
+// to reapplyUnresolvedBindings, which resolves them by a different key. The two
+// sets are disjoint by construction, so no session is bound twice in one pass.
+func (r *registryReconciler) importLiveSessions(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	live map[string]bool,
+	binder *coremetadata.BindingMatcher,
+) ([]observedSession, error) {
+	names := make([]string, 0, len(live))
+	for name := range live {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	var unresolved []observedSession
+	for _, name := range names {
+		legacy, targets, err := r.observeLegacy(ctx, name)
+		if err != nil {
+			// A session that cannot be observed is not a Project source. Failing
+			// the whole create because one unrelated session is in a strange
+			// state would be worse than skipping it. There is nothing to repair
+			// with either, so it is not handed on.
+			r.refuseSession(name, resourcegraph.DivergenceUnknown, "live session observation failed: "+err.Error())
+			continue
+		}
+		if r.refusedSessions[name] {
+			continue
+		}
+		if _, control := working.ControlSessionBySession(name); control {
+			// An exact ControlSession declaration is root-kind authority. A Project
+			// path on that same physical session is contamination, not permission
+			// to reinterpret the control-owned Window/Pane chain as a Project.
+			if strings.TrimSpace(legacy.Root) != "" {
+				r.refuseSession(name, resourcegraph.DivergenceContaminated,
+					"exact ControlSession carries a foreign Project root claim")
+			}
+			continue
+		}
+		if projectUID := r.exactProjects[name]; projectUID != "" {
+			if r.sessionBindingRefused(*working, projectUID, legacy) {
+				r.refuseSession(name, r.refusedSessionDivergence[name], "live session binding is outside the exact Project owner scope")
+				continue
+			}
+			unresolved = append(unresolved, observedSession{name: name, projectUID: projectUID, legacy: legacy, targets: targets})
+			continue
+		}
+		if r.refuseForeign && strings.TrimSpace(legacy.Root) != "" {
+			projectUID := ""
+			if project, ok := working.ProjectByRoot(legacy.Root); ok {
+				projectUID = project.Metadata.UID
+			}
+			if r.sessionBindingRefused(*working, projectUID, legacy) {
+				r.refuseSession(name, r.refusedSessionDivergence[name], "live session binding is outside the exact Project owner scope")
+				continue
+			}
+		}
+		if strings.TrimSpace(legacy.Root) == "" {
+			unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
+			continue
+		}
+		if r.refuseForeign {
+			// D2 is L0 for every automatic/default trigger. Even a legacy
+			// project-path anchor is not approval to create Registry identity;
+			// automatic repair may only rebind rows the Registry already owns.
+			_, exists := working.ProjectByRoot(legacy.Root)
+			if !r.approvedOrphanImport || !exists {
+				unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
+				continue
+			}
+		}
+		legacy.SocketPath = r.passSocketPath()
+		result, err := mutator.ImportLegacySession(working, legacy, r.shell, operationID, binder)
+		if err != nil {
+			if coremetadata.IsUsageError(err) || errors.Is(err, coremetadata.ErrInvalidRoot) {
+				// The recorded project path no longer exists, so this session is
+				// not a registrable Project. MissingRoot tombstones belong to
+				// Projects that were registered before, not to sessions that
+				// never were. Its bindings may still be repairable through the
+				// session-name edge, so it is handed on rather than dropped.
+				unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
+				continue
+			}
+			return nil, err
+		}
+		if err := r.writeProjectMirror(ctx, name, result.Project); err != nil {
+			return nil, err
+		}
+		// The Project declaration is the exact root authority used by every
+		// descendant guard. Import already classified the observed D3 tuple and
+		// retained its exact handles above; project it before the Window/Pane
+		// stages so no descendant write is authorized by an unattributed session.
+		if err := r.mirrorImported(ctx, *working, result, targets); err != nil {
+			return nil, err
+		}
+	}
+	return unresolved, nil
+}
+
+// reapplyUnresolvedBindings rewrites the tmux uid options of every live session
+// that resolves to an existing Project through the Project<->session name edge.
+//
+// This step exists because the import path's anchor is not reachable on the
+// machine state this phase repairs. `@projmux_project_path` is written once, by
+// session creation; a session that predates it carries no anchor at all, so the
+// import step bails on it and its windows and panes keep no binding whatsoever.
+// The observable symptom is that `projmux delete pane` with no selector fails
+// with "the active tmux pane carries no @projmux_pane_uid" in almost every pane
+// on the machine.
+//
+// The edge it resolves through is the one the reconciler itself maintains and
+// the create routes already read as preflight: a Project's session name is
+// status.session.name when set, and otherwise the name sessionNameFor would
+// give its root. That is used forward only -- compute the expected name from
+// the Project and compare. A session name is never parsed back into a path;
+// that direction would be the heuristic the contract forbids.
+//
+// It creates no Window. A live window with no eligible registry Window left is
+// left exactly as it was found: creating registry topology for a session
+// projmux cannot even resolve to a root is the import path's job, and the
+// import path has the anchor it needs to do it safely. Panes are the single
+// exception, and only underneath a Window this pass already paired -- see
+// reapplySessionBindings for why that exception had to exist and why it stays
+// closed inside one Project.
+//
+// It is tolerant, per session and per object. This is maintenance riding along
+// inside somebody else's transaction, so one session whose tmux state changed
+// mid-pass must not fail the create that happened to trigger the reconcile.
+func (r *registryReconciler) reapplyUnresolvedBindings(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	sessions []observedSession,
+	binder *coremetadata.BindingMatcher,
+) {
+	if len(sessions) == 0 {
+		return
+	}
+	scope := r.projectsBySessionName(*working)
+	for _, session := range sessions {
+		if r.refusedSessions[session.name] {
+			continue
+		}
+		projectUID := session.projectUID
+		if projectUID == "" {
+			projectUID = scope[session.name]
+		}
+		if projectUID == "" {
+			continue
+		}
+		if r.refuseForeign && r.sessionBindingRefused(*working, projectUID, session.legacy) {
+			r.refuseSession(session.name, r.refusedSessionDivergence[session.name], "live session binding is outside the exact Project owner scope")
+			continue
+		}
+		r.reapplySessionBindings(ctx, working, mutator, operationID, projectUID, session, binder)
+	}
+}
+
+func (r *registryReconciler) sessionBindingRefused(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) bool {
+	divergence := resourceSessionBindingDivergence(registry, projectUID, legacy)
+	if divergence != "" {
+		r.initializeRefusalBookkeeping()
+		r.refusedSessionDivergence[legacy.Session] = divergence
+	}
+	return divergence != "" && !(r.approvedOrphanImport && divergence == resourcegraph.DivergenceOrphanMirror)
+}
+
+func resourceSessionBindingDivergence(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) resourcegraph.Divergence {
+	seen := map[string]bool{}
+	orphan := false
+	for _, liveWindow := range legacy.Windows {
+		windowUID := strings.TrimSpace(liveWindow.UID)
+		if windowUID != "" {
+			if seen[windowUID] {
+				return resourcegraph.DivergenceContaminated
+			}
+			seen[windowUID] = true
+			window, ok := registry.Window(windowUID)
+			if !ok {
+				orphan = true
+			} else if projectUID == "" || window.Metadata.OwnerUID() != projectUID {
+				return resourcegraph.DivergenceContaminated
+			}
+		}
+		for _, livePane := range liveWindow.Panes {
+			paneUID := strings.TrimSpace(livePane.UID)
+			if paneUID == "" {
+				continue
+			}
+			if strings.HasPrefix(paneUID, coremetadata.DeletedPaneMirrorPrefix) || seen[paneUID] {
+				return resourcegraph.DivergenceContaminated
+			}
+			seen[paneUID] = true
+			pane, ok := registry.Pane(paneUID)
+			if !ok {
+				orphan = true
+				continue
+			}
+			ownerUID := pane.Metadata.OwnerUID()
+			if ownerUID == windowUID && windowUID != "" {
+				continue
+			}
+			agent, ok := registry.Agent(ownerUID)
+			if windowUID == "" || !ok || agent.Metadata.OwnerUID() != windowUID {
+				return resourcegraph.DivergenceContaminated
+			}
+		}
+	}
+	if orphan {
+		return resourcegraph.DivergenceOrphanMirror
+	}
+	return ""
+}
+
+type registrySessionClaimKind string
+
+const (
+	registrySessionClaimNone    registrySessionClaimKind = "none"
+	registrySessionClaimProject registrySessionClaimKind = "project"
+	registrySessionClaimControl registrySessionClaimKind = "control-session"
+	registrySessionClaimRefused registrySessionClaimKind = "refused"
+)
+
+// registrySessionClaim is the typed Registry answer for one physical tmux
+// session name. It deliberately distinguishes the two root kinds instead of
+// returning a bare uid that a caller could silently reinterpret.
+type registrySessionClaim struct {
+	Kind       registrySessionClaimKind
+	UID        string
+	Divergence resourcegraph.Divergence
+	Reason     string
+}
+
+func (r *registryReconciler) resolveRegistrySessionClaim(registry coremetadata.Registry, sessionName string) registrySessionClaim {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return registrySessionClaim{Kind: registrySessionClaimNone}
+	}
+	// ControlSession.spec.session is an exact identity edge. It wins before a
+	// Project's remembered/fallback physical name is considered; otherwise a
+	// stale Project projection can cross-adopt the control-owned descendants.
+	if control, ok := registry.ControlSessionBySession(sessionName); ok {
+		return registrySessionClaim{Kind: registrySessionClaimControl, UID: control.Metadata.UID}
+	}
+	claims := resourceSessionProjectClaims(registry, sessionName, r)
+	switch len(claims) {
+	case 0:
+		return registrySessionClaim{Kind: registrySessionClaimNone}
+	case 1:
+		return registrySessionClaim{Kind: registrySessionClaimProject, UID: claims[0]}
+	default:
+		return registrySessionClaim{
+			Kind: registrySessionClaimRefused, Divergence: resourcegraph.DivergenceContaminated,
+			Reason: "multiple Registry Projects claim the live session-name edge",
+		}
+	}
+}
+
+// projectsBySessionName maps a live tmux session name onto the one Project that
+// claims it.
+//
+// A name two Projects claim is ambiguous and is dropped rather than resolved to
+// the first. Adoption's one unrecoverable mistake is pushing a live object into
+// the wrong Project, so an ambiguous scope adopts nothing at all.
+//
+// Liveness is deliberately not read here. status.session.live is a stored bool,
+// and a stored bool is exactly what the runtime-observation work replaced; the
+// caller only ever passes session names that came out of the live inventory, so
+// liveness is already established by construction.
+func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registry) map[string]string {
+	byName := map[string]string{}
+	for _, project := range registry.Projects {
+		name := strings.TrimSpace(r.sessionNameFor(project.Spec.Root))
+		if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
+			name = strings.TrimSpace(project.Status.Session.Name)
+		}
+		if name == "" {
+			continue
+		}
+		claim := r.resolveRegistrySessionClaim(registry, name)
+		if claim.Kind == registrySessionClaimProject {
+			byName[name] = claim.UID
+		}
+	}
+	return byName
+}
+
+// projectPhysicalSessionName chooses the persistent runtime projection for one
+// Project without changing its Registry identity. Existing non-colliding
+// projections are preserved. When another Registry root owns that exact
+// physical name, the Project receives a deterministic full-UID suffix; the
+// suffix is stable across order, restart, and repeat reconcile, and is valid
+// under the existing tmux session name rules.
+func (r *registryReconciler) projectPhysicalSessionName(registry coremetadata.Registry, project coremetadata.Project) string {
+	preferred := ""
+	if project.Status.Session != nil {
+		preferred = strings.TrimSpace(project.Status.Session.Name)
+	}
+	if preferred == "" && r != nil && r.sessionNameFor != nil {
+		preferred = strings.TrimSpace(r.sessionNameFor(project.Spec.Root))
+	}
+	if preferred == "" {
+		return ""
+	}
+	if !projectSessionNameClaimedByOtherRoot(registry, preferred) {
+		return preferred
+	}
+	base := preferred + "--" + project.Metadata.UID
+	for suffix := range 100000 {
+		candidate := base
+		if suffix > 0 {
+			candidate += "-" + strconv.Itoa(suffix+1)
+		}
+		if coresessions.ValidateSessionName(candidate) != nil {
+			return ""
+		}
+		if !projectSessionNameClaimedByOtherRoot(registry, candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func projectSessionNameClaimedByOtherRoot(registry coremetadata.Registry, sessionName string) bool {
+	if _, ok := registry.ControlSessionBySession(sessionName); ok {
+		return true
+	}
+	return false
+}
+
+// reapplySessionBindings walks one resolved session and writes the binding of
+// every window and pane it can pair, through the same mirror write path a
+// freshly imported object uses.
+//
+// Missing bindings use the one existing write convention. A uid-only variant
+// would drift from what MirrorWindow and MirrorPane do -- automatic-rename off,
+// the name mirror, and the tmux window_name. An exact rebind, however, already
+// carries that binding and is skipped so repeated lifecycle/apply passes issue
+// no tmux writes.
+//
+// The Window layer only ever pairs. The Pane layer additionally mints, because
+// pairing cannot reach the state this phase closes; paneBindingFor carries that
+// argument and the boundary it stays inside.
+//
+// The Agent layer rides on the settled Pane rather than walking tmux again. An
+// Agent owns no tmux object of its own, so there is nothing to pair it against
+// directly; its runtime object is the managed Pane, and the pane this loop just
+// resolved is exactly that. LinkAgentPane carries the evidence rule and the
+// refusals.
+func (r *registryReconciler) reapplySessionBindings(
+	ctx context.Context,
+	registry *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	projectUID string,
+	session observedSession,
+	binder *coremetadata.BindingMatcher,
+) {
+	project, ok := registry.Project(projectUID)
+	if !ok || r.writeProjectMirror(ctx, session.name, *project) != nil {
+		return
+	}
+	for wi, legacyWindow := range session.legacy.Windows {
+		if wi >= len(session.targets.Windows) {
+			break
+		}
+		match := binder.MatchWindow(registry, projectUID, legacyWindow.UID)
+		if !match.Matched() {
+			// Refused or unmatched. Either way none of its panes are considered:
+			// a pane is only ever paired inside a Window that was itself paired.
+			continue
+		}
+		window, ok := registry.Window(match.UID)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(legacyWindow.RuntimeSessionID) != "" || strings.TrimSpace(legacyWindow.RuntimeID) != "" {
+			if _, err := mutator.ObserveWindowRuntimeBinding(registry, window.Metadata.UID,
+				legacyWindow.RuntimeSessionID, legacyWindow.RuntimeID); err != nil {
+				continue
+			}
+		}
+		// Rebind means the exact registry uid is already on this live Window.
+		// Reasserting the whole mirror would issue four writes (including a
+		// rename) on every apply/lifecycle pass. Adoption is the missing-binding
+		// case and still takes the existing whole MirrorWindow path.
+		if match.Kind != coremetadata.AdoptionRebind {
+			if err := r.writeWindowMirror(ctx, session.targets.Windows[wi], *window); err != nil {
+				continue
+			}
+		}
+		if wi >= len(session.targets.Panes) {
+			continue
+		}
+		row := session.targets.Panes[wi]
+		for pi, legacyPane := range legacyWindow.Panes {
+			if pi >= len(row) {
+				break
+			}
+			paneUID, needsMirror, ok := r.paneBindingFor(registry, mutator, operationID, match.UID, legacyPane, binder)
+			if !ok {
+				continue
+			}
+			if pane, exists := registry.Pane(paneUID); exists && releasedTerminatedAgentPane(registry, *pane) {
+				// A remain-on-exit Pane remains in topology after its process ends.
+				// Exact pane_dead plus the canonical current-generation receipt
+				// already projected and released this Agent binding; ordinary
+				// binding repair must not turn that retained dead row back into a
+				// Running Agent while lifecycle decides retain/cleanup authority.
+				continue
+			}
+			// Agent runtime linkage rides on the Pane the walk just settled on,
+			// because an Agent's runtime object *is* that Pane. The error is
+			// discarded rather than escalated *or* used to skip the binding
+			// write below: the binding is what makes the pane addressable at
+			// all, so a link that could not be made must not cost the pane the
+			// work that already succeeded. LinkAgentPane writes nothing when it
+			// fails, and the next pass sees the same pane and tries again.
+			_, linkErr := mutator.LinkAgentPane(registry, match.UID, paneUID, legacyPane, binder, operationID)
+			if linkErr != nil && r.atomicAuthorshipPromotion && coremetadata.ResolveAgentPaneAuthority(legacyPane) == coremetadata.AgentPaneAuthorityLaunch {
+				r.linkError = linkErr
+				return
+			}
+			pane, ok := registry.Pane(paneUID)
+			if !ok {
+				continue
+			}
+			// A write that fails is skipped, not retried and not escalated. The
+			// next pass observes the same drift and tries again.
+			if needsMirror {
+				_ = r.writePaneMirror(ctx, row[pi], match.UID, *pane)
+			}
+		}
+	}
+}
+
+func releasedTerminatedAgentPane(registry *coremetadata.Registry, pane coremetadata.Pane) bool {
+	owner := pane.Metadata.OwnerRef
+	evidence := pane.Status.LastTermination
+	if owner == nil || owner.Kind != coremetadata.KindAgent || evidence == nil ||
+		evidence.Generation != pane.Status.Activation.Generation ||
+		!coremetadata.ValidTerminationClassification(evidence.Classification) {
+		return false
+	}
+	agent, ok := registry.Agent(owner.UID)
+	return ok && agent.Status.PaneRef == ""
+}
+
+// paneBindingFor resolves the registry Pane one live tmux pane is the runtime
+// of, minting one when the pane has never had a registry counterpart at all.
+// The bool is false when the pane must be left exactly as it was found.
+//
+// Minting is here because pairing cannot close the measured gap. Phase 1 taught
+// this path to adopt, and adoption needs an existing registry Pane to adopt
+// *into*; panes from the non-resource `projmux create agent` bridge have none,
+// because that route
+// registers nothing. On the measured machine one live pane out of seven had a
+// binding, and the operator's own active pane was not it -- which is what made
+// the shipped "omit the selector, act on the active target" behavior
+// unreachable for `delete pane`.
+//
+// The Project boundary is structural here, not checked. The Window this mints
+// into was itself paired earlier in this same walk, and that Window is owned by
+// the single Project the session name resolved to; a session two Projects claim
+// resolves to none at all. There is no code path from a live pane to a Project
+// it does not already sit under, so cross-project registration is not refused --
+// it is unreachable.
+//
+// AdoptionForeign mints too, for the reason the import path gives: a uid nothing
+// in the registry knows is never adopted, but projmux itself produces unknown
+// uids -- a reconcile rolled back by a pre-create hook refusal has already
+// written its allocated uids onto non-transactional tmux options -- and leaving
+// those panes unmanageable forever is the worse answer. Minting allocates a new
+// uid beside it and re-identifies nothing.
+//
+// AdoptionRefused still creates nothing, and that is the half of Phase 1 this
+// phase must not undo. A refusal means a real registry object sits on the other
+// side of the ambiguity, so minting there would leave two registry Panes for one
+// tmux pane. Ambiguity resolved by guessing is the one mistake no later pass can
+// undo.
+func (r *registryReconciler) paneBindingFor(
+	registry *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	windowUID string,
+	legacyPane coremetadata.LegacyPane,
+	binder *coremetadata.BindingMatcher,
+) (string, bool, bool) {
+	// A self-target delete commits the Registry result before queueing the exact
+	// live kill. If that queue fails, the live Pane carries this transport
+	// tombstone so the next reconciliation cannot mint it back as an orphan.
+	if strings.HasPrefix(strings.TrimSpace(legacyPane.UID), coremetadata.DeletedPaneMirrorPrefix) {
+		return "", false, false
+	}
+	match := binder.MatchPane(registry, windowUID, legacyPane.UID)
+	if match.Matched() {
+		if pane, ok := registry.Pane(match.UID); ok && r.processes.Declares(*pane) {
+			return "", false, false
+		}
+		return match.UID, match.Kind != coremetadata.AdoptionRebind, true
+	}
+	if match.Kind == coremetadata.AdoptionRefused {
+		return "", false, false
+	}
+	// Automatic convergence never creates identity for a D2 unattributed live
+	// pane. In repair mode, both an empty mirror and a D3 mirror just discarded
+	// at L8 stay runtime-only until a separately approved import route is used.
+	if r.refuseForeign && !(r.approvedOrphanImport && match.Kind == coremetadata.AdoptionForeign) {
+		return "", false, false
+	}
+	pane, err := mutator.ImportOrphanPane(registry, windowUID, legacyPane, operationID)
+	if err != nil {
+		// Per object tolerant, exactly like the binding writes around it. One
+		// pane that cannot be minted must not fail the create that happened to
+		// trigger the reconcile; the next pass sees the same orphan and retries.
+		return "", false, false
+	}
+	// Claimed for the rest of the pass, the way the import path claims what it
+	// mints. Without it the next live pane of this Window would find a Pane that
+	// is unbound only because it was created seconds ago, and adopt it.
+	binder.Claim(pane.Metadata.UID)
+	return pane.Metadata.UID, true, true
+}
+
+// mirrorImported writes the uids a legacy import settled on back onto exactly
+// the tmux objects it bound.
+//
+// Without this the migrated Windows and Panes have registry identity but no
+// transport binding, so an anchor lookup would find nothing live and every
+// create against a pre-existing session would build a duplicate Window.
+//
+// Created and adopted objects are mirrored through the same existing calls. A
+// rebound object already carries the exact registry uid and is skipped. This
+// distinction preserves the full mirror contract on a missing binding while
+// making a repeated lifecycle/apply pass a tmux-write-free no-op.
+func (r *registryReconciler) mirrorImported(
+	ctx context.Context,
+	registry coremetadata.Registry,
+	result coremetadata.ImportResult,
+	targets intmetadata.LegacyTargets,
+) error {
+	for _, imported := range result.Windows {
+		if imported.Origin == coremetadata.ImportRebound {
+			continue
+		}
+		if imported.SourceIndex < 0 || imported.SourceIndex >= len(targets.Windows) {
+			continue
+		}
+		window, ok := registry.Window(imported.UID)
+		if !ok {
+			continue
+		}
+		if err := r.writeWindowMirror(ctx, targets.Windows[imported.SourceIndex], *window); err != nil {
+			return err
+		}
+	}
+	for _, imported := range result.Panes {
+		if imported.Origin == coremetadata.ImportRebound {
+			continue
+		}
+		if imported.WindowIndex < 0 || imported.WindowIndex >= len(targets.Panes) {
+			continue
+		}
+		row := targets.Panes[imported.WindowIndex]
+		if imported.PaneIndex < 0 || imported.PaneIndex >= len(row) {
+			continue
+		}
+		pane, ok := registry.Pane(imported.UID)
+		if !ok {
+			continue
+		}
+		windowUID := ""
+		if pane.Metadata.OwnerRef != nil {
+			switch pane.Metadata.OwnerRef.Kind {
+			case coremetadata.KindWindow:
+				windowUID = pane.Metadata.OwnerRef.UID
+			case coremetadata.KindAgent:
+				if agent, ok := registry.Agent(pane.Metadata.OwnerRef.UID); ok && agent.Metadata.OwnerRef != nil && agent.Metadata.OwnerRef.Kind == coremetadata.KindWindow {
+					windowUID = agent.Metadata.OwnerRef.UID
+				}
+			}
+		}
+		if err := r.writePaneMirror(ctx, row[imported.PaneIndex], windowUID, *pane); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refreshSessionProjections recomputes Project.status.session against the live
+// tmux inventory. This is the `status.session` preflight the create routes read
+// to decide whether a Project runtime needs materializing. A Project whose
+// session is on this pass's server records it live with this pass's exact
+// socket path. A Project whose session is absent is written not live (keeping
+// its recorded path) only when coremetadata.SessionAbsenceAttributableTo says
+// the absence is evidence: its projection records this pass's server or no
+// server. A projection recorded on another server is left as it is, and a pass
+// without a verified path lowers none that record a path.
+func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) error {
+	socketPath := r.passSocketPath()
+	for i := range working.Projects {
+		project := working.Projects[i]
+		name := r.projectPhysicalSessionName(*working, project)
+		if name == "" {
+			return fmt.Errorf("reconcile Project %q: no valid collision-safe physical session name", project.Metadata.UID)
+		}
+		var err error
+		switch {
+		case live[name]:
+			_, err = mutator.BindLiveProjectSession(working, project.Metadata.UID, name, socketPath)
+		case coremetadata.SessionAbsenceAttributableTo(project.Status.Session, socketPath):
+			_, err = mutator.BindOfflineProjectSession(working, project.Metadata.UID, name)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// passSocketPath is the exact socket path this pass records on the live
+// session projections it writes, "" when the pass has no verified path.
+func (r *registryReconciler) passSocketPath() string {
+	if r == nil || r.sessionSocketPath == nil {
+		return ""
+	}
+	return r.sessionSocketPath()
+}
+
+// livePaneInventory is the mirrored-uid inventory the lifecycle projection
+// diffs the registry against.
+type livePaneInventory interface {
+	LivePaneUIDs(ctx context.Context) (map[string]bool, error)
+}
+
+// A complete uid inventory still cannot prove physical absence when both
+// mirrors were lost. Confirm the recorded Window handle is absent as well.
+func returnAbsentProcessWindowProjection(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, inventory liveRuntimeInventory, observed coremetadata.RuntimeObservation, socketPath string) error {
+	mixed := false
+	for _, pane := range reg.Panes {
+		if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+			mixed = true
+			break
+		}
+	}
+	if !mixed {
+		return nil
+	}
+	runtime, ok := inventory.(interface {
+		LiveWindowRuntimeIDs(context.Context) (map[string]bool, error)
+	})
+	if !ok {
+		return nil
+	}
+	ids, err := runtime.LiveWindowRuntimeIDs(ctx)
+	if err != nil {
+		return nil
+	} // failed observations release nothing
+	protected := observed
+	protected.Windows = maps.Clone(observed.Windows)
+	if protected.Windows == nil {
+		return nil
+	}
+	for _, window := range reg.Windows {
+		project, ok := reg.Project(window.Metadata.OwnerUID())
+		if ids[window.Status.RuntimeID] || !ok || !coremetadata.SessionAbsenceAttributableTo(project.Status.Session, socketPath) {
+			protected.Windows[window.Metadata.UID] = true
+		}
+	}
+	return mut.ReturnAbsentTmuxWindowsToVirtual(reg, protected)
+}
