@@ -1653,9 +1653,9 @@ create agent --host process --detach returns exit 0 after verified startup and o
 
 Foreground process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
 
-The owner stops its provider on stdin EOF: </dev/null or closed stdin (CI steps, cron, nohup, or a noninteractive shell's &) can end it immediately. Keep stdin open, for example: `d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"`.
+The foreground owner stops its provider on stdin EOF: </dev/null or closed stdin (CI steps, cron, nohup, or a noninteractive shell's &) can end it immediately. Keep stdin open, for example: `d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"`.
 
-Measured isolated CLI exits (exit always follows actual provider Wait, rather than the owner's signal):
+Measured isolated foreground CLI exits (exit always follows actual provider Wait, rather than the owner's signal):
 
 | Owner/provider ending | Graceful EOF-aware stub | Provider requiring TERM |
 | --- | --- | --- |
