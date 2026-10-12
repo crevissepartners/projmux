@@ -897,9 +897,9 @@ func TestPlanAgentResumeCallersAreExactlyTheThreeResumePaths(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"agent_resume.go:(*agentRebinder).rebind",
 		"create_agent_execution.go:(*createCommand).planAgentPaneLaunchWithResume",
 		"registry_topology_agents.go:planTopologyAgentReplay",
+		"resume_adapters.go:(*agentRebinder).sharedResumePreparation",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("PlanAgentResume references = %q, want exactly %q", got, want)

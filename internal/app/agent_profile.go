@@ -3,10 +3,11 @@ package app
 import (
 	"errors"
 	"fmt"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"maps"
 	"strings"
+
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -179,72 +180,18 @@ func (e *profileResumeError) Error() string {
 	return fmt.Sprintf("%s: profile %q cannot be applied again (%s): %s", profileReasonResumeUnavailable, e.name, e.reason, e.detail)
 }
 
-// resolveRecordedProfile re-reads, by name, the profile an Agent records, the
-// way a create resolves an explicit --profile. A profile that is gone or that
-// `profile list` would mark invalid -- a role-claimed one included -- is a
-// profile-resume-unavailable refusal carrying the store's own reason.
-func resolveRecordedProfile(homeDir func() (string, error), lookupEnv func(string) string, name string, projectUID ...string) (config.Paths, profile.Profile, profile.Spec, error) {
-	paths, err := configPaths(homeDir, lookupEnv)
+func resolveRecordedProfile(h func() (string, error), e func(string) string, n string, u ...string) (config.Paths, profile.Profile, profile.Spec, error) {
+	paths, err := configPaths(h, e)
 	if err != nil {
-		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: name, reason: profile.ReasonNotFound,
-			detail: "the profile cannot be located: " + err.Error()}
+		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: n, reason: profile.ReasonNotFound, detail: "the profile cannot be located: " + err.Error()}
 	}
-	loaded, spec, err := profile.NewDefaultStore(paths).Resolve(name)
-	if err != nil {
-		reason := profile.ReasonOf(err)
-		if reason == "" {
-			reason = profile.ReasonValueInvalid
-		}
-		return config.Paths{}, profile.Profile{}, profile.Spec{}, &profileResumeError{name: name, reason: reason, detail: err.Error()}
-	}
-	if len(projectUID) != 0 {
-		if err := profile.CheckProject(name, spec, projectUID[0]); err != nil {
-			return config.Paths{}, profile.Profile{}, profile.Spec{}, err
-		}
-	}
-	return paths, loaded, spec, nil
+	paths, p, s, err := mutationruntime.ResolveRecordedProfile(paths, n, u...)
+	return paths, p, s, localResumeError(err)
 }
 
-// resumeProfileSettings re-reads the profile a resumed Agent records, by
-// name, on the provider-CLI resume lane.
-//
-// For Claude it writes the settings snapshot of the profile's current
-// permissions and returns the profile name, the digest of the content
-// applied, and the snapshot path ("" when the profile has no allow or deny
-// rule).
-//
-// For Codex this lane is `codex resume <id>`, including topology replay and
-// rollout picker launches. It carries the current sandbox and approval as
-// -s and -a. allow and deny have no CLI counterpart and remain unapplied.
-//
-// An Agent without the annotation, and any other provider, get nothing, so
-// their resume argv stays byte-identical. A profile that is gone or invalid
-// is a profile-resume-unavailable refusal.
-func (c *aiCommand) resumeProfileSettings(mode string, annotations map[string]string, projectUID ...string) (name, digest, settings string, policy codexappserver.ThreadPolicy, err error) {
-	name = annotations[coremetadata.AnnotationAgentProfile]
-	if name == "" || (mode != aiModeClaude && mode != aiModeCodex) {
-		return "", "", "", codexappserver.ThreadPolicy{}, nil
-	}
-	paths, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, projectUID...)
-	if err != nil {
-		return "", "", "", codexappserver.ThreadPolicy{}, err
-	}
-	if mode == aiModeCodex {
-		policy, err = codexThreadPolicy(spec.Permissions)
-		if err != nil {
-			return "", "", "", codexappserver.ThreadPolicy{}, &profileResumeError{name: name, reason: profile.ReasonValueInvalid, detail: err.Error()}
-		}
-		if policy.ApprovalPolicy == codexappserver.ApprovalUntrusted {
-			return "", "", "", codexappserver.ThreadPolicy{}, &profileResumeError{name: name, reason: profileReasonCodexCLIUntrusted,
-				detail: "approval=untrusted cannot be applied by codex resume"}
-		}
-		return loaded.Name, loaded.Digest, "", policy, nil
-	}
-	settings, err = profile.WriteSettingsSnapshot(paths.StateDir, spec.Permissions)
-	if err != nil {
-		return "", "", "", codexappserver.ThreadPolicy{}, &profileResumeError{name: name, reason: profile.ReasonValueInvalid, detail: err.Error()}
-	}
-	return loaded.Name, loaded.Digest, settings, codexappserver.ThreadPolicy{}, nil
+func (c *aiCommand) resumeProfileSettings(m string, a map[string]string, u ...string) (string, string, string, codexappserver.ThreadPolicy, error) {
+	n, d, s, p, e := c.resumeLaunchService().ResumeProfileSettings(m, a, u...)
+	return n, d, s, p, localResumeError(e)
 }
 
 // codexResumeProfile re-reads, by name, the profile a natively resumed Codex

@@ -1,5 +1,11 @@
 package runtime
 
+import (
+	"slices"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+)
+
 // claudeResumeSnapshotArgs spells the system prompt snapshot mode a resumed
 // Agent records. Only a Claude Agent annotated with
 // coremetadata.SystemPromptSnapshotOff gets an argument; any other Agent, and
@@ -9,7 +15,7 @@ func ClaudeResumeSnapshotArgs(mode string, Annotations map[string]string) []stri
 	if mode != aiModeClaude || Annotations[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff {
 		return nil
 	}
-	return []string{claudeSystemPromptSnapshotFlag, coremetadata.SystemPromptSnapshotOff}
+	return []string{ClaudeSystemPromptSnapshotFlag, coremetadata.SystemPromptSnapshotOff}
 }
 
 // claudeResumeEffort returns the recorded effort a Claude or Codex Agent

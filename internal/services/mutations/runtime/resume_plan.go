@@ -1,5 +1,14 @@
 package runtime
 
+import (
+	"cmp"
+	"fmt"
+	"slices"
+	"strings"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+)
+
 // planAgentResume fixes one rebind from the read-only registry.
 //
 // Nothing here mutates, opens the store, or calls tmux, so every refusal it can
@@ -46,7 +55,7 @@ package runtime
 // of scope. So projmux checks everything it can see -- a ref exists, it names a
 // known provider, that provider is enabled, its conversation id is well formed,
 // its binary is installed -- and hands the rest to the provider's resume argv.
-func PlanAgentResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent, retiringProcess ...bool) (AgentResumePlan, error) {
+func BuildAgentResumePlan(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent, retiringProcess ...bool) (AgentResumePlan, error) {
 	Name := agent.Metadata.Name
 
 	// (d) An Agent whose provider hook never ran has nothing to revive. This is
@@ -107,7 +116,7 @@ func PlanAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 	// spelling rather than borrowed, so the message names the verb the operator
 	// actually ran.
 	if condition, ok := Project.HasCondition(coremetadata.ConditionMissingRoot); ok && condition.Status == coremetadata.ConditionTrue {
-		return AgentResumePlan{}, usageError(fmt.Sprintf(
+		return AgentResumePlan{}, createUsage(fmt.Sprintf(
 			"%s: project/%s carries a MissingRoot condition for %q; rebind it before resuming an Agent under it",
 			spelling, Project.Metadata.Name, Project.Spec.Root))
 	}
@@ -115,12 +124,12 @@ func PlanAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 	// the active, last-used, or an alternate live Pane.
 	AnchorUID := strings.TrimSpace(window.Spec.AnchorPaneRef)
 	if AnchorUID == "" {
-		return AgentResumePlan{}, usageError(fmt.Sprintf(
+		return AgentResumePlan{}, createUsage(fmt.Sprintf(
 			"%s: window/%s (project/%s) has no anchorPaneRef, so there is no anchor to split",
 			spelling, window.Metadata.Name, Project.Metadata.Name))
 	}
 	if anchor, ok := registry.WindowAnchor(window.Metadata.UID); !ok || anchor.Metadata.UID != AnchorUID {
-		return AgentResumePlan{}, usageError(fmt.Sprintf(
+		return AgentResumePlan{}, createUsage(fmt.Sprintf(
 			"%s: window/%s (project/%s) anchorPaneRef %q is dangling or cross-Window",
 			spelling, window.Metadata.Name, Project.Metadata.Name, AnchorUID))
 	}
@@ -165,4 +174,16 @@ func SharedConversationAgents(registry coremetadata.Registry, selfUID string, Re
 		out = append(out, fmt.Sprintf("agent/%s (uid:%s)", r.Name, r.uid))
 	}
 	return out
+}
+
+// SharedConversationNotices preserves the plan's UID order and discloses that
+// this rebind selects one Agent from a conversation shared by several Agents.
+func (p AgentResumePlan) SharedConversationNotices(spelling string) []string {
+	var notices []string
+	for _, other := range p.Shared {
+		notices = append(notices, fmt.Sprintf(
+			"projmux: conversation %s:%s is also recorded on %s; %s rebinds only agent/%s",
+			p.Provider, p.ConversationID, other, spelling, p.AgentName))
+	}
+	return notices
 }

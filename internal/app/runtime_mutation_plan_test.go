@@ -3566,6 +3566,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		// collapsed into one chokepoint pair that also classifies the failure.
 		"ai_pane_write.go:writeAIPaneOption:variable-argv":                                        "agent.presentation",
 		"../services/mutations/runtime/create_shared_create_agent.go:Operation:helper:MirrorPane": "agent.presentation",
+		"../services/mutations/runtime/resume_execution.go:Operation:helper:MirrorPane":           "agent.presentation",
 		"../services/mutations/runtime/create_agent_launch.go:BindAgentPaneOnRoute:variable-argv": "agent.presentation",
 		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                                         "codex.native-lifecycle-authority",
 		"../integrations/metadata/tmuxmirror.go:RenameProject:set-option":                         "resource.rename-project",

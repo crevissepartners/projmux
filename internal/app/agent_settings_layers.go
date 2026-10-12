@@ -2,20 +2,10 @@ package app
 
 import (
 	"errors"
-	"fmt"
-	"maps"
 
-	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 )
-
-
-
-
-
-
 
 // agentSettingsResolver is the optional seam that resolves an Agent's layered
 // settings from the profile and instructions stores of its home. The Claude
@@ -62,31 +52,3 @@ func (r *agentRebinder) resolveSettings(provider string, annotations map[string]
 	}
 	return agentSettingsLaunch{}, nil
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

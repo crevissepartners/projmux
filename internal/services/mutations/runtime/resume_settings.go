@@ -1,5 +1,17 @@
 package runtime
 
+import (
+	"errors"
+	"fmt"
+	"maps"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentsettings"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/profile"
+)
+
 // agentSettingsLaunch is the layered settings one `agent resume`, `agent
 // relaunch`, Continue replay or resume-picker create launches an Agent with: the resolution, and the snapshot
 // of the new instructions content when the launch passes one. The zero value
@@ -53,14 +65,14 @@ func (q AgentSettingsRequest) ChangesLayers() bool {
 // planProjectLinksWith read them. A part the launch does not pass, or cannot
 // read now, stays nil: it gives the resolver nothing to compare.
 func (q AgentSettingsRequest) WithPromptParts(Guidance AgentGuidanceLaunch, links ProjectLinksLaunch) AgentSettingsRequest {
-	if Guidance.active && Guidance.unavailable == nil {
-		q.Guidance = &Guidance.digest
+	if Guidance.Active && Guidance.Unavailable == nil {
+		q.Guidance = &Guidance.Digest
 	}
-	if links.Project.active && links.Project.unavailable == nil {
-		q.ProjectGuidance = &links.Project.digest
+	if links.Project.Active && links.Project.Unavailable == nil {
+		q.ProjectGuidance = &links.Project.Digest
 	}
-	if links.active && links.unavailable == nil {
-		q.LinkRules = &links.digest
+	if links.Active && links.Unavailable == nil {
+		q.LinkRules = &links.Digest
 	}
 	return q
 }
@@ -78,26 +90,23 @@ func (e *RelaunchProfileError) Error() string {
 	return fmt.Sprintf("profile %q cannot be applied (%s): %s", e.Name, e.Reason, e.Detail)
 }
 
-// resolveSwitchProfile reads the profile a relaunch switches to, by name, the
-// way a create resolves an explicit --profile, and refuses one for another
-// provider.
-func ResolveSwitchProfile(homeDir func() (string, error), lookupEnv func(string) string, Provider, Name string, ProjectUID ...string) (Profile.Profile, Profile.Spec, error) {
-	_, loaded, spec, err := resolveRecordedProfile(homeDir, lookupEnv, Name, ProjectUID...)
+func ResolveSwitchProfileWithPaths(paths func() (config.Paths, error), Provider, Name string, ProjectUID ...string) (profile.Profile, profile.Spec, error) {
+	_, loaded, spec, err := ResolveRecordedProfileWithPaths(paths, Name, ProjectUID...)
 	if err != nil {
-		var unavailable *profileResumeError
+		var unavailable *ProfileResumeError
 		if errors.As(err, &unavailable) {
-			return Profile.Profile{}, Profile.Spec{}, &RelaunchProfileError{Name: Name, Reason: unavailable.Reason, Detail: unavailable.Detail}
+			return profile.Profile{}, profile.Spec{}, &RelaunchProfileError{Name: Name, Reason: unavailable.Reason, Detail: unavailable.Detail}
 		}
-		return Profile.Profile{}, Profile.Spec{}, err
+		return profile.Profile{}, profile.Spec{}, err
 	}
 	if spec.Provider != "" && spec.Provider != Provider {
-		return Profile.Profile{}, Profile.Spec{}, &RelaunchProfileError{Name: Name, Reason: profileReasonProviderMismatch,
+		return profile.Profile{}, profile.Spec{}, &RelaunchProfileError{Name: Name, Reason: profileReasonProviderMismatch,
 			Detail: fmt.Sprintf("it is for provider %s, not %s", spec.Provider, Provider)}
 	}
 	return loaded, spec, nil
 }
 
-func SettingsProfile(loaded Profile.Profile, spec Profile.Spec) *agentsettings.Profile {
+func SettingsProfile(loaded profile.Profile, spec profile.Spec) *agentsettings.Profile {
 	return &agentsettings.Profile{Name: loaded.Name, Digest: loaded.Digest,
 		Instructions: spec.Instructions, Model: spec.Model, Effort: spec.Effort}
 }
@@ -117,7 +126,10 @@ func SettingsProfile(loaded Profile.Profile, spec Profile.Spec) *agentsettings.P
 // snapshot of that content (writeSnapshot) before any transaction opens, like
 // the snapshot a create writes: it is content addressed, so one a later
 // failure leaves behind is harmless.
-func ResolveAgentSettings(homeDir func() (string, error), lookupEnv func(string) string, Provider string, Annotations map[string]string, request AgentSettingsRequest) (AgentSettingsLaunch, error) {
+func ResolveAgentSettings(paths config.Paths, provider string, annotations map[string]string, request AgentSettingsRequest) (AgentSettingsLaunch, error) {
+	return ResolveAgentSettingsWithPaths(func() (config.Paths, error) { return paths, nil }, provider, annotations, request)
+}
+func ResolveAgentSettingsWithPaths(paths func() (config.Paths, error), Provider string, Annotations map[string]string, request AgentSettingsRequest) (AgentSettingsLaunch, error) {
 	if Provider != aiModeClaude && Provider != aiModeCodex {
 		return AgentSettingsLaunch{}, nil
 	}
@@ -125,18 +137,18 @@ func ResolveAgentSettings(homeDir func() (string, error), lookupEnv func(string)
 	recordedName := Annotations[coremetadata.AnnotationAgentProfile]
 	switching := request.Profile != nil && *request.Profile != recordedName
 	if recordedName != "" {
-		_, loaded, spec, err := resolveRecordedProfile(homeDir, lookupEnv, recordedName, request.ProjectUID)
+		_, loaded, spec, err := ResolveRecordedProfileWithPaths(paths, recordedName, request.ProjectUID)
 		switch {
 		case err == nil:
 			in.Profile = SettingsProfile(loaded, spec)
-		case !switching || Profile.ReasonOf(err) == Profile.ReasonOutOfScope:
+		case !switching || profile.ReasonOf(err) == profile.ReasonOutOfScope:
 			return AgentSettingsLaunch{}, err
 		}
 	}
 	if switching {
 		in.Switch, in.SwitchSource = true, request.Source
 		if *request.Profile != "" {
-			loaded, spec, err := ResolveSwitchProfile(homeDir, lookupEnv, Provider, *request.Profile, request.ProjectUID)
+			loaded, spec, err := ResolveSwitchProfileWithPaths(paths, Provider, *request.Profile, request.ProjectUID)
 			if err != nil {
 				return AgentSettingsLaunch{}, err
 			}
@@ -155,8 +167,8 @@ func ResolveAgentSettings(homeDir func() (string, error), lookupEnv func(string)
 	in.Guidance, in.ProjectGuidance, in.LinkRules = request.Guidance, request.ProjectGuidance, request.LinkRules
 	var store persona.Store
 	var storeErr error
-	if paths, err := configPaths(homeDir, lookupEnv); err == nil {
-		store = persona.NewDefaultStore(paths)
+	if resolved, err := paths(); err == nil {
+		store = persona.NewDefaultStore(resolved)
 	} else {
 		storeErr = err
 	}
@@ -258,7 +270,7 @@ func (l AgentSettingsLaunch) Notice(label string) string {
 		return ""
 	case r.InstructionsNotApplied:
 		return fmt.Sprintf("projmux: agent/%s resumed with the instructions its Codex thread started with; instructions %s were not applied (%s): %s",
-			label, AgentSettingsInstructionsWord(r.WantedInstructions), personaReasonCodexInstructionsImmutable,
+			label, AgentSettingsInstructionsWord(r.WantedInstructions), PersonaReasonCodexInstructionsImmutable,
 			"its thread replays the developer message recorded when it started")
 	case r.InstructionsUnavailable != "":
 		return fmt.Sprintf("projmux: agent/%s resumed with its recorded instructions; instructions %s cannot be read now (%s)",

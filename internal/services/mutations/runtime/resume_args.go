@@ -1,5 +1,13 @@
 package runtime
 
+import (
+	"fmt"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+)
+
 func ResumeArgsForAgent(mode, resumeID string) ([]string, error) {
 	switch mode {
 	case aiModeClaude:

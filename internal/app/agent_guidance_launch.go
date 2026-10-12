@@ -138,10 +138,6 @@ func (l agentGuidanceLaunch) record(registry *coremetadata.Registry, mutator cor
 // persona notice does.
 func (l agentGuidanceLaunch) notice(label string) string { return l.shared().Notice(label) }
 
-func agentGuidanceNotice(label string, err error) string {
-	return mutationruntime.AgentGuidanceNotice(label, err)
-}
-
 // planAgentGuidanceWith asks launcher for the guidance when it has the seam,
 // and returns the zero launch otherwise.
 func planAgentGuidanceWith(launcher any, provider string, recorded map[string]string) agentGuidanceLaunch {
@@ -211,43 +207,4 @@ func (c *createCommand) prepareProcessAgentGuidance(flags *resourceCreateFlags) 
 		base = flags.personaLaunch.snapshot.Path
 	}
 	flags.agentGuidance = guidance.withCreateFile(base)
-}
-
-// resumeGuidanceSystemPromptFile is the one --append-system-prompt-file a
-// Claude resume passes, given baseFile, the file it would pass without
-// guidance ("" for none): baseFile alone, the guidance snapshot the digest
-// annotation names, or the composite of the guidance and baseFile. Guidance
-// that cannot be found is dropped and disclosed; baseFile is kept.
-func (c *aiCommand) resumeGuidanceSystemPromptFile(mode string, annotations map[string]string, baseFile string) (string, error) {
-	digest := annotations[coremetadata.AnnotationAgentGuidanceDigest]
-	if mode != aiModeClaude || digest == "" {
-		return baseFile, nil
-	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return baseFile, err
-	}
-	store := agentguidance.NewDefaultStore(paths)
-	if baseFile == "" {
-		return store.RecordedSnapshotPath(digest)
-	}
-	composite, err := composeAgentGuidance(store, digest, baseFile)
-	if err != nil {
-		return baseFile, err
-	}
-	return composite, nil
-}
-
-// composeAgentGuidance writes the composite of the guidance digest names and
-// the content of base, and returns its path.
-func composeAgentGuidance(store agentguidance.Store, digest, base string) (string, error) {
-	return mutationruntime.ComposeAgentGuidance(store, digest, base)
-}
-
-// readSystemPromptPart reads one file a Claude launch would pass as its
-// system prompt (a persona snapshot, a rules snapshot, or their composite),
-// bounded like every rules snapshot read. The file is opened inside its own
-// directory, so the read cannot leave that directory.
-func readSystemPromptPart(path string) ([]byte, error) {
-	return mutationruntime.ReadSystemPromptPart(path)
 }

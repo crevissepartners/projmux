@@ -432,3 +432,17 @@ func TestExternalAgentCreateConsumer(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestExternalResumeAgent(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{StateDir: t.TempDir(), ConfigDir: t.TempDir(), HomeDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var result core.ResumeAgentResult
+	result, err = c.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:agent", Project: "uid:project", Window: "uid:window", Model: "sonnet", Effort: "high", DialogueReplyOnly: false, SocketPath: "/explicit/socket"})
+	if !errors.Is(err, context.Canceled) || result.PaneID != "" {
+		t.Fatalf("cancelled external resume: %+v %v", result, err)
+	}
+}

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -20,6 +19,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf16"
+
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
@@ -33,9 +34,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -1917,8 +1915,6 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	}
 	return c.launchPickerSelection(intent)
 }
-
-
 
 // themedPickerOptions fills options.Theme with the global theme source so AI
 // split-picker and AI settings popups paint the themed surface/background

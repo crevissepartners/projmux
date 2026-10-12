@@ -66,6 +66,7 @@ Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusa
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.StopProject	Public v0 Project stop SDK entrypoint; SDK/CLI parity, exact socket/PID/UID guards and external consumer tests.
@@ -87,6 +88,7 @@ Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapt
 Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.questionService	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -254,6 +256,7 @@ Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained a
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 ResolveAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+ResolveAgentSettings	Public v0 tmux resume SDK fixed-path settings adapter; CLI uses the lazy injected path seam, and SDK parity and boundary tests cover this external-only closure.
 ResolveProcessCodexRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 ResolveProjectStopRoute	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
@@ -261,6 +264,8 @@ Result.Validate	Test-only installed qualification API retained for closed class 
 ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained with the per-provider ResumeCommand wrappers after snapshot replay, its only product caller, was removed.
 ResumeCommand	Per-provider Agent CLI resume command wrappers retained as the tested adapter surface after snapshot replay, their only product caller, was removed.
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
+ResumeLaunchService.PlanAgentResume	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
+ResumeReceipt	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run dispatch that RunWithLifecycleDiagnostics ships.
@@ -340,6 +345,7 @@ committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 so
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
 copyUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+createCommand.ensureAnchorPane	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
 createCommand.recordOperatorCreator	In-process operator creator seam for an operator client layered on projmux that runs creates on the operator's behalf; argv has no spelling of it by design (TestNoArgvPathBuildsAnOperatorCreator), so main reaches it only from tests.
 createFirstResult	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 createReceipt	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
@@ -398,6 +404,7 @@ openReadyThreadClient	The default-endpoint client helper remains behind installe
 ownedStream.Close	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 ownedStream.Write	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
+paneTarget.shared	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
@@ -422,6 +429,7 @@ questionRefusal	Public v0 Agent question SDK entrypoint/adapter or preserved CLI
 questionStateRefusal	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 readArchive	Hook-taking body of ReadArchive, retained with it as the seam read_test.go uses to run a writer between the store and history reads.
 readKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+readPersonaSnapshot	Existing instructions-message or profile-project fixture calls this path/scope adapter; production resume now uses the shared implementation directly.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 refusal	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
@@ -442,8 +450,10 @@ renameTargetAllowed	Public v0 rename SDK entrypoint or exact-socket adapter; ret
 renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.
 renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
 renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
+resolveSwitchProfile	Existing instructions-message or profile-project fixture calls this path/scope adapter; production resume now uses the shared implementation directly.
 resourceQuery	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 resourceRefusal	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+resumeRefusal	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 routedRunner.Run	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 runShellOutputLedger	Closed run-shell producer ledger; the C-1 no-overlay contract is enforced by sweeping shipped generated config against it.
