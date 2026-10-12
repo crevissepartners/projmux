@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -21,11 +22,18 @@ const (
 	CodeProjectNotLive             Code = "project-not-live"
 	CodeProjectStopRouteRefused    Code = "project-stop-route-refused"
 	CodeProjectStopExecutionFailed Code = "project-stop-execution-failed"
+	// CodeProjectHasRunningProcessAgents refuses StopProject before any writes
+	// when its Registry snapshot contains Running process Agents in the Project.
+	// The Refusal message identifies each Agent by name and UID.
+	CodeProjectHasRunningProcessAgents Code = "project-has-running-process-agents"
 )
 
 // StopProject ends one Project's persistent tmux session while retaining its
-// Registry identity, desired topology, root and external assets. It does not
-// stop process Agents or move clients. Cancellation is effective before
+// Registry identity, desired topology, root and external assets. If its Registry
+// snapshot contains Running process Agents in the Project, it returns a Refusal
+// with CodeProjectHasRunningProcessAgents and their names and UIDs before any
+// Registry or tmux writes. Use CLI stop project to stop those Agents. Otherwise
+// it ends only tmux and does not move clients. Cancellation is effective before
 // admission only; admitted execution and compensation finish independently.
 func (c *Client) StopProject(ctx context.Context, req core.StopProjectRequest) (core.StopProjectResult, error) {
 	return c.stopProjectWithRunner(ctx, req, tmux.ExecRunner{})
@@ -60,6 +68,29 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 	project, err := mutations.ResolveProjectRef(func() (metadata.Registry, error) { return reg, nil }, "stop project", req.Ref, func(message string) error { return &Refusal{Code: CodeResourceNotFound, message: message} }, func(err error) error { return err })
 	if err != nil {
 		return result, resourceRefusal(err)
+	}
+	windowUIDs := make(map[string]bool)
+	for _, window := range reg.WindowsOf(project.Metadata.UID) {
+		windowUIDs[window.Metadata.UID] = true
+	}
+	var runningProcessAgents []string
+	for _, agent := range reg.Agents {
+		if agent.Status.Phase != metadata.PhaseRunning || agent.Metadata.OwnerRef == nil ||
+			agent.Metadata.OwnerRef.Kind != metadata.KindWindow || !windowUIDs[agent.Metadata.OwnerRef.UID] {
+			continue
+		}
+		pane, ok := reg.Pane(agent.Status.PaneRef)
+		// Match RecordProjectStopInterruptions: an empty activation kind alone
+		// is not process evidence, and desired runtime is not observed runtime.
+		if ok && (pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != metadata.RuntimeTmux)) {
+			runningProcessAgents = append(runningProcessAgents, fmt.Sprintf("%s (uid:%s)", agent.Metadata.Name, agent.Metadata.UID))
+		}
+	}
+	if len(runningProcessAgents) != 0 {
+		sort.Strings(runningProcessAgents)
+		return result, &Refusal{Code: CodeProjectHasRunningProcessAgents, message: fmt.Sprintf(
+			"stop project: project/%s has Running process Agents: %s; use CLI stop project to stop them",
+			project.Metadata.Name, strings.Join(runningProcessAgents, ", "))}
 	}
 	root := strings.TrimSpace(project.Spec.Root)
 	if root == "" {

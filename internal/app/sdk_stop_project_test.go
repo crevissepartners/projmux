@@ -146,6 +146,121 @@ func TestStopProjectSDKCLIParity(t *testing.T) {
 	}
 }
 
+// Refusal uses the same observed process predicate as CLI interruption filtering.
+// In every refused case, both the Registry bytes and the live tmux session survive.
+func TestStopProjectSDKRunningProcessAgentsZeroWrite(t *testing.T) {
+	for _, evidence := range []string{"both", "activation-only", "session-only"} {
+		t.Run(evidence, func(t *testing.T) {
+			socket, run := stopAppSocket(t)
+			fixture := freshStartFixtureStore(t)
+			activateRuntimeStopAgent(t, fixture, "gen-tmux")
+			agentUID, paneUID := addProjectStopProcessFixture(t, fixture)
+			secondUID, _ := addSecondProjectStopProcessFixture(t, fixture)
+			pane, _ := fixture.registry.Pane(paneUID)
+			if evidence == "activation-only" {
+				pane.Status.ProcessSession = nil
+			}
+			if evidence == "session-only" {
+				pane.Status.Activation = metadata.PaneActivation{}
+			}
+			home := t.TempDir()
+			session := sessions.NewNamer(home).SessionName(fixture.registry.Projects[0].Spec.Root)
+			fixture.registry.Projects[0].Status.Session = &metadata.SessionProjection{Name: session, Live: true}
+			run("new-session", "-d", "-s", session, "tail -f /dev/null")
+			run("set-option", "-t", session, tmuxopts.ProjectUIDSession, "prj-alpha")
+			state, _, _ := renameState(t, fixture.registry)
+			client, err := projmux.NewClient(projmux.Options{StateDir: state, HomeDir: home, SocketPath: socket})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := projectRegistryBytes(t, state)
+			// Refuse even when tmux routing would fail: process admission comes first.
+			for _, route := range []string{socket, filepath.Join(filepath.Dir(socket), "missing")} {
+				result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: route})
+				var refusal *projmux.Refusal
+				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectHasRunningProcessAgents {
+					t.Fatalf("result=%+v error=%v", result, err)
+				}
+				if sdkJSON(t, result) != sdkJSON(t, core.StopProjectResult{}) {
+					t.Fatalf("refusal reported effects: %+v", result)
+				}
+				for _, uid := range []string{agentUID, secondUID} {
+					agent, _ := fixture.registry.Agent(uid)
+					if !strings.Contains(refusal.Error(), agent.Metadata.Name) || !strings.Contains(refusal.Error(), uid) {
+						t.Fatalf("missing Agent name/UID: %v", refusal)
+					}
+				}
+				if before != projectRegistryBytes(t, state) {
+					t.Fatal("process refusal changed Registry bytes")
+				}
+				if got := run("list-sessions", "-F", "#{session_name}"); !strings.Contains(got, session) || !strings.Contains(got, "bystander") {
+					t.Fatalf("process refusal changed tmux sessions: %s", got)
+				}
+			}
+		})
+	}
+}
+
+func TestStopProjectSDKWithoutRunningProcessAgents(t *testing.T) {
+	for _, mode := range []string{"offline-process", "other-project-process"} {
+		t.Run(mode, func(t *testing.T) {
+			socket, run := stopAppSocket(t)
+			fixture := freshStartFixtureStore(t)
+			activateRuntimeStopAgent(t, fixture, "gen-tmux")
+			agentUID, processPaneUID := addProjectStopProcessFixture(t, fixture)
+			agent, _ := fixture.registry.Agent(agentUID)
+			if mode == "offline-process" {
+				agent.Status.Phase = metadata.PhaseOffline
+			} else {
+				// Keep process evidence valid while moving it outside this Project.
+				agent.Metadata.OwnerRef.UID = "win-beta-main"
+				processPane, _ := fixture.registry.Pane(processPaneUID)
+				binding := &processPane.Status.ProcessSession.Binding
+				binding.ProjectUID, binding.WindowUID = "prj-beta", "win-beta-main"
+				processPane.Status.Activation.Process.Binding = *binding
+				for i := range fixture.registry.NameReservations {
+					reservation := &fixture.registry.NameReservations[i]
+					if reservation.UID == agentUID || reservation.UID == processPaneUID {
+						reservation.Scope = "prj-beta"
+					}
+				}
+			}
+			if err := fixture.registry.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			home := t.TempDir()
+			session := sessions.NewNamer(home).SessionName(fixture.registry.Projects[0].Spec.Root)
+			fixture.registry.Projects[0].Status.Session = &metadata.SessionProjection{Name: session, Live: true}
+			paneID := run("new-session", "-d", "-s", session, "-P", "-F", "#{pane_id}", "tail -f /dev/null")
+			run("set-option", "-t", session, tmuxopts.ProjectUIDSession, "prj-alpha")
+			pane, _ := fixture.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.RuntimeID = paneID
+			state, _, _ := renameState(t, fixture.registry)
+			client, err := projmux.NewClient(projmux.Options{StateDir: state, HomeDir: home, SocketPath: socket})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha"})
+			if err != nil || !result.Stopped || len(result.Interruptions) != 1 || result.OperationID == "" {
+				t.Fatalf("SDK result=%+v error=%v", result, err)
+			}
+			if got := run("list-sessions", "-F", "#{session_name}"); got != "bystander" {
+				t.Fatalf("tmux stop changed: %s", got)
+			}
+			after := projectRegistry(t, state)
+			tmuxAgent, _ := after.Agent("agt-alpha-codex")
+			if tmuxAgent.Status.Phase != metadata.PhaseOffline || tmuxAgent.Status.LastTermination == nil {
+				t.Fatal("tmux interruption missing")
+			}
+			beforeAgent, _ := fixture.registry.Agent("agt-alpha-review")
+			afterAgent, _ := after.Agent("agt-alpha-review")
+			if sdkJSON(t, beforeAgent) != sdkJSON(t, afterAgent) {
+				t.Fatal("unselected process Agent changed")
+			}
+		})
+	}
+}
+
 func TestStopProjectSDKNoWriteRefusals(t *testing.T) {
 	socket, run := stopAppSocket(t)
 	reg := freshStartFixtureStore(t).registry
