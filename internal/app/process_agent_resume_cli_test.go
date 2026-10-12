@@ -613,6 +613,10 @@ func TestProcessResumeSupervisorSpawnFailureCanRetryActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "task"))
+			// This retry/claim setup requires an initialized conversation before EOF.
+			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.ConnectionID != "" && (r.SessionID != "" || r.ThreadID != "")
+			})
 			first.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			executable, err := os.Executable()
@@ -770,6 +774,10 @@ func TestDeferredPeerWakeAndKilledClaimantActualCLI(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 				defer cancel()
 				first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+				// This retry/claim setup requires an initialized conversation before EOF.
+				awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+					return r.ConnectionID != "" && (r.SessionID != "" || r.ThreadID != "")
+				})
 				first.shutdown(t)
 				old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 				args := f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task")
