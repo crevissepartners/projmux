@@ -112,8 +112,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Adds get project-candidates with JSON projection to the public graph.
-	const want = "4fee42ac2661373739a6ee880a80551f90baa2025865f0850e836f947439f545"
+	// Adds agent turn deliver to the public graph.
+	const want = "d004c03f9db0b013cee34d8f8a3df42bcfa465f876aee46075354505d4284a68"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

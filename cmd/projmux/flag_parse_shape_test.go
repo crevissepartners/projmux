@@ -169,6 +169,7 @@ var flagParseShapeExclusions = map[string]flagParseShapeExclusion{
 	"agent turn interrupt": {run: true, reason: flagParseShapeOperand},
 	"agent turn start":     {run: true, reason: flagParseShapeOperand},
 	"agent turn steer":     {run: true, reason: flagParseShapeOperand},
+	"agent turn deliver":   {run: true, reason: flagParseShapeOperand},
 	"attach":               {run: true, reason: flagParseShapeLegacy},
 	"attention":            {run: true, reason: flagParseShapeVerbDispatch},
 	"config":               {run: true, reason: flagParseShapeVerbDispatch},

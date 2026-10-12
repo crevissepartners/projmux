@@ -141,6 +141,7 @@ var publicRouteArgvOperandRoutes = []string{
 	"agent relaunch",
 	"agent turn start",
 	"agent turn steer",
+	"agent turn deliver",
 	"agent turn interrupt",
 	"agent approval review",
 	"agent approval list",

@@ -16,6 +16,19 @@ import (
 )
 
 func TestProcessCodexSteerRunningAndIdleActualCLI(t *testing.T) {
+	testProcessCodexInputCLI(t, false)
+}
+
+func TestProcessCodexDeliverRunningAndIdleActualCLI(t *testing.T) {
+	testProcessCodexInputCLI(t, true)
+}
+
+func testProcessCodexInputCLI(t *testing.T, deliver bool) {
+	t.Helper()
+	start, steer := "start", "steer"
+	if deliver {
+		start, steer = "deliver", "deliver"
+	}
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("copied product binary required")
 	}
@@ -85,8 +98,10 @@ func TestProcessCodexSteerRunningAndIdleActualCLI(t *testing.T) {
 		}
 	}
 	refuseIdle()
-	if out, err := cli("agent", "turn", "start", ref, "--", "hold"); err != nil {
+	if out, err := cli("agent", "turn", start, ref, "--", "hold"); err != nil {
 		t.Fatalf("start: %v %s", err, out)
+	} else if deliver && !bytes.Contains(out, []byte("mode=start")) {
+		t.Fatalf("start receipt: %s", out)
 	}
 	waitCodexCreate(t, ctx, func() bool {
 		reg, _ := f.store.LoadDegradedReadOnly()
@@ -98,8 +113,11 @@ func TestProcessCodexSteerRunningAndIdleActualCLI(t *testing.T) {
 	if out, err := cli("agent", "turn", "steer", "uid:agent-foreign", "--", "foreign"); err == nil {
 		t.Fatalf("foreign admitted: %s", out)
 	}
-	out, err := cli("agent", "turn", "steer", ref, "--", "same-turn-answer")
+	out, err := cli("agent", "turn", steer, ref, "--", "same-turn-answer")
 	want := "Steer current turn thread=\"process-thread\" turn=\"turn-1\" acceptance=provider delivery=unconfirmed\n"
+	if deliver {
+		want = strings.Replace(want, " acceptance=", " mode=steer acceptance=", 1)
+	}
 	if err != nil || string(out) != want {
 		t.Fatalf("steer: %v %q want %q", err, out, want)
 	}
@@ -127,7 +145,7 @@ func TestProcessCodexSteerRunningAndIdleActualCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := mustReadSteerWire(t, f.trace)
-	if out, err := cli("agent", "turn", "steer", ref, "--", "old-generation"); err == nil {
+	if out, err := cli("agent", "turn", steer, ref, "--", "old-generation"); err == nil {
 		t.Fatalf("stale admitted: %s", out)
 	}
 	if !bytes.Equal(before, mustReadSteerWire(t, f.trace)) {
