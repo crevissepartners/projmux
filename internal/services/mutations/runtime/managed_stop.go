@@ -338,6 +338,9 @@ func RecordProjectStopInterruptions(store *StopStore, projectUID, operationID st
 				continue
 			}
 			pane, ok := working.Pane(agent.Status.PaneRef)
+			if ok && (pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != coremetadata.RuntimeTmux)) {
+				continue
+			}
 			if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
 				pane.Metadata.OwnerRef.UID != agent.Metadata.UID || pane.Status.Activation.AgentUID != agent.Metadata.UID ||
 				strings.TrimSpace(pane.Status.Activation.Generation) == "" {
@@ -405,6 +408,9 @@ func VerifyProjectStopInterruptions(store *StopStore, projectUID string, interru
 			continue
 		}
 		pane, ok := registry.Pane(agent.Status.PaneRef)
+		if ok && (pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != coremetadata.RuntimeTmux)) {
+			continue
+		}
 		want, selected := expected[agent.Status.PaneRef]
 		if !ok || !selected || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
 			pane.Metadata.OwnerRef.UID != agent.Metadata.UID || want.AgentUID != agent.Metadata.UID ||

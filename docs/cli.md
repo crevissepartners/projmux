@@ -4356,6 +4356,8 @@ Allowed effects:
 projmux stop project <ref> [-o receipt|none]
 ```
 
+Stops Running headless Agents through their process hosts before terminating tmux; durable Wait confirmation shares one 10-second limit. A Project with only Running headless Agents can also be stopped. Unconfirmed Agents remain Running and are named with project-stop-agents-still-running; the command exits nonzero after continuing the tmux stop. Retry stop project for remaining Agents. Project session Ctrl-X in the sidebar and session picker follows the same stop path.
+
 Output modes (`-o`): `receipt`, `none`
 
 ## `projmux switch`

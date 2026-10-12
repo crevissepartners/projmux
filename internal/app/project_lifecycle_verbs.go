@@ -144,6 +144,12 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 
 	receipt, err := c.execute(ctx, spelling, project, root, sessionName, live, route)
 	if err != nil {
+		if receipt.Operation != "" {
+			if validationErr := receipt.Validate(); validationErr != nil {
+				return errors.Join(err, validationErr)
+			}
+			return errors.Join(err, writeOperationReceipt(stdout, mode, receipt))
+		}
 		return err
 	}
 	if err := receipt.Validate(); err != nil {
@@ -206,18 +212,38 @@ func (c *projectLifecycleCommand) execute(
 
 	case projectLifecycleStop:
 		if !live {
-			return cli.OperationReceipt{}, usageError(fmt.Sprintf(
-				"%s: project/%s has no live persistent session; nothing was changed",
-				spelling, project.Metadata.Name))
+			reg, err := c.store.load()
+			if err != nil {
+				return cli.OperationReceipt{}, err
+			}
+			if len(runningProjectProcessAgents(reg, project.Metadata.UID)) == 0 {
+				return cli.OperationReceipt{}, usageError(fmt.Sprintf("%s: project/%s has no live persistent session; nothing was changed", spelling, project.Metadata.Name))
+			}
 		}
 		focus := cli.FocusUnchanged
-		if c.attachedToSession(sessionName) {
+		if live && c.attachedToSession(sessionName) {
 			focus = cli.FocusMovedCurrentClient
 		}
-		if err := c.switcher.stopManagedProjectSessionOnRoute(ctx, switchRegistryUIDPrefix+project.Metadata.UID, sessionName, "", "", route); err != nil {
+		var stopped []cli.ReceiptResource
+		var tmuxStopped bool
+		var err error
+		if live {
+			stopped, tmuxStopped, err = c.switcher.stopManagedProjectSessionResult(ctx, switchRegistryUIDPrefix+project.Metadata.UID, sessionName, "", "", route)
+		} else {
+			stopper := c.switcher.stopProcessAgents
+			if stopper == nil {
+				stopper = stopProjectProcessAgents
+			}
+			stopped, err = stopper(ctx, c.store, project.Metadata.UID)
+		}
+		if err != nil && !tmuxStopped && len(stopped) == 0 {
 			return cli.OperationReceipt{}, err
 		}
-		return c.receipt(cli.OperationStopProject, target, cli.RuntimeStopped, focus), nil
+		receipt := c.receipt(cli.OperationStopProject, target, cli.RuntimeStopped, focus)
+		for _, agent := range stopped {
+			receipt.Add(agent.Kind, agent.UID, agent.Name, agent.Action)
+		}
+		return receipt, err
 	}
 	return cli.OperationReceipt{}, fmt.Errorf("%s: unknown Project lifecycle verb", spelling)
 }
