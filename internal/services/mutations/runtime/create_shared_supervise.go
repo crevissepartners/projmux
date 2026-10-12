@@ -1,29 +1,17 @@
 package runtime
 
 import (
-	"errors"
-	"flag"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"strings"
-	"time"
-
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 )
 
-// superviseSpec is the identity one supervised launch quotes back when its
+// SuperviseSpec is the identity one supervised launch quotes back when its
 // child stops.
 //
 // Everything in it is minted by projmux before the pane exists. Nothing is read
 // out of the pane, the shell, or the provider afterwards, which is what keeps
 // the receipt an assertion about a process this build started rather than a
 // guess about a process it found.
-type superviseSpec struct {
+type SuperviseSpec struct {
 	PaneUID     string
 	AgentUID    string
 	Generation  string
@@ -51,11 +39,11 @@ type superviseSpec struct {
 	ServerDefaultCommand bool
 }
 
-// superviseServerDefaultCommandFlag is the private flag that carries
-// superviseSpec.ServerDefaultCommand.
-const superviseServerDefaultCommandFlag = "server-default-command"
+// SuperviseServerDefaultCommandFlag is the private flag that carries
+// SuperviseSpec.ServerDefaultCommand.
+const SuperviseServerDefaultCommandFlag = "server-default-command"
 
 // valid reports whether the spec can identify a receipt at all.
-func (s superviseSpec) valid() bool {
+func (s SuperviseSpec) Valid() bool {
 	return strings.TrimSpace(s.PaneUID) != "" && strings.TrimSpace(s.Generation) != ""
 }

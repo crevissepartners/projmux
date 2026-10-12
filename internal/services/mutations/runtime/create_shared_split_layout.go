@@ -2,28 +2,28 @@ package runtime
 
 import "sort"
 
-// aiPaneGeometry is the shared geometry record used by legacy AI splits and
+// AiPaneGeometry is the shared geometry record used by legacy AI splits and
 // canonical resource creates. Keeping the established name avoids changing the
 // legacy test seam while moving the algorithm out of the AI route.
-type aiPaneGeometry struct {
-	id     string
-	left   int
-	top    int
-	width  int
-	height int
+type AiPaneGeometry struct {
+	Id     string
+	Left   int
+	Top    int
+	Width  int
+	Height int
 }
 
-type plannedPaneResize struct {
-	paneID string
-	axis   string
-	size   int
+type PlannedPaneResize struct {
+	PaneID string
+	Axis   string
+	Size   int
 }
 
-func planEvenSplitResizes(targetPane, direction string, panes []aiPaneGeometry) []plannedPaneResize {
-	var target aiPaneGeometry
+func PlanEvenSplitResizes(targetPane, direction string, panes []AiPaneGeometry) []PlannedPaneResize {
+	var target AiPaneGeometry
 	found := false
 	for _, pane := range panes {
-		if pane.id == targetPane {
+		if pane.Id == targetPane {
 			target = pane
 			found = true
 			break
@@ -33,45 +33,45 @@ func planEvenSplitResizes(targetPane, direction string, panes []aiPaneGeometry) 
 		return nil
 	}
 
-	peers := splitLayoutPeers(panes, target, direction)
+	peers := SplitLayoutPeers(panes, target, direction)
 	if len(peers) < 2 {
 		return nil
 	}
-	var planned []plannedPaneResize
-	if direction == placementDown {
-		resizePanesEvenly(peers, func(p aiPaneGeometry, size int) {
-			planned = append(planned, plannedPaneResize{paneID: p.id, axis: "-y", size: size})
-		}, func(p aiPaneGeometry) int { return p.height })
+	var planned []PlannedPaneResize
+	if direction == PlacementDown {
+		ResizePanesEvenly(peers, func(p AiPaneGeometry, size int) {
+			planned = append(planned, PlannedPaneResize{PaneID: p.Id, Axis: "-y", Size: size})
+		}, func(p AiPaneGeometry) int { return p.Height })
 		return planned
 	}
-	resizePanesEvenly(peers, func(p aiPaneGeometry, size int) {
-		planned = append(planned, plannedPaneResize{paneID: p.id, axis: "-x", size: size})
-	}, func(p aiPaneGeometry) int { return p.width })
+	ResizePanesEvenly(peers, func(p AiPaneGeometry, size int) {
+		planned = append(planned, PlannedPaneResize{PaneID: p.Id, Axis: "-x", Size: size})
+	}, func(p AiPaneGeometry) int { return p.Width })
 	return planned
 }
 
-func splitLayoutPeers(panes []aiPaneGeometry, target aiPaneGeometry, direction string) []aiPaneGeometry {
-	peers := make([]aiPaneGeometry, 0, len(panes))
+func SplitLayoutPeers(panes []AiPaneGeometry, target AiPaneGeometry, direction string) []AiPaneGeometry {
+	peers := make([]AiPaneGeometry, 0, len(panes))
 	for _, pane := range panes {
-		if direction == placementDown {
-			if pane.left == target.left && pane.width == target.width {
+		if direction == PlacementDown {
+			if pane.Left == target.Left && pane.Width == target.Width {
 				peers = append(peers, pane)
 			}
 			continue
 		}
-		if pane.top == target.top && pane.height == target.height {
+		if pane.Top == target.Top && pane.Height == target.Height {
 			peers = append(peers, pane)
 		}
 	}
-	if direction == placementDown {
-		sort.Slice(peers, func(i, j int) bool { return peers[i].top < peers[j].top })
+	if direction == PlacementDown {
+		sort.Slice(peers, func(i, j int) bool { return peers[i].Top < peers[j].Top })
 		return peers
 	}
-	sort.Slice(peers, func(i, j int) bool { return peers[i].left < peers[j].left })
+	sort.Slice(peers, func(i, j int) bool { return peers[i].Left < peers[j].Left })
 	return peers
 }
 
-func resizePanesEvenly(peers []aiPaneGeometry, resize func(aiPaneGeometry, int), currentSize func(aiPaneGeometry) int) {
+func ResizePanesEvenly(peers []AiPaneGeometry, resize func(AiPaneGeometry, int), currentSize func(AiPaneGeometry) int) {
 	if len(peers) == 0 || resize == nil || currentSize == nil {
 		return
 	}

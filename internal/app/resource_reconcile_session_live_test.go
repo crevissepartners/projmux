@@ -178,9 +178,9 @@ func TestFullReconcilePassRecordsItsSocketPathLiveAndKeepsItOffline(t *testing.T
 	uid := project.Metadata.UID
 	reconciler := reconcileFixtureReconciler(root, "alpha")(server, inttmux.NewClient(server))
 	const passSocket = "/tmp/fake-tmux/pass"
-	reconciler.sessionSocketPath = func() string { return passSocket }
+	reconciler.SessionSocketPath = func() string { return passSocket }
 
-	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-live"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &store.registry, store.mutator(), "op-full-live"); err != nil {
 		t.Fatalf("live pass: %v", err)
 	}
 	if got, want := storedSessionProjection(t, store, uid), (coremetadata.SessionProjection{Name: "alpha", Live: true, SocketPath: passSocket}); got != want {
@@ -188,7 +188,7 @@ func TestFullReconcilePassRecordsItsSocketPathLiveAndKeepsItOffline(t *testing.T
 	}
 
 	server.sessions = slices.DeleteFunc(server.sessions, func(session *fakeTmuxSession) bool { return session.name == "alpha" })
-	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-offline"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &store.registry, store.mutator(), "op-full-offline"); err != nil {
 		t.Fatalf("offline pass: %v", err)
 	}
 	if got, want := storedSessionProjection(t, store, uid), (coremetadata.SessionProjection{Name: "alpha", SocketPath: passSocket}); got != want {
@@ -202,7 +202,7 @@ func fullPassFixture(t *testing.T, passSocket string) (*registryReconciler, *fak
 	t.Helper()
 	_, store, server, _, root := newReconcileFixture(t, "-L", "primary")
 	reconciler := reconcileFixtureReconciler(root, "alpha")(server, inttmux.NewClient(server))
-	reconciler.sessionSocketPath = func() string { return passSocket }
+	reconciler.SessionSocketPath = func() string { return passSocket }
 	return reconciler, store
 }
 
@@ -236,7 +236,7 @@ func TestFullReconcilePassLeavesAProjectionRecordedOnAnotherServerByteIdentical(
 	}
 	before := map[string][]byte{elsewhere: storedProjectJSON(t, store, elsewhere), stopped: storedProjectJSON(t, store, stopped)}
 
-	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-cross-server"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &store.registry, store.mutator(), "op-full-cross-server"); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
 	for uid, previous := range before {
@@ -258,7 +258,7 @@ func TestFullReconcilePassLowersAnAbsentProjectionRecordedOnItsServerOrOnNoServe
 	own := addEndedSessionProject(t, store, "own", passSocket)
 	unknown := addEndedSessionProject(t, store, "unknown", "")
 
-	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-own-server"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &store.registry, store.mutator(), "op-full-own-server"); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
 	if got, want := storedSessionProjection(t, store, own), (coremetadata.SessionProjection{Name: "own", SocketPath: passSocket}); got != want {
@@ -279,7 +279,7 @@ func TestFullReconcilePassWithoutAVerifiedSocketPathLowersNoProjectionThatRecord
 	recorded := addEndedSessionProject(t, store, "recorded", "/tmp/fake-tmux/pass")
 	before := storedProjectJSON(t, store, recorded)
 
-	if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-full-unverified"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &store.registry, store.mutator(), "op-full-unverified"); err != nil {
 		t.Fatalf("pass: %v", err)
 	}
 	if after := storedProjectJSON(t, store, recorded); string(after) != string(before) {

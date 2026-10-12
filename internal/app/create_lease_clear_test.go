@@ -1,13 +1,13 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
 	"slices"
 	"strings"
 	"testing"
+
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -21,7 +21,7 @@ const (
 // hand clearCreateOperations, over one fake server.
 func newLeaseClearMaterializer(tmux *fakeTmux, warn *bytes.Buffer) *materializer {
 	return &materializer{
-		mirror: intmetadata.NewMirror(tmux), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux, Sessions: &fakeSessionMaterializer{tmux: tmux}, Warn: warn,
+		Mirror: intmetadata.NewMirror(tmux), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux, Sessions: &fakeSessionMaterializer{tmux: tmux}, Warn: warn,
 			Target:             tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
 			ExpectedSocketPath: tmux.socketPath,
 			SocketName:         defaultAppSocket,

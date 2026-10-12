@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -9,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -229,7 +230,7 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			seam.afterEnd = tt.afterEnd(seam.socketPath)
 			var warnings bytes.Buffer
 			runtime := &materializer{
-				mirror: intmetadata.NewMirror(seam), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: seam, Warn: &warnings,
+				Mirror: intmetadata.NewMirror(seam), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: seam, Warn: &warnings,
 					Target:             tmuxTransport{Kind: tmuxSocketPath, Value: seam.socketPath, Source: tmuxSocketPathSource},
 					ExpectedSocketPath: seam.socketPath,
 					SocketName:         defaultAppSocket,

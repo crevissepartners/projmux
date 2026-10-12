@@ -22,18 +22,18 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 	if err := c.ensureRuntimeRoute(ctx); err != nil {
 		return "", err
 	}
-	sessionName := c.reconciler.projectPhysicalSessionName(*reg, project)
+	sessionName := c.reconciler.ProjectPhysicalSessionName(*reg, project)
 	if sessionName == "" {
 		return "", errors.New("materialize virtual Window: no physical session name")
 	}
-	created, _, err := c.runtime.ensureSessionLaunching(ctx, project, sessionName, pane.Spec.CWD, window.Metadata.Name, func() (superviseSpec, error) { return activation, nil }, ledger, command)
+	created, _, err := c.runtime.EnsureSessionLaunching(ctx, project, sessionName, pane.Spec.CWD, window.Metadata.Name, func() (superviseSpec, error) { return activation, nil }, ledger, command)
 	if err != nil {
 		return "", err
 	}
 	windowID, paneID := created.WindowID, created.PaneID
 	if !created.Created {
 		// Refuse an unexpected live claim rather than creating a duplicate UID.
-		inventory, err := c.runtime.windowRuntimeInventory(ctx, created.SessionID)
+		inventory, err := c.runtime.WindowRuntimeInventory(ctx, created.SessionID)
 		if err != nil {
 			return "", err
 		}
@@ -42,7 +42,7 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 		} else if found {
 			return "", fmt.Errorf("virtual Window uid:%s already has a runtime", windowUID)
 		}
-		made, err := c.runtime.newWindow(ctx, created.SessionID, window.Metadata.Name, pane.Spec.CWD, c.runtime.supervisedLaunch(ctx, activation, command))
+		made, err := c.runtime.NewWindow(ctx, created.SessionID, window.Metadata.Name, pane.Spec.CWD, c.runtime.SupervisedLaunch(ctx, activation, command))
 		windowID, paneID = made.WindowID, made.PaneID
 		if windowID != "" {
 			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); claimErr != nil {
@@ -59,7 +59,7 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 	if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
 		return "", err
 	}
-	if err := c.runtime.mirrorWindow(ctx, windowID, *window); err != nil {
+	if err := c.runtime.MirrorWindowIdentity(ctx, windowID, *window); err != nil {
 		return "", err
 	}
 	if err := c.runtime.MirrorPaneIdentity(ctx, paneID, pane); err != nil {
@@ -76,7 +76,7 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 	if _, err := mut.BindLiveProjectSession(reg, project.Metadata.UID, sessionName, c.runtime.ExpectedSocketPath); err != nil {
 		return "", err
 	}
-	if err := c.runtime.finalizeSessionStartup(ctx, created, sessionName, project.Spec.Root, ledger); err != nil {
+	if err := c.runtime.FinalizeSessionStartup(ctx, created, sessionName, project.Spec.Root, ledger); err != nil {
 		return "", err
 	}
 	return paneID, nil
@@ -104,9 +104,9 @@ func virtualWindowCreator(runner tmuxCommandRunner, lookup func(string) string, 
 			client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 			c.runtime.InvalidateRouteIdentity("virtual-window-navigation")
 			c.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
-			c.reconciler.shareRouteIdentityScope(c.runtime)
-			c.reconciler.sessionSocketPath = func() string { return c.runtime.ExpectedSocketPath }
-			c.runtime.Runner, c.runtime.mirror, c.runtime.Sessions = exact, intmetadata.NewMirror(exact), client
+			c.reconciler.ShareRouteIdentityScope(c.runtime)
+			c.reconciler.SessionSocketPath = func() string { return c.runtime.ExpectedSocketPath }
+			c.runtime.Runner, c.runtime.Mirror, c.runtime.Sessions = exact, intmetadata.NewMirror(exact), client
 			c.runtime.Target, c.runtime.ExpectedSocketPath, c.runtime.SocketName, c.runtime.RouteAuthority = route.Target, route.ExpectedSocketPath, route.SocketName, route.Authority
 			return nil
 		}

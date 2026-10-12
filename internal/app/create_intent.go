@@ -103,7 +103,7 @@ func (c *createCommand) projectCanonicalOriginWindowBinding(
 	mutator coremetadata.Mutator,
 	scope canonicalIntentScope,
 ) error {
-	owner, found, err := c.runtime.windowRuntimeForUID(ctx, scope.sessionName, scope.windowUID)
+	owner, found, err := c.runtime.WindowRuntimeForUID(ctx, scope.sessionName, scope.windowUID)
 	if err != nil {
 		return err
 	}
@@ -261,15 +261,15 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 			}
 			scope.sessionID = sessionID
 		}
-		created, createErr := c.runtime.newWindow(ctx, scope.sessionID, window.Metadata.Name, cwd,
-			c.runtime.supervisedLaunch(ctx, activation, nil))
+		created, createErr := c.runtime.NewWindow(ctx, scope.sessionID, window.Metadata.Name, cwd,
+			c.runtime.SupervisedLaunch(ctx, activation, nil))
 		if created.WindowID == "" {
 			return createErr
 		}
 		if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, window.Metadata.UID, ledger); claimErr != nil {
 			return errors.Join(createErr, claimErr)
 		}
-		if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, window); mirrorErr != nil {
+		if mirrorErr := c.runtime.MirrorWindowIdentity(ctx, created.WindowID, window); mirrorErr != nil {
 			return errors.Join(createErr, mirrorErr)
 		}
 		projected, bindingErr := c.observeWindowRuntimeBinding(
@@ -558,7 +558,7 @@ func (c *createCommand) resolveProjectWindowIntentScope(projectUID string) (cano
 	if err := c.refuseMissingRoot(*project); err != nil {
 		return canonicalIntentScope{}, usageError(err.Error() + "; nothing was created")
 	}
-	sessionName := c.reconciler.projectPhysicalSessionName(registry, *project)
+	sessionName := c.reconciler.ProjectPhysicalSessionName(registry, *project)
 	if sessionName == "" {
 		return canonicalIntentScope{}, usageError(fmt.Sprintf(
 			"canonical create: Project %q has no valid collision-safe physical session name; nothing was created", projectUID))
@@ -706,7 +706,7 @@ func (c *createCommand) canonicalOriginGuard(scope canonicalIntentScope) createP
 		if !ok || control.Spec.Session != scope.sessionName {
 			return liveSessionIdentity{}, usageError("canonical create: the exact ControlSession declaration changed before commit; nothing was created")
 		}
-		markers, err := c.runtime.mirror.ObserveControlSessionMarkers(ctx, liveSession.Name)
+		markers, err := c.runtime.Mirror.ObserveControlSessionMarkers(ctx, liveSession.Name)
 		if err != nil {
 			return liveSessionIdentity{}, fmt.Errorf("canonical create: prove ControlSession %q identity: %v", liveSession.Name, err)
 		}
@@ -763,7 +763,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 			return err
 		}
 		paneID, err := c.runtime.SplitPane(ctx, scope.anchorPaneID, intent.placement, cwd,
-			c.runtime.supervisedLaunch(ctx, activation, nil), nil)
+			c.runtime.SupervisedLaunch(ctx, activation, nil), nil)
 		if paneID != "" {
 			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
@@ -779,7 +779,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 		if _, _, err := mutator.AdoptWindowDefaultShell(working, scope.windowUID, pane.Metadata.UID); err != nil {
 			return MapMetadataError(err)
 		}
-		c.runtime.equalizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
+		c.runtime.EqualizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
 		result = createResult{kind: coremetadata.KindPane, uid: pane.Metadata.UID, name: pane.Metadata.Name,
 			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
 		created = createdPaneRuntime{paneID: paneID}
@@ -1308,7 +1308,7 @@ func (c *createCommand) openIntentAgent(
 		}
 	}
 	paneID, err := c.runtime.SplitPane(ctx, target.anchorPaneID, target.placement, workspace.CWD,
-		c.runtime.supervisedLaunch(ctx, activation, launchArgv), nil)
+		c.runtime.SupervisedLaunch(ctx, activation, launchArgv), nil)
 	if paneID != "" {
 		// The supervised child now runs and will want the Registry lock
 		// this transaction holds; create.outcome measures the rest of the hold.
@@ -1325,7 +1325,7 @@ func (c *createCommand) openIntentAgent(
 		return intentAgentOpened{}, err
 	}
 	if target.equalize {
-		c.runtime.equalizeSplitLayout(ctx, target.anchorPaneID, target.placement)
+		c.runtime.EqualizeSplitLayout(ctx, target.anchorPaneID, target.placement)
 	}
 	// Native create binds its first thread after the resume-picker branch above.
 	// Stage it here; the caller appends only after this transaction commits.

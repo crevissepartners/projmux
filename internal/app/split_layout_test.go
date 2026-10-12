@@ -21,21 +21,21 @@ func TestSplitLayoutPeersAreAxisScopedAndOrdered(t *testing.T) {
 	t.Parallel()
 
 	panes := []aiPaneGeometry{
-		{id: "%right-last", left: 42, top: 0, width: 20, height: 10},
-		{id: "%other-row", left: 0, top: 11, width: 62, height: 9},
-		{id: "%anchor", left: 21, top: 0, width: 20, height: 10},
-		{id: "%right-first", left: 0, top: 0, width: 20, height: 10},
-		{id: "%other-column", left: 63, top: 0, width: 10, height: 21},
+		{Id: "%right-last", Left: 42, Top: 0, Width: 20, Height: 10},
+		{Id: "%other-row", Left: 0, Top: 11, Width: 62, Height: 9},
+		{Id: "%anchor", Left: 21, Top: 0, Width: 20, Height: 10},
+		{Id: "%right-first", Left: 0, Top: 0, Width: 20, Height: 10},
+		{Id: "%other-column", Left: 63, Top: 0, Width: 10, Height: 21},
 	}
 	if got, want := paneGeometryIDs(splitLayoutPeers(panes, panes[2], "right")), []string{"%right-first", "%anchor", "%right-last"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("right peers = %v, want %v", got, want)
 	}
 
 	panes = []aiPaneGeometry{
-		{id: "%down-last", left: 0, top: 22, width: 40, height: 10},
-		{id: "%other-column", left: 41, top: 0, width: 20, height: 32},
-		{id: "%anchor", left: 0, top: 11, width: 40, height: 10},
-		{id: "%down-first", left: 0, top: 0, width: 40, height: 10},
+		{Id: "%down-last", Left: 0, Top: 22, Width: 40, Height: 10},
+		{Id: "%other-column", Left: 41, Top: 0, Width: 20, Height: 32},
+		{Id: "%anchor", Left: 0, Top: 11, Width: 40, Height: 10},
+		{Id: "%down-first", Left: 0, Top: 0, Width: 40, Height: 10},
 	}
 	if got, want := paneGeometryIDs(splitLayoutPeers(panes, panes[2], placementDown)), []string{"%down-first", "%anchor", "%down-last"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("down peers = %v, want %v", got, want)
@@ -45,11 +45,11 @@ func TestSplitLayoutPeersAreAxisScopedAndOrdered(t *testing.T) {
 func TestResizePanesEvenlyDistributesDeterministicRemainder(t *testing.T) {
 	t.Parallel()
 
-	peers := []aiPaneGeometry{{id: "%1", width: 10}, {id: "%2", width: 10}, {id: "%3", width: 11}}
+	peers := []aiPaneGeometry{{Id: "%1", Width: 10}, {Id: "%2", Width: 10}, {Id: "%3", Width: 11}}
 	var got []string
 	resizePanesEvenly(peers, func(p aiPaneGeometry, size int) {
-		got = append(got, p.id+"="+strconv.Itoa(size))
-	}, func(p aiPaneGeometry) int { return p.width })
+		got = append(got, p.Id+"="+strconv.Itoa(size))
+	}, func(p aiPaneGeometry) int { return p.Width })
 	if want := []string{"%1=11", "%2=10", "%3=10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("resize distribution = %v, want %v", got, want)
 	}
@@ -63,8 +63,8 @@ func TestPlanEvenSplitResizesNoOpsWithoutExactMultiPaneAnchor(t *testing.T) {
 		panes []aiPaneGeometry
 	}{
 		{name: "empty"},
-		{name: "one pane", panes: []aiPaneGeometry{{id: "%1", width: 80, height: 24}}},
-		{name: "target absent", panes: []aiPaneGeometry{{id: "%2", width: 80, height: 24}}},
+		{name: "one pane", panes: []aiPaneGeometry{{Id: "%1", Width: 80, Height: 24}}},
+		{name: "target absent", panes: []aiPaneGeometry{{Id: "%2", Width: 80, Height: 24}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -81,15 +81,15 @@ func TestPlanEvenSplitResizesReturnsTypedOrderedOperandsAndIgnoresUnrelatedTopol
 	t.Parallel()
 
 	planned := planEvenSplitResizes("%2", "right", []aiPaneGeometry{
-		{id: "%1", left: 0, top: 0, width: 20, height: 10},
-		{id: "%2", left: 21, top: 0, width: 10, height: 10},
-		{id: "%3", left: 32, top: 0, width: 10, height: 10},
-		{id: "%4", left: 0, top: 11, width: 42, height: 10},
+		{Id: "%1", Left: 0, Top: 0, Width: 20, Height: 10},
+		{Id: "%2", Left: 21, Top: 0, Width: 10, Height: 10},
+		{Id: "%3", Left: 32, Top: 0, Width: 10, Height: 10},
+		{Id: "%4", Left: 0, Top: 11, Width: 42, Height: 10},
 	})
 	want := []plannedPaneResize{
-		{paneID: "%1", axis: "-x", size: 14},
-		{paneID: "%2", axis: "-x", size: 13},
-		{paneID: "%3", axis: "-x", size: 13},
+		{PaneID: "%1", Axis: "-x", Size: 14},
+		{PaneID: "%2", Axis: "-x", Size: 13},
+		{PaneID: "%3", Axis: "-x", Size: 13},
 	}
 	if !reflect.DeepEqual(planned, want) {
 		t.Fatalf("resize plan = %v, want %v", planned, want)

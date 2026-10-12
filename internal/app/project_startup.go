@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -13,14 +11,20 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/controller"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -601,9 +605,9 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 	routed := explicitTmuxRunner{Runner: runner, Target: route.Target}
 	client := defaultTmuxClientWithSocketRunner(routed, route.SocketName, recorder)
 	runtime := &materializer{
-		mirror: intmetadata.NewMirror(routed),
+		Mirror: intmetadata.NewMirror(routed),
 
-		executable: os.Executable, lookupEnv: os.Getenv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client,
+		Executable: os.Executable, LookupEnv: os.Getenv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client,
 			Target: route.Target, ExpectedSocketPath: route.ExpectedSocketPath, Warn: io.Discard,
 			SocketName: route.SocketName, RouteAuthority: route.Authority},
 	}
@@ -618,7 +622,7 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 		if !ok || current.Spec.Root != project.Spec.Root {
 			return errors.New("bootstrapped Project declaration drifted before canonical materialization")
 		}
-		created, initialActivation, err := runtime.ensureSessionLaunching(ctx, *current, sessionName, current.Spec.Root,
+		created, initialActivation, err := runtime.EnsureSessionLaunching(ctx, *current, sessionName, current.Spec.Root,
 			initialWindowName(working, current.Metadata.UID), helper.initialPaneActivation(working, store.mutator(), current.Metadata.UID, operationID), ledger)
 		if err != nil {
 			return err
@@ -631,7 +635,7 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 		if _, err := store.mutator().BindLiveProjectSession(working, current.Metadata.UID, sessionName, runtime.ExpectedSocketPath); err != nil {
 			return MapMetadataError(err)
 		}
-		return runtime.finalizeSessionStartup(ctx, created, sessionName, cwd, ledger)
+		return runtime.FinalizeSessionStartup(ctx, created, sessionName, cwd, ledger)
 	})
 	if err != nil {
 		runtime.Rollback(ctx, ledger)

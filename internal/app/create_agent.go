@@ -548,7 +548,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if work.target.virtual {
 				paneID, err = c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.target.windowUID, work.pane, work.activation, workLaunchArgv)
 			} else {
-				paneID, err = c.runtime.SplitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD, c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
+				paneID, err = c.runtime.SplitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD, c.runtime.SupervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
 			}
 			if paneID != "" && !work.target.virtual {
 				// The supervised child now runs and will want the Registry lock
@@ -557,7 +557,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
 				}
-				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
+				if mirrorErr := c.runtime.Mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
 				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.Warn)
@@ -566,7 +566,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				return err
 			}
 			if !work.target.virtual {
-				c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
+				c.runtime.EqualizeSplitLayout(ctx, anchorPaneID, flags.placement)
 			}
 			// The managed-pane options are what make this pane an agent pane to
 			// the statusbar, the attention tracker, and the notification

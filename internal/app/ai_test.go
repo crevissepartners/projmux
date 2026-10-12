@@ -1020,9 +1020,9 @@ func TestAILabelsSayPlainShellNotZsh(t *testing.T) {
 
 func TestSplitLayoutPeersPreserveOtherAxes(t *testing.T) {
 	panes := []aiPaneGeometry{
-		{id: "%1", left: 0, top: 0, width: 20, height: 10},
-		{id: "%2", left: 21, top: 0, width: 10, height: 10},
-		{id: "%3", left: 0, top: 11, width: 31, height: 10},
+		{Id: "%1", Left: 0, Top: 0, Width: 20, Height: 10},
+		{Id: "%2", Left: 21, Top: 0, Width: 10, Height: 10},
+		{Id: "%3", Left: 0, Top: 11, Width: 31, Height: 10},
 	}
 	rightPeers := splitLayoutPeers(panes, panes[1], "right")
 	if got, want := paneGeometryIDs(rightPeers), []string{"%1", "%2"}; !reflect.DeepEqual(got, want) {
@@ -1030,9 +1030,9 @@ func TestSplitLayoutPeersPreserveOtherAxes(t *testing.T) {
 	}
 
 	panes = []aiPaneGeometry{
-		{id: "%1", left: 0, top: 0, width: 40, height: 10},
-		{id: "%2", left: 0, top: 11, width: 40, height: 5},
-		{id: "%3", left: 41, top: 0, width: 20, height: 16},
+		{Id: "%1", Left: 0, Top: 0, Width: 40, Height: 10},
+		{Id: "%2", Left: 0, Top: 11, Width: 40, Height: 5},
+		{Id: "%3", Left: 41, Top: 0, Width: 20, Height: 16},
 	}
 	downPeers := splitLayoutPeers(panes, panes[1], "down")
 	if got, want := paneGeometryIDs(downPeers), []string{"%1", "%2"}; !reflect.DeepEqual(got, want) {
@@ -2425,7 +2425,7 @@ func containsAICommandArgSubstring(commands []recordedAICommand, value string) b
 func paneGeometryIDs(panes []aiPaneGeometry) []string {
 	ids := make([]string, 0, len(panes))
 	for _, pane := range panes {
-		ids = append(ids, pane.id)
+		ids = append(ids, pane.Id)
 	}
 	return ids
 }

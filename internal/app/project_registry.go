@@ -2,13 +2,8 @@ package app
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -21,8 +16,6 @@ import (
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
-
-
 func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
 	return newRegistryReconcilerWithRoute(runner, sessions, runtimeMutationRoute{})
 }
@@ -32,44 +25,51 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 	home, err := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
 	reconciler := &registryReconciler{
-		discoverRoots: func() ([]string, error) {
+		MarkApplyPhase: func(ctx context.Context, commit bool) {
+			phase := diagnostics.ApplyLockPhaseObserve
+			if commit {
+				phase = diagnostics.ApplyLockPhaseCommit
+			}
+			markApplyLockPhase(ctx, phase)
+		},
+		DiscoverRoots: func() ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
 			return discoverProjectRoots(home, os.Getenv)
 		},
-		liveSessions: sessions.ExistingSessions,
-		mirror:       mirror,
-		shell:        configuredShell(os.Getenv),
+		LiveSessions: sessions.ExistingSessions,
+		Mirror:       mirror,
+		Shell:        configuredShell(os.Getenv),
 		// Every production caller is an automatic/default recovery path unless
 		// it explicitly opts into the approved D3 matcher. D2 import therefore
 		// starts closed even for create-time convergence.
-		refuseForeign:            true,
-		refusedSessions:          map[string]bool{},
-		refusedSessionDivergence: map[string]resourcegraph.Divergence{},
-		refusedSessionReasons:    map[string]string{},
-		exactProjects:            map[string]string{},
-		sessionNameFor: func(root string) string {
+		RefuseForeign:            true,
+		RefusedSessions:          map[string]bool{},
+		RefusedSessionDivergence: map[string]resourcegraph.Divergence{},
+		RefusedSessionReasons:    map[string]string{},
+		ExactProjects:            map[string]string{},
+		SessionNameFor: func(root string) string {
 			return namer.SessionName(root)
 		},
 	}
 	routeSocketPath := route.ExpectedSocketPath
-	reconciler.sessionSocketPath = func() string { return routeSocketPath }
+	reconciler.SessionSocketPath = func() string { return routeSocketPath }
 	if _, recording := runner.(*resourcePlanTmuxRunner); recording {
 		// Project identity is already an explicit resource-plan item. Repeating
 		// it inside the shadow reconciler would mutate the observation used to
 		// classify D2/D3 rows and double-count the same desired write.
-		reconciler.mirrorProject = func(context.Context, string, coremetadata.Project) error { return nil }
-		reconciler.mirrorWindow = mirror.MirrorWindow
-		reconciler.mirrorPane = func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+		reconciler.MirrorProjectWrite = func(context.Context, string, coremetadata.Project) error { return nil }
+		reconciler.MirrorWindowWrite = mirror.MirrorWindow
+		reconciler.MirrorPaneWrite = func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
 			return mirror.MirrorPane(ctx, target, pane)
 		}
-		reconciler.observeLegacy = mirror.ObserveLegacySessionTargets
+		reconciler.ObserveLegacy = mirror.ObserveLegacySessionTargets
 	} else {
-		reconciler.useTypedMirror(runtimeMutationMetadataMirror{runner: runner, route: route})
-		reconciler.observeServer = mirror.ObserveServer
-		reconciler.observeLegacy = func(ctx context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
-			if snapshot := reconciler.passServerSnapshot(ctx); snapshot != nil {
+		reconciler.UseTypedMirror(runtimeMutationMetadataMirror{Runner: runner, Route: route})
+		reconciler.ObserveServer = mirror.ObserveServer
+		reconciler.ObserveLegacy = func(ctx context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+			if snapshot := reconciler.PassServerSnapshot(ctx); snapshot != nil {
 				if legacy, targets, ok := snapshot.LegacySessionTargets(session); ok {
 					return legacy, targets, nil
 				}
@@ -79,26 +79,6 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 	}
 	return reconciler
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // sessionLister is the live tmux session inventory seam.
 type sessionLister interface {
@@ -152,49 +132,3 @@ func discoverProjectRoots(homeDir string, lookupEnv func(string) string) ([]stri
 		Pins:         pinned,
 	})
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

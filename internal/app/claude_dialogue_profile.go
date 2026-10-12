@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"maps"
 	"os"
@@ -21,7 +22,7 @@ import (
 // AgentSpec or the inherited environment. That invocation records it on the
 // Agent (coremetadata.AnnotationAgentDialogueReplyOnly), and every later
 // generation of the same Agent is launched reply-only from that record.
-const claudeDialogueReplyOnlyFlag = "dialogue-reply-only"
+const claudeDialogueReplyOnlyFlag = mutationruntime.DialogueReplyOnlyFlag
 
 // withDialogueReplyOnlyAnnotation adds the reply-only record to base, the
 // Agent annotations a create already records. Without the mode it returns

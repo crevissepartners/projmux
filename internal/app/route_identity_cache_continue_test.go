@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -12,7 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -97,7 +98,7 @@ func newContinueReplayActivation(t *testing.T, root, logs string) (*registryProj
 		newOperationID:     func() (string, error) { return "op-continue", nil },
 		newGeneration:      func() (string, error) { generation++; return fmt.Sprintf("gen-continue-%02d", generation), nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
+			return &materializer{Mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),
@@ -258,7 +259,7 @@ func runContinueReplay(t *testing.T, root, logs string, cacheOff bool, driftAfte
 	base := activation.newMaterializer
 	activation.newMaterializer = func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 		runtime := base(exact, warn)
-		runtime.routeIdentityDisabled = cacheOff
+		runtime.RouteIdentityDisabled = cacheOff
 		runtime.AfterGuardedWrite = func() {
 			outcome.guardedWrites++
 			if writes := routeIdentityWrites(server.calls[start:]); len(writes) > 0 {

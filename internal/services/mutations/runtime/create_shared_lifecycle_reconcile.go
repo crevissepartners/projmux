@@ -1,19 +1,12 @@
 package runtime
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"strings"
-	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
-func paneWindowUID(registry coremetadata.Registry, pane coremetadata.Pane) (string, bool) {
+func PaneWindowUID(registry coremetadata.Registry, pane coremetadata.Pane) (string, bool) {
 	owner := pane.Metadata.OwnerRef
 	if owner == nil {
 		return "", false
@@ -33,7 +26,7 @@ func paneWindowUID(registry coremetadata.Registry, pane coremetadata.Pane) (stri
 	return agent.Metadata.OwnerRef.UID, ok
 }
 
-// lifecycleProjectionTargets is the pure decision half: which Panes in registry
+// LifecycleProjectionTargets is the pure decision half: which Panes in registry
 // still need a lifecycle projection against the observation in live.
 //
 // A Pane qualifies when all of the following hold, and the order matters only
@@ -51,9 +44,9 @@ func paneWindowUID(registry coremetadata.Registry, pane coremetadata.Pane) (stri
 //
 // liveWindows is the same observation's mirrored Window uids. Only a typed
 // window-unlinked event reads it; every other caller passes nil.
-func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindows map[string]bool, event lifecycleDirtyEvent) []coremetadata.TerminationProjectionInput {
+func LifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindows map[string]bool, event LifecycleProjectionEvent) []coremetadata.TerminationProjectionInput {
 	windowUID := ""
-	if event.teardownKind == coremetadata.TeardownEventWindowUnlinked {
+	if event.TeardownKind == coremetadata.TeardownEventWindowUnlinked {
 		// A typed window-unlinked event must never widen into a whole-host
 		// absence projection: that would turn an unknown/foreign/empty
 		// inventory into replacement authority. It projects only the Panes of
@@ -61,21 +54,21 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindow
 		// the same observation proves that Window gone from the hook server.
 		// A Window that is still live -- moved to another session, or unlinked
 		// from one of several -- projects nothing, and its Panes are live anyway.
-		if event.target.Flag() == "" || event.target.Value == "" || len(live) == 0 || liveWindows == nil {
+		if event.Target.Flag() == "" || event.Target.Value == "" || len(live) == 0 || liveWindows == nil {
 			return nil
 		}
-		window, ok := lifecycleWindowUnlinkedWindow(registry, event)
+		window, ok := LifecycleWindowUnlinkedWindow(registry, event)
 		if !ok || liveWindows[window.Metadata.UID] {
 			return nil
 		}
 		windowUID = window.Metadata.UID
 	}
-	narrowed := strings.TrimSpace(event.paneUID)
-	runtimePane := strings.TrimSpace(event.runtimePaneID)
+	narrowed := strings.TrimSpace(event.PaneUID)
+	RuntimePane := strings.TrimSpace(event.RuntimePaneID)
 	var out []coremetadata.TerminationProjectionInput
 	for i := range registry.Panes {
 		paneUID := registry.Panes[i].Metadata.UID
-		if event.processes.Declares(registry.Panes[i]) {
+		if event.Processes.Declares(registry.Panes[i]) {
 			continue
 		}
 		// A clean last-Pane receipt retains the complete subtree until its exact
@@ -88,17 +81,17 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindow
 			continue
 		}
 		if windowUID != "" {
-			if owner, ok := paneWindowUID(registry, registry.Panes[i]); !ok || owner != windowUID {
+			if owner, ok := PaneWindowUID(registry, registry.Panes[i]); !ok || owner != windowUID {
 				continue
 			}
 		}
-		if runtimePane != "" && registry.Panes[i].Status.Activation.RuntimeID != runtimePane {
+		if RuntimePane != "" && registry.Panes[i].Status.Activation.RuntimeID != RuntimePane {
 			continue
 		}
 		if live[paneUID] {
 			continue
 		}
-		if generation := strings.TrimSpace(event.generation); generation != "" {
+		if generation := strings.TrimSpace(event.Generation); generation != "" {
 			// The generation guard is applied here as well as inside the
 			// projection. Inside, it is correctness: the registry may have been
 			// relaunched while the event queued. Here, it is cost -- a stale event
@@ -112,13 +105,13 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindow
 		}
 		out = append(out, coremetadata.TerminationProjectionInput{
 			PaneUID:    paneUID,
-			Generation: event.generation,
+			Generation: event.Generation,
 		})
 	}
 	return out
 }
 
-// projectTerminations applies the lifecycle projection to every named Pane and
+// ProjectTerminations applies the lifecycle projection to every named Pane and
 // returns what it did.
 //
 // It is the one transition body both trigger paths share: the reconciler's
@@ -129,7 +122,7 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live, liveWindow
 // A projection that fails is skipped rather than propagated. This body runs as
 // maintenance inside another operation on the reconciler path, and one Pane that
 // cannot be projected must not fail the operation that happened to trigger it.
-func projectTerminations(
+func ProjectTerminations(
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	inputs []coremetadata.TerminationProjectionInput,

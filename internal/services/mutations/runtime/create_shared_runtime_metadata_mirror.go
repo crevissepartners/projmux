@@ -10,77 +10,77 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
-// runtimeMutationMetadataMirror is the app-layer replacement for direct
+// RuntimeMutationMetadataMirror is the app-layer replacement for direct
 // metadata Mirror writes in live create/controller reconciliation. Reads stay
 // on the generic adapter; every managed write is expanded into printable,
 // totally ordered steps here.
-type runtimeMutationMetadataMirror struct {
-	runner tmuxCommandRunner
-	route  runtimeMutationRoute
-	// scope, when set, is the materializer whose runtime-mutation transaction
+type RuntimeMutationMetadataMirror struct {
+	Runner TmuxCommandRunner
+	Route  RuntimeMutationRoute
+	// scope, when set, is the Materializer whose runtime-mutation transaction
 	// this mirror writes inside. Its route guards then reuse that transaction's
-	// identity cache under the same #1012 contract as the materializer's own
-	// guards, and every mirror Apply/Undo passes through the materializer's
+	// identity cache under the same #1012 contract as the Materializer's own
+	// guards, and every mirror Apply/Undo passes through the Materializer's
 	// guarded-write seam, which drops every reusable proof after the write. So
 	// no mirror write relies on a proof older than the previous guarded write of
 	// the transaction, and no later guard relies on a proof older than a mirror
 	// write. Outside a transaction the cache is nil and every guard reads tmux.
-	scope *materializer
+	Scope *Materializer
 }
 
 // identity is the open transaction cache the route guards may reuse, or nil.
-func (m runtimeMutationMetadataMirror) identity() *runtimeRouteIdentityCache {
-	if m.scope == nil {
+func (m RuntimeMutationMetadataMirror) Identity() *RuntimeRouteIdentityCache {
+	if m.Scope == nil {
 		return nil
 	}
-	return m.scope.RouteIdentity
+	return m.Scope.RouteIdentity
 }
 
-// guardedSteps routes one mirror plan's steps through the materializer's
+// guardedSteps routes one mirror plan's steps through the Materializer's
 // guarded-write seam when the mirror writes inside a transaction scope; see
 // scope. Outside a scope the steps are returned unchanged.
-func (m runtimeMutationMetadataMirror) guardedSteps(steps []runtimeMutationStep) []runtimeMutationStep {
-	if m.scope == nil {
+func (m RuntimeMutationMetadataMirror) GuardedSteps(steps []RuntimeMutationStep) []RuntimeMutationStep {
+	if m.Scope == nil {
 		return steps
 	}
-	return m.scope.GuardedWriteSteps(steps)
+	return m.Scope.GuardedWriteSteps(steps)
 }
 
-func (m runtimeMutationMetadataMirror) exactRoute(ctx context.Context) (tmuxCommandRunner, runtimeMutationRoute, error) {
-	if m.runner == nil {
-		return nil, runtimeMutationRoute{}, errors.New("typed metadata mirror requires a tmux runner")
+func (m RuntimeMutationMetadataMirror) ExactRoute(ctx context.Context) (TmuxCommandRunner, RuntimeMutationRoute, error) {
+	if m.Runner == nil {
+		return nil, RuntimeMutationRoute{}, errors.New("typed metadata mirror requires a tmux runner")
 	}
-	var base tmuxCommandRunner
-	var target tmuxTransport
-	switch runner := m.runner.(type) {
-	case explicitTmuxRunner:
+	var base TmuxCommandRunner
+	var target TmuxTransport
+	switch runner := m.Runner.(type) {
+	case ExplicitTmuxRunner:
 		base, target = runner.Runner, runner.Target
-	case *explicitTmuxRunner:
+	case *ExplicitTmuxRunner:
 		base, target = runner.Runner, runner.Target
 	default:
-		return nil, runtimeMutationRoute{}, errors.New("typed metadata mirror requires an explicit tmux route")
+		return nil, RuntimeMutationRoute{}, errors.New("typed metadata mirror requires an explicit tmux route")
 	}
 	if base == nil || target.Flag() == "" || target.Value == "" {
-		return nil, runtimeMutationRoute{}, errors.New("typed metadata mirror route is incomplete")
+		return nil, RuntimeMutationRoute{}, errors.New("typed metadata mirror route is incomplete")
 	}
-	if m.route.Target.Flag() != "" {
-		if !m.route.Target.SameRoute(target) || m.route.ExpectedSocketPath == "" {
-			return nil, runtimeMutationRoute{}, errors.New("typed metadata mirror injected route disagrees with its transport")
+	if m.Route.Target.Flag() != "" {
+		if !m.Route.Target.SameRoute(target) || m.Route.ExpectedSocketPath == "" {
+			return nil, RuntimeMutationRoute{}, errors.New("typed metadata mirror injected route disagrees with its transport")
 		}
-		if err := guardResolvedRuntimeMutationRouteWithIdentity(ctx, base, m.route, m.identity()); err != nil {
-			return nil, runtimeMutationRoute{}, err
+		if err := GuardResolvedRuntimeMutationRouteWithIdentity(ctx, base, m.Route, m.Identity()); err != nil {
+			return nil, RuntimeMutationRoute{}, err
 		}
-		return base, m.route, nil
+		return base, m.Route, nil
 	}
-	route, err := resolveExistingRuntimeMutationRoute(ctx, base, target, nil)
+	route, err := ResolveExistingRuntimeMutationRoute(ctx, base, target, nil)
 	if err != nil {
-		return nil, runtimeMutationRoute{}, fmt.Errorf("typed metadata mirror: bind exact route: %w", err)
+		return nil, RuntimeMutationRoute{}, fmt.Errorf("typed metadata mirror: bind exact route: %w", err)
 	}
 	return base, route, nil
 }
 
-func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessionName string, project coremetadata.Project) error {
-	runner, route, err := m.exactRoute(ctx)
+func (m RuntimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessionName string, project coremetadata.Project) error {
+	runner, route, err := m.ExactRoute(ctx)
 	if err != nil {
 		return err
 	}
@@ -88,16 +88,16 @@ func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessio
 	if sessionName == "" || strings.TrimSpace(project.Metadata.UID) == "" {
 		return errors.New("typed metadata mirror requires a Project UID and session name")
 	}
-	identity := m.identity()
-	exact := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
-	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.ProjectNameSession+"}", "#{"+tmuxopts.SessionRole+"}")
+	identity := m.Identity()
+	exact := ExplicitTmuxRunner{Runner: runner, Target: TmuxTransport{Kind: TmuxSocketPath, Value: route.ExpectedSocketPath, Source: TmuxSocketPathSource}}
+	format := TmuxRowFormat("#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.ProjectNameSession+"}", "#{"+tmuxopts.SessionRole+"}")
 	observeTuple := func(ctx context.Context) ([]string, error) {
-		if err := guardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity); err != nil {
+		if err := GuardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity); err != nil {
 			return nil, err
 		}
 		out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "-F", format)
-		rows := splitTmuxRows(string(out), 5)
-		if err != nil || len(rows) != 1 || exactTmuxHandle(rows[0][0], "$") == "" || rows[0][1] != sessionName {
+		rows := SplitTmuxRows(string(out), 5)
+		if err != nil || len(rows) != 1 || ExactTmuxHandle(rows[0][0], "$") == "" || rows[0][1] != sessionName {
 			return nil, errors.New("typed metadata mirror: Project session containment is unavailable")
 		}
 		return rows[0], nil
@@ -129,21 +129,21 @@ func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessio
 	if initial[4] != "" {
 		return errors.New("typed metadata mirror: Project session carries a non-Project role")
 	}
-	target := runtimeMutationTarget{Kind: "session", ID: initial[0], UID: project.Metadata.UID, Parent: "project/" + project.Metadata.UID}
-	bindRuntimeMutationRouteTarget(&target, route)
+	target := RuntimeMutationTarget{Kind: "session", ID: initial[0], UID: project.Metadata.UID, Parent: "project/" + project.Metadata.UID}
+	BindRuntimeMutationRouteTarget(&target, route)
 	declarations := []struct{ option, value string }{
 		{tmuxopts.ProjectUIDSession, project.Metadata.UID},
 		{tmuxopts.ProjectNameSession, project.Metadata.Name},
 	}
-	steps := make([]runtimeMutationStep, 0, len(declarations))
+	steps := make([]RuntimeMutationStep, 0, len(declarations))
 	for index, item := range declarations {
-		action := newRuntimeMutation(index+1, mutationWriteIdentity, target)
-		bindRuntimeMutationGuard(&action, "exact Project session tuple and prior mirrors="+strings.Join(initial, "/"))
+		action := NewRuntimeMutation(index+1, MutationWriteIdentity, target)
+		BindRuntimeMutationGuard(&action, "exact Project session tuple and prior mirrors="+strings.Join(initial, "/"))
 		action.Operands = []string{"-t", target.ID, "-q", item.option, item.value}
-		steps = append(steps, runtimeMutationStep{
+		steps = append(steps, RuntimeMutationStep{
 			Action: action,
 			TargetRouteGuard: func(ctx context.Context) error {
-				return guardPrintedRuntimeMutationRouteWithIdentity(ctx, runner, route, action, identity)
+				return GuardPrintedRuntimeMutationRouteWithIdentity(ctx, runner, route, action, identity)
 			},
 			Reobserve: func(ctx context.Context) (bool, error) {
 				current, err := reobserveTuple(ctx)
@@ -153,7 +153,7 @@ func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessio
 				if current[0] != target.ID || current[1] != initial[1] || current[2] != project.Metadata.UID || current[4] != "" {
 					return false, nil
 				}
-				return current[mirrorProjectTupleField(item.option)] == item.value, nil
+				return current[MirrorProjectTupleField(item.option)] == item.value, nil
 			},
 			Guard: func(ctx context.Context) error {
 				current, err := observeTuple(ctx)
@@ -166,63 +166,63 @@ func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessio
 				// converged by a concurrent writer without changing the target.
 				drifted := current[0] != initial[0] || current[1] != initial[1] || current[4] != initial[4]
 				for _, written := range declarations {
-					field := mirrorProjectTupleField(written.option)
+					field := MirrorProjectTupleField(written.option)
 					drifted = drifted || (current[field] != initial[field] && current[field] != written.value)
 				}
 				if drifted {
 					return errors.New("typed metadata mirror: Project session tuple drifted before write")
 				}
-				field := mirrorProjectTupleField(item.option)
+				field := MirrorProjectTupleField(item.option)
 				if current[field] != initial[field] && current[field] == item.value {
-					return fmt.Errorf("typed metadata mirror: Project session %s: %w", item.option, errRuntimeMutationEffectConverged)
+					return fmt.Errorf("typed metadata mirror: Project session %s: %w", item.option, ErrRuntimeMutationEffectConverged)
 				}
 				return nil
 			},
 			Apply: func(ctx context.Context) error {
 				unwritten = nil
-				_, err := runRuntimeMutationCommand(ctx, runner, action)
+				_, err := RunRuntimeMutationCommand(ctx, runner, action)
 				return err
 			},
 		})
 	}
-	return executeRuntimeMutationPlan(ctx, m.guardedSteps(steps))
+	return ExecuteRuntimeMutationPlan(ctx, m.GuardedSteps(steps))
 }
 
-// mirrorProjectTupleField is the index of a MirrorProject-written option in
+// MirrorProjectTupleField is the index of a MirrorProject-written option in
 // the observed Project session tuple.
-func mirrorProjectTupleField(option string) int {
+func MirrorProjectTupleField(option string) int {
 	if option == tmuxopts.ProjectNameSession {
 		return 3
 	}
 	return 2
 }
 
-func (m runtimeMutationMetadataMirror) MirrorWindow(ctx context.Context, windowID string, window coremetadata.Window) error {
-	windowID = exactTmuxHandle(windowID, "@")
+func (m RuntimeMutationMetadataMirror) MirrorWindow(ctx context.Context, windowID string, window coremetadata.Window) error {
+	windowID = ExactTmuxHandle(windowID, "@")
 	if windowID == "" || strings.TrimSpace(window.Metadata.UID) == "" || window.Metadata.OwnerRef == nil {
 		return errors.New("typed metadata mirror requires exact Window handle, UID, and owner")
 	}
 	if window.Metadata.OwnerRef.Kind != coremetadata.KindProject {
 		return errors.New("typed Project reconciler mirror refuses non-Project Window ownership")
 	}
-	runner, route, err := m.exactRoute(ctx)
+	runner, route, err := m.ExactRoute(ctx)
 	if err != nil {
 		return err
 	}
-	target := runtimeMutationTarget{
+	target := RuntimeMutationTarget{
 		Kind: "window", ID: windowID, UID: window.Metadata.UID,
 		Parent: string(window.Metadata.OwnerRef.Kind) + "/" + window.Metadata.OwnerRef.UID,
 	}
-	bindRuntimeMutationRouteTarget(&target, route)
+	BindRuntimeMutationRouteTarget(&target, route)
 	type declaration struct {
-		verb     runtimeMutationVerb
+		verb     RuntimeMutationVerb
 		operands []string
 		observe  func(context.Context) (bool, error)
 	}
-	identity := m.identity()
-	exact := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
+	identity := m.Identity()
+	exact := ExplicitTmuxRunner{Runner: runner, Target: TmuxTransport{Kind: TmuxSocketPath, Value: route.ExpectedSocketPath, Source: TmuxSocketPathSource}}
 	observeOwnedTarget := func(ctx context.Context) (bool, error) {
-		if err := guardTypedMetadataWindow(ctx, runner, route, identity, windowID, window); err != nil {
+		if err := GuardTypedMetadataWindow(ctx, runner, route, identity, windowID, window); err != nil {
 			return false, err
 		}
 		out, err := exact.Run(ctx, "tmux", "show-options", "-wqv", "-t", windowID, tmuxopts.WindowUID)
@@ -242,44 +242,44 @@ func (m runtimeMutationMetadataMirror) MirrorWindow(ctx context.Context, windowI
 		}
 	}
 	declarations := []declaration{
-		{verb: mutationWriteIdentity, operands: []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, observe: observeOption(tmuxopts.AutomaticRenameWindow, "off")},
-		{verb: mutationWriteIdentity, operands: []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, observe: observeOption(tmuxopts.WindowUID, window.Metadata.UID)},
-		{verb: mutationWriteIdentity, operands: []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, observe: observeOption(tmuxopts.WindowName, window.Metadata.Name)},
+		{verb: MutationWriteIdentity, operands: []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, observe: observeOption(tmuxopts.AutomaticRenameWindow, "off")},
+		{verb: MutationWriteIdentity, operands: []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, observe: observeOption(tmuxopts.WindowUID, window.Metadata.UID)},
+		{verb: MutationWriteIdentity, operands: []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, observe: observeOption(tmuxopts.WindowName, window.Metadata.Name)},
 	}
-	steps := make([]runtimeMutationStep, 0, len(declarations))
+	steps := make([]RuntimeMutationStep, 0, len(declarations))
 	for index, item := range declarations {
-		action := newRuntimeMutation(index+1, item.verb, target)
-		bindRuntimeMutationGuard(&action, "exact app route, Window UID/owner containment, and handle="+windowID)
+		action := NewRuntimeMutation(index+1, item.verb, target)
+		BindRuntimeMutationGuard(&action, "exact app route, Window UID/owner containment, and handle="+windowID)
 		action.Operands = item.operands
-		steps = append(steps, runtimeMutationStep{
+		steps = append(steps, RuntimeMutationStep{
 			Action: action,
 			TargetRouteGuard: func(ctx context.Context) error {
-				return guardPrintedRuntimeMutationRouteWithIdentity(ctx, runner, route, action, identity)
+				return GuardPrintedRuntimeMutationRouteWithIdentity(ctx, runner, route, action, identity)
 			},
 			Reobserve: item.observe,
 			Guard: func(ctx context.Context) error {
-				return guardTypedMetadataWindow(ctx, runner, route, identity, windowID, window)
+				return GuardTypedMetadataWindow(ctx, runner, route, identity, windowID, window)
 			},
 			Apply: func(ctx context.Context) error {
-				_, err := runRuntimeMutationCommand(ctx, runner, action)
+				_, err := RunRuntimeMutationCommand(ctx, runner, action)
 				return err
 			},
 		})
 	}
-	return executeRuntimeMutationPlan(ctx, m.guardedSteps(steps))
+	return ExecuteRuntimeMutationPlan(ctx, m.GuardedSteps(steps))
 }
 
-func guardTypedMetadataWindow(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, identity *runtimeRouteIdentityCache, windowID string, window coremetadata.Window) error {
-	if err := guardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity); err != nil {
+func GuardTypedMetadataWindow(ctx context.Context, runner TmuxCommandRunner, route RuntimeMutationRoute, identity *RuntimeRouteIdentityCache, windowID string, window coremetadata.Window) error {
+	if err := GuardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity); err != nil {
 		return err
 	}
-	exact := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
-	out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F", tmuxRowFormat(
+	exact := ExplicitTmuxRunner{Runner: runner, Target: TmuxTransport{Kind: TmuxSocketPath, Value: route.ExpectedSocketPath, Source: TmuxSocketPathSource}}
+	out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F", TmuxRowFormat(
 		"#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}"))
 	if err != nil {
 		return err
 	}
-	rows := splitTmuxRows(string(out), 4)
+	rows := SplitTmuxRows(string(out), 4)
 	if len(rows) != 1 || rows[0][0] != windowID || (rows[0][1] != "" && rows[0][1] != window.Metadata.UID) {
 		return errors.New("typed metadata mirror: Window handle or UID drifted")
 	}
@@ -296,21 +296,21 @@ func guardTypedMetadataWindow(ctx context.Context, runner tmuxCommandRunner, rou
 	return nil
 }
 
-func (m runtimeMutationMetadataMirror) MirrorPane(ctx context.Context, paneID, windowUID string, pane coremetadata.Pane) error {
-	paneID = exactTmuxHandle(paneID, "%")
+func (m RuntimeMutationMetadataMirror) MirrorPane(ctx context.Context, paneID, windowUID string, pane coremetadata.Pane) error {
+	paneID = ExactTmuxHandle(paneID, "%")
 	if paneID == "" || strings.TrimSpace(windowUID) == "" || strings.TrimSpace(pane.Metadata.UID) == "" {
 		return errors.New("typed metadata mirror requires exact Pane handle, Window UID, and Pane UID")
 	}
-	runner, route, err := m.exactRoute(ctx)
+	runner, route, err := m.ExactRoute(ctx)
 	if err != nil {
 		return err
 	}
-	target := runtimeMutationTarget{Kind: "pane", ID: paneID, UID: pane.Metadata.UID, Parent: "window/" + windowUID}
-	bindRuntimeMutationRouteTarget(&target, route)
-	identity := m.identity()
-	exact := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
+	target := RuntimeMutationTarget{Kind: "pane", ID: paneID, UID: pane.Metadata.UID, Parent: "window/" + windowUID}
+	BindRuntimeMutationRouteTarget(&target, route)
+	identity := m.Identity()
+	exact := ExplicitTmuxRunner{Runner: runner, Target: TmuxTransport{Kind: TmuxSocketPath, Value: route.ExpectedSocketPath, Source: TmuxSocketPathSource}}
 	observeOwnedTarget := func(ctx context.Context) (bool, error) {
-		if err := guardTypedMetadataPane(ctx, runner, route, identity, paneID, windowUID, pane.Metadata.UID); err != nil {
+		if err := GuardTypedMetadataPane(ctx, runner, route, identity, paneID, windowUID, pane.Metadata.UID); err != nil {
 			return false, err
 		}
 		out, err := exact.Run(ctx, "tmux", "show-options", "-pqv", "-t", paneID, tmuxopts.PaneUID)
@@ -332,15 +332,15 @@ func (m runtimeMutationMetadataMirror) MirrorPane(ctx context.Context, paneID, w
 	if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
 		declarations = append(declarations, struct{ option, value string }{tmuxopts.AgentUIDPane, pane.Metadata.OwnerRef.UID})
 	}
-	steps := make([]runtimeMutationStep, 0, len(declarations))
+	steps := make([]RuntimeMutationStep, 0, len(declarations))
 	for index, item := range declarations {
-		action := newRuntimeMutation(index+1, mutationWriteIdentity, target)
-		bindRuntimeMutationGuard(&action, "exact app route, Pane UID and Window containment="+windowUID+"/"+paneID)
+		action := NewRuntimeMutation(index+1, MutationWriteIdentity, target)
+		BindRuntimeMutationGuard(&action, "exact app route, Pane UID and Window containment="+windowUID+"/"+paneID)
 		action.Operands = []string{"-p", "-t", paneID, "-q", item.option, item.value}
-		steps = append(steps, runtimeMutationStep{
+		steps = append(steps, RuntimeMutationStep{
 			Action: action,
 			TargetRouteGuard: func(ctx context.Context) error {
-				return guardPrintedRuntimeMutationRouteWithIdentity(ctx, runner, route, action, identity)
+				return GuardPrintedRuntimeMutationRouteWithIdentity(ctx, runner, route, action, identity)
 			},
 			Reobserve: func(ctx context.Context) (bool, error) {
 				owned, err := observeOwnedTarget(ctx)
@@ -351,28 +351,28 @@ func (m runtimeMutationMetadataMirror) MirrorPane(ctx context.Context, paneID, w
 				return err == nil && strings.TrimSpace(string(out)) == item.value, err
 			},
 			Guard: func(ctx context.Context) error {
-				return guardTypedMetadataPane(ctx, runner, route, identity, paneID, windowUID, pane.Metadata.UID)
+				return GuardTypedMetadataPane(ctx, runner, route, identity, paneID, windowUID, pane.Metadata.UID)
 			},
 			Apply: func(ctx context.Context) error {
-				_, err := runRuntimeMutationCommand(ctx, runner, action)
+				_, err := RunRuntimeMutationCommand(ctx, runner, action)
 				return err
 			},
 		})
 	}
-	return executeRuntimeMutationPlan(ctx, m.guardedSteps(steps))
+	return ExecuteRuntimeMutationPlan(ctx, m.GuardedSteps(steps))
 }
 
-func guardTypedMetadataPane(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, identity *runtimeRouteIdentityCache, paneID, windowUID, paneUID string) error {
-	if err := guardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity); err != nil {
+func GuardTypedMetadataPane(ctx context.Context, runner TmuxCommandRunner, route RuntimeMutationRoute, identity *RuntimeRouteIdentityCache, paneID, windowUID, paneUID string) error {
+	if err := GuardResolvedRuntimeMutationRouteWithIdentity(ctx, runner, route, identity); err != nil {
 		return err
 	}
-	exact := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
-	out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", tmuxRowFormat(
+	exact := ExplicitTmuxRunner{Runner: runner, Target: TmuxTransport{Kind: TmuxSocketPath, Value: route.ExpectedSocketPath, Source: TmuxSocketPathSource}}
+	out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", TmuxRowFormat(
 		"#{pane_id}", "#{"+tmuxopts.PaneUID+"}", "#{"+tmuxopts.WindowUID+"}"))
 	if err != nil {
 		return err
 	}
-	rows := splitTmuxRows(string(out), 3)
+	rows := SplitTmuxRows(string(out), 3)
 	if len(rows) != 1 || rows[0][0] != paneID || rows[0][2] != windowUID || (rows[0][1] != "" && rows[0][1] != paneUID) {
 		return errors.New("typed metadata mirror: Pane UID or Window containment drifted")
 	}

@@ -130,8 +130,8 @@ func (c *doctorCommand) evaluateRegistryInvariants() []doctorFinding {
 	// route opens fine.
 	runner := doctorOfflineTmuxRunner{}
 	reconciler := newRegistryReconciler(runner, inttmux.NewClient(runner))
-	reconciler.refuseForeign = true
-	reconciler.targetLiveOnly = true
+	reconciler.RefuseForeign = true
+	reconciler.TargetLiveOnly = true
 
 	ctx := context.Background()
 	audited := 0

@@ -89,8 +89,8 @@ func controlOwnerFixtureSessions() []observedResourceProjectSession {
 
 func controlOwnerFixtureReconciler() *registryReconciler {
 	return &registryReconciler{
-		refusedSessions: map[string]bool{},
-		sessionNameFor:  func(string) string { return "" },
+		RefusedSessions: map[string]bool{},
+		SessionNameFor:  func(string) string { return "" },
 	}
 }
 

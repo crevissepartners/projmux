@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"strings"
 	"time"
 
@@ -183,8 +184,6 @@ func (r lifecycleReconcileResult) changed() int {
 	count += len(r.rootCascaded)
 	return count
 }
-
-
 
 func exactJournalReceipt(receipts []coremetadata.TerminationEvidence, pane coremetadata.Pane) bool {
 	stored := pane.Status.LastTermination
@@ -649,21 +648,7 @@ func planExactWindowUnlinkCascade(
 	return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, root: plan, subject: subject}, err
 }
 
-func lifecycleRootSessionName(registry coremetadata.Registry, root coremetadata.OwnerRef) string {
-	switch root.Kind {
-	case coremetadata.KindProject:
-		project, ok := registry.Project(root.UID)
-		if ok && project.Status.Session != nil {
-			return strings.TrimSpace(project.Status.Session.Name)
-		}
-	case coremetadata.KindControlSession:
-		control, ok := registry.ControlSession(root.UID)
-		if ok {
-			return strings.TrimSpace(control.Spec.Session)
-		}
-	}
-	return ""
-}
+var lifecycleRootSessionName = mutationruntime.LifecycleRootSessionName
 
 func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent, sessionName string, pane coremetadata.Pane) paneLiveDeleteTarget {
 	target := paneLiveDeleteTarget{
@@ -863,8 +848,6 @@ func lifecycleInventory(runner tmuxCommandRunner, target tmuxTransport) livePane
 	return &exactLifecycleInventory{Mirror: intmetadata.NewMirror(routed), runtime: runtime}
 }
 
-
-
 func lifecycleEffectiveLivePanes(live, dead map[string]bool) map[string]bool {
 	if len(dead) == 0 {
 		return live
@@ -877,8 +860,6 @@ func lifecycleEffectiveLivePanes(live, dead map[string]bool) map[string]bool {
 	}
 	return effective
 }
-
-
 
 // reconcileLifecycle is the one-shot exit reconciliation.
 //

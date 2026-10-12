@@ -78,9 +78,9 @@ func bindCreatorTestRoute(command *createCommand, runner tmuxCommandRunner, look
 		}
 		resolved = route
 		exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
-		command.reconciler.mirror = intmetadata.NewMirror(exact)
+		command.reconciler.Mirror = intmetadata.NewMirror(exact)
 		command.runtime.Runner = exact
-		command.runtime.mirror = intmetadata.NewMirror(exact)
+		command.runtime.Mirror = intmetadata.NewMirror(exact)
 		command.runtime.Target = route.Target
 		command.runtime.ExpectedSocketPath = route.ExpectedSocketPath
 		command.runtime.SocketName = route.SocketName

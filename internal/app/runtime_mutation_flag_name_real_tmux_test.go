@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"os"
@@ -11,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -69,7 +70,7 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 
 	target := tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}
 	routed := explicitTmuxRunner{Runner: shellTmuxExecRunner{env: func() []string { return environment }}, Target: target}
-	runtime := &materializer{mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target}}
+	runtime := &materializer{Mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target}}
 	if err := runtime.GuardExactRoute(ctx, false); err != nil {
 		t.Fatalf("bind isolated app route: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 		if err := coremetadata.ValidateName(name); err != nil {
 			t.Fatalf("Registry refuses %q: %v", name, err)
 		}
-		created, err := runtime.newWindow(ctx, sessionID, name, root, []string{"tail", "-f", "/dev/null"})
+		created, err := runtime.NewWindow(ctx, sessionID, name, root, []string{"tail", "-f", "/dev/null"})
 		if err != nil {
 			t.Fatalf("create Window %q: %v", name, err)
 		}
@@ -86,7 +87,7 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 		if _, err := runtime.ClaimRuntimeUID(ctx, runtimeWindow, created.WindowID, window.Metadata.UID); err != nil {
 			t.Fatalf("claim Window %q: %v", name, err)
 		}
-		if err := runtime.mirrorWindow(ctx, created.WindowID, window); err != nil {
+		if err := runtime.MirrorWindowIdentity(ctx, created.WindowID, window); err != nil {
 			t.Fatalf("mirror Window %q: %v", name, err)
 		}
 		for _, format := range []string{"#{window_name}", "#{" + tmuxopts.WindowName + "}"} {

@@ -26,12 +26,6 @@ const (
 	internalClaudeRegistryPathEnv   = "PMX_INTERNAL_CLAUDE_REGISTRY_PATH"
 )
 
-
-
-
-
-
-
 func exactActivationRegistryPath(path string) error {
 	if path == "" || !filepath.IsAbs(path) {
 		return errors.New("agent activation requires an absolute Registry path")
@@ -145,7 +139,7 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return usageError("internal supervise --" + superviseServerDefaultCommandFlag + " takes no command")
 		}
 		resolved := c.resolveServerDefaultCommand()
-		child, *argv0 = resolved.argv, resolved.argv0
+		child, *argv0 = resolved.Argv, resolved.Argv0
 	}
 	if len(child) == 0 {
 		return usageError("internal supervise requires a command after --")
@@ -158,7 +152,7 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 		RegistryPath:      *registryPath,
 		DialogueReplyOnly: *dialogueReplyOnly,
 	}
-	if !spec.valid() {
+	if !spec.Valid() {
 		return usageError("internal supervise requires --pane-uid and --generation")
 	}
 	if c.run == nil && c.runActivation == nil {

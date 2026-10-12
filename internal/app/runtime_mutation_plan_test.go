@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -23,10 +21,15 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -2143,7 +2146,7 @@ func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 	sessions := &fakeSessionMaterializer{tmux: server}
 	session := server.addSession("drift")
 	runtime := &materializer{
-		mirror: intmetadata.NewMirror(server), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server, Sessions: sessions,
+		Mirror: intmetadata.NewMirror(server), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server, Sessions: sessions,
 			Target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
 			ExpectedSocketPath: server.socketPath,
 			SocketName:         defaultAppSocket,
@@ -2277,7 +2280,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 			Metadata: coremetadata.ObjectMeta{UID: "prj-receipt", Name: "receipt"},
 			Spec:     coremetadata.ProjectSpec{Root: "/work/receipt"},
 		}
-		err := runtime.writeCreatedProjectAnchor(context.Background(), result, project, "op-receipt")
+		err := runtime.WriteCreatedProjectAnchor(context.Background(), result, project, "op-receipt")
 		if err == nil || !strings.Contains(err.Error(), "created Project tuple or operation lease drifted") {
 			t.Fatalf("matching path with wrong receipt = %v", err)
 		}
@@ -2292,7 +2295,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 		startupCalls := 0
 		sessions.startup = func() { startupCalls++ }
 		server.calls = nil
-		err := runtime.finalizeSessionStartup(context.Background(), result, "receipt", "/work/receipt", NewRuntimeLedger("op-receipt"))
+		err := runtime.FinalizeSessionStartup(context.Background(), result, "receipt", "/work/receipt", NewRuntimeLedger("op-receipt"))
 		if err == nil || !strings.Contains(err.Error(), "create-operation lease changed") {
 			t.Fatalf("matching finalize marker with wrong receipt = %v", err)
 		}
@@ -2334,13 +2337,13 @@ func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testi
 	routed := explicitTmuxRunner{Runner: server, Target: target}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	runtime := &materializer{
-		mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: sessions, Target: target},
+		Mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: sessions, Target: target},
 	}
 	project := coremetadata.Project{
 		Metadata: coremetadata.ObjectMeta{UID: "prj-first", Name: "first"},
 		Spec:     coremetadata.ProjectSpec{Root: "/work/first"},
 	}
-	result, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, "", NewRuntimeLedger("op-first"))
+	result, err := ensureSessionAt(runtime, context.Background(), project, "first", project.Spec.Root, "", NewRuntimeLedger("op-first"))
 	if err != nil {
 		t.Fatalf("first-session materialize: %v", err)
 	}
@@ -2379,8 +2382,8 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		target := tmuxTransport{Kind: tmuxSocketName, Value: "phase10-fresh", Source: tmuxSocketNameSource}
 		routed := explicitTmuxRunner{Runner: server, Target: target}
 		runtime := &materializer{
-			mirror:     intmetadata.NewMirror(routed),
-			configPath: configPath, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
+			Mirror:     intmetadata.NewMirror(routed),
+			ConfigPath: configPath, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
 				Target: target},
 		}
 		project := coremetadata.Project{
@@ -2393,7 +2396,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 	t.Run("config precedes create and marker precedes managed identity", func(t *testing.T) {
 		runtime, server, project, configPath := newFixture(t, "1", "")
 		ledger := NewRuntimeLedger("op-fresh")
-		result, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", ledger)
+		result, err := ensureSessionAt(runtime, context.Background(), project, "fresh", project.Spec.Root, "", ledger)
 		if err != nil {
 			t.Fatalf("fresh Project materialize: %v", err)
 		}
@@ -2428,7 +2431,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		}
 
 		server.calls = nil
-		if err := runtime.writeCreatedProjectRouteMarker(context.Background(), result, ledger.OperationMarker); err != nil {
+		if err := runtime.WriteCreatedProjectRouteMarker(context.Background(), result, ledger.OperationMarker); err != nil {
 			t.Fatalf("repeat route marker: %v", err)
 		}
 		for _, call := range server.calls {
@@ -2443,7 +2446,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		server.fail = []string{"new-session"}
 		server.failAfterMutation = true
 		server.failMessage = "synchronous hook failed after create"
-		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-after-effect"))
+		_, err := ensureSessionAt(runtime, context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-after-effect"))
 		if err == nil || !strings.Contains(err.Error(), "synchronous hook failed after create") {
 			t.Fatalf("fresh create after-effect error = %v", err)
 		}
@@ -2474,7 +2477,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		created := server.addSession("partial")
 		marker := "op-partial-receipt"
 		created.env[createOperationEnvironment] = marker
-		if err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{Created: true, SessionID: created.id}, marker); err != nil {
+		if err := runtime.RecoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{Created: true, SessionID: created.id}, marker); err != nil {
 			t.Fatalf("recover partial result from unique lease: %v", err)
 		}
 		if server.session("partial") != nil {
@@ -2484,7 +2487,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 
 	t.Run("no server is already absent and performs no write", func(t *testing.T) {
 		runtime, server, _, _ := newFixture(t, "", "")
-		if err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, "op-no-server"); err != nil {
+		if err := runtime.RecoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, "op-no-server"); err != nil {
 			t.Fatalf("recover absent server: %v", err)
 		}
 		for _, call := range server.calls {
@@ -2501,7 +2504,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		created := server.addSession("mismatch")
 		marker := "op-full-mismatch"
 		created.env[createOperationEnvironment] = marker
-		err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{
+		err := runtime.RecoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{
 			Created: true, SessionID: "$900", WindowID: "@901", PaneID: "%902",
 		}, marker)
 		if err == nil || !strings.Contains(err.Error(), "disagrees with unique lease tuple") {
@@ -2525,7 +2528,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		second := server.addSession("ambiguous-b")
 		first.env[createOperationEnvironment] = marker
 		second.env[createOperationEnvironment] = marker
-		err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker)
+		err := runtime.RecoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker)
 		if err == nil || !strings.Contains(err.Error(), "matched 2 exact containments") {
 			t.Fatalf("ambiguous lease recovery error = %v", err)
 		}
@@ -2546,7 +2549,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		if err := os.Remove(configPath); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-existing")); err != nil {
+		if _, err := ensureSessionAt(runtime, context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-existing")); err != nil {
 			t.Fatalf("materialize on existing app server: %v", err)
 		}
 		foundCreate := false
@@ -2575,7 +2578,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime, server, project, _ := newFixture(t, test.appMarker, test.logicalMarker)
-			_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-refuse"))
+			_, err := ensureSessionAt(runtime, context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-refuse"))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("fresh forged config error = %v, want %q", err, test.want)
 			}
@@ -2596,7 +2599,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		if err := os.Remove(configPath); err != nil {
 			t.Fatal(err)
 		}
-		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-missing-config"))
+		_, err := ensureSessionAt(runtime, context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-missing-config"))
 		if err == nil || !strings.Contains(err.Error(), "is unavailable") {
 			t.Fatalf("missing generated config error = %v", err)
 		}
@@ -2657,9 +2660,9 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 			routed := explicitTmuxRunner{Runner: server, Target: target}
 			runtime := &materializer{
-				mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server}, Target: target},
+				Mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server}, Target: target},
 			}
-			if _, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, test.windowName, NewRuntimeLedger("op-first-window")); err != nil {
+			if _, err := ensureSessionAt(runtime, context.Background(), project, "first", project.Spec.Root, test.windowName, NewRuntimeLedger("op-first-window")); err != nil {
 				t.Fatalf("materialize session: %v", err)
 			}
 			argv := newSessionArgv(t, server)
@@ -2690,8 +2693,8 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 		target := tmuxTransport{Kind: tmuxSocketName, Value: "first-window-fresh", Source: tmuxSocketNameSource}
 		routed := explicitTmuxRunner{Runner: server, Target: target}
 		runtime := &materializer{
-			mirror:     intmetadata.NewMirror(routed),
-			configPath: configPath, MaterializeRuntime:
+			Mirror:     intmetadata.NewMirror(routed),
+			ConfigPath: configPath, MaterializeRuntime:
 
 			// The printable declaration itself: -f stays operand 0 and -n is an
 			// ordinary value-carrying operand after the one -s session operand.
@@ -2718,7 +2721,7 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 			t.Fatalf("assembled fresh create-session argv = %#v", assembled)
 		}
 
-		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "w-first", NewRuntimeLedger("op-fresh-first-window")); err != nil {
+		if _, err := ensureSessionAt(runtime, context.Background(), project, "fresh", project.Spec.Root, "w-first", NewRuntimeLedger("op-fresh-first-window")); err != nil {
 			t.Fatalf("fresh Project materialize with first-Window name: %v", err)
 		}
 		argv := newSessionArgv(t, server)
@@ -2817,14 +2820,14 @@ func TestStandaloneInheritedRouteMaterializesWithPrintablePIDAndPaneAuthority(t 
 
 	routed := explicitTmuxRunner{Runner: server, Target: route.Target}
 	runtime := &materializer{
-		mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
+		Mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
 			Target: route.Target, ExpectedSocketPath: route.ExpectedSocketPath, RouteAuthority: route.Authority},
 	}
 	project := coremetadata.Project{
 		Metadata: coremetadata.ObjectMeta{UID: "prj-standalone", Name: "standalone"},
 		Spec:     coremetadata.ProjectSpec{Root: t.TempDir()},
 	}
-	result, err := runtime.ensureSessionAt(context.Background(), project, "standalone-project", project.Spec.Root, "", NewRuntimeLedger("op-standalone"))
+	result, err := ensureSessionAt(runtime, context.Background(), project, "standalone-project", project.Spec.Root, "", NewRuntimeLedger("op-standalone"))
 	if err != nil {
 		t.Fatalf("materialize on inherited standalone route: %v", err)
 	}
@@ -3451,42 +3454,42 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"SetOption": true, "SetHook": true,
 	}
 	requiredPlanSites := map[string]bool{
-		"materialize.go:finalizeSessionStartup":                                     true,
-		"../services/mutations/runtime/materialize_shared.go:Rollback":              true,
-		"materialize.go:ensureSessionLaunching":                                     true,
-		"materialize.go:writeCreatedProjectRouteMarker":                             true,
-		"materialize.go:recoverCreatedProjectByLease":                               true,
-		"../services/mutations/runtime/materialize_shared.go:ClaimRuntimeUID":       true,
-		"materialize.go:mirrorWindow":                                               true,
-		"../services/mutations/runtime/materialize_shared.go:MirrorPaneIdentity":    true,
-		"materialize.go:recordErrorCreatedSession":                                  true,
-		"../services/mutations/runtime/materialize_shared.go:MarkCreateOperation":   true,
-		"../services/mutations/runtime/materialize_shared.go:ClearCreateOperations": true,
-		"materialize.go:newWindow":                                                  true,
-		"../services/mutations/runtime/materialize_shared.go:SplitPane":             true,
-		"materialize.go:equalizeSplitLayout":                                        true,
-		"../services/mutations/runtime/delete_pane_runtime.go:KillAll":              true,
-		"delete_pane_runtime.go:tombstoneSelfKill":                                  true,
-		"delete_pane_runtime.go:restoreSelfKill":                                    true,
-		"delete_pane_runtime.go:queueSelfKill":                                      true,
-		"../services/mutations/runtime/delete_window_runtime.go:KillAll":            true,
-		"../services/mutations/runtime/delete_window_runtime.go:QueueSelfKill":      true,
-		"../services/mutations/runtime/managed_stop.go:ExecuteManagedRuntimeStop":   true,
-		"shell.go:provisionAppSession":                                              true,
-		"shell.go:prepareControlSession":                                            true,
-		"shell.go:rollbackControlBootstrap":                                         true,
-		"create_intent.go:renameWindowFromIntent":                                   true,
-		"rename.go:renameService":                                                   true,
-		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":                     true,
-		"tmux.go:writeRuntimeMutationRouteMarker":                                   true,
-		"control_session.go:executeControlSessionIdentityPlan":                      true,
-		"runtime_metadata_mirror.go:MirrorWindow":                                   true,
-		"runtime_metadata_mirror.go:MirrorPane":                                     true,
-		"runtime_metadata_mirror.go:MirrorProject":                                  true,
-		"controller_runtime_mutation.go:executeControllerRuntimeMutations":          true,
-		"resource_controller.go:converge":                                           true,
-		"controller_trigger.go:runAutomaticMirrorRecovery":                          true,
-		"registry_topology_materialize.go:execute":                                  true,
+		"../services/mutations/runtime/create_shared_materialize.go:FinalizeSessionStartup":         true,
+		"../services/mutations/runtime/materialize_shared.go:Rollback":                              true,
+		"../services/mutations/runtime/create_shared_materialize.go:EnsureSessionLaunching":         true,
+		"../services/mutations/runtime/create_shared_materialize.go:WriteCreatedProjectRouteMarker": true,
+		"../services/mutations/runtime/create_shared_materialize.go:RecoverCreatedProjectByLease":   true,
+		"../services/mutations/runtime/materialize_shared.go:ClaimRuntimeUID":                       true,
+		"../services/mutations/runtime/create_shared_materialize.go:MirrorWindowIdentity":           true,
+		"../services/mutations/runtime/materialize_shared.go:MirrorPaneIdentity":                    true,
+		"../services/mutations/runtime/create_shared_materialize.go:RecordErrorCreatedSession":      true,
+		"../services/mutations/runtime/materialize_shared.go:MarkCreateOperation":                   true,
+		"../services/mutations/runtime/materialize_shared.go:ClearCreateOperations":                 true,
+		"../services/mutations/runtime/create_shared_materialize.go:NewWindow":                      true,
+		"../services/mutations/runtime/materialize_shared.go:SplitPane":                             true,
+		"../services/mutations/runtime/create_shared_materialize.go:EqualizeSplitLayout":            true,
+		"../services/mutations/runtime/delete_pane_runtime.go:KillAll":                              true,
+		"delete_pane_runtime.go:tombstoneSelfKill":                                                  true,
+		"delete_pane_runtime.go:restoreSelfKill":                                                    true,
+		"delete_pane_runtime.go:queueSelfKill":                                                      true,
+		"../services/mutations/runtime/delete_window_runtime.go:KillAll":                            true,
+		"../services/mutations/runtime/delete_window_runtime.go:QueueSelfKill":                      true,
+		"../services/mutations/runtime/managed_stop.go:ExecuteManagedRuntimeStop":                   true,
+		"shell.go:provisionAppSession":                                                              true,
+		"shell.go:prepareControlSession":                                                            true,
+		"shell.go:rollbackControlBootstrap":                                                         true,
+		"create_intent.go:renameWindowFromIntent":                                                   true,
+		"rename.go:renameService":                                                                   true,
+		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":                                     true,
+		"tmux.go:writeRuntimeMutationRouteMarker":                                                   true,
+		"control_session.go:executeControlSessionIdentityPlan":                                      true,
+		"../services/mutations/runtime/create_shared_runtime_metadata_mirror.go:MirrorWindow":       true,
+		"../services/mutations/runtime/create_shared_runtime_metadata_mirror.go:MirrorPane":         true,
+		"../services/mutations/runtime/create_shared_runtime_metadata_mirror.go:MirrorProject":      true,
+		"controller_runtime_mutation.go:executeControllerRuntimeMutations":                          true,
+		"resource_controller.go:converge":                                                           true,
+		"controller_trigger.go:runAutomaticMirrorRecovery":                                          true,
+		"registry_topology_materialize.go:execute":                                                  true,
 	}
 	// These are semantic exemptions, keyed to one exact source function and
 	// verb. They are intentionally not a broad verb allowlist.
@@ -3703,7 +3706,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 				}
 				if ok && (selector.Sel.Name == "runMutation" || selector.Sel.Name == "RunMutation" || selector.Sel.Name == "runMaterializeMutation" || selector.Sel.Name == "RunMaterializeMutation" ||
 					selector.Sel.Name == "runIdentityWrites" || selector.Sel.Name == "RunIdentityWrites" || selector.Sel.Name == "claimRuntimeUIDForRollback" || selector.Sel.Name == "ClaimRuntimeUIDForRollback" || selector.Sel.Name == "MirrorPaneIdentity" ||
-					selector.Sel.Name == "mirrorProject") {
+					selector.Sel.Name == "MirrorProjectIdentity") {
 					usesPlanSeam = true
 				}
 				if ok && (selector.Sel.Name == "run" || selector.Sel.Name == "runCommand") {
@@ -3869,9 +3872,9 @@ func TestGenericWindowPaneMirrorIsRecorderOnlyOutsideNativePhase2(t *testing.T) 
 		t.Fatal(err)
 	}
 	text := string(source)
-	if strings.Count(text, "reconciler.mirrorWindow = mirror.MirrorWindow") != 1 ||
+	if strings.Count(text, "reconciler.MirrorWindowWrite = mirror.MirrorWindow") != 1 ||
 		!strings.Contains(text, "if _, recording := runner.(*resourcePlanTmuxRunner); recording {") ||
-		strings.Contains(text, "r.mirror.MirrorWindow(ctx") || strings.Contains(text, "r.mirror.MirrorPane(ctx") {
+		strings.Contains(text, "r.Mirror.MirrorWindow(ctx") || strings.Contains(text, "r.Mirror.MirrorPane(ctx") {
 		t.Fatal("project Registry generic Window/Pane mirror is not structurally recorder-only")
 	}
 }

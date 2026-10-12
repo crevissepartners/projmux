@@ -130,12 +130,12 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "contributes Project roots to discovery; a ControlSession contributes no path by construction",
 	},
 	{
-		File: "internal/app/project_registry.go", Func: "registryReconciler.projectsBySessionName",
+		File: "internal/services/mutations/runtime/create_shared_project_registry.go", Func: "RegistryReconciler.ProjectsBySessionName",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "indexes Project session claims; a control session is claimed by exact name through ControlSessionBySession",
 	},
 	{
-		File: "internal/app/project_registry.go", Func: "registryReconciler.refreshSessionProjections",
+		File: "internal/services/mutations/runtime/create_shared_project_registry.go", Func: "RegistryReconciler.RefreshSessionProjections",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "refreshes ProjectStatus.Session; ControlSessionSpec carries the session name itself and has no status projection to refresh",
 	},
@@ -170,7 +170,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "the reservation table names both root kinds, so dropping unbacked rows has to know both (#705)",
 	},
 	{
-		File: "internal/app/resource_reconcile_plan.go", Func: "resourceSessionProjectClaims",
+		File: "internal/services/mutations/runtime/create_session_claims.go", Func: "ResourceSessionProjectClaims",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "counts Projects claiming one session name; a control session is not a Project claimant",
 	},

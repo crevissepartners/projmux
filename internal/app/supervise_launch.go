@@ -1,44 +1,8 @@
 package app
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // mintGeneration issues one activation generation for a create/resume route.
 func (c *createCommand) mintGeneration() (string, error) {
@@ -64,7 +28,3 @@ func (c *createCommand) issuePaneActivation(
 ) (superviseSpec, error) {
 	return issuePaneActivation(c.mintGeneration, working, mutator, paneUID, agentUID, operationID)
 }
-
-
-
-

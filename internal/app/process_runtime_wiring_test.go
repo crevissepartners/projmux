@@ -243,7 +243,7 @@ func TestProcessRuntimeReconcileLockNeverDialsHost(t *testing.T) {
 	abort := errors.New("observation-only lock probe")
 	store := intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
 	_, err = store.Update(func(*coremetadata.Registry) error {
-		reconciler.observeRuntime(ctx, &reg, coremetadata.Mutator{}, nil)
+		reconciler.ObserveRuntime(ctx, &reg, coremetadata.Mutator{}, nil)
 		return abort
 	})
 	if !errors.Is(err, abort) {

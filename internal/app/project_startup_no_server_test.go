@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"io"
@@ -11,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -43,7 +44,7 @@ func TestContinueWithNoAppServerBringsItUp(t *testing.T) {
 	}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	activation.newMaterializer = func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-		return &materializer{mirror: intmetadata.NewMirror(exact), configPath: configPath, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
+		return &materializer{Mirror: intmetadata.NewMirror(exact), ConfigPath: configPath, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 	}
 
 	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})

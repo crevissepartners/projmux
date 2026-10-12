@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-// createOperationEnvironment is a session-scoped lease carried by canonical
+// CreateOperationEnvironment is a session-scoped lease carried by canonical
 // create mutations. Generated tmux lifecycle hooks inspect it before opening
 // the registry: a hook caused by the create that already owns the registry lock
 // returns immediately, while an ordinary hook keeps its synchronous contract.

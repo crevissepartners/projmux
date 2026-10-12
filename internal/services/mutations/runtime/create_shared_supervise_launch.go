@@ -14,12 +14,12 @@ import (
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
-// superviseArgv wraps one child argv in the managed process supervisor.
+// SuperviseArgv wraps one child argv in the managed process supervisor.
 //
 // The result is an argv, not a shell string: tmux execs `split-window`'s
 // trailing words directly, so the child's own argv survives verbatim through
 // the wrapper instead of being re-quoted through a second shell.
-func superviseArgv(binary string, spec superviseSpec, argv0 string, child []string) []string {
+func SuperviseArgv(binary string, spec SuperviseSpec, argv0 string, child []string) []string {
 	argv := []string{binary, "internal", "supervise", "--pane-uid", spec.PaneUID, "--generation", spec.Generation}
 	if spec.AgentUID != "" {
 		argv = append(argv, "--agent-uid", spec.AgentUID)
@@ -31,10 +31,10 @@ func superviseArgv(binary string, spec superviseSpec, argv0 string, child []stri
 		argv = append(argv, "--registry-path", spec.RegistryPath)
 	}
 	if spec.DialogueReplyOnly {
-		argv = append(argv, "--"+claudeDialogueReplyOnlyFlag)
+		argv = append(argv, "--"+DialogueReplyOnlyFlag)
 	}
 	if spec.ServerDefaultCommand {
-		argv = append(argv, "--"+superviseServerDefaultCommandFlag)
+		argv = append(argv, "--"+SuperviseServerDefaultCommandFlag)
 	}
 	if argv0 != "" {
 		argv = append(argv, "--argv0", argv0)
@@ -43,17 +43,17 @@ func superviseArgv(binary string, spec superviseSpec, argv0 string, child []stri
 	return append(argv, child...)
 }
 
-// resolvedPaneCommand is the exact process tmux would have started for a pane
+// ResolvedPaneCommand is the exact process tmux would have started for a pane
 // created with no command of its own.
-type resolvedPaneCommand struct {
-	argv  []string
-	argv0 string
+type ResolvedPaneCommand struct {
+	Argv  []string
+	Argv0 string
 }
 
 // executablePath resolves this build's own binary, which the supervised child
 // argv has to name.
-func (m *materializer) executablePath() (string, error) {
-	resolve := m.executable
+func (m *Materializer) ExecutablePath() (string, error) {
+	resolve := m.Executable
 	if resolve == nil {
 		resolve = os.Executable
 	}
@@ -67,8 +67,8 @@ func (m *materializer) executablePath() (string, error) {
 	return path, nil
 }
 
-func (m *materializer) environment(name string) string {
-	lookup := m.lookupEnv
+func (m *Materializer) Environment(name string) string {
+	lookup := m.LookupEnv
 	if lookup == nil {
 		lookup = os.Getenv
 	}
@@ -84,24 +84,24 @@ func (m *materializer) environment(name string) string {
 // dash. Getting either half wrong would change what the operator's shell reads
 // at startup, so the values are read from the same exact server the pane is
 // created on rather than guessed from this process's environment.
-func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneCommand, error) {
-	if memo := m.paneDefaults; memo != nil && m.ExpectedSocketPath != "" && memo.socket == filepath.Clean(m.ExpectedSocketPath) {
-		return resolvePaneCommand(memo.shell, memo.command, m.environment("SHELL")), nil
+func (m *Materializer) DefaultPaneCommand(ctx context.Context) (ResolvedPaneCommand, error) {
+	if memo := m.PaneDefaults; memo != nil && m.ExpectedSocketPath != "" && memo.Socket == filepath.Clean(m.ExpectedSocketPath) {
+		return ResolvePaneCommand(memo.Shell, memo.Command, m.Environment("SHELL")), nil
 	}
 	shell, err := m.ReadTmux(ctx, "show-options", "-gv", "default-shell")
 	if err != nil {
-		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-shell: %w", err)
+		return ResolvedPaneCommand{}, fmt.Errorf("read tmux default-shell: %w", err)
 	}
 	command, err := m.ReadTmux(ctx, "show-options", "-gv", "default-command")
 	if err != nil {
-		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-command: %w", err)
+		return ResolvedPaneCommand{}, fmt.Errorf("read tmux default-command: %w", err)
 	}
-	return resolvePaneCommand(shell, command, m.environment("SHELL")), nil
+	return ResolvePaneCommand(shell, command, m.Environment("SHELL")), nil
 }
 
-// resolvePaneCommand applies tmux's rule to one default-shell/default-command
+// ResolvePaneCommand applies tmux's rule to one default-shell/default-command
 // pair; envShell stands in for an empty default-shell, as tmux's own SHELL does.
-func resolvePaneCommand(shell, command, envShell string) resolvedPaneCommand {
+func ResolvePaneCommand(shell, command, envShell string) ResolvedPaneCommand {
 	shell = strings.TrimSpace(shell)
 	if shell == "" {
 		shell = strings.TrimSpace(envShell)
@@ -110,22 +110,22 @@ func resolvePaneCommand(shell, command, envShell string) resolvedPaneCommand {
 		shell = "/bin/sh"
 	}
 	if command = strings.TrimSpace(command); command != "" {
-		return resolvedPaneCommand{argv: []string{shell, "-c", command}, argv0: filepath.Base(shell)}
+		return ResolvedPaneCommand{Argv: []string{shell, "-c", command}, Argv0: filepath.Base(shell)}
 	}
-	return resolvedPaneCommand{argv: []string{shell}, argv0: "-" + filepath.Base(shell)}
+	return ResolvedPaneCommand{Argv: []string{shell}, Argv0: "-" + filepath.Base(shell)}
 }
 
-// paneDefaultsMemo is the default-shell/default-command pair read before the
+// PaneDefaultsMemo is the default-shell/default-command pair read before the
 // Registry lock, keyed by the exact physical socket it was read through.
-type paneDefaultsMemo struct {
-	socket  string
-	shell   string
-	command string
+type PaneDefaultsMemo struct {
+	Socket  string
+	Shell   string
+	Command string
 }
 
 var (
-	paneDefaultsReadShell   = routeRead{"show-options", "-gv", "default-shell"}
-	paneDefaultsReadCommand = routeRead{"show-options", "-gv", "default-command"}
+	paneDefaultsReadShell   = RouteRead{"show-options", "-gv", "default-shell"}
+	paneDefaultsReadCommand = RouteRead{"show-options", "-gv", "default-command"}
 )
 
 // prefetchPaneDefaults reads, before a create takes the Registry lock, the two
@@ -143,21 +143,21 @@ var (
 // of the lock rather than under it. They are best-effort launch configuration
 // for the new pane's process, not a Registry decision, so nothing the lock
 // protects depends on them being read under it.
-func (m *materializer) prefetchPaneDefaults(ctx context.Context) func() {
+func (m *Materializer) PrefetchPaneDefaults(ctx context.Context) func() {
 	clearMemo := func() {
 		if m != nil {
-			m.paneDefaults = nil
+			m.PaneDefaults = nil
 		}
 	}
 	if m == nil || m.ExpectedSocketPath == "" || !filepath.IsAbs(m.ExpectedSocketPath) {
 		return clearMemo
 	}
 	socket := filepath.Clean(m.ExpectedSocketPath)
-	sections, err := readTmuxSequence(ctx, m.RoutedRunner(), paneDefaultsReadShell, paneDefaultsReadCommand)
+	sections, err := ReadTmuxSequence(ctx, m.RoutedRunner(), paneDefaultsReadShell, paneDefaultsReadCommand)
 	if err != nil {
 		return clearMemo
 	}
-	m.paneDefaults = &paneDefaultsMemo{socket: socket, shell: strings.TrimSpace(sections[0]), command: strings.TrimSpace(sections[1])}
+	m.PaneDefaults = &PaneDefaultsMemo{Socket: socket, Shell: strings.TrimSpace(sections[0]), Command: strings.TrimSpace(sections[1])}
 	return clearMemo
 }
 
@@ -169,17 +169,17 @@ func (m *materializer) prefetchPaneDefaults(ctx context.Context) func() {
 // stricter boundary. Once the supervisor binary is available, failure to
 // resolve the creator's Registry authority keeps that supervisor in the argv
 // with an empty authority so admission fails closed before provider start.
-func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec, command []string) []string {
-	if m == nil || !spec.valid() {
+func (m *Materializer) SupervisedLaunch(ctx context.Context, spec SuperviseSpec, command []string) []string {
+	if m == nil || !spec.Valid() {
 		return command
 	}
-	binary, err := m.executablePath()
+	binary, err := m.ExecutablePath()
 	if err != nil {
-		m.warnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
+		m.WarnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
 		return command
 	}
 	if spec.AgentUID != "" {
-		registryPath, pathErr := creatorRegistryPath()
+		registryPath, pathErr := CreatorRegistryPath()
 		if pathErr != nil {
 			// Keep the internal supervisor in place with an empty authority. Its
 			// Agent admission fails closed before provider start; silently falling
@@ -194,34 +194,34 @@ func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec,
 	child := command
 	argv0 := ""
 	if len(child) == 0 {
-		resolved, err := m.defaultPaneCommand(ctx)
+		resolved, err := m.DefaultPaneCommand(ctx)
 		if err != nil {
-			m.warnUnsupervised(spec, err.Error())
+			m.WarnUnsupervised(spec, err.Error())
 			return command
 		}
-		child, argv0 = resolved.argv, resolved.argv0
+		child, argv0 = resolved.Argv, resolved.Argv0
 	}
-	return superviseArgv(binary, spec, argv0, child)
+	return SuperviseArgv(binary, spec, argv0, child)
 }
 
 // supervisedLaunchOnFreshServer is supervisedLaunch for the first Pane of a
 // server this new-session starts. No server exists to read default-shell and
 // default-command from yet, so the supervisor reads them from the server it
 // runs in. The fallback is supervisedLaunch's: an unsupervised default Pane.
-func (m *materializer) supervisedLaunchOnFreshServer(spec superviseSpec) []string {
-	if m == nil || !spec.valid() || spec.AgentUID != "" {
+func (m *Materializer) SupervisedLaunchOnFreshServer(spec SuperviseSpec) []string {
+	if m == nil || !spec.Valid() || spec.AgentUID != "" {
 		return nil
 	}
-	binary, err := m.executablePath()
+	binary, err := m.ExecutablePath()
 	if err != nil {
-		m.warnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
+		m.WarnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
 		return nil
 	}
 	spec.ServerDefaultCommand = true
-	return superviseArgv(binary, spec, "", nil)
+	return SuperviseArgv(binary, spec, "", nil)
 }
 
-func creatorRegistryPath() (string, error) {
+func CreatorRegistryPath() (string, error) {
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		return "", err
@@ -233,49 +233,49 @@ func creatorRegistryPath() (string, error) {
 	return filepath.Clean(path), nil
 }
 
-func (m *materializer) warnUnsupervised(spec superviseSpec, reason string) {
+func (m *Materializer) WarnUnsupervised(spec SuperviseSpec, reason string) {
 	if m == nil || m.Warn == nil {
 		return
 	}
 	fmt.Fprintf(m.Warn, "projmux: pane %s starts without termination evidence because %s\n", spec.PaneUID, reason)
 }
 
-// issuePaneActivation is the route-independent half: mint, record, and return
+// IssuePaneActivation is the route-independent half: mint, record, and return
 // the spec the launch argv is built from.
-func issuePaneActivation(
+func IssuePaneActivation(
 	mint func() (string, error),
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	paneUID, agentUID, operationID string,
-) (superviseSpec, error) {
+) (SuperviseSpec, error) {
 	if mint == nil {
 		mint = coremetadata.NewGeneration
 	}
 	generation, err := mint()
 	if err != nil {
-		return superviseSpec{}, err
+		return SuperviseSpec{}, err
 	}
 	if _, err := mutator.RecordPaneActivation(working, paneUID, coremetadata.PaneActivationOptions{
 		Generation:  generation,
 		AgentUID:    agentUID,
 		OperationID: operationID,
 	}); err != nil {
-		return superviseSpec{}, MapMetadataError(err)
+		return SuperviseSpec{}, MapMetadataError(err)
 	}
-	return superviseSpec{PaneUID: paneUID, AgentUID: agentUID, Generation: generation, OperationID: operationID}, nil
+	return SuperviseSpec{PaneUID: paneUID, AgentUID: agentUID, Generation: generation, OperationID: operationID}, nil
 }
 
-// observeActivationRuntime records the exact tmux handle the generation landed
+// ObserveActivationRuntime records the exact tmux handle the generation landed
 // on. A failure is a diagnostic, never a create failure: the binding the
 // receipt guard uses is the generation, and it is already durable.
-func observeActivationRuntime(
+func ObserveActivationRuntime(
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
-	spec superviseSpec,
+	spec SuperviseSpec,
 	paneID string,
 	warn io.Writer,
 ) {
-	if !spec.valid() || strings.TrimSpace(paneID) == "" {
+	if !spec.Valid() || strings.TrimSpace(paneID) == "" {
 		return
 	}
 	if _, err := mutator.ObservePaneActivationRuntime(working, spec.PaneUID, spec.Generation, paneID); err != nil && warn != nil {

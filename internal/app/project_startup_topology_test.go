@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -15,9 +13,13 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -243,7 +245,7 @@ func newProjectStartupTopologyFixture(t *testing.T) (*registryProjectTopologyMat
 		newReconciler:  reconcileFixtureReconciler(root, "beta"),
 		newOperationID: func() (string, error) { return "op-startup", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
+			return &materializer{Mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),

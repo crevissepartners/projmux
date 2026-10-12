@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -11,8 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
@@ -1639,7 +1640,7 @@ func TestDeletedPaneTransportTombstoneCannotBeReimported(t *testing.T) {
 	before := registry.Clone()
 	binder := coremetadata.NewBindingMatcher(coremetadata.RuntimeObservation{})
 	reconciler := &registryReconciler{}
-	uid, mirror, ok := reconciler.paneBindingFor(&registry, fixtureMutator(), "op-delete", "win-alpha-main",
+	uid, mirror, ok := reconciler.PaneBindingFor(&registry, fixtureMutator(), "op-delete", "win-alpha-main",
 		coremetadata.LegacyPane{UID: deletedPaneMirrorPrefix + "pan-deleted", CWD: "/srv/alpha"}, binder)
 	if uid != "" || mirror || ok || !reflect.DeepEqual(registry, before) {
 		t.Fatalf("tombstone reimport result uid=%q mirror=%t ok=%t changed=%t", uid, mirror, ok, !reflect.DeepEqual(registry, before))

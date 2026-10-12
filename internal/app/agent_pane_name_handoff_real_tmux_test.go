@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -15,7 +13,10 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -289,8 +290,8 @@ func TestContinueReplayCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 		newGeneration:  coremetadata.NewGeneration,
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			return &materializer{
-				mirror:     intmetadata.NewMirror(exact),
-				executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), Target: target, Warn: warn},
+				Mirror:     intmetadata.NewMirror(exact),
+				Executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), Target: target, Warn: warn},
 			}
 		},
 	}
@@ -363,10 +364,10 @@ func TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 		store:      store.store(),
 		reconciler: newRegistryReconciler(routed, client),
 		runtime: &materializer{
-			mirror: intmetadata.NewMirror(routed),
+			Mirror: intmetadata.NewMirror(routed),
 
-			executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") },
-			lookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
+			Executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") },
+			LookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
 				Warn: testWarnWriter{t}},
 		},
 		shell:          "/bin/sh",
@@ -384,9 +385,9 @@ func TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 		exactClient := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 		create.reconciler = newRegistryReconcilerWithRoute(exact, exactClient, route)
 		// Keep the reconciler off the real $HOME Project discovery.
-		create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
+		create.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
 		create.runtime.Runner = exact
-		create.runtime.mirror = intmetadata.NewMirror(exact)
+		create.runtime.Mirror = intmetadata.NewMirror(exact)
 		create.runtime.Sessions = exactClient
 		create.runtime.Target = route.Target
 		create.runtime.ExpectedSocketPath = route.ExpectedSocketPath

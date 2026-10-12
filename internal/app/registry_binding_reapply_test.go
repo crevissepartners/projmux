@@ -163,7 +163,7 @@ func TestASingleReconcileReattachesADriftedRegistryToItsLiveSession(t *testing.T
 	window.name = "zsh"
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 	windowIdentityBefore := make(map[string]coremetadata.ObjectMeta, len(registry.Windows))
 	for _, stored := range registry.Windows {
@@ -171,7 +171,7 @@ func TestASingleReconcileReattachesADriftedRegistryToItsLiveSession(t *testing.T
 	}
 	reservationsBefore := slices.Clone(registry.NameReservations)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -228,18 +228,18 @@ func TestReattachingADriftedRegistryIsIdempotent(t *testing.T) {
 	session.windows[0].name = "zsh"
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 	mutator := fixtureMutator()
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	afterFirst := registry.Clone()
 	tmuxAfterFirst := tmux.state()
 	tmux.calls = nil
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if !reflect.DeepEqual(registry, afterFirst) {
@@ -306,13 +306,13 @@ func TestBindingReapplyRefusesEverySessionItCannotResolveToExactlyOneProject(t *
 			window := session.windows[0]
 
 			reconciler := newTestReconciler(tmux, []string{root})
-			reconciler.observeLegacy = unanchoredObservation(tt.sessionName, session)
+			reconciler.ObserveLegacy = unanchoredObservation(tt.sessionName, session)
 			registry := driftedRegistry(t, root)
 			if tt.mutate != nil {
 				tt.mutate(&registry, root)
 			}
 
-			if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+			if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
 			if got := window.opts[tmuxopts.WindowUID]; got != "" {
@@ -344,7 +344,7 @@ func TestBindingReapplyNeverMovesAnObjectBetweenProjects(t *testing.T) {
 	reconciler := newTestReconciler(tmux, []string{alphaRoot, betaRoot})
 	alphaObserve := unanchoredObservation(driftedSessionName, alphaSession)
 	betaObserve := unanchoredObservation("repos-beta", betaSession)
-	reconciler.observeLegacy = func(ctx context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+	reconciler.ObserveLegacy = func(ctx context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 		if name == "repos-beta" {
 			return betaObserve(ctx, name)
 		}
@@ -385,7 +385,7 @@ func TestBindingReapplyNeverMovesAnObjectBetweenProjects(t *testing.T) {
 		t.Fatalf("two-Project fixture is not a valid registry: %v", err)
 	}
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -421,10 +421,10 @@ func TestBindingReapplyLeavesAForeignUIDAlone(t *testing.T) {
 	window.opts[tmuxopts.WindowUID] = "win-from-another-machine"
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if got := window.opts[tmuxopts.WindowUID]; got != "win-from-another-machine" {
@@ -458,10 +458,10 @@ func TestBindingReapplyNeverStealsABindingFromAnotherLiveWindow(t *testing.T) {
 	session.windows = append(session.windows, bound)
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if got := bound.opts[tmuxopts.WindowUID]; got != "win-first" {
@@ -489,10 +489,10 @@ func TestReconcileToleratesABindingWriteThatFails(t *testing.T) {
 	tmux.failAlways = true
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("a failed binding write failed the whole reconcile: %v", err)
 	}
 	if got := session.windows[0].opts[tmuxopts.WindowUID]; got != "" {

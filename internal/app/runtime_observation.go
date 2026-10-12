@@ -43,8 +43,6 @@ import (
 //     "nothing is live", which is what is actually true of a machine with no
 //     tmux server.
 
-
-
 // runtimeLookup returns the invocation's live-tmux observation. It is memoized,
 // so a route that resolves several times -- delete's per-ref unmatched probe,
 // for one -- still observes the machine exactly once and judges every match
@@ -95,8 +93,6 @@ func tmuxRuntimeLookup(inventory liveRuntimeInventory) runtimeLookup {
 		return observeRuntime(context.Background(), inventory)
 	})
 }
-
-
 
 // observation resolves a possibly-nil lookup into a snapshot. A nil lookup is
 // the empty observation, which is the same fail-closed reading a failed query

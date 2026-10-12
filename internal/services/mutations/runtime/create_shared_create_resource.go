@@ -1,28 +1,16 @@
 package runtime
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 import (
-	"cmp"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
-	"io"
-	"slices"
-	"strings"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/cli"
-	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
-	"github.com/crevissepartners/projmux/internal/core/selector"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
-// createOperation is one create body, run inside the registry transaction.
-type createOperation func(
+// CreateOperation is one create body, run inside the registry transaction.
+type CreateOperation func(
 	ctx context.Context,
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
@@ -30,164 +18,164 @@ type createOperation func(
 	ledger *RuntimeLedger,
 ) error
 
-type createPreReconcile func(
+type CreatePreReconcile func(
 	ctx context.Context,
 	working coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	operationID string,
-) (liveSessionIdentity, error)
+) (LiveSessionIdentity, error)
 
-// operationClock is the clock the transaction ledger's create-operation marker
+// OperationClock is the Clock the transaction ledger's create-operation marker
 // is stamped from. Production wires time.Now; a nil seam falls back to it.
-func (c *createCommand) operationClock() func() time.Time {
-	if c == nil || c.now == nil {
+func (c *CreateTransaction) OperationClock() func() time.Time {
+	if c == nil || c.Now == nil {
 		return time.Now
 	}
-	return c.now
+	return c.Now
 }
 
-// createKindUnrecorded is the kind of a route that runs through transact but
+// CreateKindUnrecorded is the kind of a route that runs through Transact but
 // is not a create -- the generated Window rename. It writes no create.outcome.
-const createKindUnrecorded diagnostics.CreateKind = ""
+const CreateKindUnrecorded CreateKind = ""
 
-// createOutcomeClock is the clock create.outcome timings are measured on.
-func (c *createCommand) createOutcomeClock() func() time.Time {
-	if c == nil || c.outcomeClock == nil {
+// CreateOutcomeClock is the Clock create.outcome timings are measured on.
+func (c *CreateTransaction) CreateOutcomeClock() func() time.Time {
+	if c == nil || c.OutcomeClock == nil {
 		return time.Now
 	}
-	return c.outcomeClock
+	return c.OutcomeClock
 }
 
-// createLockSpan measures how long one transaction held the Registry lock:
+// CreateLockSpan measures how long one transaction Held the Registry lock:
 // from entering the mutation closure to the Registry update returning, so it
 // covers the closure, the store's own normalize/validate/write, and the unlock,
 // and never the wait for the lock or the Registry read before the closure.
 //
-// The span is also split into the closed create phases. enter opens the guard
-// phase, each mark closes the open phase and opens the next on one clock
-// reading, and leave closes whichever phase is open, so the phases tile the
-// hold exactly. A phase the transaction never reached stays nil. The first
-// supervised child spawn inside the span is stamped too, so leave can report
+// The span is also split into the closed create Phases. Enter opens the guard
+// Phase, each Mark closes the open Phase and opens the next on one Clock
+// reading, and Leave closes whichever Phase is open, so the Phases tile the
+// hold exactly. A Phase the transaction never reached stays nil. The first
+// supervised child spawn inside the span is stamped too, so Leave can report
 // how much of the hold came after it.
 //
 // One span belongs to one transaction and is only touched from the goroutine
 // running it; it travels to the operation through the context, never through
-// the createCommand, which concurrent transactions may share.
-type createLockSpan struct {
-	clock     func() time.Time
-	entered   bool
-	enteredAt time.Time
-	held      *time.Duration
+// the CreateTransaction, which concurrent transactions may share.
+type CreateLockSpan struct {
+	Clock     func() time.Time
+	Entered   bool
+	EnteredAt time.Time
+	Held      *time.Duration
 
-	phase          diagnostics.CreatePhase
-	phaseStartedAt time.Time
-	phases         diagnostics.CreatePhases
+	Phase          CreatePhase
+	PhaseStartedAt time.Time
+	Phases         CreatePhases
 
-	spawned        bool
-	spawnedAt      time.Time
-	spawnToRelease *time.Duration
+	Spawned        bool
+	SpawnedAt      time.Time
+	SpawnToRelease *time.Duration
 }
 
-func (s *createLockSpan) enter() {
-	if !s.entered {
-		s.entered, s.enteredAt = true, s.clock()
-		s.phase, s.phaseStartedAt = diagnostics.CreatePhaseGuard, s.enteredAt
+func (s *CreateLockSpan) Enter() {
+	if !s.Entered {
+		s.Entered, s.EnteredAt = true, s.Clock()
+		s.Phase, s.PhaseStartedAt = CreatePhaseGuard, s.EnteredAt
 	}
 }
 
-// mark closes the open phase and opens next. It is a no-op outside the span.
-func (s *createLockSpan) mark(next diagnostics.CreatePhase) {
-	if s == nil || !s.entered || s.held != nil {
+// Mark closes the open Phase and opens next. It is a no-op outside the span.
+func (s *CreateLockSpan) Mark(next CreatePhase) {
+	if s == nil || !s.Entered || s.Held != nil {
 		return
 	}
-	now := s.clock()
-	s.closePhase(now)
-	s.phase, s.phaseStartedAt = next, now
+	now := s.Clock()
+	s.ClosePhase(now)
+	s.Phase, s.PhaseStartedAt = next, now
 }
 
-func (s *createLockSpan) closePhase(now time.Time) {
-	elapsed := now.Sub(s.phaseStartedAt)
-	if previous := s.phases[s.phase]; previous != nil {
+func (s *CreateLockSpan) ClosePhase(now time.Time) {
+	elapsed := now.Sub(s.PhaseStartedAt)
+	if previous := s.Phases[s.Phase]; previous != nil {
 		elapsed += *previous
 	}
-	s.phases[s.phase] = &elapsed
+	s.Phases[s.Phase] = &elapsed
 }
 
-// markSpawn stamps the first supervised child spawn inside the span.
-func (s *createLockSpan) markSpawn() {
-	if s == nil || !s.entered || s.held != nil || s.spawned {
+// MarkSpawn stamps the first supervised child spawn inside the span.
+func (s *CreateLockSpan) MarkSpawn() {
+	if s == nil || !s.Entered || s.Held != nil || s.Spawned {
 		return
 	}
-	s.spawned, s.spawnedAt = true, s.clock()
+	s.Spawned, s.SpawnedAt = true, s.Clock()
 }
 
-func (s *createLockSpan) leave() {
-	if s.entered {
-		now := s.clock()
-		held := now.Sub(s.enteredAt)
-		s.held = &held
-		s.closePhase(now)
-		if s.spawned {
-			spawnToRelease := now.Sub(s.spawnedAt)
-			s.spawnToRelease = &spawnToRelease
+func (s *CreateLockSpan) Leave() {
+	if s.Entered {
+		now := s.Clock()
+		Held := now.Sub(s.EnteredAt)
+		s.Held = &Held
+		s.ClosePhase(now)
+		if s.Spawned {
+			SpawnToRelease := now.Sub(s.SpawnedAt)
+			s.SpawnToRelease = &SpawnToRelease
 		}
 	}
 }
 
-type createLockSpanKey struct{}
+type CreateLockSpanKey struct{}
 
-// withCreateLockSpan hands the transaction's span to the operation it runs.
-func withCreateLockSpan(ctx context.Context, span *createLockSpan) context.Context {
+// WithCreateLockSpan hands the transaction's span to the operation it runs.
+func WithCreateLockSpan(ctx context.Context, span *CreateLockSpan) context.Context {
 	if span == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, createLockSpanKey{}, span)
+	return context.WithValue(ctx, CreateLockSpanKey{}, span)
 }
 
-// markSupervisedSpawn records, once per transaction, the moment the split
+// MarkSupervisedSpawn records, once per transaction, the moment the split
 // that starts a managed Pane's supervisor returned a Pane: from then on the
 // supervised child is running and will need the Registry lock this
 // transaction still holds. Outside a create transaction it does nothing.
-func markSupervisedSpawn(ctx context.Context) {
-	if span, ok := ctx.Value(createLockSpanKey{}).(*createLockSpan); ok {
-		span.markSpawn()
+func MarkSupervisedSpawn(ctx context.Context) {
+	if span, ok := ctx.Value(CreateLockSpanKey{}).(*CreateLockSpan); ok {
+		span.MarkSpawn()
 	}
 }
 
-// transact runs one create operation and records its create.outcome.
+// Transact runs one create operation and records its create.outcome.
 //
 // The record is measurement only. It is appended after the whole transaction
 // returned -- the Registry lock released, rollback and lease clear done -- and a
 // journal failure never reaches the create's result. kind names the create;
-// createKindUnrecorded records nothing.
-func (c *createCommand) transact(kind diagnostics.CreateKind, op createOperation, guards ...createPreReconcile) error {
-	return c.transactAdmitted(kind, nil, op, guards...)
+// CreateKindUnrecorded records nothing.
+func (c *CreateTransaction) Transact(kind CreateKind, op CreateOperation, guards ...CreatePreReconcile) error {
+	return c.TransactAdmitted(kind, nil, op, guards...)
 }
 
-func (c *createCommand) transactAdmitted(kind diagnostics.CreateKind, admission func(coremetadata.Registry) error, op createOperation, guards ...createPreReconcile) error {
+func (c *CreateTransaction) TransactAdmitted(kind CreateKind, admission func(coremetadata.Registry) error, op CreateOperation, guards ...CreatePreReconcile) error {
 	if c == nil {
-		return errCreateRoutesNotConfigured
+		return ErrCreateRoutesNotConfigured
 	}
-	clock := c.createOutcomeClock()
-	started := clock()
-	lock := createLockSpan{clock: clock}
-	err := c.runTransaction(&lock, admission, op, guards...)
-	if kind != createKindUnrecorded {
-		result := diagnostics.LifecycleSuccess
+	Clock := c.CreateOutcomeClock()
+	started := Clock()
+	lock := CreateLockSpan{Clock: Clock}
+	err := c.RunTransaction(&lock, admission, op, guards...)
+	if kind != CreateKindUnrecorded && c.Outcomes != nil {
+		result := "success"
 		if err != nil {
-			result = diagnostics.LifecycleError
+			result = "error"
 		}
-		c.outcomes.Record(diagnostics.CreateOutcome{
-			Kind: kind, Result: result, Duration: clock().Sub(started), LockHeld: lock.held,
-			Phases: lock.phases, SpawnToRelease: lock.spawnToRelease,
+		c.Outcomes.Record(CreateOutcome{
+			Kind: kind, Result: result, Duration: Clock().Sub(started), LockHeld: lock.Held,
+			Phases: lock.Phases, SpawnToRelease: lock.SpawnToRelease,
 		})
 	}
 	return err
 }
 
-var errCreateRoutesNotConfigured = errors.New("create: the resource-backed create routes are not configured")
+var ErrCreateRoutesNotConfigured = errors.New("create: the resource-backed create routes are not configured")
 
-// runTransaction runs one create operation under the declared transaction
+// RunTransaction runs one create operation under the declared transaction
 // order: full preflight -> operation id -> created-resource ledger -> metadata
 // mutation -> runtime mutation -> commit.
 //
@@ -197,24 +185,24 @@ var errCreateRoutesNotConfigured = errors.New("create: the resource-backed creat
 // a pre-create hook refusal, a stale anchor, a tmux error -- leaves the registry
 // file byte-identical. The tmux objects the body created are undone from the
 // runtime ledger, which is the half no transaction can roll back for us.
-func (c *createCommand) runTransaction(lock *createLockSpan, admission func(coremetadata.Registry) error, op createOperation, guards ...createPreReconcile) error {
-	if c == nil || c.store == nil || c.store.update == nil || c.runtime == nil || c.reconciler == nil {
-		return errCreateRoutesNotConfigured
+func (c *CreateTransaction) RunTransaction(lock *CreateLockSpan, admission func(coremetadata.Registry) error, op CreateOperation, guards ...CreatePreReconcile) error {
+	if c == nil || c.Store == nil || c.Store.Update == nil || c.Runtime == nil || c.Reconciler == nil {
+		return ErrCreateRoutesNotConfigured
 	}
 	// The span rides the context so the operation can stamp its supervised
-	// spawn without the shared createCommand carrying per-transaction state.
-	ctx := withCreateLockSpan(context.Background(), lock)
+	// spawn without the shared CreateTransaction carrying per-transaction state.
+	ctx := WithCreateLockSpan(context.Background(), lock)
 	// Parsing and scope resolution have already succeeded before a resource
 	// handler reaches the transaction. Bind the exact app-owned route here so
 	// malformed argv keeps its stable usage failure and no environment probe can
 	// preempt it, while reconciliation and every later write share one route.
 	if admission != nil {
-		read := c.store.snapshot
+		read := c.Store.Snapshot
 		if read == nil {
-			read = c.store.load
+			read = c.Store.Load
 		}
 		if read == nil {
-			return errCreateRoutesNotConfigured
+			return ErrCreateRoutesNotConfigured
 		}
 		registry, err := read()
 		if err != nil {
@@ -228,44 +216,44 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 		return err
 	}
 
-	operationID, err := c.newOperationID()
+	operationID, err := c.NewOperationID()
 	if err != nil {
 		return err
 	}
-	ledger := NewRuntimeLedgerAt(operationID, c.operationClock()())
+	ledger := NewRuntimeLedgerAt(operationID, c.OperationClock()())
 	// One transaction is one identity-reuse scope. The first route guard still
 	// proves the exact server against tmux; later guards for the same tuple
 	// reuse that proof instead of re-reading it under the registry lock. The
 	// scope closes before rollback, so unwinding re-proves identity in full.
-	c.runtime.openRouteIdentityCache(operationID)
-	defer c.runtime.closeRouteIdentityCache()
+	c.Runtime.OpenRouteIdentityCache(operationID)
+	defer c.Runtime.CloseRouteIdentityCache()
 	// The read-only admission above refuses process anchors before transport.
 	// After it passes, preserve the tmux default-read order outside the lock.
 	// Admission is repeated against locked bytes before reconciliation or writes.
-	clearDefaults := c.runtime.prefetchPaneDefaults(ctx)
+	clearDefaults := c.Runtime.PrefetchPaneDefaults(ctx)
 	defer clearDefaults()
 
-	guard := combineCreateGuards(guards)
+	guard := CombineCreateGuards(guards)
 
-	_, err = c.store.update(func(working *coremetadata.Registry) error {
-		lock.enter()
+	_, err = c.Store.Update(func(working *coremetadata.Registry) error {
+		lock.Enter()
 		// Whatever the closure returns, what follows it -- normalize, validate,
-		// the durable write, the unlock -- is the store-write phase.
-		defer lock.mark(diagnostics.CreatePhaseStoreWrite)
+		// the durable write, the unlock -- is the store-write Phase.
+		defer lock.Mark(CreatePhaseStoreWrite)
 		if admission != nil {
 			if err := admission(working.Clone()); err != nil {
 				return err
 			}
 		}
-		return c.reconcileCreateOperation(ctx, working, lock, operationID, ledger, guard, op)
+		return c.ReconcileCreateOperation(ctx, working, lock, operationID, ledger, guard, op)
 	})
-	lock.leave()
+	lock.Leave()
 	if err != nil {
 		// Rollback runs after the scope is closed, so every guard of the
 		// unwind -- and of the lease clear after it -- proves identity in full.
-		c.runtime.closeRouteIdentityCache()
-		c.runtime.Rollback(ctx, ledger)
-		c.runtime.ClearCreateOperations(ctx, ledger)
+		c.Runtime.CloseRouteIdentityCache()
+		c.Runtime.Rollback(ctx, ledger)
+		c.Runtime.ClearCreateOperations(ctx, ledger)
 		return MapMetadataError(err)
 	}
 	// On success the lease clear is the transaction's last guarded write and
@@ -273,15 +261,15 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 	// post-effect proof of the previous guarded write), which no write of ours
 	// has followed. Its own guarded-write seam drops that proof after the
 	// write, so the post-effect observation proves identity again.
-	c.runtime.ClearCreateOperations(ctx, ledger)
-	c.runtime.closeRouteIdentityCache()
+	c.Runtime.ClearCreateOperations(ctx, ledger)
+	c.Runtime.CloseRouteIdentityCache()
 	return nil
 }
 
-// reconcileCreateOperation retains the preflight proof only until a guarded
+// ReconcileCreateOperation retains the preflight proof only until a guarded
 // write occurs, then re-proves both reconciliation and commit authority.
-func (c *createCommand) reconcileCreateOperation(ctx context.Context, working *coremetadata.Registry, lock *createLockSpan, operationID string, ledger *RuntimeLedger, guard createPreReconcile, op createOperation) error {
-	preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
+func (c *CreateTransaction) ReconcileCreateOperation(ctx context.Context, working *coremetadata.Registry, lock *CreateLockSpan, operationID string, ledger *RuntimeLedger, guard CreatePreReconcile, op CreateOperation) error {
+	preflight, err := guard(ctx, working.Clone(), c.Store.Mutator(), operationID)
 	if err != nil {
 		return err
 	}
@@ -289,52 +277,52 @@ func (c *createCommand) reconcileCreateOperation(ctx context.Context, working *c
 	// the same Registry before any write of ours: it reuses the preflight
 	// answer while no guarded write has run since. The second pass follows
 	// the create's own writes and always asks tmux again.
-	preflightWrites := c.runtime.GuardedWrites
-	firstPass := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
-		if c.runtime.GuardedWrites == preflightWrites {
+	preflightWrites := c.Runtime.GuardedWrites
+	firstPass := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (LiveSessionIdentity, error) {
+		if c.Runtime.GuardedWrites == preflightWrites {
 			return preflight, nil
 		}
 		return guard(ctx, working, mutator, operationID)
 	}
-	lock.mark(diagnostics.CreatePhaseFirstReconcile)
-	if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, firstPass); err != nil {
+	lock.Mark(CreatePhaseFirstReconcile)
+	if err := c.Reconciler.ReconcileGuarded(ctx, working, c.Store.Mutator(), operationID, firstPass); err != nil {
 		return err
 	}
-	lock.mark(diagnostics.CreatePhaseOperation)
-	if err := op(ctx, working, c.store.mutator(), operationID, ledger); err != nil {
+	lock.Mark(CreatePhaseOperation)
+	if err := op(ctx, working, c.Store.Mutator(), operationID, ledger); err != nil {
 		return err
 	}
-	lock.mark(diagnostics.CreatePhaseSecondReconcile)
+	lock.Mark(CreatePhaseSecondReconcile)
 	// The lifecycle hook caused by our own tmux mutation deliberately
 	// defers while this transaction owns the registry lock. Re-run the same
 	// reconciler after all explicit mirrors are in place so the committed
 	// status and the live tmux projection agree before create returns.
-	if err := c.reconciler.reconcileGuarded(ctx, working, c.store.mutator(), operationID, guard); err != nil {
+	if err := c.Reconciler.ReconcileGuarded(ctx, working, c.Store.Mutator(), operationID, guard); err != nil {
 		return err
 	}
-	lock.mark(diagnostics.CreatePhaseReprove)
+	lock.Mark(CreatePhaseReprove)
 	// Any identity reused inside this transaction is proved once more
 	// before commit, so a server that drifted after the first proof rolls
 	// the whole operation back instead of committing on stale evidence.
-	return c.runtime.reproveReusedRouteIdentity(ctx)
+	return c.Runtime.ReproveReusedRouteIdentity(ctx)
 }
 
-// combineCreateGuards preserves each guard's private Registry snapshot and
+// CombineCreateGuards preserves each guard's private Registry snapshot and
 // refuses conflicting exact session selections before reconciliation.
-func combineCreateGuards(guards []createPreReconcile) createPreReconcile {
-	return func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
-		var selected liveSessionIdentity
+func CombineCreateGuards(guards []CreatePreReconcile) CreatePreReconcile {
+	return func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (LiveSessionIdentity, error) {
+		var selected LiveSessionIdentity
 		for _, candidate := range guards {
 			if candidate != nil {
 				identity, err := candidate(ctx, working.Clone(), mutator, operationID)
 				if err != nil {
-					return liveSessionIdentity{}, err
+					return LiveSessionIdentity{}, err
 				}
 				if selected.Name != "" && identity.Name != "" && selected.Name != identity.Name {
-					return liveSessionIdentity{}, fmt.Errorf("create: ownership guards selected different tmux sessions %q and %q", selected.Name, identity.Name)
+					return LiveSessionIdentity{}, fmt.Errorf("create: ownership guards selected different tmux sessions %q and %q", selected.Name, identity.Name)
 				}
 				if selected.ID != "" && identity.ID != "" && selected.ID != identity.ID {
-					return liveSessionIdentity{}, fmt.Errorf("create: ownership guards selected different tmux session ids %q and %q", selected.ID, identity.ID)
+					return LiveSessionIdentity{}, fmt.Errorf("create: ownership guards selected different tmux session ids %q and %q", selected.ID, identity.ID)
 				}
 				if identity.Name != "" {
 					selected = identity
@@ -344,4 +332,11 @@ func combineCreateGuards(guards []createPreReconcile) createPreReconcile {
 		return selected, nil
 
 	}
+}
+
+func (c *CreateTransaction) ensureRuntimeRoute(ctx context.Context) error {
+	if c.EnsureRuntimeRoute == nil {
+		return nil
+	}
+	return c.EnsureRuntimeRoute(ctx)
 }

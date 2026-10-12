@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -10,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -371,34 +371,34 @@ func TestPaneDefaultsPrefetchAnswersOnlyForItsSocket(t *testing.T) {
 
 	ctx := context.Background()
 	runner := &paneDefaultsRunner{shell: "/bin/fish"}
-	runtime := &materializer{lookupEnv: func(string) string { return "" }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: runner, ExpectedSocketPath: routeSequenceSocket}}
-	clearMemo := runtime.prefetchPaneDefaults(ctx)
+	runtime := &materializer{LookupEnv: func(string) string { return "" }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: runner, ExpectedSocketPath: routeSequenceSocket}}
+	clearMemo := runtime.PrefetchPaneDefaults(ctx)
 	if len(runner.execs) != 1 {
 		t.Fatalf("prefetch issued %d tmux execs, want 1", len(runner.execs))
 	}
 	runner.shell = "/bin/changed"
-	resolved, err := runtime.defaultPaneCommand(ctx)
-	if err != nil || !slices.Equal(resolved.argv, []string{"/bin/fish"}) || len(runner.execs) != 1 {
-		t.Fatalf("memoized launch = %v, %v after %d execs; want the prefetched /bin/fish and no read", resolved.argv, err, len(runner.execs))
+	resolved, err := runtime.DefaultPaneCommand(ctx)
+	if err != nil || !slices.Equal(resolved.Argv, []string{"/bin/fish"}) || len(runner.execs) != 1 {
+		t.Fatalf("memoized launch = %v, %v after %d execs; want the prefetched /bin/fish and no read", resolved.Argv, err, len(runner.execs))
 	}
 
 	runtime.ExpectedSocketPath = "/tmp/fake-tmux/rebound"
-	resolved, err = runtime.defaultPaneCommand(ctx)
-	if err != nil || !slices.Equal(resolved.argv, []string{"/bin/changed"}) || len(runner.execs) != 3 {
-		t.Fatalf("launch after the route changed = %v, %v after %d execs; want two fresh reads", resolved.argv, err, len(runner.execs))
+	resolved, err = runtime.DefaultPaneCommand(ctx)
+	if err != nil || !slices.Equal(resolved.Argv, []string{"/bin/changed"}) || len(runner.execs) != 3 {
+		t.Fatalf("launch after the route changed = %v, %v after %d execs; want two fresh reads", resolved.Argv, err, len(runner.execs))
 	}
 	clearMemo()
-	if runtime.paneDefaults != nil {
+	if runtime.PaneDefaults != nil {
 		t.Fatal("the transaction end left the pane-defaults memo in place")
 	}
 
 	failing := &paneDefaultsRunner{err: errors.New("injected tmux failure")}
 	runtime = &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: failing, ExpectedSocketPath: routeSequenceSocket}}
-	defer runtime.prefetchPaneDefaults(ctx)()
-	if runtime.paneDefaults != nil {
+	defer runtime.PrefetchPaneDefaults(ctx)()
+	if runtime.PaneDefaults != nil {
 		t.Fatal("a failed prefetch left a memo")
 	}
-	if _, err := runtime.defaultPaneCommand(ctx); err == nil || err.Error() != "read tmux default-shell: injected tmux failure" {
+	if _, err := runtime.DefaultPaneCommand(ctx); err == nil || err.Error() != "read tmux default-shell: injected tmux failure" {
 		t.Fatalf("launch after a failed prefetch = %v, want today's in-lock read error", err)
 	}
 }

@@ -69,11 +69,11 @@ func TestReconcileRegistersAnOrphanLivePaneAndMirrorsItsUID(t *testing.T) {
 	orphan := addLivePane(tmux, window, "claude", nil)
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 	mutator := fixtureMutator()
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestReconcileRegistersAnOrphanLivePaneAndMirrorsItsUID(t *testing.T) {
 	// Claim inside the create path this is where a duplicate would appear.
 	afterFirst := registry.Clone()
 	tmuxAfterFirst := tmux.state()
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if !reflect.DeepEqual(registry, afterFirst) {
@@ -281,14 +281,14 @@ func TestOrphanPaneRegistrationRulesAndRefusals(t *testing.T) {
 			tt.arrange(tmux, session)
 
 			reconciler := newTestReconciler(tmux, []string{root})
-			reconciler.observeLegacy = unanchoredObservation(sessionName, session)
+			reconciler.ObserveLegacy = unanchoredObservation(sessionName, session)
 			registry := driftedRegistry(t, root)
 			if tt.mutate != nil {
 				tt.mutate(&registry, root)
 			}
 			before := registry.Clone()
 
-			if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+			if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
 
@@ -339,7 +339,7 @@ func TestOrphanPaneRegistrationNeverCrossesAProjectBoundary(t *testing.T) {
 	reconciler := newTestReconciler(tmux, []string{alphaRoot, betaRoot})
 	alphaObserve := unanchoredObservation(driftedSessionName, alphaSession)
 	betaObserve := unanchoredObservation("repos-beta", betaSession)
-	reconciler.observeLegacy = func(ctx context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+	reconciler.ObserveLegacy = func(ctx context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 		if name == "repos-beta" {
 			return betaObserve(ctx, name)
 		}
@@ -381,7 +381,7 @@ func TestOrphanPaneRegistrationNeverCrossesAProjectBoundary(t *testing.T) {
 	}
 	before := registry.Clone()
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -426,11 +426,11 @@ func TestOrphanPaneRegistrationReIdentifiesAndDeletesNothing(t *testing.T) {
 	addLivePane(tmux, session.windows[0], "claude", nil)
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 	before := identitySnapshot(registry)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	after := identitySnapshot(registry)
@@ -487,7 +487,7 @@ func TestReconcileToleratesAnOrphanPaneItCannotRegister(t *testing.T) {
 	orphan := addLivePane(tmux, session.windows[0], "claude", nil)
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
 	mutator := fixtureMutator()
@@ -498,7 +498,7 @@ func TestReconcileToleratesAnOrphanPaneItCannotRegister(t *testing.T) {
 		return coremetadata.NewUID(kind)
 	}
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("a failed orphan registration failed the whole reconcile: %v", err)
 	}
 	if len(registry.Panes) != 2 {

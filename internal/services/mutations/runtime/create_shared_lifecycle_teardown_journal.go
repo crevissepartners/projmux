@@ -4,16 +4,15 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
-// lifecycleWindowUnlinkedWindow resolves the exact `$N/@N` window-unlinked hook
+// LifecycleWindowUnlinkedWindow resolves the exact `$N/@N` window-unlinked hook
 // handles to the one Registry Window whose last exact binding carries both and
 // whose owner resolves one managed root session. No match, or more than one,
 // resolves nothing. The handles alone are only a locator: a caller that acts on
 // the Window must still prove it and its Panes absent from the hook server.
-func lifecycleWindowUnlinkedWindow(registry coremetadata.Registry, event lifecycleDirtyEvent) (*coremetadata.Window, bool) {
-	windowID, sessionID := strings.TrimSpace(event.runtimeWindowID), strings.TrimSpace(event.runtimeSessionID)
+func LifecycleWindowUnlinkedWindow(registry coremetadata.Registry, event LifecycleProjectionEvent) (*coremetadata.Window, bool) {
+	windowID, sessionID := strings.TrimSpace(event.RuntimeWindowID), strings.TrimSpace(event.RuntimeSessionID)
 	if windowID == "" || sessionID == "" {
 		return nil, false
 	}
@@ -25,7 +24,7 @@ func lifecycleWindowUnlinkedWindow(registry coremetadata.Registry, event lifecyc
 		}
 		root := candidate.Metadata.OwnerRef
 		if root == nil || (root.Kind != coremetadata.KindProject && root.Kind != coremetadata.KindControlSession) ||
-			lifecycleRootSessionName(registry, *root) == "" {
+			LifecycleRootSessionName(registry, *root) == "" {
 			continue
 		}
 		if window != nil {
@@ -34,4 +33,19 @@ func lifecycleWindowUnlinkedWindow(registry coremetadata.Registry, event lifecyc
 		window = candidate
 	}
 	return window, window != nil
+}
+func LifecycleRootSessionName(registry coremetadata.Registry, root coremetadata.OwnerRef) string {
+	switch root.Kind {
+	case coremetadata.KindProject:
+		project, ok := registry.Project(root.UID)
+		if ok && project.Status.Session != nil {
+			return strings.TrimSpace(project.Status.Session.Name)
+		}
+	case coremetadata.KindControlSession:
+		control, ok := registry.ControlSession(root.UID)
+		if ok {
+			return strings.TrimSpace(control.Spec.Session)
+		}
+	}
+	return ""
 }

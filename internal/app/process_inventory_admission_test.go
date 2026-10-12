@@ -183,9 +183,9 @@ func TestProcessConvergencePlanExcludesTmuxBindingAndBootstrap(t *testing.T) {
 	stored, _ := store.registry.Pane(pane.Metadata.UID)
 	stored.Status.Activation.Generation = "process-generation"
 	process := resourcegraph.ProcessInventory{Declared: []resourcegraph.ProcessKey{{Host: "unavailable-host", Pane: pane.Metadata.UID, Generation: "process-generation"}}}
-	reconciler := &registryReconciler{processes: process}
+	reconciler := &registryReconciler{Processes: process}
 	matcher := coremetadata.NewBindingMatcher(coremetadata.RuntimeObservation{})
-	uid, _, ok := reconciler.paneBindingFor(&store.registry, store.mutator(), "bind", window.Metadata.UID, coremetadata.LegacyPane{UID: pane.Metadata.UID}, matcher)
+	uid, _, ok := reconciler.PaneBindingFor(&store.registry, store.mutator(), "bind", window.Metadata.UID, coremetadata.LegacyPane{UID: pane.Metadata.UID}, matcher)
 	if ok || uid != "" {
 		t.Fatalf("process binding=%s %v", uid, ok)
 	}

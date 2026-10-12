@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -15,8 +13,12 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -194,7 +196,7 @@ func TestRealTmuxRegistryContinueFieldFidelity(t *testing.T) {
 		// hook configuration.
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			client := inttmux.NewClient(exact, inttmux.WithSocketName(logical))
-			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: client, Target: target, Warn: warn}}
+			return &materializer{Mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: client, Target: target, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),

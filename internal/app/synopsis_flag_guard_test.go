@@ -480,7 +480,11 @@ func (e *synopsisFlagEngine) identValue(name string, fr *synopsisFrame, depth in
 	}
 	pkg := e.eval.pkgOf[fr.file]
 	if c, ok := e.eval.consts[pkg][name]; ok {
-		return e.value(c, e.newFrame(fr.file, nil, nil), depth+1)
+		file := e.eval.constFiles[pkg][name]
+		if file == "" {
+			file = fr.file
+		}
+		return e.value(c, e.newFrame(file, nil, nil), depth+1)
 	}
 	if v, ok := e.vars[pkg][name]; ok {
 		return e.value(v, e.newFrame(fr.file, nil, nil), depth+1)
@@ -503,6 +507,20 @@ func (e *synopsisFlagEngine) isLocal(name string, fr *synopsisFrame) bool {
 
 func (e *synopsisFlagEngine) selectorValue(x *ast.SelectorExpr, fr *synopsisFrame, depth int) synopsisValue {
 	if id, ok := x.X.(*ast.Ident); ok && e.imports[fr.file][id.Name] && !e.isLocal(id.Name, fr) {
+		for _, spec := range e.eval.files[fr.file].Imports {
+			path, _ := strconv.Unquote(spec.Path.Value)
+			local := path[strings.LastIndex(path, "/")+1:]
+			if spec.Name != nil {
+				local = spec.Name.Name
+			}
+			if local != id.Name {
+				continue
+			}
+			if value, ok := e.eval.consts[path][x.Sel.Name]; ok {
+				file := e.eval.constFiles[path][x.Sel.Name]
+				return e.value(value, e.newFrame(file, nil, nil), depth+1)
+			}
+		}
 		return synopsisValue{kind: synopsisSymbol, s: types.ExprString(x)}
 	}
 	sel := types.ExprString(x)
@@ -1722,5 +1740,33 @@ func refuseDelta() error { return usageError("--delta is refused") }
 	}
 	if got := synopsisRefusalProblem("create codex provider", row, usageError("create codex already names the provider; drop --provider")); got != "" {
 		t.Errorf("negative control: a live refusal must pass: %q", got)
+	}
+}
+
+func TestSynopsisResolvesImportedFlagConstantsWithoutScanningServiceRoutes(t *testing.T) {
+	const appPkg = "example.test/app"
+	const servicePkg = "example.test/service"
+	packages := []flagParseGuardPackage{
+		{importPath: appPkg, scan: true, files: []flagParseGuardFile{{name: "synthetic/app.go", src: []byte(`package app
+import shared "example.test/service"
+const name = shared.FlagName
+`)}, {name: "synthetic/caller.go", src: []byte(`package app`)}}},
+		{importPath: servicePkg, scan: false, files: []flagParseGuardFile{{name: "synthetic/service.go", src: []byte(`package service
+const FlagName = "dialogue-reply-only"
+func unrelatedServiceRoute() {}
+`)}}},
+	}
+	evaluator, problems := newFlagSetNameEval(packages)
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	engine := newSynopsisFlagEngine(evaluator)
+	frame := engine.newFrame("synthetic/caller.go", nil, nil)
+	value := engine.identValue("name", frame, 0)
+	if value.kind != synopsisString || value.s != "dialogue-reply-only" {
+		t.Fatalf("imported flag constant = %+v", value)
+	}
+	if len(evaluator.funcs[servicePkg]) != 0 {
+		t.Fatal("service routes entered CLI flag evaluation")
 	}
 }

@@ -5,8 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/core/profile"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/profile"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -543,7 +544,7 @@ func replayTopologyWindowAgents(
 			return nil, err
 		}
 		paneID, splitErr := runtime.SplitPane(ctx, anchorID, defaultPlacement, replay.cwd,
-			runtime.supervisedLaunch(ctx, activation, replay.argv), nil)
+			runtime.SupervisedLaunch(ctx, activation, replay.argv), nil)
 		if paneID != "" {
 			if adoptErr := AdoptCreatedPane(ctx, runtime, paneID, sessionID, windowID, pane, ledger); adoptErr != nil {
 				return nil, errors.Join(splitErr, adoptErr)
@@ -554,7 +555,7 @@ func replayTopologyWindowAgents(
 			return nil, splitErr
 		}
 		bindings[pane.Metadata.UID] = paneID
-		runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)
+		runtime.EqualizeSplitLayout(ctx, anchorID, defaultPlacement)
 		if err := launcher.BindAgentPaneOnRoute(ctx, runtime.Runner, agentPaneBinding{
 			PaneID: paneID, Provider: replay.provider, ContextDir: replay.cwd, Title: replay.title,
 			Topic:          replay.agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],

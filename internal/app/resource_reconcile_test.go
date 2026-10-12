@@ -1019,17 +1019,17 @@ func reconcileFixtureReconciler(root, sessionName string) func(tmuxCommandRunner
 	return func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
 		mirror := intmetadata.NewMirror(runner)
 		return &registryReconciler{
-			discoverRoots: func() ([]string, error) { return []string{root}, nil },
-			liveSessions:  sessions.ExistingSessions,
-			observeLegacy: mirror.ObserveLegacySessionTargets,
-			mirror:        mirror,
-			mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
-			mirrorWindow:  mirror.MirrorWindow,
-			mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+			DiscoverRoots:      func() ([]string, error) { return []string{root}, nil },
+			LiveSessions:       sessions.ExistingSessions,
+			ObserveLegacy:      mirror.ObserveLegacySessionTargets,
+			Mirror:             mirror,
+			MirrorProjectWrite: func(context.Context, string, coremetadata.Project) error { return nil },
+			MirrorWindowWrite:  mirror.MirrorWindow,
+			MirrorPaneWrite: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
 				return mirror.MirrorPane(ctx, target, pane)
 			},
-			shell: "/bin/zsh",
-			sessionNameFor: func(string) string {
+			Shell: "/bin/zsh",
+			SessionNameFor: func(string) string {
 				return sessionName
 			},
 		}
@@ -1758,9 +1758,9 @@ func TestResourceReconcileRefusesAmbiguousRootlessProjectScope(t *testing.T) {
 		newReconciler: func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
 			mirror := intmetadata.NewMirror(runner)
 			return &registryReconciler{
-				discoverRoots: func() ([]string, error) { return nil, nil }, liveSessions: sessions.ExistingSessions,
-				observeLegacy: mirror.ObserveLegacySessionTargets, mirror: mirror, shell: "/bin/zsh",
-				sessionNameFor: func(string) string { return "shared" },
+				DiscoverRoots: func() ([]string, error) { return nil, nil }, LiveSessions: sessions.ExistingSessions,
+				ObserveLegacy: mirror.ObserveLegacySessionTargets, Mirror: mirror, Shell: "/bin/zsh",
+				SessionNameFor: func(string) string { return "shared" },
 			}
 		},
 	}

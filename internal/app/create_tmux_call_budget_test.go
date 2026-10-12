@@ -162,7 +162,7 @@ func newCallBudgetFixtureWith(t *testing.T, others int, staleMirror bool) callBu
 	create := newCreateCommandOn(tmux, lookupEnv)
 	create.store = store.store()
 	create.runtime.Warn = testWarnWriter{t}
-	create.runtime.executable = func() (string, error) { return testSupervisorBinary, nil }
+	create.runtime.Executable = func() (string, error) { return testSupervisorBinary, nil }
 	create.sessionNameFor = filepath.Base
 	create.newGeneration = testGenerationSequence()
 	create.newOperationID = func() (string, error) { return "op-test", nil }
@@ -176,8 +176,8 @@ func newCallBudgetFixtureWith(t *testing.T, others int, staleMirror bool) callBu
 			if err := bind(ctx); err != nil {
 				return err
 			}
-			create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-			create.reconciler.sessionNameFor = filepath.Base
+			create.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
+			create.reconciler.SessionNameFor = filepath.Base
 			return nil
 		}
 	}

@@ -214,8 +214,6 @@ func lifecycleWindowUnlinkAwaitingSubject(registry coremetadata.Registry, event 
 	return subject
 }
 
-
-
 // awaitingTeardownSubject is the journal subject of an awaiting unlink plan and
 // the zero subject for every other plan.
 func (p exactLifecycleCascadePlan) awaitingTeardownSubject() lifecycleTeardownSubject {
