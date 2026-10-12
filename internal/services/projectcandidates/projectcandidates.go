@@ -58,6 +58,9 @@ func (s Service) List(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve home directory: %w", err)
 	}
+	if home == "" {
+		return Result{}, fmt.Errorf("resolve home directory: home directory is empty")
+	}
 	home = filepath.Clean(home)
 	stored, err := pins.NewDefaultStore(paths).Load()
 	if err != nil {

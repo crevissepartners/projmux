@@ -60,3 +60,16 @@ func TestSDKProjectCandidatesCapturedInputsAndRefusal(t *testing.T) {
 		t.Fatalf("typed refusal: %v", err)
 	}
 }
+
+func TestSDKProjectCandidatesMissingHomeDoesNotUseWorkingDirectory(t *testing.T) {
+	t.Setenv("HOME", "")
+	root := t.TempDir()
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.ListProjectCandidates(context.Background())
+	if err == nil || len(got.Candidates) != 0 {
+		t.Fatalf("missing HOME discovered working directory: %+v %v", got, err)
+	}
+}
