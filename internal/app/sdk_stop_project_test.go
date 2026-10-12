@@ -201,6 +201,58 @@ func TestStopProjectSDKRunningProcessAgentsZeroWrite(t *testing.T) {
 	}
 }
 
+func TestStopProjectSDKCLIServiceProcessAgentSelectionParity(t *testing.T) {
+	for _, evidence := range []string{"both", "activation-only", "session-only"} {
+		t.Run(evidence, func(t *testing.T) {
+			fixture := freshStartFixtureStore(t)
+			activateRuntimeStopAgent(t, fixture, "gen-tmux")
+			agentUID, paneUID := addProjectStopProcessFixture(t, fixture)
+			pane, _ := fixture.registry.Pane(paneUID)
+			if evidence == "activation-only" {
+				pane.Status.ProcessSession = nil
+			}
+			if evidence == "session-only" {
+				pane.Status.Activation = metadata.PaneActivation{}
+			}
+			// All three paths observe this same mixed Registry snapshot.
+			state, _, client := renameState(t, fixture.registry)
+			before := projectRegistryBytes(t, state)
+			_, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: filepath.Join(t.TempDir(), "missing")})
+			var refusal *projmux.Refusal
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectHasRunningProcessAgents {
+				t.Fatal(err)
+			}
+			cliTargets := runningProjectProcessAgents(fixture.registry, "prj-alpha")
+			if len(cliTargets) != 1 || cliTargets[0].agent.Metadata.UID != agentUID {
+				t.Fatalf("CLI targets=%+v", cliTargets)
+			}
+			for _, agent := range fixture.registry.Agents {
+				if agent.Metadata.UID != "agt-alpha-codex" && agent.Metadata.UID != agentUID {
+					continue
+				}
+				selected := agent.Metadata.UID == cliTargets[0].agent.Metadata.UID
+				if strings.Contains(refusal.Error(), agent.Metadata.UID) != selected {
+					t.Fatalf("SDK/CLI selection differs for %s: %v", agent.Metadata.UID, refusal)
+				}
+			}
+			interruptions, err := recordProjectStopInterruptions(fixture.store(), "prj-alpha", "op-selection-parity")
+			if err != nil || len(interruptions) != 1 || interruptions[0].AgentUID != "agt-alpha-codex" {
+				t.Fatalf("service tmux selections=%+v err=%v", interruptions, err)
+			}
+			if err := mutationruntime.VerifyProjectStopInterruptions(stopServiceStore(fixture.store()), "prj-alpha", interruptions, "op-selection-parity"); err != nil {
+				t.Fatal(err)
+			}
+			processAgent, _ := fixture.registry.Agent(cliTargets[0].agent.Metadata.UID)
+			if processAgent.Status.Phase != metadata.PhaseRunning || processAgent.Status.LastTermination != nil {
+				t.Fatal("service failed to exclude CLI/SDK process selection")
+			}
+			if before != projectRegistryBytes(t, state) {
+				t.Fatal("SDK refusal wrote Registry")
+			}
+		})
+	}
+}
+
 func TestStopProjectSDKWithoutRunningProcessAgents(t *testing.T) {
 	for _, mode := range []string{"offline-process", "other-project-process"} {
 		t.Run(mode, func(t *testing.T) {

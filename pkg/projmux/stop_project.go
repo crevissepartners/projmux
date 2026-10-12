@@ -80,9 +80,7 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 			continue
 		}
 		pane, ok := reg.Pane(agent.Status.PaneRef)
-		// Match RecordProjectStopInterruptions: an empty activation kind alone
-		// is not process evidence, and desired runtime is not observed runtime.
-		if ok && (pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != metadata.RuntimeTmux)) {
+		if ok && mutationruntime.IsNonTmuxRuntimePane(*pane) {
 			runningProcessAgents = append(runningProcessAgents, fmt.Sprintf("%s (uid:%s)", agent.Metadata.Name, agent.Metadata.UID))
 		}
 	}

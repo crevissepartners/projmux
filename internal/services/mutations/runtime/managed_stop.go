@@ -308,6 +308,15 @@ func RecordManagedRuntimeStopSessionNotLive(store *StopStore, target ManagedRunt
 	return nil
 }
 
+// IsNonTmuxRuntimePane reports observed runtime evidence that tmux termination
+// cannot stop. An empty activation kind alone is not process evidence; desired
+// runtime kind is not observed runtime. Project stop admission and interruption
+// filtering share this predicate, including future non-tmux runtime kinds.
+func IsNonTmuxRuntimePane(pane coremetadata.Pane) bool {
+	return pane.Status.ProcessSession != nil ||
+		(pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != coremetadata.RuntimeTmux)
+}
+
 // RecordProjectStopInterruptions atomically records one receipt for every and
 // only currently Running Agent whose exact Pane activation belongs to project.
 // Any malformed/stale ownership aborts the whole Store.Update, so no subset can
@@ -338,7 +347,7 @@ func RecordProjectStopInterruptions(store *StopStore, projectUID, operationID st
 				continue
 			}
 			pane, ok := working.Pane(agent.Status.PaneRef)
-			if ok && (pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != coremetadata.RuntimeTmux)) {
+			if ok && IsNonTmuxRuntimePane(*pane) {
 				continue
 			}
 			if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
@@ -408,7 +417,7 @@ func VerifyProjectStopInterruptions(store *StopStore, projectUID string, interru
 			continue
 		}
 		pane, ok := registry.Pane(agent.Status.PaneRef)
-		if ok && (pane.Status.ProcessSession != nil || (pane.Status.Activation.Kind != "" && pane.Status.Activation.Kind != coremetadata.RuntimeTmux)) {
+		if ok && IsNonTmuxRuntimePane(*pane) {
 			continue
 		}
 		want, selected := expected[agent.Status.PaneRef]
