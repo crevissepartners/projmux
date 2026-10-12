@@ -10,6 +10,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // pruneProjectCandidate is one Project the missing-root prune would remove.
@@ -91,6 +92,13 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 	}
 	candidates := pruneProjectCandidates(preview, c.now().UTC(), age)
 
+	var protectedUIDs []string
+	for _, entry := range candidates {
+		protectedUIDs = append(protectedUIDs, entry.UID)
+	}
+	if err := mutations.ValidatePruneTargets(preview, coremetadata.KindProject, protectedUIDs); err != nil {
+		return err
+	}
 	if !*yes {
 		return writePruneProjectPlan(stdout, spelling, candidates, true)
 	}
@@ -106,6 +114,9 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 	var affected []DeletionAffected
 	if err := c.store.mutate(coremetadata.KindProject, uids,
 		func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+			if err := mutations.ValidatePruneTargets(*working, coremetadata.KindProject, uids); err != nil {
+				return err
+			}
 			// Re-observe and re-select inside the lock: a root that came back
 			// between the listing and the confirmation drops out of the set here
 			// rather than being deleted on stale evidence.

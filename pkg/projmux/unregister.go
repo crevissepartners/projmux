@@ -55,6 +55,9 @@ func (c *Client) UnregisterProject(ctx context.Context, req core.UnregisterReque
 		return out, resourceRefusal(err)
 	}
 	plan := mutations.BuildDeletePlan(reg, metadata.KindProject, resolution)
+	if err := mutations.ValidateDeleteProtection(reg, plan); err != nil {
+		return out, deleteRefusal(CodeAgentProtected, err)
+	}
 	preview := mutations.PreviewDelete(plan)
 	if err := unregisterCopy(preview, &out.Plan); err != nil {
 		return out, err
@@ -94,6 +97,9 @@ func (c *Client) UnregisterProject(ctx context.Context, req core.UnregisterReque
 	if err != nil {
 		var f *mutations.Failure
 		if errors.As(err, &f) {
+			if f.Code == mutations.CodeAgentProtected {
+				return out, deleteRefusal(CodeAgentProtected, err)
+			}
 			return out, &Refusal{Code: Code(f.Code), message: fmt.Sprintf("project lifecycle action=delete-project stage=registry-unregister old_uid=%s new_uid=-: %s", strings.Join(resolution.UIDs(), ","), err), cause: err}
 		}
 	}

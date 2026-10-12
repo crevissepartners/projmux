@@ -229,7 +229,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		}
 		r := *request.Foreground
 		current := s.currentForeground
-		if r.Action == "stop" {
+		if r.Action == "stop" || r.Action == "delete-stop" {
 			current = func(ctx context.Context, a processhost.Authority) error {
 				return s.currentForegroundBinding(ctx, a.Binding)
 			}
@@ -237,10 +237,12 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		var admission processhost.TurnAdmission
 		var applyErr error
 		result := controlProcessForeground(bounded, peer, r, current, func() error {
-			if r.Action == "stop" {
-				s.stopRecorder.record(diagnostics.OwnerStopControl)
-			}
-			applyErr = applyClaudeForeground(bounded, s.handle, r, &admission)
+			applyErr = admitProcessDeleteStop(s.registryPath, r, func() error {
+				if r.Action == "stop" || r.Action == "delete-stop" {
+					s.stopRecorder.record(diagnostics.OwnerStopControl)
+				}
+				return applyClaudeForeground(bounded, s.handle, r, &admission)
+			})
 			return applyErr
 		})
 		if result.Accepted && admission.Joined {

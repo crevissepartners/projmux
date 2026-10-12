@@ -13,6 +13,7 @@ Owner:           project/alpha window/main
 Status:          live
 Provider:        codex
 Phase:           Running
+Protected:       false
 Interaction:     unknown
 Activation:      not_requested
 WorkspaceCWD:    /srv/alpha
@@ -35,6 +36,7 @@ Owner:           project/alpha window/main
 Status:          live
 Provider:        codex
 Phase:           Running
+Protected:       false
 Interaction:     unknown
 Activation:      not_requested
 WorkspaceCWD:    /srv/alpha

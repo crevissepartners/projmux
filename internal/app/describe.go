@@ -268,7 +268,7 @@ func describeSpecRows(resource any) [][2]string {
 		rows = append(rows, describeTerminationRows(typed.Status.LastTermination)...)
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Agent:
-		rows := [][2]string{{"Provider", typed.Spec.Provider}, {"Phase", string(typed.Status.Phase)}}
+		rows := [][2]string{{"Provider", typed.Spec.Provider}, {"Phase", string(typed.Status.Phase)}, {"Protected", fmt.Sprint(coremetadata.AgentProtected(typed))}}
 		interaction := typed.Status.Interaction
 		rows = append(rows, [2]string{"Interaction", string(interaction.Kind)})
 		if !interaction.ObservedAt.IsZero() {

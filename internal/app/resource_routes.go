@@ -674,6 +674,11 @@ func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry cor
 		case columnKind:
 			return strings.ToLower(string(kind))
 		case columnName:
+			if kind == coremetadata.KindAgent {
+				if agent, ok := registry.Agent(match.UID); ok && coremetadata.AgentProtected(*agent) {
+					return match.Name + " [projmux.io/protected]"
+				}
+			}
 			return match.Name
 		case columnStatus:
 			return string(match.Status)

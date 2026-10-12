@@ -217,3 +217,68 @@ func TestDeleteQueryPreservesRequestNamesInUserValues(t *testing.T) {
 		}
 	}
 }
+
+type protectingDeleteRunner struct {
+	*deleteFailureRunner
+	protect func()
+	once    bool
+}
+
+func (r *protectingDeleteRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if !r.once {
+		r.once = true
+		r.protect()
+	}
+	return r.deleteFailureRunner.Run(ctx, name, args...)
+}
+
+func TestDeleteSDKLockedProtectionCarriesAgentUID(t *testing.T) {
+	reg, window, state, client := deleteFailureFixture(t)
+	agent, err := store.DefaultMutator().CreateAgent(&reg, window, metadata.CreateAgentOptions{Provider: "codex", OperationID: "op-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := store.PathFor(state)
+	data, err := json.Marshal(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var admittedBytes []byte
+	runner := &protectingDeleteRunner{deleteFailureRunner: &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s"), uid: window, project: reg.Projects[0].Metadata.UID}}
+	runner.protect = func() {
+		_, err := store.NewStore(path).Update(func(working *metadata.Registry) error {
+			_, _, err := store.DefaultMutator().SetLabels(working, metadata.KindAgent, agent.Metadata.UID, map[string]string{metadata.LabelProtected: "true"}, nil)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		admittedBytes, err = os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := client.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window, SocketPath: runner.path, Confirm: true}, runner)
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeAgentProtected || refusal.AgentUID != agent.Metadata.UID || result.Committed {
+		t.Fatalf("result=%+v refusal=%+v err=%v", result, refusal, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(admittedBytes, after) || runner.kills+runner.queued != 0 {
+		t.Fatal("locked protection allowed writes or runtime effects")
+	}
+	raw, err := json.Marshal(refusal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil || fields["agentUID"] != agent.Metadata.UID {
+		t.Fatalf("structured UID %s %v", raw, err)
+	}
+}

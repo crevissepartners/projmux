@@ -339,10 +339,12 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 			}
 			return err
 		}
-		if r.Action == "stop" {
-			e.stopRecorder.record(diagnostics.OwnerStopControl)
-		}
-		return applyCodexForeground(ctx, e.handle, r)
+		return admitProcessDeleteStop(e.registryPath, r, func() error {
+			if r.Action == "stop" || r.Action == "delete-stop" {
+				e.stopRecorder.record(diagnostics.OwnerStopControl)
+			}
+			return applyCodexForeground(ctx, e.handle, r)
+		})
 	})
 	result.Receipt = receipt
 	result.UserDelivery = userDelivery

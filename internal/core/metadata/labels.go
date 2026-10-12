@@ -20,14 +20,19 @@ import (
 // remove deletes a key and is idempotent, because "this key is not on this
 // resource" is the same end state whether or not it was there before.
 //
-// Keys and values are stored exactly as given. A label value has no length or
-// character-set rule anywhere in this package, and adding one here would give
-// the Registry two different label contracts depending on which writer ran.
+// Keys and values are stored exactly as given. Values have no length or character-set
+// rule. The reserved Agent protection key accepts only true for new writes;
+// removing the key disables protection.
 //
 // changed reports whether the stored map actually differs afterwards, so a
 // repeat invocation neither rewrites the Registry nor claims it did.
 func (m Mutator) SetLabels(reg *Registry, kind Kind, uid string, set map[string]string, remove []string) (meta ObjectMeta, changed bool, err error) {
 	op := "label " + strings.ToLower(string(kind))
+	if kind == KindAgent {
+		if err := ValidateAgentProtectionLabels(set); err != nil {
+			return ObjectMeta{}, false, err
+		}
+	}
 
 	for key := range set {
 		if strings.TrimSpace(key) == "" {

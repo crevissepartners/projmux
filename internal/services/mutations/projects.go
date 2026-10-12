@@ -31,8 +31,9 @@ func NewStore(path string) Store {
 
 // Failure preserves the CLI cause and input/runtime classification.
 type Failure struct {
-	Code  string
-	Cause error
+	AgentUID string `json:"agentUID,omitempty"`
+	Code     string
+	Cause    error
 }
 
 func (e *Failure) Error() string            { return e.Cause.Error() }
