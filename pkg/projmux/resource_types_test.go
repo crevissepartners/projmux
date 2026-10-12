@@ -7,6 +7,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"github.com/crevissepartners/projmux/internal/services/approvals"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"reflect"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 func TestPublicResourceFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
 		{reflect.TypeFor[receipt.OperationReceipt](), reflect.TypeFor[core.OperationReceipt]()},
+		{reflect.TypeFor[mutationruntime.WindowLiveDeleteTarget](), reflect.TypeFor[core.DeleteWindow]()},
 		{reflect.TypeFor[mutations.DeletePreview](), reflect.TypeFor[core.DeletePlan]()},
 
 		{reflect.TypeFor[linkservice.Result](), reflect.TypeFor[core.ProjectLinkRulesResult]()},

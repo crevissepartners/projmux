@@ -39,6 +39,11 @@ func (c *DeleteExecutor) RecordIntentionalTermination(
 		return nil, fmt.Errorf("%s: the resource registry store is not configured", spelling)
 	}
 	_, err := c.Update(func(working *coremetadata.Registry) error {
+		if c.Allow != nil {
+			if err := c.Allow(*working, plan); err != nil {
+				return err
+			}
+		}
 		mutator := c.Mutator()
 		for _, paneUID := range panes {
 			pane, ok := working.Pane(paneUID)

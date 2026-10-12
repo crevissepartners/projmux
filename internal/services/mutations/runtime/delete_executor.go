@@ -47,6 +47,7 @@ type DeleteExecutor struct {
 	Via            mutations.DeletionVia
 	Warnings       io.Writer
 	MapError       func(error) error
+	Allow          func(coremetadata.Registry, DeletePlan) error
 }
 
 type DeleteResult struct {
@@ -100,6 +101,11 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 	var actor mutations.DeletionActor
 	var affected []mutations.DeletionAffected
 	if err := c.Mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if c.Allow != nil {
+			if err := c.Allow(*working, plan); err != nil {
+				return err
+			}
+		}
 		if current := mutations.BuildDeletePlan(*working, kind, resolution).Signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
 		}
