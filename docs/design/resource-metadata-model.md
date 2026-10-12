@@ -439,6 +439,23 @@ Termination evidence transport:
   with action `deleted`. No explicit deletion route removes a ControlSession
   today (only a rolled-back transaction does, and that writes no record), so
   that kind is listed for completeness of the two root kinds.
+- Automatic Agent removals also use this file: process-create rollback,
+  promotion rollback, causal last-Pane Window cascade, Project Fresh replacement,
+  and explicit Registry recovery restore. Each removed Agent gets one row with
+  `via: "automatic"`, an empty actor, and that Agent in `targets` and `affected`.
+  Their operation tokens are `process-create-rollback`, `promotion-rollback`,
+  `lifecycle-window-cascade`, `project-fresh`, and `registry-recovery-restore`.
+  Retained Agents and repeated no-op reconciliation/restore write no deletion row.
+  These rows use the same post-commit best-effort writer and do not strengthen
+  durability. Protected rollback remnants survive Offline; protected causal
+  closure retains the Window and Agents while removing the ended Pane. Fresh
+  refuses if its old graph contains a protected Agent. Recovery refuses when a
+  readable current graph has a protected Agent UID absent from the source.
+  When current bytes cannot supply protection authority, recovery proceeds and
+  reports optional `restore.protectionUnavailable: true` (text token
+  `protection-unavailable`). It appends a recovery evidence row with empty
+  targets/affected and `actor.basis: "protection-unavailable"`; it cannot name
+  Agents whose identities are unreadable.
 - The actor is the same pane-chain judgment creator provenance uses, run
   against the pre-commit Registry inside the delete's own transaction, so a
   delete that removes its own Agent still names it. `basis` is `pane-chain`

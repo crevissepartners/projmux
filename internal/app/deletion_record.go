@@ -23,8 +23,8 @@ import (
 //
 // The record is written after the commit and never feeds back into the
 // deletion: a record that cannot be written costs one stderr line and nothing
-// else. Automatic lifecycle teardown and internal row cleanup are not explicit
-// deletions and write nothing here.
+// else. Automatic Agent removals use the same writer through the metadata
+// integration, with one row per removed Agent and no ambient actor.
 //
 // The actor is provenance, never authentication. An empty actor does not mean
 // a human ran the deletion: a UI route never judges one, and a command run by

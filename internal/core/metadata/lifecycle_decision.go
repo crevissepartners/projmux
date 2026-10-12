@@ -722,6 +722,22 @@ func PlanWindowRootCascadeDelete(registry Registry, paneEvent, unlinkEvent Teard
 		out.Decision.Reason = TeardownReasonStaleOwnerBinding
 		return out, nil
 	}
+
+	for _, agent := range registry.AgentsOf(window.Metadata.UID) {
+		if AgentProtected(agent) {
+			// The causal Pane receipt remains authoritative, but protection retains
+			// the Window and all Agents. Normal Pane cleanup leaves its Agent Offline.
+			paneEvent.LiveSiblingPane = true
+			panePlan, err := PlanPaneAgentCascadeDelete(registry, paneEvent, now)
+			if err != nil {
+				return WindowRootCascadeDeletePlan{}, err
+			}
+			return WindowRootCascadeDeletePlan{Operation: ProjectLifecycleOperationCloseWindow, Decision: panePlan.Decision,
+				Desired: panePlan.Desired, Changed: panePlan.Changed, PaneUID: pane.Metadata.UID, WindowUID: window.Metadata.UID,
+				RootKind: paneEvent.Chain.RootKind, RootUID: paneEvent.Chain.RootUID, DeletedPanes: panePlan.DeletedPanes,
+				DeletedReservations: len(registry.NameReservations) - len(panePlan.Desired.NameReservations)}, nil
+		}
+	}
 	desired := registry.Clone()
 	mutator := Mutator{Now: func() time.Time { return now.UTC() }}
 	deletedPanes := len(registry.PanesOf(window.Metadata.UID))
@@ -1019,6 +1035,9 @@ func PlanProjectFreshReplacement(registry Registry, projectUID string, opts Regi
 
 	desired := registry.Clone()
 	if err := mutator.DeleteProject(&desired, project.Metadata.UID); err != nil {
+		return plan, err
+	}
+	if err := ValidateAgentRemovals(registry, desired); err != nil {
 		return plan, err
 	}
 	opts.Root = project.Spec.Root

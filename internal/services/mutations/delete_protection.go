@@ -21,7 +21,7 @@ func ValidateDeleteProtection(reg coremetadata.Registry, plan DeletePlan) error 
 		if !ok || !coremetadata.AgentProtected(*agent) {
 			return nil
 		}
-		return &Failure{Code: CodeAgentProtected, AgentUID: uid, Cause: fmt.Errorf("%s: Agent %q uid=%s is protected; remove protection with: projmux label agent uid:%s %s-", CodeAgentProtected, agent.Metadata.Name, uid, uid, coremetadata.LabelProtected)}
+		return &Failure{Code: CodeAgentProtected, AgentUID: uid, Cause: coremetadata.AgentProtectionError(*agent)}
 	}
 	for _, target := range plan.Targets {
 		if err := check(plan.Kind, target.Match.UID); err != nil {

@@ -949,10 +949,24 @@ func (k *resourceControllerKernel) rollbackPromotionRegistry(receipt promotionRe
 	if k == nil || k.store == nil || k.store.updateConvergent == nil {
 		return errors.New("promotion rollback store is not configured")
 	}
-	_, _, err := k.store.updateConvergent(func(current *coremetadata.Registry) error {
+	var before coremetadata.Registry
+	after, _, err := k.store.updateConvergent(func(current *coremetadata.Registry) error {
+		before = current.Clone()
 		return rollbackPromotionScope(current, receipt)
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	intmetadata.RecordAutomaticRemovals(k.store.stateDir, before, after, "promotion-rollback", os.Stderr)
+	var residual error
+	for _, promotion := range receipt.promotions {
+		if _, existed := receipt.before.Agent(promotion.AgentUID); !existed {
+			if agent, present := after.Agent(promotion.AgentUID); present && coremetadata.AgentProtected(*agent) {
+				residual = errors.Join(residual, fmt.Errorf("remaining Offline agent uid:%s: %w", agent.Metadata.UID, coremetadata.AgentProtectionError(*agent)))
+			}
+		}
+	}
+	return residual
 }
 
 func rollbackPromotionScope(current *coremetadata.Registry, receipt promotionRegistryReceipt) error {
@@ -994,6 +1008,19 @@ func rollbackPromotionScope(current *coremetadata.Registry, receipt promotionReg
 				return fmt.Errorf("promotion rollback Agent status CAS changed for %s", promotion.AgentUID)
 			}
 			currentAgent.Status = beforeAgent.Clone().Status
+		} else if coremetadata.AgentProtected(*currentAgent) {
+			currentComparable, committedComparable := currentAgent.Clone(), committedAgent.Clone()
+			currentComparable.Metadata.Labels = committedComparable.Metadata.Labels
+			if !reflect.DeepEqual(currentComparable, committedComparable) {
+				return fmt.Errorf("promotion rollback protected Agent CAS changed for %s; remaining agent uid:%s: %w", promotion.AgentUID, promotion.AgentUID, coremetadata.AgentProtectionError(*currentAgent))
+			}
+			// Restore the shell binding but retain this committed protected identity.
+			// Promotion has no provider process/Wait; its failed runtime mirror leaves
+			// the minted Agent Offline with a diagnostic reason.
+			currentAgent.Status.Phase = coremetadata.PhaseOffline
+			currentAgent.Status.PaneRef = ""
+			currentAgent.Status.Reason = "promotion rollback retained protected Agent"
+			delete(affectedReservations, promotion.AgentUID)
 		} else {
 			if !reflect.DeepEqual(currentAgent.Clone(), committedAgent.Clone()) {
 				return fmt.Errorf("promotion rollback minted Agent CAS changed for %s", promotion.AgentUID)

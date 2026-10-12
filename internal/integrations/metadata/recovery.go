@@ -572,8 +572,9 @@ type RestoreRequest struct {
 
 // RestoreResult reports what a restore did.
 type RestoreResult struct {
-	SourcePath     string `json:"sourcePath"`
-	SourceChecksum string `json:"sourceChecksum"`
+	ProtectionUnavailable bool   `json:"protectionUnavailable,omitempty"`
+	SourcePath            string `json:"sourcePath"`
+	SourceChecksum        string `json:"sourceChecksum"`
 	// PublishedChecksum is the checksum of the canonical bytes committed to
 	// registry.json. It differs from SourceChecksum only for a v3 source.
 	PublishedChecksum string           `json:"publishedChecksum"`
@@ -638,6 +639,7 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 	}
 
 	var result RestoreResult
+	var before, after coremetadata.Registry
 	err = s.withRecoveryLock(func() error {
 		// Re-verify under the recovery lock. Between the pre-lock verification and here
 		// the file could have been replaced by something this build must not
@@ -658,8 +660,23 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 				ErrRecoveryRaced, s.path, guard, displayChecksum(current.Checksum))
 		}
 
+		// Decode without requiring graph validity: labels in a decodable degraded
+		// graph still provide protection authority. Undecodable bytes cannot.
+		protectionUnavailable := len(currentBytes) > 0 && json.Unmarshal(currentBytes, &before) != nil
+		if current.State == RegistryStateMissing || current.State == RegistryStateUnreadable || current.State == RegistryStateEmpty {
+			protectionUnavailable = true
+		}
+		if err := json.Unmarshal(verified.publishBytes, &after); err != nil {
+			return err
+		}
+		if !protectionUnavailable {
+			if err := coremetadata.ValidateAgentRemovals(before, after); err != nil {
+				return err
+			}
+		}
 		result = RestoreResult{
-			SourcePath: source, SourceChecksum: verified.info.Checksum,
+			ProtectionUnavailable: protectionUnavailable,
+			SourcePath:            source, SourceChecksum: verified.info.Checksum,
 			PublishedChecksum: verified.publishChecksum,
 			Contents:          verified.info.Contents, ReplacedState: current.State,
 			Migration: verified.migration,
@@ -670,11 +687,23 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 		if current.Checksum == verified.publishChecksum {
 			return nil
 		}
-		return s.publishRestore(source, verified, currentBytes, current, &result)
+		if err := s.publishRestore(source, verified, currentBytes, current, &result); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	if result.Changed {
+		stateDir := func() (string, error) { return filepath.Dir(filepath.Dir(s.path)), nil }
+		if result.ProtectionUnavailable {
+			RecordProtectionUnavailable(stateDir, os.Stderr)
+		} else {
+			RecordAutomaticRemovals(stateDir, before, after, "registry-recovery-restore", os.Stderr)
+		}
+	}
+
 	return result, nil
 }
 
