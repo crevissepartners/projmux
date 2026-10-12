@@ -319,3 +319,22 @@ func TestExternalProjectCandidatesConsumer(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalRenameConsumer(t *testing.T) {
+	client, err := projmux.NewClient(projmux.Options{StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.CreateProject(context.Background(), core.CreateProjectRequest{Root: t.TempDir(), Name: "old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := client.Rename(context.Background(), core.RenameRequest{Kind: core.KindProject, Ref: "uid:" + created.Project.Metadata.UID, Name: "new"})
+	if err != nil || !renamed.Committed || renamed.Receipt.Operation != core.OperationRenameProject {
+		t.Fatalf("rename: %+v %v", renamed, err)
+	}
+	project, ok := renamed.Projection.(core.Project)
+	if !ok || project.Metadata.Name != "new" {
+		t.Fatalf("projection: %#v", renamed.Projection)
+	}
+}

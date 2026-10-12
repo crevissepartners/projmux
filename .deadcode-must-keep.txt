@@ -55,6 +55,7 @@ Client.ObserveRuntime	Public v0 runtime SDK entrypoint retained for external mod
 Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -98,6 +99,7 @@ Discover	The background-context discovery wrapper is retained as a test and comp
 Dispositions	Closed CLI route disposition catalog retained as the test seam that pins exactly one disposition per canonical route.
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
+ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
 Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
 Fixture.Ledger	Test-only installed qualification API retained for semantic ambient non-mutation proof.
@@ -216,6 +218,7 @@ ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnos
 RecordSession	Internal content-free provider session persistence seam retained until the foreground consumer records explicit resume state.
 Recovery	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Refusal.Error	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
+Refusal.Unwrap	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
 RegistrationLease	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 Registry.rebuildMissingReservations	v0-to-v1 name reservation rebuild retained as the migration proof for the live scopeFor reservation scoping.
@@ -263,6 +266,7 @@ Text.Locale	Resolved-locale accessor retained as the test seam that pins the liv
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 Window.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+WindowForPane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
@@ -306,6 +310,7 @@ createCommand.recordOperatorCreator	In-process operator creator seam for an oper
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
 defaultUsageDir	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
+executeWindowRenameSteps	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 exitOf	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 finishOwnedChild	Owned-child signals precede actual Wait only after successful exit observation; retained for processhost lifecycle proof.
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
@@ -379,6 +384,19 @@ reapGroup	Internal processhost implementation retained for owned-process and bou
 refusal	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
+renameMirrorRefusal	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameQuery	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameRefusal	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.FindPaneTargetForUID	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.FindSessionForProjectUID	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.RenamePane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.RenameProject	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.Run	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.check	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.provePane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.proveProject	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameSocket.raw	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+renameTargetAllowed	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renderNativeInteractive	Cursor-at-end entry point of renderNativeInteractiveWithCursor retained as the native picker frame golden seam.
 renderNotifyBadge	Severity badge entry point retained as the test seam over the live renderNotifyBlockBadge palette.
 renderSettingsNavTree	Settings navigation tree renderer retained as the golden seam over the live settingsNavChildren topology.
@@ -415,4 +433,5 @@ versionOrUnknown	Test-only installed qualification helper retained for nonblank 
 waitForProcessExit	Test-only installed qualification helper retained for independently bounded direct kill-wait proof.
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
 waitGroupAbsent	Darwin owned-group absence requires ESRCH after bounded observation, retained with processhost lifecycle proof.
+windowDisplayNotConvergedNotice	CLI notice compatibility adapter to the shared rename service; retained for generated/control-root rename byte parity proofs.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.

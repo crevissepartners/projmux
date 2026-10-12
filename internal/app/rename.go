@@ -12,11 +12,9 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // renameKinds lists the kind spellings `rename` implements, in help order, each
@@ -155,52 +153,14 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 // renameOriginGuard re-proves, under the Registry lock of one rename, the
 // runtime evidence a caller resolved its target from. It reads the working
 // Registry and never writes; a refusal leaves the Registry untouched.
-type renameOriginGuard func(context.Context, coremetadata.Registry, coremetadata.Mutator) error
+type renameOriginGuard = mutations.RenameOriginGuard
 
-// commitRename is the one owner of a Registry rename. Public `rename <kind>`
-// and the generated Window and Pane rename routes (`internal tmux
-// window-rename` and `internal tmux pane-rename`) all commit through it, so the
-// typed Mutator rename, its same-scope conflict refusal, and the exact
-// stable-name mirror that follows it are one path whether the name came from a
-// typed command or a key press.
-//
-// guard, when set, runs inside the Registry transaction before the Mutator.
-// committed reports whether the Registry transaction committed: false means
-// nothing was written anywhere, true with an error means the Registry holds the
-// new name and only its live mirror failed to converge.
-//
-// notice is the one line a caller prints when the Registry committed but no
-// live runtime route could carry the name to the display. It is never an
-// error: outside a projmux tmux runtime a rename is Registry-only by contract,
-// and the caller says so instead of pretending the tab converged.
-func (c *renameCommand) commitRename(ctx context.Context, kind coremetadata.Kind, uid, name string, guard renameOriginGuard) (committed bool, notice string, err error) {
-	if err := c.store.mutate(kind, []string{uid}, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if guard != nil {
-			if err := guard(ctx, working.Clone(), mutator); err != nil {
-				return err
-			}
-		}
-		switch kind {
-		case coremetadata.KindProject:
-			_, err := mutator.RenameProject(working, uid, name)
-			return err
-		case coremetadata.KindWindow:
-			_, err := mutator.RenameWindow(working, uid, name)
-			return err
-		case coremetadata.KindPane:
-			_, err := mutator.RenamePane(working, uid, name)
-			return err
-		case coremetadata.KindAgent:
-			_, err := mutator.RenameAgent(working, uid, name)
-			return err
-		default:
-			return fmt.Errorf("rename %s: unsupported kind %q", strings.ToLower(string(kind)), kind)
-		}
-	}); err != nil {
-		return false, "", err
+func (c *renameCommand) commitRename(ctx context.Context, kind coremetadata.Kind, uid, name string, guard renameOriginGuard) (bool, string, error) {
+	committed, notice, err := c.renameService().CommitRename(ctx, kind, uid, name, guard)
+	if !committed {
+		err = MapMetadataError(err)
 	}
-	notice, err = c.mirrorRenamed(ctx, kind, uid, name)
-	return true, notice, err
+	return committed, notice, err
 }
 
 // generatedRenameName applies the input rules of the generated rename routes to
@@ -235,248 +195,52 @@ func generatedRenameName(response string) (name string, requested bool, err erro
 // each resource, and a second name field would be the beginning of the stored
 // second address this track just finished removing.
 func renameReceipt(kind coremetadata.Kind, uid, name string) cli.OperationReceipt {
-	operation := cli.OperationRenameProject
-	switch kind {
-	case coremetadata.KindWindow:
-		operation = cli.OperationRenameWindow
-	case coremetadata.KindPane:
-		operation = cli.OperationRenamePane
-	case coremetadata.KindAgent:
-		operation = cli.OperationRenameAgent
-	}
-	receipt := cli.NewReceipt(operation, cli.ReceiptTarget{Kind: string(kind), UID: uid, Name: name}, cli.ReceiptEffects{
-		Identity:     cli.IdentityUnchanged,
-		Address:      cli.AddressRenamed,
-		Topology:     cli.TopologyUnchanged,
-		DesiredState: cli.DesiredStateUnchanged,
-		Runtime:      cli.RuntimeUnchanged,
-		Focus:        cli.FocusUnchanged,
-	})
-	receipt.Add(string(kind), uid, name, cli.ActionRenamed)
-	return receipt
+	return cli.OperationReceipt(mutations.RenameReceipt(kind, uid, name))
 }
-
-// windowDisplayNotConvergedNotice is the one line a committed Window rename
-// leaves when this invocation has no live runtime route to carry the name to
-// the tmux tab. The Registry name and its reservation are already durable; only
-// the display is still the old spelling, and the next materialization of that
-// Window from the Registry projects the new one.
 func windowDisplayNotConvergedNotice(uid, name string) string {
-	return fmt.Sprintf("rename window: window/%s: committed the Registry name %q; this invocation has no live tmux route, so the tmux tab keeps its old name until a rename runs inside that runtime", uid, name)
+	return mutations.WindowDisplayNotConvergedNotice(uid, name)
 }
-
-func (c *renameCommand) mirrorRenamed(ctx context.Context, kind coremetadata.Kind, uid, name string) (string, error) {
-	if kind == coremetadata.KindAgent {
-		return "", nil
-	}
-	if kind == coremetadata.KindWindow {
-		if c.mirror == nil {
-			return windowDisplayNotConvergedNotice(uid, name), nil
-		}
-		return c.renameRuntimeWindow(ctx, uid, name)
-	}
-	if c.mirror == nil {
-		return "", nil
-	}
-	var (
-		target string
-		found  bool
-		err    error
-	)
-	switch kind {
-	case coremetadata.KindProject:
-		target, found, err = c.mirror.FindSessionForProjectUID(ctx, uid)
-	case coremetadata.KindPane:
-		target, found, err = c.mirror.FindPaneTargetForUID(ctx, uid)
-	}
-	if err != nil {
-		if errors.Is(err, intmetadata.ErrAmbiguousMirror) {
-			return "", committedMirrorError("rename", kind, uid, err)
-		}
-		// An unavailable inventory cannot prove this resource is live. Preserve
-		// the authoritative Registry result for later exact-socket reconcile.
-		return "", nil
-	}
-	if !found {
-		return "", nil
-	}
-	switch kind {
-	case coremetadata.KindProject:
-		err = c.mirror.RenameProject(ctx, target, name)
-	case coremetadata.KindPane:
-		err = c.mirror.RenamePane(ctx, target, name)
-	}
-	if err != nil {
-		return "", committedMirrorError("rename", kind, uid, err)
-	}
-	return "", nil
-}
-
-type runtimeWindowRenameObservation struct {
-	windowID   string
-	sessionID  string
-	projectUID string
-	role       string
-	stableName string
-	windowName string
-}
-
-// renameRuntimeWindow converges the live projection of one committed Window
-// rename. Inside a proven runtime route the Registry name, the
-// `@projmux_window_name` mirror and the tmux tab (`#{window_name}`) are one
-// value: the stable-name option is written first and the display follows
-// through the canonical `rename-window -t @N -- <name>`, the same argv shape
-// and validator the rename key and the Window menu Rename item go through, so a
-// leading-dash name cannot be read as a flag. Reobservation requires the tab to
-// carry the new name; a display that did not move is a committed-mirror failure,
-// not a success.
-//
-// With no route there is no tab to converge and the rename stays
-// Registry-authoritative, so the caller is handed the display notice instead of
-// an error.
-func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name string) (string, error) {
-	if c.tmuxRunner == nil {
-		return "", committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("typed runtime mutation runner is not configured"))
-	}
-	registry, err := c.store.load()
-	if err != nil {
-		return "", MapMetadataError(err)
-	}
-	window, ok := registry.Window(uid)
-	if !ok {
-		return "", committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("renamed Window disappeared from Registry"))
-	}
-	rootUID := window.Metadata.OwnerUID()
-	rootKind := coremetadata.KindProject
-	if _, ok := registry.Project(rootUID); !ok {
-		if _, ok := registry.ControlSession(rootUID); !ok {
-			return "", committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("Window owner root disappeared from Registry"))
-		}
-		rootKind = coremetadata.KindControlSession
-	}
-	route, err := resolveExactObjectRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
-	if err != nil {
-		// Preserve the established metadata-authoritative behavior when no live
-		// runtime can be proven. A later controller pass projects the name.
-		return windowDisplayNotConvergedNotice(uid, name), nil
-	}
-	if route.expectedSocketPath == "" {
-		return windowDisplayNotConvergedNotice(uid, name), nil
-	}
-	routed := explicitTmuxRunner{runner: c.tmuxRunner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
-	observe := func(ctx context.Context) (runtimeWindowRenameObservation, bool, error) {
-		out, err := routed.Run(ctx, "tmux", "list-windows", "-a", "-F", tmuxRowFormat(
-			"#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{session_id}",
-			"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}",
-			"#{"+tmuxopts.WindowName+"}", "#{window_name}"))
-		if err != nil {
-			return runtimeWindowRenameObservation{}, false, err
-		}
-		var found []runtimeWindowRenameObservation
-		for _, row := range splitTmuxRows(string(out), 7) {
-			if row[1] != uid {
-				continue
+func (c *renameCommand) renameService() mutations.Renamer {
+	return mutations.Renamer{Store: projectMutationStore(c.store), Load: func() (coremetadata.Registry, error) { r, e := c.store.load(); return r, MapMetadataError(e) }, Mirror: c.mirror,
+		ResolveWindowRoute: func(ctx context.Context) (mutations.WindowRenameRoute, error) {
+			if c.tmuxRunner == nil {
+				return mutations.WindowRenameRoute{}, mutations.ErrWindowRunnerNotConfigured
 			}
-			found = append(found, runtimeWindowRenameObservation{windowID: row[0], sessionID: row[2], projectUID: row[3], role: row[4], stableName: row[5], windowName: row[6]})
-		}
-		if len(found) == 0 {
-			return runtimeWindowRenameObservation{}, false, nil
-		}
-		if len(found) != 1 || exactTmuxHandle(found[0].windowID, "@") == "" || exactTmuxHandle(found[0].sessionID, "$") == "" {
-			return runtimeWindowRenameObservation{}, false, errors.New("Window runtime identity is ambiguous")
-		}
-		if rootKind == coremetadata.KindProject {
-			if found[0].projectUID != rootUID || found[0].role != "" {
-				return runtimeWindowRenameObservation{}, false, errors.New("Window Project containment drifted")
+			route, err := resolveExactObjectRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+			if err != nil {
+				return mutations.WindowRenameRoute{}, err
 			}
-		} else if found[0].projectUID != "" || found[0].role != resourcegraph.ControlSessionRole {
-			return runtimeWindowRenameObservation{}, false, errors.New("Window ControlSession containment drifted")
-		}
-		return found[0], true, nil
-	}
-	observed, found, err := observe(ctx)
-	if err != nil {
-		return "", committedMirrorError("rename", coremetadata.KindWindow, uid, err)
-	}
-	if !found {
-		return "", nil
-	}
-	mutationTarget := runtimeMutationTarget{
-		Kind: string(runtimeWindow), ID: observed.windowID, UID: uid,
-		Parent: string(rootKind) + "/" + rootUID + "/" + observed.sessionID,
-	}
-	bindRuntimeMutationRouteTarget(&mutationTarget, route)
-	guardDetail := "exact Window=" + observed.windowID + ";root=" + string(rootKind) + "/" + rootUID
-	stable := newRuntimeMutation(1, mutationWriteStableName, mutationTarget)
-	bindRuntimeMutationGuard(&stable, guardDetail)
-	stable.Operands = []string{"-w", "-t", observed.windowID, "-q", tmuxopts.WindowName, name}
-	display := newRuntimeMutation(2, mutationRenameWindow, mutationTarget)
-	bindRuntimeMutationGuard(&display, guardDetail)
-	display.Operands = []string{"-t", observed.windowID, "--", name}
-	// The identity half of every step is the same: the exact live Window still
-	// carries this UID inside this root on this server generation. Only the
-	// field each step converges differs.
-	// Both steps write their field to the same planned name. At the guard each
-	// written field may sit at its snapshot value or at name, and every other
-	// field must still equal the snapshot.
-	written := []func(runtimeWindowRenameObservation) string{
-		func(o runtimeWindowRenameObservation) string { return o.stableName },
-		func(o runtimeWindowRenameObservation) string { return o.windowName },
-	}
-	step := func(action plannedRuntimeMutation, own func(runtimeWindowRenameObservation) string) runtimeMutationStep {
-		return runtimeMutationStep{
-			Action: action,
-			TargetRouteGuard: func(ctx context.Context) error {
-				return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action)
-			},
-			Reobserve: func(ctx context.Context) (bool, error) {
-				if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
-					return false, err
+			routed := explicitTmuxRunner{runner: c.tmuxRunner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
+			actionFor := func(s mutations.WindowRenameStep, order int) plannedRuntimeMutation {
+				target := runtimeMutationTarget{Kind: string(runtimeWindow), ID: s.WindowID, UID: s.UID, Parent: s.Parent}
+				bindRuntimeMutationRouteTarget(&target, route)
+				verb := mutationWriteStableName
+				if s.Verb == "rename-window" {
+					verb = mutationRenameWindow
 				}
-				current, ok, err := observe(ctx)
-				if err != nil {
-					return false, err
-				}
-				return ok && current.windowID == action.Target.ID && current.sessionID == observed.sessionID &&
-					own(current) == name, nil
-			},
-			Guard: func(ctx context.Context) error {
-				if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
-					return err
-				}
-				current, ok, err := observe(ctx)
-				if err != nil {
-					return err
-				}
-				drifted := !ok
-				if ok {
-					unwritten := current
-					unwritten.stableName, unwritten.windowName = observed.stableName, observed.windowName
-					drifted = unwritten != observed
-					for _, field := range written {
-						drifted = drifted || (field(current) != field(observed) && field(current) != name)
+				action := newRuntimeMutation(order, verb, target)
+				bindRuntimeMutationGuard(&action, "exact Window="+s.WindowID+";root="+strings.Join(strings.Split(s.Parent, "/")[:2], "/"))
+				action.Operands = s.Operands
+				return action
+			}
+			return mutations.WindowRenameRoute{SocketPath: route.expectedSocketPath, Runner: routed,
+				Check: func(ctx context.Context, s mutations.WindowRenameStep) error {
+					return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, actionFor(s, 1))
+				},
+				Execute: func(ctx context.Context, steps []mutations.WindowRenameStep) error {
+					converted := make([]runtimeMutationStep, 0, len(steps))
+					for i, s := range steps {
+						action := actionFor(s, i+1)
+						guard := s.Guard
+						converted = append(converted, runtimeMutationStep{Action: action, TargetRouteGuard: s.TargetRouteGuard, Guard: func(ctx context.Context) error {
+							e := guard(ctx)
+							if errors.Is(e, mutations.ErrEffectConverged) {
+								return errRuntimeMutationEffectConverged
+							}
+							return e
+						}, Reobserve: s.Reobserve, Apply: func(ctx context.Context) error { _, e := runRuntimeMutationCommand(ctx, routed, action); return e }})
 					}
-				}
-				if drifted {
-					return errors.New("Window runtime identity drifted before rename")
-				}
-				if own(current) != own(observed) && own(current) == name {
-					return fmt.Errorf("window rename %s: %w", action.Verb, errRuntimeMutationEffectConverged)
-				}
-				return nil
-			},
-			Apply: func(ctx context.Context) error {
-				_, err := runRuntimeMutationCommand(ctx, routed, action)
-				return err
-			},
-		}
-	}
-	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{
-		step(stable, written[0]),
-		step(display, written[1]),
-	})
-	if err != nil {
-		return "", committedMirrorError("rename", coremetadata.KindWindow, uid, err)
-	}
-	return "", nil
+					return executeRuntimeMutationPlan(ctx, converted)
+				}}, nil
+		}}
 }
