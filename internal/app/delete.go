@@ -708,9 +708,6 @@ func paneDeleteReplacementShells(before, desired coremetadata.Registry, live pan
 func buildDeletePlan(reg coremetadata.Registry, kind coremetadata.Kind, resolution selector.Resolution) deletePlan {
 	return deletePlan(mutations.BuildDeletePlan(reg, kind, resolution))
 }
-func cascadeOf(reg coremetadata.Registry, kind coremetadata.Kind, uid string) []deleteDescendant {
-	return mutations.CascadeOf(reg, kind, uid)
-}
 
 // writeDeletePlan renders the plan for both the dry run and the executed run.
 func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live windowLiveDeletePlan, panes paneLiveDeletePlan, socket tmuxTransport, dryRun, selfQueued bool) error {

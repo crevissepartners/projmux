@@ -283,7 +283,6 @@ boundedBuffer.Bytes	Test-only installed qualification helper retained for bounde
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
 buildFocusURI	Round-trip counterpart of the retained focus URI parser; the test pins that the shipped parser accepts the documented format.
 buildPopupToggle	Default-style entry point of buildPopupToggleWithStyle retained as the popup launcher environment seam.
-cascadeOf	CLI planning adapter consumed by private web Project deletion; implementation lives in mutations.CascadeOf.
 catalogRefusal	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
 claudeCoordinationCallOutcome	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.

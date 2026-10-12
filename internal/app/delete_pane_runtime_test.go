@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 func livePaneInventoryRow(fields ...string) string {
@@ -52,7 +53,7 @@ func panePlanFor(t *testing.T, registry coremetadata.Registry, kind coremetadata
 	for _, uid := range targets {
 		plan.Targets = append(plan.Targets, deleteTarget{
 			Match:       selector.Match{Kind: kind, UID: uid},
-			Descendants: cascadeOf(registry, kind, uid),
+			Descendants: mutations.CascadeOf(registry, kind, uid),
 		})
 	}
 	return plan
