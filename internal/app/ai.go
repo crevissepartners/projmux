@@ -1918,18 +1918,7 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	return c.launchPickerSelection(intent)
 }
 
-func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
-	switch mode {
-	case aiModeClaude:
-		return claude.ResumeArgs(resumeID)
-	case aiModeCodex:
-		return codex.ResumeArgs(resumeID)
-	case aiModeAntigravity:
-		return antigravity.ResumeArgs(resumeID)
-	default:
-		return nil, fmt.Errorf("unsupported resume agent: %s", mode)
-	}
-}
+
 
 // themedPickerOptions fills options.Theme with the global theme source so AI
 // split-picker and AI settings popups paint the themed surface/background

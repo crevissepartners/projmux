@@ -436,19 +436,7 @@ func (c *agentCommand) prepareResume(spelling string, registry coremetadata.Regi
 	return plan, nil
 }
 
-// requireResumablePhase enforces the Agent lifecycle gate of resume.
-func requireResumablePhase(spelling string, agent *coremetadata.Agent) error {
-	if slices.Contains(resumableAgentPhases, agent.Status.Phase) {
-		return nil
-	}
-	if agent.Status.Phase == coremetadata.PhaseRunning {
-		return usageError(fmt.Sprintf(
-			"%s: agent/%s is %s and already owns a managed Pane; resume only rebinds an %s or %s Agent. To look at it, run `projmux focus pane`",
-			spelling, agent.Metadata.Name, agent.Status.Phase, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
-	}
-	return usageError(fmt.Sprintf("%s: agent/%s is %s; resume only rebinds an %s or %s Agent",
-		spelling, agent.Metadata.Name, agent.Status.Phase, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
-}
+
 
 // A process Agent has no provider TUI; its existing answer stores remain the
 // only response surface, independently of tmux's question/approval opt-in.
