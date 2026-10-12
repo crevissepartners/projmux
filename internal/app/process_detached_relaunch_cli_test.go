@@ -21,6 +21,23 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
+// A Pane init can precede the Agent's durable conversation pointer. Relaunch
+// source proofs require both to identify the acknowledged initial conversation.
+func awaitDetachedRelaunchInitialConversation(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
+	t.Helper()
+	awaitDetachedInitialConversation(t, ctx, f, ref)
+	processCLIUntil(t, ctx, func() bool {
+		reg, err := f.store.LoadReadOnly()
+		if err != nil {
+			return false
+		}
+		uid := strings.TrimPrefix(ref, "uid:")
+		a, found := reg.Agent(uid)
+		p, ambiguous := processResumePane(reg, uid)
+		return found && !ambiguous && p != nil && p.Status.ProcessSession != nil && a.Status.Activation.State == coremetadata.ActivationAcknowledged && p.Status.ProcessSession.ConnectionID != "" && p.Status.ProcessSession.TurnID == "" && a.Status.SessionRef.ConversationID() != "" && a.Status.SessionRef.ConversationID() == processRelaunchConversation(p.Status.ProcessSession)
+	})
+}
+
 func TestDetachedProcessRelaunchSameConversationCLI(t *testing.T) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
@@ -32,7 +49,7 @@ func TestDetachedProcessRelaunchSameConversationCLI(t *testing.T) {
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
 			defer first.shutdown(t)
-			awaitDetachedInitialConversation(t, ctx, f, first.ref)
+			awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
 			cleanupDetachedResume(t, f, first.ref)
 			// The Codex default shortcut still leaves its current owner alone.
@@ -97,7 +114,7 @@ func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
 	defer first.shutdown(t)
-	awaitDetachedInitialConversation(t, ctx, f, first.ref)
+	awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
 	old, _ := f.store.LoadReadOnly()
 	a, _ := old.Agent(strings.TrimPrefix(first.ref, "uid:"))
 	pane, _ := old.Pane(a.Status.PaneRef)
@@ -131,7 +148,7 @@ func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
 	detachedResumeCLI(t, ctx, f, "agent", "relaunch", first.ref, "--detach")
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "peer-source", "--", "source"))
 	defer source.shutdown(t)
-	awaitDetachedInitialConversation(t, ctx, f, source.ref)
+	awaitDetachedRelaunchInitialConversation(t, ctx, f, source.ref)
 	detachedResumeCLI(t, ctx, f, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", "detached-relaunch-peer", "--", "resume frozen conversation")
 	deferredCLIStatus(t, ctx, f, "detached-relaunch-peer", "delivered")
 	next := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
@@ -157,7 +174,7 @@ func TestDetachedProcessRelaunchRefusalsAndPreviewCLI(t *testing.T) {
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
 	defer first.shutdown(t)
-	awaitDetachedInitialConversation(t, ctx, f, first.ref)
+	awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
 	before, _ := f.store.LoadReadOnly()
 	a, _ := before.Agent(strings.TrimPrefix(first.ref, "uid:"))
 	p, _ := before.Pane(a.Status.PaneRef)
@@ -213,18 +230,7 @@ func TestDetachedProcessRelaunchRollbackCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
-			awaitDetachedInitialConversation(t, ctx, f, first.ref)
-			// The Pane init can precede the Agent's durable conversation pointer.
-			// Capture the source proof only once both identify this conversation.
-			processCLIUntil(t, ctx, func() bool {
-				reg, err := f.store.LoadReadOnly()
-				if err != nil {
-					return false
-				}
-				a, found := reg.Agent(strings.TrimPrefix(first.ref, "uid:"))
-				p, ambiguous := processResumePane(reg, strings.TrimPrefix(first.ref, "uid:"))
-				return found && !ambiguous && p != nil && p.Status.ProcessSession != nil && a.Status.SessionRef.ConversationID() != "" && a.Status.SessionRef.ConversationID() == processRelaunchConversation(p.Status.ProcessSession)
-			})
+			awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
 			if mode != "same-recipe-running-output" && mode != "stale-source" {
 				first.shutdown(t)
 			} else {
@@ -235,7 +241,7 @@ func TestDetachedProcessRelaunchRollbackCLI(t *testing.T) {
 			pane, _ := old.Pane(agent.Status.PaneRef)
 			sibling := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "sibling", "--", "sibling"))
 			defer sibling.shutdown(t)
-			awaitDetachedInitialConversation(t, ctx, f, sibling.ref)
+			awaitDetachedRelaunchInitialConversation(t, ctx, f, sibling.ref)
 			before, _ := f.store.LoadReadOnly()
 			other, _ := before.Agent(strings.TrimPrefix(sibling.ref, "uid:"))
 			otherPane, _ := before.Pane(other.Status.PaneRef)
