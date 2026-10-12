@@ -406,6 +406,7 @@ func (c *agentCommand) lockDeferredRelease(ctx context.Context, uid string) (fun
 // Only a proved zero-write hold can be retried; terminal/unknown outcomes retain
 // their existing meaning. Persist a crash witness around each possible write.
 func (c *agentCommand) releaseDeferredPeer(ctx context.Context, record messagestore.Record, mark func(string) error, syncStep func() error) error {
+	backoff := 20 * time.Millisecond
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -446,8 +447,14 @@ func (c *agentCommand) releaseDeferredPeer(ctx context.Context, record messagest
 		if err = mark(""); err != nil {
 			return err
 		}
-		if err = c.sleepMessage(ctx, 20*time.Millisecond); err != nil {
-			return err
+		// Busy does not retire accepted work. Bound polling load while retaining
+		// its existing message deadline and immediate context cancellation.
+		pause := min(backoff, settled.Envelope.Deadline.Sub(c.messageClock()))
+		backoff = min(2*backoff, 500*time.Millisecond)
+		if pause > 0 {
+			if err = c.sleepMessage(ctx, pause); err != nil {
+				return err
+			}
 		}
 	}
 }

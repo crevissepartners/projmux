@@ -418,3 +418,65 @@ func TestDetachedProcessStopFenceRejectsReplacementOrStaleProof(t *testing.T) {
 		})
 	}
 }
+
+func TestDetachedProcessDeferredReleaseBackoffDeadlineAndCancel(t *testing.T) {
+	for _, ending := range []string{"deadline", "cancel"} {
+		t.Run(ending, func(t *testing.T) {
+			f := newHoldFixture(t)
+			deadline := f.now.Add(2 * time.Second)
+			if ending == "cancel" {
+				deadline = f.now.Add(time.Minute)
+			}
+			f.putHeld(t, "backoff-first", f.now, deadline, deferredHoldReason)
+			f.putHeld(t, "backoff-later", f.now.Add(time.Millisecond), f.now.Add(time.Minute), deferredHoldReason)
+			held, err := f.store.DeferredFor(f.claudeUID, deferredHoldReason)
+			if err != nil || len(held) != 2 {
+				t.Fatal("held fixture", held, err)
+			}
+			f.adapter.busy = 100
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f.installFakeSleep()
+			f.onWait = func() {
+				if ending == "cancel" && len(f.waits) == 8 {
+					cancel()
+				}
+			}
+			var witness string
+			syncs := 0
+			unlock, err := f.cmd.lockDeferredRelease(ctx, f.claudeUID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = f.cmd.releaseDeferredPeer(ctx, held[0], func(ref string) error { witness = ref; return nil }, func() error { syncs++; return nil })
+			unlock()
+			want := []time.Duration{20 * time.Millisecond, 40 * time.Millisecond, 80 * time.Millisecond, 160 * time.Millisecond, 320 * time.Millisecond, 500 * time.Millisecond, 500 * time.Millisecond, 380 * time.Millisecond}
+			state := coremessage.StateExpired
+			if ending == "cancel" {
+				want[7] = 500 * time.Millisecond
+				state = coremessage.StateHeld
+			}
+			if ending == "deadline" && err != nil {
+				t.Fatal(err)
+			}
+			if ending == "cancel" && err != context.Canceled {
+				t.Fatal("backoff ignored cancellation", err)
+			}
+			if !reflect.DeepEqual(f.waits, want) {
+				t.Fatal("backoff growth/cap/deadline changed", f.waits, want)
+			}
+			if syncs < len(want) || witness != "" || len(f.adapter.submits) != len(want) {
+				t.Fatal("controls/witness/zero-write retry changed", syncs, witness, f.adapter.submits)
+			}
+			record, _, _ := f.store.Get("backoff-first")
+			if record.Delivery.State != state || record.HandoffObserved || record.Delivery.OutcomeUnknown || f.delivery(t, "backoff-later").State != coremessage.StateHeld {
+				t.Fatal("backoff changed outcome/order", record)
+			}
+			again, err := f.cmd.lockDeferredRelease(context.Background(), f.claudeUID)
+			if err != nil {
+				t.Fatal("backoff leaked lock", err)
+			}
+			again()
+		})
+	}
+}
