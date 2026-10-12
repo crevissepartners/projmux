@@ -358,7 +358,10 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context
 			return result, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "closed-precondition", plan.ProjectUID, "", err)
 		}
 	}
+	var before, after coremetadata.Registry
 	_, err = s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		before = working.Clone()
+		defer func() { after = working.Clone() }()
 		if current, ok := working.ProjectByRoot(root); ok {
 			if current.Metadata.UID != plan.ProjectUID {
 				return fmt.Errorf("project fresh start: %q now declares a different Project; retry", root)
@@ -404,6 +407,7 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context
 	if err != nil {
 		return result, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "registry-commit", plan.ProjectUID, result.NewProjectUID, err)
 	}
+	intmetadata.RecordAutomaticRemovals(s.resources.stateDir, before, after, "project-fresh", os.Stderr)
 	return result, nil
 }
 

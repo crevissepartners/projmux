@@ -595,6 +595,10 @@ type RestoreResult struct {
 	SourceBackupPath    string                       `json:"sourceBackupPath,omitempty"`
 	MigrationReportPath string                       `json:"migrationReportPath,omitempty"`
 	Migration           coremetadata.MigrationReport `json:"-"`
+	// Degraded authority cannot require protection removal through the disabled
+	// ordinary mutation gate. Known protected removals remain inspectable.
+	ProtectionUnavailable          bool     `json:"protectionUnavailable,omitempty"`
+	ProtectionUnavailableAgentUIDs []string `json:"protectionUnavailableAgentUIDs,omitempty"`
 }
 
 type verifiedRecoverySource struct {
@@ -638,6 +642,7 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 	}
 
 	var result RestoreResult
+	var before, after coremetadata.Registry
 	err = s.withRecoveryLock(func() error {
 		// Re-verify under the recovery lock. Between the pre-lock verification and here
 		// the file could have been replaced by something this build must not
@@ -658,8 +663,36 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 				ErrRecoveryRaced, s.path, guard, displayChecksum(current.Checksum))
 		}
 
+		// A degraded graph cannot release protection through ordinary mutations.
+		// Preserve known identities for evidence, but do not block its repair.
+		decodeErr := json.Unmarshal(currentBytes, &before)
+		protectionUnavailable := current.State != RegistryStateValid && current.State != RegistryStateFirstUse
+		if decodeErr != nil {
+			before = coremetadata.Registry{}
+		}
+
+		if err := json.Unmarshal(verified.publishBytes, &after); err != nil {
+			return err
+		}
+		if !protectionUnavailable {
+			if err := coremetadata.ValidateAgentRemovals(before, after); err != nil {
+				return err
+			}
+		}
+
+		var unavailableAgentUIDs []string
+		if protectionUnavailable {
+			for _, agent := range coremetadata.RemovedAgents(before, after) {
+				if coremetadata.AgentProtected(agent) {
+					unavailableAgentUIDs = append(unavailableAgentUIDs, agent.Metadata.UID)
+				}
+			}
+			sort.Strings(unavailableAgentUIDs)
+		}
 		result = RestoreResult{
-			SourcePath: source, SourceChecksum: verified.info.Checksum,
+			ProtectionUnavailable:          protectionUnavailable,
+			ProtectionUnavailableAgentUIDs: unavailableAgentUIDs,
+			SourcePath:                     source, SourceChecksum: verified.info.Checksum,
 			PublishedChecksum: verified.publishChecksum,
 			Contents:          verified.info.Contents, ReplacedState: current.State,
 			Migration: verified.migration,
@@ -670,11 +703,23 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 		if current.Checksum == verified.publishChecksum {
 			return nil
 		}
-		return s.publishRestore(source, verified, currentBytes, current, &result)
+		if err := s.publishRestore(source, verified, currentBytes, current, &result); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	if result.Changed {
+		stateDir := func() (string, error) { return s.deletionStateDir, nil }
+		if result.ProtectionUnavailable {
+			RecordProtectionUnavailable(stateDir, before, after, os.Stderr)
+		} else {
+			RecordAutomaticRemovals(stateDir, before, after, "registry-recovery-restore", os.Stderr)
+		}
+	}
+
 	return result, nil
 }
 

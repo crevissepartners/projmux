@@ -1414,3 +1414,36 @@ def send_many(b):
 		t.Fatalf("owner died %v %s", err, stderr.String())
 	}
 }
+
+func TestAutomaticProtectedProcessHookRollbackActualCLI(t *testing.T) {
+	for _, virtual := range []bool{false, true} {
+		t.Run(fmt.Sprint(virtual), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			f.config(t, "[hooks.post-create]\nruntime = \"process\"\nrun = \"exit 7\"\n")
+			args := append(f.args(), "--label", "projmux.io/protected=true")
+			if virtual {
+				args = []string{"create", "window", "--host", "process", "--provider", "claude", "-p", "uid:" + f.project, "--name", "protected-virtual", "--label", "projmux.io/protected=true"}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
+			if err == nil || !bytes.Contains(out, []byte("agent-protected")) || !bytes.Contains(out, []byte("runtime=offline")) {
+				t.Fatalf("protected rollback: %v %s", err, out)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(reg.Agents) != 1 || !coremetadata.AgentProtected(reg.Agents[0]) || reg.Agents[0].Status.Phase != coremetadata.PhaseOffline || reg.Agents[0].Status.LastTermination == nil {
+				t.Fatalf("protected Wait retained: %+v", reg.Agents)
+			}
+			if !bytes.Contains(out, []byte("remaining agent uid:"+reg.Agents[0].Metadata.UID)) {
+				t.Fatalf("residual receipt=%s", out)
+			}
+			data, _ := os.ReadFile(filepath.Join(f.root, "state", "projmux", deletionRecordsFile))
+			if len(data) != 0 {
+				t.Fatalf("protected removal record=%s", data)
+			}
+		})
+	}
+}

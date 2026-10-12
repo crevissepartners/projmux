@@ -112,13 +112,15 @@ type registryRecoveryReport struct {
 
 // registryRecoveryRestore is the committed half of the report.
 type registryRecoveryRestore struct {
-	SourcePath        string                       `json:"sourcePath"`
-	SourceChecksum    string                       `json:"sourceChecksum"`
-	Changed           bool                         `json:"changed"`
-	ReplacedState     intmetadata.RegistryState    `json:"replacedState,omitempty"`
-	PreservedPath     string                       `json:"preservedPath,omitempty"`
-	PreservedChecksum string                       `json:"preservedChecksum,omitempty"`
-	Contents          intmetadata.RegistryContents `json:"contents"`
+	SourcePath                     string                       `json:"sourcePath"`
+	SourceChecksum                 string                       `json:"sourceChecksum"`
+	Changed                        bool                         `json:"changed"`
+	ReplacedState                  intmetadata.RegistryState    `json:"replacedState,omitempty"`
+	PreservedPath                  string                       `json:"preservedPath,omitempty"`
+	PreservedChecksum              string                       `json:"preservedChecksum,omitempty"`
+	Contents                       intmetadata.RegistryContents `json:"contents"`
+	ProtectionUnavailable          bool                         `json:"protectionUnavailable,omitempty"`
+	ProtectionUnavailableAgentUIDs []string                     `json:"protectionUnavailableAgentUIDs,omitempty"`
 }
 
 // registryRecoveryMirrorReport is the partial-evidence diagnostic.
@@ -239,7 +241,9 @@ func (c *registryRecoveryCommand) Run(args []string, stdout, stderr io.Writer) e
 		report.Outcome = "no-op"
 	}
 	report.Restore = &registryRecoveryRestore{
-		SourcePath: result.SourcePath, SourceChecksum: result.SourceChecksum, Changed: result.Changed,
+		ProtectionUnavailable:          result.ProtectionUnavailable,
+		ProtectionUnavailableAgentUIDs: result.ProtectionUnavailableAgentUIDs,
+		SourcePath:                     result.SourcePath, SourceChecksum: result.SourceChecksum, Changed: result.Changed,
 		ReplacedState: result.ReplacedState, PreservedPath: result.PreservedPath,
 		PreservedChecksum: result.PreservedChecksum, Contents: result.Contents,
 	}
@@ -500,6 +504,11 @@ func writeRegistryRecoveryReport(w io.Writer, output string, report registryReco
 		}
 	}
 	if report.Restore != nil {
+		if report.Restore.ProtectionUnavailable {
+			if _, err := fmt.Fprintf(w, "registry recovery: protection-unavailable agents=%v\n", report.Restore.ProtectionUnavailableAgentUIDs); err != nil {
+				return err
+			}
+		}
 		if _, err := fmt.Fprintf(w, "restored: %s changed=%t contents=%s\n", report.Restore.SourcePath, report.Restore.Changed, formatRegistryRecoveryContents(report.Restore.Contents)); err != nil {
 			return err
 		}

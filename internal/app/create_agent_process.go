@@ -835,13 +835,26 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 			return processCreateCleanupError(*result, err)
 		}
 	}
-	_, err := c.store.update(func(reg *coremetadata.Registry) error {
+	var before coremetadata.Registry
+	var retained error
+	after, err := c.store.update(func(reg *coremetadata.Registry) error {
+		before = reg.Clone()
 		pane, ok := reg.Pane(result.Binding.Pane)
 		if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(result.Binding) {
 			return processhost.ErrStale
 		}
 		if result.Handle != nil && (!pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil) {
 			return processhost.ErrStale
+		}
+		if agent, ok := reg.Agent(result.Binding.Agent); ok && coremetadata.AgentProtected(*agent) {
+			retained = coremetadata.AgentProtectionError(*agent)
+			if result.Handle == nil {
+				// No provider was spawned. Keep the reservation Offline without inventing
+				// a supervisor Wait receipt for a process that never existed.
+				agent.Status.Phase = coremetadata.PhaseOffline
+				agent.Status.Reason = "process create rollback retained protected unstarted Agent"
+			}
+			return nil
 		}
 		if result.createdWindow {
 			window, ok := reg.Window(result.Binding.Window)
@@ -854,6 +867,10 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 	})
 	if err != nil {
 		return processCreateCleanupError(*result, err)
+	}
+	intmetadata.RecordAutomaticRemovals(c.store.stateDir, before, after, "process-create-rollback", os.Stderr)
+	if retained != nil {
+		return processCreateCleanupError(*result, retained)
 	}
 	return nil
 }

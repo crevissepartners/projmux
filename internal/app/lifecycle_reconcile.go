@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"os"
 	"strings"
 	"time"
 
@@ -966,7 +967,10 @@ func reconcileLifecycle(
 	var locked *lifecycleTeardownRecord
 	var lockedErr error
 	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindLifecycleReconcile)
+	var removalBefore, removalAfter coremetadata.Registry
 	_, err = store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		removalBefore = working.Clone()
+		defer func() { removalAfter = working.Clone() }()
 		defer lock.Returned()
 		locked, lockedErr = nil, nil
 		lock.Phase(diagnostics.ApplyLockPhaseObserve)
@@ -1084,6 +1088,7 @@ func reconcileLifecycle(
 		}
 		return result, err
 	}
+	intmetadata.RecordAutomaticRemovals(store.stateDir, removalBefore, removalAfter, "lifecycle-window-cascade", os.Stderr)
 	event.journalTeardown(locked)
 	if result.changed() == 0 {
 		// The locked re-observation found every candidate live again, or every
