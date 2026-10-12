@@ -122,7 +122,7 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 		<-done
 		return fmt.Errorf("process-detached-identity-handshake-failed: %w", errors.Join(err, ctx.Err()))
 	}
-	if !identity.Owner.Valid() || identity.Owner.OwnerUID != callerUID() {
+	if !identity.Owner.Valid() || int64(identity.Owner.OwnerUID) != int64(os.Getuid()) {
 		_ = launcher.Process.Kill()
 		<-done
 		return errors.New("process-detached-owner-identity-invalid")
@@ -194,8 +194,6 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 	failed = false
 	return nil
 }
-
-func callerUID() uint32 { return uint32(os.Getuid()) }
 
 func signalDetachedProcessOwner(identity coremetadata.ProcessIdentity) {
 	current, _, err := localipc.Process(identity.PID)
@@ -347,7 +345,7 @@ func runProcessDetachedEntry(route string, command *createCommand) error {
 // rather than infer provenance from the new owner after its session boundary.
 func bindDetachedCaller(command *createCommand, caller coremetadata.ProcessIdentity) error {
 	current, _, err := localipc.Process(caller.PID)
-	if err != nil || current != caller || caller.OwnerUID != callerUID() {
+	if err != nil || current != caller || int64(caller.OwnerUID) != int64(os.Getuid()) {
 		return errors.New("process-detached-caller-identity-invalid")
 	}
 	ancestors := func() ([]coremetadata.ProcessIdentity, error) {
@@ -388,11 +386,21 @@ type processDetachedLog struct {
 }
 
 func newProcessDetachedLog(registryPath string, binding processhost.Binding) (*processDetachedLog, error) {
+	for _, component := range []string{binding.Agent, binding.Generation} {
+		if !filepath.IsLocal(component) || filepath.Base(component) != component || component == "." {
+			return nil, errors.New("process-detached-log-binding-invalid")
+		}
+	}
 	dir := filepath.Join(filepath.Dir(filepath.Dir(registryPath)), "process-owners")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(dir, binding.Agent+"-"+binding.Generation+".log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !localipc.OwnedByCurrentUser(info) {
+		return nil, errors.New("process-detached-log-directory-not-private")
+	}
+	// #nosec G304 -- single-component binding names under the exact owned private state directory; exclusive nofollow creation cannot replace or follow an existing log.
+	file, err := os.OpenFile(filepath.Join(dir, binding.Agent+"-"+binding.Generation+".log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return nil, err
 	}

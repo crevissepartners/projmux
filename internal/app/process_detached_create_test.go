@@ -140,3 +140,28 @@ func TestDetachedStopRejectsChangedGeneration(t *testing.T) {
 		t.Fatalf("stale stop borrowed another generation's Wait: %v", err)
 	}
 }
+
+func TestDetachedOwnerLogRejectsTraversalAndSymlink(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry", "registry.json")
+	for _, component := range []string{"", ".", "..", "../outside", "/outside", "nested/name"} {
+		for _, binding := range []processhost.Binding{{Agent: component, Generation: "gen-probe"}, {Agent: "agent-probe", Generation: component}} {
+			if log, err := newProcessDetachedLog(registry, binding); err == nil {
+				log.file.Close()
+				t.Fatalf("unsafe log name accepted: %+v", binding)
+			}
+		}
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "process-owners")); err != nil {
+		t.Fatal(err)
+	}
+	if log, err := newProcessDetachedLog(registry, processhost.Binding{Agent: "agent-probe", Generation: "gen-probe"}); err == nil {
+		log.file.Close()
+		t.Fatal("symlinked log directory accepted")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("unsafe log wrote outside private root: %v %v", entries, err)
+	}
+}
