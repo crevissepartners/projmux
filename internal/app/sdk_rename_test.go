@@ -17,6 +17,7 @@ import (
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -322,41 +323,149 @@ func TestRenameSDKIsolatedClientsAndInputFailures(t *testing.T) {
 	}
 }
 
-func TestRenameSDKAgentOwnedPaneAndProcessRefusal(t *testing.T) {
+func TestRenameSDKAgentOwnedPane(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
 	reg := resourceFixtureRegistry(t)
-	state, _, c := renameState(t, reg)
+	_, _, c := renameState(t, reg)
 	got, err := c.Rename(context.Background(), core.RenameRequest{Kind: core.KindPane, Ref: "uid:pan-alpha-codex", Project: "alpha", Window: "main", Name: "agent-pane-new"})
 	if err != nil || !got.Committed {
 		t.Fatalf("Agent Pane: %+v %v", got, err)
 	}
-	// Process targets must be rejected before opening a Registry transaction.
-	r := projectRegistry(t, state)
-	p, _ := r.Pane("pan-alpha-codex")
-	p.Spec.Runtime.Kind = metadata.RuntimeProcess
-	p.Status = metadata.PaneStatus{}
-	a, _ := r.Agent("agt-alpha-codex")
-	a.Status.Phase = metadata.PhaseOffline
-	if err := r.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	b, err := json.Marshal(r)
+}
+
+// Metadata rename does not own a provider lifetime, including on virtual Windows.
+func TestRenameSDKProcessMetadataCLIParity(t *testing.T) {
+	liveguard.RequireActive(t)
+	requireRealTmux(t)
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	reg := resourceFixtureRegistry(t)
+	window, agent, pane, err := store.DefaultMutator().CreateProcessWindow(&reg, "prj-alpha", metadata.BootstrapWindow{Name: "process-window"}, metadata.CreateAgentOptions{Name: "process-agent", Provider: "codex", Workspace: metadata.AgentWorkspace{CWD: "/tmp"}, OperationID: "rename-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "generation", OperationID: "rename-process"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(store.PathFor(state), b, 0600); err != nil {
+	if !reg.IsVirtualWindow(window.Metadata.UID) {
+		t.Fatal("fixture is not virtual")
+	}
+	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, req := range []core.RenameRequest{{Kind: core.KindPane, Ref: "uid:pan-alpha-codex", Name: "process-new"}, {Kind: core.KindAgent, Ref: "uid:agt-alpha-codex", Name: "process-new"}} {
-		result, err := c.Rename(context.Background(), req)
-		var f *projmux.Refusal
-		if result.Committed || !errors.As(err, &f) || f.Code != projmux.CodeProcessUnsupported {
-			t.Fatalf("process target: %+v %v", result, err)
+	root, err := os.MkdirTemp(os.Getenv("TMUX_TMPDIR"), "sdk-process-rename-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Fatal("socket directory missing")
+	}
+	socket := filepath.Join(root, "tmux.sock")
+	runner := tmux.ExecRunner{}
+	run := func(args ...string) string {
+		t.Helper()
+		out, err := runner.Run(context.Background(), "tmux", append([]string{"-S", socket}, args...)...)
+		if err != nil {
+			t.Fatalf("%v: %v %s", args, err, out)
 		}
-		after, _ := os.ReadFile(store.PathFor(state))
-		if !bytes.Equal(b, after) {
-			t.Fatal("process refusal wrote Registry")
+		return strings.TrimSpace(string(out))
+	}
+	runtimePane := run("-f", "/dev/null", "new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "unrelated", "-n", "untouched", "tail -f /dev/null")
+	runtimePID := run("display-message", "-p", "#{pid}")
+	t.Cleanup(func() {
+		if run("display-message", "-p", "#{socket_path}") != socket {
+			t.Fatal("socket cleanup proof")
+		}
+		run("kill-server")
+		_ = os.RemoveAll(root)
+	})
+	snapshot := func() string {
+		return run("list-sessions", "-F", "#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_project_name}") + run("list-windows", "-a", "-F", "#{window_id}|#{window_name}|#{@projmux_window_uid}|#{@projmux_window_name}") + run("list-panes", "-a", "-F", "#{pane_id}|#{pane_title}|#{@projmux_pane_uid}|#{@projmux_pane_name}")
+	}
+	before := snapshot()
+	for _, target := range []struct {
+		kind core.Kind
+		uid  string
+	}{
+		{core.KindWindow, window.Metadata.UID}, {core.KindPane, pane.Metadata.UID}, {core.KindAgent, agent.Metadata.UID},
+	} {
+		for _, mode := range []string{"no-socket", "socket", "missing-server"} {
+			t.Run(string(target.kind)+"/"+mode, func(t *testing.T) {
+				sdkState, _, c := renameState(t, reg)
+				cliState, s, _ := renameState(t, reg)
+				req := core.RenameRequest{Kind: target.kind, Ref: "uid:" + target.uid, Name: "process-renamed"}
+				if mode == "socket" {
+					req.SocketPath = socket
+				}
+				if mode == "missing-server" {
+					req.SocketPath = filepath.Join(root, "missing.sock")
+				}
+				got, err := c.Rename(context.Background(), req)
+				if !got.Committed {
+					t.Fatalf("SDK did not commit: %+v %v", got, err)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				cmd := &renameCommand{store: s}
+				if mode != "no-socket" {
+					lookup := func(key string) string {
+						switch key {
+						case "TMUX":
+							return req.SocketPath + "," + runtimePID + ",0"
+						case "TMUX_PANE":
+							return runtimePane
+						}
+						return ""
+					}
+					cmd.mirror = inheritedResourceMutationMirror(lookup, runner)
+					cmd.tmuxRunner = runner
+					cmd.lookupEnv = lookup
+				}
+				var cliOut, cliNotice bytes.Buffer
+				if err := cmd.Run([]string{strings.ToLower(string(target.kind)), req.Ref, "--name", req.Name}, &cliOut, &cliNotice); err != nil {
+					t.Fatalf("CLI: %v %s", err, cliNotice.String())
+				}
+				notice := cliNotice.String()
+				if strings.TrimSpace(notice) != got.Notice {
+					t.Fatalf("notice mismatch %q != %q", notice, got.Notice)
+				}
+				// The shared service can observe inventory but must issue zero writes.
+				counter := &renameCountingRuntimeRunner{delegate: runner}
+				mirror := mutations.ExplicitSocketRenamer(mutations.Store{}, func() (metadata.Registry, error) { return reg, nil }, req.SocketPath, counter)
+				mirrorNotice, mirrorErr := mirror.MirrorRenamed(context.Background(), metadata.Kind(target.kind), target.uid, req.Name)
+				if mirrorErr != nil || mirrorNotice != got.Notice || counter.writes != 0 || (mode == "no-socket" && counter.calls != 0) || (mode != "no-socket" && target.kind != core.KindAgent && counter.calls == 0) {
+					t.Fatalf("process mirror: notice=%q error=%v calls=%d writes=%d", mirrorNotice, mirrorErr, counter.calls, counter.writes)
+				}
+				a, err := os.ReadFile(store.PathFor(sdkState))
+				if err != nil {
+					t.Fatal(err)
+				}
+				b, err := os.ReadFile(store.PathFor(cliState))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if normalizeProjectJSON(t, string(a), projectRegistry(t, sdkState)) != normalizeProjectJSON(t, string(b), projectRegistry(t, cliState)) {
+					t.Fatalf("process Registry bytes differ: %s\n%s", a, b)
+				}
+				if after := snapshot(); after != before {
+					t.Fatalf("process metadata rename touched tmux: %q != %q", after, before)
+				}
+			})
 		}
 	}
+}
+
+type renameCountingRuntimeRunner struct {
+	calls, writes int
+	delegate      tmux.ExecRunner
+}
+
+func (r *renameCountingRuntimeRunner) Run(ctx context.Context, executable string, args ...string) ([]byte, error) {
+	r.calls++
+	if len(args) >= 3 {
+		switch args[2] {
+		case "set-option", "rename-window", "rename-session", "select-pane":
+			r.writes++
+		}
+	}
+	return r.delegate.Run(ctx, executable, args...)
 }

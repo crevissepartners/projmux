@@ -20,7 +20,6 @@ import (
 const (
 	CodeRenameKindUnsupported Code = "rename-kind-unsupported"
 	CodeMirrorNotConverged    Code = "mirror-not-converged"
-	CodeProcessUnsupported    Code = "process-unsupported"
 )
 
 // Rename admits one explicit resource change. It never reads inherited TMUX or
@@ -177,9 +176,6 @@ func renameTargetAllowed(r metadata.Registry, kind metadata.Kind, uid string) er
 		if !ok {
 			return metadata.ErrNotFound
 		}
-		if p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-			return &Refusal{Code: CodeProcessUnsupported, message: "RenameRequest.Ref selects a process Pane"}
-		}
 		w, ok := mutations.WindowForPane(r, p.Metadata.UID)
 		if !ok {
 			return metadata.ErrNotFound
@@ -189,10 +185,6 @@ func renameTargetAllowed(r metadata.Registry, kind metadata.Kind, uid string) er
 		a, ok := r.Agent(uid)
 		if !ok {
 			return metadata.ErrNotFound
-		}
-		p, ok := r.Pane(a.Status.PaneRef)
-		if ok && p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-			return &Refusal{Code: CodeProcessUnsupported, message: "RenameRequest.Ref selects a process Agent"}
 		}
 		windowUID = a.Metadata.OwnerUID()
 	}

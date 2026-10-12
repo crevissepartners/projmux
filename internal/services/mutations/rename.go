@@ -160,7 +160,14 @@ func (c Renamer) MirrorRenamed(ctx context.Context, kind coremetadata.Kind, uid,
 	}
 	if !found {
 		if c.StrictMirror {
-			return "", CommittedMirrorError("rename", kind, uid, errors.New("resource runtime identity was not found"))
+			reg, err := c.Load()
+			if err != nil {
+				return "", CommittedMirrorError("rename", kind, uid, err)
+			}
+			pane, ok := reg.Pane(uid)
+			if kind != coremetadata.KindPane || !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+				return "", CommittedMirrorError("rename", kind, uid, errors.New("resource runtime identity was not found"))
+			}
 		}
 		return "", nil
 	}
@@ -210,6 +217,7 @@ func (c Renamer) RenameRuntimeWindow(ctx context.Context, uid, name string) (str
 	if !ok {
 		return "", CommittedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("renamed Window disappeared from Registry"))
 	}
+	virtual := registry.IsVirtualWindow(uid)
 	rootUID := window.Metadata.OwnerUID()
 	rootKind := coremetadata.KindProject
 	if _, ok := registry.Project(rootUID); !ok {
@@ -220,7 +228,7 @@ func (c Renamer) RenameRuntimeWindow(ctx context.Context, uid, name string) (str
 	}
 	route, err := c.ResolveWindowRoute(ctx)
 	if err != nil {
-		if c.StrictMirror || errors.Is(err, ErrWindowRunnerNotConfigured) {
+		if (c.StrictMirror && !virtual) || errors.Is(err, ErrWindowRunnerNotConfigured) {
 			return "", CommittedMirrorError("rename", coremetadata.KindWindow, uid, err)
 		}
 		// Preserve the established metadata-authoritative behavior when no live
@@ -274,7 +282,7 @@ func (c Renamer) RenameRuntimeWindow(ctx context.Context, uid, name string) (str
 		return "", CommittedMirrorError("rename", coremetadata.KindWindow, uid, err)
 	}
 	if !found {
-		if c.StrictMirror {
+		if c.StrictMirror && !virtual {
 			return "", CommittedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("window runtime identity was not found"))
 		}
 		return "", nil

@@ -113,6 +113,17 @@ func (r *renameSocket) proveProject(ctx context.Context, uid string) (string, bo
 }
 func (r *renameSocket) FindPaneTargetForUID(ctx context.Context, uid string) (string, bool, error) {
 	r.paneUID = uid
+	reg, err := r.load()
+	if err != nil {
+		return "", false, err
+	}
+	if pane, ok := reg.Pane(uid); ok && pane.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
+		// A process Pane can be renamed with the same best-effort inventory
+		// lookup as the CLI. Once captured, server drift remains a refusal.
+		if err := r.check(ctx); err != nil {
+			return "", false, nil
+		}
+	}
 	return r.provePane(ctx, uid)
 }
 func (r *renameSocket) provePane(ctx context.Context, uid string) (string, bool, error) {
@@ -149,6 +160,9 @@ func (r *renameSocket) provePane(ctx context.Context, uid string) (string, bool,
 			return "", false, errors.New("pane Project containment drifted")
 		}
 		found = append(found, row[0])
+	}
+	if len(found) == 0 && pane.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
+		return "", false, nil
 	}
 	if len(found) != 1 {
 		return "", false, fmt.Errorf("pane runtime UID must match exactly one pane, got %d", len(found))

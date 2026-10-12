@@ -137,7 +137,7 @@
 // ListProjectCandidates reads configured paths in discovery order without writing
 // pin preferences or saved discovery memory.
 //
-// Rename changes one explicitly selected Project, Window, Pane or tmux Agent.
+// Rename changes one explicitly selected Project, Window, Pane or Agent.
 // Ref and optional Project/Window scopes never infer an active target. Encode
 // its singular Projection and Receipt with the same JSON encoding as above.
 // Request SocketPath overrides Options.SocketPath; with neither, tmux is never
@@ -145,5 +145,9 @@
 // must prove one UID in its Registry Project on the same server PID throughout
 // writes and reobservation. A mirror failure returns Committed=true and
 // CodeMirrorNotConverged with a wrapped cause; the Registry name is durable.
-// Process targets and ControlSession descendants are outside this mutation API.
+// Process Pane/Agent and virtual Window names are metadata-only and own no
+// provider lifetime. An explicit socket observes their runtime inventory: an
+// absent target produces no writes or Notice; an unavailable route gives the
+// existing Window Notice. Without a socket, only Window returns that Notice.
+// ControlSession descendants are outside this mutation API.
 package projmux
