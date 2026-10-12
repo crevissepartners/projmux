@@ -293,3 +293,29 @@ func TestProjectLinkRulesPublicContract(t *testing.T) {
 	_ = result
 	_ = refusal
 }
+
+func TestExternalProjectCandidatesConsumer(t *testing.T) {
+	home := t.TempDir()
+	repo := filepath.Join(home, "repos")
+	root := filepath.Join(repo, "sample")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PROJMUX_PROJDIR", repo)
+	t.Setenv("PROJMUX_MANAGED_ROOTS", "")
+	t.Setenv("TMUX_SESSIONIZER_ROOTS", "")
+	client, err := projmux.NewClient(projmux.Options{HomeDir: home, ConfigDir: filepath.Join(home, "config"), StateDir: filepath.Join(home, "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result core.ProjectCandidatesResult
+	result, err = client.ListProjectCandidates(context.Background())
+	if err != nil || len(result.Candidates) != 1 || result.Candidates[0].Path != root || result.Candidates[0].Pinned || result.Candidates[0].ProjectUID != "" {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for _, path := range []string{filepath.Join(home, "config"), filepath.Join(home, "state")} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read created %s: %v", path, err)
+		}
+	}
+}

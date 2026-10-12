@@ -160,6 +160,7 @@ var settingsLayerGuardArgv = [][]string{
 	{"persona", "edit", "reviewer"},
 	{"persona", "delete", "reviewer", "--yes"},
 
+	{"get", "project-candidates"},
 	{"link-rules", "show", "alpha"},
 	{"link-rules", "set", "alpha", "--file", "{tmp}/link-rules.json", "--dry-run"},
 	{"link-rules", "delete", "alpha", "--yes"},

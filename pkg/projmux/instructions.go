@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/services/instructions"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
+	"github.com/crevissepartners/projmux/internal/services/projectcandidates"
 	"github.com/crevissepartners/projmux/internal/services/questions"
 )
 
@@ -55,6 +56,8 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	discoveryHome      string
+	discoveryEnv       map[string]string
 	projectShell       string
 	projectSessionName func(string) string
 	approvalControl    ApprovalControl
@@ -98,7 +101,8 @@ func NewClient(options Options) (*Client, error) {
 	}
 	defaults := mutations.CaptureProjectDefaults(options.DefaultShell, options.HomeDir)
 	namer := sessions.NewNamer(defaults.HomeDir)
-	return &Client{projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	discoveryEnv := projectcandidates.CaptureEnvironment()
+	return &Client{discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

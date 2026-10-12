@@ -154,6 +154,7 @@ func TestClassifyCoversEveryTopLevelRule(t *testing.T) {
 		{args: []string{"delete", "agent"}},
 		{args: []string{"describe", "pane"}},
 		{args: []string{"get", "pane"}},
+		{args: []string{"get", "project-candidates"}},
 		{args: []string{"help"}},
 		{args: []string{"instructions", "set"}},
 		{args: []string{"label", "pane"}},

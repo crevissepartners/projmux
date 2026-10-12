@@ -86,6 +86,7 @@ route=focus project identity=unchanged address=unchanged topology=unchanged desi
 route=focus window identity=unchanged|created address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created runtime=unchanged|materialized focus=moved-current-client cardinality=exact-one domain-effect=null
 route=focus pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
 route=get identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=get project-candidates identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=get projects identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=get windows identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
 route=get panes identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null

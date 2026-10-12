@@ -163,67 +163,15 @@ func (a Authority) read() (pins.Set, pins.Resolver, error) {
 // unregistered candidate is pinned by its folded path key, because a path is the
 // only thing anyone knows about it. projectsByRootKey is the bridge a path
 // argument crosses to reach the first question.
-type Selection struct {
-	projectUIDs       map[string]bool
-	candidateKeys     map[string]bool
-	projectsByRootKey map[string][]string
-}
+type Selection = pins.Selection
 
-// Selection builds the render-pass pin lookup. It writes nothing.
+// Selection builds the render-pass pin lookup without writing.
 func (a Authority) Selection() (Selection, error) {
 	stored, resolver, err := a.read()
 	if err != nil {
 		return Selection{}, err
 	}
-	out := Selection{
-		projectUIDs:       map[string]bool{},
-		candidateKeys:     map[string]bool{},
-		projectsByRootKey: map[string][]string{},
-	}
-	for _, ref := range resolver.Projects {
-		if key := candidates.MatchKey(ref.Root); key != "" {
-			out.projectsByRootKey[key] = append(out.projectsByRootKey[key], ref.UID)
-		}
-	}
-	resolution := resolver.Resolve(stored)
-	for _, uid := range resolution.Set.ProjectUIDs() {
-		out.projectUIDs[uid] = true
-	}
-	for _, path := range resolution.Set.CandidatePaths() {
-		if key := candidates.MatchKey(path); key != "" {
-			out.candidateKeys[key] = true
-		}
-	}
-	return out, nil
-}
-
-// PinnedProject reports whether a Registry Project carries a managed pin.
-func (s Selection) PinnedProject(uid string) bool {
-	return s.projectUIDs[strings.TrimSpace(uid)]
-}
-
-// PinnedCandidate reports whether an unregistered path carries a candidate pin.
-func (s Selection) PinnedCandidate(path string) bool {
-	key := candidates.MatchKey(path)
-	return key != "" && s.candidateKeys[key]
-}
-
-// PinnedPath reports whether the pin a path argument resolves to is present.
-//
-// It follows the same resolve-or-candidate rule the pin actions use, so the row
-// that says "already pinned" and the action that would pin it agree about which
-// entry they mean.
-func (s Selection) PinnedPath(path string) bool {
-	key := candidates.MatchKey(path)
-	if key == "" {
-		return false
-	}
-	for _, uid := range s.projectsByRootKey[key] {
-		if s.projectUIDs[uid] {
-			return true
-		}
-	}
-	return s.candidateKeys[key]
+	return pins.Select(stored, resolver), nil
 }
 
 // Row is one typed pin prepared for a picker row.
@@ -282,23 +230,7 @@ func (a Authority) DiscoveryPaths() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	roots := map[string]string{}
-	for _, ref := range resolver.Projects {
-		roots[ref.UID] = ref.Root
-	}
-	resolution := resolver.Resolve(stored)
-	out := make([]string, 0, len(resolution.Set.Pins))
-	for _, pin := range resolution.Set.Pins {
-		switch pin.Kind {
-		case pins.KindCandidate:
-			out = append(out, pin.Value)
-		case pins.KindProject:
-			if root := strings.TrimSpace(roots[pin.Value]); root != "" {
-				out = append(out, root)
-			}
-		}
-	}
-	return out, nil
+	return pins.DiscoveryPaths(stored, resolver), nil
 }
 
 // errAmbiguousPinTarget refuses to type a pin whose path more than one Project

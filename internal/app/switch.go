@@ -27,6 +27,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/projectcandidates"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
@@ -801,13 +802,7 @@ func (c *switchCommand) projectDiscoveryInputs(memoize bool) (candidates.Inputs,
 	} else {
 		repoRoot, _ = resolveProjdir(homeDir, c.lookupEnv, c.tmuxProjdir, c.loadProjdir)
 	}
-	extraRoots := extraProjdirRoots(c.lookupEnv)
-	return candidates.Inputs{
-		HomeDir:      homeDir,
-		RepoRoot:     repoRoot,
-		ManagedRoots: switchManagedRoots(homeDir, repoRoot, extraRoots, c.lookupEnv, c.loadWorkdirs),
-		Pins:         pinPaths,
-	}, nil
+	return projectcandidates.DiscoveryInputs(homeDir, repoRoot, pinPaths, c.lookupEnv, c.loadWorkdirs), nil
 }
 
 func (c *switchCommand) resolveHomeDir() (string, error) {
@@ -1216,34 +1211,7 @@ func resolveProjdir(
 	tmuxOption func() string,
 	load func(string) (string, error),
 ) (string, string) {
-	if raw := envValue(lookup, projdirEnvVar); strings.TrimSpace(raw) != "" {
-		// PROJMUX_PROJDIR is a PATH-style multi-value: the first
-		// non-empty entry is the primary repo root; extra entries are
-		// fed to managed roots elsewhere via extraProjdirRoots.
-		for _, entry := range filepath.SplitList(raw) {
-			if repoRoot := cleanOptionalPath(entry); repoRoot != "" {
-				return repoRoot, projdirSourcePROJDIRenv
-			}
-		}
-	}
-
-	if tmuxOption != nil {
-		if raw := strings.TrimSpace(tmuxOption()); raw != "" {
-			if repoRoot := cleanOptionalPath(raw); repoRoot != "" {
-				return repoRoot, projdirSourceTmuxOption
-			}
-		}
-	}
-
-	if load != nil && homeDir != "" {
-		if saved, err := load(homeDir); err == nil {
-			if repoRoot := cleanOptionalPath(saved); repoRoot != "" {
-				return repoRoot, projdirSourceSaved
-			}
-		}
-	}
-
-	return "", projdirSourceUnresolved
+	return projectcandidates.ResolveProjdir(homeDir, lookup, tmuxOption, load)
 }
 
 // currentProjdirInfo returns the currently resolved repo root path and the
@@ -1348,25 +1316,7 @@ func (c *switchCommand) executeProjdirSettingsAction(action string, stdout, stde
 // switchRepoRoot. Each remaining entry is cleaned and empty entries are
 // dropped. Order is preserved.
 func extraProjdirRoots(lookup func(string) string) []string {
-	raw := envValue(lookup, projdirEnvVar)
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	entries := filepath.SplitList(raw)
-	primaryFound := false
-	extras := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		cleaned := cleanOptionalPath(entry)
-		if cleaned == "" {
-			continue
-		}
-		if !primaryFound {
-			primaryFound = true
-			continue
-		}
-		extras = append(extras, cleaned)
-	}
-	return extras
+	return projectcandidates.ExtraProjdirRoots(lookup)
 }
 
 // tmuxProjdirOption returns the tmux user-option @projmux_projdir value when
@@ -1414,86 +1364,8 @@ func memoizeProjdir(
 }
 
 func switchManagedRoots(homeDir, repoRoot string, extraProjdirRoots []string, lookup func(string) string, loadWorkdirs func(string) ([]string, error)) []string {
-	roots := make([]string, 0)
-	seen := make(map[string]struct{})
-
-	appendRoot := func(root string) {
-		root = cleanOptionalPath(root)
-		if root == "" {
-			return
-		}
-		if _, ok := seen[root]; ok {
-			return
-		}
-		seen[root] = struct{}{}
-		roots = append(roots, root)
-	}
-
-	// Extra PROJMUX_PROJDIR roots (everything past the primary entry)
-	// are prepended so they take priority over env- or saved-managed
-	// roots and the default fallback list. Like PROJMUX_MANAGED_ROOTS,
-	// any explicit env-driven entry suppresses the saved-workdirs and
-	// default fallback below.
-	managedFromEnv := false
-	for _, root := range extraProjdirRoots {
-		if cleanOptionalPath(root) == "" {
-			continue
-		}
-		managedFromEnv = true
-		appendRoot(root)
-	}
-
-	for _, value := range []string{
-		envValue(lookup, managedRootsEnvVar),
-		envValue(lookup, legacyManagedRootsEnvVar),
-	} {
-		for _, root := range filepath.SplitList(value) {
-			if cleanOptionalPath(root) == "" {
-				continue
-			}
-			managedFromEnv = true
-			appendRoot(root)
-		}
-	}
-
-	if !managedFromEnv && loadWorkdirs != nil {
-		saved, err := loadWorkdirs(homeDir)
-		if err == nil {
-			for _, root := range saved {
-				appendRoot(root)
-			}
-		}
-	}
-
-	if len(roots) == 0 {
-		for _, root := range defaultManagedRoots(homeDir, repoRoot) {
-			appendRoot(root)
-		}
-	}
-
-	return roots
+	return projectcandidates.ManagedRoots(homeDir, repoRoot, extraProjdirRoots, lookup, loadWorkdirs)
 }
-
-func defaultManagedRoots(homeDir, repoRoot string) []string {
-	roots := make([]string, 0, 6)
-	for _, root := range []string{
-		filepath.Join(homeDir, "source"),
-		filepath.Join(homeDir, "work"),
-		filepath.Join(homeDir, "projects"),
-		filepath.Join(homeDir, "src"),
-		filepath.Join(homeDir, "code"),
-		repoRoot,
-	} {
-		root = cleanOptionalPath(root)
-		if root == "" {
-			continue
-		}
-		roots = append(roots, root)
-	}
-
-	return roots
-}
-
 func envValue(lookup func(string) string, name string) string {
 	if lookup == nil {
 		return ""
