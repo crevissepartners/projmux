@@ -45,6 +45,19 @@
 // session; Running Agent interruption evidence is recorded exactly as in CLI.
 // A Running process descendant may therefore be projected Offline/interrupted
 // while its provider survives; StopProject does not control process lifetimes.
+// CreateWindow and CreatePane create shell resources through the same CLI
+// transaction, hooks, exact socket/PID/UID guards and rollback. Requests require
+// an explicit Project; CreatePane also requires an explicit Window. Request
+// SocketPath overrides Options.SocketPath; empty uses the proved app socket.
+// SDK calls do not record create.outcome journal events (Backlog 622).
+// Options.ProjmuxExecutable must name an absolute executable from the same
+// projmux build (same module version and commit) as this SDK. Other builds are
+// unsupported and their results are undefined; no version probe is performed.
+// An embedding projmux executable can explicitly pass its own os.Executable()
+// path. The SDK uses this binary only for supervised shell children, and never
+// delegates mutations to CLI commands. Missing, relative or invalid executables
+// return CodeCreateExecutableInvalid before effects. Delete replacement shells
+// do not use this supervisor and do not require ProjmuxExecutable.
 // Clients own no processes or goroutines. Concurrent calls are supported, but
 // multi-call transactions and concurrent profile edits are not serialized.
 // Returned resource graphs, bytes, maps, and slices belong to the caller.

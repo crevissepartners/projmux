@@ -1,9 +1,8 @@
 package app
 
 import (
-	"errors"
 	"fmt"
-	"os"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,7 +22,7 @@ func resolveAgentWorkspace(registry coremetadata.Registry, owner coremetadata.Pr
 
 // errAgentWorkspaceNotAbsolute is the reason every empty or relative workspace
 // path is refused with.
-var errAgentWorkspaceNotAbsolute = errors.New("must be an absolute existing directory")
+var errAgentWorkspaceNotAbsolute = mutationruntime.ErrWorkspaceNotAbsolute
 
 // refuseStatelessAgentWorkspace is the argv half of resolveAgentWorkspace: the
 // refusals a --cwd or --add-dir value earns without reading the Registry or the
@@ -138,21 +137,5 @@ func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, o
 }
 
 func canonicalExistingDir(raw string) (string, error) {
-	if !absoluteWorkspacePath(raw) {
-		return "", errAgentWorkspaceNotAbsolute
-	}
-	raw = strings.TrimSpace(raw)
-	clean := filepath.Clean(raw)
-	info, err := os.Stat(clean)
-	if err != nil {
-		return "", err
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("is not a directory")
-	}
-	real, err := filepath.EvalSymlinks(clean)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(real), nil
+	return mutationruntime.CanonicalExistingDir(raw)
 }

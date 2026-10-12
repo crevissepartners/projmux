@@ -22,6 +22,10 @@ import (
 // ConfigDir is the projmux directory itself, not its XDG parent. Profiles used
 // to guard Delete live in ConfigDir too. No method changes global environment.
 type Options struct {
+	// ProjmuxExecutable is the absolute executable of this same projmux build.
+	// CreateWindow and CreatePane require it for supervised shell children.
+	ProjmuxExecutable string
+
 	// ApprovalControl overrides the exact existing Codex approval transport.
 	ApprovalControl ApprovalControl
 	// QuestionDispatcher overrides only the existing process question transport.
@@ -56,6 +60,8 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	projmuxExecutable string
+
 	discoveryHome      string
 	discoveryEnv       map[string]string
 	projectShell       string
@@ -102,7 +108,7 @@ func NewClient(options Options) (*Client, error) {
 	defaults := mutations.CaptureProjectDefaults(options.DefaultShell, options.HomeDir)
 	namer := sessions.NewNamer(defaults.HomeDir)
 	discoveryEnv := projectcandidates.CaptureEnvironment()
-	return &Client{discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	return &Client{projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}
@@ -126,13 +132,13 @@ const (
 // ordinary errors. Users names the profiles blocking a deletion.
 // Field and Reason optionally describe a link rule validation or confirmation refusal.
 type Refusal struct {
+	Code Code `json:"Code"`
 	// AgentUID identifies the protected Agent when Code is CodeAgentProtected.
-	AgentUID string `json:"agentUID,omitempty"`
-	Code     Code
-	Name     string
-	Users    []string
-	Field    string
-	Reason   string
+	AgentUID string   `json:"agentUID,omitempty"`
+	Name     string   `json:"Name"`
+	Users    []string `json:"Users"`
+	Field    string   `json:"Field"`
+	Reason   string   `json:"Reason"`
 	message  string
 	cause    error
 }

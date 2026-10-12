@@ -12,15 +12,11 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
-	"github.com/crevissepartners/projmux/internal/core/candidates"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-
-	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 // The two canonical create spellings this Phase makes executable.
@@ -175,9 +171,6 @@ type resourceCreateShape struct {
 	// one flag registered twice is a flag package panic, not a refusal.
 	initialProvider bool
 }
-
-
-
 
 // resolveCreateScope fixes the scope of one create before its transaction opens.
 //
@@ -571,7 +564,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 // --create-window may create. A `uid:` occurrence never does: an unresolvable
 // uid names nothing, so there is no name to allocate.
 func isExactNameRef(raw string) bool {
-	return strings.TrimSpace(raw) != "" && !strings.HasPrefix(raw, selector.UIDPrefix)
+	return mutationruntime.IsExactNameRef(raw)
 }
 
 // windowScopeFlagConflict is one flag an explicit cardinality flag cannot be
@@ -641,7 +634,6 @@ func labelMap(raw []string) (map[string]string, error) {
 	}
 	return out, nil
 }
-
 
 // explicitWindowScope reports whether the argv named the Window scope itself.
 //
@@ -772,6 +764,17 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 		return err
 	}
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
+
+	if provider == "" {
+		var out mutationruntime.ShellCreateResult
+		err := c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, op string, ledger *RuntimeLedger) error {
+			return c.createExecution().WindowOperation(scope.shared(), mutationruntime.WindowRequest{Name: flags.name, Labels: labels, Payload: flags.payload}, &out)(ctx, reg, mut, op, ledger)
+		}, c.projectOwnershipGuard(scope))
+		if err != nil {
+			return err
+		}
+		return c.writeResults(stdout, spelling, mode, coremetadata.KindWindow, localShellResults(out.Results))
+	}
 
 	var results []createResult
 	var openedAgent coremetadata.Agent
@@ -1067,146 +1070,12 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	var selectedWindowUIDs []string
 	var notices []string
 	if err := c.transactAdmitted(diagnostics.CreateKindPane, c.processAnchorAdmission(scope, flags, spelling), func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
-		project, err := c.resolveProject(*working, scope)
-		if err != nil {
-			return err
-		}
-		if err := c.refuseMissingRoot(project); err != nil {
-			return err
-		}
-		// A CLI split follows its own argv: only --cwd-from decides, and no
-		// config file is opened. See cliSplitCWDSource.
-		source := cliSplitCWDSource(flags.cwdFrom)
-
-		// Full preflight plus the metadata half of the Window ensure. Every
-		// target Window and every anchor Pane is fixed, and every Window this
-		// operation must create is allocated, before the first tmux call.
-		plan, windows, err := c.resolveSplitTargets(working, mutator, project, scope, flags,
-			selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling, operationID)
-		if err != nil {
-			return err
-		}
-		selectedWindowUIDs = plan.selectedWindowUIDs()
-		if len(plan.targets) == 0 {
-			return usageError(fmt.Sprintf("%s resolved no target Window; %s matched at least one Window is required",
-				spelling, selector.DescribeSelector(plan.query)))
-		}
-
-		panes := make([]paneWork, 0, len(plan.targets))
-		for _, target := range plan.targets {
-			window, ok := working.Window(target.windowUID)
-			if !ok {
-				return fmt.Errorf("%s: window %q disappeared during preflight", spelling, target.windowUID)
-			}
-			pane, err := mutator.AddPane(working, target.windowUID, coremetadata.BootstrapPane{
-				Name:    flags.name,
-				Command: payloadCommand(flags.payload),
-				CWD:     project.Spec.Root,
-				Labels:  labels,
-			}, c.shell, operationID)
-			if err != nil {
-				return MapMetadataError(err)
-			}
-			activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, "", operationID)
-			if err != nil {
-				return err
-			}
-			panes = append(panes, paneWork{
-				target:     target,
-				windowName: window.Metadata.Name,
-				pane:       pane,
-				activation: activation,
-			})
-		}
-
-		// Runtime phase.
-		var sessionName string
-		if len(windows) > 0 {
-			sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
-			if err != nil {
-				return err
-			}
-		}
-		for i := range windows {
-			if err := c.materializeWindow(ctx, working, mutator, ledger, project, sessionName, &windows[i]); err != nil {
-				return err
-			}
-		}
-		for _, work := range panes {
-			if work.target.virtual {
-				paneID, err := c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.target.windowUID, work.pane, work.activation, flags.payload)
-				if err != nil {
-					return err
-				}
-				if _, _, err := mutator.AdoptWindowDefaultShell(working, work.target.windowUID, work.pane.Metadata.UID); err != nil {
-					return err
-				}
-				results = append(results, createResult{kind: coremetadata.KindPane, uid: work.pane.Metadata.UID, name: work.pane.Metadata.Name, paneID: paneID, projectName: project.Metadata.Name, windowName: work.windowName, windowUID: work.target.windowUID})
-				continue
-			}
-			if sessionName == "" {
-				sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
-				if err != nil {
-					return err
-				}
-			}
-			anchorPaneID, err := c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
-			if err != nil {
-				return err
-			}
-			launchDir := project.Spec.Root
-			if source == splitCWDFromPane {
-				var notice string
-				launchDir, notice = c.splitPaneLaunchDir(ctx, anchorPaneID, project.Spec.Root)
-				if notice != "" {
-					notices = append(notices, splitCWDNoticeLine(spelling, work.windowName, notice))
-				}
-				if launchDir != project.Spec.Root {
-					// The Pane this operation allocated starts where its split
-					// starts; the Window's own anchor and owner are untouched.
-					if stored, ok := working.Pane(work.pane.Metadata.UID); ok {
-						stored.Spec.CWD = launchDir
-					}
-					work.pane.Spec.CWD = launchDir
-				}
-			}
-			launch := c.runtime.SupervisedLaunch(ctx, work.activation, flags.payload)
-			paneID, err := c.runtime.SplitPane(ctx, anchorPaneID, flags.placement, launchDir, launch, nil)
-			if paneID != "" {
-				if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
-					return errors.Join(err, claimErr)
-				}
-				if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, paneID, work.pane); mirrorErr != nil {
-					return errors.Join(err, mirrorErr)
-				}
-				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.Warn)
-			}
-			if err != nil {
-				return err
-			}
-			// A shell-required offline bootstrap must first materialize the exact
-			// stored anchor. Only after this new shell Pane exists do we adopt it
-			// as an empty optional default.
-			if _, _, err := mutator.AdoptWindowDefaultShell(working, work.target.windowUID, work.pane.Metadata.UID); err != nil {
-				return MapMetadataError(err)
-			}
-			// Equalize before releasing the create transaction: the next serialized
-			// create may split the same exact anchor Pane and needs the capacity restored
-			// first. equalizeSplitLayout keeps this lock-held work bounded by sharing
-			// one route/inventory guard and one effect receipt across the complete
-			// printable resize batch.
-			c.runtime.EqualizeSplitLayout(ctx, anchorPaneID, flags.placement)
-			results = append(results, createResult{
-				kind:        coremetadata.KindPane,
-				uid:         work.pane.Metadata.UID,
-				name:        work.pane.Metadata.Name,
-				paneID:      paneID,
-				projectName: project.Metadata.Name,
-				windowName:  work.windowName,
-				windowUID:   work.target.windowUID,
-			})
-		}
-		return nil
+		var out mutationruntime.ShellCreateResult
+		err := c.createExecution().PaneOperation(scope.shared(), mutationruntime.ShellPaneRequest{CreateSelection: flags.sharedSelection(), Payload: flags.payload, Placement: flags.placement, CwdFrom: flags.cwdFrom}, labels, &out)(ctx, working, mutator, operationID, ledger)
+		results = localShellResults(out.Results)
+		selectedWindowUIDs = out.SelectedWindowUIDs
+		notices = out.Notices
+		return err
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
@@ -1218,59 +1087,12 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 }
 
 // paneWork is one allocated Pane waiting for its runtime split.
-type paneWork struct {
-	target     paneTarget
-	windowName string
-	pane       coremetadata.Pane
-	// activation is the generation this Pane's supervised launch was issued.
-	activation superviseSpec
-}
-
-
-
-
-
 
 // processAnchorAdmission checks a read-only snapshot before route binding and
 // repeats against locked bytes before reconciliation or resource allocation.
 // Nil retains the legacy injectable transaction order.
 func (c *createCommand) processAnchorAdmission(scope createScope, flags resourceCreateFlags, spelling string) func(coremetadata.Registry) error {
-	if c.processRuntime == nil {
-		return nil
-	}
-	var virtualAnchors map[string]string
-	return func(registry coremetadata.Registry) error {
-		if virtualAnchors == nil {
-			virtualAnchors = make(map[string]string)
-			for _, window := range registry.Windows {
-				if registry.IsVirtualWindow(window.Metadata.UID) {
-					virtualAnchors[window.Metadata.UID] = window.Spec.AnchorPaneRef
-				}
-			}
-		}
-		if len(processPaneUIDs(registry, c.processRuntime.inventory())) == 0 {
-			return nil
-		}
-		project, err := c.resolveProject(registry, scope)
-		if err != nil {
-			return nil
-		}
-		plan, err := c.planPaneTargets(registry, project, scope, flags, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling)
-		var capability resourcegraph.ProcessCapabilityError
-		if errors.As(err, &capability) {
-			return err
-		}
-		for _, target := range plan.targets {
-			// A Window admitted for a split cannot turn into a process anchor
-			// while waiting for the Registry lock and gain creation authority.
-			if target.virtual && virtualAnchors[target.windowUID] != target.anchorUID {
-				return resourcegraph.ProcessCapabilityError{Action: resourcegraph.ProcessCreatePane, Anchor: true}
-			}
-		}
-		// Preserve ordinary tmux validation order and its route errors. Only the
-		// process capability refusal belongs to this earlier admission stage.
-		return nil
-	}
+	return c.createExecution().ProcessAnchorAdmission(scope.shared(), flags.sharedSelection(), spelling)
 }
 
 // primaryWindowSpelling names how argv asked for the exact-one primary Window,
@@ -1289,25 +1111,6 @@ func (f resourceCreateFlags) primaryWindowSpelling() string {
 		return ""
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // writeResults renders a committed create through the shared output catalog.
 //
@@ -1391,16 +1194,6 @@ func (c *createCommand) writeResultsWithReceipt(
 	return writeResourceProjection(stdout, spelling, mode, kind, matches, registry, true, time.Time{})
 }
 
-// createReceiptOperations binds each created kind to its receipt operation. The
-// provider shortcuts share `create.agent` because a receipt records what
-// happened, not which door it was asked through.
-var createReceiptOperations = map[coremetadata.Kind]cli.Operation{
-	coremetadata.KindProject: cli.OperationCreateProject,
-	coremetadata.KindWindow:  cli.OperationCreateWindow,
-	coremetadata.KindPane:    cli.OperationCreatePane,
-	coremetadata.KindAgent:   cli.OperationCreateAgent,
-}
-
 // createResultsReceipt is the default receipt of a create whose route has no
 // separate target planner to quote.
 //
@@ -1433,25 +1226,9 @@ func createPlannedReceipt(
 	results []createResult,
 	selectedWindowUIDs []string,
 ) cli.OperationReceipt {
-	target := cli.ReceiptTarget{Kind: string(kind)}
-	if len(results) > 0 {
-		target.UID, target.Name = results[0].uid, results[0].name
-	}
-	runtime := cli.RuntimeMaterialized
-	if kind == coremetadata.KindProject {
-		runtime = cli.RuntimeUnchanged
-	}
-	receipt := cli.NewReceipt(createReceiptOperations[kind], target, cli.ReceiptEffects{
-		Identity:     cli.IdentityCreated,
-		Address:      cli.AddressAllocated,
-		Topology:     cli.TopologyEstablished,
-		DesiredState: cli.DesiredStateCreated,
-		Runtime:      runtime,
-		Focus:        cli.FocusUnchanged,
-	})
+	var rows []mutationruntime.CreateReceiptResource
 	for _, result := range results {
-		receipt.Add(string(result.kind), result.uid, result.name, result.receiptAction())
+		rows = append(rows, mutationruntime.CreateReceiptResource{Kind: result.kind, UID: result.uid, Name: result.name, Action: result.receiptAction()})
 	}
-	receipt.SelectWindows(selectedWindowUIDs...)
-	return receipt
+	return cli.OperationReceipt(mutationruntime.CreateReceipt(kind, rows, selectedWindowUIDs))
 }

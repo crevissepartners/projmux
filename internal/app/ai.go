@@ -2583,19 +2583,7 @@ func (c *aiCommand) resolveSessionProjectPath(sessionName string) string {
 // It uses a pure path comparison (filepath.Rel with no leading ".."), matching
 // the roadmap's "path descendant" rule; both inputs are assumed to be existing
 // directories so no symlink resolution is attempted.
-func pathWithinTree(anchor, path string) bool {
-	anchor = strings.TrimSpace(anchor)
-	path = strings.TrimSpace(path)
-	if anchor == "" || path == "" {
-		return false
-	}
-	rel, err := filepath.Rel(anchor, path)
-	if err != nil {
-		return false
-	}
-	rel = filepath.ToSlash(rel)
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../"))
-}
+func pathWithinTree(anchor, path string) bool { return mutationruntime.PathWithinTree(anchor, path) }
 
 // splitOriginPane is the pane a popup-hosted split UI acts on.
 //

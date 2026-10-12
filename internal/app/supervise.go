@@ -238,7 +238,7 @@ func (c *superviseCommand) recordOutcome(spec superviseSpec, outcome processOutc
 	journal := c.journal
 	if strings.TrimSpace(journal.path) == "" {
 		var err error
-		if spec.AgentUID != "" {
+		if spec.AgentUID != "" || spec.RegistryPath != "" {
 			journal, err = terminationJournalForRegistryPath(spec.RegistryPath)
 		} else {
 			journal, err = newTerminationJournal(nil, nil)

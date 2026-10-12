@@ -26,9 +26,10 @@ const (
 	CreatePhaseSecondReconcile
 	CreatePhaseReprove
 	CreatePhaseStoreWrite
+	createPhaseCount
 )
 
-type CreatePhases [6]*time.Duration
+type CreatePhases [createPhaseCount]*time.Duration
 type CreateOutcome struct {
 	Kind           CreateKind
 	Result         string
