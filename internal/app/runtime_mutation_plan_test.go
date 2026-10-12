@@ -3405,7 +3405,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"runtime_mutation_surface.go": "the closed inventory declaration",
 	}
 	var files []string
-	for _, scanRoot := range []string{root, filepath.Join(root, "..", "core", "controller"), filepath.Join(root, "..", "integrations", "mux"), filepath.Join(root, "..", "integrations", "metadata"), filepath.Join(root, "..", "integrations", "tmux")} {
+	for _, scanRoot := range []string{root, filepath.Join(root, "..", "core", "controller"), filepath.Join(root, "..", "integrations", "mux"), filepath.Join(root, "..", "integrations", "metadata"), filepath.Join(root, "..", "integrations", "tmux"), filepath.Join(root, "..", "services", "mutations")} {
 		if err := filepath.WalkDir(scanRoot, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -3465,7 +3465,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"shell.go:prepareControlSession":                                   true,
 		"shell.go:rollbackControlBootstrap":                                true,
 		"create_intent.go:renameWindowFromIntent":                          true,
-		"rename.go:renameRuntimeWindow":                                    true,
+		"rename.go:renameService":                                          true,
 		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":            true,
 		"tmux.go:writeRuntimeMutationRouteMarker":                          true,
 		"control_session.go:executeControlSessionIdentityPlan":             true,
@@ -3564,6 +3564,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 	// their cited surface must remain planned and their source key is audited
 	// bidirectionally just like the app-owned runtimeMutationArgv seam.
 	plannedTypedSites := map[string]string{
+		"../services/mutations/rename.go:RenameRuntimeWindow:variable-argv":                     "resource.rename-window",
 		"kill.go:KillSession:helper:KillSession":                                                "manual.tagged-kill",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:MirrorProject":            "controller.identity",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:RebindProject":            "controller.identity",
@@ -3750,7 +3751,8 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 			})
 			// killCommand is a pure closed argv projection; it cannot execute.
 			pureArgvBuilder := name == "materialize.go" && function.Name.Name == "killCommand"
-			transportOnly := name == "../integrations/metadata/tmuxmirror.go" && function.Name.Name == "run"
+			transportOnly := (name == "../integrations/metadata/tmuxmirror.go" && function.Name.Name == "run") ||
+				(name == "../services/mutations/rename_socket.go" && function.Name.Name == "raw")
 			if len(rawMutations) > 0 && !pureArgvBuilder && !transportOnly {
 				for _, verb := range rawMutations {
 					key := name + ":" + sourceFunctionName + ":" + verb

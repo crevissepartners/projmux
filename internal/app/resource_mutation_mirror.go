@@ -2,14 +2,13 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // resourceMutationMirror is the narrow live-transport seam shared by rename
@@ -46,9 +45,5 @@ func inheritedResourceMutationMirror(lookupEnv func(string) string, runner tmuxC
 }
 
 func committedMirrorError(verb string, kind coremetadata.Kind, uid string, err error) error {
-	// The mirror cause stays wrapped so a tmux subprocess failure keeps its
-	// exit code and failure projection; cli.ClassifyFailure decides how the
-	// entrypoint prints and journals it.
-	return fmt.Errorf("%s %s %q committed Registry state but could not converge its exact live tmux mirror: %w; retry on the same exact socket with `projmux reconcile resources`",
-		verb, strings.ToLower(string(kind)), uid, err)
+	return mutations.CommittedMirrorError(verb, kind, uid, err)
 }

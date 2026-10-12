@@ -132,9 +132,11 @@ type Refusal struct {
 	Field   string
 	Reason  string
 	message string
+	cause   error
 }
 
 func (e *Refusal) Error() string { return e.message }
+func (e *Refusal) Unwrap() error { return e.cause }
 
 // InstructionInfo describes a stored file. Size and Digest cover its raw bytes.
 type InstructionInfo struct {
