@@ -119,11 +119,18 @@ func (claim *deferredProcessClaim) markInflight(ref string) error {
 		return err
 	}
 	defer unlock()
-	if err = claim.command.checkDeferredClaim(claim.record.Agent, claim); err != nil {
-		return err
-	}
 	record, err := readDeferredClaim(claim.path)
 	if err != nil {
+		return err
+	}
+	if ref == "" {
+		// Stop prevents birth, but the same exact owner must still clear a
+		// cancelled pre-birth selection or a settled delivery witness. This
+		// cannot admit input, clear StopRequested, or touch a replacement claim.
+		if !deferredClaimIdentityEqual(record, claim.record) || !deferredClaimLive(record) {
+			return deferredRefused("deferred claim changed before inflight cleanup")
+		}
+	} else if err = claim.command.checkDeferredClaim(claim.record.Agent, claim); err != nil {
 		return err
 	}
 	if ref != "" && record.Inflight != "" {
@@ -172,23 +179,46 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 	if err != nil {
 		noChild := result.hasNoChild()
 		err = result.fail(err)
-		// Cancellation before any child exists is a released wait, not a
-		// failed delivery. Keep the undispatched envelope for the next claim.
-		if noChild && ctx.Err() != nil && result.previousRecord == nil {
+		// A durable exact Stop fence can precede signal/context observation.
+		// Only an undispatched peer and a pre-birth, unmodified conversation
+		// may be released as cancellation; handoff evidence remains unknown.
+		cancelled := ctx.Err()
+		if noChild && result.previousRecord == nil && cancelled == nil {
+			stopped, stopErr := claim.preBirthStopRequested()
+			if stopErr != nil {
+				return result, errors.Join(err, stopErr)
+			}
+			if stopped {
+				cancelled = context.Canceled
+			}
+		}
+		if first != nil {
+			current, found, readErr := c.messageStore.Get(first.Envelope.MessageRef)
+			if readErr != nil || !found {
+				return result, errors.Join(err, readErr, messagestore.ErrNotFound)
+			}
+			first.HandoffObserved = current.HandoffObserved
+			first.Delivery = current.Delivery
+		}
+		undispatched := first == nil || (!first.HandoffObserved && !first.Delivery.OutcomeUnknown && !first.Delivery.State.Terminal())
+		if noChild && cancelled != nil && result.previousRecord == nil && undispatched {
 			if first != nil {
 				if clearErr := claim.markInflight(""); clearErr != nil {
 					return result, clearErr
 				}
 			}
 			result.Handle = nil
-			return result, ctx.Err()
+			return result, cancelled
 		}
 		if first != nil {
 			kind, reason := coremessage.EventFail, processResumeRefused
-			if resumeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			unknown := first.HandoffObserved || first.Delivery.OutcomeUnknown
+			if unknown {
+				reason = "provider-handoff-outcome-unknown"
+			} else if resumeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 				kind, reason = coremessage.EventExpire, "deadline-expired"
 			}
-			_, applyErr := c.terminalCoordination(*first, kind, reason, false, nil)
+			_, applyErr := c.terminalCoordination(*first, kind, reason, unknown, nil)
 			err = errors.Join(err, applyErr)
 			if applyErr == nil {
 				err = errors.Join(err, claim.markInflight(""))
@@ -226,6 +256,13 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 
 func (claim *deferredProcessClaim) drain(ctx context.Context, result processAgentResumeResult) error {
 	c := claim.command
+	// Deferred and ordinary held release share one target queue. Hold this
+	// before listing/readdressing so neither can submit a stale held snapshot.
+	unlock, err := c.lockDeferredRelease(ctx, claim.record.Agent)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	snapshot, err := result.Handle.Observe(result.Binding)
 	if err != nil {
 		return err
@@ -329,19 +366,110 @@ release:
 		}
 		// Persist the crash witness before submitting. A dead
 		// claimant is never permission to resend a potentially written frame.
-		if err = claim.markInflight(record.Envelope.MessageRef); err != nil {
-			return err
-		}
-		record, err = c.deliverOrHoldCoordination(record, *target, route, record.Envelope)
-		if err != nil {
-			return err
-		}
-		if !record.Delivery.State.Terminal() {
-			return fmt.Errorf("%s: deferred release did not settle", processResumeRefused)
-		}
-		if err = claim.markInflight(""); err != nil {
+		if err = c.releaseDeferredPeer(ctx, record, claim.markInflight, func() error {
+			snapshot, err := result.Handle.Observe(result.Binding)
+			if err != nil {
+				return err
+			}
+			return synchronize(snapshot)
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// A short lock attempt preserves owner cancellation while using the ordinary
+// release's existing lock and total wait bound.
+func (c *agentCommand) lockDeferredRelease(ctx context.Context, uid string) (func(), error) {
+	locker, ok := c.messageStore.(agentMessageReleaseLocker)
+	if !ok {
+		return nil, errors.New("process-host-unavailable: deferred release lock unavailable")
+	}
+	end := time.Now().Add(agentMessageReleaseLockWait)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		unlock, err := locker.LockTargetRelease(uid, 20*time.Millisecond)
+		if err == nil {
+			return unlock, nil
+		}
+		if !errors.Is(err, messagestore.ErrBusy) || !time.Now().Before(end) {
+			return nil, err
+		}
+	}
+}
+
+// The caller holds the target release lock. Judge the oldest held record with
+// the ordinary release path, which does not hold it behind later queued peers.
+// Only a proved zero-write hold can be retried; terminal/unknown outcomes retain
+// their existing meaning. Persist a crash witness around each possible write.
+func (c *agentCommand) releaseDeferredPeer(ctx context.Context, record messagestore.Record, mark func(string) error, syncStep func() error) error {
+	backoff := 20 * time.Millisecond
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if syncStep != nil {
+			if err := syncStep(); err != nil {
+				return err
+			}
+		}
+		current, found, err := c.messageStore.Get(record.Envelope.MessageRef)
+		if err != nil || !found {
+			return errors.Join(err, messagestore.ErrNotFound)
+		}
+		if current.Delivery.State.Terminal() {
+			return nil
+		}
+		if !current.Envelope.Deadline.After(c.messageClock()) {
+			_, _, err = c.messageStore.Status(current.Envelope.MessageRef, c.messageClock())
+			return err
+		}
+		if err = mark(current.Envelope.MessageRef); err != nil {
+			return err
+		}
+		outcome, _, err := c.releaseHeldMessage(current)
+		if err != nil {
+			return err
+		}
+		settled, found, err := c.messageStore.Get(current.Envelope.MessageRef)
+		if err != nil || !found {
+			return errors.Join(err, messagestore.ErrNotFound)
+		}
+		if settled.Delivery.State.Terminal() {
+			return mark("")
+		}
+		if settled.Delivery.State != coremessage.StateHeld || settled.HandoffObserved || (outcome != heldReleaseBlocked && outcome != heldReleaseUndecidable) {
+			return fmt.Errorf("%s: deferred release did not settle", processResumeRefused)
+		}
+		if err = mark(""); err != nil {
+			return err
+		}
+		// Busy does not retire accepted work. Bound polling load while retaining
+		// its existing message deadline and immediate context cancellation.
+		pause := min(backoff, settled.Envelope.Deadline.Sub(c.messageClock()))
+		backoff = min(2*backoff, 500*time.Millisecond)
+		if pause > 0 {
+			if err = c.sleepMessage(ctx, pause); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// The caller has proved no child and no previous-record replacement. Read Stop
+// under the reservation guard; a replacement/stale owner cannot lend its fence.
+func (claim *deferredProcessClaim) preBirthStopRequested() (bool, error) {
+	unlock, err := lockDeferredClaim(claim.path)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	record, err := readDeferredClaim(claim.path)
+	if err != nil {
+		return false, err
+	}
+	return record.StopRequested && deferredClaimIdentityEqual(record, claim.record) && deferredClaimLive(record), nil
 }

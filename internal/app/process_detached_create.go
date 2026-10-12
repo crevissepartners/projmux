@@ -29,6 +29,7 @@ const processDetachedLogLimit = 64 << 10
 // task) is an unlinked private file; the handshake is a private duplex fd.
 // The intermediate launcher never owns a provider and exits before success.
 type processDetachedRequest struct {
+	Resume       *processDetachedResumeRequest `json:",omitempty"`
 	Options      processAgentCreateOptions
 	Output       cli.OutputMode
 	Caller       coremetadata.ProcessIdentity
@@ -39,6 +40,7 @@ type processDetachedReply struct {
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string
 	Phase                 string
+	Claim                 *deferredClaimRecord `json:",omitempty"`
 }
 
 func (c *createCommand) runDetachedProcessCreate(request processAgentCreateRequest, mode cli.OutputMode, stdout, stderr io.Writer) error {
@@ -134,7 +136,7 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 		if failed {
 			_ = conn.Close()
 			signalDetachedProcessOwner(identity.Owner)
-			returnErr = errors.Join(returnErr, awaitDetachedStartupCleanup(command, identity.Owner, ready.Binding))
+			returnErr = errors.Join(returnErr, awaitDetachedRequestCleanup(command, request, identity.Owner, ready))
 		}
 	}()
 	kernelOwner, _, identityErr := localipc.Process(identity.Owner.PID)
@@ -170,7 +172,11 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 		return err
 	}
 	activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(ready.Binding))
-	if !current || activation.HostProcess != identity.Owner {
+	if ready.Claim != nil {
+		if request.Resume == nil || !request.Resume.WaitForPeer || !detachedClaimCurrent(command, reg, *ready.Claim, identity.Owner) {
+			return processhost.ErrStale
+		}
+	} else if !current || activation.HostProcess != identity.Owner {
 		return processhost.ErrStale
 	}
 	if _, err = io.WriteString(stderr, ready.Stderr); err != nil {
@@ -204,7 +210,7 @@ func signalDetachedProcessOwner(identity coremetadata.ProcessIdentity) {
 	}
 }
 
-func runProcessDetachedEntry(route string, command *createCommand) error {
+func runProcessDetachedEntry(route string, command *createCommand, resume *agentCommand) error {
 	handshake := os.NewFile(3, "detach-handshake")
 	payload := os.NewFile(4, "detach-request")
 	syscall.CloseOnExec(3)
@@ -263,6 +269,12 @@ func runProcessDetachedEntry(route string, command *createCommand) error {
 	}
 	if req.RegistryPath != intmetadata.PathFor(stateDir) {
 		return errors.New("process-detached-registry-mismatch")
+	}
+	if req.Resume != nil {
+		if resume == nil {
+			return errors.New("process-detached-resume-unavailable")
+		}
+		return runProcessDetachedResumeOwner(conn, encoder, decoder, req, identity, resume)
 	}
 	request, err := newProcessAgentCreateRequest(req.Options)
 	if err != nil {

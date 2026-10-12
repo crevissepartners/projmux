@@ -33,6 +33,9 @@ func (c *agentCommand) runStop(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return MapMetadataError(err)
 	}
+	// VerbReview supplies only the shared exact-one cardinality cell here.
+	// The required positional reference above prevents selectorless inference;
+	// scope resolution and process Stop authority remain independent of its name.
 	resolution, err := flags.resolve(selector.VerbReview, false, reg)
 	if err != nil {
 		return MapMetadataError(err)
@@ -55,6 +58,9 @@ func (c *agentCommand) runStop(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *agentCommand) stopExactProcessAgent(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane) error {
+	if handled, err := c.stopDetachedClaim(ctx, agent, pane); handled || err != nil {
+		return err
+	}
 	if pane.Status.Activation.IsZero() && agent.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
 		return nil
 	}

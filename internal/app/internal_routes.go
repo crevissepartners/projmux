@@ -72,6 +72,7 @@ type internalCommand struct {
 	supervise             rawArgvCommand
 	processHostSupervisor rawArgvCommand
 	detachedCreate        *createCommand
+	detachedResume        *agentCommand
 	activationExec        rawArgvCommand
 	// codexBroker is the Codex endpoint broker runtime. It is the only
 	// internal route whose process outlives the invocation that started it.
@@ -118,7 +119,7 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if len(rest) != 0 || c.detachedCreate == nil {
 			return usageError("internal process Agent owner requires its private descriptors")
 		}
-		return runProcessDetachedEntry(args[0], c.detachedCreate)
+		return runProcessDetachedEntry(args[0], c.detachedCreate, c.detachedResume)
 	case "process-host-supervisor":
 		return forwardRawArgv(c.processHostSupervisor, "internal process-host-supervisor", "process-host-supervisor", nil, rest, stdout, stderr)
 	case "activation-exec":

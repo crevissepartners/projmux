@@ -165,3 +165,18 @@ func TestDetachedOwnerLogRejectsTraversalAndSymlink(t *testing.T) {
 		t.Fatalf("unsafe log wrote outside private root: %v %v", entries, err)
 	}
 }
+
+// Stop requires a user-named target before invoking the shared resolver. Its
+// VerbReview cell enforces exact-one only; it grants no runtime authority.
+func TestDetachedStopSelectorAuthorityRemainsExplicit(t *testing.T) {
+	command := &agentCommand{loadRegistry: func() (coremetadata.Registry, error) {
+		t.Fatal("selectorless stop read Registry")
+		return coremetadata.Registry{}, nil
+	}}
+	for _, args := range [][]string{nil, {"--selector", "role=worker"}, {"uid:agent-one", "uid:agent-two"}} {
+		var stdout, stderr bytes.Buffer
+		if err := command.runStop(args, &stdout, &stderr); err == nil || !strings.Contains(err.Error(), "exactly one Agent reference") || stdout.Len() != 0 {
+			t.Fatalf("selectorless/fanout stop admitted: %v", err)
+		}
+	}
+}

@@ -1307,7 +1307,7 @@ their existing format, and `-o none` suppresses displays. The owner continues
 with closed caller stdin, stdout, and stderr; later provider exit is recorded
 in termination evidence. Stop it explicitly with `agent stop <agent-ref>`.
 See [Operating Process-Hosted Agents](process-host-operations.md) for its limits.
-The owner stops its provider at stdin EOF. `</dev/null` or closed stdin (CI
+The foreground owner stops its provider at stdin EOF. `</dev/null` or closed stdin (CI
 steps, cron, `nohup`, or a noninteractive shell's `&`) can end it immediately.
 Keep stdin open, for example:
 
@@ -1315,7 +1315,7 @@ Keep stdin open, for example:
 d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"
 ```
 
-Measured isolated CLI exits follow the provider's actual Wait, not the owner's signal:
+Measured isolated foreground CLI exits follow the provider's actual Wait, not the owner's signal:
 
 | Owner/provider ending | Graceful EOF-aware stub | Provider requiring TERM |
 | --- | --- | --- |
@@ -1334,7 +1334,7 @@ Default stdout starts with `agent uid:<agent> pane uid:<pane> runtime=process
 foreground=owned`, followed by the usual resource result. Existing `-o`
 projections keep their stdout format and put ownership on stderr; `-o none`
 suppresses both displays and `-o pane-id` is refused before mutation. Provider
-content never reaches stdout. Exit codes come from actual Wait (a signal is
+content never reaches stdout. Foreground exit codes come from actual Wait (a signal is
 `128 + signal number`); startup, hook, and receipt failures exit nonzero.
 
 ## Examples

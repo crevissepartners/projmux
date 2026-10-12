@@ -214,6 +214,18 @@ func TestDetachedProcessChildSurvivesParentProviderGroupCLI(t *testing.T) {
 			if child.Metadata.Annotations[coremetadata.AnnotationCreatorAgent] != parentAgent.Metadata.UID || child.Metadata.Annotations[coremetadata.AnnotationCreatorBasis] != coremetadata.CreatorBasisProcessChain {
 				t.Fatalf("caller creator lineage lost: %v", child.Metadata.Annotations)
 			}
+			// Prove source readiness before ending the parent group. The assertion
+			// after group death still requires the same child's real control.
+			if scenario.provider == "claude" {
+				processCLIUntil(t, ctx, func() bool {
+					current, err := f.store.LoadReadOnly()
+					if err != nil {
+						return false
+					}
+					_, ready := discoverProcessClaudeProof(f.store.Path(), current, child.Metadata.UID)
+					return ready
+				})
+			}
 			// Only this fixture-created provider's own group is targeted.
 			if err = syscall.Kill(-parentActivation.Child.PID, scenario.signal); err != nil {
 				t.Fatal(err)

@@ -127,7 +127,11 @@ func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand)
 	}, control.syncControls, func() error { return control.attention.sync(r.Handle, r.Binding) }, nil
 }
 
-func (r *processAgentResumeResult) writeResumeResult(creator *createCommand, stdout, stderr io.Writer, mode cli.OutputMode) error {
+func (r *processAgentResumeResult) writeResumeResult(creator *createCommand, stdout, stderr io.Writer, mode cli.OutputMode, detached ...bool) error {
+	ownershipMode := "owned"
+	if len(detached) > 0 && detached[0] {
+		ownershipMode = "detached"
+	}
 	if err := writeSplitCWDNotices(stderr, r.owner.Notices); err != nil {
 		return err
 	}
@@ -136,7 +140,7 @@ func (r *processAgentResumeResult) writeResumeResult(creator *createCommand, std
 		if mode == cli.OutputModeDefault {
 			ownership = stdout
 		}
-		if _, err := fmt.Fprintf(ownership, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", r.Binding.Agent, r.Binding.Pane); err != nil {
+		if _, err := fmt.Fprintf(ownership, "agent uid:%s pane uid:%s runtime=process foreground=%s\n", r.Binding.Agent, r.Binding.Pane, ownershipMode); err != nil {
 			return err
 		}
 	}

@@ -406,6 +406,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	internalCmd.supervise = superviseCmd
 	internalCmd.processHostSupervisor = &processHostSupervisorCommand{}
 	internalCmd.detachedCreate = createCmd
+	internalCmd.detachedResume = agentCmd
 	internalCmd.activationExec = activationExecCmd
 	internalCmd.codexBroker = newCodexBrokerCommand()
 	// The Claude registration hook and its helper each record their refusal,
