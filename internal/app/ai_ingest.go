@@ -706,8 +706,8 @@ func (c *aiCommand) readAIHookPaneMarkers(paneID string) aiHookPaneMarkers {
 		return aiHookPaneMarkers{}
 	}
 	runner := explicitTmuxRunner{
-		runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
-		target: route.transport,
+		Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
+		Target: route.transport,
 	}
 	out, err := runner.Run(context.Background(), "tmux", "display-message", "-p", "-t", paneID, aiHookPaneMarkerFormat)
 	if err != nil {

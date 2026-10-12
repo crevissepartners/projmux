@@ -246,11 +246,11 @@ func (c *projectLifecycleCommand) sessionLive(ctx context.Context, sessionName s
 		return false, nil, nil
 	}
 	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.switcher.tmuxRunner, c.switcher.lookupEnv)
-	if err != nil || route.authority == nil || strings.TrimSpace(route.expectedSocketPath) == "" {
+	if err != nil || route.Authority == nil || strings.TrimSpace(route.ExpectedSocketPath) == "" {
 		return false, nil, nil
 	}
-	exact := explicitTmuxRunner{runner: c.switcher.tmuxRunner, target: tmuxTransport{
-		Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource,
+	exact := explicitTmuxRunner{Runner: c.switcher.tmuxRunner, Target: tmuxTransport{
+		Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource,
 	}}
 	live, err := inttmux.NewClient(exact).SessionExists(ctx, sessionName)
 	if err != nil {

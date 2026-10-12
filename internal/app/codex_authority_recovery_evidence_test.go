@@ -256,7 +256,7 @@ func observeInstalledRecovery(ctx context.Context, uid, generation string, retir
 	}
 	out := recoveryRegistryObservation(registry, uid, generation, retired)
 	if out.Identity.Pane != "" {
-		runner := explicitTmuxRunner{runner: inttmux.ExecRunner{}, target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
+		runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
 		lookup := &tmuxAgentControlBindingLookup{lookup: intmetadata.NewMirror(runner), runner: runner}
 		live, found, err := lookup.Live(ctx, out.Identity.Pane)
 		out.Live = &installedRecoveryLive{Error: recoveryError(err)}
@@ -361,7 +361,7 @@ func captureInstalledRecoveryFailure(ctx context.Context, fixture *codexinstalle
 		out.Processes = processes
 	}
 	if identity.Runtime != "" && exactTmuxHandle(identity.Runtime, "%") != "" {
-		runner := explicitTmuxRunner{runner: inttmux.ExecRunner{}, target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
+		runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
 		raw, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", identity.Runtime, tmuxRowFormat("#{@projmux_pane_uid}", "#{pane_pid}", "#{pane_dead}", "#{pane_dead_status}"))
 		out.PaneError = recoveryError(err)
 		fields := strings.Split(strings.TrimSpace(string(raw)), tmuxRowSepFormat)

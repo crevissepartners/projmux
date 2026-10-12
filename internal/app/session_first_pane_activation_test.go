@@ -166,7 +166,7 @@ func TestCanonicalProjectStartupRecordsTheSessionFirstPaneRuntimeID(t *testing.T
 	project, _ := store.registry.Project("prj-beta")
 	recorder, _, _ := topologyJournalFixture(t)
 	if err := materializeProjectSessionCanonical(context.Background(), store.store(), canonicalSeparatorRunner(activation.runner),
-		runtimeMutationRoute{target: activation.target, socketName: defaultAppSocket}, recorder,
+		runtimeMutationRoute{Target: activation.target, SocketName: defaultAppSocket}, recorder,
 		"beta", root, *project); err != nil {
 		t.Fatalf("canonical Project startup: %v", err)
 	}

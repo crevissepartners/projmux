@@ -717,7 +717,7 @@ func TestControlBootstrapNoServerBindsFirstCreatedPhysicalRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provisionAppSession() error = %v", err)
 	}
-	if got, want := receipt.route.expectedSocketPath, "/tmp/tmux-1000/projmux-created"; got != want {
+	if got, want := receipt.route.ExpectedSocketPath, "/tmp/tmux-1000/projmux-created"; got != want {
 		t.Fatalf("bound route = %q, want %q", got, want)
 	}
 	if tmux.routeMarkerAbsent || tmux.logicalSocket != "projmux" {
@@ -856,9 +856,9 @@ func TestControlBootstrapLeaseClearRefusesPhysicalRouteDriftBeforeWrite(t *testi
 	receipt := controlBootstrapReceipt{
 		created: true, sessionID: "$9", windowID: "@12", paneID: "%15", operationMarker: tmux.operationMarker,
 		route: runtimeMutationRoute{
-			target: tmuxTransport{Kind: tmuxSocketName, Value: "projmux", Source: tmuxSocketNameSource}, socketName: "projmux",
-			expectedSocketPath: "/tmp/tmux-1000/original",
-			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
+			Target: tmuxTransport{Kind: tmuxSocketName, Value: "projmux", Source: tmuxSocketNameSource}, SocketName: "projmux",
+			ExpectedSocketPath: "/tmp/tmux-1000/original",
+			Authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
 		},
 	}
 
@@ -963,9 +963,9 @@ func bootstrapLeaseRaceReceipt(runner *bootstrapLeaseRaceRunner) controlBootstra
 	return controlBootstrapReceipt{
 		created: true, sessionID: "$9", windowID: "@12", paneID: "%15", operationMarker: "projmux-create-op-race",
 		route: runtimeMutationRoute{
-			target: tmuxTransport{Kind: tmuxSocketName, Value: "projmux", Source: tmuxSocketNameSource}, socketName: "projmux",
-			expectedSocketPath: runner.physical,
-			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
+			Target: tmuxTransport{Kind: tmuxSocketName, Value: "projmux", Source: tmuxSocketNameSource}, SocketName: "projmux",
+			ExpectedSocketPath: runner.physical,
+			Authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
 		},
 	}
 }

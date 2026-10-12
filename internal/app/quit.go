@@ -122,7 +122,7 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 	if err != nil {
 		return err
 	}
-	routed := explicitTmuxRunner{runner: c.runner, target: target}
+	routed := explicitTmuxRunner{Runner: c.runner, Target: target}
 	pathOut, err := routed.Run(ctx, command, "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
 		if tmuxServerMissing(err) {

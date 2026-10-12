@@ -130,7 +130,7 @@ func TestAgentPaneBinderRequiredOptionsAndFailureCompensationOnExactRoutes(t *te
 						failWrite: failure.write, failureCommand: -1,
 					}
 					maps.Copy(raw.options, before)
-					runner := explicitTmuxRunner{runner: raw, target: route}
+					runner := explicitTmuxRunner{Runner: raw, Target: route}
 					binder := &aiCommand{now: func() time.Time { return fixedAt }}
 					err := binder.BindAgentPaneOnRoute(context.Background(), runner, shape.binding)
 					if failure.write != 0 {

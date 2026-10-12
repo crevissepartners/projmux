@@ -192,7 +192,7 @@ func routedCodexLifecycleAuthorityLookup(lookupEnv func(string) string, load fun
 		if err != nil {
 			return codexLifecycleAuthorityDiagnostic{Source: "unavailable", Reason: "no exact tmux route", EpochStatus: "unknown"}
 		}
-		return observeCodexLifecycleAuthority(ctx, explicitTmuxRunner{runner: runner, target: target}, paneUID)
+		return observeCodexLifecycleAuthority(ctx, explicitTmuxRunner{Runner: runner, Target: target}, paneUID)
 	}
 }
 

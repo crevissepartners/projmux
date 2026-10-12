@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -15,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // deleteKinds lists the kind spellings `delete` implements, in help order, each
@@ -197,11 +197,6 @@ func (c *unregisterCommand) Run(args []string, stdout, stderr io.Writer) error {
 // deleteDescendant is one resource the cascade removes together with a target.
 type deleteDescendant = mutations.DeleteDescendant
 type deleteTarget = mutations.DeleteTarget
-type deletePlan mutations.DeletePlan
-
-func (p deletePlan) Cascades() int           { return mutations.DeletePlan(p).Cascades() }
-func (p deletePlan) signature() string       { return mutations.DeletePlan(p).Signature() }
-func (p deletePlan) needsConfirmation() bool { return mutations.DeletePlan(p).NeedsConfirmation() }
 
 func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args []string, stdout, stderr io.Writer) error {
 	spelling := verb + " " + token
@@ -301,8 +296,8 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		if c.windows == nil {
 			return errors.New("delete window: live tmux deletion is not configured")
 		}
-		c.windows.useExactTarget(target)
-		livePlan, err = c.windows.preflight(context.Background(), registry, plan)
+		c.windows.UseExactTarget(target)
+		livePlan, err = c.windows.Preflight(context.Background(), registry, plan)
 		if err != nil {
 			return err
 		}
@@ -323,17 +318,17 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	if *dryRun {
 		return writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, true, false)
 	}
-	needsConfirmation := plan.needsConfirmation() || panePlan.endsWindows() > 0 || panePlan.endsSessions() > 0
+	needsConfirmation := mutationruntime.NeedsDeleteConfirmation(plan, panePlan)
 	if needsConfirmation {
 		prompt := fmt.Sprintf("%s will remove %d %s and %d descendant resources",
 			spelling, len(plan.Targets), strings.ToLower(string(kind))+plural(len(plan.Targets)), plan.Cascades())
 		if kind == coremetadata.KindWindow {
 			prompt += fmt.Sprintf(", kill %d exact live tmux Window%s, and end %d managed root session%s",
-				len(livePlan.Targets), plural(len(livePlan.Targets)), livePlan.endsSessions(), plural(livePlan.endsSessions()))
+				len(livePlan.Targets), plural(len(livePlan.Targets)), livePlan.EndsSessions(), plural(livePlan.EndsSessions()))
 		} else {
 			prompt += fmt.Sprintf(", kill %d exact live tmux Pane%s, end %d Window%s, and end %d managed root session%s",
-				len(panePlan.Targets), plural(len(panePlan.Targets)), panePlan.endsWindows(), plural(panePlan.endsWindows()),
-				panePlan.endsSessions(), plural(panePlan.endsSessions()))
+				len(panePlan.Targets), plural(len(panePlan.Targets)), panePlan.EndsWindows(), plural(panePlan.EndsWindows()),
+				panePlan.EndsSessions(), plural(panePlan.EndsSessions()))
 		}
 		refusal := fmt.Sprintf("%s needs confirmation: %d targets and %d descendant resources. Re-run with --yes, or with --dry-run to review the plan first.",
 			spelling, len(plan.Targets), plan.Cascades())
@@ -342,181 +337,13 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		}
 	}
 
-	// Intent is durable before the first live mutation. See
-	// recordIntentionalTermination: a failure here aborts with zero tmux
-	// mutations, because nothing live has been touched yet.
-	operationID, err := c.mintOperationID()
+	executor := c.deleteExecutor(target)
+	executor.Warnings = stderr
+	result, err := executor.Execute(context.Background(), spelling, plan, resolution, livePlan, panePlan)
 	if err != nil {
 		return err
 	}
-	recordedIntent, err := c.recordIntentionalTermination(spelling, plan, livePlan, panePlan, operationID)
-	if err != nil {
-		return err
-	}
-	// Every refusal below leaves live processes running, so the recorded intent
-	// has to be withdrawn on the way out.
-	withdrawIntent := func(cause error) error {
-		if withdrawErr := c.withdrawIntentionalTermination(recordedIntent, operationID); withdrawErr != nil {
-			return fmt.Errorf("%w; recorded intentional termination evidence for %s could not be withdrawn: %v; those Panes carry a stale intentional receipt until they are relaunched",
-				cause, strings.Join(recordedIntent, ","), withdrawErr)
-		}
-		return cause
-	}
-
-	approved := plan.signature()
-	approvedLive := livePlan.signature()
-	approvedPanes := panePlan.signature()
-	selfTarget := (kind == coremetadata.KindWindow && livePlan.hasSelfTarget()) ||
-		(kind != coremetadata.KindWindow && panePlan.hasSelfTarget())
-	var killedLive []windowLiveDeleteTarget
-	var killedPanes []paneLiveDeleteTarget
-	paneTombstoned := false
-	var replacementReceipt paneReplacementReceipt
-	var actor DeletionActor
-	var affected []DeletionAffected
-	if err := c.store.mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if current := buildDeletePlan(*working, kind, resolution).signature(); current != approved {
-			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
-		}
-		// The actor is judged here, against the pre-commit Registry and before
-		// any kill: a delete can remove the actor's own Pane.
-		actor = c.observeDeletionActor(target, working)
-		var preparedDelete coremetadata.Registry
-		if kind == coremetadata.KindWindow {
-			currentLive, err := c.windows.preflight(context.Background(), *working, plan)
-			if err != nil {
-				return err
-			}
-			if currentLive.signature() != approvedLive {
-				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
-			}
-			// Prepare and validate the complete Registry result before touching
-			// tmux. Explicit Window deletion preserves the owning root identity
-			// and allocates no replacement Window; validation must finish while
-			// every exact live target is still intact, never after its kill.
-			candidate := working.Clone()
-			for _, uid := range resolution.UIDs() {
-				if err := deleteResource(&candidate, mutator, kind, uid); err != nil {
-					return err
-				}
-			}
-			if err := candidate.Validate(); err != nil {
-				return err
-			}
-			preparedDelete = candidate
-			// A self-target cannot synchronously kill its own Window: tmux tears
-			// down the caller's pty before the registry transaction can commit or
-			// the result can be written. Its exact kill is queued only after the
-			// durable commit and flushed result below.
-			if !selfTarget {
-				applied, err := c.windows.killAll(context.Background(), currentLive.Targets)
-				if applied > len(currentLive.Targets) {
-					applied = len(currentLive.Targets)
-				}
-				killedLive = append(killedLive, currentLive.Targets[:applied]...)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-			currentPanes, err := c.panes.preflight(context.Background(), *working, plan)
-			if err != nil {
-				return err
-			}
-			if currentPanes.signature() != approvedPanes {
-				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
-			}
-			candidate := working.Clone()
-			for _, uid := range resolution.UIDs() {
-				if err := deleteResource(&candidate, mutator, kind, uid); err != nil {
-					return err
-				}
-			}
-			if err := candidate.Validate(); err != nil {
-				return err
-			}
-			replacements := paneDeleteReplacementShells(*working, candidate, currentPanes)
-			replacementReceipt, err = c.panes.prepareReplacements(context.Background(), replacements)
-			if err != nil {
-				return fmt.Errorf("%s: create exact replacement shell before deleting the last Window descendant: %w", spelling, err)
-			}
-			preparedDelete = candidate
-			// A caller-containing plan marks the complete exact live set before
-			// deleting Registry resources. A partial mark is rolled back while the
-			// Registry still owns every uid; after commit, every queued or unqueued
-			// survivor is therefore protected from orphan import.
-			if selfTarget {
-				if err := c.panes.tombstoneSelfKill(context.Background(), currentPanes.Targets); err != nil {
-					return err
-				}
-				paneTombstoned = true
-			} else {
-				if batch, ok := c.panes.(interface {
-					killAll(context.Context, []paneLiveDeleteTarget) (int, error)
-				}); ok {
-					removed, err := batch.killAll(context.Background(), currentPanes.Targets)
-					killedPanes = append(killedPanes, currentPanes.Targets[:removed]...)
-					if err != nil {
-						return err
-					}
-				} else {
-					for _, target := range currentPanes.Targets {
-						if err := c.panes.kill(context.Background(), target); err != nil {
-							return err
-						}
-						killedPanes = append(killedPanes, target)
-					}
-				}
-			}
-		}
-		affected = deletionAffectedBetween(*working, preparedDelete)
-		*working = preparedDelete
-		return nil
-	}); err != nil {
-		if paneTombstoned {
-			if restoreErr := c.panes.restoreSelfKill(context.Background(), panePlan.Targets); restoreErr != nil {
-				return withdrawIntent(fmt.Errorf("%w; Registry uid(s) %s remain, but rollback of pre-commit exact Pane tombstones was incomplete: %v; reported tombstoned drift cannot be orphan-imported",
-					err, strings.Join(resolution.UIDs(), ","), restoreErr))
-			}
-			if rollbackErr := c.panes.rollbackReplacements(context.Background(), replacementReceipt); rollbackErr != nil {
-				return withdrawIntent(fmt.Errorf("%w; exact Pane tombstones were restored but replacement rollback failed: %v", err, rollbackErr))
-			}
-			return withdrawIntent(fmt.Errorf("%w; pre-commit exact Pane tombstones %s were restored and Registry uid(s) %s remain unchanged for retry",
-				err, paneDeleteIDs(panePlan.Targets), strings.Join(resolution.UIDs(), ",")))
-		}
-		if len(killedPanes) == 0 {
-			if rollbackErr := c.panes.rollbackReplacements(context.Background(), replacementReceipt); rollbackErr != nil {
-				return withdrawIntent(fmt.Errorf("%w; exact owned replacement rollback failed: %v", err, rollbackErr))
-			}
-		}
-		if len(killedLive) > 0 {
-			var removed []string
-			for _, target := range killedLive {
-				removed = append(removed, fmt.Sprintf("%s/session=%s(%s)", target.WindowID, target.SessionName, target.SessionID))
-			}
-			// The exact live Windows are already gone, so the intent that
-			// explains their removal stays recorded rather than being withdrawn.
-			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift; no unplanned Window was targeted",
-				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","))
-		}
-		if len(killedPanes) > 0 {
-			var removed []string
-			for _, target := range killedPanes {
-				removed = append(removed, fmt.Sprintf("%s/window=%s/session=%s(%s)/pane-uid=%s",
-					target.PaneID, target.WindowID, target.SessionName, target.SessionID, target.PaneUID))
-			}
-			// As above: those Panes really were terminated on purpose. A created
-			// replacement cannot be rolled back after that point without destroying
-			// the only remaining runtime descendant of the retained Window.
-			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift%s; exact Registry preimage remains unchanged for retry; no unplanned Pane was targeted",
-				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","), retainedPaneReplacementDrift(replacementReceipt))
-		}
-		return withdrawIntent(err)
-	}
-	// The record follows the durable commit and precedes the result and any
-	// queued self-kill, which can end this process.
-	recordDeletion(c.store, newDeletionRecord(childDeletionOperation(kind), operationID, c.deletionVia(), actor,
-		deletionTargetsOf(plan), affected), stderr)
+	selfTarget := result.SelfTarget
 	writeResult := func() error {
 		if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, false, selfTarget); err != nil {
 			return err
@@ -528,7 +355,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 			// The registry result is already durable. Still queue the exact live
 			// half so an unavailable output sink cannot leave a live orphan.
 			if kind == coremetadata.KindWindow {
-				_ = c.windows.queueSelfKill(context.Background(), livePlan.Targets)
+				_ = c.windows.QueueSelfKill(context.Background(), livePlan.Targets)
 			} else {
 				_ = c.panes.queueSelfKill(context.Background(), panePlan.Targets)
 			}
@@ -538,7 +365,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	if err := flushDeleteResult(stdout); err != nil {
 		if selfTarget {
 			if kind == coremetadata.KindWindow {
-				_ = c.windows.queueSelfKill(context.Background(), livePlan.Targets)
+				_ = c.windows.QueueSelfKill(context.Background(), livePlan.Targets)
 			} else {
 				_ = c.panes.queueSelfKill(context.Background(), panePlan.Targets)
 			}
@@ -547,7 +374,7 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	}
 	if selfTarget {
 		if kind == coremetadata.KindWindow {
-			if err := c.windows.queueSelfKill(context.Background(), livePlan.Targets); err != nil {
+			if err := c.windows.QueueSelfKill(context.Background(), livePlan.Targets); err != nil {
 				return fmt.Errorf("delete window: registry cascade committed and the complete result was written, but %w; exact live target remains as retryable orphan drift", err)
 			}
 		} else if err := c.panes.queueSelfKill(context.Background(), panePlan.Targets); err != nil {
@@ -629,14 +456,7 @@ func explicitUIDTargetRefs(refs []string) bool {
 // childDeletionOperation is the deletion record operation of a Window, Pane,
 // or Agent delete.
 func childDeletionOperation(kind coremetadata.Kind) string {
-	switch kind {
-	case coremetadata.KindPane:
-		return deletionOperationDeletePane
-	case coremetadata.KindAgent:
-		return deletionOperationDeleteAgent
-	default:
-		return deletionOperationDeleteWindow
-	}
+	return mutationruntime.ChildDeletionOperation(kind)
 }
 
 // mintOperationID labels one delete's intentional termination receipt.
@@ -653,54 +473,6 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
-}
-
-// deleteResource routes one uid onto the mutator that owns its cascade.
-func deleteResource(registry *coremetadata.Registry, mutator coremetadata.Mutator, kind coremetadata.Kind, uid string) error {
-	switch kind {
-	case coremetadata.KindProject:
-		return mutator.DeleteProject(registry, uid)
-	case coremetadata.KindWindow:
-		return mutator.DeleteWindow(registry, uid)
-	case coremetadata.KindAgent:
-		return mutator.DeleteAgent(registry, uid)
-	case coremetadata.KindPane:
-		return mutator.DeletePane(registry, uid)
-	default:
-		return fmt.Errorf("delete: unsupported kind %q", kind)
-	}
-}
-
-// paneDeleteReplacementShells finds only newly allocated desired shell rows for
-// live Windows whose complete target Pane set would otherwise end the Window.
-// One stable target in that Window is used as the pre-kill split anchor.
-func paneDeleteReplacementShells(before, desired coremetadata.Registry, live paneLiveDeletePlan) []paneReplacementShell {
-	beforeUIDs := make(map[string]bool, len(before.Panes))
-	for _, pane := range before.Panes {
-		beforeUIDs[pane.Metadata.UID] = true
-	}
-	anchorByWindow := map[string]paneLiveDeleteTarget{}
-	for _, target := range live.Targets {
-		if !target.EndsWindow {
-			continue
-		}
-		if _, exists := anchorByWindow[target.WindowUID]; !exists {
-			anchorByWindow[target.WindowUID] = target
-		}
-	}
-	var replacements []paneReplacementShell
-	for _, pane := range desired.Panes {
-		if beforeUIDs[pane.Metadata.UID] || pane.Metadata.OwnerRef == nil ||
-			pane.Metadata.OwnerRef.Kind != coremetadata.KindWindow || pane.Spec.Role != coremetadata.PaneRoleShell {
-			continue
-		}
-		anchor, ok := anchorByWindow[pane.Metadata.OwnerRef.UID]
-		if !ok {
-			continue
-		}
-		replacements = append(replacements, paneReplacementShell{Pane: pane.Clone(), Anchor: anchor})
-	}
-	return replacements
 }
 
 // buildDeletePlan expands every resolved target into its cascade plan.
@@ -807,18 +579,6 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 	return err
 }
 
-func retainedPaneReplacementDrift(receipt paneReplacementReceipt) string {
-	if len(receipt.created) == 0 {
-		return ""
-	}
-	retained := make([]string, 0, len(receipt.created))
-	for _, created := range receipt.created {
-		retained = append(retained, fmt.Sprintf("%s/pane-uid=%s", created.ID, created.UID))
-	}
-	slices.Sort(retained)
-	return "; retained replacement runtime Pane(s) " + strings.Join(retained, ",") + " were not rolled back after exact target removal"
-}
-
 func flushDeleteResult(stdout io.Writer) error {
 	if flusher, ok := stdout.(interface{ Flush() error }); ok {
 		if err := flusher.Flush(); err != nil {
@@ -869,45 +629,6 @@ func projectUnregisterReceipt(plan deletePlan, deprecated bool) cli.OperationRec
 // one, and reports `unchanged` only when the delete was Registry-only. A
 // self-targeted Window kill is still `stopped`; the queue after the flush is a
 // transport detail, not a different outcome.
-func childDeleteReceipt(
-	kind coremetadata.Kind,
-	plan deletePlan,
-	windows windowLiveDeletePlan,
-	panes paneLiveDeletePlan,
-	selfTarget bool,
-) cli.OperationReceipt {
-	operation := cli.OperationDeleteWindow
-	switch kind {
-	case coremetadata.KindPane:
-		operation = cli.OperationDeletePane
-	case coremetadata.KindAgent:
-		operation = cli.OperationDeleteAgent
-	}
-	runtime := cli.RuntimeUnchanged
-	if len(windows.Targets) > 0 || len(panes.Targets) > 0 {
-		runtime = cli.RuntimeStopped
-	}
-	focus := cli.FocusUnchanged
-	if selfTarget {
-		focus = cli.FocusMovedCurrentClient
-	}
-	target := cli.ReceiptTarget{Kind: string(kind)}
-	if len(plan.Targets) > 0 {
-		target.UID, target.Name = plan.Targets[0].Match.UID, plan.Targets[0].Match.Name
-	}
-	receipt := cli.NewReceipt(operation, target, cli.ReceiptEffects{
-		Identity:     cli.IdentityRemoved,
-		Address:      cli.AddressReleased,
-		Topology:     cli.TopologyRemoved,
-		DesiredState: cli.DesiredStateRemoved,
-		Runtime:      runtime,
-		Focus:        focus,
-	})
-	for _, entry := range plan.Targets {
-		receipt.Add(string(kind), entry.Match.UID, entry.Match.Name, cli.ActionRemoved)
-		for _, descendant := range entry.Descendants {
-			receipt.Add(string(descendant.Kind), descendant.UID, descendant.Name, cli.ActionRemoved)
-		}
-	}
-	return receipt
+func childDeleteReceipt(kind coremetadata.Kind, plan deletePlan, windows windowLiveDeletePlan, panes paneLiveDeletePlan, selfTarget bool) cli.OperationReceipt {
+	return cli.OperationReceipt(mutationruntime.ChildDeleteReceipt(kind, plan, windows, panes, selfTarget))
 }

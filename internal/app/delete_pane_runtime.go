@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,98 +38,6 @@ type paneDeleteRuntime interface {
 	queueSelfKill(context.Context, []paneLiveDeleteTarget) error
 }
 
-// paneReplacementShell binds one desired replacement row to the exact live
-// Pane that still anchors its Window immediately before deletion.
-type paneReplacementShell struct {
-	Pane   coremetadata.Pane
-	Anchor paneLiveDeleteTarget
-}
-
-// paneReplacementReceipt contains only runtime objects this delete created.
-// Rollback is therefore exact and never targets a pre-existing sibling.
-type paneReplacementReceipt struct {
-	created []runtimeObject
-}
-
-type paneLiveDeleteTarget struct {
-	ResourceUID string
-	PaneUID     string
-	PaneID      string
-	WindowUID   string
-	WindowID    string
-	SessionID   string
-	SessionName string
-	RootKind    coremetadata.Kind
-	RootUID     string
-	EndsWindow  bool
-	EndsSession bool
-	Self        bool
-	OwnerKind   coremetadata.Kind
-	OwnerUID    string
-	AgentUID    string
-	PaneRole    coremetadata.PaneRole
-	Generation  string
-	// SupervisorPID is the retained dead Pane's original pane_pid. A non-zero
-	// value requires the first-write guard to prove both PID identity and bounded
-	// process absence again immediately before cleanup.
-	SupervisorPID int
-	// RequireDead is set only by retained lifecycle cleanup. Its first-write
-	// guard must re-prove positive pane_dead on the current UID containment;
-	// canonical live delete intentionally leaves this false.
-	RequireDead bool
-}
-
-type paneLiveDeletePlan struct {
-	Targets      []paneLiveDeleteTarget
-	RegistryOnly []paneRegistryOnlyDeleteTarget
-	SocketPath   string
-	// Authority is the exact Registry owner/generation/lifecycle signature
-	// observed together with SocketPath. Locked revalidation must reproduce it
-	// before either a live kill or a Registry-only commit is allowed.
-	Authority string
-}
-
-type paneRegistryOnlyDeleteTarget struct {
-	ResourceUID string
-	Kind        string
-	Evidence    string
-	WindowUID   string
-	RootKind    coremetadata.Kind
-	RootUID     string
-}
-
-func (p paneLiveDeletePlan) signature() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "socket=%q;authority=%q;", p.SocketPath, p.Authority)
-	for _, target := range p.Targets {
-		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%t,%t,%t,%s,%s,%s,%s,%s,%t;", target.ResourceUID,
-			target.PaneUID, target.PaneID, target.WindowUID, target.WindowID,
-			target.SessionID, target.SessionName, target.RootKind, target.RootUID,
-			target.EndsWindow, target.EndsSession, target.Self, target.OwnerKind, target.OwnerUID,
-			target.AgentUID, target.PaneRole, target.Generation, target.RequireDead)
-	}
-	for _, target := range p.RegistryOnly {
-		fmt.Fprintf(&b, "registry-only,%s,%s,%s,%s,%s,%s;", target.ResourceUID,
-			target.Kind, target.Evidence, target.WindowUID, target.RootKind, target.RootUID)
-	}
-	return b.String()
-}
-
-func (p paneLiveDeletePlan) endsWindows() int {
-	// Canonical Pane/Agent delete always preserves its owning Window. The
-	// EndsWindow bit means a replacement must be created before the kill, not
-	// that the final plan ends the Window.
-	return 0
-}
-
-func (p paneLiveDeletePlan) endsSessions() int {
-	return 0
-}
-
-func (p paneLiveDeletePlan) hasSelfTarget() bool {
-	return slices.ContainsFunc(p.Targets, func(target paneLiveDeleteTarget) bool { return target.Self })
-}
-
 type tmuxPaneDeleteRuntime struct {
 	runner                tmuxCommandRunner
 	target                tmuxTransport
@@ -148,16 +57,6 @@ type tmuxPaneDeleteRuntime struct {
 // reaching for the app socket.
 func newTmuxPaneDeleteRuntime() *tmuxPaneDeleteRuntime {
 	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: os.Getenv, processAlive: notifyQueueEventProcessAlive}
-}
-
-// bindExactDeleteTarget pins a delete seam to one resolved server and drops
-// every expectation the previous binding derived from the old one.
-func bindExactDeleteTarget(target tmuxTransport, bound *tmuxTransport,
-	expectedSocketPath, expectedLogicalSocket *string, routeAuthority **runtimeMutationRouteAuthority) {
-	*bound = target
-	*expectedSocketPath = ""
-	*expectedLogicalSocket = ""
-	*routeAuthority = nil
 }
 
 func (r *tmuxPaneDeleteRuntime) useExactTarget(target tmuxTransport) {
@@ -183,16 +82,16 @@ type livePaneDeleteRow struct {
 
 func (r *tmuxPaneDeleteRuntime) routed() explicitTmuxRunner {
 	if r.expectedSocketPath != "" {
-		return explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: r.expectedSocketPath, Source: tmuxSocketPathSource}}
+		return explicitTmuxRunner{Runner: r.runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: r.expectedSocketPath, Source: tmuxSocketPathSource}}
 	}
-	return explicitTmuxRunner{runner: r.runner, target: r.target}
+	return explicitTmuxRunner{Runner: r.runner, Target: r.target}
 }
 
 func (r *tmuxPaneDeleteRuntime) mutationAction(kind runtimeMutationVerb, target paneLiveDeleteTarget, guard, _ string, args ...string) plannedRuntimeMutation {
 	logicalRoute := r.target.Flag() + "=" + r.target.Value
 	action := newRuntimeMutation(1, kind, runtimeMutationTarget{
 		Socket: logicalRoute, PhysicalSocket: printableRuntimeMutationSocket(r.expectedSocketPath),
-		RouteAuthority: r.routeAuthority.printable(),
+		RouteAuthority: r.routeAuthority.Printable(),
 		Kind:           "pane",
 		ID:             target.PaneID,
 		UID:            target.PaneUID,
@@ -205,8 +104,8 @@ func (r *tmuxPaneDeleteRuntime) mutationAction(kind runtimeMutationVerb, target 
 
 func (r *tmuxPaneDeleteRuntime) guardPrintedMutationRoute(ctx context.Context, action plannedRuntimeMutation) error {
 	return guardPrintedRuntimeMutationRoute(ctx, r.runner, runtimeMutationRoute{
-		target: r.target, expectedSocketPath: r.expectedSocketPath,
-		socketName: r.expectedLogicalSocket, authority: r.routeAuthority,
+		Target: r.target, ExpectedSocketPath: r.expectedSocketPath,
+		SocketName: r.expectedLogicalSocket, Authority: r.routeAuthority,
 	}, action)
 }
 
@@ -387,7 +286,7 @@ func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, ta
 		}
 	}
 	root := deleteRootOwner{Kind: target.RootKind, UID: target.RootUID, Session: target.SessionName}
-	if err := root.validateLiveSession("delete pane", "Pane", target.PaneID, target.PaneUID, row[4], row[1]); err != nil {
+	if err := root.ValidateLiveSession("delete pane", "Pane", target.PaneID, target.PaneUID, row[4], row[1]); err != nil {
 		return err
 	}
 	return nil
@@ -494,20 +393,20 @@ func (r *tmuxPaneDeleteRuntime) guardSocketIdentity(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("delete pane: %w", err)
 		}
-		if route.expectedSocketPath != r.expectedSocketPath || route.authority == nil {
+		if route.ExpectedSocketPath != r.expectedSocketPath || route.Authority == nil {
 			return errors.New("delete pane: invocation server-generation authority drifted")
 		}
-		r.target = route.target
-		r.routeAuthority = route.authority
-		r.expectedLogicalSocket = route.socketName
-		if route.authority.Class == runtimeMutationRouteStandalone {
+		r.target = route.Target
+		r.routeAuthority = route.Authority
+		r.expectedLogicalSocket = route.SocketName
+		if route.Authority.Class == runtimeMutationRouteStandalone {
 			r.expectedLogicalSocket = ""
 		}
 	}
 	if r.routeAuthority != nil {
 		return guardResolvedRuntimeMutationRoute(ctx, r.runner, runtimeMutationRoute{
-			target: r.target, expectedSocketPath: r.expectedSocketPath,
-			socketName: r.expectedLogicalSocket, authority: r.routeAuthority,
+			Target: r.target, ExpectedSocketPath: r.expectedSocketPath,
+			SocketName: r.expectedLogicalSocket, Authority: r.routeAuthority,
 		})
 	}
 	if err := guardRuntimeMutationServerOwnership(ctx, r.routed(), r.target); err != nil {
@@ -888,7 +787,7 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 				strings.ToLower(string(plan.Kind)), window.Metadata.UID, mirrors, r.target.Value, target.paneUID)
 		}
 		spelling := "delete " + strings.ToLower(string(plan.Kind))
-		if err := root.validateLiveSession(spelling, "Pane", row.paneID, target.paneUID, row.projectUID, row.sessionName); err != nil {
+		if err := root.ValidateLiveSession(spelling, "Pane", row.paneID, target.paneUID, row.projectUID, row.sessionName); err != nil {
 			return paneLiveDeletePlan{}, err
 		}
 		if plan.Implicit && row.paneID != currentPaneID {
@@ -1021,20 +920,20 @@ func (r *tmuxPaneDeleteRuntime) prepareReplacements(ctx context.Context, replace
 			return fail(err)
 		}
 	}
-	receipt.created = slices.Clone(ledger.created)
+	receipt.Created = slices.Clone(ledger.created)
 	runtime.clearCreateOperations(ctx, ledger)
 	return receipt, nil
 }
 
 func (r *tmuxPaneDeleteRuntime) rollbackReplacements(ctx context.Context, receipt paneReplacementReceipt) error {
-	if len(receipt.created) == 0 {
+	if len(receipt.Created) == 0 {
 		return nil
 	}
 	runtime := r.replacementMaterializer()
-	ledger := &runtimeLedger{created: slices.Clone(receipt.created)}
+	ledger := &runtimeLedger{created: slices.Clone(receipt.Created)}
 	runtime.rollback(ctx, ledger)
-	for _, created := range receipt.created {
-		if got := runtime.option(ctx, created.ID, "#{"+created.ownershipOption()+"}"); got == created.UID {
+	for _, created := range receipt.Created {
+		if got := runtime.option(ctx, created.ID, "#{"+created.OwnershipOption()+"}"); got == created.UID {
 			return fmt.Errorf("delete pane: replacement rollback left owned %s %s uid=%s", created.Kind, created.ID, created.UID)
 		}
 	}
@@ -1118,14 +1017,7 @@ func (r *tmuxPaneDeleteRuntime) restoreSelfKill(ctx context.Context, targets []p
 }
 
 func paneDeleteIDs(targets []paneLiveDeleteTarget) string {
-	if len(targets) == 0 {
-		return "<none>"
-	}
-	ids := make([]string, 0, len(targets))
-	for _, target := range targets {
-		ids = append(ids, fmt.Sprintf("%s/pane-uid=%s", target.PaneID, target.PaneUID))
-	}
-	return strings.Join(ids, ",")
+	return mutationruntime.PaneDeleteIDs(targets)
 }
 
 func (r *tmuxPaneDeleteRuntime) queueSelfKill(ctx context.Context, targets []paneLiveDeleteTarget) error {

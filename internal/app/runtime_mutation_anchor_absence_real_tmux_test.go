@@ -71,8 +71,8 @@ func TestAbsentAnchorPaneAnswersBlankReceiptThroughRealTmux(t *testing.T) {
 
 	runner := realTmuxAnchorRunner{ctx: ctx, environment: environment}
 	routed := explicitTmuxRunner{
-		runner: runner,
-		target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource},
+		Runner: runner,
+		Target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource},
 	}
 
 	// The shape itself: rc=0, server columns present, object columns blank.

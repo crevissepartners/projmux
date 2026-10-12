@@ -5,13 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"io"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -196,7 +197,7 @@ func (c *agentCommand) bindAgentControl(spelling string, registry coremetadata.R
 		if c.controlRunner == nil {
 			return exactAgentControlBinding{}, errors.New("exact Agent native control unavailable: exact tmux runner is not configured")
 		}
-		routed := explicitTmuxRunner{runner: c.controlRunner, target: route.target}
+		routed := explicitTmuxRunner{Runner: c.controlRunner, Target: route.Target}
 		lookup = &tmuxAgentControlBindingLookup{lookup: intmetadata.NewMirror(routed), runner: routed}
 	}
 	paths, err := c.controlPaths()

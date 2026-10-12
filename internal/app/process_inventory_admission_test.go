@@ -190,7 +190,7 @@ func TestProcessConvergencePlanExcludesTmuxBindingAndBootstrap(t *testing.T) {
 		t.Fatalf("process binding=%s %v", uid, ok)
 	}
 	target := tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}
-	planner := resourceReconcilePlanner{reader: explicitTmuxRunner{runner: runner, target: target}, store: store.store(), newReconciler: reconcileFixtureReconciler(root, "alpha"), materializeProject: "uid:" + project.Metadata.UID, exactTarget: target}
+	planner := resourceReconcilePlanner{reader: explicitTmuxRunner{Runner: runner, Target: target}, store: store.store(), newReconciler: reconcileFixtureReconciler(root, "alpha"), materializeProject: "uid:" + project.Metadata.UID, exactTarget: target}
 	kernel := newResourceControllerKernel(runner, store.store(), planner, target)
 	kernel.observe = func(ctx context.Context) resourcegraph.Inventory {
 		inventory := intmetadata.NewInventoryObserver(runner, target.ExplicitProjection()).Observe(ctx)

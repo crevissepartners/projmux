@@ -70,7 +70,7 @@ func newRegistryRecoveryCommand(tmux *tmuxCommand) *registryRecoveryCommand {
 		if command.runner == nil {
 			return nil, errors.New("no tmux runner is configured")
 		}
-		return intmetadata.NewMirror(explicitTmuxRunner{runner: command.runner, target: target}).ObserveIdentityFragments(ctx)
+		return intmetadata.NewMirror(explicitTmuxRunner{Runner: command.runner, Target: target}).ObserveIdentityFragments(ctx)
 	}
 	return command
 }

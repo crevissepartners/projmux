@@ -331,7 +331,7 @@ func runShellSourceSites() []runShellSourceSite {
 		{File: "keybinding/keybinding_catalog.go", Snippet: "TmuxPaneEnvPrefix+bin"},
 		{File: "ai_integrate.go", Snippet: "agent-hook ingest bell"},
 		{File: "ai_integrate.go", Snippet: "legacyAIIngestCommand"},
-		{File: "runtime_mutation_plan.go", Snippet: `"run-shell", "-b", command`},
+		{File: "../services/mutations/runtime/runtime_mutation_plan.go", Snippet: `"run-shell", "-b", command`},
 		{File: "tmux.go", Snippet: "attention arm #{hook_pane}"},
 		{File: "tmux.go", Snippet: "attention clear #{hook_pane}"},
 		{File: "tmux.go", Snippet: "attention clear #{pane_id}"},

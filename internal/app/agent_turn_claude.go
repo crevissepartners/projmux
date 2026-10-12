@@ -172,7 +172,7 @@ func (c *agentCommand) interruptTmuxClaudeTurn(registry coremetadata.Registry, a
 	if err != nil {
 		return fmt.Errorf("claude turn interrupt unavailable: resolve exact tmux socket: %w", err)
 	}
-	runner := explicitTmuxRunner{runner: c.controlRunner, target: tmuxRoute.target}
+	runner := explicitTmuxRunner{Runner: c.controlRunner, Target: tmuxRoute.Target}
 	if _, err := exactClaudePane(ctx, runner, route.PaneUID, runtime, processTarget); err != nil {
 		return fmt.Errorf("claude turn interrupt unavailable: %w", err)
 	}

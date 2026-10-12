@@ -153,10 +153,10 @@ func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmu
 	inherited := map[string]string{"TMUX": socket + "," + serverPID + ",0", "TMUX_PANE": paneID}
 	lookupEnv := func(key string) string { return inherited[key] }
 	runner := shellTmuxExecRunner{env: func() []string { return environment }}
-	physical := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
+	physical := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
 	newCreate := func() *createCommand {
 		target := tmuxTransport{Kind: tmuxSocketName, Value: logical, Source: tmuxSocketNameSource}
-		routed := explicitTmuxRunner{runner: runner, target: target}
+		routed := explicitTmuxRunner{Runner: runner, Target: target}
 		client := defaultTmuxClientWithRunner(routed)
 		command := &createCommand{
 			store:      store.store(),
@@ -186,18 +186,18 @@ func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmu
 			if err != nil {
 				return err
 			}
-			exact := explicitTmuxRunner{runner: runner, target: route.target}
-			client := defaultTmuxClientWithSocketRunner(exact, route.socketName)
+			exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
+			client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 			command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 			// Keep the reconciler off the real $HOME Project discovery.
 			command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
 			command.runtime.runner = exact
 			command.runtime.mirror = intmetadata.NewMirror(exact)
 			command.runtime.sessions = client
-			command.runtime.target = route.target
-			command.runtime.expectedSocketPath = route.expectedSocketPath
-			command.runtime.socketName = route.socketName
-			command.runtime.routeAuthority = route.authority
+			command.runtime.target = route.Target
+			command.runtime.expectedSocketPath = route.ExpectedSocketPath
+			command.runtime.socketName = route.SocketName
+			command.runtime.routeAuthority = route.Authority
 			return nil
 		}
 		command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

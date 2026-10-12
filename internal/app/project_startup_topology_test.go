@@ -147,7 +147,7 @@ func TestCanonicalProjectStartupNamesTheFirstWindowItAdopts(t *testing.T) {
 			})
 			recorder, _, _ := topologyJournalFixture(t)
 			if err := materializeProjectSessionCanonical(context.Background(), store.store(), runner,
-				runtimeMutationRoute{target: activation.target, socketName: defaultAppSocket}, recorder,
+				runtimeMutationRoute{Target: activation.target, SocketName: defaultAppSocket}, recorder,
 				"beta", root, startupProject); err != nil {
 				t.Fatalf("canonical Project startup: %v", err)
 			}

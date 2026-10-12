@@ -126,7 +126,7 @@ func newRouteIdentityFixture() (*materializer, *fakeTmux, string) {
 	pane.opts[tmuxopts.PaneUID] = routeIdentityPaneUID
 	target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
 	return &materializer{
-		runner: explicitTmuxRunner{runner: server, target: target},
+		runner: explicitTmuxRunner{Runner: server, Target: target},
 		target: target, expectedSocketPath: server.socketPath,
 		socketName:     defaultAppSocket,
 		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
@@ -164,7 +164,7 @@ func TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple(t *testing.T) {
 	t.Parallel()
 
 	var absent *runtimeRouteIdentityCache
-	if absent.reuse(appRouteIdentityKey()) {
+	if absent.Reuse(appRouteIdentityKey()) {
 		t.Fatal("nil cache reused an identity")
 	}
 	if newRuntimeRouteIdentityCache("") != nil {
@@ -172,7 +172,7 @@ func TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple(t *testing.T) {
 	}
 
 	cold := newRuntimeRouteIdentityCache("op-cold")
-	if cold.reuse(appRouteIdentityKey()) {
+	if cold.Reuse(appRouteIdentityKey()) {
 		t.Fatal("first identity check of a transaction reused a proof that never ran")
 	}
 
@@ -192,13 +192,13 @@ func TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			cache := newRuntimeRouteIdentityCache("op-key")
-			cache.record(appRouteIdentityKey())
-			if !cache.reuse(appRouteIdentityKey()) {
+			cache.Record(appRouteIdentityKey())
+			if !cache.Reuse(appRouteIdentityKey()) {
 				t.Fatal("exact proven tuple was not reused")
 			}
 			differing := appRouteIdentityKey()
 			test.mutate(&differing)
-			if cache.reuse(differing) {
+			if cache.Reuse(differing) {
 				t.Fatalf("differing %s reused the proof of %#v", test.name, appRouteIdentityKey())
 			}
 		})
@@ -207,11 +207,11 @@ func TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple(t *testing.T) {
 	t.Run("standalone classes are distinct", func(t *testing.T) {
 		t.Parallel()
 		cache := newRuntimeRouteIdentityCache("op-standalone")
-		cache.record(standaloneRouteIdentityKey(runtimeMutationRouteStandalone))
-		if !cache.reuse(standaloneRouteIdentityKey(runtimeMutationRouteStandalone)) {
+		cache.Record(standaloneRouteIdentityKey(runtimeMutationRouteStandalone))
+		if !cache.Reuse(standaloneRouteIdentityKey(runtimeMutationRouteStandalone)) {
 			t.Fatal("exact standalone tuple was not reused")
 		}
-		if cache.reuse(standaloneRouteIdentityKey(runtimeMutationRouteStandaloneExplicit)) {
+		if cache.Reuse(standaloneRouteIdentityKey(runtimeMutationRouteStandaloneExplicit)) {
 			t.Fatal("standalone-explicit reused a standalone proof")
 		}
 	})
@@ -232,8 +232,8 @@ func TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple(t *testing.T) {
 			}(),
 		} {
 			cache := newRuntimeRouteIdentityCache("op-incomplete")
-			cache.record(key)
-			if cache.reuse(key) || cache.snapshot().Proofs != 0 {
+			cache.Record(key)
+			if cache.Reuse(key) || cache.Snapshot().Proofs != 0 {
 				t.Fatalf("incomplete identity %#v was cached", key)
 			}
 		}
@@ -242,17 +242,17 @@ func TestRuntimeRouteIdentityCacheReusesOnlyTheExactProvenTuple(t *testing.T) {
 	t.Run("route key requires a captured generation", func(t *testing.T) {
 		t.Parallel()
 		route := runtimeMutationRoute{
-			target:     tmuxTransport{Kind: tmuxSocketName, Value: "app", Source: tmuxSocketNameSource},
-			socketName: "app",
+			Target:     tmuxTransport{Kind: tmuxSocketName, Value: "app", Source: tmuxSocketNameSource},
+			SocketName: "app",
 		}
 		if _, ok := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, route); ok {
 			t.Fatal("route without physical socket or authority was cacheable")
 		}
-		route.expectedSocketPath = "/tmp/tmux-1000/app"
+		route.ExpectedSocketPath = "/tmp/tmux-1000/app"
 		if _, ok := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, route); ok {
 			t.Fatal("route without server generation was cacheable")
 		}
-		route.authority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+		route.Authority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 		key, ok := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, route)
 		if !ok || key != appRouteIdentityKey() {
 			t.Fatalf("route key = %#v, %v; want %#v", key, ok, appRouteIdentityKey())
@@ -266,16 +266,16 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 	t.Run("server swap drops every proof", func(t *testing.T) {
 		t.Parallel()
 		cache := newRuntimeRouteIdentityCache("op-swap")
-		cache.record(appRouteIdentityKey())
+		cache.Record(appRouteIdentityKey())
 		swapped := appRouteIdentityKey()
 		swapped.PhysicalSocket = "/tmp/tmux-1000/replacement"
-		if cache.reuse(swapped) {
+		if cache.Reuse(swapped) {
 			t.Fatal("swapped server reused the old proof")
 		}
-		if cache.reuse(appRouteIdentityKey()) {
+		if cache.Reuse(appRouteIdentityKey()) {
 			t.Fatal("old server proof survived a server swap")
 		}
-		if got := cache.snapshot(); got.Invalidations != 1 || got.LastInvalidation != "route-target-changed" {
+		if got := cache.Snapshot(); got.Invalidations != 1 || got.LastInvalidation != "route-target-changed" {
 			t.Fatalf("swap invalidation = %#v", got)
 		}
 	})
@@ -283,17 +283,17 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 	t.Run("transaction end closes the scope", func(t *testing.T) {
 		t.Parallel()
 		cache := newRuntimeRouteIdentityCache("op-end")
-		cache.record(appRouteIdentityKey())
-		cache.close()
-		cache.close()
-		if cache.reuse(appRouteIdentityKey()) {
+		cache.Record(appRouteIdentityKey())
+		cache.Close()
+		cache.Close()
+		if cache.Reuse(appRouteIdentityKey()) {
 			t.Fatal("closed transaction scope reused a proof")
 		}
-		cache.record(appRouteIdentityKey())
-		if cache.reuse(appRouteIdentityKey()) {
+		cache.Record(appRouteIdentityKey())
+		if cache.Reuse(appRouteIdentityKey()) {
 			t.Fatal("closed transaction scope accepted a new proof")
 		}
-		if got := cache.snapshot(); !got.Closed || got.LastInvalidation != "transaction-end" {
+		if got := cache.Snapshot(); !got.Closed || got.LastInvalidation != "transaction-end" {
 			t.Fatalf("closed cache stats = %#v", got)
 		}
 	})
@@ -323,7 +323,7 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 			trigger: func(runtime *materializer, server *fakeTmux, _ string) {
 				server.socketPath = "/tmp/fake-tmux/moved"
 				target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
-				runtime.runner = explicitTmuxRunner{runner: server, target: target}
+				runtime.runner = explicitTmuxRunner{Runner: server, Target: target}
 				runtime.target, runtime.expectedSocketPath = target, server.socketPath
 			},
 		},
@@ -373,7 +373,7 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 			start := len(server.calls)
 			test.trigger(runtime, server, paneID)
 			if test.wantReason != "" {
-				if got := runtime.routeIdentity.snapshot().LastInvalidation; got != test.wantReason {
+				if got := runtime.routeIdentity.Snapshot().LastInvalidation; got != test.wantReason {
 					t.Fatalf("last invalidation = %q, want %q", got, test.wantReason)
 				}
 			}
@@ -421,7 +421,7 @@ func TestMaterializerRouteGuardReprovesIdentityAfterEveryGuardedWrite(t *testing
 		}
 		return measurement{
 			reads: routeIdentityReads(server.calls), writes: routeIdentityWrites(server.calls),
-			segments: routeIdentitySegments(server.calls), stats: runtime.routeIdentity.snapshot(),
+			segments: routeIdentitySegments(server.calls), stats: runtime.routeIdentity.Snapshot(),
 		}
 	}
 
@@ -544,7 +544,7 @@ func TestCachedRouteGuardRefusalsKeepTheirErrorFamily(t *testing.T) {
 				if err == nil {
 					t.Fatalf("%s was not refused (cache open=%v)", test.name, open)
 				}
-				return err.Error(), routeIdentityWrites(server.calls), runtime.routeIdentity.snapshot()
+				return err.Error(), routeIdentityWrites(server.calls), runtime.routeIdentity.Snapshot()
 			}
 			uncached, uncachedWrites, _ := refuse(false)
 			cached, cachedWrites, stats := refuse(true)
@@ -604,12 +604,12 @@ func TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof(t *testing.T) {
 		t.Fatalf("full proof over stale cache = %v, want %v", gotGuard, wantGuard)
 	}
 	staleRoute := runtimeMutationRoute{
-		target: runtime.target, expectedSocketPath: runtime.expectedSocketPath,
-		socketName: runtime.logicalSocketName(runtime.target), authority: runtime.routeAuthority,
+		Target: runtime.target, ExpectedSocketPath: runtime.expectedSocketPath,
+		SocketName: runtime.logicalSocketName(runtime.target), Authority: runtime.routeAuthority,
 	}
 	for _, scope := range []string{routeIdentityScopeResolvedRoute, routeIdentityScopeExactRoute} {
 		key, ok := runtimeRouteIdentityKeyForRoute(scope, staleRoute)
-		if !ok || runtime.routeIdentity.reuse(key) {
+		if !ok || runtime.routeIdentity.Reuse(key) {
 			t.Fatalf("stale %s proof survived detection (cacheable=%v)", scope, ok)
 		}
 	}

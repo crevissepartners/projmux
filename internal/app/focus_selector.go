@@ -264,7 +264,7 @@ func (c *focusCommand) resolveUIDNavigation(ctx context.Context, opts focusOptio
 			if err != nil {
 				return "", socket, err
 			}
-			serverRunner = explicitTmuxRunner{runner: c.runner, target: target}
+			serverRunner = explicitTmuxRunner{Runner: c.runner, Target: target}
 		}
 		if _, err := serverRunner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}"); err != nil {
 			if isMissingTmuxServer(err) {

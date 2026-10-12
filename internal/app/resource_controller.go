@@ -101,8 +101,8 @@ func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore,
 		// observer is what keeps a single stage consistent; carrying it across
 		// stages would make the reobservation report the pre-execute machine.
 		readTarget := kernel.target
-		if kernel.route != nil && kernel.route.expectedSocketPath != "" {
-			readTarget = tmuxTransport{Kind: tmuxSocketPath, Value: kernel.route.expectedSocketPath, Source: tmuxSocketPathSource}
+		if kernel.route != nil && kernel.route.ExpectedSocketPath != "" {
+			readTarget = tmuxTransport{Kind: tmuxSocketPath, Value: kernel.route.ExpectedSocketPath, Source: tmuxSocketPathSource}
 		}
 		inventory := intmetadata.NewInventoryObserver(runner, readTarget.ExplicitProjection()).Observe(ctx)
 		// The public plan continues to describe the operator's requested route;
@@ -112,10 +112,10 @@ func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore,
 	}
 	kernel.socketPath = func(ctx context.Context) (string, bool) {
 		readTarget := kernel.target
-		if kernel.route != nil && kernel.route.expectedSocketPath != "" {
-			readTarget = tmuxTransport{Kind: tmuxSocketPath, Value: kernel.route.expectedSocketPath, Source: tmuxSocketPathSource}
+		if kernel.route != nil && kernel.route.ExpectedSocketPath != "" {
+			readTarget = tmuxTransport{Kind: tmuxSocketPath, Value: kernel.route.ExpectedSocketPath, Source: tmuxSocketPathSource}
 		}
-		routed := explicitTmuxRunner{runner: runner, target: readTarget}
+		routed := explicitTmuxRunner{Runner: runner, Target: readTarget}
 		out, err := routed.Run(ctx, "tmux", "display-message", "-p", "#{socket_path}")
 		if err != nil {
 			return "", false
@@ -130,7 +130,7 @@ func (k *resourceControllerKernel) bindRuntimeRoute(ctx context.Context) error {
 		if err := guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route); err != nil {
 			return err
 		}
-		k.planner.exactSocketPath = k.route.expectedSocketPath
+		k.planner.exactSocketPath = k.route.ExpectedSocketPath
 		return nil
 	}
 	lookup := k.lookupEnv
@@ -144,7 +144,7 @@ func (k *resourceControllerKernel) bindRuntimeRoute(ctx context.Context) error {
 	k.route = &route
 	// The planner records and judges session projections against the exact
 	// path this authority verified, never against the operator's -L name.
-	k.planner.exactSocketPath = route.expectedSocketPath
+	k.planner.exactSocketPath = route.ExpectedSocketPath
 	return nil
 }
 
@@ -549,7 +549,7 @@ func (k *resourceControllerKernel) guardPlan(ctx context.Context, socket string,
 	if err := guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route); err != nil {
 		return fmt.Errorf("exact tmux socket changed before repair: %w", err)
 	}
-	routed := explicitTmuxRunner{runner: k.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: k.route.expectedSocketPath, Source: tmuxSocketPathSource}}
+	routed := explicitTmuxRunner{Runner: k.runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: k.route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
 	if socket != "" {
 		current, ok := k.socketPath(ctx)
 		if !ok {

@@ -80,7 +80,7 @@ func (c *switchCommand) selectVirtualTerminalArrival(ctx context.Context, sessio
 	if err != nil {
 		return err
 	}
-	runner := explicitTmuxRunner{runner: c.tmuxRunner, target: target}
+	runner := explicitTmuxRunner{Runner: c.tmuxRunner, Target: target}
 	out, err := runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", tmuxRowFormat("#{window_id}", "#{window_active}"))
 	if err != nil {
 		return err

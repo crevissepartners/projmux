@@ -46,8 +46,8 @@ func managedIngestMigrationAIBuilders() []managedIngestMigrationAIBuilder {
 			replaced: []string{"runCommand", "readCommand"},
 			build: func(c *tmuxCommand) *aiCommand {
 				return c.managedIngestMigrationAIForRoute(runtimeMutationRoute{
-					socketName:         "projmux",
-					expectedSocketPath: "/tmp/tmux-test/projmux",
+					SocketName:         "projmux",
+					ExpectedSocketPath: "/tmp/tmux-test/projmux",
 				})
 			},
 		},

@@ -1140,7 +1140,7 @@ func TestClaudeQuestionViewingClientPicksTheMostRecentTerminalClient(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	popup = tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{runner: routed, target: target}, routed: true}
+	popup = tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{Runner: routed, Target: target}, routed: true}
 	if got, err := popup.ViewingClient(context.Background(), "%7"); err != nil || got != "/dev/pts/9" {
 		t.Fatalf("routed Codex client = %q, %v", got, err)
 	}

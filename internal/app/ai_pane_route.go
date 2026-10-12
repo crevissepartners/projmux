@@ -52,10 +52,10 @@ func (c *aiCommand) aiPaneOptionRoute(paneID string) (aiPaneOptionTarget, *aiPan
 	if err == nil && inherited.Present() {
 		return aiPaneOptionTarget{transport: inherited}, nil
 	}
-	target := aiPaneOptionTarget{transport: defaultRuntimeMutationRoute().target}
+	target := aiPaneOptionTarget{transport: defaultRuntimeMutationRoute().Target}
 	runner := explicitTmuxRunner{
-		runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
-		target: target.transport,
+		Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
+		Target: target.transport,
 	}
 	output, runErr := runner.Run(context.Background(), "tmux",
 		"display-message", "-p", "-t", paneID, "-F", aiPaneOptionRouteFormat)

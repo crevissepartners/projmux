@@ -284,7 +284,7 @@ func processWaitEvidence(receipt coremetadata.TerminationEvidence) string {
 // locked transaction must reproduce it byte for byte before deleting.
 func processDeleteSignature(registry coremetadata.Registry, plan deletePlan) string {
 	var b strings.Builder
-	b.WriteString(plan.signature())
+	b.WriteString(plan.Signature())
 	if plan.Kind == coremetadata.KindWindow {
 		for _, target := range plan.Targets {
 			if window, ok := registry.Window(target.Match.UID); ok {
@@ -366,7 +366,7 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 	if err != nil {
 		return processDeleteOutcome{}, MapMetadataError(err)
 	}
-	if current := buildDeletePlan(registry, plan.Kind, resolutionOf(plan)).signature(); current != plan.signature() {
+	if current := buildDeletePlan(registry, plan.Kind, resolutionOf(plan)).Signature(); current != plan.Signature() {
 		return processDeleteOutcome{}, processDeleteRefusal(processDeleteRefusedToken, "", "delete agent: the cascade plan changed before deletion; nothing was deleted")
 	}
 	final, err := d.classifyPlan(registry, plan)
@@ -388,8 +388,8 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 	}
 	approved := processDeleteSignature(registry, plan)
 	outcome := processDeleteOutcome{targets: final}
-	err = d.store.mutate(plan.Kind, plan.uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if current := buildDeletePlan(*working, plan.Kind, resolutionOf(plan)).signature(); current != plan.signature() {
+	err = d.store.mutate(plan.Kind, plan.Uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if current := buildDeletePlan(*working, plan.Kind, resolutionOf(plan)).Signature(); current != plan.Signature() {
 			return processDeleteRefusal(processDeleteRefusedToken, "", "the cascade plan changed between preflight and deletion; nothing was deleted")
 		}
 		if processDeleteSignature(*working, plan) != approved {
@@ -399,7 +399,7 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 			outcome.actor = actor(working)
 		}
 		candidate := working.Clone()
-		for _, uid := range plan.uids() {
+		for _, uid := range plan.Uids() {
 			if err := deleteResource(&candidate, mutator, plan.Kind, uid); err != nil {
 				return err
 			}
@@ -487,14 +487,6 @@ func resolutionOf(plan deletePlan) selector.Resolution {
 		resolution.Matches = append(resolution.Matches, target.Match)
 	}
 	return resolution
-}
-
-func (p deletePlan) uids() []string {
-	out := make([]string, 0, len(p.Targets))
-	for _, target := range p.Targets {
-		out = append(out, target.Match.UID)
-	}
-	return out
 }
 
 func (d *processAgentDeleter) record(outcome processDeleteOutcome, plan deletePlan, operationID string, stderr io.Writer) {
@@ -770,7 +762,7 @@ func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags
 	if dryRun {
 		return writeVirtualDeletePlan(stdout, spelling, plan, targets, true)
 	}
-	if plan.needsConfirmation() {
+	if plan.NeedsConfirmation() {
 		stops := 0
 		for _, target := range targets {
 			if target.Runtime == processDeleteRuntimeRunning {

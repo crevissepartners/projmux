@@ -2727,10 +2727,10 @@ func (c *switchCommand) stopManagedProjectSessionOnRoute(
 	}
 	observed := runtimeTransportRequest{}
 	if resolved != nil {
-		if strings.TrimSpace(resolved.expectedSocketPath) == "" {
+		if strings.TrimSpace(resolved.ExpectedSocketPath) == "" {
 			return errors.New("switch managed runtime stop: resolved route has no physical socket; nothing was changed")
 		}
-		observed.socketPath = resolved.expectedSocketPath
+		observed.socketPath = resolved.ExpectedSocketPath
 	}
 	view, err := c.navigationViewOn(ctx, observed)
 	if err != nil {

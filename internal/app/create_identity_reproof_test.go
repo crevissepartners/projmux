@@ -93,10 +93,10 @@ func typedMirrorCases() []typedMirrorCase {
 // mirror is exactly the pre-scope writer.
 func newScopedTypedMirror(runtime *materializer, runner tmuxCommandRunner, scoped bool) runtimeMutationMetadataMirror {
 	mirror := runtimeMutationMetadataMirror{
-		runner: explicitTmuxRunner{runner: runner, target: runtime.target},
+		runner: explicitTmuxRunner{Runner: runner, Target: runtime.target},
 		route: runtimeMutationRoute{
-			target: runtime.target, expectedSocketPath: runtime.expectedSocketPath,
-			socketName: runtime.socketName, authority: runtime.routeAuthority,
+			Target: runtime.target, ExpectedSocketPath: runtime.expectedSocketPath,
+			SocketName: runtime.socketName, Authority: runtime.routeAuthority,
 		},
 	}
 	if scoped {

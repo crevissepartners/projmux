@@ -179,9 +179,9 @@ func TestProjectStopLowersInterruptedAgentsOfflineThroughRealTmux(t *testing.T) 
 	target := managedRuntimeStopTarget{
 		SessionID: sessionID, SessionName: sessionName, RootKind: coremetadata.KindProject, RootUID: "prj-name-handoff",
 		Route: runtimeMutationRoute{
-			target:     tmuxTransport{Kind: tmuxSocketName, Value: server.logical, Source: tmuxSocketNameSource},
-			socketName: server.logical, expectedSocketPath: server.socket,
-			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: serverPID},
+			Target:     tmuxTransport{Kind: tmuxSocketName, Value: server.logical, Source: tmuxSocketNameSource},
+			SocketName: server.logical, ExpectedSocketPath: server.socket,
+			Authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: serverPID},
 		},
 	}
 	stopStore := store.store()

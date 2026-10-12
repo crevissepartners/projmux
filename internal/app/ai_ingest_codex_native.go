@@ -2160,7 +2160,7 @@ func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObser
 		return codexObserverStartupResult{Status: codexObserverStartupStale}
 	}
 	identity := target.Identity
-	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
+	runner := explicitTmuxRunner{Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, Target: target.Route}
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
 	// The activation may have been replaced between create/resume committing
 	// its binding and reaching this synchronous transition. Pending is itself
@@ -2429,7 +2429,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	// A creator that stopped waiting closes the startup pipe. The one late
 	// report must then fail as a write error, not end the observer.
 	signal.Ignore(syscall.SIGPIPE)
-	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
+	runner := explicitTmuxRunner{Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, Target: target.Route}
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
 	session, sessionErr := newCodexBrokerObserverSessionForRoute(target.Identity, "", nil, target.NativeRoute)
 	if sessionErr != nil {
@@ -2449,7 +2449,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		open:            session.Open,
 		questions: &codexQuestionChannel{
 			loadRegistry: c.loadRegistry, store: defaultAgentQuestionStore,
-			popup:     tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{runner: inttmux.ExecRunner{}, target: target.Route}, executable: rawExecutablePath, routed: true},
+			popup:     tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target.Route}, executable: rawExecutablePath, routed: true},
 			answering: questionAnswering, window: claudeQuestionWindow,
 			newID: agentquestion.NewID,
 		},

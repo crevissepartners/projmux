@@ -139,7 +139,7 @@ func TestResourceReconcileNeverLowersWithoutAVerifiedSocketPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	planner := resourceReconcilePlanner{
-		reader: explicitTmuxRunner{runner: command.runner, target: target}, store: command.resources,
+		reader: explicitTmuxRunner{Runner: command.runner, Target: target}, store: command.resources,
 		newReconciler: command.newReconciler,
 	}
 	plan, err := planner.build(context.Background(), store.registry.Clone())

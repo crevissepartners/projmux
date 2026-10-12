@@ -53,7 +53,7 @@ func TestRouteReadSequenceMatchesSeparateReadsThroughRealTmux(t *testing.T) {
 		t.Fatalf("seed socket name marker: %v: %s", err, out)
 	}
 
-	routed := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
+	routed := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}}
 	reads := []routeRead{routeReadSocketPath, routeReadServerPID, routeReadAppMarker, routeReadSocketNameMarker}
 	for _, test := range []struct {
 		name    string

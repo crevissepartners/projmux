@@ -412,7 +412,7 @@ func inheritedAgentMutationMirror(lookupEnv func(string) string, runner tmuxComm
 	if err != nil || !target.Present() {
 		return nil
 	}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	return &tmuxAgentMutationMirror{lookup: intmetadata.NewMirror(routed), runner: routed}
 }
 

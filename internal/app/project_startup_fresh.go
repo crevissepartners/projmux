@@ -433,7 +433,7 @@ func (s *registryProjectFreshStarter) requireClosedProject(ctx context.Context, 
 			return fmt.Errorf("project fresh start: exact tmux target: %w", err)
 		}
 	}
-	exactRunner := explicitTmuxRunner{runner: s.runner, target: target}
+	exactRunner := explicitTmuxRunner{Runner: s.runner, Target: target}
 	if _, found, err := (&materializer{runner: exactRunner}).preflightSessionOwnership(ctx, *project, sessionName); err != nil {
 		return fmt.Errorf("project fresh start: target Project must be exactly closed before Open fresh; nothing was deleted: %w", err)
 	} else if found {
@@ -633,7 +633,7 @@ func (c *switchCommand) displayFreshLaunchDefaultLine(ctx context.Context, clien
 	if err != nil {
 		return
 	}
-	exact := explicitTmuxRunner{runner: c.tmuxRunner, target: target}
+	exact := explicitTmuxRunner{Runner: c.tmuxRunner, Target: target}
 	head := ""
 	if reason, kept := strings.CutPrefix(line, keptOriginShellHead); kept {
 		head, line = keptOriginShellHead, reason
@@ -733,7 +733,7 @@ func (c *switchCommand) liveShellPaneTarget(ctx context.Context, paneUID string)
 	if err != nil {
 		return "", false, err
 	}
-	return intmetadata.NewMirror(explicitTmuxRunner{runner: c.tmuxRunner, target: target}).FindPaneTargetForUID(ctx, paneUID)
+	return intmetadata.NewMirror(explicitTmuxRunner{Runner: c.tmuxRunner, Target: target}).FindPaneTargetForUID(ctx, paneUID)
 }
 
 // verifyProjectFreshStartPruned re-reads the Registry and refuses to continue

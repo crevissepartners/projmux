@@ -44,7 +44,7 @@ func TestFreshServerSessionFirstPaneResolvesItsDefaultsInsideTheServer(t *testin
 	server.appMarker = "1"
 	server.socketName = ""
 	target := tmuxTransport{Kind: tmuxSocketName, Value: "first-pane-fresh", Source: tmuxSocketNameSource}
-	routed := explicitTmuxRunner{runner: server, target: target}
+	routed := explicitTmuxRunner{Runner: server, Target: target}
 	runtime := &materializer{
 		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
 		target: target, configPath: configPath, executable: func() (string, error) { return testSupervisorBinary, nil },

@@ -261,7 +261,7 @@ func restartAnchorConfirm(runner tmuxCommandRunner, route tmuxTransport) paneCha
 		if runner == nil || !route.Present() {
 			return 0, creatorSkipServerUnproven
 		}
-		out, err := (explicitTmuxRunner{runner: runner, target: route}).Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
+		out, err := (explicitTmuxRunner{Runner: runner, Target: route}).Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
 			tmuxRowFormat("#{pane_id}", "#{pane_pid}", "#{"+tmuxopts.PaneUID+"}"))
 		if err != nil {
 			return 0, creatorSkipAnchorQueryFailed

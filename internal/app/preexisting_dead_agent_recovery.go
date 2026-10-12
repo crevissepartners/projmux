@@ -66,7 +66,7 @@ func (r *controllerTriggerRunner) reconcileOnePreexistingDeadAgentPane(
 ) (controllerPassResult, bool, error) {
 	var pass controllerPassResult
 	route, err := resolveControllerRuntimeMutationRoute(ctx, r.runner, target, func(string) string { return "" })
-	if err != nil || route.authority == nil || route.authority.Class != runtimeMutationRouteApp {
+	if err != nil || route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp {
 		detail := "exact app socket authority is unavailable"
 		if err != nil {
 			detail = err.Error()

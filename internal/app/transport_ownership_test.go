@@ -30,10 +30,10 @@ func TestRawTmuxTransportHasOneProductionOwner(t *testing.T) {
 	}
 	fset := token.NewFileSet()
 	allowedContainmentReaders := map[string]bool{
-		"delete_pane_runtime.go":   true,
-		"delete_window_runtime.go": true,
+		"delete_pane_runtime.go":                                 true,
+		"../services/mutations/runtime/delete_window_runtime.go": true,
 	}
-	for _, name := range appSourceFiles(t) {
+	for _, name := range append(appSourceFiles(t), mutationRuntimeSourceFiles(t)...) {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
@@ -69,8 +69,9 @@ func TestRawTmuxTransportHasOneProductionOwner(t *testing.T) {
 	for _, owner := range []struct{ name, resolver string }{
 		{"agent_interaction.go", "resourcegraph.ResolveTransport("},
 		{"agent_review.go", "resourcegraph.ResolveTransport("},
-		{"binding_convergence.go", "resourcegraph.ResolveTransport("},
-		{"delete_transport.go", "resourcegraph.ResolveTransport("},
+		{"../services/mutations/runtime/binding_convergence.go", "resourcegraph.ResolveTransport("},
+		{"../services/mutations/runtime/delete_transport.go", "resourcegraph.ResolveTransport("},
+		{"delete_transport.go", "mutationruntime.ResolveDeleteTarget("},
 		{"resource_mutation_mirror.go", "resourcegraph.ResolveTransport("},
 		{"resource_reconcile.go", "resourcegraph.ResolveTransport("},
 		{"registry_recovery.go", "resourcegraph.ResolveTransport("},

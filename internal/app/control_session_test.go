@@ -190,7 +190,7 @@ func TestControlSessionIdentityPlanNormalizesAutomaticRenameFormatBoolean(t *tes
 
 func TestControlSessionIdentityPlanFlattensEquivalentNestedRoutes(t *testing.T) {
 	converger, _, server, runner := controlSessionFixture(t)
-	converger.runner = explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}}
+	converger.runner = explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}}
 
 	result, err := converger.converge(context.Background(), controlFixtureSocket, "home")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestControlSessionIdentityPlanRefusesMismatchedNestedPhysicalRoute(t *testi
 	converger, store, _, runner := controlSessionFixture(t)
 	server := runner.servers["-L\x00"+controlFixtureSocket]
 	runner.servers["-S\x00/tmp/foreign-control.sock"] = server
-	converger.runner = explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/foreign-control.sock", Source: tmuxSocketPathSource}}
+	converger.runner = explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/foreign-control.sock", Source: tmuxSocketPathSource}}
 
 	_, err := converger.converge(context.Background(), controlFixtureSocket, "home")
 	if err == nil || !strings.Contains(err.Error(), "physical route disagrees") {
@@ -269,8 +269,8 @@ func TestControlSessionIdentityConvergenceNeverOverwritesForeignDescendantUID(t 
 				Panes:   [][]string{{session.windows[0].panes[0].id}},
 			}
 			mirror := intmetadata.NewMirror(explicitTmuxRunner{
-				runner: runner,
-				target: tmuxTransport{Kind: tmuxSocketName, Value: controlFixtureSocket, Source: tmuxSocketNameSource},
+				Runner: runner,
+				Target: tmuxTransport{Kind: tmuxSocketName, Value: controlFixtureSocket, Source: tmuxSocketNameSource},
 			})
 			_, err := executeControlSessionIdentityPlan(
 				context.Background(),
@@ -639,7 +639,7 @@ func TestControlSessionIdentityPlanDropsUIDAConcurrentWriterAlreadyConvergedAndR
 			targets := intmetadata.LegacyTargets{Windows: []string{session.windows[0].id}, Panes: [][]string{{session.windows[0].panes[0].id}}}
 			transport := tmuxTransport{Kind: tmuxSocketName, Value: controlFixtureSocket, Source: tmuxSocketNameSource}
 			_, err := executeControlSessionIdentityPlan(context.Background(), transport, "home",
-				intmetadata.NewMirror(explicitTmuxRunner{runner: runner, target: transport}), registry, binding, targets, false)
+				intmetadata.NewMirror(explicitTmuxRunner{Runner: runner, Target: transport}), registry, binding, targets, false)
 			if runner.seen <= test.after {
 				t.Fatalf("guard did not reread the %s tuple after the concurrent write (reads=%d)", test.field, runner.seen)
 			}

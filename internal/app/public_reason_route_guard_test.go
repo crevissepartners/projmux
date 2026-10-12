@@ -91,7 +91,7 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/create_resource.go (resourceCreateFlags).refuseConflictingWindowScope spelling`: {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go requireExplicitProject spelling`:                             {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go splitPayload spelling`:                                       {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
-	`internal/app/delete_transport.go resolveDeleteTarget spelling`:                               {routes: []string{"delete project", "delete window", "delete pane", "delete agent", "unregister project"}, reason: publicReasonDynamicReason},
+	`internal/services/mutations/runtime/delete_transport.go ResolveDeleteTarget spelling`:        {routes: []string{"delete project", "delete window", "delete pane", "delete agent", "unregister project"}, reason: publicReasonDynamicReason},
 	`internal/app/personacmd/persona.go (*Command).Run c.spelling()`:                              {routes: []string{"persona", "instructions"}, reason: "the noun is the persona or instructions spelling the handler was built for"},
 	`internal/app/personacmd/persona.go (*Command).runDelete c.spelling()`:                        {routes: []string{"persona delete", "instructions delete"}, reason: "the noun is the persona or instructions spelling the handler was built for"},
 	`internal/app/personacmd/persona.go (*Command).runList c.spelling()`:                          {routes: []string{"persona list", "instructions list"}, reason: "the noun is the persona or instructions spelling the handler was built for"},
@@ -122,19 +122,20 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/usagecmd/usage.go "status"`:                                 {reason: publicReasonHiddenReason},
 
 	// Text that is not a route.
-	`internal/app/agent_activation_binding.go "tmux"`:                 {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
-	`internal/app/attach.go "runtime attach fallback"`:                {reason: "the route `runtime attach` followed by the name of its --fallback flag"},
-	`internal/services/settings/settings.go "agent question window"`:  {reason: publicReasonNotARoute + ": the agent question window setting"},
-	`internal/app/create.go "agent pane"`:                             {reason: publicReasonNotARoute + ": the agent pane intent invariant"},
-	`internal/app/create_agent.go "tmux"`:                             {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
-	`internal/app/registry_recovery.go "reconcile registry checksum"`: {reason: "the route `reconcile registry` followed by English (`checksum guards require --source`)"},
-	`internal/app/runtime_mutation_route.go "runtime mutation"`:       {reason: publicReasonNotARoute + ": the runtime mutation authority invariant"},
-	`internal/app/supervise.go "agent activation"`:                    {reason: publicReasonNotARoute + ": the agent activation invariant"},
-	`internal/app/supervise_child_unix.go "agent activation"`:         {reason: publicReasonNotARoute + ": the agent activation invariant"},
-	`internal/app/switch.go "settings discovery"`:                     {reason: publicReasonNotARoute + ": a settings picker label its caller passes with no operands, so the refusal never prints"},
-	`internal/app/switch.go "settings project"`:                       {reason: publicReasonNotARoute + ": a settings picker label its caller passes with no operands, so the refusal never prints"},
-	`internal/app/switch.go "switch command"`:                         {reason: publicReasonNotARoute + ": the switch plan invariant"},
-	`internal/app/tmux.go "config apply route"`:                       {reason: publicReasonNotARoute + ": the config apply runtime route invariant"},
+	`internal/app/agent_activation_binding.go "tmux"`:                                  {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
+	`internal/app/attach.go "runtime attach fallback"`:                                 {reason: "the route `runtime attach` followed by the name of its --fallback flag"},
+	`internal/services/settings/settings.go "agent question window"`:                   {reason: publicReasonNotARoute + ": the agent question window setting"},
+	`internal/app/create.go "agent pane"`:                                              {reason: publicReasonNotARoute + ": the agent pane intent invariant"},
+	`internal/app/create_agent.go "tmux"`:                                              {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
+	`internal/app/registry_recovery.go "reconcile registry checksum"`:                  {reason: "the route `reconcile registry` followed by English (`checksum guards require --source`)"},
+	`internal/app/runtime_mutation_route.go "runtime mutation"`:                        {reason: publicReasonNotARoute + ": the runtime mutation authority invariant"},
+	`internal/services/mutations/runtime/runtime_mutation_route.go "runtime mutation"`: {reason: publicReasonNotARoute + ": the runtime mutation authority invariant"},
+	`internal/app/supervise.go "agent activation"`:                                     {reason: publicReasonNotARoute + ": the agent activation invariant"},
+	`internal/app/supervise_child_unix.go "agent activation"`:                          {reason: publicReasonNotARoute + ": the agent activation invariant"},
+	`internal/app/switch.go "settings discovery"`:                                      {reason: publicReasonNotARoute + ": a settings picker label its caller passes with no operands, so the refusal never prints"},
+	`internal/app/switch.go "settings project"`:                                        {reason: publicReasonNotARoute + ": a settings picker label its caller passes with no operands, so the refusal never prints"},
+	`internal/app/switch.go "switch command"`:                                          {reason: publicReasonNotARoute + ": the switch plan invariant"},
+	`internal/app/tmux.go "config apply route"`:                                        {reason: publicReasonNotARoute + ": the config apply runtime route invariant"},
 }
 
 // publicReasonCreateAgentRoutes are the spellings the Agent create helpers
@@ -726,7 +727,7 @@ func TestPublicRouteReasonsNameCatalogRoutes(t *testing.T) {
 	// public route spellings under this guard at the new ownership boundary.
 	for i := range pkgs {
 		switch pkgs[i].importPath {
-		case flagParseGuardModule + "/internal/services/mutations", flagParseGuardModule + "/internal/services/settings", flagParseGuardModule + "/internal/services/notifications", flagParseGuardModule + "/internal/services/usage":
+		case flagParseGuardModule + "/internal/services/mutations/runtime", flagParseGuardModule + "/internal/services/mutations", flagParseGuardModule + "/internal/services/settings", flagParseGuardModule + "/internal/services/notifications", flagParseGuardModule + "/internal/services/usage":
 			pkgs[i].scan = true
 		}
 	}

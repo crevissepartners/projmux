@@ -301,7 +301,7 @@ func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testin
 		t.Fatalf("last Pane preflight: %v", err)
 	}
 	if len(lastPlan.Targets) != 1 || !lastPlan.Targets[0].EndsWindow || !lastPlan.Targets[0].EndsSession ||
-		lastPlan.endsWindows() != 0 || lastPlan.endsSessions() != 0 {
+		lastPlan.EndsWindows() != 0 || lastPlan.EndsSessions() != 0 {
 		t.Fatalf("last Pane plan = %#v", lastPlan)
 	}
 }
@@ -799,7 +799,7 @@ func TestPaneDeleteStandaloneSocketAuthorizesOnlyRegistryOnlyEvidence(t *testing
 			}
 			second, err := runtime.preflight(context.Background(), registry,
 				exactPanePlanFor(t, registry, test.kind, test.uid))
-			if err != nil || second.signature() != first.signature() {
+			if err != nil || second.Signature() != first.Signature() {
 				t.Fatalf("standalone locked reobservation = %#v, err %v; first %#v", second, err, first)
 			}
 			if len(first.Targets) != 0 || len(first.RegistryOnly) != 1 || first.RegistryOnly[0].Evidence != test.want {
@@ -850,7 +850,7 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generation revalidation: %v", err)
 	}
-	if first.signature() == second.signature() {
+	if first.Signature() == second.Signature() {
 		t.Fatal("activation generation change did not change the signed plan")
 	}
 
@@ -860,7 +860,7 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner revalidation: %v", err)
 	}
-	if first.signature() == third.signature() {
+	if first.Signature() == third.Signature() {
 		t.Fatal("owner change did not change the signed plan")
 	}
 
@@ -953,7 +953,7 @@ func TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resumed Agent locked preflight: %v", err)
 		}
-		if len(current.RegistryOnly) != 0 || current.signature() == approved.signature() {
+		if len(current.RegistryOnly) != 0 || current.Signature() == approved.Signature() {
 			t.Fatalf("resume did not change the signed plan: approved %#v, current %#v", approved, current)
 		}
 		assertNoPaneDeleteTmuxKill(t, runner)

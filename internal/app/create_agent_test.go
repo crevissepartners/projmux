@@ -268,14 +268,14 @@ func bindTestCreateRuntimeRoute(command *createCommand, tmux *fakeTmux, lookupEn
 			return err
 		}
 		resolved = route
-		exact := explicitTmuxRunner{runner: tmux, target: route.target}
+		exact := explicitTmuxRunner{Runner: tmux, Target: route.Target}
 		command.reconciler.mirror = intmetadata.NewMirror(exact)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
-		command.runtime.target = route.target
-		command.runtime.expectedSocketPath = route.expectedSocketPath
-		command.runtime.socketName = route.socketName
-		command.runtime.routeAuthority = route.authority
+		command.runtime.target = route.Target
+		command.runtime.expectedSocketPath = route.ExpectedSocketPath
+		command.runtime.socketName = route.SocketName
+		command.runtime.routeAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
@@ -330,8 +330,8 @@ func TestExactThreeUIDCreateAgentRouteIgnoresUnrelatedAmbientPane(t *testing.T) 
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
 		t.Fatalf("exact three-UID create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
-		t.Fatalf("explicit resource route authority = %#v, want app PID authority without ambient=%s Pane containment", route.authority, ambientPane.id)
+	if route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp || route.Authority.PaneID != "" {
+		t.Fatalf("explicit resource route authority = %#v, want app PID authority without ambient=%s Pane containment", route.Authority, ambientPane.id)
 	}
 	if ambientSession.windows[0].panes[0].id != ambientPane.id || len(ambientSession.windows) != 1 || len(ambientSession.windows[0].panes) != 1 {
 		t.Fatalf("unrelated ambient client changed: before=%s after=%s", ambientBefore, tmux.state())
@@ -364,8 +364,8 @@ func TestExactProjectCreateWindowUsesAppRouteDespiteStaleInheritedPane(t *testin
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" {
 		t.Fatalf("exact Project create-window = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if route.target != (tmuxTransport{Kind: tmuxSocketName, Value: "phase1-custom-app", Source: tmuxSocketNameSource}) || route.expectedSocketPath != tmux.socketPath || route.authority == nil ||
-		route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
+	if route.Target != (tmuxTransport{Kind: tmuxSocketName, Value: "phase1-custom-app", Source: tmuxSocketNameSource}) || route.ExpectedSocketPath != tmux.socketPath || route.Authority == nil ||
+		route.Authority.Class != runtimeMutationRouteApp || route.Authority.PaneID != "" {
 		t.Fatalf("explicit create-window route = %#v, want validated custom app -L without inherited Pane containment", *route)
 	}
 	if len(launcher.plans) != 1 {
@@ -414,7 +414,7 @@ func TestExactProjectCreateWindowIsByteEquivalentAcrossAmbientPanes(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.Flag() + "=" + route.target.Value + "\x00" + string(calls)
+		return stdout + "\x00" + store.snapshot() + "\x00" + route.Target.Flag() + "=" + route.Target.Value + "\x00" + string(calls)
 	}
 
 	current := run(t, false)
@@ -464,7 +464,7 @@ func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainme
 		if err != nil {
 			t.Fatal(err)
 		}
-		return stdout + "\x00" + annotatedSnapshot(store, true) + "\x00" + route.target.Label() + "\x00" + string(calls)
+		return stdout + "\x00" + annotatedSnapshot(store, true) + "\x00" + route.Target.Label() + "\x00" + string(calls)
 	}
 	current := run(t, "current")
 	for _, anchor := range []string{"unrelated", "stale"} {
@@ -509,8 +509,8 @@ func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainme
 		if err != nil || stderr != "" {
 			t.Fatalf("Agent-Pane private anchor (observe=%t): stdout=%q stderr=%q err=%v", observe, stdout, stderr, err)
 		}
-		if route.authority == nil || route.authority.PaneID != "" {
-			t.Fatalf("explicit route authority = %#v, want no ambient Pane containment", route.authority)
+		if route.Authority == nil || route.Authority.PaneID != "" {
+			t.Fatalf("explicit route authority = %#v, want no ambient Pane containment", route.Authority)
 		}
 		recorded := tmux.calls
 		if observe {
@@ -520,7 +520,7 @@ func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainme
 		if err != nil {
 			t.Fatal(err)
 		}
-		return stdout + "\x00" + annotatedSnapshot(store, true) + "\x00" + route.target.Label() + "\x00" + string(calls),
+		return stdout + "\x00" + annotatedSnapshot(store, true) + "\x00" + route.Target.Label() + "\x00" + string(calls),
 			annotatedSnapshot(store, false)
 	}
 	unobserved, unobservedFull := agentAnchor(t, false)
@@ -642,8 +642,8 @@ func TestOutsideTmuxExactThreeUIDCreateAgentUsesOnlyQuietAppRoute(t *testing.T) 
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
 		t.Fatalf("outside exact create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if route.target != (tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}) || route.authority == nil ||
-		route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
+	if route.Target != (tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}) || route.Authority == nil ||
+		route.Authority.Class != runtimeMutationRouteApp || route.Authority.PaneID != "" {
 		t.Fatalf("outside exact app route = %#v", *route)
 	}
 	assertEveryTmuxCallHasExactRoute(t, tmux.calls)

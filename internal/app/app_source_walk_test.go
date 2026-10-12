@@ -85,6 +85,7 @@ var appSourceSweepExceptions = map[string]string{
 	"git_call_lock_guard_test.go:TestProductionGitCallsCannotTakeTheIndexLock":           "repository-wide walk",
 	"lifecycle_teardown_journal_test.go:coreTeardownReasons":                             "reads internal/core/metadata, not internal/app",
 	"resource_reconcile_root_kind_test.go:scanRootSliceTraversals":                       "repository-wide walk",
+	"runtime_mutation_plan_test.go:mutationRuntimeSourceFiles":                           "recursive walk of internal/services/mutations/runtime/** only; app source still uses the shared app walk",
 	"runtime_mutation_plan_test.go:TestPlanOnlyMutationNegativeAuditHasZeroBypass":       "walks internal/app/** and four packages outside it",
 
 	// Sweeps that already walk internal/app/** recursively; their rules are

@@ -79,7 +79,7 @@ func routeSequenceTarget() tmuxTransport {
 func newRouteSequenceMaterializer(runner tmuxCommandRunner, class string) *materializer {
 	target := routeSequenceTarget()
 	return &materializer{
-		runner: explicitTmuxRunner{runner: runner, target: target},
+		runner: explicitTmuxRunner{Runner: runner, Target: target},
 		target: target, expectedSocketPath: routeSequenceSocket, socketName: defaultAppSocket,
 		routeAuthority: &runtimeMutationRouteAuthority{Class: class, ServerPID: "4242"},
 	}
@@ -87,8 +87,8 @@ func newRouteSequenceMaterializer(runner tmuxCommandRunner, class string) *mater
 
 func routeSequenceRoute(class string) runtimeMutationRoute {
 	return runtimeMutationRoute{
-		target: routeSequenceTarget(), expectedSocketPath: routeSequenceSocket, socketName: defaultAppSocket,
-		authority: &runtimeMutationRouteAuthority{Class: class, ServerPID: "4242"},
+		Target: routeSequenceTarget(), ExpectedSocketPath: routeSequenceSocket, SocketName: defaultAppSocket,
+		Authority: &runtimeMutationRouteAuthority{Class: class, ServerPID: "4242"},
 	}
 }
 

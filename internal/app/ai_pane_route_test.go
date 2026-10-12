@@ -206,7 +206,7 @@ func TestSharedPaneRoutingLaunchBeforeFirstMarker(t *testing.T) {
 				}
 				return nil, nil
 			})
-			exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/materialization/socket", Source: tmuxSocketPathSource}}
+			exact := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/materialization/socket", Source: tmuxSocketPathSource}}
 			if err := cmd.BindAgentPaneOnRoute(context.Background(), exact, agentPaneBinding{PaneID: "%7", Provider: provider, ContextDir: "/repo", Title: "topic", ConversationID: "session"}); err != nil {
 				t.Fatal(err)
 			}

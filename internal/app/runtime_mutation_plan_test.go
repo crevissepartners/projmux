@@ -42,7 +42,7 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 	verbs := closedRuntimeMutationVerbs()
 	actions := make([]plannedRuntimeMutation, 0, len(verbs))
 	for i, verb := range verbs {
-		authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+		authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 		target := runtimeMutationTarget{
 			Socket: "-L=phase10-inventory", PhysicalSocket: "/tmp/phase10-inventory",
 			RouteAuthority: authority,
@@ -157,11 +157,11 @@ func TestPlanOnlyMutationInventoryIsClosedAndPrintable(t *testing.T) {
 		t.Fatalf("runtime mutation vocabulary = %v, want closed inventory %v", got, want)
 	}
 	plan := printableRuntimeMutationInventory()
-	first, err := plan.printableBytes()
+	first, err := plan.PrintableBytes()
 	if err != nil {
 		t.Fatalf("print inventory: %v", err)
 	}
-	second, err := newRuntimeMutationPlan(slices.Clone(plan.Actions)...).printableBytes()
+	second, err := newRuntimeMutationPlan(slices.Clone(plan.Actions)...).PrintableBytes()
 	if err != nil {
 		t.Fatalf("repeat print inventory: %v", err)
 	}
@@ -417,6 +417,12 @@ func resolveNativeProjectionString(expr ast.Expr, constants map[string]string) (
 	case *ast.Ident:
 		resolved, ok := constants[value.Name]
 		return resolved, ok
+	case *ast.SelectorExpr:
+		if pkg, ok := value.X.(*ast.Ident); ok {
+			resolved, ok := constants[pkg.Name+"."+value.Sel.Name]
+			return resolved, ok
+		}
+		return "", false
 	case *ast.BinaryExpr:
 		if value.Op != token.ADD {
 			return "", false
@@ -432,7 +438,7 @@ func resolveNativeProjectionString(expr ast.Expr, constants map[string]string) (
 func nativeProjectionStringConstants(t *testing.T) map[string]string {
 	t.Helper()
 	pending := map[string]ast.Expr{}
-	for _, name := range appSourceFiles(t) {
+	for _, name := range append(appSourceFiles(t), mutationRuntimeSourceFiles(t)...) {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse native projection constant source %s: %v", name, err)
@@ -447,6 +453,9 @@ func nativeProjectionStringConstants(t *testing.T) map[string]string {
 				for index, name := range values.Names {
 					if index < len(values.Values) {
 						pending[name.Name] = values.Values[index]
+						if strings.HasPrefix(parsed.Name.Name, "runtime") {
+							pending["mutationruntime."+name.Name] = values.Values[index]
+						}
 					}
 				}
 			}
@@ -1327,7 +1336,7 @@ func TestAIBellIntegrationOwnsRunnerLifecycleTransport(t *testing.T) {
 }
 
 func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	actions := []plannedRuntimeMutation{
 		newRuntimeMutation(3, mutationWriteLayout, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%3", UID: "pan-3"}),
 		newRuntimeMutation(1, mutationWriteLease, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "session", ID: "$1", UID: "prj-1"}),
@@ -1336,11 +1345,11 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 	actions[0].Operands = []string{"-t", "%3", "-x", "40"}
 	actions[1].Operands = []string{"-t", "$1", createOperationEnvironment, "op-property"}
 	actions[2].Operands = []string{"-d", "-t", "%2"}
-	left, err := newRuntimeMutationPlan(actions...).printableBytes()
+	left, err := newRuntimeMutationPlan(actions...).PrintableBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	right, err := newRuntimeMutationPlan(actions[1], actions[2], actions[0]).printableBytes()
+	right, err := newRuntimeMutationPlan(actions[1], actions[2], actions[0]).PrintableBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1429,7 +1438,7 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 	if len(appliedEffects) != beforeRepeat {
 		t.Fatalf("repeat execute performed %d new writes, want zero", len(appliedEffects)-beforeRepeat)
 	}
-	repeat, err := plan.withoutEffects(observed)
+	repeat, err := plan.WithoutEffects(observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1468,7 +1477,7 @@ func TestRuntimeMutationArgvBindsPrintableTargetToExecutableOperand(t *testing.T
 		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: "app:pid=4242/session=/window=/pane=", Kind: "pane", ID: "%1", UID: "pan-1", Parent: "$1/@1",
 	})
 	action.Operands = []string{"-t", "%2"}
-	if _, err := newRuntimeMutationPlan(action).printableBytes(); err == nil || !strings.Contains(err.Error(), "does not match printable target") {
+	if _, err := newRuntimeMutationPlan(action).PrintableBytes(); err == nil || !strings.Contains(err.Error(), "does not match printable target") {
 		t.Fatalf("printable plan accepted mismatched executable target: %v", err)
 	}
 	if _, err := runtimeMutationArgv(action); err == nil || !strings.Contains(err.Error(), "does not match printable target") {
@@ -1529,7 +1538,7 @@ func TestRuntimeMutationArgvRejectsDuplicateTargetRouteAndSeparatorOperands(t *t
 }
 
 func TestRuntimeMutationPlanRejectsMalformedLaterActionBeforeFirstWrite(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	first := newRuntimeMutation(1, mutationKillPane, runtimeMutationTarget{
 		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%7", UID: "pan-7",
 	})
@@ -1557,7 +1566,7 @@ func TestRuntimeMutationPlanRejectsMalformedLaterActionBeforeFirstWrite(t *testi
 }
 
 func TestRuntimeMutationPlanGuardsPrintableRouteBeforeRepeatEmptyObservation(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	action := newRuntimeMutation(1, mutationKillPane, runtimeMutationTarget{
 		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority,
 		Kind: "pane", ID: "%7", UID: "pan-7",
@@ -1582,7 +1591,7 @@ func TestRuntimeMutationPlanGuardsPrintableRouteBeforeRepeatEmptyObservation(t *
 }
 
 func TestQueuedMutationBindsPrintableRouteContainmentAndConditionalCleanup(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	action := newRuntimeMutation(1, mutationQueuePaneKill, runtimeMutationTarget{
 		Socket: "-L=property", PhysicalSocket: "/tmp/property.sock", RouteAuthority: authority, Kind: "pane",
 		ID: "%7", UID: "deleted:pan-7", Parent: "$1/@2/prj-1",
@@ -1642,7 +1651,7 @@ func TestQueuedMutationBindsPrintableRouteContainmentAndConditionalCleanup(t *te
 }
 
 func TestQueuedStandaloneMutationPinsPrintableServerPIDAndBlankRouteClass(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteStandalone, ServerPID: "4242", SessionID: "$1", WindowID: "@2", PaneID: "%8"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteStandalone, ServerPID: "4242", SessionID: "$1", WindowID: "@2", PaneID: "%8"}).Printable()
 	action := newRuntimeMutation(1, mutationQueuePaneKill, runtimeMutationTarget{
 		Socket: "-S=/tmp/standalone.sock", PhysicalSocket: "/tmp/standalone.sock", RouteAuthority: authority,
 		Kind: "pane", ID: "%8", UID: "deleted:pan-8", Parent: "$1/@2/prj-1",
@@ -1670,7 +1679,7 @@ func TestQueuedStandaloneMutationPinsPrintableServerPIDAndBlankRouteClass(t *tes
 		func(candidate *plannedRuntimeMutation) { candidate.Queue.RouteAuthority = "" },
 		func(candidate *plannedRuntimeMutation) { candidate.Target.Socket = "-L=projmux" },
 		func(candidate *plannedRuntimeMutation) {
-			candidate.Queue.RouteAuthority = (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteStandalone, ServerPID: "9999", SessionID: "$1", WindowID: "@2", PaneID: "%8"}).printable()
+			candidate.Queue.RouteAuthority = (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteStandalone, ServerPID: "9999", SessionID: "$1", WindowID: "@2", PaneID: "%8"}).Printable()
 		},
 	} {
 		candidate := action
@@ -1773,7 +1782,7 @@ func TestRuntimeMutationArgvBindsBootstrapAndRouteMarkerToPrintableRoute(t *test
 // a name spelled like a tmux flag reaches argv unchanged and the -t/-s/-f
 // declarations still bind to the real operands.
 func TestRuntimeMutationArgvAcceptsFlagShapedNamesInTmuxValueSlots(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	const configPath, cwd = "/tmp/property/tmux.conf", "/work/project"
 	windowRow := tmuxRowFormat("#{window_id}", "#{pane_id}")
 	sessionRow := tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}")
@@ -1874,7 +1883,7 @@ func TestRuntimeMutationArgvAcceptsFlagShapedNamesInTmuxValueSlots(t *testing.T)
 // the refusals the value-slot classification must not weaken, with their exact
 // existing messages.
 func TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	const configPath = "/tmp/property/tmux.conf"
 	windowParent := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window-parent", ID: "$1"}
 	existingSession := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "project-declaration", ID: "project-a", UID: "prj-a"}
@@ -1941,7 +1950,7 @@ func TestRuntimeMutationArgvKeepsRefusingFlagSlotRouteAndAttachedOperands(t *tes
 // tmux ends options at "--", so a Registry Window name spelled like a tmux flag,
 // or "--" itself, is the new-name value and reaches argv unchanged.
 func TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOptions(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
 	for _, name := range []string{"-L", "-S", "-s", "-t", "-f", "-n", "-Lx", "-Sx", "-sfoo", "-tfoo", "ok-name", "--"} {
 		t.Run(name, func(t *testing.T) {
@@ -1953,7 +1962,7 @@ func TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOp
 			if want := []string{"rename-window", "-t", "@2", "--", name}; !reflect.DeepEqual(argv, want) {
 				t.Fatalf("argv = %q, want %q", argv, want)
 			}
-			if _, err := newRuntimeMutationPlan(action).printableBytes(); err != nil {
+			if _, err := newRuntimeMutationPlan(action).PrintableBytes(); err != nil {
 				t.Fatalf("canonical rename %q is unprintable: %v", name, err)
 			}
 			drifted := action
@@ -1972,7 +1981,7 @@ func TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOp
 // flag-slot "--" followed by exactly one Window name gets the one new message,
 // and "--" stays a flag slot for every other verb.
 func TestRuntimeMutationArgvRefusesRenameWindowWithoutSingleEndOfOptionsName(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	windowParent := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window-parent", ID: "$1"}
 	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
 	const endOfOptions = `runtime mutation plan: action "rename-window" must end options with -- before exactly one Window name`
@@ -2025,7 +2034,7 @@ func TestPrintedPhysicalSocketIsExecutionAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runRuntimeMutationCommand(context.Background(), explicitTmuxRunner{runner: runner, target: logical}, action); err != nil {
+	if _, err := runRuntimeMutationCommand(context.Background(), explicitTmuxRunner{Runner: runner, Target: logical}, action); err != nil {
 		t.Fatal(err)
 	}
 	want := recordedTmuxCall{name: "tmux", args: []string{"-S", "/tmp/printed.sock", "kill-pane", "-t", "%7"}}
@@ -2033,7 +2042,7 @@ func TestPrintedPhysicalSocketIsExecutionAuthority(t *testing.T) {
 		t.Fatalf("execution route = %#v, want printable physical authority %#v", runner.calls, want)
 	}
 
-	route := runtimeMutationRoute{target: logical, expectedSocketPath: "/tmp/bound.sock", socketName: "logical"}
+	route := runtimeMutationRoute{Target: logical, ExpectedSocketPath: "/tmp/bound.sock", SocketName: "logical"}
 	runner.calls = nil
 	if err := guardPrintedRuntimeMutationRoute(context.Background(), runner, route, action); err == nil || !strings.Contains(err.Error(), "disagrees") {
 		t.Fatalf("print/execution mismatch guard = %v", err)
@@ -2051,23 +2060,23 @@ func TestPreMarkerRouteGuardAllowsOnlyTheMissingLogicalEffect(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := runtimeMutationRoute{
-		target:             logical,
-		expectedSocketPath: "/tmp/tmux-1000/app",
-		socketName:         "app",
-		authority: &runtimeMutationRouteAuthority{
+		Target:             logical,
+		ExpectedSocketPath: "/tmp/tmux-1000/app",
+		SocketName:         "app",
+		Authority: &runtimeMutationRouteAuthority{
 			Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$1", WindowID: "@1", PaneID: "%1",
 		},
 	}
 	action := newRuntimeMutation(1, mutationWriteRouteMarker, runtimeMutationTarget{
-		Socket: "-S=/tmp/tmux-1000/app", PhysicalSocket: "/tmp/tmux-1000/app", RouteAuthority: route.authority.printable(),
+		Socket: "-S=/tmp/tmux-1000/app", PhysicalSocket: "/tmp/tmux-1000/app", RouteAuthority: route.Authority.Printable(),
 		Kind: "session", ID: "$1", UID: "logical:app", Parent: "@1/%1",
 	})
 	action.Operands = []string{"-S", "/tmp/tmux-1000/app", "-gq", runtimeMutationSocketNameOption, "app"}
 
 	baseOutputs := map[string]string{
-		recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-F", "#{socket_path}"): route.expectedSocketPath + "\n",
-		recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-F", "#{pid}"):         "4242\n",
-		recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", tmuxopts.AppGlobal):      "1\n",
+		recordedTmuxCallKey("tmux", "-S", route.ExpectedSocketPath, "display-message", "-p", "-F", "#{socket_path}"): route.ExpectedSocketPath + "\n",
+		recordedTmuxCallKey("tmux", "-S", route.ExpectedSocketPath, "display-message", "-p", "-F", "#{pid}"):         "4242\n",
+		recordedTmuxCallKey("tmux", "-S", route.ExpectedSocketPath, "show-options", "-gqv", tmuxopts.AppGlobal):      "1\n",
 	}
 	for _, tc := range []struct {
 		name, marker, wantErr string
@@ -2078,7 +2087,7 @@ func TestPreMarkerRouteGuardAllowsOnlyTheMissingLogicalEffect(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			outputs := maps.Clone(baseOutputs)
-			outputs[recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", runtimeMutationSocketNameOption)] = tc.marker
+			outputs[recordedTmuxCallKey("tmux", "-S", route.ExpectedSocketPath, "show-options", "-gqv", runtimeMutationSocketNameOption)] = tc.marker
 			runner := &recordingTmuxRunner{outputs: outputs}
 			err := guardPrintedRuntimeMutationRouteBeforeMarkerWrite(context.Background(), runner, route, action)
 			if tc.wantErr == "" && err != nil {
@@ -2091,7 +2100,7 @@ func TestPreMarkerRouteGuardAllowsOnlyTheMissingLogicalEffect(t *testing.T) {
 	}
 
 	outputs := maps.Clone(baseOutputs)
-	outputs[recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", runtimeMutationSocketNameOption)] = ""
+	outputs[recordedTmuxCallKey("tmux", "-S", route.ExpectedSocketPath, "show-options", "-gqv", runtimeMutationSocketNameOption)] = ""
 	if err := guardPrintedRuntimeMutationRoute(context.Background(), &recordingTmuxRunner{outputs: outputs}, route, action); err == nil || !strings.Contains(err.Error(), "logical route marker drifted") {
 		t.Fatalf("normal route guard accepted missing post-write marker: %v", err)
 	}
@@ -2189,7 +2198,7 @@ func TestMaterializerUnsetIdentityRequiresReadableOwnedTargetBeforeReplan(t *tes
 		pane.opts[tmuxopts.PaneUID] = ownerUID
 		target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
 		return &materializer{
-			runner: explicitTmuxRunner{runner: server, target: target},
+			runner: explicitTmuxRunner{Runner: server, Target: target},
 			target: target, expectedSocketPath: server.socketPath,
 			socketName:     defaultAppSocket,
 			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
@@ -2244,7 +2253,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 		target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
 		sessions := &fakeSessionMaterializer{tmux: server}
 		return &materializer{
-			runner: explicitTmuxRunner{runner: server, target: target}, sessions: sessions,
+			runner: explicitTmuxRunner{Runner: server, Target: target}, sessions: sessions,
 			target: target, expectedSocketPath: server.socketPath,
 			socketName:     defaultAppSocket,
 			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
@@ -2323,7 +2332,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testing.T) {
 	server := newFakeTmux()
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
-	routed := explicitTmuxRunner{runner: server, target: target}
+	routed := explicitTmuxRunner{Runner: server, Target: target}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	runtime := &materializer{
 		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: sessions, target: target,
@@ -2369,7 +2378,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		server.appMarker = appMarker
 		server.socketName = logicalMarker
 		target := tmuxTransport{Kind: tmuxSocketName, Value: "phase10-fresh", Source: tmuxSocketNameSource}
-		routed := explicitTmuxRunner{runner: server, target: target}
+		routed := explicitTmuxRunner{Runner: server, Target: target}
 		runtime := &materializer{
 			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
 			target: target, configPath: configPath,
@@ -2646,7 +2655,7 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			server := newFakeTmux()
 			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
-			routed := explicitTmuxRunner{runner: server, target: target}
+			routed := explicitTmuxRunner{Runner: server, Target: target}
 			runtime := &materializer{
 				runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server}, target: target,
 			}
@@ -2679,7 +2688,7 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 		server.appMarker = "1"
 		server.socketName = ""
 		target := tmuxTransport{Kind: tmuxSocketName, Value: "first-window-fresh", Source: tmuxSocketNameSource}
-		routed := explicitTmuxRunner{runner: server, target: target}
+		routed := explicitTmuxRunner{Runner: server, Target: target}
 		runtime := &materializer{
 			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
 			target: target, configPath: configPath,
@@ -2695,7 +2704,7 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 		if declared.Target.PhysicalSocket != runtimeMutationSocketAbsentBeforeCreate {
 			t.Fatalf("fresh declaration physical socket = %q, want absent-before-create", declared.Target.PhysicalSocket)
 		}
-		if err := newRuntimeMutationPlan(declared).validate(); err != nil {
+		if err := newRuntimeMutationPlan(declared).Validate(); err != nil {
 			t.Fatalf("fresh create-session plan with -n rejected: %v", err)
 		}
 		assembled, err := runtimeMutationArgv(declared)
@@ -2728,7 +2737,7 @@ func TestMaterializerDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.
 	}}
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	runtime := &materializer{
-		runner: explicitTmuxRunner{runner: base, target: target}, target: target, expectedSocketPath: path,
+		runner: explicitTmuxRunner{Runner: base, Target: target}, target: target, expectedSocketPath: path,
 	}
 	err := runtime.markCreateOperation(context.Background(), "$1", newRuntimeLedger("op-forged-default"))
 	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
@@ -2766,8 +2775,8 @@ func TestInvocationRoutePreservesNonDefaultLogicalSocketWithoutBasenameInference
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.target.Flag() != "-L" || route.target.Value != name || route.expectedSocketPath != path || route.socketName != name ||
-		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "123" || route.authority.PaneID != "%8" {
+	if route.Target.Flag() != "-L" || route.Target.Value != name || route.ExpectedSocketPath != path || route.SocketName != name ||
+		route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp || route.Authority.ServerPID != "123" || route.Authority.PaneID != "%8" {
 		t.Fatalf("resolved route = %#v, want logical -L %s over exact path %s", route, name, path)
 	}
 	if filepath.Base(path) == name {
@@ -2796,19 +2805,19 @@ func TestStandaloneInheritedRouteMaterializesWithPrintablePIDAndPaneAuthority(t 
 	if err != nil {
 		t.Fatalf("resolve inherited standalone route: %v", err)
 	}
-	if route.target.Flag() != "-S" || route.target.Value != server.socketPath || route.expectedSocketPath != server.socketPath ||
-		route.socketName != defaultAppSocket || route.authority == nil {
+	if route.Target.Flag() != "-S" || route.Target.Value != server.socketPath || route.ExpectedSocketPath != server.socketPath ||
+		route.SocketName != defaultAppSocket || route.Authority == nil {
 		t.Fatalf("standalone route = %#v", route)
 	}
 	wantAuthority := "standalone:pid=" + server.serverPID + "/session=" + driver.id + "/window=" + driverWindow.id + "/pane=" + driverPane.id
-	if route.authority.printable() != wantAuthority {
-		t.Fatalf("standalone printable authority = %q, want %q", route.authority.printable(), wantAuthority)
+	if route.Authority.Printable() != wantAuthority {
+		t.Fatalf("standalone printable authority = %q, want %q", route.Authority.Printable(), wantAuthority)
 	}
 
-	routed := explicitTmuxRunner{runner: server, target: route.target}
+	routed := explicitTmuxRunner{Runner: server, Target: route.Target}
 	runtime := &materializer{
 		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
-		target: route.target, expectedSocketPath: route.expectedSocketPath, routeAuthority: route.authority,
+		target: route.Target, expectedSocketPath: route.ExpectedSocketPath, routeAuthority: route.Authority,
 	}
 	project := coremetadata.Project{
 		Metadata: coremetadata.ObjectMeta{UID: "prj-standalone", Name: "standalone"},
@@ -2857,10 +2866,10 @@ func TestStandaloneProducerAnchorSuppliesExactInvocationAuthorityWithoutInherite
 	if err != nil {
 		t.Fatalf("resolve producer-anchored standalone route: %v", err)
 	}
-	if route.authority == nil || route.authority.Class != runtimeMutationRouteStandalone ||
-		route.authority.PaneID != pane.id || route.authority.WindowID != driver.windows[0].id ||
-		route.authority.SessionID != driver.id {
-		t.Fatalf("producer-anchored authority = %#v", route.authority)
+	if route.Authority == nil || route.Authority.Class != runtimeMutationRouteStandalone ||
+		route.Authority.PaneID != pane.id || route.Authority.WindowID != driver.windows[0].id ||
+		route.Authority.SessionID != driver.id {
+		t.Fatalf("producer-anchored authority = %#v", route.Authority)
 	}
 
 	if _, err := resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), server, lookup, "%999"); err == nil {
@@ -2885,11 +2894,11 @@ func TestNativePrivateActivationAnchorSuppliesExactAppAuthorityWithoutInheritedP
 	if err != nil {
 		t.Fatalf("resolve private-anchored app route: %v", err)
 	}
-	if route.target != (tmuxTransport{Kind: tmuxSocketName, Value: server.socketName, Source: tmuxSocketNameSource}) ||
-		route.expectedSocketPath != server.socketPath || route.authority == nil ||
-		route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != server.serverPID ||
-		route.authority.SessionID != driver.id || route.authority.WindowID != driver.windows[0].id ||
-		route.authority.PaneID != pane.id {
+	if route.Target != (tmuxTransport{Kind: tmuxSocketName, Value: server.socketName, Source: tmuxSocketNameSource}) ||
+		route.ExpectedSocketPath != server.socketPath || route.Authority == nil ||
+		route.Authority.Class != runtimeMutationRouteApp || route.Authority.ServerPID != server.serverPID ||
+		route.Authority.SessionID != driver.id || route.Authority.WindowID != driver.windows[0].id ||
+		route.Authority.PaneID != pane.id {
 		t.Fatalf("private-anchored app authority = %#v", route)
 	}
 	for _, call := range server.calls {
@@ -3069,8 +3078,8 @@ func TestDefaultInvocationAliasRecoversCanonicalAppRouteBidirectionally(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.target.Flag() != "-L" || route.target.Value != name || route.socketName != name || route.expectedSocketPath != path ||
-		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" || route.authority.PaneID != "" {
+	if route.Target.Flag() != "-L" || route.Target.Value != name || route.SocketName != name || route.ExpectedSocketPath != path ||
+		route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp || route.Authority.ServerPID != "4242" || route.Authority.PaneID != "" {
 		t.Fatalf("canonical alias route = %#v", route)
 	}
 }
@@ -3115,8 +3124,8 @@ func TestDetachedExplicitAnchorBindsExactAppRouteWithoutAmbientEnvironment(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" ||
-		route.authority.SessionID != "$1" || route.authority.WindowID != "@2" || route.authority.PaneID != pane {
+	if route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp || route.Authority.ServerPID != "4242" ||
+		route.Authority.SessionID != "$1" || route.Authority.WindowID != "@2" || route.Authority.PaneID != pane {
 		t.Fatalf("detached explicit route = %#v", route)
 	}
 }
@@ -3255,7 +3264,7 @@ func TestOutsideTmuxAppRouteSuppressesOnlyTypedNoServerProbe(t *testing.T) {
 			}}
 			route, err := resolveInvocationRuntimeMutationRoute(context.Background(), runner, func(string) string { return "" })
 			if test.wantOK {
-				if err != nil || route.target != (tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}) || route.authority != nil {
+				if err != nil || route.Target != (tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}) || route.Authority != nil {
 					t.Fatalf("typed no-server route = %#v err=%v", route, err)
 				}
 			} else {
@@ -3323,7 +3332,7 @@ func (e *planPropertyError) Error() string { return e.text }
 
 func TestObservationFailureNeverPlansRegistryDeletion(t *testing.T) {
 	plan := printableRuntimeMutationInventory()
-	repeat, err := plan.withoutEffects(nil)
+	repeat, err := plan.WithoutEffects(nil)
 	if err == nil || !strings.Contains(err.Error(), "observation is unknown") {
 		t.Fatalf("unknown observation = %#v, %v", repeat, err)
 	}
@@ -3402,7 +3411,8 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 	excludedFiles := map[string]string{
 		"create_agent.go": "Phase 2 native create owner", "agent_resume.go": "Phase 2 native resume owner",
 		"supervise_launch.go": "Phase 2 native launch owner", "runtime_mutation_plan.go": "the typed executor itself",
-		"runtime_mutation_surface.go": "the closed inventory declaration",
+		"runtime_mutation_surface.go":                            "the closed inventory declaration",
+		"../services/mutations/runtime/runtime_mutation_plan.go": "the relocated typed executor itself",
 	}
 	var files []string
 	for _, scanRoot := range []string{root, filepath.Join(root, "..", "core", "controller"), filepath.Join(root, "..", "integrations", "mux"), filepath.Join(root, "..", "integrations", "metadata"), filepath.Join(root, "..", "integrations", "tmux"), filepath.Join(root, "..", "services", "mutations")} {
@@ -3440,113 +3450,113 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"SetOption": true, "SetHook": true,
 	}
 	requiredPlanSites := map[string]bool{
-		"materialize.go:finalizeSessionStartup":                            true,
-		"materialize.go:rollback":                                          true,
-		"materialize.go:ensureSessionLaunching":                            true,
-		"materialize.go:writeCreatedProjectRouteMarker":                    true,
-		"materialize.go:recoverCreatedProjectByLease":                      true,
-		"materialize.go:claimRuntimeUID":                                   true,
-		"materialize.go:mirrorWindow":                                      true,
-		"materialize.go:mirrorPane":                                        true,
-		"materialize.go:recordErrorCreatedSession":                         true,
-		"materialize.go:markCreateOperation":                               true,
-		"materialize.go:clearCreateOperations":                             true,
-		"materialize.go:newWindow":                                         true,
-		"materialize.go:splitPane":                                         true,
-		"materialize.go:equalizeSplitLayout":                               true,
-		"delete_pane_runtime.go:killAll":                                   true,
-		"delete_pane_runtime.go:tombstoneSelfKill":                         true,
-		"delete_pane_runtime.go:restoreSelfKill":                           true,
-		"delete_pane_runtime.go:queueSelfKill":                             true,
-		"delete_window_runtime.go:killAll":                                 true,
-		"delete_window_runtime.go:queueSelfKill":                           true,
-		"runtime_stop.go:executeManagedRuntimeStop":                        true,
-		"shell.go:provisionAppSession":                                     true,
-		"shell.go:prepareControlSession":                                   true,
-		"shell.go:rollbackControlBootstrap":                                true,
-		"create_intent.go:renameWindowFromIntent":                          true,
-		"rename.go:renameService":                                          true,
-		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":            true,
-		"tmux.go:writeRuntimeMutationRouteMarker":                          true,
-		"control_session.go:executeControlSessionIdentityPlan":             true,
-		"runtime_metadata_mirror.go:MirrorWindow":                          true,
-		"runtime_metadata_mirror.go:MirrorPane":                            true,
-		"runtime_metadata_mirror.go:MirrorProject":                         true,
-		"controller_runtime_mutation.go:executeControllerRuntimeMutations": true,
-		"resource_controller.go:converge":                                  true,
-		"controller_trigger.go:runAutomaticMirrorRecovery":                 true,
-		"registry_topology_materialize.go:execute":                         true,
+		"materialize.go:finalizeSessionStartup":                                true,
+		"materialize.go:rollback":                                              true,
+		"materialize.go:ensureSessionLaunching":                                true,
+		"materialize.go:writeCreatedProjectRouteMarker":                        true,
+		"materialize.go:recoverCreatedProjectByLease":                          true,
+		"materialize.go:claimRuntimeUID":                                       true,
+		"materialize.go:mirrorWindow":                                          true,
+		"materialize.go:mirrorPane":                                            true,
+		"materialize.go:recordErrorCreatedSession":                             true,
+		"materialize.go:markCreateOperation":                                   true,
+		"materialize.go:clearCreateOperations":                                 true,
+		"materialize.go:newWindow":                                             true,
+		"materialize.go:splitPane":                                             true,
+		"materialize.go:equalizeSplitLayout":                                   true,
+		"delete_pane_runtime.go:killAll":                                       true,
+		"delete_pane_runtime.go:tombstoneSelfKill":                             true,
+		"delete_pane_runtime.go:restoreSelfKill":                               true,
+		"delete_pane_runtime.go:queueSelfKill":                                 true,
+		"../services/mutations/runtime/delete_window_runtime.go:KillAll":       true,
+		"../services/mutations/runtime/delete_window_runtime.go:QueueSelfKill": true,
+		"runtime_stop.go:executeManagedRuntimeStop":                            true,
+		"shell.go:provisionAppSession":                                         true,
+		"shell.go:prepareControlSession":                                       true,
+		"shell.go:rollbackControlBootstrap":                                    true,
+		"create_intent.go:renameWindowFromIntent":                              true,
+		"rename.go:renameService":                                              true,
+		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":                true,
+		"tmux.go:writeRuntimeMutationRouteMarker":                              true,
+		"control_session.go:executeControlSessionIdentityPlan":                 true,
+		"runtime_metadata_mirror.go:MirrorWindow":                              true,
+		"runtime_metadata_mirror.go:MirrorPane":                                true,
+		"runtime_metadata_mirror.go:MirrorProject":                             true,
+		"controller_runtime_mutation.go:executeControllerRuntimeMutations":     true,
+		"resource_controller.go:converge":                                      true,
+		"controller_trigger.go:runAutomaticMirrorRecovery":                     true,
+		"registry_topology_materialize.go:execute":                             true,
 	}
 	// These are semantic exemptions, keyed to one exact source function and
 	// verb. They are intentionally not a broad verb allowlist.
 	exemptRawSites := map[string]string{
-		"../integrations/tmux/client.go:CreateEphemeralSession:set-option":                "attach.ephemeral-create",
-		"../integrations/tmux/client.go:applyProjectSessionEnv:set-environment":           "attach.ephemeral-create",
-		"../integrations/tmux/client.go:setProjectPathAnchor:set-option":                  "attach.ephemeral-create",
-		"../integrations/tmux/client.go:markStartupPane:set-option":                       "startup.presentation",
-		"../integrations/tmux/client.go:KillSession:kill-session":                         "attach.ephemeral-prune",
-		"tmux.go:runRebalancePanes:select-layout":                                         "pane.rebalance",
-		"tmux.go:runRenamePane:set-option":                                                "internal.rename-pane-label",
-		"../integrations/tmux/client.go:createDetachedSession:helper:NewEphemeralSession": "attach.ephemeral-create",
-		"attach.go:executeAutoAttachPlan:helper:KillSession":                              "attach.ephemeral-prune",
-		"prune.go:runEphemeral:helper:KillSession":                                        "standalone.prune",
-		"materialize.go:read:variable-argv":                                               "runtime.observation",
-		"runtime_mutation_route.go:readTmuxSequence:variable-argv":                        "runtime.observation",
-		"tmux.go:managedIngestMigrationAIForRoute:variable-argv":                          "config.migration",
-		"tmux.go:runApply:source-file":                                                    "config.apply-source",
-		"tmux.go:retireGeneratedKeySequenceState:variable-argv":                           "key-sequence.retirement",
-		"tmux.go:restoreSidebarOriginSession:variable-argv":                               "sidebar.origin-restore",
-		"ai.go:readMux:variable-argv":                                                     "runtime.observation",
-		"ai.go:readTrimmed:variable-argv":                                                 "runtime.observation",
-		"../integrations/mux/lifecycle.go:Runner.SetHook:variable-argv":                   "ai.integrate-tmux-bell",
-		"../integrations/mux/lifecycle.go:Runner.SetOption:variable-argv":                 "ai.integrate-tmux-bell",
-		"../integrations/mux/lifecycle.go:Runner.NewEphemeralSession:variable-argv":       "attach.ephemeral-create",
-		"../integrations/tmux/client.go:OpenSession:variable-argv":                        "sidebar.origin-restore",
-		"../integrations/tmux/client.go:OpenSessionTarget:variable-argv":                  "sidebar.origin-restore",
-		"../integrations/tmux/client.go:DisplayPopupWithOptions:variable-argv":            "popup.display",
-		"../integrations/metadata/inventory.go:Run:variable-argv":                         "runtime.observation",
-		"../integrations/mux/interactive.go:DisplayPopup:variable-argv":                   "popup.display",
-		"../integrations/mux/interactive.go:ClosePopup:variable-argv":                     "popup.display",
-		"../integrations/mux/interactive.go:SwitchClient:variable-argv":                   "sidebar.origin-restore",
-		"../integrations/mux/interactive.go:SelectPane:variable-argv":                     "sidebar.origin-restore",
-		"../integrations/mux/interactive.go:SelectWindow:variable-argv":                   "sidebar.origin-restore",
-		"../integrations/mux/runner.go:SetPaneOption:variable-argv":                       "agent.presentation",
-		"../integrations/mux/runner.go:UnsetPaneOption:variable-argv":                     "agent.presentation",
-		"../integrations/mux/runner.go:Read:variable-argv":                                "runtime.observation",
-		"agent_interaction.go:WriteTopic:set-option":                                      "agent.presentation",
-		"agent_interaction.go:WriteInteraction:set-option":                                "agent.presentation",
-		"ai_ingest_codex.go:applyCodexHookSemanticDelivery:variable-argv":                 "agent.presentation",
-		"ai_ingest_codex_native.go:Apply:variable-argv":                                   "agent.presentation",
-		"ai_ingest_codex_native.go:ApplyProgress:variable-argv":                           "agent.presentation",
-		"ai_ingest_codex_native.go:SetAuthority:variable-argv":                            "codex.native-lifecycle-authority",
-		"ai_ingest_codex_native.go:recordAINotification:set-option":                       "agent.presentation",
-		"attention.go:run:variable-argv":                                                  "agent.presentation",
-		"binding_convergence.go:Run:variable-argv":                                        "binding.convergence",
-		"create_reentrancy.go:deferBindingConvergence:set-environment":                    "create.reentrancy",
-		"focus.go:listTargets:variable-argv":                                              "runtime.observation",
-		"focus.go:translatePaneIDToTarget:variable-argv":                                  "runtime.observation",
-		"focus.go:listSessionInventory:variable-argv":                                     "runtime.observation",
-		"focus.go:listClients:variable-argv":                                              "runtime.observation",
-		"hook_trust_popup.go:runTmuxHookTrustPopup:variable-argv":                         "popup.display",
-		"claude_question_popup.go:Open:variable-argv":                                     "popup.display",
-		"notify.go:focusNotification:variable-argv":                                       "notification.focus",
-		"runtime_diagnostics.go:socketPath:variable-argv":                                 "runtime.observation",
-		"status.go:readTrimmed:variable-argv":                                             "runtime.observation",
-		"status.go:Run:variable-argv":                                                     "runtime.observation",
-		"statusbar.go:handlePopupToggleWithClient:variable-argv":                          "popup.display",
-		"statusbar.go:handleNotify:variable-argv":                                         "notification.focus",
-		"statusbar.go:runTmuxNoFallback:variable-argv":                                    "runtime.observation",
-		"welcome_command.go:runPopup:variable-argv":                                       "popup.display",
-		"quit.go:shutdownAppRuntime:kill-server":                                          "app.quit",
-		"ai_integrate.go:runTmuxBellCommand:helper:SetOption":                             "ai.integrate-tmux-bell",
-		"ai_integrate.go:runTmuxBellCommand:helper:SetHook":                               "ai.integrate-tmux-bell",
-		"ai_integrate.go:runTmuxBellCommand:variable-argv":                                "ai.integrate-tmux-bell",
-		"notification.go:ensureWSLLegacyAppIDCleaned:set-option":                          "notification.wsl-legacy-cleanup-marker",
-		"settings_keybindings.go:regenerateAndReloadTmuxConfig:source-file":               "settings.generated-config-reload",
-		"settings_keybindings.go:retireCurrentTmuxKeySequenceState:variable-argv":         "settings.key-sequence-retirement",
-		"settings_notifications.go:setDesktopNotifyMode:set-option":                       "settings.desktop-notify-option",
-		"settings_appearance.go:setStatusbarDecoration:set-option":                        "settings.statusbar-decoration-option",
-		"settings_appearance.go:setAIBadgeStyle:set-option":                               "settings.ai-badge-option",
+		"../integrations/tmux/client.go:CreateEphemeralSession:set-option":                       "attach.ephemeral-create",
+		"../integrations/tmux/client.go:applyProjectSessionEnv:set-environment":                  "attach.ephemeral-create",
+		"../integrations/tmux/client.go:setProjectPathAnchor:set-option":                         "attach.ephemeral-create",
+		"../integrations/tmux/client.go:markStartupPane:set-option":                              "startup.presentation",
+		"../integrations/tmux/client.go:KillSession:kill-session":                                "attach.ephemeral-prune",
+		"tmux.go:runRebalancePanes:select-layout":                                                "pane.rebalance",
+		"tmux.go:runRenamePane:set-option":                                                       "internal.rename-pane-label",
+		"../integrations/tmux/client.go:createDetachedSession:helper:NewEphemeralSession":        "attach.ephemeral-create",
+		"attach.go:executeAutoAttachPlan:helper:KillSession":                                     "attach.ephemeral-prune",
+		"prune.go:runEphemeral:helper:KillSession":                                               "standalone.prune",
+		"materialize.go:read:variable-argv":                                                      "runtime.observation",
+		"../services/mutations/runtime/runtime_mutation_route.go:ReadTmuxSequence:variable-argv": "runtime.observation",
+		"tmux.go:managedIngestMigrationAIForRoute:variable-argv":                                 "config.migration",
+		"tmux.go:runApply:source-file":                                                           "config.apply-source",
+		"tmux.go:retireGeneratedKeySequenceState:variable-argv":                                  "key-sequence.retirement",
+		"tmux.go:restoreSidebarOriginSession:variable-argv":                                      "sidebar.origin-restore",
+		"ai.go:readMux:variable-argv":                                                            "runtime.observation",
+		"ai.go:readTrimmed:variable-argv":                                                        "runtime.observation",
+		"../integrations/mux/lifecycle.go:Runner.SetHook:variable-argv":                          "ai.integrate-tmux-bell",
+		"../integrations/mux/lifecycle.go:Runner.SetOption:variable-argv":                        "ai.integrate-tmux-bell",
+		"../integrations/mux/lifecycle.go:Runner.NewEphemeralSession:variable-argv":              "attach.ephemeral-create",
+		"../integrations/tmux/client.go:OpenSession:variable-argv":                               "sidebar.origin-restore",
+		"../integrations/tmux/client.go:OpenSessionTarget:variable-argv":                         "sidebar.origin-restore",
+		"../integrations/tmux/client.go:DisplayPopupWithOptions:variable-argv":                   "popup.display",
+		"../integrations/metadata/inventory.go:Run:variable-argv":                                "runtime.observation",
+		"../integrations/mux/interactive.go:DisplayPopup:variable-argv":                          "popup.display",
+		"../integrations/mux/interactive.go:ClosePopup:variable-argv":                            "popup.display",
+		"../integrations/mux/interactive.go:SwitchClient:variable-argv":                          "sidebar.origin-restore",
+		"../integrations/mux/interactive.go:SelectPane:variable-argv":                            "sidebar.origin-restore",
+		"../integrations/mux/interactive.go:SelectWindow:variable-argv":                          "sidebar.origin-restore",
+		"../integrations/mux/runner.go:SetPaneOption:variable-argv":                              "agent.presentation",
+		"../integrations/mux/runner.go:UnsetPaneOption:variable-argv":                            "agent.presentation",
+		"../integrations/mux/runner.go:Read:variable-argv":                                       "runtime.observation",
+		"agent_interaction.go:WriteTopic:set-option":                                             "agent.presentation",
+		"agent_interaction.go:WriteInteraction:set-option":                                       "agent.presentation",
+		"ai_ingest_codex.go:applyCodexHookSemanticDelivery:variable-argv":                        "agent.presentation",
+		"ai_ingest_codex_native.go:Apply:variable-argv":                                          "agent.presentation",
+		"ai_ingest_codex_native.go:ApplyProgress:variable-argv":                                  "agent.presentation",
+		"ai_ingest_codex_native.go:SetAuthority:variable-argv":                                   "codex.native-lifecycle-authority",
+		"ai_ingest_codex_native.go:recordAINotification:set-option":                              "agent.presentation",
+		"attention.go:run:variable-argv":                                                         "agent.presentation",
+		"../services/mutations/runtime/binding_convergence.go:Run:variable-argv":                 "binding.convergence",
+		"create_reentrancy.go:deferBindingConvergence:set-environment":                           "create.reentrancy",
+		"focus.go:listTargets:variable-argv":                                                     "runtime.observation",
+		"focus.go:translatePaneIDToTarget:variable-argv":                                         "runtime.observation",
+		"focus.go:listSessionInventory:variable-argv":                                            "runtime.observation",
+		"focus.go:listClients:variable-argv":                                                     "runtime.observation",
+		"hook_trust_popup.go:runTmuxHookTrustPopup:variable-argv":                                "popup.display",
+		"claude_question_popup.go:Open:variable-argv":                                            "popup.display",
+		"notify.go:focusNotification:variable-argv":                                              "notification.focus",
+		"runtime_diagnostics.go:socketPath:variable-argv":                                        "runtime.observation",
+		"status.go:readTrimmed:variable-argv":                                                    "runtime.observation",
+		"status.go:Run:variable-argv":                                                            "runtime.observation",
+		"statusbar.go:handlePopupToggleWithClient:variable-argv":                                 "popup.display",
+		"statusbar.go:handleNotify:variable-argv":                                                "notification.focus",
+		"statusbar.go:runTmuxNoFallback:variable-argv":                                           "runtime.observation",
+		"welcome_command.go:runPopup:variable-argv":                                              "popup.display",
+		"quit.go:shutdownAppRuntime:kill-server":                                                 "app.quit",
+		"ai_integrate.go:runTmuxBellCommand:helper:SetOption":                                    "ai.integrate-tmux-bell",
+		"ai_integrate.go:runTmuxBellCommand:helper:SetHook":                                      "ai.integrate-tmux-bell",
+		"ai_integrate.go:runTmuxBellCommand:variable-argv":                                       "ai.integrate-tmux-bell",
+		"notification.go:ensureWSLLegacyAppIDCleaned:set-option":                                 "notification.wsl-legacy-cleanup-marker",
+		"settings_keybindings.go:regenerateAndReloadTmuxConfig:source-file":                      "settings.generated-config-reload",
+		"settings_keybindings.go:retireCurrentTmuxKeySequenceState:variable-argv":                "settings.key-sequence-retirement",
+		"settings_notifications.go:setDesktopNotifyMode:set-option":                              "settings.desktop-notify-option",
+		"settings_appearance.go:setStatusbarDecoration:set-option":                               "settings.statusbar-decoration-option",
+		"settings_appearance.go:setAIBadgeStyle:set-option":                                      "settings.ai-badge-option",
 		// Every AI reflection write now passes through these two helpers, so
 		// the twelve exempt call sites that used to spell `set-option` inline
 		// collapsed into one chokepoint pair that also classifies the failure.
@@ -3639,7 +3649,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 				}
 				if ident, ok := call.Fun.(*ast.Ident); ok {
 					switch ident.Name {
-					case "executeRuntimeMutationPlan", "runMaterializeMutation", "executeControllerRuntimeMutations":
+					case "executeRuntimeMutationPlan", "ExecuteRuntimeMutationPlan", "runMaterializeMutation", "executeControllerRuntimeMutations":
 						usesPlanSeam = true
 					}
 					if argvCallbacks[ident.Name] {
@@ -3894,7 +3904,7 @@ func TestOwnedKillReobserveArgvMatchesEachTargetKind(t *testing.T) {
 			recorder := &recordingTmuxRunner{outputs: map[string]string{
 				recordedTmuxCallKey("tmux", wantArgv...): row.id + "\n",
 			}}
-			runtime := &materializer{runner: explicitTmuxRunner{runner: recorder, target: target}, target: target}
+			runtime := &materializer{runner: explicitTmuxRunner{Runner: recorder, Target: target}, target: target}
 			action := materializeMutationAction(mutationKillOwned,
 				runtime.boundMutationTarget(row.kind, row.id, "uid-"+row.kind),
 				"same mirrored ownership uid", "owned created "+row.kind+" is absent", "-t", row.id)
@@ -3923,7 +3933,7 @@ func TestOwnedKillReobserveArgvMatchesEachTargetKind(t *testing.T) {
 }
 
 func TestRuntimeMutationPlanDropsGuardConvergedStepWithoutApplyOrUndo(t *testing.T) {
-	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).Printable()
 	actions := []plannedRuntimeMutation{
 		newRuntimeMutation(1, mutationWriteLease, runtimeMutationTarget{Socket: "-L=converged", PhysicalSocket: "/tmp/converged", RouteAuthority: authority, Kind: "session", ID: "$1", UID: "prj-1"}),
 		newRuntimeMutation(2, mutationCreatePane, runtimeMutationTarget{Socket: "-L=converged", PhysicalSocket: "/tmp/converged", RouteAuthority: authority, Kind: "pane", ID: "%2", UID: "pan-2"}),
@@ -4004,4 +4014,33 @@ func TestRuntimeMutationPlanDropsGuardConvergedStepWithoutApplyOrUndo(t *testing
 	if refused.applied != nil || refused.undone != nil {
 		t.Fatalf("refused plan apply/undo = %v/%v, want none", refused.applied, refused.undone)
 	}
+}
+
+// mutationRuntimeSourceFiles keeps source-owner audits closed after extraction.
+func mutationRuntimeSourceFiles(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir("../services/mutations/runtime", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if entry.Name() == "testdata" || strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "_") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), ".go") && !strings.HasSuffix(entry.Name(), "_test.go") {
+			out = append(out, filepath.ToSlash(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out)
+	if len(out) == 0 {
+		t.Fatal("shared runtime source walk found no Go files")
+	}
+	return out
 }

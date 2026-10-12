@@ -305,7 +305,7 @@ func TestVirtualWindowMissingMirrorsDoNotRetireLivingShell(t *testing.T) {
 	project, _ := store.registry.Project("prj-name-handoff")
 	project.Status.Session.SocketPath = server.socket
 	before := store.registry.Clone()
-	runner := explicitTmuxRunner{runner: inttmux.ExecRunner{}, target: tmuxTransport{Kind: tmuxSocketPath, Value: server.socket, Source: tmuxSocketPathSource}}
+	runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: tmuxTransport{Kind: tmuxSocketPath, Value: server.socket, Source: tmuxSocketPathSource}}
 	inventory := intmetadata.Mirror{Runner: runner}
 	if err := returnAbsentProcessWindowProjection(ctx, &store.registry, store.mutator(), inventory, coremetadata.RuntimeObservation{Windows: map[string]bool{}, Panes: map[string]bool{}}, server.socket); err != nil {
 		t.Fatal(err)

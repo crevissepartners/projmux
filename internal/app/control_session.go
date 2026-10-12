@@ -160,7 +160,7 @@ func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context
 	if target.Flag() == "" || strings.TrimSpace(target.Value) == "" || strings.TrimSpace(sessionName) == "" {
 		return controlSessionConvergence{}, errors.New("control session convergence requires an exact tmux target and session declaration")
 	}
-	mirror := intmetadata.NewMirror(explicitTmuxRunner{runner: c.runner, target: target})
+	mirror := intmetadata.NewMirror(explicitTmuxRunner{Runner: c.runner, Target: target})
 
 	markers, err := mirror.ObserveControlSessionMarkers(ctx, sessionName)
 	if err != nil {
@@ -417,38 +417,38 @@ func executeControlSessionIdentityPlan(
 	for {
 		switch explicit := transport.(type) {
 		case explicitTmuxRunner:
-			if explicit.target.Flag() == "-L" && !explicit.target.SameRoute(target) {
+			if explicit.Target.Flag() == "-L" && !explicit.Target.SameRoute(target) {
 				return 0, errors.New("ControlSession identity plan route disagrees with its mirror")
 			}
-			if explicit.target.Flag() == "-S" {
-				boundPaths = append(boundPaths, filepath.Clean(explicit.target.Value))
+			if explicit.Target.Flag() == "-S" {
+				boundPaths = append(boundPaths, filepath.Clean(explicit.Target.Value))
 			}
-			transport = explicit.runner
+			transport = explicit.Runner
 			continue
 		case *explicitTmuxRunner:
-			if explicit.target.Flag() == "-L" && !explicit.target.SameRoute(target) {
+			if explicit.Target.Flag() == "-L" && !explicit.Target.SameRoute(target) {
 				return 0, errors.New("ControlSession identity plan route disagrees with its mirror")
 			}
-			if explicit.target.Flag() == "-S" {
-				boundPaths = append(boundPaths, filepath.Clean(explicit.target.Value))
+			if explicit.Target.Flag() == "-S" {
+				boundPaths = append(boundPaths, filepath.Clean(explicit.Target.Value))
 			}
-			transport = explicit.runner
+			transport = explicit.Runner
 			continue
 		}
 		break
 	}
 	route, err := resolveExistingRuntimeMutationRoute(ctx, transport, target, nil)
-	if err != nil || route.authority == nil || route.authority.Class != runtimeMutationRouteApp {
+	if err != nil || route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp {
 		return 0, fmt.Errorf("ControlSession identity plan: bind exact app route: %w", err)
 	}
-	target = route.target
-	expectedSocket := route.expectedSocketPath
+	target = route.Target
+	expectedSocket := route.ExpectedSocketPath
 	for _, boundPath := range boundPaths {
 		if !filepath.IsAbs(boundPath) || boundPath != expectedSocket {
 			return 0, errors.New("ControlSession identity plan physical route disagrees with its mirror")
 		}
 	}
-	routed := explicitTmuxRunner{runner: transport, target: tmuxTransport{Kind: tmuxSocketPath, Value: expectedSocket, Source: tmuxSocketPathSource}}
+	routed := explicitTmuxRunner{Runner: transport, Target: tmuxTransport{Kind: tmuxSocketPath, Value: expectedSocket, Source: tmuxSocketPathSource}}
 	sessionOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "-F", "#{session_id}")
 	if err != nil || exactTmuxHandle(strings.TrimSpace(string(sessionOut)), "$") == "" {
 		return 0, errors.New("ControlSession identity plan: exact session handle is unavailable")
@@ -508,7 +508,7 @@ func executeControlSessionIdentityPlan(
 		})
 	}
 	if ensureRole {
-		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, RouteAuthority: route.authority.printable(), Kind: "control-session", ID: sessionID, UID: binding.ControlSession.Metadata.UID}
+		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, RouteAuthority: route.Authority.Printable(), Kind: "control-session", ID: sessionID, UID: binding.ControlSession.Metadata.UID}
 		observeStable := func(ctx context.Context) (bool, error) {
 			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", sessionID, "-F",
 				tmuxRowFormat("#{session_id}", "#{"+tmuxopts.SessionRole+"}", "#{"+tmuxopts.ProjectUIDSession+"}"))
@@ -545,7 +545,7 @@ func executeControlSessionIdentityPlan(
 			continue
 		}
 		windowID := targets.Windows[bound.SourceIndex]
-		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, RouteAuthority: route.authority.printable(), Kind: "window", ID: windowID, UID: window.Metadata.UID, Parent: sessionID}
+		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, RouteAuthority: route.Authority.Printable(), Kind: "window", ID: windowID, UID: window.Metadata.UID, Parent: sessionID}
 		initialOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F",
 			tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
 		initialRows := splitTmuxRows(string(initialOut), 3)
@@ -620,7 +620,7 @@ func executeControlSessionIdentityPlan(
 				break
 			}
 		}
-		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, RouteAuthority: route.authority.printable(), Kind: "pane", ID: paneID, UID: pane.Metadata.UID, Parent: sessionID + "/" + windowID}
+		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, RouteAuthority: route.Authority.Printable(), Kind: "pane", ID: paneID, UID: pane.Metadata.UID, Parent: sessionID + "/" + windowID}
 		initialOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
 			tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
 		initialRows := splitTmuxRows(string(initialOut), 4)

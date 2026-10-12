@@ -449,7 +449,7 @@ func TestTopologyRecoveryCanonicalContinueReportsAfterCommit(t *testing.T) {
 					projectTopology: &fakeProjectTopologyMaterializer{},
 					projectSessionPlan: func(ctx context.Context, request projectSessionRequest) error {
 						return materializeProjectSessionCanonical(ctx, canonicalStore, canonicalRunner,
-							runtimeMutationRoute{target: activation.target, socketName: defaultAppSocket}, recorder,
+							runtimeMutationRoute{Target: activation.target, SocketName: defaultAppSocket}, recorder,
 							request.SessionName, request.CWD, request.Opened.project)
 					},
 				}

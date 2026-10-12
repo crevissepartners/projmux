@@ -1,10 +1,9 @@
 package app
 
 import (
-	"errors"
 	"os"
 
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // deleteSocketFlags are the two mutually exclusive exact-target flags every
@@ -29,20 +28,9 @@ func resolveDeleteTarget(spelling string, flags deleteSocketFlags, lookupEnv fun
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
-	target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{
-		SocketName:    flags.socket,
-		SocketPath:    flags.socketPath,
-		InheritedTMUX: lookupEnv("TMUX"),
-	})
+	target, err := mutationruntime.ResolveDeleteTarget(spelling, flags.socket, flags.socketPath, lookupEnv)
 	if err != nil {
-		if errors.Is(err, resourcegraph.ErrTransportConflict) {
-			return tmuxTransport{}, usageError(spelling + " accepts only one of --socket and --socket-path")
-		}
-		return tmuxTransport{}, usageError(spelling + ": --socket-path must be absolute")
-	}
-	if !target.Present() {
-		return tmuxTransport{}, usageError(spelling +
-			" requires --socket <name> or --socket-path <absolute> outside tmux")
+		return target, usageError(err.Error())
 	}
 	return target, nil
 }

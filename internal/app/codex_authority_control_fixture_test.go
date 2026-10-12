@@ -63,7 +63,7 @@ func installedRecoveryControlFixture(t *testing.T) (*agentCommand, *fakeResource
 	command.controlRunner = runner
 	command.controlRoute = func(ctx context.Context) (runtimeMutationRoute, error) {
 		route, err := resolveExactObjectRuntimeMutationRoute(ctx, runner, func(string) string { return "" })
-		if err == nil && (route.target.Flag() != "-L" || route.target.Value != "cp1-control" || route.expectedSocketPath != "/private/tmux/cp1-control" || route.authority == nil || route.authority.ServerPID != "4242") {
+		if err == nil && (route.Target.Flag() != "-L" || route.Target.Value != "cp1-control" || route.ExpectedSocketPath != "/private/tmux/cp1-control" || route.Authority == nil || route.Authority.ServerPID != "4242") {
 			t.Fatal("default alias did not prove the exact canonical route")
 		}
 		return route, err
