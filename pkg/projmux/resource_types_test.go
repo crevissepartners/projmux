@@ -34,6 +34,8 @@ func TestPublicResourceFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
 		{reflect.TypeFor[receipt.OperationReceipt](), reflect.TypeFor[core.OperationReceipt]()},
 		{reflect.TypeFor[mutationruntime.WindowLiveDeleteTarget](), reflect.TypeFor[core.DeleteWindow]()},
+		{reflect.TypeFor[mutationruntime.PaneLiveDeleteTarget](), reflect.TypeFor[core.DeletePane]()},
+		{reflect.TypeFor[mutationruntime.PaneRegistryOnlyDeleteTarget](), reflect.TypeFor[core.DeleteRegistryOnly]()},
 		{reflect.TypeFor[mutations.DeletePreview](), reflect.TypeFor[core.DeletePlan]()},
 
 		{reflect.TypeFor[linkservice.Result](), reflect.TypeFor[core.ProjectLinkRulesResult]()},

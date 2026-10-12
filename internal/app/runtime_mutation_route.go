@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -54,32 +56,7 @@ func defaultRuntimeMutationRoute() runtimeMutationRoute {
 // guardRuntimeMutationServerOwnership proves that an already-running server is
 // the app-owned server declared by the logical route. A matching socket path is
 // not ownership evidence: a foreign server can be cloned onto the same -L name.
-func guardRuntimeMutationServerOwnership(ctx context.Context, routed tmuxCommandRunner, target tmuxTransport) error {
-	// Both markers are read in one tmux invocation through the same runner. A
-	// failed sequence reports the error the first read (the app marker) gives.
-	markers, err := readTmuxSequence(ctx, routed, routeReadAppMarker, routeReadSocketNameMarker)
-	if err != nil {
-		return fmt.Errorf("runtime mutation route: read app ownership marker: %w", err)
-	}
-	if strings.TrimSpace(markers[0]) != "1" {
-		return errors.New("runtime mutation route: exact server is not app-owned")
-	}
-	logicalName := strings.TrimSpace(markers[1])
-	if logicalName == "" {
-		name := ""
-		if target.Flag() == "-L" {
-			name = target.Value
-		}
-		return missingRuntimeMutationMarker(name)
-	}
-	if _, err := tmuxSocketNameTarget(logicalName); err != nil {
-		return errors.New("runtime mutation route: app server logical marker is invalid")
-	}
-	if target.Flag() == "-L" && logicalName != target.Value {
-		return fmt.Errorf("runtime mutation route: logical socket marker is %q, planned %q", logicalName, target.Value)
-	}
-	return nil
-}
+var guardRuntimeMutationServerOwnership = mutationruntime.GuardRuntimeMutationServerOwnership
 
 // resolveInvocationRuntimeMutationRoute converts inherited invocation evidence
 // into an explicit logical route before any mutation. The inherited value is

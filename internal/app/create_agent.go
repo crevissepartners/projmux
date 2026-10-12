@@ -300,7 +300,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			return nativeCreatePreparationRefusal(spelling, err)
 		}
 	}
-	if err := c.transact(diagnostics.CreateKindAgent, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	if err := c.transact(diagnostics.CreateKindAgent, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		nativeSessionHistory = nil
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -548,19 +548,19 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if work.target.virtual {
 				paneID, err = c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.target.windowUID, work.pane, work.activation, workLaunchArgv)
 			} else {
-				paneID, err = c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD, c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
+				paneID, err = c.runtime.SplitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD, c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
 			}
 			if paneID != "" && !work.target.virtual {
 				// The supervised child now runs and will want the Registry lock
 				// this transaction holds; create.outcome measures the rest of the hold.
 				markSupervisedSpawn(ctx)
-				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
+				if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
 				}
 				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
-				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.warn)
+				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.Warn)
 			}
 			if err != nil {
 				return err
@@ -573,7 +573,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
 			if usedNative {
-				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workWorkspace.CWD, workTitle, "", nativeBinding.ThreadID); err != nil {
+				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.Runner, paneID, workWorkspace.CWD, workTitle, "", nativeBinding.ThreadID); err != nil {
 					return fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", spelling, paneID, err)
 				}
 				if nativeLifecycleCapable {
@@ -582,7 +582,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 							AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
 							Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
 						},
-						Route: c.runtime.target, NativeRoute: nativeRoute,
+						Route: c.runtime.Target, NativeRoute: nativeRoute,
 					})
 				}
 			} else if err := c.bindAgentPane(ctx, paneID, provider, workWorkspace.CWD, workTitle,
@@ -677,7 +677,7 @@ func nativeCodexFreshCreateRequired(provider string, flags resourceCreateFlags) 
 func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget) error {
 	var diagnostics []error
 	for _, target := range targets {
-		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.runner, target.paneID,
+		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.Runner, target.paneID,
 			agentActivationStartupDeadline, agentActivationAcknowledgementDeadline)
 		source := string(coremetadata.InteractionSourceProviderHook)
 		state := coremetadata.ActivationAcknowledged
@@ -971,17 +971,17 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, contextDir, title, declared string, flags resourceCreateFlags) error {
 	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
 		if source := strings.TrimSpace(flags.resumeSource); source != "" {
-			return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
+			return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.Runner, agentPaneBinding{
 				PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
 				ConversationID: conversation, ResumeSource: source, CodexNativeDeclared: declared,
 			})
 		}
-		return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
+		return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.Runner, agentPaneBinding{
 			PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
 			ConversationID: conversation, CodexNativeDeclared: declared,
 		})
 	}
-	return c.agents.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
+	return c.agents.BindAgentPaneOnRoute(ctx, c.runtime.Runner, agentPaneBinding{
 		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title, CodexNativeDeclared: declared,
 	})
 }

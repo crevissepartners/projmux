@@ -21,8 +21,8 @@ import (
 func (fx *splitFocusRealTmux) deletePaneRoute() paneMenuDeleteFunc {
 	return func(anchorPaneID string, stdout, stderr io.Writer) error {
 		panes := newTmuxPaneDeleteRuntime()
-		panes.runner = fx.runner
-		panes.getenv = fx.lookupEnv
+		panes.Runner = fx.runner
+		panes.Getenv = fx.lookupEnv
 		command := &deleteCommand{
 			store:          fx.store.store(),
 			confirm:        newConfirmer(),

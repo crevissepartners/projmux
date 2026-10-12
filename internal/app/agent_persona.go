@@ -455,7 +455,7 @@ func (c *agentCommand) observeStoppedAgentPane(spelling string, socket deleteSoc
 // pane` runtime bound to target, read-only.
 func observeManagedPaneLive(target tmuxTransport, paneUID string) (bool, error) {
 	runtime := newTmuxPaneDeleteRuntime()
-	runtime.useExactTarget(target)
+	runtime.UseExactTarget(target)
 	return managedPaneMirrorLive(context.Background(), runtime, paneUID)
 }
 
@@ -464,14 +464,14 @@ func observeManagedPaneLive(target tmuxTransport, paneUID string) (bool, error) 
 // kills from. An empty inventory proves nothing about one Pane, the same way
 // it authorizes nothing in `delete pane`, so it is an error.
 func managedPaneMirrorLive(ctx context.Context, runtime *tmuxPaneDeleteRuntime, paneUID string) (bool, error) {
-	rows, err := runtime.inventory(ctx)
+	rows, err := runtime.Inventory(ctx)
 	if err != nil {
 		return false, err
 	}
 	if len(rows) == 0 {
-		return false, fmt.Errorf("exact tmux inventory on %s was empty", runtime.target.Label())
+		return false, fmt.Errorf("exact tmux inventory on %s was empty", runtime.Target.Label())
 	}
-	return slices.ContainsFunc(rows, func(row livePaneDeleteRow) bool { return row.paneUID == paneUID }), nil
+	return slices.ContainsFunc(rows, func(row LivePaneDeleteRow) bool { return row.PaneUID == paneUID }), nil
 }
 
 // resumeStoppedAgent brings the stopped Agent back through the `agent resume`

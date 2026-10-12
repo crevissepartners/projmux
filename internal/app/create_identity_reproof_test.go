@@ -93,10 +93,10 @@ func typedMirrorCases() []typedMirrorCase {
 // mirror is exactly the pre-scope writer.
 func newScopedTypedMirror(runtime *materializer, runner tmuxCommandRunner, scoped bool) runtimeMutationMetadataMirror {
 	mirror := runtimeMutationMetadataMirror{
-		runner: explicitTmuxRunner{Runner: runner, Target: runtime.target},
+		runner: explicitTmuxRunner{Runner: runner, Target: runtime.Target},
 		route: runtimeMutationRoute{
-			Target: runtime.target, ExpectedSocketPath: runtime.expectedSocketPath,
-			SocketName: runtime.socketName, Authority: runtime.routeAuthority,
+			Target: runtime.Target, ExpectedSocketPath: runtime.ExpectedSocketPath,
+			SocketName: runtime.SocketName, Authority: runtime.RouteAuthority,
 		},
 	}
 	if scoped {
@@ -115,7 +115,7 @@ func TestTypedMetadataMirrorReusesTheTransactionProofOnlyUntilItsOwnWrite(t *tes
 			runtime, server, _ := newRouteIdentityFixture()
 			runtime.openRouteIdentityCache("op-mirror")
 			defer runtime.closeRouteIdentityCache()
-			if err := runtime.guardExactRoute(ctx, false, runtime.expectedSocketPath); err != nil {
+			if err := runtime.GuardExactRoute(ctx, false, runtime.ExpectedSocketPath); err != nil {
 				t.Fatalf("first transaction proof: %v", err)
 			}
 			mirror := newScopedTypedMirror(runtime, server, true)
@@ -136,7 +136,7 @@ func TestTypedMetadataMirrorReusesTheTransactionProofOnlyUntilItsOwnWrite(t *tes
 			if last := segments[len(segments)-1]; last.socketPath == 0 || last.pid == 0 {
 				t.Fatalf("%s post-effect observation reused a proof older than its own write: segments=%#v", test.name, segments)
 			}
-			if got := runtime.guardedWrites; got != uint64(len(writes)) {
+			if got := runtime.GuardedWrites; got != uint64(len(writes)) {
 				t.Fatalf("%s writes through the guarded-write seam = %d, want every one of %d", test.name, got, len(writes))
 			}
 
@@ -182,7 +182,7 @@ func TestTypedMetadataMirrorRefusesServerReplacementBeforeTheNextWriteLikeUncach
 					if scoped {
 						runtime.openRouteIdentityCache("op-mirror-drift")
 						defer runtime.closeRouteIdentityCache()
-						if err := runtime.guardExactRoute(ctx, false, runtime.expectedSocketPath); err != nil {
+						if err := runtime.GuardExactRoute(ctx, false, runtime.ExpectedSocketPath); err != nil {
 							t.Fatalf("first transaction proof: %v", err)
 						}
 					}
@@ -347,7 +347,7 @@ func TestCreateLeaseClearReusesTheCommitProofAndReprovesAfterItsWrite(t *testing
 	if last := tail[len(tail)-1]; last.socketPath == 0 || last.pid == 0 {
 		t.Fatalf("lease clear post-effect observation did not re-prove identity: %#v", tail)
 	}
-	if fixture.create.runtime.routeIdentity != nil {
+	if fixture.create.runtime.RouteIdentity != nil {
 		t.Fatal("create left its identity scope open after the lease clear")
 	}
 
@@ -358,8 +358,8 @@ func TestCreateLeaseClearReusesTheCommitProofAndReprovesAfterItsWrite(t *testing
 				f := newCallBudgetFixture(t, 1)
 				f.create.runtime.routeIdentityDisabled = cacheOff
 				var warnings strings.Builder
-				f.create.runtime.warn = &warnings
-				f.create.runtime.afterGuardedWrite = func() {
+				f.create.runtime.Warn = &warnings
+				f.create.runtime.AfterGuardedWrite = func() {
 					if argv := tmuxCommandArgv(f.tmux.calls[len(f.tmux.calls)-1]); ownerCheckedLeaseClearOf(argv, "") {
 						drift.apply(f.tmux)
 					}
@@ -391,7 +391,7 @@ func TestCreateLeaseClearReusesTheCommitProofAndReprovesAfterItsWrite(t *testing
 		t.Parallel()
 		f := newCallBudgetFixture(t, 1)
 		var warnings strings.Builder
-		f.create.runtime.warn = &warnings
+		f.create.runtime.Warn = &warnings
 		commitDriftStore(f.create.store, func() { f.tmux.serverPID = "5252" })
 		committed := f.store.writes
 		if _, _, err := runRoute(t, f.create, "window", "--project", "uid:prj-target", "--name", "probe", "-o", "uid"); err != nil {

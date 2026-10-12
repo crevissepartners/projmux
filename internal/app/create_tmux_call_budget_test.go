@@ -161,7 +161,7 @@ func newCallBudgetFixtureWith(t *testing.T, others int, staleMirror bool) callBu
 	}
 	create := newCreateCommandOn(tmux, lookupEnv)
 	create.store = store.store()
-	create.runtime.warn = testWarnWriter{t}
+	create.runtime.Warn = testWarnWriter{t}
 	create.runtime.executable = func() (string, error) { return testSupervisorBinary, nil }
 	create.sessionNameFor = filepath.Base
 	create.newGeneration = testGenerationSequence()

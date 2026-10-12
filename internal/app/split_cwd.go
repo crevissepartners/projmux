@@ -141,7 +141,7 @@ func (c *createCommand) uiSplitCWDSource(flagValue, projectRoot string) splitCWD
 // splitPaneLaunchDir reads one exact anchor Pane's live directory once and
 // applies the owner Project root rule to it.
 func (c *createCommand) splitPaneLaunchDir(ctx context.Context, anchorPaneID, root string) (string, string) {
-	live, err := c.runtime.read(ctx, "display-message", "-p", "-t", anchorPaneID, "-F", "#{pane_current_path}")
+	live, err := c.runtime.ReadTmux(ctx, "display-message", "-p", "-t", anchorPaneID, "-F", "#{pane_current_path}")
 	return resolveSplitPaneCWD(root, live, err)
 }
 

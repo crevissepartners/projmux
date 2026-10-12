@@ -361,7 +361,7 @@ func TestUnregisterProjectPublicConsumer(t *testing.T) {
 	}
 }
 
-func TestDeleteWindowPublicConsumer(t *testing.T) {
+func TestDeletePublicConsumer(t *testing.T) {
 	client, err := projmux.NewClient(projmux.Options{StateDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -369,8 +369,10 @@ func TestDeleteWindowPublicConsumer(t *testing.T) {
 	req := core.DeleteRequest{Kind: core.KindPane, Ref: "uid:reserved", Project: "explicit", Window: "scope", SocketPath: "/tmp/explicit", DryRun: true, Confirm: true}
 	result, err := client.Delete(context.Background(), req)
 	var refusal *projmux.Refusal
-	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeDeleteKindUnsupported || result.Committed {
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound || result.Committed {
 		t.Fatalf("%+v %v", result, err)
 	}
+	_ = core.DeletePane{PaneUID: "pane", PaneID: "%1", RootKind: core.KindProject}
+	_ = core.DeleteRegistryOnly{ResourceUID: "agent", Evidence: "offline"}
 	_ = core.DeleteWindow{UID: "window", WindowID: "@1", SessionID: "$1", RootKind: core.KindProject, EndsSession: true}
 }

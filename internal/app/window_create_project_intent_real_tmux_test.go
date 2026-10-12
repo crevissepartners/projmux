@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -178,11 +180,14 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 		store:      store.store(),
 		reconciler: newRegistryReconciler(routed, inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket))),
 		runtime: &materializer{
-			runner: routed, mirror: intmetadata.NewMirror(routed),
-			sessions: inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket)), target: target,
+			mirror: intmetadata.NewMirror(routed),
+
 			configPath: configPath,
-			warn:       io.MultiWriter(testWarnWriter{t}, warnings), lookupEnv: lookupEnv,
-			executable: func() (string, error) { return "", errors.New("no supervisor in this test") },
+			lookupEnv:  lookupEnv,
+			executable: func() (string, error) { return "", errors.New("no supervisor in this test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed,
+				Sessions: inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket)), Target: target,
+
+				Warn: io.MultiWriter(testWarnWriter{t}, warnings)},
 		},
 		agents:  sleepAgentLauncher{newFakeAgentLauncher()},
 		resumes: sleepResumeLauncher{resumes},
@@ -209,13 +214,13 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 		client := inttmux.NewClient(exact, inttmux.WithSocketName(route.SocketName))
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 		command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-		command.runtime.runner = exact
+		command.runtime.Runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
-		command.runtime.sessions = client
-		command.runtime.target = route.Target
-		command.runtime.expectedSocketPath = route.ExpectedSocketPath
-		command.runtime.socketName = route.SocketName
-		command.runtime.routeAuthority = route.Authority
+		command.runtime.Sessions = client
+		command.runtime.Target = route.Target
+		command.runtime.ExpectedSocketPath = route.ExpectedSocketPath
+		command.runtime.SocketName = route.SocketName
+		command.runtime.RouteAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -599,16 +601,17 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 	routed := explicitTmuxRunner{Runner: runner, Target: route.Target}
 	client := defaultTmuxClientWithSocketRunner(routed, route.SocketName, recorder)
 	runtime := &materializer{
-		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: client,
-		target: route.Target, expectedSocketPath: route.ExpectedSocketPath, warn: io.Discard,
-		socketName: route.SocketName, routeAuthority: route.Authority,
-		executable: os.Executable, lookupEnv: os.Getenv,
+		mirror: intmetadata.NewMirror(routed),
+
+		executable: os.Executable, lookupEnv: os.Getenv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client,
+			Target: route.Target, ExpectedSocketPath: route.ExpectedSocketPath, Warn: io.Discard,
+			SocketName: route.SocketName, RouteAuthority: route.Authority},
 	}
 	operationID, err := newCreateOperationID()
 	if err != nil {
 		return err
 	}
-	ledger := newRuntimeLedger(operationID)
+	ledger := NewRuntimeLedger(operationID)
 	helper := &createCommand{runtime: runtime}
 	_, err = store.update(func(working *coremetadata.Registry) error {
 		current, ok := working.Project(project.Metadata.UID)
@@ -625,17 +628,17 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 				return err
 			}
 		}
-		if _, err := store.mutator().BindLiveProjectSession(working, current.Metadata.UID, sessionName, runtime.expectedSocketPath); err != nil {
+		if _, err := store.mutator().BindLiveProjectSession(working, current.Metadata.UID, sessionName, runtime.ExpectedSocketPath); err != nil {
 			return MapMetadataError(err)
 		}
 		return runtime.finalizeSessionStartup(ctx, created, sessionName, cwd, ledger)
 	})
 	if err != nil {
-		runtime.rollback(ctx, ledger)
-		runtime.clearCreateOperations(ctx, ledger)
+		runtime.Rollback(ctx, ledger)
+		runtime.ClearCreateOperations(ctx, ledger)
 		return err
 	}
-	runtime.clearCreateOperations(ctx, ledger)
+	runtime.ClearCreateOperations(ctx, ledger)
 	return nil
 }
 

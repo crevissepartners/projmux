@@ -120,6 +120,10 @@ func renameRefusal(err error) error {
 	return &Refusal{Code: Code(f.Code), message: message, cause: err}
 }
 func renameQuery(req core.RenameRequest) (selector.Query, error) {
+	return mutationQuery(req.Kind, req.Ref, req.Project, req.Window, "RenameRequest")
+}
+
+func mutationQuery(kind core.Kind, ref, project, window, prefix string) (selector.Query, error) {
 	var q selector.Query
 	parse := func(kind metadata.Kind, value, field string) (selector.Ref, error) {
 		r, e := selector.ParseRef(kind, value)
@@ -128,31 +132,31 @@ func renameQuery(req core.RenameRequest) (selector.Query, error) {
 		}
 		return r, e
 	}
-	if req.Project != "" {
-		r, e := parse(metadata.KindProject, req.Project, "RenameRequest.Project")
+	if project != "" {
+		r, e := parse(metadata.KindProject, project, prefix+".Project")
 		if e != nil {
 			return q, e
 		}
 		q.Project = &r
 	}
-	if req.Window != "" {
-		if req.Kind != core.KindPane && req.Kind != core.KindAgent {
-			return q, &resources.Failure{Code: string(CodeSelectorInvalid), Cause: errors.New("RenameRequest.Window scopes only Panes and Agents")}
+	if window != "" {
+		if kind != core.KindPane && kind != core.KindAgent {
+			return q, &resources.Failure{Code: string(CodeSelectorInvalid), Cause: errors.New(prefix + ".Window scopes only Panes and Agents")}
 		}
-		r, e := parse(metadata.KindWindow, req.Window, "RenameRequest.Window")
+		r, e := parse(metadata.KindWindow, window, prefix+".Window")
 		if e != nil {
 			return q, e
 		}
 		q.Windows = []selector.Ref{r}
 	}
-	r, e := parse(metadata.Kind(req.Kind), req.Ref, "RenameRequest.Ref")
+	r, e := parse(metadata.Kind(kind), ref, prefix+".Ref")
 	if e != nil {
 		return q, e
 	}
-	switch req.Kind {
+	switch kind {
 	case core.KindProject:
-		if req.Project != "" {
-			return q, &resources.Failure{Code: string(CodeSelectorInvalid), Cause: errors.New("RenameRequest.Project is not supported for Project rename")}
+		if project != "" {
+			return q, &resources.Failure{Code: string(CodeSelectorInvalid), Cause: errors.New(prefix + ".Project is not supported for Project rename")}
 		}
 		q.Project = &r
 	case core.KindWindow:

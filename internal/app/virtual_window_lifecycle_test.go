@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -201,7 +203,7 @@ func TestVirtualWindowLastTmuxPaneRealLifecycle(t *testing.T) {
 				}
 			} else {
 				c := newTestDeleteCommand(store, false, false, nil)
-				c.panes = &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: func(string) string { return "" }}
+				c.panes = &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: inttmux.ExecRunner{}, Getenv: func(string) string { return "" }}}
 				c.lookupEnv = func(string) string { return "" }
 				if err := c.Run([]string{kind, "uid:" + target, "--socket-path", server.socket, "--yes"}, io.Discard, io.Discard); err != nil {
 					t.Fatal(err)

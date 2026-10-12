@@ -733,7 +733,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		working *coremetadata.Registry,
 		mutator coremetadata.Mutator,
 		operationID string,
-		ledger *runtimeLedger,
+		ledger *RuntimeLedger,
 	) error {
 		nameReason = ""
 		agent, ok := working.Agent(plan.agentUID)
@@ -971,19 +971,19 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if virtual {
 			paneID, err = r.create.materializeVirtualPane(ctx, working, mutator, ledger, *project, plan.windowUID, pane, activation, workLaunchArgv)
 		} else {
-			paneID, err = r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir, r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv), nil)
+			paneID, err = r.create.runtime.SplitPane(ctx, anchorPaneID, defaultPlacement, contextDir, r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv), nil)
 		}
 		if paneID != "" && !virtual {
 			// The supervised child now runs and will want the Registry lock
 			// this transaction holds; create.outcome measures the rest of the hold.
 			markSupervisedSpawn(ctx)
-			if claimErr := r.create.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
+			if claimErr := r.create.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
 			}
 			if mirrorErr := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
-			observeActivationRuntime(working, mutator, activation, paneID, r.create.runtime.warn)
+			observeActivationRuntime(working, mutator, activation, paneID, r.create.runtime.Warn)
 		}
 		if err != nil {
 			return err
@@ -996,7 +996,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 					return err
 				}
 			}
-			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, plan.topic, nativeThreadID); err != nil {
+			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.Runner, paneID, contextDir, workTitle, plan.topic, nativeThreadID); err != nil {
 				return fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", spelling, paneID, err)
 			}
 			if nativeLifecycleCapable {
@@ -1006,10 +1006,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 						AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
 						Generation: activation.Generation, ThreadID: nativeThreadID,
 					},
-					Route: r.create.runtime.target, NativeRoute: nativeRoute,
+					Route: r.create.runtime.Target, NativeRoute: nativeRoute,
 				}
 			}
-		} else if err := r.launcher.BindAgentPaneOnRoute(ctx, r.create.runtime.runner, agentPaneBinding{
+		} else if err := r.launcher.BindAgentPaneOnRoute(ctx, r.create.runtime.Runner, agentPaneBinding{
 			PaneID: paneID, Provider: plan.provider, ContextDir: contextDir, Title: workTitle,
 			Topic: plan.topic, TopicManual: strings.TrimSpace(plan.topic) != "", ConversationID: plan.conversationID,
 		}); err != nil {

@@ -115,7 +115,7 @@ func newSplitCWDFixture(t *testing.T) *splitCWDFixture {
 // developer's own global config.
 func (f *splitCWDFixture) wire(create *createCommand) {
 	f.runner = &paneCWDRunner{tmuxCommandRunner: f.tmux, cwds: map[string]string{}, errs: map[string]error{}}
-	create.runtime.runner = f.runner
+	create.runtime.Runner = f.runner
 	f.configHome = f.t.TempDir()
 	create.homeDir = func() (string, error) { return f.configHome, nil }
 	create.lookupEnv = func(key string) string {

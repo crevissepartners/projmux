@@ -28,10 +28,14 @@ func sdkDeleteCLI(t *testing.T, state string, req core.DeleteRequest) (string, s
 	c.store = &resourceStore{load: storage.LoadReadOnly, update: storage.Update, mutator: store.DefaultMutator, stateDir: func() (string, error) { return state, nil }}
 	c.lookupEnv = func(string) string { return "" }
 	c.windows = &tmuxWindowDeleteRuntime{Runner: tmux.ExecRunner{}}
+	c.panes = &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: tmux.ExecRunner{}, Getenv: func(string) string { return "" }}}
 	c.activeTarget = func() (activeTargetObserver, bool) { return activeTargetObserver{}, false }
-	args := []string{"window", req.Ref}
+	args := []string{strings.ToLower(string(req.Kind)), req.Ref}
 	if req.Project != "" {
 		args = append(args, "--project", req.Project)
+	}
+	if req.Window != "" {
+		args = append(args, "--window", req.Window)
 	}
 	if req.SocketPath != "" {
 		args = append(args, "--socket-path", req.SocketPath)
@@ -213,8 +217,8 @@ func TestDeleteWindowSDKRefusals(t *testing.T) {
 		{core.DeleteRequest{Kind: core.KindWindow, Ref: "missing"}, projmux.CodeResourceNotFound, true},
 
 		{core.DeleteRequest{Kind: core.KindWindow}, projmux.CodeSelectorInvalid, false},
-		{core.DeleteRequest{Kind: core.KindPane, Ref: "zsh"}, projmux.CodeDeleteKindUnsupported, false},
-		{core.DeleteRequest{Kind: core.KindAgent, Ref: "reader"}, projmux.CodeDeleteKindUnsupported, false},
+		{core.DeleteRequest{Kind: core.KindProject, Ref: "alpha"}, projmux.CodeDeleteKindUnsupported, false},
+		{core.DeleteRequest{Kind: core.KindAgent, Ref: "reader"}, projmux.CodeDeleteTransportRequired, false},
 		{core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:win-alpha-main"}, projmux.CodeDeleteTransportRequired, false},
 		{core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:win-alpha-main", SocketPath: "relative"}, projmux.CodeRuntimeRequestInvalid, false},
 	} {

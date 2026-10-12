@@ -17,6 +17,11 @@
       "rule": "ST1005",
       "scope": "internal/services/mutations/rename.go: five relocated CLI Window rename diagnostics",
       "reason": "Moved from internal/app/rename.go on 2026-10-12 with the shared rename service. The five previously reviewed diagnostic strings and maximum counts are unchanged to preserve CLI failure bytes; only the owner path and the exported CommittedMirrorError call spelling changed. SDK-only diagnostics do not add findings."
+    },
+    {
+      "rule": "ST1005",
+      "scope": "internal/services/mutations/runtime/materialize_shared.go: two relocated Pane split inventory diagnostics",
+      "reason": "Relocated from internal/app/materialize.go with the shared replacement materializer. Diagnostic source and maximum count remain unchanged; only the owner path changed."
     }
   ],
   "entries": [
@@ -92,7 +97,7 @@
     },
     {
       "rule": "ST1005",
-      "path": "internal/app/materialize.go",
+      "path": "internal/services/mutations/runtime/materialize_shared.go",
       "message": "error strings should not be capitalized",
       "source": "return errors.New(\"Pane inventory drifted before split\")",
       "max_count": 2

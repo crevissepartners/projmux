@@ -33,7 +33,7 @@ func (m runtimeMutationMetadataMirror) identity() *runtimeRouteIdentityCache {
 	if m.scope == nil {
 		return nil
 	}
-	return m.scope.routeIdentity
+	return m.scope.RouteIdentity
 }
 
 // guardedSteps routes one mirror plan's steps through the materializer's
@@ -43,7 +43,7 @@ func (m runtimeMutationMetadataMirror) guardedSteps(steps []runtimeMutationStep)
 	if m.scope == nil {
 		return steps
 	}
-	return m.scope.guardedWriteSteps(steps)
+	return m.scope.GuardedWriteSteps(steps)
 }
 
 func (m runtimeMutationMetadataMirror) exactRoute(ctx context.Context) (tmuxCommandRunner, runtimeMutationRoute, error) {

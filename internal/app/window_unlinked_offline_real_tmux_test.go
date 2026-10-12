@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -238,8 +240,8 @@ func TestWindowUnlinkedLowersAgentsOfAKilledSessionOfflineThroughRealTmux(t *tes
 		newGeneration:  coremetadata.NewGeneration,
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			return &materializer{
-				runner: exact, mirror: intmetadata.NewMirror(exact), sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), target: materializeTarget, warn: warn,
-				executable: func() (string, error) { return "", errors.New("no supervisor in the kill-session Continue test") },
+				mirror:     intmetadata.NewMirror(exact),
+				executable: func() (string, error) { return "", errors.New("no supervisor in the kill-session Continue test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), Target: materializeTarget, Warn: warn},
 			}
 		},
 	}

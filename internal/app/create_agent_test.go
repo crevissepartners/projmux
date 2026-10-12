@@ -270,12 +270,12 @@ func bindTestCreateRuntimeRoute(command *createCommand, tmux *fakeTmux, lookupEn
 		resolved = route
 		exact := explicitTmuxRunner{Runner: tmux, Target: route.Target}
 		command.reconciler.mirror = intmetadata.NewMirror(exact)
-		command.runtime.runner = exact
+		command.runtime.Runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
-		command.runtime.target = route.Target
-		command.runtime.expectedSocketPath = route.ExpectedSocketPath
-		command.runtime.socketName = route.SocketName
-		command.runtime.routeAuthority = route.Authority
+		command.runtime.Target = route.Target
+		command.runtime.ExpectedSocketPath = route.ExpectedSocketPath
+		command.runtime.SocketName = route.SocketName
+		command.runtime.RouteAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
@@ -1603,7 +1603,7 @@ func TestConcurrentAgentCreatesConvergeOnOneEnsuredWindow(t *testing.T) {
 			<-start
 			cmd := fixture.command(nil)
 			cmd.agents = launcher
-			cmd.runtime.warn = warnings[i]
+			cmd.runtime.Warn = warnings[i]
 			stdout, _, err := runRoute(t, cmd,
 				"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "shared", "--create-window", "-o", "uid")
 			outs[i], errs[i] = stdout, err

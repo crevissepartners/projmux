@@ -17,9 +17,9 @@ func (c *deleteCommand) deleteExecutor(target tmuxTransport) *mutationruntime.De
 	if c.panes != nil {
 		e.Panes = mutationruntime.PaneDeleteRuntime{Preflight: c.panes.preflight, PrepareReplacements: c.panes.prepareReplacements, RollbackReplacements: c.panes.rollbackReplacements, Kill: c.panes.kill, TombstoneSelfKill: c.panes.tombstoneSelfKill, RestoreSelfKill: c.panes.restoreSelfKill}
 		if batch, ok := c.panes.(interface {
-			killAll(context.Context, []paneLiveDeleteTarget) (int, error)
+			KillAll(context.Context, []paneLiveDeleteTarget) (int, error)
 		}); ok {
-			e.Panes.KillAll = batch.killAll
+			e.Panes.KillAll = batch.KillAll
 		}
 	}
 	return e

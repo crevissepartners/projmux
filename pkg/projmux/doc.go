@@ -168,4 +168,11 @@
 // Plan changes, lifecycle refusals and Registry execution failures have declared
 // Code constants and preserve their causes. CLI selection-result messages remain
 // unchanged; SDK input-shape messages name Go fields.
+// Delete selects one explicit Window, Pane or Agent ref on a required explicit
+// tmux socket. Process targets are refused before runtime or Registry effects.
+// Its reviewed plan includes exact live Pane targets and required replacement
+// shells. One named leaf Pane uses the CLI confirmation exemption. Admitted
+// execution and compensation ignore cancellation; a partial kill failure can
+// return Committed=false with runtime effects and retained Registry resources.
+// The SDK never infers a caller Pane or queues self-kill.
 package projmux

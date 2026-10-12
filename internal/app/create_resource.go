@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"cmp"
 	"context"
@@ -27,7 +29,7 @@ const (
 )
 
 // placementDown is the vertical member of the closed placement enum.
-const placementDown = "down"
+const placementDown = mutationruntime.PlacementDown
 
 // createResult is one created resource, carrying both its Projmux identity and
 // the raw tmux pane handle the `pane-id` projection exposes.
@@ -805,7 +807,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	var activationTargets []agentActivationTarget
 	var creator creatorRecord
 	var linksNotice, guidanceNotice string
-	if err := c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	if err := c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
@@ -1015,23 +1017,23 @@ func (c *createCommand) openWindowAgentPane(
 	ctx context.Context,
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	provider string,
 	work windowWork,
 	agent agentWork,
 	launch agentPaneLaunch,
 	flags resourceCreateFlags,
 ) (string, error) {
-	paneID, err := c.runtime.splitPane(ctx, work.initialPaneID, defaultPlacement, launch.workspace.CWD,
+	paneID, err := c.runtime.SplitPane(ctx, work.initialPaneID, defaultPlacement, launch.workspace.CWD,
 		c.runtime.supervisedLaunch(ctx, agent.activation, launch.argv), nil)
 	if paneID != "" {
-		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, agent.pane.Metadata.UID, ledger); claimErr != nil {
+		if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, agent.pane.Metadata.UID, ledger); claimErr != nil {
 			return "", errors.Join(err, claimErr)
 		}
-		if mirrorErr := c.runtime.mirrorPane(ctx, paneID, agent.pane); mirrorErr != nil {
+		if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, paneID, agent.pane); mirrorErr != nil {
 			return "", errors.Join(err, mirrorErr)
 		}
-		observeActivationRuntime(working, mutator, agent.activation, paneID, c.runtime.warn)
+		observeActivationRuntime(working, mutator, agent.activation, paneID, c.runtime.Warn)
 	}
 	if err != nil {
 		return "", err
@@ -1093,7 +1095,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	var results []createResult
 	var selectedWindowUIDs []string
 	var notices []string
-	if err := c.transactAdmitted(diagnostics.CreateKindPane, c.processAnchorAdmission(scope, flags, spelling), func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	if err := c.transactAdmitted(diagnostics.CreateKindPane, c.processAnchorAdmission(scope, flags, spelling), func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
@@ -1198,15 +1200,15 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 				}
 			}
 			launch := c.runtime.supervisedLaunch(ctx, work.activation, flags.payload)
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, launchDir, launch, nil)
+			paneID, err := c.runtime.SplitPane(ctx, anchorPaneID, flags.placement, launchDir, launch, nil)
 			if paneID != "" {
-				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
+				if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
 				}
-				if mirrorErr := c.runtime.mirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
+				if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
-				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.warn)
+				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.Warn)
 			}
 			if err != nil {
 				return err
@@ -1675,7 +1677,7 @@ func (c *createCommand) materializeWindow(
 	ctx context.Context,
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	project coremetadata.Project,
 	sessionName string,
 	work *windowWork,
@@ -1688,7 +1690,7 @@ func (c *createCommand) materializeWindow(
 	// tmux windows mirroring one stable UID with the adopted one stranded. The
 	// adopted runtime already is this Window's materialization, so bind the
 	// allocated initial Pane to it instead of creating anything.
-	if owner, adopted := ledger.currentWindow(work.window.Metadata.UID); adopted {
+	if owner, adopted := ledger.CurrentWindow(work.window.Metadata.UID); adopted {
 		return c.bindAdoptedWindow(ctx, working, mutator, work, owner)
 	}
 	launch := c.runtime.supervisedLaunch(ctx, work.activation, work.payload)
@@ -1696,7 +1698,7 @@ func (c *createCommand) materializeWindow(
 	if created.WindowID == "" {
 		return err
 	}
-	if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
+	if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 		return errors.Join(err, claimErr)
 	}
 	if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, work.window); mirrorErr != nil {
@@ -1710,18 +1712,18 @@ func (c *createCommand) materializeWindow(
 			return errors.Join(err, bindingErr)
 		}
 		work.window = projected
-		ledger.observeCurrentWindow(work.window.Metadata.UID, runtimeOwner{
+		ledger.ObserveCurrentWindow(work.window.Metadata.UID, RuntimeOwner{
 			SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
 		})
 	}
-	if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, work.initial.Metadata.UID, ledger); claimErr != nil {
+	if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, work.initial.Metadata.UID, ledger); claimErr != nil {
 		return errors.Join(err, claimErr)
 	}
 	work.initialPaneID = created.PaneID
-	if mirrorErr := c.runtime.mirrorPane(ctx, work.initialPaneID, work.initial); mirrorErr != nil {
+	if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, work.initialPaneID, work.initial); mirrorErr != nil {
 		return errors.Join(err, mirrorErr)
 	}
-	observeActivationRuntime(working, mutator, work.activation, work.initialPaneID, c.runtime.warn)
+	observeActivationRuntime(working, mutator, work.activation, work.initialPaneID, c.runtime.Warn)
 	return err
 }
 
@@ -1739,7 +1741,7 @@ func (c *createCommand) bindAdoptedWindow(
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	work *windowWork,
-	owner runtimeOwner,
+	owner RuntimeOwner,
 ) error {
 	if projected, ok := working.Window(work.window.Metadata.UID); ok {
 		work.window = *projected
@@ -1753,7 +1755,7 @@ func (c *createCommand) bindAdoptedWindow(
 			continue
 		}
 		work.initialPaneID = row[1]
-		observeActivationRuntime(working, mutator, work.activation, work.initialPaneID, c.runtime.warn)
+		observeActivationRuntime(working, mutator, work.activation, work.initialPaneID, c.runtime.Warn)
 		return nil
 	}
 	return fmt.Errorf(
@@ -1768,7 +1770,7 @@ func (c *createCommand) ensureAnchorPane(
 	ctx context.Context,
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	project coremetadata.Project,
 	sessionName, operationID string,
 	target paneTarget,
@@ -1801,7 +1803,7 @@ func (c *createCommand) ensureAnchorPane(
 		}
 	}
 
-	owner, observedCurrent := ledger.currentWindow(target.windowUID)
+	owner, observedCurrent := ledger.CurrentWindow(target.windowUID)
 	if observedCurrent && owner.SessionID != sessionName {
 		return "", fmt.Errorf("create pane: Window uid %q moved outside current Project session %s", target.windowUID, sessionName)
 	}
@@ -1838,7 +1840,7 @@ func (c *createCommand) ensureAnchorPane(
 			c.runtime.supervisedLaunch(ctx, bootstrapActivation, nil))
 		windowID, err = created.WindowID, createErr
 		if windowID != "" {
-			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, window.Metadata.UID, ledger); claimErr != nil {
+			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, window.Metadata.UID, ledger); claimErr != nil {
 				return "", errors.Join(err, claimErr)
 			}
 			if mirrorErr := c.runtime.mirrorWindow(ctx, windowID, *window); mirrorErr != nil {
@@ -1851,17 +1853,17 @@ func (c *createCommand) ensureAnchorPane(
 				if bindingErr != nil {
 					return "", errors.Join(err, bindingErr)
 				}
-				ledger.observeCurrentWindow(window.Metadata.UID, runtimeOwner{
+				ledger.ObserveCurrentWindow(window.Metadata.UID, RuntimeOwner{
 					SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
 				})
 			}
-			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, bootstrap.Metadata.UID, ledger); claimErr != nil {
+			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, bootstrap.Metadata.UID, ledger); claimErr != nil {
 				return "", errors.Join(err, claimErr)
 			}
-			if mirrorErr := c.runtime.mirrorPane(ctx, created.PaneID, bootstrap); mirrorErr != nil {
+			if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, created.PaneID, bootstrap); mirrorErr != nil {
 				return "", errors.Join(err, mirrorErr)
 			}
-			observeActivationRuntime(working, mutator, bootstrapActivation, created.PaneID, c.runtime.warn)
+			observeActivationRuntime(working, mutator, bootstrapActivation, created.PaneID, c.runtime.Warn)
 			return created.PaneID, err
 		}
 		if err != nil {
@@ -1895,7 +1897,7 @@ func (c *createCommand) ensureProjectRuntime(
 	mutator coremetadata.Mutator,
 	project coremetadata.Project,
 	operationID string,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 ) (string, error) {
 	if err := c.ensureRuntimeRoute(ctx); err != nil {
 		return "", err
@@ -1904,7 +1906,7 @@ func (c *createCommand) ensureProjectRuntime(
 	if sessionName == "" {
 		return "", fmt.Errorf("create: Project %q has no valid collision-safe physical session name", project.Metadata.UID)
 	}
-	exists, err := c.runtime.sessions.SessionExists(ctx, sessionName)
+	exists, err := c.runtime.Sessions.SessionExists(ctx, sessionName)
 	if err != nil {
 		return "", fmt.Errorf("create: inspect Project runtime %q: %w", sessionName, err)
 	}
@@ -1940,7 +1942,7 @@ func (c *createCommand) ensureProjectRuntime(
 	if observeErr != nil {
 		return "", observeErr
 	}
-	ledger.resetCurrentWindows()
+	ledger.ResetCurrentWindows()
 	for _, window := range working.WindowsOf(project.Metadata.UID) {
 		owner, found, observeErr := resolveWindowRuntimeUID(windowRuntimes, window.Metadata.UID)
 		if observeErr != nil {
@@ -1955,9 +1957,9 @@ func (c *createCommand) ensureProjectRuntime(
 		if _, bindingErr := c.observeWindowRuntimeBinding(mutator, working, window.Metadata.UID, owner.SessionID, owner.WindowID); bindingErr != nil {
 			return "", bindingErr
 		}
-		ledger.observeCurrentWindow(window.Metadata.UID, owner)
+		ledger.ObserveCurrentWindow(window.Metadata.UID, owner)
 	}
-	if _, err := mutator.BindLiveProjectSession(working, project.Metadata.UID, sessionName, c.runtime.expectedSocketPath); err != nil {
+	if _, err := mutator.BindLiveProjectSession(working, project.Metadata.UID, sessionName, c.runtime.ExpectedSocketPath); err != nil {
 		return "", MapMetadataError(err)
 	}
 	if err := c.runtime.finalizeSessionStartup(ctx, created, sessionName, project.Spec.Root, ledger); err != nil {
@@ -2005,13 +2007,13 @@ func (c *createCommand) initialPaneActivation(registry *coremetadata.Registry, m
 // remove each owned handle even when a hook moved it out of the new Session.
 // activation is the generation the Pane was launched under; its %N is recorded
 // once the Pane is claimed.
-func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coremetadata.Registry, mutator coremetadata.Mutator, project coremetadata.Project, created intmux.NewSessionResult, activation superviseSpec, ledger *runtimeLedger) error {
+func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coremetadata.Registry, mutator coremetadata.Mutator, project coremetadata.Project, created intmux.NewSessionResult, activation superviseSpec, ledger *RuntimeLedger) error {
 	windows := terminalWindows(*registry, project.Metadata.UID)
 	if len(windows) == 0 {
 		return nil
 	}
 	first := windows[0]
-	if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.Metadata.UID, ledger); err != nil {
+	if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.Metadata.UID, ledger); err != nil {
 		return err
 	}
 	if err := c.runtime.mirrorWindow(ctx, created.WindowID, first); err != nil {
@@ -2025,7 +2027,7 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 			return err
 		}
 		first = projected
-		ledger.observeCurrentWindow(first.Metadata.UID, runtimeOwner{
+		ledger.ObserveCurrentWindow(first.Metadata.UID, RuntimeOwner{
 			SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
 		})
 	}
@@ -2033,14 +2035,14 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 	if !ok {
 		return nil
 	}
-	if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, primary.Metadata.UID, ledger); err != nil {
+	if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, primary.Metadata.UID, ledger); err != nil {
 		return err
 	}
-	if err := c.runtime.mirrorPane(ctx, created.PaneID, *primary); err != nil {
+	if err := c.runtime.MirrorPaneIdentity(ctx, created.PaneID, *primary); err != nil {
 		return err
 	}
 	if activation.PaneUID == primary.Metadata.UID {
-		observeActivationRuntime(registry, mutator, activation, created.PaneID, c.runtime.warn)
+		observeActivationRuntime(registry, mutator, activation, created.PaneID, c.runtime.Warn)
 	}
 	return nil
 }
@@ -2051,7 +2053,7 @@ type createOperation func(
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	operationID string,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 ) error
 
 type createPreReconcile func(
@@ -2355,7 +2357,7 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 	if err != nil {
 		return err
 	}
-	ledger := newRuntimeLedgerAt(operationID, c.operationClock()())
+	ledger := NewRuntimeLedgerAt(operationID, c.operationClock()())
 	// One transaction is one identity-reuse scope. The first route guard still
 	// proves the exact server against tmux; later guards for the same tuple
 	// reuse that proof instead of re-reading it under the registry lock. The
@@ -2387,8 +2389,8 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 		// Rollback runs after the scope is closed, so every guard of the
 		// unwind -- and of the lease clear after it -- proves identity in full.
 		c.runtime.closeRouteIdentityCache()
-		c.runtime.rollback(ctx, ledger)
-		c.runtime.clearCreateOperations(ctx, ledger)
+		c.runtime.Rollback(ctx, ledger)
+		c.runtime.ClearCreateOperations(ctx, ledger)
 		return MapMetadataError(err)
 	}
 	// On success the lease clear is the transaction's last guarded write and
@@ -2396,14 +2398,14 @@ func (c *createCommand) runTransaction(lock *createLockSpan, admission func(core
 	// post-effect proof of the previous guarded write), which no write of ours
 	// has followed. Its own guarded-write seam drops that proof after the
 	// write, so the post-effect observation proves identity again.
-	c.runtime.clearCreateOperations(ctx, ledger)
+	c.runtime.ClearCreateOperations(ctx, ledger)
 	c.runtime.closeRouteIdentityCache()
 	return nil
 }
 
 // reconcileCreateOperation retains the preflight proof only until a guarded
 // write occurs, then re-proves both reconciliation and commit authority.
-func (c *createCommand) reconcileCreateOperation(ctx context.Context, working *coremetadata.Registry, lock *createLockSpan, operationID string, ledger *runtimeLedger, guard createPreReconcile, op createOperation) error {
+func (c *createCommand) reconcileCreateOperation(ctx context.Context, working *coremetadata.Registry, lock *createLockSpan, operationID string, ledger *RuntimeLedger, guard createPreReconcile, op createOperation) error {
 	preflight, err := guard(ctx, working.Clone(), c.store.mutator(), operationID)
 	if err != nil {
 		return err
@@ -2412,9 +2414,9 @@ func (c *createCommand) reconcileCreateOperation(ctx context.Context, working *c
 	// the same Registry before any write of ours: it reuses the preflight
 	// answer while no guarded write has run since. The second pass follows
 	// the create's own writes and always asks tmux again.
-	preflightWrites := c.runtime.guardedWrites
+	preflightWrites := c.runtime.GuardedWrites
 	firstPass := func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
-		if c.runtime.guardedWrites == preflightWrites {
+		if c.runtime.GuardedWrites == preflightWrites {
 			return preflight, nil
 		}
 		return guard(ctx, working, mutator, operationID)

@@ -9,10 +9,8 @@ const runtimeWindow = mutationruntime.RuntimeWindow
 
 type paneLiveDeletePlan = mutationruntime.PaneLiveDeletePlan
 type paneLiveDeleteTarget = mutationruntime.PaneLiveDeleteTarget
-type paneRegistryOnlyDeleteTarget = mutationruntime.PaneRegistryOnlyDeleteTarget
 type paneReplacementReceipt = mutationruntime.PaneReplacementReceipt
 type paneReplacementShell = mutationruntime.PaneReplacementShell
 type runtimeObject = mutationruntime.RuntimeObject
-type runtimeObjectKind = mutationruntime.RuntimeObjectKind
 
 var deleteResource = mutationruntime.DeleteResource

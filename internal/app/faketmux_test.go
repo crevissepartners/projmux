@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"fmt"
@@ -1140,7 +1142,7 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 		case token == "pane_height" && pane != nil:
 			out = append(out, fmt.Sprintf("%d", pane.height))
 		case token == tmuxopts.RemainOnExitPane && pane != nil:
-			if enabled, ok := exactTmuxBoolean(pane.opts[token]); ok && enabled {
+			if enabled, ok := mutationruntime.ExactTmuxBoolean(pane.opts[token]); ok && enabled {
 				out = append(out, "1")
 			} else {
 				out = append(out, "0")

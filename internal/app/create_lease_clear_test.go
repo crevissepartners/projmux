@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -19,11 +21,11 @@ const (
 // hand clearCreateOperations, over one fake server.
 func newLeaseClearMaterializer(tmux *fakeTmux, warn *bytes.Buffer) *materializer {
 	return &materializer{
-		runner: tmux, mirror: intmetadata.NewMirror(tmux), sessions: &fakeSessionMaterializer{tmux: tmux}, warn: warn,
-		target:             tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
-		expectedSocketPath: tmux.socketPath,
-		socketName:         defaultAppSocket,
-		routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID},
+		mirror: intmetadata.NewMirror(tmux), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux, Sessions: &fakeSessionMaterializer{tmux: tmux}, Warn: warn,
+			Target:             tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
+			ExpectedSocketPath: tmux.socketPath,
+			SocketName:         defaultAppSocket,
+			RouteAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}},
 	}
 }
 
@@ -79,10 +81,10 @@ func TestClearCreateOperationsKeepsAnotherOperationsLeaseWrittenAfterItsObservat
 	}
 	var warnings bytes.Buffer
 	runtime := newLeaseClearMaterializer(tmux, &warnings)
-	ledger := &runtimeLedger{operationMarker: leaseClearOurMarker}
-	ledger.markSession(session.id)
+	ledger := &RuntimeLedger{OperationMarker: leaseClearOurMarker}
+	ledger.MarkSession(session.id)
 
-	runtime.clearCreateOperations(context.Background(), ledger)
+	runtime.ClearCreateOperations(context.Background(), ledger)
 
 	if !injected {
 		t.Fatalf("the create-lease deletion never ran; writes=%q", leaseClearWrites(tmux))
@@ -111,10 +113,10 @@ func TestClearCreateOperationsRemovesOnlyItsOwnLease(t *testing.T) {
 	session.env["KEEP"] = "1"
 	var warnings bytes.Buffer
 	runtime := newLeaseClearMaterializer(tmux, &warnings)
-	ledger := &runtimeLedger{operationMarker: leaseClearOurMarker}
-	ledger.markSession(session.id)
+	ledger := &RuntimeLedger{OperationMarker: leaseClearOurMarker}
+	ledger.MarkSession(session.id)
 
-	runtime.clearCreateOperations(context.Background(), ledger)
+	runtime.ClearCreateOperations(context.Background(), ledger)
 
 	for _, name := range []string{createOperationEnvironment, finalizeOperationEnvironment} {
 		if got, ok := session.env[name]; ok {
@@ -160,13 +162,13 @@ func TestClearCreateOperationsIssuesNoWriteWithoutItsLease(t *testing.T) {
 				session.env[createOperationEnvironment] = tt.lease
 				session.env[finalizeOperationEnvironment] = tt.lease
 			}
-			ledger := &runtimeLedger{operationMarker: leaseClearOurMarker}
-			ledger.markSession(session.id)
+			ledger := &RuntimeLedger{OperationMarker: leaseClearOurMarker}
+			ledger.MarkSession(session.id)
 			if tt.gone {
 				tmux.sessions = nil
 			}
 			var warnings bytes.Buffer
-			newLeaseClearMaterializer(tmux, &warnings).clearCreateOperations(context.Background(), ledger)
+			newLeaseClearMaterializer(tmux, &warnings).ClearCreateOperations(context.Background(), ledger)
 			if writes := leaseClearWrites(tmux); len(writes) != 0 {
 				t.Fatalf("writes = %q, want none", writes)
 			}

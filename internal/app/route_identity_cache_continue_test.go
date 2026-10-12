@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -95,7 +97,7 @@ func newContinueReplayActivation(t *testing.T, root, logs string) (*registryProj
 		newOperationID:     func() (string, error) { return "op-continue", nil },
 		newGeneration:      func() (string, error) { generation++; return fmt.Sprintf("gen-continue-%02d", generation), nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
+			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),
@@ -235,7 +237,7 @@ func runContinueReplay(t *testing.T, root, logs string, cacheOff bool, driftAfte
 	// unwind -- passes the materializer's routed runner, which wraps this one.
 	activation.runner = &continueRouteObserver{base: activation.runner, before: func(argv []string) {
 		switch {
-		case probe.runtime != nil && probe.runtime.routeIdentity != nil:
+		case probe.runtime != nil && probe.runtime.RouteIdentity != nil:
 			opened = true
 			if outcome.scopeClosedAt >= 0 {
 				outcome.scopeOpenAfterClose = true
@@ -244,7 +246,7 @@ func runContinueReplay(t *testing.T, root, logs string, cacheOff bool, driftAfte
 			outcome.scopeClosedAt = len(outcome.calls)
 		}
 		if outcome.firstReuseAt < 0 && probe.runtime != nil {
-			if stats := probe.runtime.routeIdentity.Snapshot(); stats.Reuses > 0 {
+			if stats := probe.runtime.RouteIdentity.Snapshot(); stats.Reuses > 0 {
 				outcome.firstReuseAt, outcome.proofsAtFirstReuse = len(outcome.calls), stats.Proofs
 			}
 		}
@@ -257,7 +259,7 @@ func runContinueReplay(t *testing.T, root, logs string, cacheOff bool, driftAfte
 	activation.newMaterializer = func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 		runtime := base(exact, warn)
 		runtime.routeIdentityDisabled = cacheOff
-		runtime.afterGuardedWrite = func() {
+		runtime.AfterGuardedWrite = func() {
 			outcome.guardedWrites++
 			if writes := routeIdentityWrites(server.calls[start:]); len(writes) > 0 {
 				outcome.guardedWrite[outcome.guardedWrites] = writes[len(writes)-1]
@@ -317,7 +319,7 @@ func TestContinueReplayProvesItsFirstRouteIdentityAgainstTmux(t *testing.T) {
 				return
 			}
 			runtime := probe.runtime
-			cache := runtime.routeIdentity
+			cache := runtime.RouteIdentity
 			if cache == nil {
 				return
 			}
@@ -327,11 +329,11 @@ func TestContinueReplayProvesItsFirstRouteIdentityAgainstTmux(t *testing.T) {
 			if reusedKey {
 				return
 			}
-			target, _, err := runtime.exactMutationRoute()
+			target, _, err := runtime.ExactMutationRoute()
 			if err != nil {
 				return
 			}
-			key, ok := runtime.exactRouteIdentityKey(target)
+			key, ok := runtime.ExactRouteIdentityKey(target)
 			if !ok {
 				return
 			}
@@ -544,7 +546,7 @@ func TestContinueReplayCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *tes
 			if probe.runtime == nil {
 				return
 			}
-			cache := probe.runtime.routeIdentity
+			cache := probe.runtime.RouteIdentity
 			if cache == nil {
 				return
 			}

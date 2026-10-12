@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -20,7 +22,7 @@ func (m *materializer) ensureSessionAt(
 	ctx context.Context,
 	project coremetadata.Project,
 	sessionName, runtimeCWD, firstWindowName string,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 ) (intmux.NewSessionResult, error) {
 	result, _, err := m.ensureSessionLaunching(ctx, project, sessionName, runtimeCWD, firstWindowName, nil, ledger)
 	return result, err
@@ -46,8 +48,9 @@ func TestFreshServerSessionFirstPaneResolvesItsDefaultsInsideTheServer(t *testin
 	target := tmuxTransport{Kind: tmuxSocketName, Value: "first-pane-fresh", Source: tmuxSocketNameSource}
 	routed := explicitTmuxRunner{Runner: server, Target: target}
 	runtime := &materializer{
-		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
-		target: target, configPath: configPath, executable: func() (string, error) { return testSupervisorBinary, nil },
+		mirror:     intmetadata.NewMirror(routed),
+		configPath: configPath, executable: func() (string, error) { return testSupervisorBinary, nil }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
+			Target: target},
 	}
 	project := coremetadata.Project{
 		Metadata: coremetadata.ObjectMeta{UID: "prj-fresh", Name: "fresh"},
@@ -56,7 +59,7 @@ func TestFreshServerSessionFirstPaneResolvesItsDefaultsInsideTheServer(t *testin
 	spec := superviseSpec{PaneUID: "pan-fresh-first", Generation: "gen-fresh-first", OperationID: "op-fresh"}
 	issued := 0
 	result, launched, err := runtime.ensureSessionLaunching(context.Background(), project, "fresh", project.Spec.Root, "w-first",
-		func() (superviseSpec, error) { issued++; return spec, nil }, newRuntimeLedger("op-fresh"))
+		func() (superviseSpec, error) { issued++; return spec, nil }, NewRuntimeLedger("op-fresh"))
 	if err != nil {
 		t.Fatalf("fresh Project materialize: %v", err)
 	}
@@ -87,7 +90,7 @@ func TestFreshServerSessionFirstPaneResolvesItsDefaultsInsideTheServer(t *testin
 	// activation it already runs under: nothing is issued for it.
 	issued = 0
 	again, launched, err := runtime.ensureSessionLaunching(context.Background(), project, "fresh", project.Spec.Root, "w-first",
-		func() (superviseSpec, error) { issued++; return spec, nil }, newRuntimeLedger("op-again"))
+		func() (superviseSpec, error) { issued++; return spec, nil }, NewRuntimeLedger("op-again"))
 	if err != nil || again.Created || issued != 0 || launched.valid() {
 		t.Fatalf("live session reuse = created %t issued %d launched %+v err %v", again.Created, issued, launched, err)
 	}

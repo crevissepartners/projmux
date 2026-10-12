@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -606,7 +608,7 @@ func defaultTopologyMaterializer(target tmuxTransport, recorder *diagnostics.Lif
 		if hooks := defaultLifecycleHookRunner(); hooks != nil {
 			opts = append(opts, inttmux.WithLifecycleHookRunner(hooks))
 		}
-		return &materializer{runner: runner, mirror: intmetadata.NewMirror(runner), sessions: inttmux.NewClient(runner, opts...), target: target, warn: warn}
+		return &materializer{mirror: intmetadata.NewMirror(runner), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: runner, Sessions: inttmux.NewClient(runner, opts...), Target: target, Warn: warn}}
 	}
 }
 
@@ -633,22 +635,22 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	if err != nil {
 		return outcome, err
 	}
-	ledger := newRuntimeLedger(operationID)
+	ledger := NewRuntimeLedger(operationID)
 	routed := explicitTmuxRunner{Runner: r.runner, Target: r.target}
 	newRuntime := r.newMaterializer
 	if newRuntime == nil {
 		newRuntime = defaultTopologyMaterializer(r.target, r.diagnostics)
 	}
 	runtime := newRuntime(routed, warn)
-	if runtime != nil && runtime.expectedSocketPath == "" {
-		runtime.expectedSocketPath = r.expectedSocketPath
+	if runtime != nil && runtime.ExpectedSocketPath == "" {
+		runtime.ExpectedSocketPath = r.expectedSocketPath
 	}
 	if runtime != nil {
-		if runtime.socketName == "" {
-			runtime.socketName = r.socketName
+		if runtime.SocketName == "" {
+			runtime.SocketName = r.socketName
 		}
-		if runtime.routeAuthority == nil {
-			runtime.routeAuthority = r.routeAuthority
+		if runtime.RouteAuthority == nil {
+			runtime.RouteAuthority = r.routeAuthority
 		}
 	}
 	// One transaction is one identity-reuse scope, exactly as the create
@@ -727,11 +729,11 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	runtime.closeRouteIdentityCache()
 	outcome.registryChanged = registryChanged
 	if updateErr != nil {
-		runtime.rollback(ctx, ledger)
-		runtime.clearCreateOperations(ctx, ledger)
+		runtime.Rollback(ctx, ledger)
+		runtime.ClearCreateOperations(ctx, ledger)
 		return outcome, updateErr
 	}
-	runtime.clearCreateOperations(ctx, ledger)
+	runtime.ClearCreateOperations(ctx, ledger)
 	if plan := outcome.plan.materialization; plan != nil {
 		outcome.recovery.Reasons = plan.agentSkips
 		for _, count := range plan.agentSkips {
@@ -919,13 +921,13 @@ func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner
 // inventory, before the first mutation.
 type topologyOwnerGuard struct {
 	windowOwner map[string]string
-	paneOwner   map[string]runtimeOwner
+	paneOwner   map[string]RuntimeOwner
 	windowUIDs  map[string][]string
 	paneUIDs    map[string][]string
 }
 
 func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topologyOwnerGuard, error) {
-	windowsOut, err := runtime.read(ctx, "list-windows", "-a", "-F",
+	windowsOut, err := runtime.ReadTmux(ctx, "list-windows", "-a", "-F",
 		tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
 	if err != nil {
 		// No server is the ordinary state of an offline Project on a fresh
@@ -936,7 +938,7 @@ func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topolog
 		}
 		return nil, fmt.Errorf("inventory tmux Window owners: %w", err)
 	}
-	panesOut, err := runtime.read(ctx, "list-panes", "-a", "-F",
+	panesOut, err := runtime.ReadTmux(ctx, "list-panes", "-a", "-F",
 		tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
 	if err != nil {
 		if isMissingTmuxServer(err) {
@@ -946,7 +948,7 @@ func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topolog
 	}
 	guard := &topologyOwnerGuard{
 		windowOwner: map[string]string{},
-		paneOwner:   map[string]runtimeOwner{},
+		paneOwner:   map[string]RuntimeOwner{},
 		windowUIDs:  map[string][]string{},
 		paneUIDs:    map[string][]string{},
 	}
@@ -974,7 +976,7 @@ func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topolog
 		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" || exactTmuxHandle(row[2], "%") == "" {
 			return nil, fmt.Errorf("malformed tmux Pane owner inventory")
 		}
-		owner := runtimeOwner{SessionID: row[0], WindowID: row[1]}
+		owner := RuntimeOwner{SessionID: row[0], WindowID: row[1]}
 		if existing, seen := guard.paneOwner[row[2]]; seen && existing != owner {
 			return nil, fmt.Errorf("tmux pane %s reports two owning windows", row[2])
 		}
@@ -989,7 +991,7 @@ func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topolog
 func emptyTopologyOwnerGuard() *topologyOwnerGuard {
 	return &topologyOwnerGuard{
 		windowOwner: map[string]string{},
-		paneOwner:   map[string]runtimeOwner{},
+		paneOwner:   map[string]RuntimeOwner{},
 		windowUIDs:  map[string][]string{},
 		paneUIDs:    map[string][]string{},
 	}
@@ -1048,7 +1050,7 @@ func (g *topologyOwnerGuard) requirePlannedParents(ctx context.Context, runtime 
 		work := &plan.windows[wi]
 		windowLabel := work.window.Metadata.Name
 		if work.liveID != "" {
-			if runtime.option(ctx, work.liveID, "#{"+tmuxopts.WindowUID+"}") != work.window.Metadata.UID {
+			if runtime.Option(ctx, work.liveID, "#{"+tmuxopts.WindowUID+"}") != work.window.Metadata.UID {
 				return fmt.Errorf("window %s uid changed after planning", windowLabel)
 			}
 			if err := g.requireWindowOf(sessionID, work.liveID, windowLabel); err != nil {
@@ -1056,7 +1058,7 @@ func (g *topologyOwnerGuard) requirePlannedParents(ctx context.Context, runtime 
 			}
 		}
 		if work.anchorLiveID != "" {
-			if runtime.option(ctx, work.anchorLiveID, "#{"+tmuxopts.PaneUID+"}") != work.anchor.Metadata.UID {
+			if runtime.Option(ctx, work.anchorLiveID, "#{"+tmuxopts.PaneUID+"}") != work.anchor.Metadata.UID {
 				return fmt.Errorf("window %s anchor Pane uid changed after planning", windowLabel)
 			}
 			if err := g.requirePaneOf(sessionID, work.liveID, work.anchorLiveID, windowLabel+"/"+work.anchor.Metadata.Name); err != nil {
@@ -1087,7 +1089,7 @@ func (g *topologyOwnerGuard) requireWindowOf(sessionID, windowID, label string) 
 
 // requirePaneOf proves paneID is present and owned by exactly sessionID/windowID.
 func (g *topologyOwnerGuard) requirePaneOf(sessionID, windowID, paneID, label string) error {
-	want := runtimeOwner{SessionID: sessionID, WindowID: windowID}
+	want := RuntimeOwner{SessionID: sessionID, WindowID: windowID}
 	if owner, present := g.paneOwner[paneID]; !present || owner != want {
 		return fmt.Errorf("pane %s (%s) is not owned by session %s window %s: owner=%q/%q",
 			label, paneID, sessionID, windowID, owner.SessionID, owner.WindowID)
@@ -1120,55 +1122,13 @@ func requireSoleUIDClaim(kind, label, uid, handle string, claims []string) error
 	return nil
 }
 
-// requireCreatedPaneParent re-reads one freshly created Pane's exact parent
-// tuple. A split is not attributed by a before/after owner diff the way
-// new-window is, so the returned handle's parent is proven with its own exact
-// observation before any uid claim or mirror is written to it.
-func requireCreatedPaneParent(ctx context.Context, runtime *materializer, paneID, sessionID, windowID string) error {
-	out, err := runtime.read(ctx, "display-message", "-p", "-t", paneID, "-F",
-		tmuxRowFormat("#{session_id}", "#{window_id}"))
-	if err != nil {
-		return fmt.Errorf("inspect created tmux pane %s parent: %w", paneID, err)
-	}
-	rows := splitTmuxRows(out, 2)
-	if len(rows) != 1 || exactTmuxHandle(rows[0][0], "$") == "" || exactTmuxHandle(rows[0][1], "@") == "" {
-		return fmt.Errorf("inspect created tmux pane %s parent: malformed row %q", paneID, strings.TrimSpace(out))
-	}
-	if rows[0][0] != sessionID || rows[0][1] != windowID {
-		return fmt.Errorf("created tmux pane %s landed in %s/%s, want %s/%s",
-			paneID, rows[0][0], rows[0][1], sessionID, windowID)
-	}
-	return nil
-}
-
-// adoptCreatedPane claims, ledgers, and mirrors one Pane this operation created
-// after proving its parent. A Pane whose parent cannot be proven is left
-// unclaimed and reported as an exact residual instead of being given this
-// Project's identity in the wrong topology.
-func adoptCreatedPane(
-	ctx context.Context,
-	runtime *materializer,
-	paneID, sessionID, windowID string,
-	pane coremetadata.Pane,
-	ledger *runtimeLedger,
-) error {
-	if err := requireCreatedPaneParent(ctx, runtime, paneID, sessionID, windowID); err != nil {
-		runtime.warnUnclaimedHandle(runtimePane, paneID)
-		return err
-	}
-	if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
-		return err
-	}
-	return runtime.mirrorPane(ctx, paneID, pane)
-}
-
 func executeRegistryTopology(
 	ctx context.Context,
 	runtime *materializer,
 	registry *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	plan *registryTopologyPlan,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	newGeneration func() (string, error),
 	operationID string,
 	launcher topologyAgentLauncher,
@@ -1207,14 +1167,14 @@ func executeRegistryTopology(
 	if err := registry.Validate(); err != nil {
 		return MapMetadataError(err)
 	}
-	exists, err := runtime.sessions.SessionExists(ctx, plan.sessionName)
+	exists, err := runtime.Sessions.SessionExists(ctx, plan.sessionName)
 	if err != nil {
 		return fmt.Errorf("revalidate selected Project session: %w", err)
 	}
 	if exists != plan.sessionLive {
 		return fmt.Errorf("selected Project session liveness changed after planning")
 	}
-	if exists && runtime.option(ctx, plan.sessionName, "#{"+tmuxopts.ProjectUIDSession+"}") != plan.project.Metadata.UID {
+	if exists && runtime.Option(ctx, plan.sessionName, "#{"+tmuxopts.ProjectUIDSession+"}") != plan.project.Metadata.UID {
 		return fmt.Errorf("selected Project session uid changed after planning")
 	}
 	// Creating the selected Project session runs the public pre/post-create
@@ -1251,7 +1211,7 @@ func executeRegistryTopology(
 		if first.bootstrap.Metadata.UID == "" {
 			return fmt.Errorf("window %s has no default shell bootstrap", first.window.Metadata.Name)
 		}
-		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.window.Metadata.UID, ledger); err != nil {
+		if err := runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.window.Metadata.UID, ledger); err != nil {
 			return err
 		}
 		if err := runtime.mirrorWindow(ctx, created.WindowID, first.window); err != nil {
@@ -1260,13 +1220,13 @@ func executeRegistryTopology(
 		if err := observeReplayedWindowBinding(registry, mutator, ledger, &first.window, created.SessionID, created.WindowID); err != nil {
 			return err
 		}
-		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, first.bootstrap.Metadata.UID, ledger); err != nil {
+		if err := runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, first.bootstrap.Metadata.UID, ledger); err != nil {
 			return err
 		}
-		if err := runtime.mirrorPane(ctx, created.PaneID, first.bootstrap); err != nil {
+		if err := runtime.MirrorPaneIdentity(ctx, created.PaneID, first.bootstrap); err != nil {
 			return err
 		}
-		observeActivationRuntime(registry, mutator, firstActivation, created.PaneID, runtime.warn)
+		observeActivationRuntime(registry, mutator, firstActivation, created.PaneID, runtime.Warn)
 		first.liveID, first.create = created.WindowID, false
 		for pi := range first.panes {
 			paneWork := &first.panes[pi]
@@ -1309,7 +1269,7 @@ func executeRegistryTopology(
 				materializePaneCWD(plan.project, work.bootstrap),
 				runtime.supervisedLaunch(ctx, bootstrapActivation, nil))
 			if result.WindowID != "" {
-				if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
+				if claimErr := runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(createErr, claimErr)
 				}
 				if mirrorErr := runtime.mirrorWindow(ctx, result.WindowID, work.window); mirrorErr != nil {
@@ -1321,13 +1281,13 @@ func executeRegistryTopology(
 				if result.PaneID != "" {
 					// Attribution already proved this Pane belongs to the exact new
 					// Window under the selected Session.
-					if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.bootstrap.Metadata.UID, ledger); claimErr != nil {
+					if claimErr := runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.bootstrap.Metadata.UID, ledger); claimErr != nil {
 						return errors.Join(createErr, claimErr)
 					}
-					if mirrorErr := runtime.mirrorPane(ctx, result.PaneID, work.bootstrap); mirrorErr != nil {
+					if mirrorErr := runtime.MirrorPaneIdentity(ctx, result.PaneID, work.bootstrap); mirrorErr != nil {
 						return errors.Join(createErr, mirrorErr)
 					}
-					observeActivationRuntime(registry, mutator, bootstrapActivation, result.PaneID, runtime.warn)
+					observeActivationRuntime(registry, mutator, bootstrapActivation, result.PaneID, runtime.Warn)
 				}
 			}
 			if createErr != nil {
@@ -1366,14 +1326,14 @@ func executeRegistryTopology(
 			if activationErr != nil {
 				return activationErr
 			}
-			paneID, splitErr := runtime.splitPane(ctx, splitAnchorID, defaultPlacement,
+			paneID, splitErr := runtime.SplitPane(ctx, splitAnchorID, defaultPlacement,
 				materializePaneCWD(plan.project, paneWork.pane),
 				runtime.supervisedLaunch(ctx, paneActivation, nil), nil)
 			if paneID != "" {
-				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, paneWork.pane, ledger); adoptErr != nil {
+				if adoptErr := AdoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, paneWork.pane, ledger); adoptErr != nil {
 					return errors.Join(splitErr, adoptErr)
 				}
-				observeActivationRuntime(registry, mutator, paneActivation, paneID, runtime.warn)
+				observeActivationRuntime(registry, mutator, paneActivation, paneID, runtime.Warn)
 			}
 			if splitErr != nil {
 				return splitErr
@@ -1392,11 +1352,11 @@ func executeRegistryTopology(
 		if paneID := agentBindings[work.anchor.Metadata.UID]; paneID != "" {
 			work.anchorLiveID = paneID
 		}
-		if work.anchorLiveID == "" || runtime.option(ctx, work.anchorLiveID, "#{"+tmuxopts.PaneUID+"}") != work.anchor.Metadata.UID {
+		if work.anchorLiveID == "" || runtime.Option(ctx, work.anchorLiveID, "#{"+tmuxopts.PaneUID+"}") != work.anchor.Metadata.UID {
 			return fmt.Errorf("window %s role-agnostic anchor Pane is not live after materialization", work.window.Metadata.Name)
 		}
 	}
-	if _, err := mutator.BindLiveProjectSession(registry, plan.project.Metadata.UID, plan.sessionName, runtime.expectedSocketPath); err != nil {
+	if _, err := mutator.BindLiveProjectSession(registry, plan.project.Metadata.UID, plan.sessionName, runtime.ExpectedSocketPath); err != nil {
 		return MapMetadataError(err)
 	}
 	// Startup runs only after every created object carries its exact uid, so a
@@ -1413,7 +1373,7 @@ func executeRegistryTopology(
 func observeReplayedWindowBinding(
 	registry *coremetadata.Registry,
 	mutator coremetadata.Mutator,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	window *coremetadata.Window,
 	sessionID, windowID string,
 ) error {
@@ -1425,7 +1385,7 @@ func observeReplayedWindowBinding(
 		return MapMetadataError(err)
 	}
 	*window = projected
-	ledger.observeCurrentWindow(projected.Metadata.UID, runtimeOwner{
+	ledger.ObserveCurrentWindow(projected.Metadata.UID, RuntimeOwner{
 		SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
 	})
 	return nil

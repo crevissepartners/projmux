@@ -43,7 +43,7 @@ func newProjectWindowIntentFixture(t *testing.T, live bool) *projectWindowIntent
 	create, _ := newTestAgentCreateCommand(t, store, tmux)
 	create.resumes = newFakeResumeLauncher()
 	fx := &projectWindowIntentFixture{store: store, tmux: tmux, create: create,
-		sessions: create.runtime.sessions.(*fakeSessionMaterializer)}
+		sessions: create.runtime.Sessions.(*fakeSessionMaterializer)}
 	create.bindRuntime = func(context.Context) error { fx.natural++; return nil }
 	create.bindExplicitRuntime = func(context.Context) error { fx.explicit++; return nil }
 	return fx

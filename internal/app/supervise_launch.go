@@ -85,14 +85,14 @@ func (m *materializer) environment(name string) string {
 // at startup, so the values are read from the same exact server the pane is
 // created on rather than guessed from this process's environment.
 func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneCommand, error) {
-	if memo := m.paneDefaults; memo != nil && m.expectedSocketPath != "" && memo.socket == filepath.Clean(m.expectedSocketPath) {
+	if memo := m.paneDefaults; memo != nil && m.ExpectedSocketPath != "" && memo.socket == filepath.Clean(m.ExpectedSocketPath) {
 		return resolvePaneCommand(memo.shell, memo.command, m.environment("SHELL")), nil
 	}
-	shell, err := m.read(ctx, "show-options", "-gv", "default-shell")
+	shell, err := m.ReadTmux(ctx, "show-options", "-gv", "default-shell")
 	if err != nil {
 		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-shell: %w", err)
 	}
-	command, err := m.read(ctx, "show-options", "-gv", "default-command")
+	command, err := m.ReadTmux(ctx, "show-options", "-gv", "default-command")
 	if err != nil {
 		return resolvedPaneCommand{}, fmt.Errorf("read tmux default-command: %w", err)
 	}
@@ -149,11 +149,11 @@ func (m *materializer) prefetchPaneDefaults(ctx context.Context) func() {
 			m.paneDefaults = nil
 		}
 	}
-	if m == nil || m.expectedSocketPath == "" || !filepath.IsAbs(m.expectedSocketPath) {
+	if m == nil || m.ExpectedSocketPath == "" || !filepath.IsAbs(m.ExpectedSocketPath) {
 		return clearMemo
 	}
-	socket := filepath.Clean(m.expectedSocketPath)
-	sections, err := readTmuxSequence(ctx, m.routedRunner(), paneDefaultsReadShell, paneDefaultsReadCommand)
+	socket := filepath.Clean(m.ExpectedSocketPath)
+	sections, err := readTmuxSequence(ctx, m.RoutedRunner(), paneDefaultsReadShell, paneDefaultsReadCommand)
 	if err != nil {
 		return clearMemo
 	}
@@ -184,8 +184,8 @@ func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec,
 			// Keep the internal supervisor in place with an empty authority. Its
 			// Agent admission fails closed before provider start; silently falling
 			// back to an ungated provider here would reopen the ownership race.
-			if m.warn != nil {
-				fmt.Fprintf(m.warn, "projmux: pane %s Agent activation will fail closed because the creator Registry authority cannot be resolved: %v\n", spec.PaneUID, pathErr)
+			if m.Warn != nil {
+				fmt.Fprintf(m.Warn, "projmux: pane %s Agent activation will fail closed because the creator Registry authority cannot be resolved: %v\n", spec.PaneUID, pathErr)
 			}
 		} else {
 			spec.RegistryPath = registryPath
@@ -234,10 +234,10 @@ func creatorRegistryPath() (string, error) {
 }
 
 func (m *materializer) warnUnsupervised(spec superviseSpec, reason string) {
-	if m == nil || m.warn == nil {
+	if m == nil || m.Warn == nil {
 		return
 	}
-	fmt.Fprintf(m.warn, "projmux: pane %s starts without termination evidence because %s\n", spec.PaneUID, reason)
+	fmt.Fprintf(m.Warn, "projmux: pane %s starts without termination evidence because %s\n", spec.PaneUID, reason)
 }
 
 // mintGeneration issues one activation generation for a create/resume route.

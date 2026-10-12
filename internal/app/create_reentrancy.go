@@ -1,9 +1,11 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"fmt"
-	"os"
+
 	"strconv"
 	"strings"
 	"time"
@@ -19,9 +21,7 @@ func newCreateOperationMarker(operationID string) string {
 // a transaction whose clock is injected produces the same marker on every run.
 // The format is the hook-visible contract; only the source of the instant
 // differs from newCreateOperationMarker.
-func newCreateOperationMarkerAt(operationID string, now time.Time) string {
-	return fmt.Sprintf("v1:%d:%d:%s", os.Getpid(), now.Unix(), strings.TrimSpace(operationID))
-}
+var newCreateOperationMarkerAt = mutationruntime.NewCreateOperationMarkerAt
 
 func activeCreateOperationMarker(marker string, now time.Time) bool {
 	parts := strings.SplitN(strings.TrimSpace(marker), ":", 4)
