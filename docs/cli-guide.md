@@ -2171,7 +2171,8 @@ changes nothing, and refuses when the Codex app server does not take it
 (`relaunch-codex-settings-unsupported`): the resume after the stop could not
 apply the new settings.
 Outside tmux the stop needs `--socket <name>` or `--socket-path <absolute>`,
-exactly as `delete pane` does. A Running Agent without `--model` whose
+exactly as `delete pane` does. Without `--detach`, a Running Agent without
+`--model` whose
 settings, `--effort` included, resolve to exactly what it was launched with,
 whose agent guidance and Project label link rules are the ones it recorded,
 and whose `--profile`, `--instructions`, or `--reset` changes no recorded value,
