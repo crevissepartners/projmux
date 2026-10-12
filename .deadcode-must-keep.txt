@@ -6,6 +6,7 @@
 # Each data row is exactly `symbol<TAB>maintenance reason`; reasons are
 # mandatory. This file suppresses only its exact, reason-bearing symbols when
 # they appear in deadcode output; unrelated new findings still fail the gate.
+
 Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentInteraction.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -59,6 +60,7 @@ Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its a
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.StopProject	Public v0 Project stop SDK entrypoint; SDK/CLI parity, exact socket/PID/UID guards and external consumer tests.
 Client.UnregisterProject	Public v0 Project unregister entrypoint; verified by external consumer and CLI parity tests.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.WriteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
@@ -71,6 +73,7 @@ Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapt
 Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.questionService	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.newAdapter	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -103,6 +106,7 @@ Dispositions	Closed CLI route disposition catalog retained as the test seam that
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+FindProjectStopTarget	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
 Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
 Fixture.Ledger	Test-only installed qualification API retained for semantic ambient non-mutation proof.
@@ -209,6 +213,7 @@ ProcessAlive	Public v0 Agent catalog SDK entrypoint or its read-only adapter; re
 ProcessQuestionDispatcher.AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ProcessQuestionDispatcher.ReadExactProcessQuestions	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Project.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+ProjectNotLive	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 ProjectStore.Delete	Project common-instruction API of internal/core/agentguidance, retained for consumers that remove per-Project instruction files; the CLI has no editing command.
 ProjectStore.Save	Project common-instruction API of internal/core/agentguidance, retained for consumers that edit per-Project instruction files; the CLI has no editing command.
 PromptLineWithCursor	Default-theme cursor prompt entry point retained as the picker prompt seam over QueryWithCursorAndTheme.
@@ -233,6 +238,7 @@ Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as th
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 ResolveAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ResolveProcessCodexRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+ResolveProjectStopRoute	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
 ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained with the per-provider ResumeCommand wrappers after snapshot replay, its only product caller, was removed.
@@ -255,6 +261,7 @@ SkipIfReplacementCollapses	Test-only host probe retained: socket-replacement tes
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 Snapshot.Termination	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
+StopProject	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Store.Delete	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Dir	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.

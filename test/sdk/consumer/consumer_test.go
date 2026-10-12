@@ -376,3 +376,22 @@ func TestDeletePublicConsumer(t *testing.T) {
 	_ = core.DeleteRegistryOnly{ResourceUID: "agent", Evidence: "offline"}
 	_ = core.DeleteWindow{UID: "window", WindowID: "@1", SessionID: "$1", RootKind: core.KindProject, EndsSession: true}
 }
+
+func TestExternalStopProjectConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{StateDir: filepath.Join(t.TempDir(), "state")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var result core.StopProjectResult
+	result, err = c.StopProject(ctx, core.StopProjectRequest{Ref: "uid:project", SocketPath: "/explicit/socket"})
+	if !errors.Is(err, context.Canceled) || result.Stopped {
+		t.Fatalf("cancelled stop: %+v %v", result, err)
+	}
+	_, err = c.StopProject(context.Background(), core.StopProjectRequest{})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("input refusal %v", err)
+	}
+}

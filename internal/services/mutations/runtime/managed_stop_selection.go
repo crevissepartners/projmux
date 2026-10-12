@@ -15,8 +15,8 @@ func cleanStopPath(s string) string {
 }
 func ResolveManagedProjectStopTarget(view registryview.View, selection, sessionName string) (ManagedRuntimeStopTarget, bool) {
 	selectionUID := ""
-	if strings.HasPrefix(strings.TrimSpace(selection), "uid:") {
-		selectionUID = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(selection), "uid:"))
+	if after, ok := strings.CutPrefix(strings.TrimSpace(selection), "uid:"); ok {
+		selectionUID = strings.TrimSpace(after)
 	}
 	for _, row := range view.Section(registryview.SectionProjects) {
 		if row.Kind != registryview.RowKindProject {

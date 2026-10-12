@@ -15,11 +15,12 @@ import (
 )
 
 type StopStore struct {
-	Load      func() (coremetadata.Registry, error)
-	Update    func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
-	Mutator   func() coremetadata.Mutator
-	MapError  func(error) error
-	WrapError func(coremetadata.ProjectLifecycleAction, string, string, string, error) error
+	Interruptions func(string, []ProjectStopInterruption)
+	Load          func() (coremetadata.Registry, error)
+	Update        func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	Mutator       func() coremetadata.Mutator
+	MapError      func(error) error
+	WrapError     func(coremetadata.ProjectLifecycleAction, string, string, string, error) error
 }
 
 func (s *StopStore) mapError(err error) error {
@@ -118,6 +119,9 @@ func ExecuteManagedRuntimeStop(ctx context.Context, runner TmuxCommandRunner, ta
 		if err != nil {
 			return err
 		}
+	}
+	if stopStore != nil && stopStore.Interruptions != nil {
+		stopStore.Interruptions(operationID, interruptions)
 	}
 	compensate := func(cause error) error {
 		if len(interruptions) == 0 {

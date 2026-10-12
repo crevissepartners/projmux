@@ -803,6 +803,7 @@ func (p RuntimeMutationPlan) Validate() error {
 				return fmt.Errorf("runtime mutation plan: action %q standalone authority is not bound to its exact physical route", action.Verb)
 			}
 			if authority.Class == RuntimeMutationRouteStandaloneExplicit &&
+				(action.Verb != MutationStopManagedSession || action.Target.Kind != "Project") &&
 				((action.Verb != MutationWriteIdentity && action.Verb != MutationWriteOption && action.Verb != MutationWritePresentationOption && action.Verb != MutationRenameWindow) ||
 					!strings.HasPrefix(action.Target.Parent, "controller.identity/") || action.Controller == nil) {
 				return fmt.Errorf("runtime mutation plan: action %q cannot use controller-only explicit standalone authority", action.Verb)

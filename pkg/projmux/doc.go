@@ -35,6 +35,13 @@
 // return a plan without writing. Process targets and Pane/Agent deletion currently
 // return declared unsupported Codes. The SDK never queues a self-kill. Deletion
 // records use via=sdk; actor is unproven outside an ambient Pane.
+// StopProject ends one explicitly selected Project's persistent tmux session.
+// StopProjectRequest.SocketPath overrides Options.SocketPath; empty routing uses
+// the app-owned projmux socket with server generation and Project UID guards.
+// Its receipt always reports focus unchanged. Project stop ends only the tmux
+// session; Running Agent interruption evidence is recorded exactly as in CLI.
+// A Running process descendant may therefore be projected Offline/interrupted
+// while its provider survives; StopProject does not control process lifetimes.
 // Clients own no processes or goroutines. Concurrent calls are supported, but
 // multi-call transactions and concurrent profile edits are not serialized.
 // Returned resource graphs, bytes, maps, and slices belong to the caller.

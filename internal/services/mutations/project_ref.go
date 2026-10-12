@@ -9,10 +9,10 @@ import (
 )
 
 // ResolveProjectRef is the shared explicit lifecycle selector, including absolute roots.
-func ResolveProjectRef(load func() (coremetadata.Registry, error), spelling, ref string, usage func(string) error, mapError func(error) error) (coremetadata.Project, error) {
+func ResolveProjectRef(load func() (coremetadata.Registry, error), spelling, ref string, usageError func(string) error, mapError func(error) error) (coremetadata.Project, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return coremetadata.Project{}, usage(spelling + " requires a non-empty Project reference")
+		return coremetadata.Project{}, usageError(spelling + " requires a non-empty Project reference")
 	}
 	if load == nil {
 		return coremetadata.Project{}, fmt.Errorf("%s: the resource registry is not configured", spelling)
@@ -24,7 +24,7 @@ func ResolveProjectRef(load func() (coremetadata.Registry, error), spelling, ref
 	if filepath.IsAbs(ref) {
 		project, ok := registry.ProjectByRoot(filepath.Clean(ref))
 		if !ok {
-			return coremetadata.Project{}, usage(fmt.Sprintf(
+			return coremetadata.Project{}, usageError(fmt.Sprintf(
 				"%s: no Project claims root %q; register it with `projmux create project --root %s`", spelling, ref, ref))
 		}
 		return *project, nil
