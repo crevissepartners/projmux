@@ -10,6 +10,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const projectStopAgentsStillRunning = "project-stop-agents-still-running"
@@ -32,7 +33,7 @@ func runningProjectProcessAgents(reg coremetadata.Registry, projectUID string) [
 			continue
 		}
 		pane, ok := reg.Pane(agent.Status.PaneRef)
-		if ok && (pane.Status.ProcessSession != nil || pane.Status.Activation.Kind == coremetadata.RuntimeProcess) {
+		if ok && mutationruntime.IsNonTmuxRuntimePane(*pane) {
 			targets = append(targets, projectProcessStopTarget{agent.Clone(), pane.Clone()})
 		}
 	}
