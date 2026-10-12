@@ -90,7 +90,15 @@ func TestDeletePaneAgentSDKCLIParity(t *testing.T) {
 			var snapshots, receipts []string
 			for _, sdk := range []bool{false, true} {
 				state, _, c := renameState(t, reg)
-				root := t.TempDir()
+				root, rootErr := os.MkdirTemp(os.Getenv("TMUX_TMPDIR"), "sdk-pane-")
+				if rootErr != nil {
+					t.Fatal(rootErr)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(root); err != nil {
+						t.Error(err)
+					}
+				})
 				if st, e := os.Stat(root); e != nil || !st.IsDir() {
 					t.Fatal("socket root absent")
 				}
