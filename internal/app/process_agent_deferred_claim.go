@@ -30,7 +30,9 @@ type deferredClaimRecord struct {
 	Nonce                     string
 	// Inflight is persisted before the first provider frame. A replacement
 	// claimant fails it as unknown rather than writing the frame twice.
-	Inflight string
+	Inflight      string
+	Detached      bool `json:",omitempty"`
+	StopRequested bool `json:",omitempty"`
 }
 
 type deferredProcessClaim struct {
@@ -134,7 +136,7 @@ func (c *agentCommand) checkDeferredClaim(uid string, claim *deferredProcessClai
 		return err
 	}
 	if claim != nil {
-		if claim.command != c || claim.record.Agent != uid || record.Nonce != claim.record.Nonce || !deferredClaimLive(record) {
+		if claim.command != c || claim.record.Agent != uid || record.Nonce != claim.record.Nonce || record.Binding != claim.record.Binding || record.Process != claim.record.Process || record.Provider != claim.record.Provider || record.Session != claim.record.Session || record.Thread != claim.record.Thread || record.Detached != claim.record.Detached || record.StopRequested || !deferredClaimLive(record) {
 			return fmt.Errorf("%s: %w: deferred claim changed", processResumeRefused, processhost.ErrResumeRefused)
 		}
 	} else if deferredClaimLive(record) {
@@ -207,7 +209,7 @@ func (c *agentCommand) claimDeferredProcessAgent(ctx context.Context, options pr
 	if err != nil {
 		return nil, err
 	}
-	claim := &deferredProcessClaim{command: c, options: options, path: path, launchDigest: deferredLaunchDigest(prepared), record: deferredClaimRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Binding: candidate.Record.Binding, Provider: candidate.Record.Provider, Session: candidate.Record.SessionID, Thread: candidate.Record.ThreadID, Process: identity, Nonce: nonce}}
+	claim := &deferredProcessClaim{command: c, options: options, path: path, launchDigest: deferredLaunchDigest(prepared), record: deferredClaimRecord{Version: 1, Agent: candidate.Agent.Metadata.UID, Binding: candidate.Record.Binding, Provider: candidate.Record.Provider, Session: candidate.Record.SessionID, Thread: candidate.Record.ThreadID, Process: identity, Nonce: nonce, Detached: processOwnerMode(ctx) == processHostOwnerDetached}}
 	if err = writeDeferredClaim(path, claim.record); err != nil {
 		return nil, err
 	}

@@ -48,7 +48,7 @@ func (c *agentCommand) sendDeferredPeer(registry coremetadata.Registry, source, 
 	if err != nil {
 		return true, err
 	}
-	if !deferredClaimLive(claim) {
+	if claim.StopRequested || !deferredClaimLive(claim) {
 		return false, nil
 	}
 	registry, err = c.readMessageRegistry()

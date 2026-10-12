@@ -245,7 +245,7 @@ func (c *agentCommand) acceptDeferredUserTurn(uid, text string) (*deferredUserIn
 	if err != nil {
 		return nil, true, err
 	}
-	if !deferredClaimLive(claim) {
+	if claim.StopRequested || !deferredClaimLive(claim) {
 		return nil, false, nil
 	}
 	registry, err := c.loadRegistry()

@@ -23,10 +23,22 @@ written to that log. Later provider exit is read through termination records.
 and owner retirement, and preserves the Agent, Pane, and conversation. An
 already stopped target with exact Wait evidence is a no-op. An unknown owner
 or stale generation is refused; inspect it with `describe agent` before retrying.
-Use ordinary foreground `agent resume` to continue the preserved conversation.
-Detached resume/relaunch and direct `create window --detach` are unsupported.
+Use `agent resume <agent-ref> --detach -- <prompt>` to continue the same
+conversation under a new independent owner. Claude needs a prompt; Codex can
+resume without one. Add `--wait-for-peer --detach` to return with a child-free
+claim: the first coordination message starts the same conversation and remaining
+messages follow in acceptance order. `agent stop` releases this claim by exact
+claimant identity without writing provider Wait; after child birth it waits for
+actual provider Wait. Foreground resume remains the default, including its
+stdin EOF and provider exit contract. Detached relaunch and direct
+`create window --detach` are unsupported.
 Detachment does not promise survival across reboot, logout, or termination of
-a whole service/cgroup.
+a whole service/cgroup or PID namespace. An orphaned owner can reparent to
+the nearest subreaper; `setsid` does not move it out of that cgroup or namespace.
+Codex sandbox native tools can run in a temporary PID namespace which ends with
+the tool. A detached Agent launched there can return success and then die when
+that namespace ends. Run the CLI from a caller whose lifetime domain stays
+alive; detachment does not provide namespace escape or automatic recovery.
 This page covers what you see and do while such an Agent runs. Creation flags,
 output, exit codes, and the opt-in `post-create` hook contract are in
 [Process Host Post-Create](hooks.md#process-host-post-create). The Registry
@@ -312,8 +324,8 @@ plan without replacing it; when absent, it prepares the recorded configuration
 through the samehost planner and refuses implicit recipe drift. `Prepared` has no
 live lifetime to register. The first actual user input acquires the existing
 claim and uses the frozen resume engine. These are CORE producer contracts for
-a future consumer; they do not establish web UI support. The public CLI retains
-its foreground ownership, stdin/signal cancellation and deferred peer waiting.
+a future consumer; they do not establish web UI support. Public relaunch retains foreground ownership, stdin/signal cancellation and
+deferred peer waiting. Public resume additionally supports `--detach`.
 
 The first peer message starts that configuration with its existing untrusted
 coordination envelope. An operator can instead submit `agent turn start` from
@@ -339,22 +351,29 @@ active-writer (`-32600`) refusal does not create a replacement conversation.
 
 ## Waiting to resume on a peer message
 
-An Offline Agent with a recorded resumable conversation can have one foreground
-claimant, without starting a provider yet:
+An Offline Agent with a recorded resumable conversation can have one claimant,
+without starting a provider yet:
 
 ```sh
 projmux agent resume <agent-ref> --wait-for-peer
 ```
 
-This works for Claude and Codex. Keep stdin open: EOF, `SIGINT`, or `SIGTERM`
+This works for Claude and Codex. Add `--detach` to return after exact child-free
+claim ownership is confirmed. Caller EOF does not release a detached claim.
+`agent stop <agent-ref>` releases it without a child or new Wait record. Once
+the first peer wakes the provider, Stop uses actual provider Wait instead.
+
+In foreground mode, keep stdin open: EOF, `SIGINT`, or `SIGTERM`
 before resume releases the claim and exits 0. With `</dev/null` or a cron stdin,
 the command ends immediately. After resume the command owns the provider and
 reports its actual exit, as ordinary `agent resume` does.
 
-Default output starts with
+Foreground default output starts with
 `agent uid:<agent> pane uid:<pane> runtime=process foreground=claimed`;
 successful resume then prints the existing `foreground=owned` result.
-`-o none` suppresses output. The waiting flag cannot accompany a prompt,
+Detached claims report `foreground=detached claim=waiting`, and other selected
+projections keep their format with ownership on stderr. `-o none` suppresses
+output. The waiting flag cannot accompany a prompt,
 `--dialogue-reply-only`, or a tmux Agent.
 
 While that exact claimant process lives, peer sends are accepted with

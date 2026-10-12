@@ -121,7 +121,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent stop <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [--detach] [-o <mode>] [-- <prompt>]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn deliver <agent-ref> -- <text>
@@ -155,7 +155,7 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent stop`](#projmux-agent-stop) | Stop one exact process Agent after its provider Wait; preserve the Agent, Pane, and conversation |
-| [`projmux agent resume`](#projmux-agent-resume) | Resume one retired process Agent in the foreground, or rebind an Offline or Failed tmux Agent |
+| [`projmux agent resume`](#projmux-agent-resume) | Resume one retired process Agent with optional detached ownership, or rebind an Offline or Failed tmux Agent |
 | [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval, or list and answer Claude and Codex permission requests |
@@ -235,11 +235,11 @@ Allowed effects:
 projmux agent stop <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
-Process Agents only; tmux targets are refused before a control write. Success requires the exact generation's durable provider Wait and kernel retirement of its owner and provider. A target already stopped with that evidence is a no-op. Unknown or stale owners never become successful stops. Resume uses the preserved conversation.
+Process Agents only; tmux targets are refused before a control write. A detached deferred claim is released by exact claimant identity before child birth, without creating Wait evidence. After birth, success requires the exact generation's durable provider Wait and kernel retirement of its owner and provider. A target already stopped with that evidence is a no-op. Unknown or stale owners never become successful stops. Resume uses the preserved conversation.
 
 ### `projmux agent resume`
 
-Resume one retired process Agent in the foreground, or rebind an Offline or Failed tmux Agent
+Resume one retired process Agent with optional detached ownership, or rebind an Offline or Failed tmux Agent
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -255,26 +255,28 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [--detach] [-o <mode>] [-- <prompt>]
 ```
 
 Process resume keeps the Agent UID and Pane UID, starts a fresh owned host generation, and never creates a replacement conversation. It requires processSession.resumeState=resumable and no live owner.
 
 Without --wait-for-peer, process Claude requires -- <prompt>: stream-json emits init only after the first user frame. Codex can reattach without a prompt. This is a new user turn; interrupted turns are not resent.
 
-Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process foreground=owned. Other -o projections keep their format with ownership on stderr, none suppresses displays, and pane-id is refused. Exit is actual provider Wait, including 128+signal; stdin EOF, INT and TERM stop only this owned provider. The receipt operation is agent.resume: identity reused, address/topology/desired-state unchanged, runtime materialized, and focus unchanged; tmux resume keeps its existing result without a receipt.
+Process stdout starts with agent uid:<agent> pane uid:<pane> runtime=process foreground=owned. Other -o projections keep their format with ownership on stderr, none suppresses displays, and pane-id is refused. Foreground exit is actual provider Wait, including 128+signal; stdin EOF, INT and TERM stop only this owned provider. The receipt operation is agent.resume: identity reused, address/topology/desired-state unchanged, runtime materialized, and focus unchanged; tmux resume keeps its existing result without a receipt.
 
-Process resume remains foreground-owned: stdin EOF terminates this owned provider, so </dev/null and ordinary CI or cron invocation can end it immediately. Keep stdin open for the intended lifetime; no daemon or detached resume is started.
+Process resume is foreground-owned by default: keep stdin open for the intended lifetime. --detach starts an independent owner and returns exit 0 only after exact owner/binding startup and output commit. Claude requires a prompt; Codex can reattach promptlessly. Ownership reports foreground=detached. Caller EOF, HUP, and caller exit do not end the resumed generation. Tmux targets are refused before mutation; detached relaunch remains unsupported.
 
 --wait-for-peer claims one Offline, resumable process Agent without starting its provider. It cannot be combined with a prompt, --dialogue-reply-only or a tmux Agent. The first peer message resumes the recorded conversation as untrusted coordination; the remaining held messages follow in acceptance order. A claimed Claude Agent also accepts agent turn start as raw first input; a committed relaunch uses its frozen configuration.
 
-A waiting claim prints agent uid:<agent> pane uid:<pane> runtime=process foreground=claimed, followed by the usual foreground=owned result after resume. Other -o modes put ownership on stderr; none suppresses output. EOF, INT or TERM before provider startup release the claim and exit 0; after startup exit is actual provider Wait. Keep stdin open: </dev/null and ordinary cron invocation end the claim immediately.
+A waiting claim prints agent uid:<agent> pane uid:<pane> runtime=process foreground=claimed, followed by the usual foreground=owned result after resume. Other -o modes put ownership on stderr; none suppresses output. In foreground mode, EOF, INT or TERM before provider startup release the claim and exit 0; after startup exit is actual provider Wait. --wait-for-peer --detach returns after an exact child-free claim handshake and survives caller EOF. It reports foreground=detached claim=waiting, with the selected output projection; first peer input starts a new generation of the same conversation. agent stop releases this exact detached claim without inventing child or Wait evidence; after provider birth it requires actual Wait.
 
 Only one exact live claimant can own a deferred Agent. A second claim or ordinary resume is refused with process-resume-owned. A killed claimant is replaced on the next claim attempt, preserving undispatched messages until their deadlines; a potentially dispatched frame is failed with outcomeUnknown and never automatically resent.
 
 Previous interrupted turns and expired controls remain in processSession.history. A killed owner without durable Wait evidence remains unknown and cannot resume; automatic revival is unavailable. Process Claude and Codex can change their launch configuration through agent relaunch.
 
 The preceding killed-owner refusal has one exception: explicit CLI agent resume can recover a current process conversation when the kernel proves both its recorded owner and provider identities absent. It rechecks both inside the reservation transaction, records reconcile/unknown without exit status, and warns that the last turn may have been truncated. Either identity alive or unreadable, or a retired unknown record without identities, keeps the existing refusal. Automatic reattachment and deferred claims do not use this recovery.
+
+Detached resume does not escape the nearest subreaper, cgroup, or PID namespace. Reboot, logout, and whole service/cgroup or PID namespace termination survival are not guaranteed. A Codex sandbox native tool may create a temporary namespace that ends with the tool; detached Agent survival there is not guaranteed.
 
 Resume refusals are process-resume-not-resumable (no resumable record or unknown), process-resume-owned (exact live owner), and process-resume-refused (invalid, ambiguous, unretired, or provider-rejected evidence). They exit nonzero without falling back to a new conversation.
 
@@ -1647,9 +1649,9 @@ projmux create agent [--host tmux|process] [--detach] [--provider <provider>] [-
 
 --host defaults to tmux and keeps existing behavior. --host process owns one foreground Claude or Codex Agent without tmux; Antigravity is refused as process-provider-unsupported. It requires an exact Project or Window, and accepts --create-window --window <exact name> to ensure a virtual Window when absent (an existing name is reused). It refuses fan-out, Pane anchors, placement, interactive modes, and -o pane-id before creation.
 
-create agent --host process --detach returns exit 0 after verified startup and ownership; its Agent stays alive after stdin EOF, caller exit, terminal HUP, or caller provider group termination. Ownership reports foreground=detached; provider exit is read through existing termination records. agent stop stops one exact process generation after actual Wait and preserves its conversation. Direct create window --detach and tmux detach are unsupported. Reboot, logout, and service/cgroup-wide termination survival are not guaranteed.
+create agent --host process --detach returns exit 0 after verified startup and ownership; its Agent stays alive after stdin EOF, caller exit, terminal HUP, or caller provider group termination. Ownership reports foreground=detached; provider exit is read through existing termination records. agent stop stops one exact process generation after actual Wait and preserves its conversation. Direct create window --detach and tmux detach are unsupported. Reboot, logout, and whole service/cgroup or PID namespace termination survival are not guaranteed. An owner may reparent to the nearest subreaper; detachment does not escape its cgroup or PID namespace. Codex sandbox native tools may use a temporary PID namespace that ends with the tool, so detached Agents launched there may die after success.
 
-Process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
+Foreground process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
 
 The owner stops its provider on stdin EOF: </dev/null or closed stdin (CI steps, cron, nohup, or a noninteractive shell's &) can end it immediately. Keep stdin open, for example: `d=$(mktemp -d); mkfifo "$d/in"; exec 3<>"$d/in"; projmux create agent --host process --provider claude --project alpha <"$d/in"; exec 3>&-; rm -r "$d"`.
 

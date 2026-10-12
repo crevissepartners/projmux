@@ -313,6 +313,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	model := fs.String("model", "", "claude or codex: model name this resume runs; recorded on the Agent")
 	effort := fs.String("effort", "", "claude or codex: effort level, recorded on the Agent: "+strings.Join(claudeEffortLevels, "|"))
 	waitForPeer := fs.Bool("wait-for-peer", false, "process only: claim and wait for a peer first frame")
+	detach := fs.Bool("detach", false, "process only: resume under an independent owner")
 	head := args
 	var prompt []string
 	if boundary := slices.Index(args, argumentTerminator); boundary > 0 && processResumeHasReference(fs, args[:boundary]) {
@@ -345,6 +346,9 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	agent, ok := registry.Agent(match.UID)
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
+	}
+	if *detach {
+		return c.runDetachedProcessResume(*agent, flags, *model, *effort, *dialogueReplyOnly, *waitForPeer, prompt, stdout, stderr)
 	}
 	if *waitForPeer {
 		if len(prompt) > 0 || *dialogueReplyOnly {
