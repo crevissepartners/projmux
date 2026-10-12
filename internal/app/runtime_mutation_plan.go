@@ -1,11 +1,5 @@
 package app
 
-import (
-	"fmt"
-)
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
-// runtimeMutationAbsentTargetConverged is the sentinel an absence-effect Guard
-// returns when its own fresh read already proved the exact target absent.
-func runtimeMutationAbsentTargetConverged(target string) error {
-	return fmt.Errorf("exact target %s already absent: %w", target, errRuntimeMutationEffectConverged)
-}
+var runtimeMutationAbsentTargetConverged = mutationruntime.RuntimeMutationAbsentTargetConverged

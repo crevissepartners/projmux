@@ -14,14 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
-func bindRuntimeMutationRouteTarget(target *runtimeMutationTarget, route runtimeMutationRoute) {
-	if target == nil {
-		return
-	}
-	target.Socket = route.Target.Flag() + "=" + route.Target.Value
-	target.PhysicalSocket = printableRuntimeMutationSocket(route.ExpectedSocketPath)
-	target.RouteAuthority = route.Authority.Printable()
-}
+var bindRuntimeMutationRouteTarget = mutationruntime.BindRuntimeMutationRouteTarget
 
 // observeExplicitAppAnchorAuthority binds a detached invocation's required
 // `%N` operand to the already-proven physical app socket and server generation.

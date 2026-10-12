@@ -3471,7 +3471,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"delete_pane_runtime.go:queueSelfKill":                                      true,
 		"../services/mutations/runtime/delete_window_runtime.go:KillAll":            true,
 		"../services/mutations/runtime/delete_window_runtime.go:QueueSelfKill":      true,
-		"runtime_stop.go:executeManagedRuntimeStop":                                 true,
+		"../services/mutations/runtime/managed_stop.go:ExecuteManagedRuntimeStop":   true,
 		"shell.go:provisionAppSession":                                              true,
 		"shell.go:prepareControlSession":                                            true,
 		"shell.go:rollbackControlBootstrap":                                         true,

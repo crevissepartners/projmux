@@ -32,6 +32,8 @@ import (
 // New fields in any reachable internal struct fail until the public model follows.
 func TestPublicResourceFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
+		{reflect.TypeFor[mutationruntime.StopProjectResult](), reflect.TypeFor[core.StopProjectResult]()},
+		{reflect.TypeFor[mutationruntime.ProjectStopInterruption](), reflect.TypeFor[core.ProjectStopInterruption]()},
 		{reflect.TypeFor[receipt.OperationReceipt](), reflect.TypeFor[core.OperationReceipt]()},
 		{reflect.TypeFor[mutationruntime.WindowLiveDeleteTarget](), reflect.TypeFor[core.DeleteWindow]()},
 		{reflect.TypeFor[mutationruntime.PaneLiveDeleteTarget](), reflect.TypeFor[core.DeletePane]()},
