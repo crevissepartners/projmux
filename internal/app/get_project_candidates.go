@@ -24,7 +24,7 @@ func (c *getCommand) runProjectCandidates(args []string, stdout, stderr io.Write
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return usageError(err.Error())
+		return flagParseError(err)
 	}
 	if fs.NArg() != 0 {
 		return usageError("get project-candidates does not accept positional arguments")
