@@ -150,4 +150,13 @@
 // absent target produces no writes or Notice; an unavailable route gives the
 // existing Window Notice. Without a socket, only Window returns that Notice.
 // ControlSession descendants are outside this mutation API.
+// UnregisterProject removes one explicitly named Project Registry graph while
+// preserving runtime and external assets. UnregisterRequest.Ref names
+// one Project by name or uid:. DryRun and missing Confirm write nothing; the latter
+// returns CodeConfirmationRequired with the plan. Committed results carry the
+// shared receipt and deletion-record OperationID. Records use via sdk and no
+// ambient Pane actor. Record failures are best effort and appear in Notice.
+// Plan changes, lifecycle refusals and Registry execution failures have declared
+// Code constants and preserve their causes. CLI selection-result messages remain
+// unchanged; SDK input-shape messages name Go fields.
 package projmux

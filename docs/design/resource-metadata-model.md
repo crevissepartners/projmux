@@ -432,8 +432,8 @@ Termination evidence transport:
   delete prints spells it `delete.pane` and so on, a separate surface that is
   not unified with it); `operationID` is the delete's intentional termination
   receipt id, or one minted the same way for unregister and prune;
-  and `via` is `cli`, `ui` (the generated Pane and Window delete keys), or
-  `prune`. `targets` are what the operator named; `affected` is every
+  and `via` is `cli`, `ui` (the generated Pane and Window delete keys),
+  `prune`, or `sdk` (the public library). `targets` are what the operator named; `affected` is every
   Project, ControlSession, Window, Agent, and Pane present before the commit
   and absent after it (targets included), ordered by kind and then uid, each
   with action `deleted`. No explicit deletion route removes a ControlSession

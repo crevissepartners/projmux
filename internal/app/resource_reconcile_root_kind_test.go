@@ -100,7 +100,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "resolves an Agent workspace against Project roots; a ControlSession has no root to offer",
 	},
 	{
-		File: "internal/app/deletion_record.go", Func: "deletionAffectedBetween",
+		File: "internal/services/mutations/deletion_record.go", Func: "DeletionAffectedBetween",
 		Source: "Registry", Verdict: rootKindBoth,
 		Why: "a deletion record's affected set diffs every resource of both root kinds and all descendants before and after the commit",
 	},

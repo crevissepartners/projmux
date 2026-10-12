@@ -338,3 +338,25 @@ func TestExternalRenameConsumer(t *testing.T) {
 		t.Fatalf("projection: %#v", renamed.Projection)
 	}
 }
+
+func TestUnregisterProjectPublicConsumer(t *testing.T) {
+	client, err := projmux.NewClient(projmux.Options{StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.CreateProject(context.Background(), core.CreateProjectRequest{Root: t.TempDir(), Name: "sdk-unregister"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := core.UnregisterRequest{Ref: "uid:" + created.Project.Metadata.UID}
+	plan, err := client.UnregisterProject(context.Background(), req)
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeConfirmationRequired || len(plan.Plan.Targets) != 1 {
+		t.Fatalf("%+v %v", plan, err)
+	}
+	req.Confirm = true
+	result, err := client.UnregisterProject(context.Background(), req)
+	if err != nil || !result.Committed || result.OperationID == "" || result.Receipt.Operation != core.OperationUnregisterProject {
+		t.Fatalf("%+v %v", result, err)
+	}
+}

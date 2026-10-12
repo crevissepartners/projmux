@@ -58,6 +58,7 @@ Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its a
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.UnregisterProject	Public v0 Project unregister entrypoint; verified by external consumer and CLI parity tests.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.WriteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.WriteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
@@ -199,6 +200,7 @@ PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/sele
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 Placeholders	Project link rule API of internal/core/projectlinks, retained for the web backend that lists the placeholders a template may use; no in-tree caller until that backend lands.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
+PreviewDelete	Public v0 Project unregister plan projection; verified by CLI dry-run parity and public shape tests.
 PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 ProcessAlive	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
@@ -422,6 +424,7 @@ tmuxPaneBorderFormat	Default badge-style entry point of tmuxPaneBorderFormatWith
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
 tmuxStandaloneConfig	Default-keymap entry point of tmuxStandaloneConfigWithKeymap retained as the standalone config golden seam.
 tmuxStyledVisiblePaneLabelFormat	Default-theme entry point of tmuxStyledVisiblePaneLabelFormatFor retained as the visible pane label format seam.
+unregisterCopy	Public v0 Project unregister JSON projection conversion; verified by Registry, receipt and record parity.
 unsupportedRootsError	The default-endpoint roots refusal helper remains part of the retained installed protocol qualification contract.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
