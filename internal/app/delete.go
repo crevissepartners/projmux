@@ -14,6 +14,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // deleteKinds lists the kind spellings `delete` implements, in help order, each
@@ -194,85 +195,13 @@ func (c *unregisterCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 // deleteDescendant is one resource the cascade removes together with a target.
-type deleteDescendant struct {
-	Kind coremetadata.Kind
-	UID  string
-	Name string
-}
+type deleteDescendant = mutations.DeleteDescendant
+type deleteTarget = mutations.DeleteTarget
+type deletePlan mutations.DeletePlan
 
-// deleteTarget is one resolved delete target plus its cascade plan.
-type deleteTarget struct {
-	Match       selector.Match
-	Descendants []deleteDescendant
-}
-
-// deletePlan is the whole preflighted operation.
-type deletePlan struct {
-	Kind    coremetadata.Kind
-	Targets []deleteTarget
-	// ExactUID reports that every target occurrence was an explicit uid:<uid>
-	// reference. It is the only selector shape allowed to turn a durable
-	// Offline/Failed/MissingRuntime state plus a positive exact-server inventory
-	// into a Registry-only Pane or Agent delete. Names, scopes, labels, --all,
-	// and the active-target fallback keep requiring a live mirror.
-	ExactUID bool
-	// Unnamed reports that the invocation carried no selector at all, so the
-	// target set came from the active tmux target or from --all rather than from
-	// something the operator typed. It is not part of signature(): it describes
-	// how the plan was asked for, not what the plan removes.
-	Unnamed bool
-	// Implicit distinguishes the active Window fallback from --all. Both are
-	// unnamed for confirmation, but only the fallback must prove the caller is
-	// attached to the same exact socket and Window.
-	Implicit bool
-}
-
-// Cascades reports how many descendants the plan removes.
-func (p deletePlan) Cascades() int {
-	total := 0
-	for _, target := range p.Targets {
-		total += len(target.Descendants)
-	}
-	return total
-}
-
-// signature renders the plan as a comparable string. Execution re-derives it
-// inside the store lock and refuses to run when it no longer matches what the
-// preflight approved.
-func (p deletePlan) signature() string {
-	var b strings.Builder
-	for _, target := range p.Targets {
-		b.WriteString(target.Match.UID)
-		for _, descendant := range target.Descendants {
-			b.WriteString(",")
-			b.WriteString(descendant.UID)
-		}
-		b.WriteString(";")
-	}
-	return b.String()
-}
-
-// needsConfirmation reports whether the plan is destructive enough to require an
-// explicit answer. The contract carves out exactly one exception: an exact-one
-// leaf Pane delete, which removes one resource and cascades to nothing.
-//
-// The carve-out is narrowed by exactly one condition: the operator has to have
-// named the target. It was written for `delete pane log --window main`, where
-// the argv already says which single cheap resource goes away, and the point of
-// skipping the prompt is that re-reading it back would add nothing. An empty
-// selector says none of that. Whether it resolved through the active tmux target
-// or through --all, the argv names no resource, so the prompt is the only place
-// the plan is ever stated before it runs -- and it is the same prompt either
-// way, which is what keeps --yes a confirmation answer rather than a scope.
-func (p deletePlan) needsConfirmation() bool {
-	if p.Unnamed {
-		return true
-	}
-	if len(p.Targets) == 1 && p.Kind == coremetadata.KindPane && len(p.Targets[0].Descendants) == 0 {
-		return false
-	}
-	return true
-}
+func (p deletePlan) Cascades() int           { return mutations.DeletePlan(p).Cascades() }
+func (p deletePlan) signature() string       { return mutations.DeletePlan(p).Signature() }
+func (p deletePlan) needsConfirmation() bool { return mutations.DeletePlan(p).NeedsConfirmation() }
 
 func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args []string, stdout, stderr io.Writer) error {
 	spelling := verb + " " + token
@@ -653,53 +582,18 @@ func (c *deleteCommand) runProjectUnregister(verb, spelling string, plan deleteP
 		return err
 	}
 	oldUIDs := resolution.UIDs()
-	var actor DeletionActor
-	var affected []DeletionAffected
-	if err := c.store.mutate(coremetadata.KindProject, oldUIDs, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if current := buildDeletePlan(*working, coremetadata.KindProject, resolution).signature(); current != plan.signature() {
-			return errors.New("delete project: the unregister plan changed between preflight and execution; nothing was deleted")
-		}
-		actor = c.observeDeletionActor(actorRoute, working)
-		candidate := working.Clone()
-		for _, uid := range oldUIDs {
-			project, ok := working.Project(uid)
-			if !ok {
-				return fmt.Errorf("delete project: Project uid %q disappeared before state-table validation", uid)
-			}
-			state := coremetadata.ProjectLifecycleRetainedWindows
-			descendants := coremetadata.ProjectDescendantUIDsRemoved
-			if len(working.WindowsOf(project.Metadata.UID)) == 0 {
-				state = coremetadata.ProjectLifecycleZeroWindows
-				descendants = coremetadata.ProjectDescendantUIDsAbsent
-			}
-			decision := coremetadata.DecideProjectLifecycle(state, coremetadata.ProjectLifecycleDeleteProject, coremetadata.ProjectLifecyclePreconditions{})
-			if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationDeleteProject,
-				coremetadata.ProjectUIDRemoved, descendants, coremetadata.ProjectStartupWriteDeleteProjectGraph); err != nil {
-				return err
-			}
-			if err := mutator.DeleteProject(&candidate, uid); err != nil {
-				return err
-			}
-		}
-		if err := candidate.Validate(); err != nil {
-			return err
-		}
-		affected = deletionAffectedBetween(*working, candidate)
-		*working = candidate
-		return nil
-	}); err != nil {
-		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "registry-unregister", strings.Join(oldUIDs, ","), "", err)
-	}
 	operation := deletionOperationUnregisterProject
 	if deprecated {
 		operation = deletionOperationDeleteProject
 	}
-	// Unregister writes no intentional termination receipt, so its record gets
-	// its own operation id, minted the same way; a failed mint only costs the
-	// record.
-	operationID, _ := c.mintOperationID()
-	recordDeletion(c.store, newDeletionRecord(operation, operationID, c.deletionVia(), actor,
-		deletionTargetsOf(plan), affected), stderr)
+	_, err := mutations.Unregister(context.Background(), mutations.DeletePlan(plan), resolution, mutations.UnregisterOptions{
+		Mutate:   c.store.mutate,
+		Actor:    func(working *coremetadata.Registry) DeletionActor { return c.observeDeletionActor(actorRoute, working) },
+		StateDir: c.store.stateDir, NewOperationID: c.mintOperationID, Via: c.deletionVia(), Operation: operation, Warnings: stderr,
+	})
+	if err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "registry-unregister", strings.Join(oldUIDs, ","), "", err)
+	}
 	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, false, false); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
 	}
@@ -810,107 +704,12 @@ func paneDeleteReplacementShells(before, desired coremetadata.Registry, live pan
 }
 
 // buildDeletePlan expands every resolved target into its cascade plan.
-func buildDeletePlan(registry coremetadata.Registry, kind coremetadata.Kind, resolution selector.Resolution) deletePlan {
-	plan := deletePlan{Kind: kind}
-	for _, match := range resolution.Matches {
-		plan.Targets = append(plan.Targets, deleteTarget{
-			Match:       match,
-			Descendants: cascadeOf(registry, kind, match.UID),
-		})
-	}
-	if kind == coremetadata.KindPane {
-		completeVirtualWindowCascades(registry, &plan)
-	}
-	return plan
+// buildDeletePlan is the CLI adapter to the shared planning engine.
+func buildDeletePlan(reg coremetadata.Registry, kind coremetadata.Kind, resolution selector.Resolution) deletePlan {
+	return deletePlan(mutations.BuildDeletePlan(reg, kind, resolution))
 }
-
-// A selector may remove the last Panes together even when no individual
-// target is the last one yet. Preview that parent cascade on the final target.
-func completeVirtualWindowCascades(reg coremetadata.Registry, plan *deletePlan) {
-	removed := map[string]int{}
-	for i, target := range plan.Targets {
-		removed[target.Match.UID] = i
-		for _, child := range target.Descendants {
-			removed[child.UID] = i
-		}
-	}
-	for _, window := range reg.Windows {
-		uid := window.Metadata.UID
-		if _, included := removed[uid]; included || !reg.IsVirtualWindow(uid) {
-			continue
-		}
-		panes := reg.PanesOf(uid)
-		for _, agent := range reg.AgentsOf(uid) {
-			panes = append(panes, reg.PanesOf(agent.Metadata.UID)...)
-		}
-		last, complete := -1, true
-		for _, pane := range panes {
-			i, ok := removed[pane.Metadata.UID]
-			if !ok {
-				complete = false
-				break
-			}
-			last = max(last, i)
-		}
-		if !complete || last < 0 {
-			continue
-		}
-		out := &plan.Targets[last].Descendants
-		*out = append(*out, deleteDescendant{Kind: coremetadata.KindWindow, UID: uid, Name: window.Metadata.Name})
-		for _, agent := range reg.AgentsOf(uid) {
-			if _, included := removed[agent.Metadata.UID]; !included {
-				*out = append(*out, deleteDescendant{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID, Name: agent.Metadata.Name})
-			}
-		}
-	}
-}
-
-// cascadeOf returns the descendants one delete removes, in registry insertion
-// order.
-//
-//   - a Window cascades to its Agents, every Agent's managed Panes, and its own
-//     shell Panes; the owning Project is preserved.
-//   - an Agent cascades to its managed Panes; the Window and its sibling Panes
-//     are preserved.
-//   - a Pane is a leaf. Deleting an Agent's current managed Pane leaves the
-//     Agent itself alive as an Offline resource, so it is not a descendant.
-//
-// A virtual Window is removed with its final Pane or Agent; that parent and
-// any retained Agents are included in the cascade too.
-func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid string) []deleteDescendant {
-	var out []deleteDescendant
-	switch kind {
-	case coremetadata.KindProject:
-		for _, window := range registry.WindowsOf(uid) {
-			out = append(out, deleteDescendant{Kind: coremetadata.KindWindow, UID: window.Metadata.UID, Name: window.Metadata.Name})
-			out = append(out, cascadeOf(registry, coremetadata.KindWindow, window.Metadata.UID)...)
-		}
-	case coremetadata.KindWindow:
-		for _, agent := range registry.AgentsOf(uid) {
-			out = append(out, deleteDescendant{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID, Name: agent.Metadata.Name})
-			for _, pane := range registry.PanesOf(agent.Metadata.UID) {
-				out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
-			}
-		}
-		for _, pane := range registry.PanesOf(uid) {
-			out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
-		}
-	case coremetadata.KindAgent:
-		for _, pane := range registry.PanesOf(uid) {
-			out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
-		}
-	}
-	if windowUID := registry.VirtualWindowDeleteCascade(kind, uid); windowUID != "" {
-		window, _ := registry.Window(windowUID)
-		out = append(out, deleteDescendant{Kind: coremetadata.KindWindow, UID: windowUID, Name: window.Metadata.Name})
-		for _, sibling := range registry.AgentsOf(windowUID) {
-			if kind == coremetadata.KindAgent && sibling.Metadata.UID == uid {
-				continue
-			}
-			out = append(out, deleteDescendant{Kind: coremetadata.KindAgent, UID: sibling.Metadata.UID, Name: sibling.Metadata.Name})
-		}
-	}
-	return out
+func cascadeOf(reg coremetadata.Registry, kind coremetadata.Kind, uid string) []deleteDescendant {
+	return mutations.CascadeOf(reg, kind, uid)
 }
 
 // writeDeletePlan renders the plan for both the dry run and the executed run.
@@ -1059,29 +858,11 @@ func warnDeprecatedProjectDeleteAlias(stderr io.Writer) {
 // opinion about the runtime, when in fact it has a deliberate one that differs
 // from every other delete in the CLI.
 func projectUnregisterReceipt(plan deletePlan, deprecated bool) cli.OperationReceipt {
-	target := cli.ReceiptTarget{Kind: "Project"}
-	if len(plan.Targets) > 0 {
-		target.UID = plan.Targets[0].Match.UID
-		target.Name = plan.Targets[0].Match.Name
-	}
-	receipt := cli.NewReceipt(cli.OperationUnregisterProject, target, cli.ReceiptEffects{
-		Identity:     cli.IdentityRemoved,
-		Address:      cli.AddressReleased,
-		Topology:     cli.TopologyRemoved,
-		DesiredState: cli.DesiredStateRemoved,
-		Runtime:      cli.RuntimePreserved,
-		Focus:        cli.FocusUnchanged,
-	})
-	for _, entry := range plan.Targets {
-		receipt.Add("Project", entry.Match.UID, entry.Match.Name, cli.ActionRemoved)
-		for _, descendant := range entry.Descendants {
-			receipt.Add(string(descendant.Kind), descendant.UID, descendant.Name, cli.ActionRemoved)
-		}
-	}
+	r := cli.OperationReceipt(mutations.ProjectUnregisterReceipt(mutations.DeletePlan(plan)))
 	if deprecated {
-		receipt.Warn(projectDeleteAliasWarning)
+		r.Warn(projectDeleteAliasWarning)
 	}
-	return receipt
+	return r
 }
 
 // childDeleteReceipt projects one committed Window, Pane, or Agent delete.

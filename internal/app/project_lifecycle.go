@@ -3,7 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
-	"slices"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -38,12 +38,7 @@ func projectLifecycleDecisionFor(registry coremetadata.Registry, root string, ac
 // This prevents a route from merely classifying state and then executing an
 // independently maintained meaning of Stop, Continue, Fresh, or delete.
 func requireProjectLifecyclePlan(plan coremetadata.ProjectLifecyclePlan, operation coremetadata.ProjectLifecycleOperation, projectUID coremetadata.ProjectUIDOutcome, descendantUIDs coremetadata.ProjectDescendantUIDOutcome, writes ...coremetadata.ProjectStartupWrite) error {
-	if !plan.Available || plan.Operation != operation || plan.ProjectUID != projectUID ||
-		plan.DescendantUIDs != descendantUIDs || !slices.Equal(plan.AtomicWriteSet, writes) {
-		return fmt.Errorf("project lifecycle state-table cell is not executable: state=%s action=%s operation=%s project_uid=%s descendant_uids=%s writes=%v reason=%s",
-			plan.State, plan.Action, plan.Operation, plan.ProjectUID, plan.DescendantUIDs, plan.AtomicWriteSet, plan.Reason)
-	}
-	return nil
+	return mutations.RequireProjectLifecyclePlan(plan, operation, projectUID, descendantUIDs, writes...)
 }
 
 // projectLifecycleStageError is the shared failure disclosure for Stop,
