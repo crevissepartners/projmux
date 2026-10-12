@@ -124,7 +124,7 @@
 // NewClient construction. Options.HomeDir overrides session naming only;
 // Options.DefaultShell overrides the CLI-compatible shell input. Neither
 // changes the environment or the configuration/state path defaults.
-
+//
 // ReadProjectLinkRules, WriteProjectLinkRules and DeleteProjectLinkRules require an
 // explicit registered Project name or uid: ref and never contact tmux or providers.
 // The store format is ConfigDir/project-links/<uid>.json; result JSON includes
