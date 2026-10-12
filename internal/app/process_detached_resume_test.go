@@ -97,6 +97,19 @@ func TestDetachedProcessClaimCleanupRejectsReplacementIdentity(t *testing.T) {
 // durable, but before candidate admission/provider birth. The callback repeats
 // Stop's guarded marker + owner cancellation without signaling this test's PID.
 func TestDetachedProcessFirstPeerStopBeforeBirthPreservesQueue(t *testing.T) {
+	testDetachedPreBirthStopQueue(t, true, false)
+}
+
+func TestDetachedProcessStopFenceBeforeSignalDeliveryPreservesPeer(t *testing.T) {
+	testDetachedPreBirthStopQueue(t, false, false)
+}
+
+func TestDetachedProcessStopFencePreservesUnknownHandoffEvidence(t *testing.T) {
+	testDetachedPreBirthStopQueue(t, false, true)
+}
+
+func testDetachedPreBirthStopQueue(t *testing.T, signalDelivered, handoff bool) {
+	t.Helper()
 	c, options := deferredClaimFixture(t)
 	ctx, cancel := context.WithCancel((processOwnerLifetime{}).withContext(context.Background()))
 	defer cancel()
@@ -122,6 +135,11 @@ func TestDetachedProcessFirstPeerStopBeforeBirthPreservesQueue(t *testing.T) {
 		}
 		if i == 0 {
 			first = record
+		}
+	}
+	if handoff {
+		if _, _, err = store.MarkHandoff(first.Envelope.MessageRef); err != nil {
+			t.Fatal(err)
 		}
 	}
 	stopped := false
@@ -154,7 +172,9 @@ func TestDetachedProcessFirstPeerStopBeforeBirthPreservesQueue(t *testing.T) {
 				return reg, err
 			}
 			stopped = true
-			cancel()
+			if signalDelivered {
+				cancel()
+			}
 		}
 		return reg, nil
 	}
@@ -163,8 +183,12 @@ func TestDetachedProcessFirstPeerStopBeforeBirthPreservesQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := claim.Resume(ctx, processResumeFirstFrame{Kind: "peer", Text: text})
-	if !stopped || err != context.Canceled || result.Handle != nil || result.previousRecord != nil {
+	resumeErr := err
+	if !stopped || result.Handle != nil || result.previousRecord != nil {
 		t.Fatalf("Stop did not retire pre-birth selection: stopped=%v err=%v handle=%v", stopped, err, result.Handle)
+	}
+	if !signalDelivered && ctx.Err() != nil {
+		t.Fatal("test delivered signal before durable fence was judged")
 	}
 	if err = claim.Close(); err != nil {
 		t.Fatal(err)
@@ -183,13 +207,25 @@ func TestDetachedProcessFirstPeerStopBeforeBirthPreservesQueue(t *testing.T) {
 	}
 	defer replacement.Close()
 	held, err := replacement.held()
-	if err != nil || len(held) != 2 {
-		t.Fatal("Stop lost undispatched peer queue", err)
+	refs := []string{"race-first", "race-second"}
+	if handoff {
+		record, _, readErr := store.Get("race-first")
+		if readErr != nil || record.Delivery.State != coremessage.StateFailed || !record.HandoffObserved || !record.Delivery.OutcomeUnknown {
+			t.Fatal("Stop erased handoff/unknown evidence", record, readErr)
+		}
+		refs = refs[1:]
 	}
-	for i, ref := range []string{"race-first", "race-second"} {
+	if err != nil || len(held) != len(refs) {
+		record, _, readErr := store.Get("race-first")
+		t.Fatalf("Stop lost undispatched peer queue: held=%d want=%d first=%s reason=%s unknown=%v handoff=%v err=%v readErr=%v", len(held), len(refs), record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown, record.HandoffObserved, err, readErr)
+	}
+	for i, ref := range refs {
 		if held[i].Envelope.MessageRef != ref || held[i].Delivery.State != coremessage.StateHeld || held[i].Delivery.OutcomeUnknown {
 			t.Fatalf("Stop reordered/promoted/failed an undispatched frame: %+v", held[i])
 		}
+	}
+	if !handoff && resumeErr != context.Canceled {
+		t.Fatal("exact pre-birth Stop was not cancellation", resumeErr)
 	}
 }
 
@@ -348,4 +384,37 @@ func TestDetachedProcessDeferredReleaseLockCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	again()
+}
+
+func TestDetachedProcessStopFenceRejectsReplacementOrStaleProof(t *testing.T) {
+	for _, change := range []string{"nonce", "binding", "kernel"} {
+		t.Run(change, func(t *testing.T) {
+			c, options := deferredClaimFixture(t)
+			claim, err := c.claimDeferredProcessAgent((processOwnerLifetime{}).withContext(context.Background()), options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer claim.Close()
+			record := claim.record
+			record.StopRequested = true
+			switch change {
+			case "nonce":
+				record.Nonce += "-replacement"
+			case "binding":
+				record.Binding.Generation += "-replacement"
+			case "kernel":
+				record.Process.Start += "-stale"
+			}
+			if err = writeDeferredClaim(claim.path, record); err != nil {
+				t.Fatal(err)
+			}
+			if stopped, err := claim.preBirthStopRequested(); err != nil || stopped {
+				t.Fatal("borrowed replacement/stale Stop fence", stopped, err)
+			}
+			current, err := readDeferredClaim(claim.path)
+			if err != nil || current != record {
+				t.Fatal("foreign Stop proof mutated", current, err)
+			}
+		})
+	}
 }

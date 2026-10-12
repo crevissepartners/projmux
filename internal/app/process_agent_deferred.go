@@ -179,23 +179,46 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 	if err != nil {
 		noChild := result.hasNoChild()
 		err = result.fail(err)
-		// Cancellation before any child exists is a released wait, not a
-		// failed delivery. Keep the undispatched envelope for the next claim.
-		if noChild && ctx.Err() != nil && result.previousRecord == nil {
+		// A durable exact Stop fence can precede signal/context observation.
+		// Only an undispatched peer and a pre-birth, unmodified conversation
+		// may be released as cancellation; handoff evidence remains unknown.
+		cancelled := ctx.Err()
+		if noChild && result.previousRecord == nil && cancelled == nil {
+			stopped, stopErr := claim.preBirthStopRequested()
+			if stopErr != nil {
+				return result, errors.Join(err, stopErr)
+			}
+			if stopped {
+				cancelled = context.Canceled
+			}
+		}
+		if first != nil {
+			current, found, readErr := c.messageStore.Get(first.Envelope.MessageRef)
+			if readErr != nil || !found {
+				return result, errors.Join(err, readErr, messagestore.ErrNotFound)
+			}
+			first.HandoffObserved = current.HandoffObserved
+			first.Delivery = current.Delivery
+		}
+		undispatched := first == nil || (!first.HandoffObserved && !first.Delivery.OutcomeUnknown && !first.Delivery.State.Terminal())
+		if noChild && cancelled != nil && result.previousRecord == nil && undispatched {
 			if first != nil {
 				if clearErr := claim.markInflight(""); clearErr != nil {
 					return result, clearErr
 				}
 			}
 			result.Handle = nil
-			return result, ctx.Err()
+			return result, cancelled
 		}
 		if first != nil {
 			kind, reason := coremessage.EventFail, processResumeRefused
-			if resumeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			unknown := first.HandoffObserved || first.Delivery.OutcomeUnknown
+			if unknown {
+				reason = "provider-handoff-outcome-unknown"
+			} else if resumeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 				kind, reason = coremessage.EventExpire, "deadline-expired"
 			}
-			_, applyErr := c.terminalCoordination(*first, kind, reason, false, nil)
+			_, applyErr := c.terminalCoordination(*first, kind, reason, unknown, nil)
 			err = errors.Join(err, applyErr)
 			if applyErr == nil {
 				err = errors.Join(err, claim.markInflight(""))
@@ -427,4 +450,19 @@ func (c *agentCommand) releaseDeferredPeer(ctx context.Context, record messagest
 			return err
 		}
 	}
+}
+
+// The caller has proved no child and no previous-record replacement. Read Stop
+// under the reservation guard; a replacement/stale owner cannot lend its fence.
+func (claim *deferredProcessClaim) preBirthStopRequested() (bool, error) {
+	unlock, err := lockDeferredClaim(claim.path)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	record, err := readDeferredClaim(claim.path)
+	if err != nil {
+		return false, err
+	}
+	return record.StopRequested && deferredClaimIdentityEqual(record, claim.record) && deferredClaimLive(record), nil
 }
