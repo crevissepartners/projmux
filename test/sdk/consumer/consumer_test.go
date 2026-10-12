@@ -348,7 +348,7 @@ func TestUnregisterProjectPublicConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := core.UnregisterRequest{Refs: []string{"uid:" + created.Project.Metadata.UID}}
+	req := core.UnregisterRequest{Ref: "uid:" + created.Project.Metadata.UID}
 	plan, err := client.UnregisterProject(context.Background(), req)
 	var refusal *projmux.Refusal
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeConfirmationRequired || len(plan.Plan.Targets) != 1 {

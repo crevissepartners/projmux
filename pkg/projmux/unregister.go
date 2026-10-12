@@ -32,12 +32,12 @@ func (c *Client) UnregisterProject(ctx context.Context, req core.UnregisterReque
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
-	if len(req.Refs) != 1 || strings.TrimSpace(req.Refs[0]) == "" {
-		return out, &Refusal{Code: CodeSelectorInvalid, message: "UnregisterRequest.Refs must name exactly one Project"}
+	if strings.TrimSpace(req.Ref) == "" {
+		return out, &Refusal{Code: CodeSelectorInvalid, message: "UnregisterRequest.Ref must name exactly one Project"}
 	}
-	ref, err := selector.ParseRef(metadata.KindProject, req.Refs[0])
+	ref, err := selector.ParseRef(metadata.KindProject, req.Ref)
 	if err != nil {
-		return out, resourceRefusal(selectorInputError(err, "UnregisterRequest.Refs"))
+		return out, resourceRefusal(selectorInputError(err, "UnregisterRequest.Ref"))
 	}
 	if c.pathsErr != nil {
 		return out, resourceRefusal(c.pathsErr)

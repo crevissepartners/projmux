@@ -65,7 +65,7 @@ func TestUnregisterProjectSDKCLIParity(t *testing.T) {
 			t.Fatal(err)
 		}
 		plan := buildDeletePlan(reg, metadata.KindProject, resolution)
-		preview, err := c.UnregisterProject(context.Background(), core.UnregisterRequest{Refs: refs, DryRun: true})
+		preview, err := c.UnregisterProject(context.Background(), core.UnregisterRequest{Ref: ref, DryRun: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +80,7 @@ func TestUnregisterProjectSDKCLIParity(t *testing.T) {
 		if err != nil || dry != expected.String() {
 			t.Fatalf("dry run: %q %v", dry, err)
 		}
-		got, err := c.UnregisterProject(context.Background(), core.UnregisterRequest{Refs: refs, Confirm: true})
+		got, err := c.UnregisterProject(context.Background(), core.UnregisterRequest{Ref: ref, Confirm: true})
 		if err != nil || !got.Committed || got.OperationID == "" || got.Notice != "" {
 			t.Fatalf("SDK: %+v %v", got, err)
 		}
@@ -134,12 +134,11 @@ func TestUnregisterProjectSDKNoWriteAndRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, req := range []core.UnregisterRequest{
-		{Refs: []string{"alpha"}, DryRun: true},
-		{Refs: []string{"alpha"}},
-		{Refs: nil, Confirm: true},
-		{Refs: []string{"alpha", "beta"}, Confirm: true},
-		{Refs: []string{"missing"}, Confirm: true},
-		{Refs: []string{"uid:"}, Confirm: true},
+		{Ref: "alpha", DryRun: true},
+		{Ref: "alpha"},
+		{Confirm: true},
+		{Ref: "missing", Confirm: true},
+		{Ref: "uid:", Confirm: true},
 	} {
 		got, err := c.UnregisterProject(context.Background(), req)
 		var r *projmux.Refusal
@@ -148,7 +147,7 @@ func TestUnregisterProjectSDKNoWriteAndRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		case len(req.Refs) == 1 && req.Refs[0] == "alpha":
+		case req.Ref == "alpha":
 			if !errors.As(err, &r) || r.Code != projmux.CodeConfirmationRequired || len(got.Plan.Targets) != 1 {
 				t.Fatalf("%+v %v", got, err)
 			}
@@ -156,21 +155,21 @@ func TestUnregisterProjectSDKNoWriteAndRefusals(t *testing.T) {
 			if !errors.As(err, &r) {
 				t.Fatalf("untyped error %v", err)
 			}
-			_, _, cliErr := unregisterCLI(t, state, req.Refs, false, true)
+			_, _, cliErr := unregisterCLI(t, state, []string{req.Ref}, false, true)
 			if cliErr == nil {
 				t.Fatal("CLI accepted refused SDK request")
 			}
-			if len(req.Refs) == 1 && req.Refs[0] == "missing" && (r.Code != projmux.CodeResourceNotFound || r.Error() != cliErr.Error()) {
+			if req.Ref == "missing" && (r.Code != projmux.CodeResourceNotFound || r.Error() != cliErr.Error()) {
 				t.Fatalf("selection differs: %v %v", r, cliErr)
 			}
-			if len(req.Refs) != 1 && (!strings.Contains(r.Error(), "UnregisterRequest.Refs") || r.Code != projmux.CodeSelectorInvalid) {
+			if req.Ref == "" && (!strings.Contains(r.Error(), "UnregisterRequest.Ref") || r.Code != projmux.CodeSelectorInvalid) {
 				t.Fatal(r)
 			}
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.UnregisterProject(ctx, core.UnregisterRequest{Refs: []string{"alpha"}, Confirm: true}); !errors.Is(err, context.Canceled) {
+	if _, err := c.UnregisterProject(ctx, core.UnregisterRequest{Ref: "alpha", Confirm: true}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	next, e := os.Stat(store.PathFor(state))

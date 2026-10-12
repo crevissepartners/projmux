@@ -1,9 +1,9 @@
 package core
 
-// UnregisterRequest names exactly one Project. Refs follows the CLI grammar:
-// a name or uid:<uid>. Empty and multiple refs are refused before any write.
+// UnregisterRequest names exactly one Project. Ref follows the CLI grammar:
+// a name or uid:<uid>. An empty ref is refused before any write.
 type UnregisterRequest struct {
-	Refs    []string
+	Ref     string
 	DryRun  bool
 	Confirm bool
 }
