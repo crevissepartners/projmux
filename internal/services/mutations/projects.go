@@ -3,8 +3,6 @@ package mutations
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -83,13 +81,7 @@ func ProjectRoot(root string) (string, error) {
 	}
 	return filepath.Clean(root), nil
 }
-func NewOperationID() (string, error) {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("create: read operation id entropy: %w", err)
-	}
-	return "op-" + hex.EncodeToString(b), nil
-}
+func NewOperationID() (string, error) { return store.NewOperationID() }
 
 // RegisterProject accepts cancellation before admission. Once admitted, it
 // completes the locked transaction without deriving a provider lifetime from ctx.

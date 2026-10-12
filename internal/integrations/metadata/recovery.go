@@ -572,9 +572,8 @@ type RestoreRequest struct {
 
 // RestoreResult reports what a restore did.
 type RestoreResult struct {
-	ProtectionUnavailable bool   `json:"protectionUnavailable,omitempty"`
-	SourcePath            string `json:"sourcePath"`
-	SourceChecksum        string `json:"sourceChecksum"`
+	SourcePath     string `json:"sourcePath"`
+	SourceChecksum string `json:"sourceChecksum"`
 	// PublishedChecksum is the checksum of the canonical bytes committed to
 	// registry.json. It differs from SourceChecksum only for a v3 source.
 	PublishedChecksum string           `json:"publishedChecksum"`
@@ -596,6 +595,10 @@ type RestoreResult struct {
 	SourceBackupPath    string                       `json:"sourceBackupPath,omitempty"`
 	MigrationReportPath string                       `json:"migrationReportPath,omitempty"`
 	Migration           coremetadata.MigrationReport `json:"-"`
+	// Degraded authority cannot require protection removal through the disabled
+	// ordinary mutation gate. Known protected removals remain inspectable.
+	ProtectionUnavailable          bool     `json:"protectionUnavailable,omitempty"`
+	ProtectionUnavailableAgentUIDs []string `json:"protectionUnavailableAgentUIDs,omitempty"`
 }
 
 type verifiedRecoverySource struct {
@@ -660,12 +663,14 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 				ErrRecoveryRaced, s.path, guard, displayChecksum(current.Checksum))
 		}
 
-		// Decode without requiring graph validity: labels in a decodable degraded
-		// graph still provide protection authority. Undecodable bytes cannot.
-		protectionUnavailable := len(currentBytes) > 0 && json.Unmarshal(currentBytes, &before) != nil
-		if current.State == RegistryStateMissing || current.State == RegistryStateUnreadable || current.State == RegistryStateEmpty {
-			protectionUnavailable = true
+		// A degraded graph cannot release protection through ordinary mutations.
+		// Preserve known identities for evidence, but do not block its repair.
+		decodeErr := json.Unmarshal(currentBytes, &before)
+		protectionUnavailable := current.State != RegistryStateValid && current.State != RegistryStateFirstUse
+		if decodeErr != nil {
+			before = coremetadata.Registry{}
 		}
+
 		if err := json.Unmarshal(verified.publishBytes, &after); err != nil {
 			return err
 		}
@@ -674,9 +679,20 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 				return err
 			}
 		}
+
+		var unavailableAgentUIDs []string
+		if protectionUnavailable {
+			for _, agent := range coremetadata.RemovedAgents(before, after) {
+				if coremetadata.AgentProtected(agent) {
+					unavailableAgentUIDs = append(unavailableAgentUIDs, agent.Metadata.UID)
+				}
+			}
+			sort.Strings(unavailableAgentUIDs)
+		}
 		result = RestoreResult{
-			ProtectionUnavailable: protectionUnavailable,
-			SourcePath:            source, SourceChecksum: verified.info.Checksum,
+			ProtectionUnavailable:          protectionUnavailable,
+			ProtectionUnavailableAgentUIDs: unavailableAgentUIDs,
+			SourcePath:                     source, SourceChecksum: verified.info.Checksum,
 			PublishedChecksum: verified.publishChecksum,
 			Contents:          verified.info.Contents, ReplacedState: current.State,
 			Migration: verified.migration,
@@ -696,9 +712,9 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 		return RestoreResult{}, err
 	}
 	if result.Changed {
-		stateDir := func() (string, error) { return filepath.Dir(filepath.Dir(s.path)), nil }
+		stateDir := func() (string, error) { return s.deletionStateDir, nil }
 		if result.ProtectionUnavailable {
-			RecordProtectionUnavailable(stateDir, os.Stderr)
+			RecordProtectionUnavailable(stateDir, before, after, os.Stderr)
 		} else {
 			RecordAutomaticRemovals(stateDir, before, after, "registry-recovery-restore", os.Stderr)
 		}

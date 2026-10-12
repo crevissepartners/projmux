@@ -450,12 +450,14 @@ Termination evidence transport:
   durability. Protected rollback remnants survive Offline; protected causal
   closure retains the Window and Agents while removing the ended Pane. Fresh
   refuses if its old graph contains a protected Agent. Recovery refuses when a
-  readable current graph has a protected Agent UID absent from the source.
-  When current bytes cannot supply protection authority, recovery proceeds and
-  reports optional `restore.protectionUnavailable: true` (text token
-  `protection-unavailable`). It appends a recovery evidence row with empty
-  targets/affected and `actor.basis: "protection-unavailable"`; it cannot name
-  Agents whose identities are unreadable.
+  valid current graph has a protected Agent UID absent from the source.
+  A degraded current Registry cannot require label removal through the disabled
+  mutation gate. Recovery proceeds with optional `restore.protectionUnavailable:
+  true` (text token `protection-unavailable`). Decodable degraded graphs report
+  known protected removals in `restore.protectionUnavailableAgentUIDs` and per-Agent
+  deletion rows with `actor.basis: "protection-unavailable"`. When identities are
+  unreadable, an evidence row has empty targets/affected. A single automatic
+  transaction shares one `op-` operation identifier across its Agent rows.
 - The actor is the same pane-chain judgment creator provenance uses, run
   against the pre-commit Registry inside the delete's own transaction, so a
   delete that removes its own Agent still names it. `basis` is `pane-chain`

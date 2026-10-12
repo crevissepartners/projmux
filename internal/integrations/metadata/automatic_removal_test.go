@@ -2,9 +2,12 @@ package metadata
 
 import (
 	"encoding/json"
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -80,7 +83,7 @@ func TestAutomaticRecoveryProtectionAndRecords(t *testing.T) {
 			}
 			before, _ := os.ReadFile(store.Path())
 			result, err := store.RestoreFrom(RestoreRequest{SourcePath: source})
-			path := filepath.Join(filepath.Dir(filepath.Dir(store.Path())), DeletionRecordsFile)
+			path := filepath.Join(store.deletionStateDir, DeletionRecordsFile)
 			data, _ := os.ReadFile(path)
 			var rows []DeletionRecord
 			for line := range strings.SplitSeq(string(data), "\n") {
@@ -92,7 +95,7 @@ func TestAutomaticRecoveryProtectionAndRecords(t *testing.T) {
 					rows = append(rows, row)
 				}
 			}
-			if mode == "protected" || mode == "invalid-decodable" {
+			if mode == "protected" {
 				if err == nil || !strings.Contains(err.Error(), "agent-protected") {
 					t.Fatalf("refusal=%v", err)
 				}
@@ -105,7 +108,7 @@ func TestAutomaticRecoveryProtectionAndRecords(t *testing.T) {
 			if err != nil || !result.Changed {
 				t.Fatalf("restore=%+v %v", result, err)
 			}
-			unknown := mode == "malformed" || mode == "missing"
+			unknown := mode == "malformed" || mode == "missing" || mode == "invalid-decodable"
 			if result.ProtectionUnavailable != unknown {
 				t.Fatalf("protectionUnavailable=%t", result.ProtectionUnavailable)
 			}
@@ -124,8 +127,13 @@ func TestAutomaticRecoveryProtectionAndRecords(t *testing.T) {
 				if len(rows) != 1 {
 					t.Fatalf("rows=%+v", rows)
 				}
+				if mode == "invalid-decodable" {
+					if len(result.ProtectionUnavailableAgentUIDs) != 1 || result.ProtectionUnavailableAgentUIDs[0] != agentUID || len(rows[0].Affected) != 1 || rows[0].Affected[0].UID != agentUID {
+						t.Fatalf("degraded removal evidence: %+v %+v", result, rows)
+					}
+				}
 				if unknown {
-					if rows[0].Actor.Basis != "protection-unavailable" || len(rows[0].Affected) != 0 {
+					if rows[0].Actor.Basis != "protection-unavailable" || (mode != "invalid-decodable" && len(rows[0].Affected) != 0) {
 						t.Fatalf("unknown row=%+v", rows[0])
 					}
 				} else if rows[0].Affected[0].UID != agentUID {
@@ -141,5 +149,41 @@ func TestAutomaticRecoveryProtectionAndRecords(t *testing.T) {
 				t.Fatal("repeat wrote duplicate records")
 			}
 		})
+	}
+}
+
+func TestAutomaticRemovalRowsShareOperationIDAndConfiguredJournalRoot(t *testing.T) {
+	root := t.TempDir()
+	store := NewDefaultStore(config.Paths{StateDir: root})
+	if store.deletionStateDir != root {
+		t.Fatalf("default journal root=%s", store.deletionStateDir)
+	}
+	// A custom recovery file must not decide the journal's configured location.
+	custom := NewStore(filepath.Join(t.TempDir(), "custom.json"))
+	custom.deletionStateDir = root
+	before := coremetadata.Registry{Agents: []coremetadata.Agent{
+		{Metadata: coremetadata.ObjectMeta{UID: "agent-one", Name: "one"}},
+		{Metadata: coremetadata.ObjectMeta{UID: "agent-two", Name: "two"}},
+	}}
+	RecordAutomaticRemovals(func() (string, error) { return custom.deletionStateDir, nil }, before, coremetadata.Registry{}, "project-fresh", io.Discard)
+	data, err := os.ReadFile(filepath.Join(root, DeletionRecordsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []DeletionRecord
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if line != "" {
+			var row DeletionRecord
+			if err = json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) != 2 || rows[0].OperationID != rows[1].OperationID || !regexp.MustCompile(`^op-[0-9a-f]{16}$`).MatchString(rows[0].OperationID) {
+		t.Fatalf("operation rows=%+v", rows)
+	}
+	if _, err = os.Stat(filepath.Join(filepath.Dir(custom.Path()), DeletionRecordsFile)); !os.IsNotExist(err) {
+		t.Fatalf("custom Registry path guessed journal location: %v", err)
 	}
 }

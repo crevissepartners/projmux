@@ -140,12 +140,15 @@ type storeHooks struct {
 
 // Store persists one resource registry file behind a cross-process lock.
 type Store struct {
-	path           string
-	lockPath       string
-	flockPath      string
-	repairLockPath string
-	markerPath     string
-	recoveryDir    string
+	// deletionStateDir is the configured journal root. Path-only stores keep
+	// records beside their explicit Registry; NewDefaultStore binds app state.
+	deletionStateDir string
+	path             string
+	lockPath         string
+	flockPath        string
+	repairLockPath   string
+	markerPath       string
+	recoveryDir      string
 	// lockTimeout bounds one mutation's wait for the lock. Tests shorten it;
 	// nothing in production overrides the default.
 	lockTimeout time.Duration
@@ -171,16 +174,17 @@ type Store struct {
 func NewStore(path string) *Store {
 	dir := filepath.Dir(path)
 	return &Store{
-		path:           path,
-		lockPath:       path + lockFileSuffix,
-		flockPath:      path + flockFileSuffix,
-		repairLockPath: path + ".repair" + lockFileSuffix,
-		markerPath:     filepath.Join(dir, markerFileName),
-		recoveryDir:    filepath.Join(dir, recoveryDirName),
-		retention:      defaultRecoveryRetention,
-		lockTimeout:    defaultLockTimeout,
-		clock:          time.Now,
-		migrations:     coremetadata.ProductionMigrationSet(),
+		deletionStateDir: dir,
+		path:             path,
+		lockPath:         path + lockFileSuffix,
+		flockPath:        path + flockFileSuffix,
+		repairLockPath:   path + ".repair" + lockFileSuffix,
+		markerPath:       filepath.Join(dir, markerFileName),
+		recoveryDir:      filepath.Join(dir, recoveryDirName),
+		retention:        defaultRecoveryRetention,
+		lockTimeout:      defaultLockTimeout,
+		clock:            time.Now,
+		migrations:       coremetadata.ProductionMigrationSet(),
 		// #nosec G404 -- lock retry jitter is scheduling noise, not a secret;
 		// this matches the notify and recent-window store lock jitter.
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -193,7 +197,9 @@ func NewStore(path string) *Store {
 
 // NewDefaultStore builds the store at the standard XDG state location.
 func NewDefaultStore(paths config.Paths) *Store {
-	return NewStore(PathFor(paths.StateDir))
+	store := NewStore(PathFor(paths.StateDir))
+	store.deletionStateDir = paths.StateDir
+	return store
 }
 
 // PathFor returns <stateDir>/metadata/registry.json.

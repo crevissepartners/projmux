@@ -1,6 +1,14 @@
 package app
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"github.com/crevissepartners/projmux/internal/config"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"io"
+	"os"
+
 	"context"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -206,5 +214,45 @@ func TestAutomaticProjectFreshProtectionAndRecords(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Degraded recovery cannot demand label removal that the real mutation gate
+// refuses. This pins the recovery escape path against the ordinary mutation gate.
+func TestAutomaticDegradedRecoveryCannotRemoveProtectionLabel(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root+"/config")
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := intmetadata.NewDefaultStore(paths)
+	fixture := newFakeResourceStore(t)
+	agent, _ := fixture.registry.Agent("agt-beta-codex")
+	agent.Metadata.Labels = map[string]string{coremetadata.LabelProtected: "true"}
+	if _, err = store.Update(func(current *coremetadata.Registry) error { *current = fixture.registry.Clone(); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	damaged := fixture.registry.Clone()
+	damaged.NameReservations = nil
+	data, err := json.Marshal(damaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(store.Path(), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newLabelCommand()
+	err = cmd.Run([]string{"agent", "uid:agt-beta-codex", coremetadata.LabelProtected + "-"}, io.Discard, io.Discard)
+	if !errors.Is(err, intmetadata.ErrRegistryDegraded) {
+		t.Fatalf("real label-removal gate: %v", err)
+	}
+	after, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, data) {
+		t.Fatal("degraded label removal wrote Registry")
 	}
 }
