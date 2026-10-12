@@ -233,6 +233,13 @@ func (claim *deferredProcessClaim) resume(ctx context.Context, frame processResu
 
 func (claim *deferredProcessClaim) drain(ctx context.Context, result processAgentResumeResult) error {
 	c := claim.command
+	// Deferred and ordinary held release share one target queue. Hold this
+	// before listing/readdressing so neither can submit a stale held snapshot.
+	unlock, err := c.lockDeferredRelease(ctx, claim.record.Agent)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	snapshot, err := result.Handle.Observe(result.Binding)
 	if err != nil {
 		return err
@@ -336,19 +343,88 @@ release:
 		}
 		// Persist the crash witness before submitting. A dead
 		// claimant is never permission to resend a potentially written frame.
-		if err = claim.markInflight(record.Envelope.MessageRef); err != nil {
-			return err
-		}
-		record, err = c.deliverOrHoldCoordination(record, *target, route, record.Envelope)
-		if err != nil {
-			return err
-		}
-		if !record.Delivery.State.Terminal() {
-			return fmt.Errorf("%s: deferred release did not settle", processResumeRefused)
-		}
-		if err = claim.markInflight(""); err != nil {
+		if err = c.releaseDeferredPeer(ctx, record, claim.markInflight, func() error {
+			snapshot, err := result.Handle.Observe(result.Binding)
+			if err != nil {
+				return err
+			}
+			return synchronize(snapshot)
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// A short lock attempt preserves owner cancellation while using the ordinary
+// release's existing lock and total wait bound.
+func (c *agentCommand) lockDeferredRelease(ctx context.Context, uid string) (func(), error) {
+	locker, ok := c.messageStore.(agentMessageReleaseLocker)
+	if !ok {
+		return nil, errors.New("process-host-unavailable: deferred release lock unavailable")
+	}
+	end := time.Now().Add(agentMessageReleaseLockWait)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		unlock, err := locker.LockTargetRelease(uid, 20*time.Millisecond)
+		if err == nil {
+			return unlock, nil
+		}
+		if !errors.Is(err, messagestore.ErrBusy) || !time.Now().Before(end) {
+			return nil, err
+		}
+	}
+}
+
+// The caller holds the target release lock. Judge the oldest held record with
+// the ordinary release path, which does not hold it behind later queued peers.
+// Only a proved zero-write hold can be retried; terminal/unknown outcomes retain
+// their existing meaning. Persist a crash witness around each possible write.
+func (c *agentCommand) releaseDeferredPeer(ctx context.Context, record messagestore.Record, mark func(string) error, syncStep func() error) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if syncStep != nil {
+			if err := syncStep(); err != nil {
+				return err
+			}
+		}
+		current, found, err := c.messageStore.Get(record.Envelope.MessageRef)
+		if err != nil || !found {
+			return errors.Join(err, messagestore.ErrNotFound)
+		}
+		if current.Delivery.State.Terminal() {
+			return nil
+		}
+		if !current.Envelope.Deadline.After(c.messageClock()) {
+			_, _, err = c.messageStore.Status(current.Envelope.MessageRef, c.messageClock())
+			return err
+		}
+		if err = mark(current.Envelope.MessageRef); err != nil {
+			return err
+		}
+		outcome, _, err := c.releaseHeldMessage(current)
+		if err != nil {
+			return err
+		}
+		settled, found, err := c.messageStore.Get(current.Envelope.MessageRef)
+		if err != nil || !found {
+			return errors.Join(err, messagestore.ErrNotFound)
+		}
+		if settled.Delivery.State.Terminal() {
+			return mark("")
+		}
+		if settled.Delivery.State != coremessage.StateHeld || settled.HandoffObserved || (outcome != heldReleaseBlocked && outcome != heldReleaseUndecidable) {
+			return fmt.Errorf("%s: deferred release did not settle", processResumeRefused)
+		}
+		if err = mark(""); err != nil {
+			return err
+		}
+		if err = c.sleepMessage(ctx, 20*time.Millisecond); err != nil {
+			return err
+		}
+	}
 }

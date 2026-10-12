@@ -192,3 +192,160 @@ func TestDetachedProcessFirstPeerStopBeforeBirthPreservesQueue(t *testing.T) {
 		}
 	}
 }
+
+func TestDetachedProcessDeferredReleaseOldestAndConcurrentRelease(t *testing.T) {
+	f := newHoldFixture(t)
+	refs := []string{"drain-first", "drain-second", "drain-third"}
+	for i, ref := range refs {
+		f.putHeld(t, ref, f.now.Add(time.Duration(i)*time.Millisecond), f.now.Add(time.Minute), deferredHoldReason)
+	}
+	unlock, err := f.cmd.lockDeferredRelease(context.Background(), f.claudeUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := f.store.DeferredFor(f.claudeUID, deferredHoldReason)
+	if err != nil {
+		unlock()
+		t.Fatal(err)
+	}
+	f.adapter.busy = 1
+	f.installFakeSleep()
+	// The ordinary release starts while the deferred owner holds the same lock.
+	started, done := make(chan struct{}), make(chan error, 1)
+	go func() { close(started); done <- f.cmd.releaseHeldMessages(f.claudeUID) }()
+	<-started
+	var witnesses []string
+	for _, record := range held {
+		err = f.cmd.releaseDeferredPeer(context.Background(), record, func(ref string) error { witnesses = append(witnesses, ref); return nil }, nil)
+		if err != nil {
+			unlock()
+			<-done
+			t.Fatal(err)
+		}
+	}
+	unlock()
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(f.adapter.submits, []string{refs[0], refs[0], refs[1], refs[2]}) {
+		t.Fatal("concurrent release duplicated or reordered writes", f.adapter.submits)
+	}
+	if !reflect.DeepEqual(witnesses, []string{refs[0], "", refs[0], "", refs[1], "", refs[2], ""}) {
+		t.Fatal("crash witness did not bracket writes", witnesses)
+	}
+	for _, ref := range refs {
+		if f.delivery(t, ref).State != coremessage.StateDelivered {
+			t.Fatal("oldest held was stranded", ref)
+		}
+	}
+	again, err := f.cmd.lockDeferredRelease(context.Background(), f.claudeUID)
+	if err != nil {
+		t.Fatal("release lock leaked", err)
+	}
+	again()
+}
+
+func TestDetachedProcessDeferredReleaseZeroWriteCancelAndDeadline(t *testing.T) {
+	for _, ending := range []string{"cancel", "deadline"} {
+		t.Run(ending, func(t *testing.T) {
+			f := newHoldFixture(t)
+			f.putHeld(t, "drain-busy", f.now, f.now.Add(time.Second), deferredHoldReason)
+			f.putHeld(t, "drain-later", f.now.Add(time.Millisecond), f.now.Add(time.Minute), deferredHoldReason)
+			held, err := f.store.DeferredFor(f.claudeUID, deferredHoldReason)
+			if err != nil || len(held) != 2 {
+				t.Fatal("missing held fixture", held, err)
+			}
+			f.adapter.busy = 1
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f.installFakeSleep()
+			f.onWait = func() {
+				if ending == "cancel" {
+					cancel()
+				} else {
+					f.now = f.now.Add(time.Second)
+				}
+			}
+			var witness string
+			unlock, err := f.cmd.lockDeferredRelease(ctx, f.claudeUID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = f.cmd.releaseDeferredPeer(ctx, held[0], func(ref string) error { witness = ref; return nil }, nil)
+			unlock()
+			if ending == "cancel" && err != context.Canceled {
+				t.Fatal("cancel ignored", err)
+			}
+			if ending == "deadline" && err != nil {
+				t.Fatal(err)
+			}
+			if witness != "" || len(f.adapter.submits) != 1 || f.delivery(t, "drain-later").State != coremessage.StateHeld {
+				t.Fatal("zero-write hold lost witness/queue", witness, f.adapter.submits)
+			}
+			record, _, _ := f.store.Get("drain-busy")
+			want := coremessage.StateHeld
+			if ending == "deadline" {
+				want = coremessage.StateExpired
+			}
+			if record.Delivery.State != want || record.HandoffObserved || record.Delivery.OutcomeUnknown {
+				t.Fatal("zero-write outcome changed", record)
+			}
+			again, err := f.cmd.lockDeferredRelease(context.Background(), f.claudeUID)
+			if err != nil {
+				t.Fatal("cancel/deadline leaked lock", err)
+			}
+			again()
+		})
+	}
+}
+
+func TestDetachedProcessDeferredReleaseUnknownIsNeverRewritten(t *testing.T) {
+	f := newHoldFixture(t)
+	f.putHeld(t, "drain-unknown", f.now, f.now.Add(time.Minute), deferredHoldReason)
+	if _, _, err := f.store.MarkHandoff("drain-unknown"); err != nil {
+		t.Fatal(err)
+	}
+	record, _, _ := f.store.Get("drain-unknown")
+	var witness string
+	unlock, err := f.cmd.lockDeferredRelease(context.Background(), f.claudeUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err = f.cmd.releaseDeferredPeer(context.Background(), record, func(ref string) error { witness = ref; return nil }, nil); err != nil {
+		t.Fatal(err)
+	}
+	settled, _, _ := f.store.Get("drain-unknown")
+	if len(f.adapter.submits) != 0 || witness != "" || settled.Delivery.State != coremessage.StateFailed || !settled.Delivery.OutcomeUnknown {
+		t.Fatal("unknown frame rewritten or witness retained", settled)
+	}
+	if err = f.cmd.releaseDeferredPeer(context.Background(), record, func(string) error { t.Fatal("terminal frame obtained a new witness"); return nil }, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDetachedProcessDeferredReleaseLockCancellation(t *testing.T) {
+	f := newHoldFixture(t)
+	unlock, err := f.store.LockTargetRelease(f.claudeUID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if release, err := f.cmd.lockDeferredRelease(ctx, f.claudeUID); err != context.Canceled || release != nil {
+		unlock()
+		t.Fatal("cancelled owner waited for release", err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if release, err := f.cmd.lockDeferredRelease(ctx, f.claudeUID); err != context.DeadlineExceeded || release != nil {
+		unlock()
+		t.Fatal("waiting owner ignored cancellation", err)
+	}
+	unlock()
+	again, err := f.cmd.lockDeferredRelease(context.Background(), f.claudeUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again()
+}
