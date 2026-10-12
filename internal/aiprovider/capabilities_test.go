@@ -45,8 +45,8 @@ func TestAgentCapabilityCatalogIsClosedCartesianMatrix(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 28 {
-		t.Fatalf("action count = %d, want 28", len(seen))
+	if len(seen) != 29 {
+		t.Fatalf("action count = %d, want 29", len(seen))
 	}
 }
 
@@ -121,7 +121,7 @@ func TestAgentCapabilityCatalogPinsCodexNativeAndSharedFamilies(t *testing.T) {
 	t.Parallel()
 
 	for _, id := range []string{
-		"turn.start", "turn.steer", "turn.interrupt", "approval.review", "review",
+		"turn.start", "turn.steer", "turn.deliver", "turn.interrupt", "approval.review", "review",
 	} {
 		for _, provider := range AgentProviders() {
 			_, cell, ok := LookupAgentCapability(id, provider)

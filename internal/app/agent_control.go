@@ -221,16 +221,110 @@ func (c *agentCommand) bindAgentControl(spelling string, registry coremetadata.R
 
 func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("agent turn requires start, steer, or interrupt")
+		return usageError("agent turn requires start, steer, deliver, or interrupt")
 	}
 	switch args[0] {
+	case "deliver":
+		return c.runTurnDeliver(args, stdout)
 	case "start", "steer":
 		return c.runTurnInput(args, stdout)
 	case "interrupt":
 		return c.runTurnInterrupt(args, stdout)
 	default:
-		return usageError("agent turn requires start, steer, or interrupt")
+		return usageError("agent turn requires start, steer, deliver, or interrupt")
 	}
+}
+
+func (c *agentCommand) runTurnDeliver(args []string, stdout io.Writer) error {
+	// The delimiter is consumed once; flag-shaped text is provider input.
+	if len(args) != 4 || args[2] != "--" || strings.TrimSpace(args[1]) == "" || strings.TrimSpace(args[3]) == "" {
+		return usageError("agent turn deliver requires <agent-ref> -- <text>; quote text as one argument")
+	}
+	response, steered, err := c.deliverTurn(args[1], args[3])
+	if err != nil {
+		return err
+	}
+	if steered {
+		if response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed {
+			return &exactAgentControlBindingError{Reason: "turn/deliver steer response did not carry the exact provider-acceptance receipt"}
+		}
+		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s mode=steer acceptance=%s delivery=%s\n", c.agentActionText(agentActionSteerTurn), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID), response.Acceptance, response.Delivery)
+	} else {
+		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s mode=start\n", c.agentActionText(agentActionSendTurn), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
+	}
+	return err
+}
+
+// deliverTurn submits one input to one exact Codex Agent. The tmux control
+// epoch or owned process host selects start or steer from one lifecycle read.
+// Only an explicit invalid-operation refusal permits the legacy observer path;
+// transport failures and uncertain receipts never trigger another delivery.
+func (c *agentCommand) deliverTurn(ref, text string) (agentControlResponse, bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return agentControlResponse{}, false, usageError("agent turn deliver requires text")
+	}
+	reg, agent, err := c.resolveOneAgent("agent turn deliver", ref, selector.VerbReview)
+	if err != nil {
+		return agentControlResponse{}, false, err
+	}
+	if err := requireStaticNativeAgentCapability("agent turn deliver", agent); err != nil {
+		return agentControlResponse{}, false, err
+	}
+	if processAgentAnswers(reg, agent) {
+		delivery, err := c.callProcessUserDelivery(reg, agent, text)
+		if err != nil {
+			return agentControlResponse{}, false, err
+		}
+		pane, _ := reg.Pane(agent.Status.PaneRef)
+		response := agentControlResponse{OK: true, ThreadID: pane.Status.ProcessSession.ThreadID, TurnID: delivery.TurnID}
+		steered := delivery.Mode == processhost.UserTurnSteer
+		if steered {
+			response.Acceptance, response.Delivery = agentControlAcceptanceProvider, agentControlDeliveryUnconfirmed
+		}
+		return response, steered, nil
+	}
+	binding, err := c.bindAgentControl("agent turn deliver", reg, agent)
+	if err != nil {
+		return agentControlResponse{}, false, err
+	}
+	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpDeliver, Text: text})
+	if err != nil {
+		return agentControlResponse{}, false, err
+	}
+	steered := response.Acceptance == agentControlAcceptanceProvider
+	if !response.OK && response.Code == "invalid-operation" {
+		response, steered, err = c.legacyTurn(binding, text)
+		if err != nil {
+			return response, false, err
+		}
+	}
+	if err := response.Error(); err != nil {
+		return response, false, addOpenCodexBindingRecovery(err, binding)
+	}
+	if !steered {
+		if err := c.recordStartedCodexTurn(binding, response); err != nil {
+			return response, false, err
+		}
+	}
+	return response, steered, nil
+}
+
+// legacyTurn is the start-then-steer path for an observer that does not know
+// turn-deliver. It costs the extra lifecycle read that deliver exists to
+// avoid, so it runs only after that observer refused the operation outright.
+func (c *agentCommand) legacyTurn(binding exactAgentControlBinding, text string) (agentControlResponse, bool, error) {
+	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpStart, Text: text})
+	if err != nil {
+		return agentControlResponse{}, false, err
+	}
+	if response.OK || response.Code != "turn-in-progress" {
+		return response, false, nil
+	}
+	response, err = c.callControl(binding, agentControlRequest{Operation: agentControlOpSteer, Text: text})
+	if err != nil {
+		return agentControlResponse{}, false, err
+	}
+	return response, response.OK, nil
 }
 
 func (c *agentCommand) runTurnInput(args []string, stdout io.Writer) error {

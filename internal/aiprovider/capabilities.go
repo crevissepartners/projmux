@@ -181,6 +181,7 @@ var agentActions = []AgentAction{
 	{ID: "persona.detach", Group: "persona", Route: "agent instructions detach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "turn.start", Group: "turn", Route: "agent turn start", Callable: true, Cells: codexOnly(CompletionExactTurn)},
 	{ID: "turn.steer", Group: "turn", Route: "agent turn steer", Callable: true, Cells: codexOnly(CompletionExactTurn)},
+	{ID: "turn.deliver", Group: "turn", Route: "agent turn deliver", Callable: true, Cells: codexOnly(CompletionExactTurn)},
 	{ID: "turn.interrupt", Group: "turn", Route: "agent turn interrupt", Callable: true, Cells: codexOnly(CompletionExactTurn)},
 	{ID: "approval.review", Group: "approval", Route: "agent approval review", Callable: true, Cells: codexOnly(CompletionExactApproval)},
 	{ID: "review", Group: "review", Route: "agent review", Callable: true, Cells: codexOnly(CompletionExactTurn)},

@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 244 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 245 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -123,6 +123,7 @@ projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
+projmux agent turn deliver <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
@@ -166,7 +167,7 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent status`
 
@@ -324,6 +325,7 @@ Allowed effects:
 
 ```
 projmux agent turn start|steer <agent-ref> -- <text>
+projmux agent turn deliver <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref> [--via <client>]
 ```
 
@@ -333,9 +335,10 @@ Subcommands:
 | --- | --- |
 | [`projmux agent turn start`](#projmux-agent-turn-start) | Send a new turn to one exact idle Codex thread |
 | [`projmux agent turn steer`](#projmux-agent-turn-steer) | Request provider acceptance for one exact current Codex turn; delivery remains unconfirmed |
+| [`projmux agent turn deliver`](#projmux-agent-turn-deliver) | Deliver one input as a new or steered turn to one exact Codex Agent |
 | [`projmux agent turn interrupt`](#projmux-agent-turn-interrupt) | Interrupt one exact current Codex turn or send Esc to one fresh in-progress Claude turn |
 
-Canonical spelling: `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`
+Canonical spelling: `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`
 
 #### `projmux agent turn start`
 
@@ -382,6 +385,29 @@ Allowed effects:
 ```
 projmux agent turn steer <agent-ref> -- <text>
 ```
+
+#### `projmux agent turn deliver`
+
+Deliver one input as a new or steered turn to one exact Codex Agent
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent turn deliver <agent-ref> -- <text>
+```
+
+The control epoch (tmux) or owned process host chooses start or steer from one lifecycle read. The receipt includes mode=start or mode=steer; steer confirms provider acceptance and keeps delivery=unconfirmed. Only an older tmux observer's invalid-operation refusal allows the legacy start-then-steer path. Other failures are never resent. Claude is unsupported. Quote the text as one argument after --; flag-shaped text stays input.
 
 #### `projmux agent turn interrupt`
 
