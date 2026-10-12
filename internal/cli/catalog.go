@@ -2393,6 +2393,7 @@ var routes = []Route{
 				Name:             "project",
 				Invocation:       InvocationExplicit,
 				Summary:          "Terminate the exact persistent tmux session of a Project; the Registry graph, root, and external assets are preserved",
+				Notes:            []string{"Stops Running headless Agents through their process hosts before terminating tmux; durable Wait confirmation shares one 10-second limit. A Project with only Running headless Agents can also be stopped. Unconfirmed Agents remain Running and are named with project-stop-agents-still-running; the command exits nonzero after continuing the tmux stop. Retry stop project for remaining Agents. Project session Ctrl-X in the sidebar and session picker follows the same stop path."},
 				CanonicalSummary: "Terminate a Project runtime and preserve its Registry graph",
 				Usage:            []string{"projmux stop project <ref> [-o receipt|none]"},
 				Canonical:        []string{"stop project"},

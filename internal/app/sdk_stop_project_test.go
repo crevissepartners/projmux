@@ -215,10 +215,9 @@ func TestStopProjectSDKNoWriteRefusals(t *testing.T) {
 	}
 }
 
-// Existing stop semantics record Running process descendants as interrupted
-// without controlling their provider lifetime. This fixture documents that
-// behavior; changing it belongs to the separate lifecycle follow-up.
-func TestProjectStopProcessDescendantObservation(t *testing.T) {
+// A process descendant without a reachable owner cannot be confirmed stopped.
+// The CLI still ends tmux, reports failure and preserves the process record.
+func TestProjectStopUnavailableProcessDescendantStaysRunning(t *testing.T) {
 	_, run := stopAppSocket(t)
 	fixture := freshStartFixtureStore(t)
 	activateRuntimeStopAgent(t, fixture, "gen-process")
@@ -234,18 +233,27 @@ func TestProjectStopProcessDescendantObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
-	if _, err := sdkStopCLI(t, s, "alpha", "alpha"); err != nil {
-		t.Fatal(err)
-	}
+	_, stopErr := sdkStopCLI(t, s, "alpha", "alpha")
 	agent := projectRegistry(t, state).Agents[0]
-	if agent.Status.Phase != metadata.PhaseOffline || agent.Status.LastTermination == nil || agent.Status.LastTermination.Classification != metadata.TerminationInterrupted {
+	if exitCodeOf(stopErr) != 1 || !strings.Contains(stopErr.Error(), projectStopAgentsStillRunning) || !strings.Contains(stopErr.Error(), agent.Metadata.Name) || !strings.Contains(stopErr.Error(), agent.Metadata.UID) {
+		t.Fatalf("stop failure=%v", stopErr)
+	}
+	if agent.Status.Phase != metadata.PhaseRunning || agent.Status.LastTermination != nil {
 		t.Fatalf("process fixture %+v", agent.Status)
+	}
+	registry := projectRegistry(t, state)
+	pane, _ := registry.Pane("pan-alpha-codex")
+	if pane.Status.LastTermination != nil {
+		t.Fatalf("process got tmux receipt: %+v", pane.Status.LastTermination)
 	}
 	// /proc is only the fixture process, not a provider discovery or live probe.
 	if err := child.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Fatal("fixture process was stopped")
 	}
-	t.Logf("CLI process descendant phase=%s termination=%s; fixture PID remains alive", agent.Status.Phase, agent.Status.LastTermination.Classification)
+	if strings.Contains(run("list-sessions", "-F", "#{session_name}"), "alpha") {
+		t.Fatal("failed process stop prevented tmux stop")
+	}
+	t.Logf("CLI process descendant phase=%s; fixture PID remains alive after reported stop failure", agent.Status.Phase)
 }
 
 func TestSDKStopProjectInterruptionSummaryAfterCompensation(t *testing.T) {

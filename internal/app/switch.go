@@ -16,6 +16,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/pincmd"
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
@@ -140,6 +141,7 @@ type switchCommand struct {
 	sidebarOriginAnchorInvalidated bool
 	cleanupKilledSession           func(string)
 	managedStopStore               *resourceStore
+	stopProcessAgents              projectProcessStopper
 	allowVirtualTerminal           bool
 	materializeVirtualWindow       func(context.Context, string) (virtualWindowShellMaterialization, error)
 	projectTopology                switchProjectTopologyMaterializer
@@ -2717,24 +2719,29 @@ func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection
 // resolved route is used as-is, and the target session is confirmed through
 // its exact physical socket, so the confirmation, the kill, and whatever the
 // caller read before it all name one server and the route is resolved once.
-func (c *switchCommand) stopManagedProjectSessionOnRoute(
+func (c *switchCommand) stopManagedProjectSessionOnRoute(ctx context.Context, selection, sessionName, fallbackSession, anchorPane string, resolved *runtimeMutationRoute) error {
+	_, _, err := c.stopManagedProjectSessionResult(ctx, selection, sessionName, fallbackSession, anchorPane, resolved)
+	return err
+}
+
+func (c *switchCommand) stopManagedProjectSessionResult(
 	ctx context.Context,
 	selection, sessionName, fallbackSession, anchorPane string,
 	resolved *runtimeMutationRoute,
-) error {
+) ([]cli.ReceiptResource, bool, error) {
 	if c == nil {
-		return errors.New("switch managed runtime mutation runner is not configured")
+		return nil, false, errors.New("switch managed runtime mutation runner is not configured")
 	}
 	observed := runtimeTransportRequest{}
 	if resolved != nil {
 		if strings.TrimSpace(resolved.ExpectedSocketPath) == "" {
-			return errors.New("switch managed runtime stop: resolved route has no physical socket; nothing was changed")
+			return nil, false, errors.New("switch managed runtime stop: resolved route has no physical socket; nothing was changed")
 		}
 		observed.socketPath = resolved.ExpectedSocketPath
 	}
 	view, err := c.navigationViewOn(ctx, observed)
 	if err != nil {
-		return fmt.Errorf("resolve managed Project runtime stop: %w", err)
+		return nil, false, fmt.Errorf("resolve managed Project runtime stop: %w", err)
 	}
 	resolve := func(view registryview.View) (managedRuntimeStopTarget, bool) {
 		return mutationruntime.ResolveManagedProjectStopTarget(view, selection, sessionName)
@@ -2744,36 +2751,45 @@ func (c *switchCommand) stopManagedProjectSessionOnRoute(
 	// this managed plan; it may never be used for a Registry UID row.
 	if _, ok := resolve(view); !ok {
 		if switchRegistrySelectionUID(selection) != "" {
-			return fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
+			return nil, false, fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
 		}
-		return c.killFocusedSession(ctx, sessionName, fallbackSession, nil, anchorPane)
+		return nil, false, c.killFocusedSession(ctx, sessionName, fallbackSession, nil, anchorPane)
 	} else if c.tmuxRunner == nil {
-		return errors.New("switch managed runtime mutation runner is not configured")
+		return nil, false, errors.New("switch managed runtime mutation runner is not configured")
 	}
 	var route runtimeMutationRoute
 	if resolved != nil {
 		route = *resolved
 	} else if route, err = resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.tmuxRunner, c.lookupEnv, anchorPane); err != nil {
-		return err
+		return nil, false, err
 	}
 	target, ok := resolve(view)
 	if !ok {
-		return fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
+		return nil, false, fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
 	}
 	target.Route = route
 	if fallbackSession = strings.TrimSpace(fallbackSession); fallbackSession != "" && fallbackSession != sessionName {
 		if err := c.sessions.OpenSession(ctx, fallbackSession); err != nil {
-			return fmt.Errorf("open fallback tmux session %q before managed stop: %w", fallbackSession, err)
+			return nil, false, fmt.Errorf("open fallback tmux session %q before managed stop: %w", fallbackSession, err)
 		}
 	}
 	if c.navigation == nil || c.navigation.reader == nil || c.navigation.reader.reader == nil {
-		return errors.New("switch managed runtime Registry reader is not configured")
+		return nil, false, errors.New("switch managed runtime Registry reader is not configured")
 	}
 	if c.managedStopStore == nil {
-		return errors.New("switch managed runtime Registry store is not configured")
+		return nil, false, errors.New("switch managed runtime Registry store is not configured")
 	}
 	authoritative := managedRuntimeStopRegistryAuthority(c.managedStopStore.load)
-	return executeManagedRuntimeStop(ctx, c.tmuxRunner, target, authoritative, c.managedStopStore)
+	stopper := c.stopProcessAgents
+	if stopper == nil {
+		stopper = stopProjectProcessAgents
+	}
+	stopped, processErr := stopper(ctx, c.managedStopStore, target.RootUID)
+	tmuxErr := executeManagedRuntimeStop(ctx, c.tmuxRunner, target, authoritative, c.managedStopStore)
+	if tmuxErr != nil {
+		return stopped, false, errors.Join(processErr, tmuxErr)
+	}
+	return stopped, true, processErr
 }
 
 func (c *switchCommand) toggleTag(target string, stdout io.Writer) error {

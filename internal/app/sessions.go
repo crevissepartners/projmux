@@ -50,6 +50,7 @@ type sessionsCommand struct {
 	homeDir              func() (string, error)
 	cleanupKilledSession func(string)
 	managedStopStore     *resourceStore
+	stopProcessAgents    projectProcessStopper
 	// navigation is the shared zero-write Registry read seam. It supplies the
 	// attribution that decides which observed sessions are managed rows; it
 	// never writes and never materializes.
@@ -339,7 +340,15 @@ func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []in
 		authorityLoad = stopStore.load
 	}
 	authoritative := managedRuntimeStopRegistryAuthority(authorityLoad)
-	if err := executeManagedRuntimeStop(ctx, c.mutationRunner, target, authoritative, stopStore); err != nil {
+	var processErr error
+	if target.RootKind == coremetadata.KindProject {
+		stopper := c.stopProcessAgents
+		if stopper == nil {
+			stopper = stopProjectProcessAgents
+		}
+		_, processErr = stopper(ctx, stopStore, target.RootUID)
+	}
+	if err := errors.Join(processErr, executeManagedRuntimeStop(ctx, c.mutationRunner, target, authoritative, stopStore)); err != nil {
 		return nil, fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 	if c.cleanupKilledSession != nil {

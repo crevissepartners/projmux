@@ -410,7 +410,11 @@ func (c *agentCommand) runTurnInterrupt(args []string, stdout io.Writer) error {
 // process host. Starts enter the provider stream as plain user frames;
 // coordination messages keep their separate envelope route.
 func (c *agentCommand) callProcessTurn(reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, error) {
-	operation, result, err := c.callProcessForegroundAction(reg, agent, provider, action, text)
+	return c.callProcessTurnContext(context.Background(), reg, agent, provider, action, text)
+}
+
+func (c *agentCommand) callProcessTurnContext(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, error) {
+	operation, result, err := c.callProcessForegroundActionContext(ctx, reg, agent, provider, action, text)
 	if err != nil {
 		return "", err
 	}
@@ -445,6 +449,13 @@ func processUserDeliveryAcceptance(result processForegroundResult, operation str
 }
 
 func (c *agentCommand) callProcessForegroundAction(reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, processForegroundResult, error) {
+	return c.callProcessForegroundActionContext(context.Background(), reg, agent, provider, action, text)
+}
+
+func (c *agentCommand) callProcessForegroundActionContext(parent context.Context, reg coremetadata.Registry, agent coremetadata.Agent, provider, action, text string) (string, processForegroundResult, error) {
+	if err := parent.Err(); err != nil {
+		return "", processForegroundResult{}, err
+	}
 	pane, found := reg.Pane(agent.Status.PaneRef)
 	if !found || pane.Status.ProcessSession == nil || agent.Spec.Provider != provider || c.controlPaths == nil {
 		return "", processForegroundResult{}, processhost.ErrStale
@@ -472,7 +483,7 @@ func (c *agentCommand) callProcessForegroundAction(reg coremetadata.Registry, ag
 		sessionID = session.ThreadID
 	}
 	authority := processhost.Authority{Binding: processSchemaBinding(session.Binding), Connection: session.Binding.OperationID, Session: sessionID}
-	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
+	ctx, cancel := context.WithTimeout(parent, c.controlTimeoutValue())
 	defer cancel()
 	request := processHostRequest(provider, nil, &processForegroundRequest{Authority: authority, Action: action, Operation: operation, Prompt: text, Turn: session.TurnID})
 	result, err := callProcessForeground(ctx, socket, identity, activation.HostProcess, request)
