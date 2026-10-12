@@ -175,12 +175,12 @@ func (w processOwnedWait) run(ctx context.Context, end context.CancelFunc, trigg
 			trigger(end)
 		}
 	}
-	snapshot, waitErr := w.owner.waitProcessAgent(ctx, processSnapshotSynchronizer(w.changed, func(snapshot processhost.Snapshot) error {
+	snapshot, waitErr := w.owner.waitProcessAgentWithAttention(ctx, processSnapshotSynchronizer(w.changed, func(snapshot processhost.Snapshot) error {
 		if len(snapshot.Pending) > 0 {
 			return w.controls(context.WithoutCancel(ctx))
 		}
 		return nil
-	}))
+	}), w.attention)
 	// A closed authority still closes answer records and projects termination.
 	controlErr := w.controls(context.Background())
 	if errors.Is(controlErr, processhost.ErrClosed) || errors.Is(controlErr, processhost.ErrStale) {

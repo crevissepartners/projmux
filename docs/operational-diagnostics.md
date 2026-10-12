@@ -867,7 +867,7 @@ why the distribution is stored whole.
 generation. `code` is one of `owner.stop.signal-sigint`,
 `owner.stop.signal-sigterm`, `owner.stop.stdin-eof`, `owner.stop.control-stop`,
 `owner.stop.generation-abandoned`, `owner.stop.provider-exit`, or
-`owner.stop.other` (including synchronization and launch cleanup failures).
+`owner.stop.other` (including control/Registry synchronization and launch cleanup failures).
 The private journal includes `agent_uid`, `pane_uid`, `generation`, `owner_pid`,
 `owner_ppid`, and `parent_comm`. The parent name is a bounded basename and is
 empty when unavailable (including systems without `/proc`). It is a clue about
@@ -885,3 +885,27 @@ write is attempted per owner generation. Journal and stderr writes are
 best-effort; failures do not change Stop or the provider's normal/abnormal
 classification. SIGKILL cannot be recorded
 by the killed owner. Older journal readers skip this new event.
+
+
+## Headless attention write recovery
+
+While owning a headless Claude or Codex provider, create, resume, and relaunch
+owners keep attention and notification write failures separate from provider
+lifetime. The owner journals `agent.attention.sync` once at the start of a
+continuous failure episode, and once when it recovers. These records carry
+`agent_uid` and a closed `code`: `attention.sync.lock-timeout` for an attention
+lock timeout, `attention.sync.notify-write` for notification queue failures,
+`attention.sync.io` for file IO failures, or `attention.sync.projection` for
+other projection failures. Recovery uses `attention.sync.recovered`. Failure
+records have level/result `error`; recovery records have level `info` and
+result `success`. No raw error text, file paths, or provider content is logged.
+
+Only one attention projection runs at a time per owner. Failed projections
+retry one second after completion even if the provider snapshot stays unchanged;
+snapshot changes during a write coalesce. A caught-up idle owner does not poll
+attention. Existing two-second attention lock and notification lock budgets,
+notification IDs, and cursor commit ordering are unchanged. The in-flight
+write does not block provider Stop or actual Wait. Control response writes,
+Registry writes, generation abandonment, and attention stale/closed authority
+errors retain their failure behavior. The final projection after provider exit
+retains its existing error handling.

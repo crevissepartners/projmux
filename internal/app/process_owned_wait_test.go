@@ -66,11 +66,17 @@ func TestProcessOwnedWaitInjectedTriggerStopsAndRecordsWaitOnce(t *testing.T) {
 			handle := &triggerOwnedHandle{ready: processhost.Snapshot{Binding: b, Provider: provider, State: "ready", Session: conversation, Connection: b.Operation}, stopped: make(chan struct{}), observed: make(chan struct{})}
 			owner := &processAgentCreateResult{Binding: b, Handle: handle, Provider: provider, registryPath: store.Path()}
 			var changed, controls, attention atomic.Int32
+			attentionStarted := make(chan struct{})
 			wait := processOwnedWait{owner: owner, binding: b,
-				changed:   func(processhost.Snapshot) error { changed.Add(1); return nil },
-				controls:  func(context.Context) error { controls.Add(1); return nil },
-				attention: func() error { attention.Add(1); return nil },
-				fail:      func(err error) error { t.Errorf("owned Wait failed: %v", err); return err }}
+				changed:  func(processhost.Snapshot) error { changed.Add(1); return nil },
+				controls: func(context.Context) error { controls.Add(1); return nil },
+				attention: func() error {
+					if attention.Add(1) == 1 {
+						close(attentionStarted)
+					}
+					return nil
+				},
+				fail: func(err error) error { t.Errorf("owned Wait failed: %v", err); return err }}
 
 			ctx, end := context.WithCancel(context.Background())
 			defer end()
@@ -91,6 +97,14 @@ func TestProcessOwnedWaitInjectedTriggerStopsAndRecordsWaitOnce(t *testing.T) {
 			if handle.stops.Load() != 0 {
 				t.Fatal("provider stopped before the trigger fired")
 			}
+			// Observe starts before attention is scheduled. Fix the premise for
+			// expecting a live projection plus the final projection: cancellation
+			// before scheduling legitimately skips the live one.
+			select {
+			case <-attentionStarted:
+			case <-time.After(10 * time.Second):
+				t.Fatal("owned Wait never started live attention")
+			}
 			close(fire)
 			select {
 			case err := <-done:
@@ -100,7 +114,7 @@ func TestProcessOwnedWaitInjectedTriggerStopsAndRecordsWaitOnce(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("trigger did not end the owned Wait")
 			}
-			if handle.stops.Load() != 1 || changed.Load() != 1 || attention.Load() != 1 || controls.Load() < 1 {
+			if handle.stops.Load() != 1 || changed.Load() != 1 || attention.Load() < 2 || controls.Load() < 1 {
 				t.Fatalf("stops=%d changed=%d controls=%d attention=%d", handle.stops.Load(), changed.Load(), controls.Load(), attention.Load())
 			}
 			if !owner.waitRecorded {
