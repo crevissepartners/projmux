@@ -43,11 +43,11 @@ func runningProjectProcessAgents(reg coremetadata.Registry, projectUID string) [
 // evidence; this observer never projects a refused or unconfirmed stop Offline.
 func stopProjectProcessAgents(ctx context.Context, store *resourceStore, projectUID string) ([]cli.ReceiptResource, error) {
 	command := newAgentCommand()
-	return stopProjectProcessAgentsWith(ctx, store, projectUID, command.callProcessTurn, command.readProcessIdentity(), processRelaunchRetirementTimeout)
+	return stopProjectProcessAgentsWith(ctx, store, projectUID, command.callProcessTurnContext, command.readProcessIdentity(), processRelaunchRetirementTimeout)
 }
 
 func stopProjectProcessAgentsWith(ctx context.Context, store *resourceStore, projectUID string,
-	stop func(coremetadata.Registry, coremetadata.Agent, string, string, string) (string, error),
+	stop func(context.Context, coremetadata.Registry, coremetadata.Agent, string, string, string) (string, error),
 	identity processIdentityReader, timeout time.Duration) ([]cli.ReceiptResource, error) {
 	reg, err := store.load()
 	if err != nil {
@@ -66,7 +66,7 @@ func stopProjectProcessAgentsWith(ctx context.Context, store *resourceStore, pro
 				failures[i] = processhost.ErrStale
 				return
 			}
-			_, failures[i] = stop(reg, target.agent, target.pane.Status.ProcessSession.Provider, "stop", "")
+			_, failures[i] = stop(bounded, reg, target.agent, target.pane.Status.ProcessSession.Provider, "stop", "")
 		})
 	}
 	requests.Wait()

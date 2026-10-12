@@ -160,8 +160,9 @@ func (c *projectLifecycleCommand) runProject(args []string, stdout, stderr io.Wr
 
 // execute performs the verb and returns the receipt of what it actually did.
 //
-// Every refusal in here happens before the first runtime call, so a refused
-// invocation is a zero-write outcome rather than a partial one.
+// Lifecycle preflight refusals happen before runtime effects. Project stop can
+// partially succeed: confirmed Agent stops are reported even when a later host
+// or tmux stop fails. Only effects actually confirmed belong in its receipt.
 func (c *projectLifecycleCommand) execute(
 	ctx context.Context,
 	spelling string,
@@ -240,6 +241,12 @@ func (c *projectLifecycleCommand) execute(
 			return cli.OperationReceipt{}, err
 		}
 		receipt := c.receipt(cli.OperationStopProject, target, cli.RuntimeStopped, focus)
+		if live && !tmuxStopped {
+			// Only the confirmed Agent runtimes stopped; do not claim the Project
+			// session stopped or its attached client moved when tmux failed.
+			receipt.AffectedUIDs[0].Action = cli.ActionUnchanged
+			receipt.Effects.Focus = cli.FocusUnchanged
+		}
 		for _, agent := range stopped {
 			receipt.Add(agent.Kind, agent.UID, agent.Name, agent.Action)
 		}

@@ -2787,7 +2787,7 @@ func (c *switchCommand) stopManagedProjectSessionResult(
 	stopped, processErr := stopper(ctx, c.managedStopStore, target.RootUID)
 	tmuxErr := executeManagedRuntimeStop(ctx, c.tmuxRunner, target, authoritative, c.managedStopStore)
 	if tmuxErr != nil {
-		return nil, false, errors.Join(processErr, tmuxErr)
+		return stopped, false, errors.Join(processErr, tmuxErr)
 	}
 	return stopped, true, processErr
 }
