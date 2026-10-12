@@ -21,7 +21,7 @@ func ValidateDeleteProtection(reg coremetadata.Registry, plan DeletePlan) error 
 		if !ok || !coremetadata.AgentProtected(*agent) {
 			return nil
 		}
-		return &Failure{Code: CodeAgentProtected, Cause: fmt.Errorf("%s: Agent %q uid=%s is protected; remove protection with: projmux label agent uid:%s %s-", CodeAgentProtected, agent.Metadata.Name, uid, uid, coremetadata.LabelProtected)}
+		return &Failure{Code: CodeAgentProtected, AgentUID: uid, Cause: fmt.Errorf("%s: Agent %q uid=%s is protected; remove protection with: projmux label agent uid:%s %s-", CodeAgentProtected, agent.Metadata.Name, uid, uid, coremetadata.LabelProtected)}
 	}
 	for _, target := range plan.Targets {
 		if err := check(plan.Kind, target.Match.UID); err != nil {
@@ -43,4 +43,12 @@ func ValidateDeleteTargets(reg coremetadata.Registry, kind coremetadata.Kind, ui
 		resolution.Matches = append(resolution.Matches, selector.Match{UID: uid})
 	}
 	return ValidateDeleteProtection(reg, BuildDeletePlan(reg, kind, resolution))
+}
+
+// ValidatePruneTargets adds recovery guidance to the common whole-plan refusal.
+func ValidatePruneTargets(reg coremetadata.Registry, kind coremetadata.Kind, uids []string) error {
+	if err := ValidateDeleteTargets(reg, kind, uids); err != nil {
+		return fmt.Errorf("%w; narrow the selected scope or remove protection before retrying", err)
+	}
+	return nil
 }

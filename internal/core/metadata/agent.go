@@ -83,6 +83,9 @@ type CreateAgentOptions struct {
 // managed Pane is attached separately.
 func (m Mutator) CreateAgent(reg *Registry, windowUID string, opts CreateAgentOptions) (Agent, error) {
 	const op = "create agent"
+	if err := ValidateAgentProtectionLabels(opts.Labels); err != nil {
+		return Agent{}, err
+	}
 
 	if _, ok := reg.Window(windowUID); !ok {
 		return Agent{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)

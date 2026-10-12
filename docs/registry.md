@@ -209,15 +209,18 @@ Observation failures preserve create stdout, routing and exit status.
 ### Agent deletion protection
 
 Set `projmux label agent <ref> projmux.io/protected=true` to protect an Agent.
-The presence of `projmux.io/protected` protects it regardless of value (including
-`false` or an empty value). Only removing the label disables protection:
+New Agent label writes, including creation labels, accept only `true` for this
+reserved key. Other values refuse with the removal command. Existing persisted
+labels still protect by presence regardless of value (including `false` or an
+empty value). Only removing the label disables protection:
 `projmux label agent <ref> projmux.io/protected-`.
 
 Explicit deletion, unregister and prune refuse the whole operation with
 `agent-protected` when its plan removes a protected Agent, including Window and
 Project cascades. Previews also refuse and identify the Agent and exact removal
 command. Prune refuses the whole candidate set so no unprotected candidate is
-partially removed. There is no bypass flag. A plain Pane deletion that leaves
+partially removed; narrow the selected scope or remove protection before retrying.
+There is no bypass flag. A plain Pane deletion that leaves
 its Agent Offline is allowed; deletion of the final Pane in a virtual Window
 is refused when the resulting cascade would remove a protected Agent.
 
@@ -236,3 +239,7 @@ Registry schema change.
 
 Automatic rollback, lifecycle cleanup, Fresh replacement and recovery protection
 are a separate follow-up; this explicit deletion contract does not cover them.
+
+Frontends must enable protection with `key=true` and disable it by removing
+`key-`; writing `key=false` is refused. SDK protection refusals expose
+`CodeAgentProtected` and `Refusal.AgentUID` without parsing the message.

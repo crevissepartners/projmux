@@ -96,7 +96,7 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 	for _, entry := range candidates {
 		protectedUIDs = append(protectedUIDs, entry.UID)
 	}
-	if err := mutations.ValidateDeleteTargets(preview, coremetadata.KindProject, protectedUIDs); err != nil {
+	if err := mutations.ValidatePruneTargets(preview, coremetadata.KindProject, protectedUIDs); err != nil {
 		return err
 	}
 	if !*yes {
@@ -114,7 +114,7 @@ func (c *pruneProjectCommand) Run(args []string, stdout, stderr io.Writer) error
 	var affected []DeletionAffected
 	if err := c.store.mutate(coremetadata.KindProject, uids,
 		func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-			if err := mutations.ValidateDeleteTargets(*working, coremetadata.KindProject, uids); err != nil {
+			if err := mutations.ValidatePruneTargets(*working, coremetadata.KindProject, uids); err != nil {
 				return err
 			}
 			// Re-observe and re-select inside the lock: a root that came back

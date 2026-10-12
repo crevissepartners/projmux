@@ -83,7 +83,7 @@ func TestProtectedSDKDeleteAndPreflight(t *testing.T) {
 				req := core.DeleteRequest{Kind: kind, Ref: "uid:" + uid, DryRun: dry, Confirm: true}
 				_, err := client.PreflightDelete(context.Background(), req)
 				var refusal *projmux.Refusal
-				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeAgentProtected {
+				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeAgentProtected || refusal.AgentUID != "agt-alpha-codex" {
 					t.Fatalf("preflight %v", err)
 				}
 				if kind == core.KindProject {
@@ -91,7 +91,7 @@ func TestProtectedSDKDeleteAndPreflight(t *testing.T) {
 				} else {
 					_, err = client.Delete(context.Background(), req)
 				}
-				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeAgentProtected {
+				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeAgentProtected || refusal.AgentUID != "agt-alpha-codex" {
 					t.Fatalf("delete %v", err)
 				}
 				after, _ := os.ReadFile(path)
@@ -146,6 +146,9 @@ func TestProtectedPruneSurfaces(t *testing.T) {
 			}
 			_, _, err := runRoute(t, c, args...)
 			assertProtection(t, err, "agt-beta-codex")
+			if !strings.Contains(err.Error(), "narrow the selected scope or remove protection") {
+				t.Fatalf("prune retry guidance %v", err)
+			}
 			if s.writes != 0 || before != s.snapshot() {
 				t.Fatal("prune wrote")
 			}
@@ -166,6 +169,9 @@ func TestProtectedPruneSurfaces(t *testing.T) {
 			}
 			_, _, err := runRoute(t, c, args...)
 			assertProtection(t, err, "agt-alpha-codex")
+			if !strings.Contains(err.Error(), "narrow the selected scope or remove protection") {
+				t.Fatalf("prune retry guidance %v", err)
+			}
 			if s.writes != 0 || before != s.snapshot() {
 				t.Fatal("prune wrote")
 			}
@@ -424,5 +430,23 @@ func TestProtectedLaterHostAdmissionKeepsOperationPermission(t *testing.T) {
 	err := admitProcessDeleteStop(store.PathFor(state), processForegroundRequest{Authority: processhost.Authority{Binding: processSchemaBinding(pane.Status.ProcessSession.Binding)}, Action: "delete-stop", Prompt: string(payload)}, func() error { stops++; return nil })
 	if err != nil || stops != 1 {
 		t.Fatalf("later admission err=%v stops=%d", err, stops)
+	}
+}
+
+func TestProtectedCLIRejectsInvalidLabelWrites(t *testing.T) {
+	for _, value := range []string{"false", ""} {
+		t.Run(value, func(t *testing.T) {
+			s := newFakeResourceStore(t)
+			c := &labelCommand{store: s.store()}
+			before := s.snapshot()
+			var out, stderr bytes.Buffer
+			err := c.Run([]string{"agent", "uid:agt-alpha-codex", metadata.LabelProtected + "=" + value}, &out, &stderr)
+			if err == nil || !strings.Contains(err.Error(), metadata.LabelProtected+"-") {
+				t.Fatalf("invalid label %v", err)
+			}
+			if s.writes != 0 || s.snapshot() != before {
+				t.Fatal("invalid label write committed")
+			}
+		})
 	}
 }

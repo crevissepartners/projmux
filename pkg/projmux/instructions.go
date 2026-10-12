@@ -126,13 +126,15 @@ const (
 // ordinary errors. Users names the profiles blocking a deletion.
 // Field and Reason optionally describe a link rule validation or confirmation refusal.
 type Refusal struct {
-	Code    Code
-	Name    string
-	Users   []string
-	Field   string
-	Reason  string
-	message string
-	cause   error
+	// AgentUID identifies the protected Agent when Code is CodeAgentProtected.
+	AgentUID string `json:"agentUID,omitempty"`
+	Code     Code
+	Name     string
+	Users    []string
+	Field    string
+	Reason   string
+	message  string
+	cause    error
 }
 
 func (e *Refusal) Error() string { return e.message }

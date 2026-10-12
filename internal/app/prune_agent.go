@@ -223,7 +223,7 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	for _, entry := range append(append([]pruneAgentCandidate{}, plan.candidates...), plan.unknown...) {
 		protectedUIDs = append(protectedUIDs, entry.UID)
 	}
-	if err := mutations.ValidateDeleteTargets(registry, coremetadata.KindAgent, protectedUIDs); err != nil {
+	if err := mutations.ValidatePruneTargets(registry, coremetadata.KindAgent, protectedUIDs); err != nil {
 		return err
 	}
 	if !*yes {
@@ -249,7 +249,7 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 			// session ref that was recorded, or a clock that moved an Agent across
 			// the age bound changes the plan, and the whole run is refused rather
 			// than executed on stale evidence.
-			if err := mutations.ValidateDeleteTargets(*working, coremetadata.KindAgent, protectedUIDs); err != nil {
+			if err := mutations.ValidatePruneTargets(*working, coremetadata.KindAgent, protectedUIDs); err != nil {
 				return err
 			}
 			current := selectPruneAgents(*working, c.now().UTC(), criteria, c.observe)

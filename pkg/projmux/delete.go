@@ -167,14 +167,16 @@ func deleteRefusal(code Code, err error) error {
 		return err
 	}
 	var failure *mutations.Failure
+	var protectedAgentUID string
 	if errors.As(err, &failure) && failure.Code == mutations.CodeAgentProtected {
 		code = CodeAgentProtected
+		protectedAgentUID = failure.AgentUID
 	}
 	var r *Refusal
 	if errors.As(err, &r) {
 		return err
 	}
-	return &Refusal{Code: code, message: err.Error(), cause: err}
+	return &Refusal{Code: code, AgentUID: protectedAgentUID, message: err.Error(), cause: err}
 }
 func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan) error {
 	for _, t := range plan.Targets {
