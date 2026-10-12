@@ -2,36 +2,42 @@ package app
 
 import (
 	"errors"
-	"fmt"
-	"maps"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 )
 
-const projectGuidanceReasonUnavailable = "project-guidance-unavailable"
+const projectGuidanceReasonUnavailable = mutationruntime.ProjectGuidanceReasonUnavailable
 
+// projectGuidanceLaunch travels with the Project prompt layer (projectLinksLaunch)
+// so every create, resume and replay reads and records the same Project ownership.
+// It is independent of both global guidance and link rules being enabled.
+type projectGuidanceLaunch struct {
+	active           bool
+	store            agentguidance.ProjectStore
+	recorded, digest string
+	text             []byte
+	unavailable      error
+}
 
+func (c *aiCommand) loadProjectGuidance(project coremetadata.Project, recorded map[string]string) projectGuidanceLaunch {
+	return localProjectGuidanceLaunch(c.sharedGuidance().LoadProjectGuidance(project, recorded))
+}
 
+func (l projectGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
+	return l.shared().ResumeLaunchAnnotations(base)
+}
 
+func (l projectGuidanceLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
+	return l.shared().Record(registry, mutator, agentUID)
+}
 
+func (l projectGuidanceLaunch) notice(label string) string { return l.shared().Notice(label) }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// projectGuidanceUnavailable distinguishes a missing recorded Project snapshot
+// from a missing link-rule snapshot at the shared composite-file seam.
+type projectGuidanceUnavailable struct{ error }
 
 func (e *projectGuidanceUnavailable) Error() string {
 	return projectGuidanceReasonUnavailable + ": " + e.error.Error()

@@ -95,7 +95,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "builds one declared control-target plan from exact ControlSession claimants and explicitly classifies any mirrored Project uid as a conflict",
 	},
 	{
-		File: "internal/app/agent_workspace.go", Func: "resolveAgentWorkspaceFor",
+		File: "internal/services/mutations/runtime/create_agent_workspace.go", Func: "ResolveAgentWorkspaceWithFields",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "resolves an Agent workspace against Project roots; a ControlSession has no root to offer",
 	},

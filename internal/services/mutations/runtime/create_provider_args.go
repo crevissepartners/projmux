@@ -1,73 +1,41 @@
 package runtime
 
 import (
-	"bytes"
-	"context"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/aiprovider"
-	"github.com/crevissepartners/projmux/internal/app/initcmd"
-	"github.com/crevissepartners/projmux/internal/app/keybinding"
-	"github.com/crevissepartners/projmux/internal/cli"
-	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/notify"
-	"github.com/crevissepartners/projmux/internal/core/persona"
-	"github.com/crevissepartners/projmux/internal/core/profile"
-	"github.com/crevissepartners/projmux/internal/core/registryview"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/i18n"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
-	"github.com/crevissepartners/projmux/internal/version"
-	"io"
-	"maps"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"slices"
-	"strings"
-	"sync"
-	"syscall"
-	"time"
-	"unicode/utf16"
 )
 
-// providerOptionArity is how many operands one provider option consumes.
+// ProviderOptionArity is how many operands one provider option consumes.
 type ProviderOptionArity int
 
-// providerLaunchGrammar is the part of one provider CLI's argv grammar the Agent
+const (
+	// OptionOneValuePerOccurrence is `--flag <value>`: exactly one operand per
+	// occurrence, so several values mean several occurrences and a following
+	// operand is never absorbed.
+	OptionOneValuePerOccurrence ProviderOptionArity = iota
+	// OptionVariadicValues is `--flag <values...>`: one occurrence carries every
+	// value, and the option keeps consuming operands until an option-looking
+	// token or an option terminator stops it.
+	OptionVariadicValues
+)
+
+// ProviderLaunchGrammar is the part of one provider CLI's argv grammar the Agent
 // launch depends on. It is deliberately a description of the upstream contract
 // rather than a projmux preference: changing a field here is a claim about what
 // the provider's parser does.
 type ProviderLaunchGrammar struct {
-	// workingRootFlag carries the workspace CWD when the provider needs it in
+	// WorkingRootFlag carries the workspace CWD when the provider needs it in
 	// argv. It is empty for providers that take the working root from the
 	// process working directory, which the launch already sets.
 	WorkingRootFlag string
-	// additionalRootFlag carries the additional writable roots. It is empty for
+	// AdditionalRootFlag carries the additional writable roots. It is empty for
 	// providers projmux does not give additional roots to at all, which makes a
 	// stored additional root a refusal rather than an invented flag.
 	AdditionalRootFlag string
-	// additionalRootArity is the arity of additionalRootFlag.
+	// AdditionalRootArity is the arity of AdditionalRootFlag.
 	AdditionalRootArity ProviderOptionArity
-	// payloadTerminator is the token this provider's parser accepts to end
+	// PayloadTerminator is the token this provider's parser accepts to end
 	// option parsing, so everything after it is an operand. It is emitted
 	// before every non-empty payload and is what lets a payload follow a
 	// variadic option without being eaten by it. Empty means the provider's
@@ -75,7 +43,7 @@ type ProviderLaunchGrammar struct {
 	PayloadTerminator string
 }
 
-// providerLaunchGrammarFor returns the argv grammar of one provider.
+// ProviderLaunchGrammarFor returns the argv grammar of one provider.
 //
 // Measured against the installed CLIs on 2026-08-19:
 //
@@ -98,26 +66,26 @@ type ProviderLaunchGrammar struct {
 //     that policy, so a stored root that outlived the gate refuses instead of
 //     reaching `agy` through a flag this seam never validated.
 func ProviderLaunchGrammarFor(provider string) ProviderLaunchGrammar {
-	switch normalizeAIMode(provider) {
-	case aiModeClaude:
+	switch NormalizeAIMode(provider) {
+	case "claude":
 		return ProviderLaunchGrammar{
 			AdditionalRootFlag:  "--add-dir",
-			AdditionalRootArity: optionVariadicValues,
+			AdditionalRootArity: OptionVariadicValues,
 			// Claude's parser is commander, which honors `--`.
 			PayloadTerminator: "--",
 		}
-	case aiModeCodex:
+	case "codex":
 		return ProviderLaunchGrammar{
 			WorkingRootFlag:     "-C",
 			AdditionalRootFlag:  "--add-dir",
-			AdditionalRootArity: optionOneValuePerOccurrence,
+			AdditionalRootArity: OptionOneValuePerOccurrence,
 		}
 	default:
 		return ProviderLaunchGrammar{}
 	}
 }
 
-// providerLaunchArgs builds the provider argv tail for one Agent launch: the
+// ProviderLaunchArgs builds the provider argv tail for one Agent launch: the
 // workspace options followed by the initial task payload, separated so the
 // provider parses each as what it is.
 //
@@ -149,7 +117,7 @@ func ProviderLaunchArgs(provider string, workspace coremetadata.AgentWorkspace, 
 	variadicTail := false
 	if roots := workspace.AdditionalWritableRoots; len(roots) > 0 {
 		switch grammar.AdditionalRootArity {
-		case optionVariadicValues:
+		case OptionVariadicValues:
 			args = append(args, grammar.AdditionalRootFlag)
 			args = append(args, roots...)
 			variadicTail = true
@@ -175,7 +143,7 @@ func ProviderLaunchArgs(provider string, workspace coremetadata.AgentWorkspace, 
 	return append(args, payload...), nil
 }
 
-// codexLaunchOptionArgs keeps provider options ahead of the resume subcommand
+// CodexLaunchOptionArgs keeps provider options ahead of the resume subcommand
 // and workspace arguments. Codex accepts model and effort on both CLI lanes.
 func CodexLaunchOptionArgs(model, effort string) []string {
 	var args []string
@@ -188,7 +156,7 @@ func CodexLaunchOptionArgs(model, effort string) []string {
 	return args
 }
 
-// codexCLIProfileArgs carries a validated profile policy on Codex's plain
+// CodexCLIProfileArgs carries a validated profile policy on Codex's plain
 // create and CLI resume lanes. The profile's full-access value was already
 // translated to danger-full-access by codexThreadPolicy.
 func CodexCLIProfileArgs(policy codexappserver.ThreadPolicy) []string {
@@ -202,7 +170,7 @@ func CodexCLIProfileArgs(policy codexappserver.ThreadPolicy) []string {
 	return args
 }
 
-// claudeLaunchOptionArgs spells the Claude launch options. personaFile is the
+// ClaudeLaunchOptionArgs spells the Claude launch options. personaFile is the
 // persona snapshot path: only the path reaches argv, never the content, so the
 // persona does not show in `ps`.
 func ClaudeLaunchOptionArgs(model, effort, personaFile string) []string {
@@ -219,7 +187,7 @@ func ClaudeLaunchOptionArgs(model, effort, personaFile string) []string {
 	return args
 }
 
-// claudeSettingsArgs spells the Claude settings snapshot a profile's
+// ClaudeSettingsArgs spells the Claude settings snapshot a profile's
 // permissions are launched with. Only the path reaches argv.
 func ClaudeSettingsArgs(settingsFile string) []string {
 	if settingsFile == "" {
@@ -230,38 +198,38 @@ func ClaudeSettingsArgs(settingsFile string) []string {
 
 // PlanAgentLaunch builds the provider launch for one detached Agent create.
 //
-// The workspace and the initial task are assembled by providerLaunchArgs rather
+// The workspace and the initial task are assembled by ProviderLaunchArgs rather
 // than concatenated here, because where the workspace options stop is a property
 // of the provider's own parser: Claude's variadic `--add-dir` eats a payload
 // appended straight after it and starts a session with no task at all.
-func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error) {
+func (c *AgentLaunchService) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error) {
 	extra, err := ProviderLaunchArgs(provider, workspace, payload)
 	if err != nil {
 		return "", nil, err
 	}
-	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
+	title, argv, err = c.Plan(provider, workspace.CWD, extra)
 	if err != nil {
 		return "", nil, err
 	}
-	return plan.title, plan.commandArgs, nil
+	return title, argv, nil
 }
 
 // PlanAgentLaunchWithOptions applies model and effort to Claude or Codex.
 // Claude alone accepts the persona snapshot path. Options precede workspace
 // arguments so Claude's variadic --add-dir cannot consume them.
-func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
+func (c *AgentLaunchService) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
 	return c.PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, "")
 }
 
 // PlanAgentLaunchWithSettings is PlanAgentLaunchWithOptions that also passes
 // a profile's Claude settings snapshot as --settings. An empty settingsFile
 // adds nothing, which is exactly PlanAgentLaunchWithOptions.
-func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
-	mode := normalizeAIMode(provider)
-	if mode != aiModeClaude && mode != aiModeCodex {
+func (c *AgentLaunchService) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
+	mode := NormalizeAIMode(provider)
+	if mode != "claude" && mode != "codex" {
 		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --instructions", provider)
 	}
-	if mode == aiModeCodex && (personaFile != "" || settingsFile != "") {
+	if mode == "codex" && (personaFile != "" || settingsFile != "") {
 		return "", nil, fmt.Errorf("provider %q does not accept Claude instructions or settings options", provider)
 	}
 	extra, err := ProviderLaunchArgs(provider, workspace, payload)
@@ -269,28 +237,28 @@ func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace corem
 		return "", nil, err
 	}
 	options := append(ClaudeLaunchOptionArgs(model, effort, personaFile), ClaudeSettingsArgs(settingsFile)...)
-	if mode == aiModeCodex {
+	if mode == "codex" {
 		options = CodexLaunchOptionArgs(model, effort)
 	}
 	extra = append(options, extra...)
-	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
+	title, argv, err = c.Plan(provider, workspace.CWD, extra)
 	if err != nil {
 		return "", nil, err
 	}
-	return plan.title, plan.commandArgs, nil
+	return title, argv, nil
 }
 
 // PlanCodexAgentLaunchWithPolicy plans a plain Codex CLI create with the
 // profile permissions ahead of workspace options and any prompt.
-func (c *aiCommand) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (string, []string, error) {
-	extra, err := ProviderLaunchArgs(aiModeCodex, workspace, payload)
+func (c *AgentLaunchService) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (string, []string, error) {
+	extra, err := ProviderLaunchArgs("codex", workspace, payload)
 	if err != nil {
 		return "", nil, err
 	}
 	options := append(CodexLaunchOptionArgs(model, effort), CodexCLIProfileArgs(policy)...)
-	plan, err := c.planAgentLaunch(aiModeCodex, workspace.CWD, append(options, extra...), nil, "")
+	title, argv, err := c.Plan("codex", workspace.CWD, append(options, extra...))
 	if err != nil {
 		return "", nil, err
 	}
-	return plan.title, plan.commandArgs, nil
+	return title, argv, nil
 }

@@ -1,53 +1,60 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/aiprovider"
-	"github.com/crevissepartners/projmux/internal/app/initcmd"
-	"github.com/crevissepartners/projmux/internal/app/keybinding"
-	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/notify"
-	"github.com/crevissepartners/projmux/internal/core/registryview"
-	"github.com/crevissepartners/projmux/internal/core/selector"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/i18n"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
-	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
-	"github.com/crevissepartners/projmux/internal/version"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
-	"unicode/utf16"
 )
 
-// agentPaneBinding is the one typed materialization contract shared by create,
+func NormalizeAIMode(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if slices.Contains(config.AINewWindowModes, mode) {
+		return mode
+	}
+	return "selective"
+}
+
+type AgentLaunchService struct {
+	LoadRegistry   func() (coremetadata.Registry, error)
+	Sleep          func(time.Duration)
+	Plan           func(string, string, []string) (string, []string, error)
+	Now            func() time.Time
+	DeclaredReason func(string) string
+}
+
+func (c *AgentLaunchService) NowTime() time.Time {
+	if c.Now == nil {
+		return time.Now()
+	}
+	return c.Now()
+}
+
+const (
+	AiPaneAgentOption            = "@projmux_ai_agent"
+	AiPaneCodexAuthorityOption   = "@projmux_codex_authority"
+	AiPaneCodexDeclaredOption    = "@projmux_codex_native_declared"
+	AiPaneCodexEpochOption       = "@projmux_codex_authority_epoch"
+	AiPaneCodexReasonOption      = "@projmux_codex_authority_reason"
+	AiPaneContextOption          = "@projmux_ai_context"
+	AiPaneLaunchAuthorshipOption = tmuxopts.AgentLaunchAuthorshipPane
+	AiPaneManagedOption          = "@projmux_ai_managed"
+	AiPaneResumeIDOption         = "@projmux_ai_resume_id"
+	AiPaneResumeSourceOption     = "@projmux_ai_resume_source"
+	AiPaneResumeUpdatedAtOption  = "@projmux_ai_resume_updated_at"
+	AiPaneSessionIDOption        = "@projmux_ai_session_id"
+	AiPaneThreadIDOption         = "@projmux_ai_thread_id"
+	CodexAuthorityHook           = "provider-hook"
+	CodexNativeUnexplainedReason = "native-fallback"
+)
+
+// AgentPaneBinding is the one typed materialization contract shared by create,
 // resume, topology replay, and native Codex binding. The supplied runner has
 // already been bound to one explicit logical tmux route; this value contains
 // resource/presentation state only and therefore cannot reopen socket authority.
@@ -102,7 +109,7 @@ func (c *AgentLaunchService) BindAgentPaneOnRoute(ctx context.Context, runner Tm
 	if runner == nil {
 		return errors.New("managed Agent Pane binding requires an exact tmux runner")
 	}
-	binding.Provider = normalizeAIMode(binding.Provider)
+	binding.Provider = NormalizeAIMode(binding.Provider)
 	binding.ContextDir = strings.TrimSpace(binding.ContextDir)
 	binding.Topic = strings.TrimSpace(binding.Topic)
 	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
@@ -113,47 +120,47 @@ func (c *AgentLaunchService) BindAgentPaneOnRoute(ctx context.Context, runner Tm
 	}
 
 	writes := []struct {
-		Option string
+		option string
 		value  string
 		unset  bool
 	}{
-		{Option: aiPaneManagedOption, value: "1"},
-		{Option: aiPaneAgentOption, value: binding.Provider},
-		{Option: aiPaneLaunchAuthorshipOption, value: "1"},
-		{Option: aiPaneContextOption, value: binding.ContextDir},
-		{Option: aiPaneTopicOption, value: binding.Topic, unset: binding.Topic == ""},
-		{Option: aiPaneTopicManualOption, value: "on", unset: !binding.TopicManual},
-		{Option: aiPaneStateOption, value: "idle"},
-		{Option: aiPaneSessionIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
-		{Option: aiPaneResumeIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
-		{Option: aiPaneResumeSourceOption, value: binding.ResumeSource, unset: binding.ResumeSource == ""},
-		{Option: aiPaneResumeUpdatedAtOption, unset: binding.UpdatedAt.IsZero()},
-		{Option: aiPaneThreadIDOption, value: binding.ThreadID, unset: binding.ThreadID == ""},
-		{Option: aiPaneCodexAuthorityOption, unset: true},
-		{Option: aiPaneCodexEpochOption, unset: true},
-		{Option: aiPaneCodexReasonOption, unset: true},
-		{Option: aiPaneCodexDeclaredOption, unset: true},
+		{option: AiPaneManagedOption, value: "1"},
+		{option: AiPaneAgentOption, value: binding.Provider},
+		{option: AiPaneLaunchAuthorshipOption, value: "1"},
+		{option: AiPaneContextOption, value: binding.ContextDir},
+		{option: AiPaneTopicOption, value: binding.Topic, unset: binding.Topic == ""},
+		{option: AiPaneTopicManualOption, value: "on", unset: !binding.TopicManual},
+		{option: AiPaneStateOption, value: "idle"},
+		{option: AiPaneSessionIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
+		{option: AiPaneResumeIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
+		{option: AiPaneResumeSourceOption, value: binding.ResumeSource, unset: binding.ResumeSource == ""},
+		{option: AiPaneResumeUpdatedAtOption, unset: binding.UpdatedAt.IsZero()},
+		{option: AiPaneThreadIDOption, value: binding.ThreadID, unset: binding.ThreadID == ""},
+		{option: AiPaneCodexAuthorityOption, unset: true},
+		{option: AiPaneCodexEpochOption, unset: true},
+		{option: AiPaneCodexReasonOption, unset: true},
+		{option: AiPaneCodexDeclaredOption, unset: true},
 	}
 	if !binding.UpdatedAt.IsZero() {
 		writes[10].value = binding.UpdatedAt.UTC().Format(time.RFC3339)
 	}
-	if binding.Provider == aiModeCodex {
+	if binding.Provider == "codex" {
 		writes[12] = struct {
-			Option string
+			option string
 			value  string
 			unset  bool
-		}{Option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
+		}{option: AiPaneCodexAuthorityOption, value: CodexAuthorityHook}
 		writes[14] = struct {
-			Option string
+			option string
 			value  string
 			unset  bool
-		}{Option: aiPaneCodexReasonOption, value: codexNativeUnexplainedReason}
-		if declared := codexNativeDeclaredReason(binding.CodexNativeDeclared); declared != "" {
+		}{option: AiPaneCodexReasonOption, value: CodexNativeUnexplainedReason}
+		if declared := c.DeclaredReason(binding.CodexNativeDeclared); declared != "" {
 			writes[15] = struct {
-				Option string
+				option string
 				value  string
 				unset  bool
-			}{Option: aiPaneCodexDeclaredOption, value: declared}
+			}{option: AiPaneCodexDeclaredOption, value: declared}
 		}
 	}
 	if binding.NativeCodex {
@@ -161,15 +168,15 @@ func (c *AgentLaunchService) BindAgentPaneOnRoute(ctx context.Context, runner Tm
 			return errors.New("native Codex Pane binding requires an exact thread identity")
 		}
 		writes[12] = struct {
-			Option string
+			option string
 			value  string
 			unset  bool
-		}{Option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
+		}{option: AiPaneCodexAuthorityOption, value: CodexAuthorityHook}
 		writes[14] = struct {
-			Option string
+			option string
 			value  string
 			unset  bool
-		}{Option: aiPaneCodexReasonOption, value: "observer-starting"}
+		}{option: AiPaneCodexReasonOption, value: "observer-starting"}
 	}
 
 	titleBefore, err := ReadAgentPaneFieldOnRoute(ctx, runner, paneID, "#{pane_title}")
@@ -178,42 +185,42 @@ func (c *AgentLaunchService) BindAgentPaneOnRoute(ctx context.Context, runner Tm
 	}
 	before := make(map[string]string, len(writes))
 	for _, write := range writes {
-		value, readErr := ReadAgentPaneOptionOnRoute(ctx, runner, paneID, write.Option)
+		value, readErr := ReadAgentPaneOptionOnRoute(ctx, runner, paneID, write.option)
 		if readErr != nil {
-			return &AgentPaneBindError{Operation: "read Pane option " + write.Option, Cause: readErr}
+			return &AgentPaneBindError{Operation: "read Pane option " + write.option, Cause: readErr}
 		}
-		before[write.Option] = value
+		before[write.option] = value
 	}
 
 	applied := make([]struct {
-		Option string
+		option string
 		value  string
 		unset  bool
 	}, 0, len(writes))
 	titleApplied := false
 	writeBindingOption := func(write struct {
-		Option string
+		option string
 		value  string
 		unset  bool
 	}) error {
-		args := []string{"set-option", "-p", "-t", paneID, write.Option, write.value}
+		args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
 		if write.unset {
-			args = []string{"set-option", "-p", "-u", "-t", paneID, write.Option}
+			args = []string{"set-option", "-p", "-u", "-t", paneID, write.option}
 		}
 		if _, err := runner.Run(ctx, "tmux", args...); err != nil {
-			return fmt.Errorf("write Pane option %s: %w", write.Option, err)
+			return fmt.Errorf("write Pane option %s: %w", write.option, err)
 		}
 		return nil
 	}
 	compensate := func() error {
 		var failures []error
 		for i := len(applied) - 1; i >= 0; i-- {
-			prior := before[applied[i].Option]
+			prior := before[applied[i].option]
 			restore := struct {
-				Option string
+				option string
 				value  string
 				unset  bool
-			}{Option: applied[i].Option, value: prior, unset: prior == ""}
+			}{option: applied[i].option, value: prior, unset: prior == ""}
 			if restoreErr := writeBindingOption(restore); restoreErr != nil {
 				failures = append(failures, restoreErr)
 			}
@@ -231,7 +238,7 @@ func (c *AgentLaunchService) BindAgentPaneOnRoute(ctx context.Context, runner Tm
 	titleApplied = true
 	for _, write := range writes {
 		if err := writeBindingOption(write); err != nil {
-			return &AgentPaneBindError{Operation: "set Pane option " + write.Option, Cause: err, Compensation: compensate()}
+			return &AgentPaneBindError{Operation: "set Pane option " + write.option, Cause: err, Compensation: compensate()}
 		}
 		applied = append(applied, write)
 	}
@@ -252,6 +259,14 @@ func ReadAgentPaneOptionOnRoute(ctx context.Context, runner TmuxCommandRunner, p
 		return "", err
 	}
 	return strings.TrimRight(string(out), "\r\n"), nil
+}
+
+func (c *AgentLaunchService) SleepFor(d time.Duration) {
+	if c.Sleep == nil {
+		time.Sleep(d)
+	} else {
+		c.Sleep(d)
+	}
 }
 
 // AwaitAgentActivation waits only for exact provider-hook evidence committed to
@@ -279,13 +294,13 @@ func (c *AgentLaunchService) AwaitAgentActivation(ctx context.Context, runner Tm
 		return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
 	}
 	paneID = strings.TrimSpace(paneID)
-	first := checkAgentActivationBinding(initial, paneUID, paneID, nil)
-	if !first.bound() {
-		return false, "provider-hook", &agentActivationBindingError{
-			Stage: agentBindingStageBeforeAwaiting, paneUID: paneUID, paneID: paneID, check: first,
+	first := CheckAgentActivationBinding(initial, paneUID, paneID, nil)
+	if !first.Bound() {
+		return false, "provider-hook", &AgentActivationBindingError{
+			Stage: AgentBindingStageBeforeAwaiting, PaneUID: paneUID, PaneID: paneID, Check: first,
 		}
 	}
-	expect := &agentActivationBindingExpectation{AgentUID: first.AgentUID, Generation: first.Generation}
+	expect := &AgentActivationBindingExpectation{AgentUID: first.AgentUID, Generation: first.Generation}
 	agentUID := first.AgentUID
 	startupDeadline := c.NowTime().Add(startupTimeout)
 	var acknowledgementDeadline time.Time
@@ -294,9 +309,9 @@ func (c *AgentLaunchService) AwaitAgentActivation(ctx context.Context, runner Tm
 		if loadErr != nil {
 			return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
 		}
-		if current := checkAgentActivationBinding(registry, paneUID, paneID, expect); !current.bound() {
-			return false, "provider-hook", &agentActivationBindingError{
-				Stage: agentBindingStageWhileAwaiting, paneUID: paneUID, paneID: paneID, check: current,
+		if current := CheckAgentActivationBinding(registry, paneUID, paneID, expect); !current.Bound() {
+			return false, "provider-hook", &AgentActivationBindingError{
+				Stage: AgentBindingStageWhileAwaiting, PaneUID: paneUID, PaneID: paneID, Check: current,
 			}
 		}
 		agent, present := registry.Agent(agentUID)
@@ -325,80 +340,40 @@ func (c *AgentLaunchService) AwaitAgentActivation(ctx context.Context, runner Tm
 	}
 }
 
-// planAgentPaneLaunchWithResume is planAgentPaneLaunch that also returns the
-// resume launch, whose persona and effort notices a resume-picker create
-// discloses once its Agent has a name. Every other launch returns the zero
-// resume launch, which discloses nothing.
-func (c *createCommand) PlanAgentPaneLaunchWithResume(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, agentResumeLaunch, error) {
-	conversation := strings.TrimSpace(flags.resumeConversation)
-	if flags.dialogueReplyOnly {
-		launcher, ok := c.agents.(claudeDialogueLauncher)
+// FreshAgentLauncher is the provider launch portion every create caller shares.
+type FreshAgentLauncher interface {
+	PlanAgentLaunch(string, coremetadata.AgentWorkspace, []string) (string, []string, error)
+}
+
+func PlanFreshAgent(launcher FreshAgentLauncher, provider string, workspace coremetadata.AgentWorkspace, flags AgentSettingsFlags, personaFile string) (string, []string, error) {
+	switch {
+	case provider == "codex" && !NativeCodexFreshCreateRequired(provider, flags.InteractiveOnly, flags.Payload, flags.Host, flags.ResumeConversation) && !flags.ProfileLaunch.CodexPolicy.IsZero():
+		p, ok := launcher.(interface {
+			PlanCodexAgentLaunchWithPolicy(coremetadata.AgentWorkspace, []string, string, string, codexappserver.ThreadPolicy) (string, []string, error)
+		})
 		if !ok {
-			return "", nil, agentResumeLaunch{}, errors.New("claude reply-only launcher is unavailable")
+			return "", nil, errors.New("create agent: the Codex profile launcher is not configured")
 		}
-		title, argv, err := launcher.PlanClaudeDialogueLaunch(workspace, conversation)
-		return title, argv, agentResumeLaunch{}, err
+		return p.PlanCodexAgentLaunchWithPolicy(workspace, flags.Payload, flags.Model, flags.Effort, flags.ProfileLaunch.CodexPolicy)
+	case flags.ProfileLaunch.Settings != "":
+		p, ok := launcher.(interface {
+			PlanAgentLaunchWithSettings(string, coremetadata.AgentWorkspace, []string, string, string, string, string) (string, []string, error)
+		})
+		if !ok {
+			return "", nil, errors.New("create agent: the Claude profile launcher is not configured")
+		}
+		return p.PlanAgentLaunchWithSettings(provider, workspace, flags.Payload, flags.Model, flags.Effort, personaFile, flags.ProfileLaunch.Settings)
+	case flags.Model != "" || flags.Effort != "" || personaFile != "":
+		p, ok := launcher.(interface {
+			PlanAgentLaunchWithOptions(string, coremetadata.AgentWorkspace, []string, string, string, string) (string, []string, error)
+		})
+		if !ok {
+			return "", nil, errors.New("create agent: the Claude model launcher is not configured")
+		}
+		return p.PlanAgentLaunchWithOptions(provider, workspace, flags.Payload, flags.Model, flags.Effort, personaFile)
+	case provider == "codex" && len(flags.Payload) == 0:
+		return launcher.PlanAgentLaunch(provider, workspace, nil)
+	default:
+		return launcher.PlanAgentLaunch(provider, workspace, flags.Payload)
 	}
-	if conversation == "" {
-		var title string
-		var argv []string
-		var err error
-		// Only Claude is given its persona on the command line. A Codex
-		// persona rides thread/start instead, so it must not reach the Claude
-		// options launcher -- which refuses every other provider outright --
-		// and the plain launch below is the one the native create replaces.
-		personaFile := flags.personaLaunch.snapshot.Path
-		settingsFile := flags.profileLaunch.settings
-		if provider != aiModeClaude {
-			personaFile, settingsFile = "", ""
-		}
-		// Claude keeps only the last --append-system-prompt-file, so the
-		// Project's label link rules ride the one file: the rules snapshot,
-		// or the composite of the persona and the rules.
-		if provider == aiModeClaude && flags.projectLinks.systemPromptFile != "" {
-			personaFile = flags.projectLinks.systemPromptFile
-		}
-		// The agent guidance goes in front of both, in the same one file.
-		if provider == aiModeClaude && flags.agentGuidance.systemPromptFile != "" {
-			personaFile = flags.agentGuidance.systemPromptFile
-		}
-		switch {
-		case provider == aiModeCodex && !nativeCodexFreshCreateRequired(provider, flags) && !flags.profileLaunch.codexPolicy.IsZero():
-			launcher, ok := c.agents.(codexPolicyAgentLauncher)
-			if !ok {
-				return "", nil, agentResumeLaunch{}, errors.New("create agent: the Codex profile launcher is not configured")
-			}
-			title, argv, err = launcher.PlanCodexAgentLaunchWithPolicy(workspace, flags.payload, flags.model, flags.effort, flags.profileLaunch.codexPolicy)
-		case settingsFile != "":
-			// Only a profile with allow or deny rules reaches this launcher,
-			// so every other create keeps exactly the launch it had.
-			launcher, ok := c.agents.(claudeSettingsAgentLauncher)
-			if !ok {
-				return "", nil, agentResumeLaunch{}, errors.New("create agent: the Claude profile launcher is not configured")
-			}
-			title, argv, err = launcher.PlanAgentLaunchWithSettings(provider, workspace, flags.payload, flags.model, flags.effort, personaFile, settingsFile)
-		case flags.model != "" || flags.effort != "" || personaFile != "":
-			launcher, ok := c.agents.(claudeOptionsAgentLauncher)
-			if !ok {
-				return "", nil, agentResumeLaunch{}, errors.New("create agent: the Claude model launcher is not configured")
-			}
-			title, argv, err = launcher.PlanAgentLaunchWithOptions(provider, workspace, flags.payload, flags.model, flags.effort, personaFile)
-		case provider == aiModeCodex && len(flags.payload) == 0:
-			// A payload-free Codex create always takes the plain lane.
-			title, argv, err = c.agents.PlanAgentLaunch(aiModeCodex, workspace, nil)
-		default:
-			title, argv, err = c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
-		}
-		return title, argv, agentResumeLaunch{}, err
-	}
-	if c.resumes == nil {
-		return "", nil, agentResumeLaunch{}, errors.New("create agent: the provider resume launcher is not configured")
-	}
-	// A resume-picker create hands the seam the launch values it inherited
-	// from the Agents that already recorded this conversation, so the new
-	// Agent starts with the persona snapshot, snapshot mode and effort they
-	// would resume with. With nothing inherited the seam gets no annotations
-	// and the argv is what it always was.
-	launch, err := c.resumes.PlanAgentResume(provider, workspace, conversation, flags.resumeLaunchValues)
-	return launch.title, launch.argv, launch, err
 }

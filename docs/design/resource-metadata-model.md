@@ -677,7 +677,7 @@ Agent session history (Claude and Codex):
   (managed-Agent interaction commit) in `internal/app/agent_session_ref.go`,
   `openIntentAgent` (resume-picker create and intent native Codex create) in
   `internal/app/create_intent.go`, and `createAgent` (native Codex fresh
-  create) in `internal/app/create_agent.go`, and `updateProcessAgentSession`
+  create) in `internal/app/create_agent_execution.go`, and `updateProcessAgentSession`
   in `internal/app/process_agent_session.go` (confirmed process owner binding
   and writer backfill). Process initialization commits the existing SessionRef
   alongside processSession; snapshot and Wait writers

@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -15,7 +16,17 @@ import (
 	"strings"
 )
 
-// agentGuidanceLaunch is what one launch does with the agent guidance. The
+type GuidanceService struct{ Paths func() (config.Paths, error) }
+
+// projectLinksReasonUnavailable is the reason token of a launch that went
+// ahead without its Project's label link rules.
+const projectLinksReasonUnavailable = "project-link-rules-unavailable"
+
+// agentGuidanceReasonUnavailable is the reason token of a launch that went
+// ahead without the agent guidance.
+const agentGuidanceReasonUnavailable = "agent-guidance-unavailable"
+
+// AgentGuidanceLaunch is what one launch does with the agent guidance. The
 // zero value is "not applicable" (another provider or lane, the reply-only
 // lane, or a launcher without the seam) and changes no argv, no developer
 // instructions and no annotation.
@@ -27,7 +38,7 @@ import (
 // joined by projectlinks.CompositeSeparator. A Codex fresh create sends it
 // the same way as the thread's developer instructions
 // (codexDeveloperInstructions): guidance, then the Agent's identity paragraph
-// (codexAgentIdentity), then the persona, Project instructions and rules. The identity goes
+// (CodexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
 type AgentGuidanceLaunch struct {
 	Active bool
@@ -194,7 +205,7 @@ func (l AgentGuidanceLaunch) Notice(label string) string {
 // content-addressed snapshot. recorded are the Agent annotations the launch
 // compares against (nil on a fresh create).
 func (c *GuidanceService) PlanAgentGuidance(provider string, recorded map[string]string) AgentGuidanceLaunch {
-	if normalizeAIMode(provider) != aiModeClaude {
+	if NormalizeAIMode(provider) != "claude" {
 		return AgentGuidanceLaunch{}
 	}
 	launch := c.LoadAgentGuidance()
@@ -222,7 +233,7 @@ func (c *GuidanceService) PlanProcessAgentGuidance() AgentGuidanceLaunch {
 
 func (c *GuidanceService) LoadAgentGuidanceWith(load func(agentguidance.Store) (agentguidance.Guidance, error)) AgentGuidanceLaunch {
 	launch := AgentGuidanceLaunch{Active: true}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.Paths()
 	if err != nil {
 		launch.Unavailable = err
 		return launch
@@ -250,7 +261,7 @@ func AgentGuidanceNotice(label string, err error) string {
 		label, agentGuidanceReasonUnavailable, err)
 }
 
-// codexAgentIdentity is the paragraph that tells a Codex Agent its own Agent
+// CodexAgentIdentity is the paragraph that tells a Codex Agent its own Agent
 // UID and how to name itself and its targets: a Codex shell command runs in
 // the shared app server, not in the Agent's pane, so projmux cannot infer
 // either from the environment.
@@ -266,13 +277,13 @@ Your projmux Agent UID is `+"`%[1]s`"+`.
 - When you create an agent with `+"`projmux create agent`"+`, add `+"`--creator uid:%[1]s`"+` so projmux records you as its creator.
 - When you send a message with `+"`projmux agent message send`"+`, add `+"`--source uid:%[1]s`"+` so the message is sent from you.
 - Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on. Add `+"`--socket projmux`"+` only to a command that defines that flag, such as %[2]s; do not add it to %[3]s, which has no such flag and uses the `+"`%[4]s`"+` app socket itself.
-`, agentUID, strings.Join(examples, " or "), "`projmux "+CodexNoSocketCommand+"`", defaultAppSocket)
+`, agentUID, strings.Join(examples, " or "), "`projmux "+CodexNoSocketCommand+"`", DefaultAppSocket)
 }
 
-// composeAgentGuidance writes the composite of the guidance digest names and
+// ComposeAgentGuidance writes the composite of the guidance digest names and
 // the content of base, and returns its path.
 func ComposeAgentGuidance(store agentguidance.Store, digest, base string) (string, error) {
-	Content, err := ReadSystemPromptPart(base)
+	content, err := ReadSystemPromptPart(base)
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +294,7 @@ func ComposeAgentGuidance(store agentguidance.Store, digest, base string) (strin
 	return composite.Path, nil
 }
 
-// readSystemPromptPart reads one file a Claude launch would pass as its
+// ReadSystemPromptPart reads one file a Claude launch would pass as its
 // system prompt (a persona snapshot, a rules snapshot, or their composite),
 // bounded like every rules snapshot read. The file is opened inside its own
 // directory, so the read cannot leave that directory.
@@ -304,7 +315,7 @@ func ReadSystemPromptPart(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	Content, err := io.ReadAll(io.LimitReader(file, projectlinks.MaxSnapshotSize+1))
+	content, err := io.ReadAll(io.LimitReader(file, projectlinks.MaxSnapshotSize+1))
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +325,7 @@ func ReadSystemPromptPart(path string) ([]byte, error) {
 	return content, nil
 }
 
-// projectLinksLaunch is what one launch does with its Project's label link
+// ProjectLinksLaunch is what one launch does with its Project's label link
 // rules. The zero value is "not applicable" (another provider or lane, the
 // reply-only lane, no Project, or a launcher without the seam) and changes no
 // argv, no developer instructions and no annotation.
@@ -476,11 +487,11 @@ func (l ProjectLinksLaunch) Notice(label string) string {
 	if !l.Active || l.Unavailable == nil {
 		return l.Project.Notice(label)
 	}
-	Notice := ProjectLinksNotice(label, l.Unavailable)
+	notice := ProjectLinksNotice(label, l.Unavailable)
 	if projectNotice := l.Project.Notice(label); projectNotice != "" {
-		Notice += "\n" + projectNotice
+		notice += "\n" + projectNotice
 	}
-	return Notice
+	return notice
 }
 
 // PlanProjectLinks reads project's current rules, renders them with the
@@ -488,7 +499,7 @@ func (l ProjectLinksLaunch) Notice(label string) string {
 // are the Agent annotations the launch compares against (nil on a fresh
 // create).
 func (c *GuidanceService) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) ProjectLinksLaunch {
-	if normalizeAIMode(provider) != aiModeClaude || !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
+	if NormalizeAIMode(provider) != "claude" || !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
 		return ProjectLinksLaunch{}
 	}
 	launch := c.LoadProjectLinks(project)
@@ -515,7 +526,7 @@ func (c *GuidanceService) PlanCodexProjectLinks(project coremetadata.Project) Pr
 // be read.
 func (c *GuidanceService) LoadProjectLinks(project coremetadata.Project) ProjectLinksLaunch {
 	launch := ProjectLinksLaunch{Active: true}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.Paths()
 	if err != nil {
 		launch.Unavailable = err
 		return launch
@@ -548,7 +559,7 @@ func ProjectLinksNotice(label string, err error) string {
 		label, projectLinksReasonUnavailable, err)
 }
 
-// readPersonaSnapshot reads the persona snapshot at path, bounded like every
+// ReadPersonaSnapshot reads the persona snapshot at path, bounded like every
 // persona read. The file is opened inside its own directory, the snapshot
 // directory RecordedSnapshotPath already proved it a regular file of, so
 // the read cannot leave that directory.
@@ -572,13 +583,13 @@ func ReadPersonaSnapshot(path string) ([]byte, error) {
 	return persona.ReadLimited(file)
 }
 
-// projectGuidanceLaunch travels with the Project prompt layer (projectLinksLaunch)
+// ProjectGuidanceLaunch travels with the Project prompt layer (ProjectLinksLaunch)
 // so every create, resume and replay reads and records the same Project ownership.
 // It is independent of both global guidance and link rules being enabled.
 type ProjectGuidanceLaunch struct {
 	Active           bool
 	Store            agentguidance.ProjectStore
-	Recorded, digest string
+	Recorded, Digest string
 	Text             []byte
 	Unavailable      error
 }
@@ -650,7 +661,7 @@ func (c *GuidanceService) LoadProjectGuidance(project coremetadata.Project, reco
 		return ProjectGuidanceLaunch{}
 	}
 	launch := ProjectGuidanceLaunch{Active: true, Recorded: recorded[coremetadata.AnnotationAgentProjectGuidanceDigest]}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.Paths()
 	if err != nil {
 		launch.Unavailable = err
 		return launch
@@ -674,19 +685,25 @@ func (c *GuidanceService) LoadProjectGuidance(project coremetadata.Project, reco
 }
 
 func ProjectGuidanceNotice(label string, err error) string {
-	return fmt.Sprintf("projmux: agent/%s launched without its Project's common instructions (%s): %v", label, projectGuidanceReasonUnavailable, err)
+	return fmt.Sprintf("projmux: agent/%s launched without its Project's common instructions (%s): %v", label, ProjectGuidanceReasonUnavailable, err)
 }
 
-// projectGuidanceUnavailable distinguishes a missing recorded Project snapshot
+// ProjectGuidanceUnavailable distinguishes a missing recorded Project snapshot
 // from a missing link-rule snapshot at the shared composite-file seam.
 type ProjectGuidanceUnavailable struct{ error }
 
-// codexSocketCommands are the commands the identity paragraph names as taking
+func (e *ProjectGuidanceUnavailable) Error() string {
+	return ProjectGuidanceReasonUnavailable + ": " + e.error.Error()
+}
+
+// CodexSocketCommands are the commands the identity paragraph names as taking
 // `--socket projmux`. Each one defines a socket flag; a static test holds
 // them to that.
 var CodexSocketCommands = []string{"delete pane", "agent relaunch"}
 
-// codexNoSocketCommand is the command the identity paragraph tells a Codex
+// CodexNoSocketCommand is the command the identity paragraph tells a Codex
 // Agent not to pass `--socket` to: it defines no socket flag, and outside
 // tmux it routes to the app socket itself (defaultRuntimeMutationRoute).
 const CodexNoSocketCommand = "create agent"
+
+const ProjectGuidanceReasonUnavailable = "project-guidance-unavailable"

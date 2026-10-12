@@ -40,7 +40,6 @@ import (
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -56,17 +55,17 @@ const (
 
 	aiResumeNewValue = "new"
 
-	aiPaneManagedOption          = "@projmux_ai_managed"
-	aiPaneAgentOption            = "@projmux_ai_agent"
-	aiPaneLaunchAuthorshipOption = tmuxopts.AgentLaunchAuthorshipPane
-	aiPaneContextOption          = "@projmux_ai_context"
+	aiPaneManagedOption          = mutationruntime.AiPaneManagedOption
+	aiPaneAgentOption            = mutationruntime.AiPaneAgentOption
+	aiPaneLaunchAuthorshipOption = mutationruntime.AiPaneLaunchAuthorshipOption
+	aiPaneContextOption          = mutationruntime.AiPaneContextOption
 	aiPaneHookActiveOption       = "@projmux_ai_hook_active"
-	aiPaneThreadIDOption         = "@projmux_ai_thread_id"
-	aiPaneSessionIDOption        = "@projmux_ai_session_id"
-	aiPaneResumeIDOption         = "@projmux_ai_resume_id"
-	aiPaneResumeSourceOption     = "@projmux_ai_resume_source"
+	aiPaneThreadIDOption         = mutationruntime.AiPaneThreadIDOption
+	aiPaneSessionIDOption        = mutationruntime.AiPaneSessionIDOption
+	aiPaneResumeIDOption         = mutationruntime.AiPaneResumeIDOption
+	aiPaneResumeSourceOption     = mutationruntime.AiPaneResumeSourceOption
 	aiPaneTranscriptPathOption   = "@projmux_ai_transcript_path"
-	aiPaneResumeUpdatedAtOption  = "@projmux_ai_resume_updated_at"
+	aiPaneResumeUpdatedAtOption  = mutationruntime.AiPaneResumeUpdatedAtOption
 
 	canonicalCreateTargetClientEnv = keybinding.CanonicalCreateTargetClientEnv
 
@@ -2260,9 +2259,19 @@ func (c *aiCommand) openResumePickerToggle(direction string) error {
 	return err
 }
 
+type agentLaunchPlan struct {
+	// title is the agent pane title, also the seed of the pane's topic option.
+	title string
+	// command is the argv for a caller that runs the launch in place.
+	command []string
+	// commandArgs is the argv for a caller that hands the launch to a split.
+	commandArgs []string
+}
 
-
-
+func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgvOverride []string, pathPrependOverride string) (agentLaunchPlan, error) {
+	p, e := c.sharedAgentCommand().PlanLaunch(mode, contextDir, extraArgs, execArgvOverride, pathPrependOverride)
+	return agentLaunchPlan{title: p.Title, command: p.Command, commandArgs: p.CommandArgs}, e
+}
 
 // The three methods below are the seam the canonical `create agent` route
 // consumes. They are the launch half of the legacy split with the two halves
@@ -2270,15 +2279,44 @@ func (c *aiCommand) openResumePickerToggle(direction string) error {
 // splits a window, or calls applySplitLayout, so the detached materializer
 // stays the only thing that creates the pane and the client never moves.
 
+// PlanAgentLaunch builds the provider launch for one detached Agent create.
+//
+// The workspace and the initial task are assembled by providerLaunchArgs rather
+// than concatenated here, because where the workspace options stop is a property
+// of the provider's own parser: Claude's variadic `--add-dir` eats a payload
+// appended straight after it and starts a session with no task at all.
+func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error) {
+	return c.sharedAgentLaunch().PlanAgentLaunch(provider, workspace, payload)
+}
 
+// PlanAgentLaunchWithOptions applies model and effort to Claude or Codex.
+// Claude alone accepts the persona snapshot path. Options precede workspace
+// arguments so Claude's variadic --add-dir cannot consume them.
+func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
+	return c.sharedAgentLaunch().PlanAgentLaunchWithOptions(provider, workspace, payload, model, effort, personaFile)
+}
 
+// PlanAgentLaunchWithSettings is PlanAgentLaunchWithOptions that also passes
+// a profile's Claude settings snapshot as --settings. An empty settingsFile
+// adds nothing, which is exactly PlanAgentLaunchWithOptions.
+func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
+	return c.sharedAgentLaunch().PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, settingsFile)
+}
 
+// PlanCodexAgentLaunchWithPolicy plans a plain Codex CLI create with the
+// profile permissions ahead of workspace options and any prompt.
+func (c *aiCommand) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (string, []string, error) {
+	return c.sharedAgentLaunch().PlanCodexAgentLaunchWithPolicy(workspace, payload, model, effort, policy)
+}
 
-
-
-
-
-
+// AwaitAgentActivation waits only for exact provider-hook evidence committed to
+// Agent authority. SessionStart keeps the Agent pending but opens a separately
+// bounded acknowledgement window; only the initial-task hook acknowledges. It
+// does not inspect pane_title, capture-pane, semantic tmux presentation, or
+// provider conversation content.
+func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
+	return c.sharedAgentLaunch().AwaitAgentActivation(ctx, runner, paneID, startupTimeout, acknowledgementTimeout)
+}
 
 func (c *aiCommand) nowTime() time.Time {
 	if c.now == nil {
@@ -2513,19 +2551,9 @@ func (c *aiCommand) popupSize(widthPercent, widthMin, heightPercent, heightMin i
 	return c.popupAxisSize("width", widthPercent, widthMin), c.popupAxisSize("height", heightPercent, heightMin)
 }
 
+type agentPaneBinding = mutationruntime.AgentPaneBinding
 
-
-
-
-
-
-
-
-
-
-
-
-
+type agentPaneBindError = mutationruntime.AgentPaneBindError
 
 type agentPaneOptionWrite struct {
 	option string
@@ -2533,11 +2561,13 @@ type agentPaneOptionWrite struct {
 	unset  bool
 }
 
+func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	return c.sharedAgentLaunch().BindAgentPaneOnRoute(ctx, runner, binding)
+}
 
-
-
-
-
+func readAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option string) (string, error) {
+	return mutationruntime.ReadAgentPaneOptionOnRoute(ctx, runner, paneID, option)
+}
 
 func writeAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID string, write agentPaneOptionWrite) error {
 	args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
@@ -2570,7 +2600,9 @@ func (c *aiCommand) agentAvailable(mode string) bool {
 	return c.findAgentBinary(mode) != ""
 }
 
-
+func (c *aiCommand) findAgentBinary(mode string) string {
+	return c.sharedAgentCommand().FindAgentBinary(mode)
+}
 
 func (c *aiCommand) missingAgentRunnerMessage(mode string) string {
 	return fmt.Sprintf("selected runner is not installed: %s", mode)
@@ -3919,13 +3951,7 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-
-
-
-
-
-
-
+var isExecutable = mutationruntime.IsExecutable
 
 var parsePositiveInt = mutationruntime.ParsePositiveInt
 
@@ -3969,4 +3995,16 @@ func printRouteNotes(w io.Writer, route string) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, note)
 	}
+}
+
+func (c *aiCommand) sharedAgentLaunch() *mutationruntime.AgentLaunchService {
+	return &mutationruntime.AgentLaunchService{LoadRegistry: c.loadRegistry, Sleep: c.sleepFor, Now: c.nowTime, DeclaredReason: codexNativeDeclaredReason,
+		Plan: func(provider, cwd string, extra []string) (string, []string, error) {
+			plan, err := c.planAgentLaunch(provider, cwd, extra, nil, "")
+			return plan.title, plan.commandArgs, err
+		}}
+}
+
+func (c *aiCommand) sharedAgentCommand() *mutationruntime.AgentCommandPlanner {
+	return &mutationruntime.AgentCommandPlanner{ExecArgv: c.agentExecArgv, LookupEnv: c.env, HomeDir: c.homeOrEmpty(), CommandShell: posixCommandShell(c.lookupEnv), LookupBinary: func(bin string) string { return c.readTrimmed("command", "-v", bin) }}
 }

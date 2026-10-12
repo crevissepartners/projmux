@@ -1,15 +1,9 @@
 package app
 
 import (
-	"errors"
-	"fmt"
-	"io/fs"
-	"maps"
-	"os"
-	"path/filepath"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 )
 
@@ -43,29 +37,103 @@ type codexProjectLinksPlanner interface {
 
 var _ codexProjectLinksPlanner = (*aiCommand)(nil)
 
+// projectLinksLaunch is what one launch does with its Project's label link
+// rules. The zero value is "not applicable" (another provider or lane, the
+// reply-only lane, no Project, or a launcher without the seam) and changes no
+// argv, no developer instructions and no annotation.
+//
+// The Project common instructions precede the rules, independently of whether
+// rules exist. A Claude launch passes the rules last in its one
+// --append-system-prompt-file. A Codex fresh create sends them the same way,
+// after the persona, as the thread's developer instructions
+// (developerInstructions).
+type projectLinksLaunch struct {
+	// project is the independent common-instruction layer before link rules.
+	project projectGuidanceLaunch
+	active  bool
+	store   projectlinks.SnapshotStore
+	// recorded is the digest the Agent records, "" when it records none.
+	recorded string
+	// digest, snapshotPath and text are the Project's current rendered rules,
+	// all empty when the Project has no rules. text is sent only to a Codex
+	// thread and is never put in an argv or the Registry.
+	digest       string
+	snapshotPath string
+	text         []byte
+	// systemPromptFile is the one file a fresh create hands Claude: the rules
+	// snapshot, or the composite of the persona and the rules. Resumes find
+	// theirs in the seam from the digest they launch with.
+	systemPromptFile string
+	// unavailable is why the current rules could not be read. The launch goes
+	// ahead without rules and nothing is recorded.
+	unavailable error
+}
 
+// PlanProjectLinks reads project's current rules, renders them with the
+// Project's variables and writes their content-addressed snapshot. recorded
+// are the Agent annotations the launch compares against (nil on a fresh
+// create).
+func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
+	return localProjectLinksLaunch(c.sharedGuidance().PlanProjectLinks(provider, project, recorded))
+}
 
+// PlanCodexProjectLinks reads project's current rules for a Codex fresh
+// create and writes their snapshot, exactly as PlanProjectLinks does for a
+// Claude create. A Codex resume never asks: a thread keeps the developer
+// instructions it was started with.
+func (c *aiCommand) PlanCodexProjectLinks(project coremetadata.Project) projectLinksLaunch {
+	return localProjectLinksLaunch(c.sharedGuidance().PlanCodexProjectLinks(project))
+}
 
+// withCreateFile sets systemPromptFile for a fresh create that also carries
+// the persona p. A composite that cannot be written makes the rules
+// unavailable, so the create still launches, with the persona alone.
+func (l projectLinksLaunch) withCreateFile(p personaLaunch) projectLinksLaunch {
+	return localProjectLinksLaunch(l.shared().WithCreateFile(p.shared()))
+}
 
+// developerInstructions are the developer instructions a Codex fresh create
+// starts its thread with, given persona, what it would send without rules
+// ("" for none): persona, then projectlinks.CompositeSeparator and the rules,
+// each part present only when the create has it. Without rules it is persona
+// itself, so a create in a Project without rules sends exactly what it sent
+// before.
+func (l projectLinksLaunch) developerInstructions(persona string) string {
+	return l.shared().DeveloperInstructions(persona)
+}
 
+// withCreateAnnotation adds the digest a fresh create launched with to base.
+// Without rules it returns base itself, so a create in a Project without rules
+// stores exactly what it stored before -- nil included.
+func (l projectLinksLaunch) withCreateAnnotation(base map[string]string) map[string]string {
+	return l.shared().WithCreateAnnotation(base)
+}
 
+// resumeLaunchAnnotations are the annotations a resume launch reads, given
+// the ones it would otherwise read. Rules that changed put the current digest
+// (or no digest) and the snapshot mode off in place, which is exactly what
+// record writes, so the launch reads what the Agent will record. Unreadable
+// rules drop the digest so the Agent launches without rules while its record
+// stays as it was. Otherwise base itself is returned.
+func (l projectLinksLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
+	return l.shared().ResumeLaunchAnnotations(base)
+}
 
+// record writes, inside the resume transaction, the digest and snapshot mode
+// resumeLaunchAnnotations launched with. Nothing changes when the rules are
+// the recorded ones or could not be read.
+func (l projectLinksLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
+	return l.shared().Record(registry, mutator, agentUID)
+}
 
+// notice is the one-line disclosure of rules the launch could not read, or ""
+// when there is nothing to disclose. label names the Agent the way the
+// persona notice does.
+func (l projectLinksLaunch) notice(label string) string { return l.shared().Notice(label) }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+func projectLinksNotice(label string, err error) string {
+	return mutationruntime.ProjectLinksNotice(label, err)
+}
 
 // planProjectLinksWith asks launcher for project's rules when it has the
 // seam, and returns the zero launch otherwise.
@@ -155,4 +223,10 @@ func (c *aiCommand) resumeSystemPromptFile(mode string, annotations map[string]s
 	return composite.Path, nil
 }
 
-
+// readPersonaSnapshot reads the persona snapshot at path, bounded like every
+// persona read. The file is opened inside its own directory, the snapshot
+// directory RecordedSnapshotPath already proved it a regular file of, so
+// the read cannot leave that directory.
+func readPersonaSnapshot(path string) ([]byte, error) {
+	return mutationruntime.ReadPersonaSnapshot(path)
+}

@@ -413,3 +413,22 @@ func TestExternalShellCreateConsumer(t *testing.T) {
 		t.Fatalf("pane %+v %v", pane, err)
 	}
 }
+
+func TestExternalAgentCreateConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: t.TempDir(), StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out core.CreateAgentResult
+	out, err = c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:project", Window: "uid:window", Provider: "claude", Profile: "none", Instructions: "reviewer", Model: "sonnet", Effort: "high", Cwd: "/workspace", AddDirs: []string{"/another"}, InteractiveOnly: false, DialogueReplyOnly: false, Name: "worker", Labels: []string{"role=worker"}, Placement: "right", CwdFrom: "project", Payload: []string{"review"}, Creator: "uid:agent", SocketPath: "/explicit/socket"})
+	if !errors.Is(err, context.Canceled) || out.Agent.Metadata.UID != "" {
+		t.Fatalf("%+v %v", out, err)
+	}
+	_, err = c.CreateAgent(context.Background(), core.CreateAgentRequest{Project: "named", Window: "window", Provider: "codex"})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateExecutableInvalid {
+		t.Fatalf("%v", err)
+	}
+}

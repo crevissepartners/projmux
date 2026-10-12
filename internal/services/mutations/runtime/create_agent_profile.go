@@ -1,52 +1,111 @@
 package runtime
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/aiprovider"
-	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
+	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/core/selector"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
-	"io"
 	"maps"
 	"slices"
 	"strings"
-	"time"
 )
 
-// profileStore is the profile store of the create command's home. Without
-// HOME or an absolute XDG home it returns the missing-HOME reason.
+type AgentSettingsFlags struct {
+	Profile, ProfileProjectUID, Instructions, InstructionsOption, Model, Effort, Host, ResumeConversation string
+	Labels, Payload                                                                                       []string
+	DialogueReplyOnly, InteractiveOnly                                                                    bool
+	PersonaLaunch                                                                                         PersonaLaunch
+	ProfileLaunch                                                                                         ProfileLaunch
+}
+type AgentSettings struct {
+	Fields         AgentInputFields
+	Paths          func() (config.Paths, error)
+	ProfileProject func(string, AgentSettingsFlags) (string, error)
+}
+
 func (c *AgentSettings) ProfileStore() (profile.Store, error) {
-	paths, err := savedSettingsPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.Paths()
 	if err != nil {
 		return profile.Store{}, err
 	}
 	return profile.NewDefaultStore(paths), nil
 }
-
-// nativeCodexFreshCreateRequired is the pre-provider lane decision shared by
-// public create and every canonical UI intent. A fresh payload-free Codex
-// create is deliberately plain: the current installed tuple cannot hand a
-// zero-turn thread to an independent TUI durably, so consulting Current,
-// Resolve, or Create would already be too late to fall back safely.
-//
-// Prompted creates retain the native-required contract. Multi-operand payloads
-// also stay on that contract and are rejected by nativePrompt instead of being
-// silently reinterpreted by this decision.
-func NativeCodexFreshCreateRequired(provider string, flags AgentSettingsFlags) bool {
-	return provider == aiModeCodex && !flags.interactiveOnly && (len(flags.payload) > 0 || flags.host == "process") &&
-		strings.TrimSpace(flags.resumeConversation) == ""
+func AgentLabelMap(raw []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, value := range raw {
+		label, err := selector.ParseLabel(value)
+		if err != nil {
+			return nil, err
+		}
+		out[label.Key] = label.Value
+	}
+	return out, nil
+}
+func NativeCodexFreshCreateRequired(provider string, interactiveOnly bool, payload []string, host, conversation string) bool {
+	return provider == "codex" && !interactiveOnly && (len(payload) > 0 || host == "process") && strings.TrimSpace(conversation) == ""
 }
 
-// profileLaunch is the profile one Agent create applies: its name, the
-// digest of the content applied, the checked content, the Claude settings
+// Reason tokens of applying a named profile to an Agent. They are stable
+// strings: each refusal and each not-applied disclosure carries exactly one.
+const (
+	// profileReasonClaudeSandboxBashOnly is a profile `sandbox` a Claude Agent
+	// is not given. Claude's sandbox confines only Bash subprocesses and falls
+	// back to running unsandboxed, so it cannot stand for the profile's
+	// sandbox.
+	profileReasonClaudeSandboxBashOnly = "claude-sandbox-bash-only"
+	// profileReasonClaudeNoPermissionMode is a profile `approval` a Claude
+	// Agent is not given: no Claude permission mode has the approval
+	// semantics the profile vocabulary names.
+	profileReasonClaudeNoPermissionMode = "claude-no-matching-permission-mode"
+	// profileReasonOverriddenByFlag is a profile item an explicit create flag
+	// replaced: --instructions/--persona, --model, or --effort.
+	profileReasonOverriddenByFlag = "overridden-by-flag"
+	// profileReasonProviderOptionUnsupported is a profile model or effort on a
+	// provider that takes neither.
+	profileReasonProviderOptionUnsupported = "provider-Option-unsupported"
+	// profileReasonPermissionsUnsupported refuses a profile with any
+	// permission on a provider that cannot apply permissions.
+	profileReasonPermissionsUnsupported = "profile-permissions-unsupported-provider"
+	// profileReasonCodexCLIUntrusted refuses a Codex CLI launch because this
+	// Codex version accepts untrusted only on the native app-server lane.
+	profileReasonCodexCLIUntrusted = "codex-cli-untrusted-approval-unsupported"
+	// profileReasonCodexCommandRulesUnsupported is a profile `allow` or
+	// `deny` a Codex Agent is not given. They are Claude permission rules;
+	// Codex has no per-thread rule list a create could hand them to, and the
+	// profile's sandbox and approval are what bound a Codex thread.
+	profileReasonCodexCommandRulesUnsupported = "codex-command-rules-unsupported"
+	// profileReasonLaneUnsupported refuses a profile on the reply-only
+	// activation, whose launch is fixed.
+	profileReasonLaneUnsupported = "profile-lane-unsupported"
+	// profileReasonProviderMismatch refuses a create whose provider is not
+	// the one the profile names. A provider-neutral profile never mismatches.
+	profileReasonProviderMismatch = "profile-provider-mismatch"
+	// profileReasonResumeUnavailable refuses a resume of an Agent whose
+	// recorded profile cannot be applied again. There is no fallback that
+	// resumes it without the profile's permissions.
+)
+
+// profileRoleLabel is the creation label a profile's `roles` are matched
+// against when no --profile was spelled.
+const profileRoleLabel = "role"
+
+// Profile item names, as disclosed.
+const (
+	profileItemInstructions = "instructions"
+	profileItemModel        = "model"
+	profileItemEffort       = "effort"
+	profileItemSandbox      = "permissions.sandbox"
+	profileItemApproval     = "permissions.approval"
+	profileItemAllow        = "permissions.allow"
+	profileItemDeny         = "permissions.deny"
+)
+
+// ProfileLaunch is the profile one Agent create applies: its Name, the
+// Digest of the content applied, the checked content, the Claude Settings
 // snapshot its allow and deny rules are launched with, the Codex policy its
 // sandbox and approval are started with on native or CLI lanes, and items
 // not applied. The zero value means no profile.
@@ -56,10 +115,10 @@ type ProfileLaunch struct {
 	Spec        profile.Spec
 	Settings    string
 	CodexPolicy codexappserver.ThreadPolicy
-	NotApplied  []cli.ReceiptProfileItem
-	// source is how the create selected the profile
+	NotApplied  []receipt.ReceiptProfileItem
+	// Source is how the create selected the profile
 	// (coremetadata.SettingSourceFlag or coremetadata.SettingSourceRole), and
-	// filledModel and filledEffort say whether the profile, not a flag, gave
+	// FilledModel and FilledEffort say whether the profile, not a flag, gave
 	// the create its model and effort. The instructions say so themselves
 	// (personaOption "profile").
 	Source       string
@@ -87,11 +146,11 @@ func (p ProfileLaunch) WithAnnotations(base map[string]string) map[string]string
 }
 
 // receipt is the receipt disclosure of the applied profile, or nil.
-func (p ProfileLaunch) Receipt() *cli.ReceiptProfile {
+func (p ProfileLaunch) Receipt() *receipt.ReceiptProfile {
 	if !p.Active() {
 		return nil
 	}
-	return &cli.ReceiptProfile{Name: p.Name, Digest: p.Digest, NotApplied: append([]cli.ReceiptProfileItem{}, p.NotApplied...)}
+	return &receipt.ReceiptProfile{Name: p.Name, Digest: p.Digest, NotApplied: append([]receipt.ReceiptProfileItem{}, p.NotApplied...)}
 }
 
 // notices are the one-line disclosures of the items not applied, for a
@@ -105,11 +164,11 @@ func (p ProfileLaunch) Notices() []string {
 }
 
 func (p *ProfileLaunch) Skip(item, provider, reason string) {
-	p.NotApplied = append(p.NotApplied, cli.ReceiptProfileItem{Item: item, Provider: provider, Reason: reason})
+	p.NotApplied = append(p.NotApplied, receipt.ReceiptProfileItem{Item: item, Provider: provider, Reason: reason})
 }
 
-// selectedCreateProfile is the profile one Agent create selected: its name,
-// the option that selected it as the refusals quote it, and what it resolved
+// SelectedCreateProfile is the profile one Agent create selected: its Name,
+// the Option that selected it as the refusals quote it, and what it resolved
 // to. The zero value means the create applies no profile.
 type SelectedCreateProfile struct {
 	Name   string
@@ -119,7 +178,7 @@ type SelectedCreateProfile struct {
 	Spec   profile.Spec
 }
 
-// selectCreateProfile is the one definition of which profile an Agent create
+// SelectCreateProfile is the one definition of which profile an Agent create
 // uses, and it resolves that profile.
 //
 // An explicit --profile names it; `none` means no profile and no role
@@ -128,18 +187,18 @@ type SelectedCreateProfile struct {
 // argv the create itself refuses. Every way the selection or the resolution
 // fails is a refusal that says nothing was created.
 //
-// Both resolveCreateProfile and resolveCreateProvider call it, so the profile
+// Both ResolveCreateProfile and resolveCreateProvider call it, so the profile
 // that decides an omitted --provider is the profile the create then applies.
 func (c *AgentSettings) SelectCreateProfile(spelling string, flags AgentSettingsFlags) (SelectedCreateProfile, error) {
 	if flags.Profile == profile.ReservedName {
 		return SelectedCreateProfile{}, nil
 	}
 	Name := flags.Profile
-	Option := "--profile " + flags.Profile
+	Option := "" + c.Fields.Option("profile") + " " + flags.Profile
 	Source := coremetadata.SettingSourceFlag
 	role := ""
 	if Name == "" {
-		Labels, err := labelMap(flags.Labels)
+		labels, err := AgentLabelMap(flags.Labels)
 		if err != nil {
 			// The create refuses the label itself, with its own message.
 			return SelectedCreateProfile{}, nil
@@ -148,19 +207,19 @@ func (c *AgentSettings) SelectCreateProfile(spelling string, flags AgentSettings
 		if role, ok = labels[profileRoleLabel]; !ok {
 			return SelectedCreateProfile{}, nil
 		}
-		Option = "--label " + profileRoleLabel + "=" + role
+		Option = "" + c.Fields.Option("label") + " " + profileRoleLabel + "=" + role
 		Source = coremetadata.SettingSourceRole
 	}
 	// The store is opened only once a profile has to be read, so a create
 	// that selects none never depends on the config home.
 	store, err := c.ProfileStore()
 	if err != nil {
-		if flags.Profile == "" && isMissingHome(err) {
+		if flags.Profile == "" && errors.Is(err, config.ErrHomeDirRequired) {
 			// A role mapping is a read of saved profiles; without a config
 			// home there are none, so no profile claims a role.
 			return SelectedCreateProfile{}, nil
 		}
-		return SelectedCreateProfile{}, fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
+		return SelectedCreateProfile{}, fmt.Errorf("%s "+c.Fields.Option("profile")+": %w; nothing was created", spelling, err)
 	}
 	if Name == "" {
 		entries, listErr := store.List()
@@ -170,7 +229,7 @@ func (c *AgentSettings) SelectCreateProfile(spelling string, flags AgentSettings
 		projectUID := flags.ProfileProjectUID
 		for _, entry := range entries {
 			if entry.Project != "" && slices.Contains(entry.Roles, role) {
-				projectUID, err = c.profileCreateProject(spelling, flags)
+				projectUID, err = c.ProfileProject(spelling, flags)
 				if err != nil {
 					return SelectedCreateProfile{}, err
 				}
@@ -180,10 +239,10 @@ func (c *AgentSettings) SelectCreateProfile(spelling string, flags AgentSettings
 		if Name, err = store.RoleProfile(role, projectUID); err != nil {
 			switch profile.ReasonOf(err) {
 			case profile.ReasonRoleClaimed:
-				return SelectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass --profile none to create without a profile; nothing was created",
+				return SelectedCreateProfile{}, createAgentUsage(profile.ReasonRoleClaimed, fmt.Sprintf("%s %s: %v; remove the role from all but one of the listed profiles, or pass "+c.Fields.Option("profile")+" none to create without a profile; nothing was created",
 					spelling, Option, err))
 			case profile.ReasonRoleProfileInvalid:
-				return SelectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; fix the profile with `projmux profile set <name>`, or pass --profile none to create without a profile; nothing was created",
+				return SelectedCreateProfile{}, createAgentUsage(profile.ReasonRoleProfileInvalid, fmt.Sprintf("%s %s: %v; fix the profile with `projmux profile set <name>`, or pass "+c.Fields.Option("profile")+" none to create without a profile; nothing was created",
 					spelling, Option, err))
 			}
 			return SelectedCreateProfile{}, fmt.Errorf("%s %s: %w; nothing was created", spelling, Option, err)
@@ -195,23 +254,23 @@ func (c *AgentSettings) SelectCreateProfile(spelling string, flags AgentSettings
 	Loaded, Spec, err := store.Resolve(Name)
 	if err != nil {
 		if profile.ReasonOf(err) != "" {
-			return SelectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, Option, err))
+			return SelectedCreateProfile{}, createAgentUsage(profile.ReasonOf(err), fmt.Sprintf("%s %s: %v; nothing was created", spelling, Option, err))
 		}
 		return SelectedCreateProfile{}, fmt.Errorf("%s %s: %w; nothing was created", spelling, Option, err)
 	}
 	if Spec.Project != "" {
-		projectUID, scopeErr := c.profileCreateProject(spelling, flags)
+		projectUID, scopeErr := c.ProfileProject(spelling, flags)
 		if scopeErr != nil {
 			return SelectedCreateProfile{}, scopeErr
 		}
 		if err := profile.CheckProject(Name, Spec, projectUID); err != nil {
-			return SelectedCreateProfile{}, usageError(fmt.Sprintf("%s %s: %v; nothing was created", spelling, Option, err))
+			return SelectedCreateProfile{}, createAgentUsage(profile.ReasonOf(err), fmt.Sprintf("%s %s: %v; nothing was created", spelling, Option, err))
 		}
 	}
 	return SelectedCreateProfile{Name: Name, Option: Option, Source: Source, Loaded: Loaded, Spec: Spec}, nil
 }
 
-// resolveCreateProfile decides the profile one Agent create applies and merges
+// ResolveCreateProfile decides the profile one Agent create applies and merges
 // it into flags.
 //
 // An explicit --profile names it; `none` means no profile and no role
@@ -241,11 +300,11 @@ func (c *AgentSettings) SelectCreateProfile(spelling string, flags AgentSettings
 // -s and -a. allow and deny are disclosed on both lanes as not applied.
 // Other providers refuse a profile with permissions.
 //
-// selectCreateProfile decides which profile that is, the same way it does
+// SelectCreateProfile decides which profile that is, the same way it does
 // for resolveCreateProvider.
 //
-// It reads files and writes none: the settings snapshot is written by
-// prepareProfileSettings, later, next to the persona snapshot.
+// It reads files and writes none: the Settings snapshot is written by
+// PrepareProfileSettings, later, next to the persona snapshot.
 func (c *AgentSettings) ResolveCreateProfile(spelling, provider string, flags *AgentSettingsFlags) error {
 	selected, err := c.SelectCreateProfile(spelling, *flags)
 	if err != nil || selected.Name == "" {
@@ -253,28 +312,28 @@ func (c *AgentSettings) ResolveCreateProfile(spelling, provider string, flags *A
 	}
 	Name, Option, Loaded, Spec := selected.Name, selected.Option, selected.Loaded, selected.Spec
 	if Spec.Provider != "" && Spec.Provider != provider {
-		return usageError(fmt.Sprintf("%s %s: profile %q is for provider %s, not %s (%s); create the Agent with provider %s, or pass --profile none to create without a profile; nothing was created",
+		return createAgentUsage(profileReasonProviderMismatch, fmt.Sprintf("%s %s: profile %q is for provider %s, not %s (%s); create the Agent with provider %s, or pass "+c.Fields.Option("profile")+" none to create without a profile; nothing was created",
 			spelling, Option, Name, Spec.Provider, provider, profileReasonProviderMismatch, Spec.Provider))
 	}
 	if flags.DialogueReplyOnly {
-		return usageError(fmt.Sprintf("%s %s: profile %q cannot apply to --%s (%s); nothing was created",
-			spelling, Option, Name, claudeDialogueReplyOnlyFlag, profileReasonLaneUnsupported))
+		return createAgentUsage(profileReasonLaneUnsupported, fmt.Sprintf("%s %s: profile %q cannot apply to %s (%s); nothing was created",
+			spelling, Option, Name, c.Fields.Option(DialogueReplyOnlyFlag), profileReasonLaneUnsupported))
 	}
-	claude := provider == aiModeClaude
-	codexNative := NativeCodexFreshCreateRequired(provider, *flags)
+	claude := provider == "claude"
+	codexNative := NativeCodexFreshCreateRequired(provider, flags.InteractiveOnly, flags.Payload, flags.Host, flags.ResumeConversation)
 	switch {
-	case claude, provider == aiModeCodex, !Spec.Permissions.HasPermissions():
+	case claude, provider == "codex", !Spec.Permissions.HasPermissions():
 	default:
-		return usageError(fmt.Sprintf("%s %s: profile %q sets permissions, which --provider %s cannot apply (%s); nothing was created",
+		return createAgentUsage(profileReasonPermissionsUnsupported, fmt.Sprintf("%s %s: profile %q sets permissions, which "+c.Fields.Option("provider")+" %s cannot apply (%s); nothing was created",
 			spelling, Option, Name, provider, profileReasonPermissionsUnsupported))
 	}
 	launch := ProfileLaunch{Name: Loaded.Name, Digest: Loaded.Digest, Spec: Spec, Source: selected.Source}
-	if provider == aiModeCodex {
+	if provider == "codex" {
 		if launch.CodexPolicy, err = CodexThreadPolicy(Spec.Permissions); err != nil {
-			return usageError(fmt.Sprintf("%s %s: profile %q: %v; nothing was created", spelling, Option, Name, err))
+			return createUsage(fmt.Sprintf("%s %s: profile %q: %v; nothing was created", spelling, Option, Name, err))
 		}
 		if !codexNative && launch.CodexPolicy.ApprovalPolicy == codexappserver.ApprovalUntrusted {
-			return usageError(fmt.Sprintf("%s %s: profile %q requests approval=untrusted, which the Codex CLI cannot apply (%s); nothing was created",
+			return createAgentUsage(profileReasonCodexCLIUntrusted, fmt.Sprintf("%s %s: profile %q requests approval=untrusted, which the Codex CLI cannot apply (%s); nothing was created",
 				spelling, Option, Name, profileReasonCodexCLIUntrusted))
 		}
 		if len(Spec.Permissions.Allow) > 0 {
@@ -303,7 +362,7 @@ func (c *AgentSettings) ResolveCreateProfile(spelling, provider string, flags *A
 	} {
 		switch {
 		case overlap.value == "":
-		case !claude && provider != aiModeCodex:
+		case !claude && provider != "codex":
 			launch.Skip(overlap.item, provider, profileReasonProviderOptionUnsupported)
 		case *overlap.flag != "":
 			launch.Skip(overlap.item, provider, profileReasonOverriddenByFlag)
@@ -321,7 +380,7 @@ func (c *AgentSettings) ResolveCreateProfile(spelling, provider string, flags *A
 	return nil
 }
 
-// codexThreadPolicy spells a profile's sandbox and approval in the Codex
+// CodexThreadPolicy spells a profile's sandbox and approval in the Codex
 // thread/start and thread/resume vocabulary. The profile says `full-access`
 // where Codex says `danger-full-access`; every other value is spelled the
 // same. An absent value stays absent, so a profile without either maps to the
@@ -354,21 +413,21 @@ func CodexThreadPolicy(perms profile.Permissions) (codexappserver.ThreadPolicy, 
 	return policy, nil
 }
 
-// prepareProfileSettings writes the Claude settings snapshot of the applied
+// PrepareProfileSettings writes the Claude Settings snapshot of the applied
 // profile's allow and deny rules. Like preparePersonaLaunch it runs before the
 // create transaction opens, and a snapshot a later failure leaves behind is
 // harmless: it is content addressed.
 func (c *AgentSettings) PrepareProfileSettings(spelling, provider string, flags *AgentSettingsFlags) error {
-	if !flags.ProfileLaunch.Active() || provider != aiModeClaude {
+	if !flags.ProfileLaunch.Active() || provider != "claude" {
 		return nil
 	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.Paths()
 	if err != nil {
-		return fmt.Errorf("%s --profile: %w; nothing was created", spelling, err)
+		return fmt.Errorf("%s "+c.Fields.Option("profile")+": %w; nothing was created", spelling, err)
 	}
 	Settings, err := profile.WriteSettingsSnapshot(paths.StateDir, flags.ProfileLaunch.Spec.Permissions)
 	if err != nil {
-		return fmt.Errorf("%s --profile %s: %w; nothing was created", spelling, flags.ProfileLaunch.Name, err)
+		return fmt.Errorf("%s "+c.Fields.Option("profile")+" %s: %w; nothing was created", spelling, flags.ProfileLaunch.Name, err)
 	}
 	flags.ProfileLaunch.Settings = Settings
 	return nil

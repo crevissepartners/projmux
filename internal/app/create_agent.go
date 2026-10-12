@@ -1,37 +1,72 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
-	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/selector"
-	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 )
 
 // canonicalCreateAgent is the spelling the provider shortcuts normalize onto.
 const canonicalCreateAgent = "create agent"
 
+// Provider startup and initial-task acknowledgement are separate bounded
+// stages. Exact SessionStart evidence opens the acknowledgement window; it does
+// not itself acknowledge the task. Keeping them separate lets a provider spend
+// startup time before a delayed hook without turning one larger timeout into
+// the contract.
+//
+// Both bounds were five seconds, which is inside the cost of starting a real
+// provider on a busy machine, so a create that had worked would still exit
+// nonzero and offer to delete the live Agent. Measured on a 14-core machine
+// under `while :; do :; done` at 1x and 3x nproc (observed loadavg 37-72, real
+// `claude`, n=20, the product's own stage timestamps):
+//
+//	stage           p50     p90     observed max
+//	startup         9.5s    13.9s   24.4s  (loadavg 69.8)
+//	acknowledgement 4.2s     5.2s    8.6s  (loadavg 63.3)
+//
+// Each bound covers its own peak plus one more step of the observed tail slope,
+// max + (max - p90). Twenty samples make a max a weak tail estimate, and this
+// tail is heavy: startup jumps 1.75x from p90 to max. Sizing to the sample max
+// alone would leave the bound one unlucky run from the behavior this change
+// exists to remove.
+//
+// The asymmetry is the reason to spend the headroom rather than save it. A
+// bound that is too low deletes live work; a bound that is too high only delays
+// reporting a provider that really is dead, once, on the failure path -- worst
+// case 47s for one target and 47s x targets for a fan-out create, which waits
+// per target in confirmAgentActivations. The same load that produced these
+// peaks also put 19-61s of Registry and tmux work *before* this wait: those
+// creates took 26-90s end to end.
+//
+// The headroom is also what makes the exit code honest. Exceeding a bound is
+// reported as a failure only because it is meant to mean "the task never
+// arrived" rather than "this run was slower than the sample" -- so the claim
+// depends on the margin, not just on the timeout existing.
+//
+// These are not a sufficiency proof. They cover the measured envelope up to
+// loadavg ~72 on this machine class; heavier load is explicitly outside it.
+const (
+	agentActivationStartupDeadline         = mutationruntime.AgentActivationStartupDeadline
+	agentActivationAcknowledgementDeadline = mutationruntime.AgentActivationAcknowledgementDeadline
+)
 
-
-// agentPaneNameSuffix is the launcher convention for the name of the Pane an
-// Agent owns. It used to live only in the launcher documentation as a
-// mandatory follow-up `rename pane`, which meant a caller that had not read
-// that page left the managed Pane addressed by a raw UID.
-const agentPaneNameSuffix = "-pane"
-
-
-
-
+// agentWork is one allocated Agent plus its managed Pane, waiting for the
+// runtime phase to give the Pane a live tmux binding.
+type agentWork struct {
+	target     paneTarget
+	windowName string
+	agent      coremetadata.Agent
+	pane       coremetadata.Pane
+	// activation is the generation this Agent launch was issued.
+	activation superviseSpec
+}
 
 // runResourceAgent answers the canonical resource-backed `create agent` and the
 // three provider shortcuts.
@@ -150,60 +185,13 @@ func printCreateAgentUsage(stderr io.Writer, shortcutProvider string) {
 	}
 }
 
-
-
-
-
-
-
-
-
-func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget) error {
-	var diagnostics []error
-	for _, target := range targets {
-		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.Runner, target.paneID,
-			agentActivationStartupDeadline, agentActivationAcknowledgementDeadline)
-		source := string(coremetadata.InteractionSourceProviderHook)
-		state := coremetadata.ActivationAcknowledged
-		reason := ""
-		if err != nil || !acknowledged {
-			state = coremetadata.ActivationUnconfirmed
-			if err != nil {
-				reason = coremetadata.ActivationReasonFailed
-			} else {
-				reason = coremetadata.ActivationReasonTimedOut
-			}
-		}
-		var committed coremetadata.Agent
-		if _, updateErr := c.store.update(func(registry *coremetadata.Registry) error {
-			check := checkAgentActivationBinding(*registry, target.paneUID, target.paneID,
-				&agentActivationBindingExpectation{AgentUID: target.agentUID, Generation: target.generation})
-			if !check.bound() {
-				return &agentActivationBindingError{
-					command: "create agent", stage: agentBindingStageBeforeRecording,
-					paneUID: target.paneUID, paneID: target.paneID, check: check,
-				}
-			}
-			updated, setErr := c.store.mutator().SetAgentActivation(registry, target.agentUID, state, source, reason)
-			committed = updated.Clone()
-			return setErr
-		}); updateErr != nil {
-			diagnostics = append(diagnostics, MapMetadataError(updateErr))
-			continue
-		}
-		// A provider hook may commit after Await's final read but before the
-		// timeout writer takes the Registry lock. SetAgentActivation is monotonic,
-		// so inspect the committed authority instead of the stale local decision.
-		if committed.Status.Activation.State == coremetadata.ActivationUnconfirmed {
-			diagnostics = append(diagnostics, errors.New(activationUnconfirmedDiagnostic(target, reason)))
-		}
-	}
-	return errors.Join(diagnostics...)
+type agentActivationTarget struct {
+	agentUID   string
+	agentName  string
+	paneUID    string
+	paneID     string
+	generation string
 }
-
-
-
-
 
 // Registration arrives on the provider's own SessionStart hook, which is not
 // ordered against the activation acknowledgement this create already waited
@@ -325,66 +313,4 @@ func (c *createCommand) resolveCreateProvider(spelling, shortcutProvider string,
 			spelling, strings.TrimSpace(flags.provider)))
 	}
 	return shortcutProvider, nil
-}
-
-// planAgentPaneLaunch builds the provider launch of one canonical Agent create.
-//
-// The two branches are two different launches, not two spellings of one. A fresh
-// create appends the operator's payload as the provider's initial task; a resume
-// joins a conversation the provider already has and takes no payload at all --
-// the conversation id is the provider's own resume option, not an operand. There
-// is deliberately no fallback from the second to the first: a resume that
-// silently started a new conversation would lose the context the operator picked
-// the row for.
-func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, error) {
-	title, argv, _, err := c.planAgentPaneLaunchWithResume(provider, workspace, flags)
-	return title, argv, err
-}
-
-
-
-// bindAgentPane applies the managed-agent pane options.
-//
-// A resumed Pane additionally carries the conversation id in the live routing
-// index from the moment the pane exists, which is what lets the provider's first
-// hook event be attributed to this pane instead of having to wait for the
-// provider to report the conversation itself.
-func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, contextDir, title, declared string, flags resourceCreateFlags) error {
-	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
-		if source := strings.TrimSpace(flags.resumeSource); source != "" {
-			return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.Runner, agentPaneBinding{
-				PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
-				ConversationID: conversation, ResumeSource: source, CodexNativeDeclared: declared,
-			})
-		}
-		return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.Runner, agentPaneBinding{
-			PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
-			ConversationID: conversation, CodexNativeDeclared: declared,
-		})
-	}
-	return c.agents.BindAgentPaneOnRoute(ctx, c.runtime.Runner, agentPaneBinding{
-		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title, CodexNativeDeclared: declared,
-	})
-}
-
-// declaredPlainCodexLane names why one managed Codex Agent is being created on
-// the plain CLI lane, from the closed declared vocabulary.
-//
-// Only the two by-design lanes are declared. Every other route to the plain
-// lane is either a refusal that creates nothing, or a genuine loss of native
-// authority that must stay visible as an unexplained native fallback.
-func declaredPlainCodexLane(provider string, flags resourceCreateFlags, prompt string) string {
-	if provider != aiModeCodex {
-		return ""
-	}
-	if flags.interactiveOnly {
-		return codexNativeDeclaredInteractiveOnly
-	}
-	if len(flags.payload) == 0 && strings.TrimSpace(flags.resumeConversation) == "" {
-		return codexNativeDeclaredPayloadFreeFallback
-	}
-	if strings.TrimSpace(flags.resumeConversation) != "" && strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout {
-		return codexNativeDeclaredRolloutCatalogResume
-	}
-	return ""
 }

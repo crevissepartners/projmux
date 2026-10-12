@@ -155,6 +155,8 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/core/candidates",
 		module + "/internal/core/metadata",
 		module + "/internal/core/persona",
+		module + "/internal/core/agentguidance",
+		module + "/internal/integrations/agents/sessionhistory",
 		module + "/internal/core/profile",
 		module + "/internal/core/projectlinks",
 		module + "/internal/core/registryview",

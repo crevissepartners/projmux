@@ -3,9 +3,9 @@ package app
 import (
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"maps"
-	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -62,42 +62,95 @@ const profileRoleLabel = "role"
 
 // Profile item names, as disclosed.
 const (
-	profileItemInstructions = "instructions"
-	profileItemModel        = "model"
-	profileItemEffort       = "effort"
-	profileItemSandbox      = "permissions.sandbox"
-	profileItemApproval     = "permissions.approval"
-	profileItemAllow        = "permissions.allow"
-	profileItemDeny         = "permissions.deny"
+	profileItemSandbox  = "permissions.sandbox"
+	profileItemApproval = "permissions.approval"
+	profileItemAllow    = "permissions.allow"
+	profileItemDeny     = "permissions.deny"
 )
 
+// profileLaunch is the profile one Agent create applies: its name, the
+// digest of the content applied, the checked content, the Claude settings
+// snapshot its allow and deny rules are launched with, the Codex policy its
+// sandbox and approval are started with on native or CLI lanes, and items
+// not applied. The zero value means no profile.
+type profileLaunch struct {
+	name        string
+	digest      string
+	spec        profile.Spec
+	settings    string
+	codexPolicy codexappserver.ThreadPolicy
+	notApplied  []cli.ReceiptProfileItem
+	// source is how the create selected the profile
+	// (coremetadata.SettingSourceFlag or coremetadata.SettingSourceRole), and
+	// filledModel and filledEffort say whether the profile, not a flag, gave
+	// the create its model and effort. The instructions say so themselves
+	// (personaOption "profile").
+	source       string
+	filledModel  bool
+	filledEffort bool
+}
 
+func (p profileLaunch) active() bool { return p.shared().Active() }
 
+// withAnnotations adds the profile pair to base. Without a profile it returns
+// base itself, so a create without one stores exactly what it stored before
+// profiles existed -- nil included. Otherwise it returns a new map and never
+// writes into base.
+func (p profileLaunch) withAnnotations(base map[string]string) map[string]string {
+	return p.shared().WithAnnotations(base)
+}
 
+// receipt is the receipt disclosure of the applied profile, or nil.
+func (p profileLaunch) receipt() *cli.ReceiptProfile { return p.shared().Receipt() }
 
+// notices are the one-line disclosures of the items not applied, for a
+// surface whose only disclosure channel is a notice line.
+func (p profileLaunch) notices() []string { return p.shared().Notices() }
 
+func requireProfileLane(spelling string, flags resourceCreateFlags) error {
+	return (mutationruntime.AgentInputFields{}).RequireProfileLane(spelling, flags.profile, flags.dialogueReplyOnly)
+}
 
+// selectedCreateProfile is the profile one Agent create selected: its name,
+// the option that selected it as the refusals quote it, and what it resolved
+// to. The zero value means the create applies no profile.
+type selectedCreateProfile struct {
+	name   string
+	option string
+	source string
+	loaded profile.Profile
+	spec   profile.Spec
+}
 
+func (c *createCommand) selectCreateProfile(spelling string, flags resourceCreateFlags) (selectedCreateProfile, error) {
+	selected, err := c.sharedAgentSettings(flags).SelectCreateProfile(spelling, flags.sharedAgentSettingsFlags())
+	return selectedCreateProfile{name: selected.Name, option: selected.Option, source: selected.Source, loaded: selected.Loaded, spec: selected.Spec}, err
+}
 
+func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *resourceCreateFlags) error {
+	shared := flags.sharedAgentSettingsFlags()
+	err := c.sharedAgentSettings(*flags).ResolveCreateProfile(spelling, provider, &shared)
+	flags.persona, flags.personaOption, flags.model, flags.effort = shared.Instructions, shared.InstructionsOption, shared.Model, shared.Effort
+	flags.profileLaunch = localProfileLaunch(shared.ProfileLaunch)
+	return err
+}
 
+func codexThreadPolicy(perms profile.Permissions) (codexappserver.ThreadPolicy, error) {
+	return mutationruntime.CodexThreadPolicy(perms)
+}
 
+func (c *createCommand) prepareProfileSettings(spelling, provider string, flags *resourceCreateFlags) error {
+	shared := flags.sharedAgentSettingsFlags()
+	err := c.sharedAgentSettings(*flags).PrepareProfileSettings(spelling, provider, &shared)
+	flags.profileLaunch = localProfileLaunch(shared.ProfileLaunch)
+	return err
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// claudeSettingsArgs spells the Claude settings snapshot a profile's
+// permissions are launched with. Only the path reaches argv.
+func claudeSettingsArgs(settingsFile string) []string {
+	return mutationruntime.ClaudeSettingsArgs(settingsFile)
+}
 
 // writeProfileDisclosure writes the profile disclosure lines of a create whose
 // projection has no room for them (pane-id, and the resource projections) to
@@ -308,4 +361,19 @@ func (c *createCommand) profileCreateProject(spelling string, flags resourceCrea
 		return "", MapMetadataError(err)
 	}
 	return project.Metadata.UID, nil
+}
+
+func (p profileLaunch) shared() mutationruntime.ProfileLaunch {
+	return mutationruntime.ProfileLaunch{Name: p.name, Digest: p.digest, Spec: p.spec, Settings: p.settings, CodexPolicy: p.codexPolicy, NotApplied: p.notApplied, Source: p.source, FilledModel: p.filledModel, FilledEffort: p.filledEffort}
+}
+func localProfileLaunch(p mutationruntime.ProfileLaunch) profileLaunch {
+	return profileLaunch{name: p.Name, digest: p.Digest, spec: p.Spec, settings: p.Settings, codexPolicy: p.CodexPolicy, notApplied: p.NotApplied, source: p.Source, filledModel: p.FilledModel, filledEffort: p.FilledEffort}
+}
+func (f resourceCreateFlags) sharedAgentSettingsFlags() mutationruntime.AgentSettingsFlags {
+	return mutationruntime.AgentSettingsFlags{Profile: f.profile, ProfileProjectUID: f.profileProjectUID, Instructions: f.persona, InstructionsOption: f.personaOption, Model: f.model, Effort: f.effort, Host: f.host, ResumeConversation: f.resumeConversation, Labels: f.labels, Payload: f.payload, DialogueReplyOnly: f.dialogueReplyOnly, InteractiveOnly: f.interactiveOnly, PersonaLaunch: f.personaLaunch.shared(), ProfileLaunch: f.profileLaunch.shared()}
+}
+func (c *createCommand) sharedAgentSettings(f resourceCreateFlags) *mutationruntime.AgentSettings {
+	return &mutationruntime.AgentSettings{Paths: func() (config.Paths, error) { return savedSettingsPaths(c.homeDir, c.lookupEnv) }, ProfileProject: func(spelling string, _ mutationruntime.AgentSettingsFlags) (string, error) {
+		return c.profileCreateProject(spelling, f)
+	}}
 }

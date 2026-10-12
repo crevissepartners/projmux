@@ -40,3 +40,29 @@ type CreatePaneResult struct {
 	Projection ResourceList
 	Receipt    OperationReceipt
 }
+
+// CreateAgentRequest creates one tmux Agent in an explicitly named Project and
+// Window. Creator is an optional uid: Agent declaration; no caller is inferred.
+// Instructions names stored instructions, while Payload contains provider argv.
+type CreateAgentRequest struct {
+	Project, Window, Pane                          string
+	Provider, Profile, Instructions, Model, Effort string
+	Cwd                                            string
+	AddDirs                                        []string
+	InteractiveOnly, DialogueReplyOnly             bool
+	Name                                           string
+	Labels                                         []string
+	Placement, CwdFrom                             string
+	Payload                                        []string
+	Creator, SocketPath                            string
+}
+
+// CreateAgentResult also accompanies an activation-unconfirmed error: its
+// Projection, Receipt and PaneID identify the committed resources to preserve.
+type CreateAgentResult struct {
+	Agent      Agent
+	PaneID     string
+	Notices    []string
+	Projection ResourceList
+	Receipt    OperationReceipt
+}

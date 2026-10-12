@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -24,26 +21,19 @@ import (
 // generation of the same Agent is launched reply-only from that record.
 const claudeDialogueReplyOnlyFlag = mutationruntime.DialogueReplyOnlyFlag
 
-
+// withDialogueReplyOnlyAnnotation adds the reply-only record to base, the
+// Agent annotations a create already records. Without the mode it returns
+// base itself (nil included), so an ordinary create records nothing new.
+func withDialogueReplyOnlyAnnotation(enabled bool, base map[string]string) map[string]string {
+	return mutationruntime.WithDialogueReplyOnlyAnnotation(enabled, base)
+}
 
 type claudeDialogueLauncher interface {
 	PlanClaudeDialogueLaunch(coremetadata.AgentWorkspace, string) (string, []string, error)
 }
 
 func requireClaudeDialogueMode(provider string, enabled bool, payload []string) error {
-	if !enabled {
-		return nil
-	}
-	if provider != aiModeClaude {
-		return usageError("--dialogue-reply-only requires a Claude Agent/provider")
-	}
-	if len(payload) != 0 {
-		return usageError("--dialogue-reply-only starts with a fixed readiness turn and accepts no initial payload")
-	}
-	if runtime.GOOS != "linux" {
-		return errors.New("claude reply-only activation requires Linux process birth and pinned executable support")
-	}
-	return nil
+	return (mutationruntime.AgentInputFields{}).RequireDialogueMode(provider, enabled, payload)
 }
 
 func hasClaudeDialogueModeFlag(args []string) bool {
@@ -214,7 +204,9 @@ func claudeDialoguePrefixArgs(argv0, profile string, args []string) ([]string, b
 	return append([]string{"internal", "claude-reply-tool", "execute"}, args...), true
 }
 
-
+func (c *aiCommand) PlanClaudeDialogueLaunch(workspace coremetadata.AgentWorkspace, conversation string) (string, []string, error) {
+	return c.sharedAgentCommand().PlanDialogueLaunch(workspace, conversation, os.Executable)
+}
 
 // A next-activation opt-in never leaks through the inherited environment.
 // Preserve an ordinary user's official shell prefix outside this mode.

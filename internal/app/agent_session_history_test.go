@@ -56,7 +56,7 @@ var sessionHistoryObservedRowWriters = []string{
 	"internal/app/process_agent_session.go:updateProcessAgentSession",
 	"internal/app/agent_session_ref.go:persistAgentSessionRef",
 	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
-	"internal/app/create_agent.go:createAgent",
+	"internal/app/create_agent_execution.go:createAgent",
 	"internal/app/create_intent.go:openIntentAgent",
 }
 

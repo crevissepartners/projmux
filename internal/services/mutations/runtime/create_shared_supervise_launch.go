@@ -178,7 +178,7 @@ func (m *Materializer) SupervisedLaunch(ctx context.Context, spec SuperviseSpec,
 		m.WarnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
 		return command
 	}
-	if spec.AgentUID != "" {
+	if spec.AgentUID != "" && spec.RegistryPath == "" {
 		registryPath, pathErr := CreatorRegistryPath()
 		if pathErr != nil {
 			// Keep the internal supervisor in place with an empty authority. Its

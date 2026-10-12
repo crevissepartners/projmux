@@ -466,7 +466,7 @@ func nativeProjectionStringConstants(t *testing.T) map[string]string {
 			}
 		}
 	}
-	constants := map[string]string{"aiPaneLaunchAuthorshipOption": tmuxopts.AgentLaunchAuthorshipPane}
+	constants := map[string]string{"aiPaneLaunchAuthorshipOption": tmuxopts.AgentLaunchAuthorshipPane, "AiPaneLaunchAuthorshipOption": tmuxopts.AgentLaunchAuthorshipPane, "mutationruntime.AiPaneLaunchAuthorshipOption": tmuxopts.AgentLaunchAuthorshipPane}
 	for changed := true; changed; {
 		changed = false
 		for name, expr := range pending {
@@ -608,7 +608,7 @@ func extractNativeAgentProjectionOptions(function *ast.FuncDecl, constants map[s
 
 func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
 	targets := map[string]map[string][]string{
-		"ai.go": {
+		"../services/mutations/runtime/create_agent_launch.go": {
 			"BindAgentPaneOnRoute": {
 				aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption, aiPaneContextOption,
 				aiPaneTopicOption, aiPaneTopicManualOption, aiPaneStateOption, aiPaneSessionIDOption,
@@ -3564,20 +3564,22 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		// Every AI reflection write now passes through these two helpers, so
 		// the twelve exempt call sites that used to spell `set-option` inline
 		// collapsed into one chokepoint pair that also classifies the failure.
-		"ai_pane_write.go:writeAIPaneOption:variable-argv":                "agent.presentation",
-		"ai.go:BindAgentPaneOnRoute:variable-argv":                        "agent.presentation",
-		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                 "codex.native-lifecycle-authority",
-		"../integrations/metadata/tmuxmirror.go:RenameProject:set-option": "resource.rename-project",
-		"../integrations/metadata/tmuxmirror.go:RebindProject:set-option": "resource.rebind-project",
-		"../integrations/metadata/tmuxmirror.go:writePaneName:set-option": "resource.rename-pane",
-		"../integrations/metadata/tmuxmirror.go:MirrorPane:set-option":    "agent.presentation",
-		"rebind.go:runProject:helper:RebindProject":                       "resource.rebind-project",
+		"ai_pane_write.go:writeAIPaneOption:variable-argv":                                        "agent.presentation",
+		"../services/mutations/runtime/create_shared_create_agent.go:Operation:helper:MirrorPane": "agent.presentation",
+		"../services/mutations/runtime/create_agent_launch.go:BindAgentPaneOnRoute:variable-argv": "agent.presentation",
+		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                                         "codex.native-lifecycle-authority",
+		"../integrations/metadata/tmuxmirror.go:RenameProject:set-option":                         "resource.rename-project",
+		"../integrations/metadata/tmuxmirror.go:RebindProject:set-option":                         "resource.rebind-project",
+		"../integrations/metadata/tmuxmirror.go:writePaneName:set-option":                         "resource.rename-pane",
+		"../integrations/metadata/tmuxmirror.go:MirrorPane:set-option":                            "agent.presentation",
+		"rebind.go:runProject:helper:RebindProject":                                               "resource.rebind-project",
 	}
 	// These exact sites are subordinate argv transports reached only from a
 	// closed typed producer/controller plan. They are not semantic exemptions:
 	// their cited surface must remain planned and their source key is audited
 	// bidirectionally just like the app-owned runtimeMutationArgv seam.
 	plannedTypedSites := map[string]string{
+
 		"../services/mutations/rename.go:RenameRuntimeWindow:variable-argv":                     "resource.rename-window",
 		"kill.go:KillSession:helper:KillSession":                                                "manual.tagged-kill",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:MirrorProject":            "controller.identity",

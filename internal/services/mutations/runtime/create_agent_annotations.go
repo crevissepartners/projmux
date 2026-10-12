@@ -1,27 +1,11 @@
 package runtime
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"fmt"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/persona"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-	"io"
 	"maps"
-	"os"
-	"path/filepath"
-	"regexp"
-	"runtime"
-	"slices"
-	"strings"
-	"syscall"
 )
 
-// withEffortAnnotation adds the effort a new Agent is created with to
+// WithEffortAnnotation adds the effort a new Agent is created with to
 // base, the Agent annotations the create already records. Without an effort
 // it returns base itself, so a create without --effort stores exactly what it
 // stored before the effort was recorded -- nil included. Otherwise it returns
@@ -39,9 +23,9 @@ func WithEffortAnnotation(effort string, base map[string]string) map[string]stri
 	return out
 }
 
-// withModelAnnotation adds the model a new Agent is created with to base, the
+// WithModelAnnotation adds the model a new Agent is created with to base, the
 // Agent annotations the create already records, with the same contract as
-// withEffortAnnotation: without a model it returns base itself (nil included),
+// WithEffortAnnotation: without a model it returns base itself (nil included),
 // otherwise a new map, and it never writes into base.
 func WithModelAnnotation(model string, base map[string]string) map[string]string {
 	if model == "" {
@@ -55,7 +39,7 @@ func WithModelAnnotation(model string, base map[string]string) map[string]string
 	return out
 }
 
-// withDialogueReplyOnlyAnnotation adds the reply-only record to base, the
+// WithDialogueReplyOnlyAnnotation adds the reply-only record to base, the
 // Agent annotations a create already records. Without the mode it returns
 // base itself (nil included), so an ordinary create records nothing new.
 func WithDialogueReplyOnlyAnnotation(enabled bool, base map[string]string) map[string]string {
@@ -70,7 +54,7 @@ func WithDialogueReplyOnlyAnnotation(enabled bool, base map[string]string) map[s
 	return out
 }
 
-// withCreateSettingSources adds to base, the annotations a create records,
+// WithCreateSettingSources adds to base, the annotations a create records,
 // the source of every launch setting that create records a value for: the
 // profile it applied (flag or role), and the instructions, model, and effort
 // (profile when the profile filled them in, flag when a create flag gave
@@ -88,10 +72,10 @@ func WithCreateSettingSources(flags AgentSettingsFlags, base map[string]string) 
 		return coremetadata.SettingSourceFlag
 	}
 	sources := map[string]string{}
-	if flags.ProfileLaunch.active() {
+	if flags.ProfileLaunch.Active() {
 		sources[coremetadata.AnnotationAgentProfileSource] = flags.ProfileLaunch.Source
 	}
-	if flags.personaLaunch.name != "" {
+	if flags.PersonaLaunch.Name != "" {
 		sources[coremetadata.AnnotationAgentInstructionsSource] = fromProfile(flags.InstructionsOption == "profile")
 	}
 	if flags.Model != "" {

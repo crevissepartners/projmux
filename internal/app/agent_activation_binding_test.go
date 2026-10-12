@@ -158,10 +158,11 @@ func legacyExactAgentActivationBinding(registry coremetadata.Registry, paneUID, 
 // without a case fails the sweep instead of shipping untested.
 func declaredAgentActivationBindingReasons(t *testing.T) []agentActivationBindingReason {
 	t.Helper()
-	const typeName = "agentActivationBindingReason"
+	const typeName = "AgentActivationBindingReason"
 	fileSet := token.NewFileSet()
 	var files []*ast.File
-	for _, name := range appSourceFiles(t) {
+	names := mutationRuntimeSourceFiles(t)
+	for _, name := range names {
 		file, err := parser.ParseFile(fileSet, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse package source %s: %v", name, err)
@@ -358,8 +359,8 @@ func TestCreateAgentActivationBindingRefusalNamesTheChangedFact(t *testing.T) {
 			if !errors.As(err, &refusal) {
 				t.Fatalf("error %T %q is not an agentActivationBindingError", err, err)
 			}
-			if refusal.check.Reason != test.reason {
-				t.Fatalf("reason = %q, want %q", refusal.check.Reason, test.reason)
+			if refusal.Check.Reason != test.reason {
+				t.Fatalf("reason = %q, want %q", refusal.Check.Reason, test.reason)
 			}
 			// The one generator, fed the verdict recomputed from the Registry the
 			// recheck read, reproduces the whole create refusal byte for byte.
@@ -407,7 +408,7 @@ func TestAwaitAgentActivationBindingRefusalUsesTheSameGenerator(t *testing.T) {
 				t.Fatalf("refusal came after %d sleeps, want the first read after the change", sleeps)
 			}
 			var refusal *agentActivationBindingError
-			if !errors.As(err, &refusal) || refusal.check.Reason != test.reason || refusal.stage != agentBindingStageWhileAwaiting {
+			if !errors.As(err, &refusal) || refusal.Check.Reason != test.reason || refusal.Stage != agentBindingStageWhileAwaiting {
 				t.Fatalf("error = %#v, want reason %q while awaiting", err, test.reason)
 			}
 			want := agentActivationBindingRefusal("", agentBindingStageWhileAwaiting, h.paneUID, "%7",
@@ -453,7 +454,7 @@ func TestAwaitAgentActivationInitialBindingRefusalUsesTheSameGenerator(t *testin
 			_, _, err := h.cmd.AwaitAgentActivation(context.Background(), &activationAuthorityRunner{paneUID: h.paneUID}, "%7",
 				agentActivationStartupDeadline, agentActivationAcknowledgementDeadline)
 			var refusal *agentActivationBindingError
-			if !errors.As(err, &refusal) || refusal.check.Reason != test.reason || refusal.stage != agentBindingStageBeforeAwaiting {
+			if !errors.As(err, &refusal) || refusal.Check.Reason != test.reason || refusal.Stage != agentBindingStageBeforeAwaiting {
 				t.Fatalf("error = %#v, want reason %q before awaiting", err, test.reason)
 			}
 			check := checkAgentActivationBinding(*h.registry, h.paneUID, "%7", nil)

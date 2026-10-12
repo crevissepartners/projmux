@@ -318,7 +318,7 @@ func TestProductCommandLiteralsAreAcceptedByTheCLI(t *testing.T) {
 	}
 	// A stronger positive control: the activation diagnostic's cleanup step
 	// must be among what the extractor sees.
-	const knownPos, knownText = "internal/app/create_agent.go", "projmux delete agent uid:%s --yes"
+	const knownPos, knownText = "internal/services/mutations/runtime/create_agent_activation.go", "projmux delete agent uid:%s --yes"
 	found := false
 	for _, literal := range literals {
 		if strings.HasPrefix(literal.pos, knownPos+":") && literal.text == knownText {

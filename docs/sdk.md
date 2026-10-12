@@ -28,3 +28,27 @@ executable fallback is performed. Request `SocketPath` overrides the Option;
 explicit sockets require a live server with exact PID, resource UID and root
 proof. The empty route uses the app server and can start it. SDK calls do not
 record `create.outcome` diagnostics yet (Backlog 622).
+
+
+## tmux Agent creation
+
+`Client.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:...", Window:
+"uid:...", Provider: "claude", Name: "worker"})` creates one tmux Agent through
+the same transaction, provider launch plan, hooks and rollback as the CLI.
+It supports Claude, Antigravity, payload-free Codex and `InteractiveOnly` Codex.
+`Pane` selects an optional anchor; `Creator` accepts only an explicit `uid:`
+Agent declaration and records `creator-basis=explicit` without inferring a caller.
+Profiles, instructions, model, effort, workspace roots and placement use the
+CLI's existing validation. Set `Options.ProjmuxExecutable` from the same build.
+
+Native-observed Codex creation (prompted default Codex and Codex instructions)
+is not yet available in the SDK: `CodeCreateNativeCodexUnsupported` refuses it
+before effects. Use `projmux create agent` for these combinations. The follow-up
+is **SDK prompted Codex create (including explicit observer child state routing)**
+in the conversation milestone (613-B).
+
+An activation timeout or failure after commit preserves the Agent and Pane.
+`CreateAgent` returns their projection, receipt and PaneID **together with**
+`CodeCreateActivationUnconfirmed`; inspect the returned Agent before retrying.
+Context cancellation prevents admission only. The tmux server owns an admitted
+provider's lifetime, and cancelling the caller does not stop it.
