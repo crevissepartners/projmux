@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -4416,16 +4417,7 @@ func newestExecutable(paths []string) string {
 	return newestPath
 }
 
-func parsePositiveInt(value string) int {
-	n := 0
-	for _, r := range strings.TrimSpace(value) {
-		if r < '0' || r > '9' {
-			return 0
-		}
-		n = n*10 + int(r-'0')
-	}
-	return n
-}
+var parsePositiveInt = mutationruntime.ParsePositiveInt
 
 // printRouteUsage prints the catalog Usage of route, the one route a rejected
 // call reached, in the `Usage:` block every handler prints. A route that

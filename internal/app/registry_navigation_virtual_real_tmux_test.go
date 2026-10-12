@@ -43,8 +43,8 @@ func TestRegistryNavigationOpenHeadlessLiveWindowMovesRealClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-	create.runtime.executable = func() (string, error) { return "", errors.New("fixture has no supervisor") }
+	create.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
+	create.runtime.Executable = func() (string, error) { return "", errors.New("fixture has no supervisor") }
 	client := exec.CommandContext(ctx, "tmux", "-S", server.socket, "-f", "/dev/null", "-C", "attach-session", "-t", "bootstrap")
 	client.Env = server.environment
 	stdin, err := client.StdinPipe()

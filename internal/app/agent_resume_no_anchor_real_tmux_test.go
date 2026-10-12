@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -11,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -104,10 +105,10 @@ func TestAgentResumeNeedsNoAnchorPaneThroughRealTmux(t *testing.T) {
 		store:      store.store(),
 		reconciler: newRegistryReconciler(routed, client),
 		runtime: &materializer{
-			mirror: intmetadata.NewMirror(routed),
+			Mirror: intmetadata.NewMirror(routed),
 
-			executable: func() (string, error) { return "", errors.New("no supervisor in the resume anchor test") },
-			lookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
+			Executable: func() (string, error) { return "", errors.New("no supervisor in the resume anchor test") },
+			LookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
 				Warn: testWarnWriter{t}},
 		},
 		shell:          "/bin/sh",
@@ -126,9 +127,9 @@ func TestAgentResumeNeedsNoAnchorPaneThroughRealTmux(t *testing.T) {
 		exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
 		exactClient := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 		create.reconciler = newRegistryReconcilerWithRoute(exact, exactClient, route)
-		create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
+		create.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
 		create.runtime.Runner = exact
-		create.runtime.mirror = intmetadata.NewMirror(exact)
+		create.runtime.Mirror = intmetadata.NewMirror(exact)
 		create.runtime.Sessions = exactClient
 		create.runtime.Target = route.Target
 		create.runtime.ExpectedSocketPath = route.ExpectedSocketPath

@@ -589,7 +589,7 @@ func TestTheReconcilerSweepsAfterImportingLiveSessions(t *testing.T) {
 	window := session.windows[0]
 	window.name = "editor"
 	reconciler := newTestReconciler(tmux, nil)
-	reconciler.observeLegacy = func(_ context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+	reconciler.ObserveLegacy = func(_ context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 		if name != "legacy" {
 			return coremetadata.LegacySession{}, intmetadata.LegacyTargets{}, nil
 		}
@@ -611,7 +611,7 @@ func TestTheReconcilerSweepsAfterImportingLiveSessions(t *testing.T) {
 		NewUID:    coremetadata.NewUID,
 		DirExists: intmetadata.DirExists,
 	}
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if len(registry.Panes) == 0 {
@@ -638,7 +638,7 @@ func TestTheReconcilerSweepsAfterImportingLiveSessions(t *testing.T) {
 		t.Fatalf("the sweep read the inventory at call %d, before the last uid was mirrored at call %d; "+
 			"a freshly imported Pane would look dead", lastInventory, lastMirror)
 	}
-	live, err := reconciler.mirror.LivePaneUIDs(context.Background())
+	live, err := reconciler.Mirror.LivePaneUIDs(context.Background())
 	if err != nil {
 		t.Fatalf("LivePaneUIDs: %v", err)
 	}

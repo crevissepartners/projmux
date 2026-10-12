@@ -52,7 +52,7 @@ func TestTmuxApplyWritesAppConfigWhereCreateReadsItUnderXDGConfigHome(t *testing
 		t.Fatalf("stat %s error = %v, want not exist", legacy, err)
 	}
 
-	read, err := (&materializer{lookupEnv: env}).generatedAppConfigPath()
+	read, err := (&materializer{LookupEnv: env}).GeneratedAppConfigPath()
 	if err != nil {
 		t.Fatalf("generatedAppConfigPath() error = %v", err)
 	}

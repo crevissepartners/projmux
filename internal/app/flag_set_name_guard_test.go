@@ -57,11 +57,12 @@ var flagSetNameExceptions = map[string]flagSetNameException{
 // local assigned once, and a function parameter through every same-package
 // call of that function; anything else is not statically known.
 type flagSetNameEval struct {
-	fset   *token.FileSet
-	files  map[string]*ast.File // repo-relative name -> file
-	pkgOf  map[string]string    // repo-relative name -> import path
-	consts map[string]map[string]ast.Expr
-	funcs  map[string][]flagSetNameFunc // import path -> every function declaration
+	fset       *token.FileSet
+	files      map[string]*ast.File // repo-relative name -> file
+	pkgOf      map[string]string    // repo-relative name -> import path
+	consts     map[string]map[string]ast.Expr
+	constFiles map[string]map[string]string
+	funcs      map[string][]flagSetNameFunc // import path -> every function declaration
 }
 
 type flagSetNameFunc struct {
@@ -71,13 +72,11 @@ type flagSetNameFunc struct {
 
 func newFlagSetNameEval(pkgs []flagParseGuardPackage) (*flagSetNameEval, []string) {
 	fset := token.NewFileSet()
-	e := &flagSetNameEval{fset: fset, files: map[string]*ast.File{}, pkgOf: map[string]string{}, consts: map[string]map[string]ast.Expr{}, funcs: map[string][]flagSetNameFunc{}}
+	e := &flagSetNameEval{fset: fset, files: map[string]*ast.File{}, pkgOf: map[string]string{}, consts: map[string]map[string]ast.Expr{}, constFiles: map[string]map[string]string{}, funcs: map[string][]flagSetNameFunc{}}
 	var problems []string
 	for _, pkg := range pkgs {
-		if !pkg.scan {
-			continue
-		}
 		e.consts[pkg.importPath] = map[string]ast.Expr{}
+		e.constFiles[pkg.importPath] = map[string]string{}
 		for _, f := range pkg.files {
 			file, err := parser.ParseFile(fset, f.name, f.src, parser.SkipObjectResolution)
 			if err != nil {
@@ -97,10 +96,14 @@ func newFlagSetNameEval(pkgs []flagParseGuardPackage) (*flagSetNameEval, []strin
 						for i, name := range vs.Names {
 							if i < len(vs.Values) {
 								e.consts[pkg.importPath][name.Name] = vs.Values[i]
+								e.constFiles[pkg.importPath][name.Name] = f.name
 							}
 						}
 					}
 				case *ast.FuncDecl:
+					if !pkg.scan {
+						continue
+					}
 					e.funcs[pkg.importPath] = append(e.funcs[pkg.importPath], flagSetNameFunc{file: f.name, decl: d})
 				}
 			}

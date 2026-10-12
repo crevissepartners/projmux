@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -13,11 +11,16 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
@@ -225,10 +228,10 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		reconciler:     newRegistryReconciler(routed, client),
 		runtime: &materializer{
 
-			mirror: intmetadata.NewMirror(routed),
+			Mirror: intmetadata.NewMirror(routed),
 
-			executable: os.Executable,
-			lookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed,
+			Executable: os.Executable,
+			LookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed,
 
 				Sessions: client,
 				Target:   target,
@@ -258,13 +261,13 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		// server, so no identity proved before this point may be reused.
 		command.runtime.InvalidateRouteIdentity("route-bind")
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
-		command.reconciler.shareRouteIdentityScope(command.runtime)
+		command.reconciler.ShareRouteIdentityScope(command.runtime)
 		// A route resolved before any server exists has no path yet; the
 		// materializer binds it from new-session's own #{socket_path}. The
 		// reconcile pass after the create's writes records that bound value.
-		command.reconciler.sessionSocketPath = func() string { return command.runtime.ExpectedSocketPath }
+		command.reconciler.SessionSocketPath = func() string { return command.runtime.ExpectedSocketPath }
 		command.runtime.Runner = exact
-		command.runtime.mirror = intmetadata.NewMirror(exact)
+		command.runtime.Mirror = intmetadata.NewMirror(exact)
 		command.runtime.Sessions = client
 		command.runtime.Target = route.Target
 		command.runtime.ExpectedSocketPath = route.ExpectedSocketPath

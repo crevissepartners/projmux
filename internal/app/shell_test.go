@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -20,13 +18,18 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
+
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -743,14 +746,14 @@ func TestShellPrepareFailureThroughMaterializerKeepsTmuxCode(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 			routed := explicitTmuxRunner{Runner: server, Target: target}
 			runtime := &materializer{
-				mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target,
+				Mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target,
 					Sessions: sessionCheckFailure{fakeSessionMaterializer: &fakeSessionMaterializer{tmux: server}, err: realTmuxExitFailure(t, tt.stderr)}},
 			}
 			project := coremetadata.Project{
 				Metadata: coremetadata.ObjectMeta{UID: "prj-project", Name: "project"},
 				Spec:     coremetadata.ProjectSpec{Root: "/work/project"},
 			}
-			_, prepareErr := runtime.ensureSessionAt(context.Background(), project, "repos-project", project.Spec.Root, "", NewRuntimeLedger("op-shell"))
+			_, prepareErr := ensureSessionAt(runtime, context.Background(), project, "repos-project", project.Spec.Root, "", NewRuntimeLedger("op-shell"))
 			if prepareErr == nil || !strings.Contains(prepareErr.Error(), `check tmux session "repos-project"`) {
 				t.Fatalf("ensureSessionAt error = %v, want the session check failure", prepareErr)
 			}

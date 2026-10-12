@@ -971,7 +971,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if virtual {
 			paneID, err = r.create.materializeVirtualPane(ctx, working, mutator, ledger, *project, plan.windowUID, pane, activation, workLaunchArgv)
 		} else {
-			paneID, err = r.create.runtime.SplitPane(ctx, anchorPaneID, defaultPlacement, contextDir, r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv), nil)
+			paneID, err = r.create.runtime.SplitPane(ctx, anchorPaneID, defaultPlacement, contextDir, r.create.runtime.SupervisedLaunch(ctx, activation, workLaunchArgv), nil)
 		}
 		if paneID != "" && !virtual {
 			// The supervised child now runs and will want the Registry lock
@@ -980,7 +980,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			if claimErr := r.create.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
 			}
-			if mirrorErr := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
+			if mirrorErr := r.create.runtime.Mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
 			observeActivationRuntime(working, mutator, activation, paneID, r.create.runtime.Warn)

@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -9,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -32,7 +33,7 @@ func TestAgentLaunchCarriesTheCreatorResolvedAbsoluteRegistryPath(t *testing.T) 
 		Generation: "gen-exact", OperationID: "op-exact",
 	}
 	launch := newLaunchMaterializer(&stubDefaultsRunner{shell: "/bin/sh"}, &strings.Builder{}).
-		supervisedLaunch(context.Background(), spec, []string{"provider"})
+		SupervisedLaunch(context.Background(), spec, []string{"provider"})
 	// A relative XDG_STATE_HOME counts as unset, so the Registry stays under
 	// HOME instead of following the creator's working directory.
 	wantPath := intmetadata.PathFor(filepath.Join(root, "home", ".local", "state", "projmux"))
@@ -64,8 +65,8 @@ func (r *stubDefaultsRunner) Run(_ context.Context, name string, args ...string)
 func newLaunchMaterializer(runner tmuxCommandRunner, warn *strings.Builder) *materializer {
 	return &materializer{
 
-		executable: func() (string, error) { return testSupervisorBinary, nil },
-		lookupEnv:  func(string) string { return "" }, MaterializeRuntime:
+		Executable: func() (string, error) { return testSupervisorBinary, nil },
+		LookupEnv:  func(string) string { return "" }, MaterializeRuntime:
 
 		// TestShellPaneLaunchReproducesTmuxDefaultCommandSemantics is the parity half
 		// of supervising a pane that was created with no command of its own.
@@ -98,7 +99,7 @@ func TestShellPaneLaunchReproducesTmuxDefaultCommandSemantics(t *testing.T) {
 			t.Parallel()
 			runner := &stubDefaultsRunner{shell: test.shell, command: test.command}
 			launch := newLaunchMaterializer(runner, &strings.Builder{}).
-				supervisedLaunch(context.Background(), spec, nil)
+				SupervisedLaunch(context.Background(), spec, nil)
 			want := superviseArgv(testSupervisorBinary, spec, test.wantArgv0, test.wantChild)
 			if strings.Join(launch, "\x00") != strings.Join(want, "\x00") {
 				t.Fatalf("launch = %v, want %v", launch, want)
@@ -117,8 +118,8 @@ func TestUnsupervisableLaunchStillStartsThePane(t *testing.T) {
 		t.Parallel()
 		var warn strings.Builder
 		runtime := newLaunchMaterializer(&stubDefaultsRunner{shell: "/bin/sh"}, &warn)
-		runtime.executable = func() (string, error) { return "", errors.New("no executable") }
-		launch := runtime.supervisedLaunch(context.Background(), spec, []string{"nvim"})
+		runtime.Executable = func() (string, error) { return "", errors.New("no executable") }
+		launch := runtime.SupervisedLaunch(context.Background(), spec, []string{"nvim"})
 		if strings.Join(launch, " ") != "nvim" {
 			t.Fatalf("launch = %v, want the caller's command untouched", launch)
 		}
@@ -130,7 +131,7 @@ func TestUnsupervisableLaunchStillStartsThePane(t *testing.T) {
 		t.Parallel()
 		var warn strings.Builder
 		runner := &stubDefaultsRunner{err: errors.New("no server")}
-		launch := newLaunchMaterializer(runner, &warn).supervisedLaunch(context.Background(), spec, nil)
+		launch := newLaunchMaterializer(runner, &warn).SupervisedLaunch(context.Background(), spec, nil)
 		if len(launch) != 0 {
 			t.Fatalf("launch = %v, want tmux's own default", launch)
 		}
@@ -141,7 +142,7 @@ func TestUnsupervisableLaunchStillStartsThePane(t *testing.T) {
 	t.Run("a Pane with no generation", func(t *testing.T) {
 		t.Parallel()
 		launch := newLaunchMaterializer(&stubDefaultsRunner{shell: "/bin/sh"}, &strings.Builder{}).
-			supervisedLaunch(context.Background(), superviseSpec{PaneUID: "pane-1"}, []string{"nvim"})
+			SupervisedLaunch(context.Background(), superviseSpec{PaneUID: "pane-1"}, []string{"nvim"})
 		if strings.Join(launch, " ") != "nvim" {
 			t.Fatalf("launch = %v, want the caller's command untouched", launch)
 		}

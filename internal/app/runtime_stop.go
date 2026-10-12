@@ -21,10 +21,6 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 
 var managedRuntimeStopRegistryAuthority = mutationruntime.ManagedRuntimeStopRegistryAuthority
 
-// guardPrintedRuntimeMutationRouteWithIdentity is the same guard, allowed to
-// reuse an identity this transaction already proved against tmux.
-var guardPrintedRuntimeMutationRouteWithIdentity = mutationruntime.GuardPrintedRuntimeMutationRouteWithIdentity
-
 // guardPrintedRuntimeMutationRouteBeforeMarkerWrite is deliberately limited to
 // the route-marker verb. It keeps the printable/execution tuple checks exact,
 // then applies the only valid phase exception: the desired logical marker may

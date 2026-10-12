@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -14,11 +12,15 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/controller"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -93,7 +95,7 @@ func planRegistryTopology(
 	}
 	plan := &registryTopologyPlan{project: project}
 	if reconciler != nil {
-		plan.processes = reconciler.processes.Clone()
+		plan.processes = reconciler.Processes.Clone()
 	}
 	plan.sessionName = materializeSessionName(registry, project, reconciler)
 	if plan.sessionName == "" {
@@ -389,7 +391,7 @@ func materializeSessionName(registry coremetadata.Registry, project coremetadata
 	if reconciler == nil {
 		reconciler = &registryReconciler{}
 	}
-	return reconciler.projectPhysicalSessionName(registry, project)
+	return reconciler.ProjectPhysicalSessionName(registry, project)
 }
 
 func materializePaneCWD(project coremetadata.Project, pane coremetadata.Pane) string {
@@ -608,7 +610,7 @@ func defaultTopologyMaterializer(target tmuxTransport, recorder *diagnostics.Lif
 		if hooks := defaultLifecycleHookRunner(); hooks != nil {
 			opts = append(opts, inttmux.WithLifecycleHookRunner(hooks))
 		}
-		return &materializer{mirror: intmetadata.NewMirror(runner), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: runner, Sessions: inttmux.NewClient(runner, opts...), Target: target, Warn: warn}}
+		return &materializer{Mirror: intmetadata.NewMirror(runner), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: runner, Sessions: inttmux.NewClient(runner, opts...), Target: target, Warn: warn}}
 	}
 }
 
@@ -658,8 +660,8 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	// server against tmux; later guards for the same tuple reuse that proof
 	// instead of re-reading it under the registry lock. The scope closes before
 	// rollback, so unwinding re-proves identity in full.
-	runtime.openRouteIdentityCache(operationID)
-	defer runtime.closeRouteIdentityCache()
+	runtime.OpenRouteIdentityCache(operationID)
+	defer runtime.CloseRouteIdentityCache()
 	_, registryChanged, updateErr := r.resources.updateConvergent(func(working *coremetadata.Registry) error {
 		current, buildErr := planner.build(ctx, working.Clone())
 		if buildErr != nil {
@@ -717,7 +719,7 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		// Any identity reused inside this transaction is proved once more
 		// before commit, so a server that drifted after the first proof rolls
 		// the whole replay back instead of committing on stale evidence.
-		if err := runtime.reproveReusedRouteIdentity(ctx); err != nil {
+		if err := runtime.ReproveReusedRouteIdentity(ctx); err != nil {
 			outcome.failedStage = "topology materialization"
 			return err
 		}
@@ -726,7 +728,7 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	// The scope ends with the transaction: the ledger rollback below re-proves
 	// identity against tmux rather than trusting anything this transaction
 	// proved earlier.
-	runtime.closeRouteIdentityCache()
+	runtime.CloseRouteIdentityCache()
 	outcome.registryChanged = registryChanged
 	if updateErr != nil {
 		runtime.Rollback(ctx, ledger)
@@ -1197,7 +1199,7 @@ func executeRegistryTopology(
 	// session, is what keeps a concurrently created sibling from being claimed.
 	// Its first Pane is launched like every other Pane of this pass, under its
 	// own generation, so it records its own %N below.
-	created, firstActivation, err := runtime.ensureSessionLaunching(ctx, plan.project, plan.sessionName, firstCWD, first.window.Metadata.Name,
+	created, firstActivation, err := runtime.EnsureSessionLaunching(ctx, plan.project, plan.sessionName, firstCWD, first.window.Metadata.Name,
 		func() (superviseSpec, error) {
 			if first.bootstrap.Metadata.UID == "" {
 				return superviseSpec{}, nil
@@ -1214,7 +1216,7 @@ func executeRegistryTopology(
 		if err := runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.window.Metadata.UID, ledger); err != nil {
 			return err
 		}
-		if err := runtime.mirrorWindow(ctx, created.WindowID, first.window); err != nil {
+		if err := runtime.MirrorWindowIdentity(ctx, created.WindowID, first.window); err != nil {
 			return err
 		}
 		if err := observeReplayedWindowBinding(registry, mutator, ledger, &first.window, created.SessionID, created.WindowID); err != nil {
@@ -1265,14 +1267,14 @@ func executeRegistryTopology(
 			if activationErr != nil {
 				return activationErr
 			}
-			result, createErr := runtime.newWindow(ctx, created.SessionID, work.window.Metadata.Name,
+			result, createErr := runtime.NewWindow(ctx, created.SessionID, work.window.Metadata.Name,
 				materializePaneCWD(plan.project, work.bootstrap),
-				runtime.supervisedLaunch(ctx, bootstrapActivation, nil))
+				runtime.SupervisedLaunch(ctx, bootstrapActivation, nil))
 			if result.WindowID != "" {
 				if claimErr := runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(createErr, claimErr)
 				}
-				if mirrorErr := runtime.mirrorWindow(ctx, result.WindowID, work.window); mirrorErr != nil {
+				if mirrorErr := runtime.MirrorWindowIdentity(ctx, result.WindowID, work.window); mirrorErr != nil {
 					return errors.Join(createErr, mirrorErr)
 				}
 				if bindingErr := observeReplayedWindowBinding(registry, mutator, ledger, &work.window, created.SessionID, result.WindowID); bindingErr != nil {
@@ -1328,7 +1330,7 @@ func executeRegistryTopology(
 			}
 			paneID, splitErr := runtime.SplitPane(ctx, splitAnchorID, defaultPlacement,
 				materializePaneCWD(plan.project, paneWork.pane),
-				runtime.supervisedLaunch(ctx, paneActivation, nil), nil)
+				runtime.SupervisedLaunch(ctx, paneActivation, nil), nil)
 			if paneID != "" {
 				if adoptErr := AdoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, paneWork.pane, ledger); adoptErr != nil {
 					return errors.Join(splitErr, adoptErr)
@@ -1339,7 +1341,7 @@ func executeRegistryTopology(
 				return splitErr
 			}
 			paneWork.create, paneWork.liveID = false, paneID
-			runtime.equalizeSplitLayout(ctx, splitAnchorID, defaultPlacement)
+			runtime.EqualizeSplitLayout(ctx, splitAnchorID, defaultPlacement)
 		}
 		// Agents come last inside their Window, on the very anchor the shell
 		// half just proved. Their launch argv was fixed at plan time, so the
@@ -1361,7 +1363,7 @@ func executeRegistryTopology(
 	}
 	// Startup runs only after every created object carries its exact uid, so a
 	// synchronous startup mutation cannot escape the transaction unnoticed.
-	return runtime.finalizeSessionStartup(ctx, created, plan.sessionName, plan.project.Spec.Root, ledger)
+	return runtime.FinalizeSessionStartup(ctx, created, plan.sessionName, plan.project.Spec.Root, ledger)
 }
 
 // observeReplayedWindowBinding records the exact live $N/@N of a Window this

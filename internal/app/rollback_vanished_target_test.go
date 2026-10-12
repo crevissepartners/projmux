@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -9,8 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -136,7 +138,7 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 			seam := &rollbackTmuxSeam{fakeTmux: newFakeTmux()}
 			var warnings bytes.Buffer
 			runtime := &materializer{
-				mirror: intmetadata.NewMirror(seam), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: seam, Warn: &warnings,
+				Mirror: intmetadata.NewMirror(seam), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: seam, Warn: &warnings,
 					Target:             tmuxTransport{Kind: tmuxSocketPath, Value: seam.socketPath, Source: tmuxSocketPathSource},
 					ExpectedSocketPath: seam.socketPath,
 					SocketName:         defaultAppSocket,
@@ -154,7 +156,7 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 // writer.
 func ownedKillRaceMaterializer(server *fakeTmux, warn *bytes.Buffer) *materializer {
 	return &materializer{
-		mirror: intmetadata.NewMirror(server), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server, Warn: warn,
+		Mirror: intmetadata.NewMirror(server), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server, Warn: warn,
 			Target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
 			ExpectedSocketPath: server.socketPath,
 			SocketName:         defaultAppSocket,
@@ -257,7 +259,7 @@ func TestRetireOwnedPaneTreatsAPaneRemovedBetweenReobserveAndGuardAsAbsent(t *te
 			}
 		}
 	})
-	if err := ownedKillRaceMaterializer(server, nil).retireOwnedPane(context.Background(), pane.id, "pan-retire"); err != nil {
+	if err := ownedKillRaceMaterializer(server, nil).RetireOwnedPane(context.Background(), pane.id, "pan-retire"); err != nil {
 		t.Fatalf("retireOwnedPane() error = %v; want the concurrently removed Pane treated as retired", err)
 	}
 	if got := countTmuxVerb(server, "kill-pane"); got != 0 {
@@ -268,7 +270,7 @@ func TestRetireOwnedPaneTreatsAPaneRemovedBetweenReobserveAndGuardAsAbsent(t *te
 func TestRetireOwnedPaneStillRefusesAPaneWhoseUIDDriftedBetweenReobserveAndGuard(t *testing.T) {
 	server, _, pane := retireRaceFixture(t)
 	onNthOwnershipRead(server, pane.id, tmuxopts.PaneUID, 1, func(*fakeTmux) { pane.opts[tmuxopts.PaneUID] = "pan-someone-else" })
-	err := ownedKillRaceMaterializer(server, nil).retireOwnedPane(context.Background(), pane.id, "pan-retire")
+	err := ownedKillRaceMaterializer(server, nil).RetireOwnedPane(context.Background(), pane.id, "pan-retire")
 	if err == nil || !strings.Contains(err.Error(), `guard refused action "kill-owned" before first write`) ||
 		!strings.Contains(err.Error(), `ownership uid is "pan-someone-else", want "pan-retire"`) {
 		t.Fatalf("retireOwnedPane() error = %v; want the drifted owner refused at the guard", err)
@@ -304,7 +306,7 @@ func TestRecoverCreatedProjectByLeaseTreatsASessionRemovedBetweenReobserveAndGua
 	marker := "op-lease-raced-away"
 	created.env[createOperationEnvironment] = marker
 	onLeaseReceiptRead(server, created.id, func(f *fakeTmux) { removeFakeSession(f, created.id) })
-	if err := ownedKillRaceMaterializer(server, nil).recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker); err != nil {
+	if err := ownedKillRaceMaterializer(server, nil).RecoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker); err != nil {
 		t.Fatalf("recoverCreatedProjectByLease() error = %v; want the concurrently removed session treated as absent", err)
 	}
 	if got := countTmuxVerb(server, "kill-session"); got != 0 {
@@ -318,7 +320,7 @@ func TestRecoverCreatedProjectByLeaseStillRefusesALeaseChangedBetweenReobserveAn
 	marker := "op-lease-changed"
 	created.env[createOperationEnvironment] = marker
 	onLeaseReceiptRead(server, created.id, func(*fakeTmux) { created.env[createOperationEnvironment] = "op-someone-else" })
-	err := ownedKillRaceMaterializer(server, nil).recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker)
+	err := ownedKillRaceMaterializer(server, nil).RecoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker)
 	if err == nil || !strings.Contains(err.Error(), `guard refused action "kill-owned" before first write`) ||
 		!strings.Contains(err.Error(), "created Project lease rollback containment is absent or changed") {
 		t.Fatalf("recoverCreatedProjectByLease() error = %v; want the changed lease refused at the guard", err)

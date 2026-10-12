@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -13,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -223,8 +224,8 @@ func TestProjectStopLowersInterruptedAgentsOfflineThroughRealTmux(t *testing.T) 
 		agents: recordingStopContinueLauncher{resumed: &resumed},
 		newReconciler: func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
 			reconciler := reconcileFixtureReconciler(projectRoot, sessionName)(runner, sessions)
-			reconciler.discoverRoots = func() ([]string, error) { return []string{projectRoot, otherRoot}, nil }
-			reconciler.sessionNameFor = func(root string) string {
+			reconciler.DiscoverRoots = func() ([]string, error) { return []string{projectRoot, otherRoot}, nil }
+			reconciler.SessionNameFor = func(root string) string {
 				if root == otherRoot {
 					return otherSession
 				}
@@ -236,8 +237,8 @@ func TestProjectStopLowersInterruptedAgentsOfflineThroughRealTmux(t *testing.T) 
 		newGeneration:  coremetadata.NewGeneration,
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			return &materializer{
-				mirror:     intmetadata.NewMirror(exact),
-				executable: func() (string, error) { return "", errors.New("no supervisor in the stop Continue test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), Target: materializeTarget, Warn: warn},
+				Mirror:     intmetadata.NewMirror(exact),
+				Executable: func() (string, error) { return "", errors.New("no supervisor in the stop Continue test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), Target: materializeTarget, Warn: warn},
 			}
 		},
 	}

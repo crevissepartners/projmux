@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -10,10 +8,15 @@ import (
 	"strings"
 	"testing"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -92,16 +95,16 @@ func correctiveAReconciler(projectRoot string) func(tmuxCommandRunner, sessionLi
 	return func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
 		mirror := intmetadata.NewMirror(runner)
 		return &registryReconciler{
-			liveSessions:  sessions.ExistingSessions,
-			observeLegacy: mirror.ObserveLegacySessionTargets,
-			mirror:        mirror,
-			mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
-			mirrorWindow:  mirror.MirrorWindow,
-			mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+			LiveSessions:       sessions.ExistingSessions,
+			ObserveLegacy:      mirror.ObserveLegacySessionTargets,
+			Mirror:             mirror,
+			MirrorProjectWrite: func(context.Context, string, coremetadata.Project) error { return nil },
+			MirrorWindowWrite:  mirror.MirrorWindow,
+			MirrorPaneWrite: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
 				return mirror.MirrorPane(ctx, target, pane)
 			},
-			shell: "/bin/zsh",
-			sessionNameFor: func(root string) string {
+			Shell: "/bin/zsh",
+			SessionNameFor: func(root string) string {
 				if root == projectRoot {
 					return "home"
 				}
@@ -114,16 +117,16 @@ func correctiveAReconciler(projectRoot string) func(tmuxCommandRunner, sessionLi
 func TestRegistryReconcilerConstructorAlwaysInitializesRefusalBookkeeping(t *testing.T) {
 	tmux := newFakeTmux()
 	r := newRegistryReconciler(tmux, inttmux.NewClient(tmux))
-	if r.refusedSessions == nil || r.refusedSessionDivergence == nil || r.refusedSessionReasons == nil || r.exactProjects == nil {
+	if r.RefusedSessions == nil || r.RefusedSessionDivergence == nil || r.RefusedSessionReasons == nil || r.ExactProjects == nil {
 		t.Fatalf("constructor left refusal bookkeeping nil: %+v", r)
 	}
 	// An injected planner factory is allowed to return a literal. The planner
 	// boundary must restore the same invariant before any per-session write.
 	injected := &registryReconciler{}
-	injected.initializeRefusalBookkeeping()
-	injected.refuseSession("foreign", resourcegraph.DivergenceContaminated, "foreign fixture")
-	if !injected.refusedSessions["foreign"] || injected.refusedSessionDivergence["foreign"] != resourcegraph.DivergenceContaminated {
-		t.Fatalf("injected reconciler refusal = %#v / %#v", injected.refusedSessions, injected.refusedSessionDivergence)
+	injected.InitializeRefusalBookkeeping()
+	injected.RefuseSession("foreign", resourcegraph.DivergenceContaminated, "foreign fixture")
+	if !injected.RefusedSessions["foreign"] || injected.RefusedSessionDivergence["foreign"] != resourcegraph.DivergenceContaminated {
+		t.Fatalf("injected reconciler refusal = %#v / %#v", injected.RefusedSessions, injected.RefusedSessionDivergence)
 	}
 }
 
@@ -131,31 +134,31 @@ func TestHomeDualRootClaimantPrecedenceAndPhysicalAllocation(t *testing.T) {
 	registry := coremetadata.NewRegistry()
 	projectRoot := t.TempDir()
 	addCorrectiveAIncidentRegistry(t, &registry, projectRoot)
-	r := &registryReconciler{sessionNameFor: func(string) string { return "home" }}
+	r := &registryReconciler{SessionNameFor: func(string) string { return "home" }}
 
-	claim := r.resolveRegistrySessionClaim(registry, "home")
+	claim := r.ResolveRegistrySessionClaim(registry, "home")
 	if claim.Kind != registrySessionClaimControl || claim.UID != correctiveAControlUID {
 		t.Fatalf("home claim = %+v, want exact ControlSession", claim)
 	}
-	if uid := r.projectsBySessionName(registry)["home"]; uid != "" {
+	if uid := r.ProjectsBySessionName(registry)["home"]; uid != "" {
 		t.Fatalf("Project session-name fallback crossed exact ControlSession claim: %q", uid)
 	}
 	project, _ := registry.Project(correctiveAProjectUID)
-	if got := r.projectPhysicalSessionName(registry, *project); got != correctiveAProjectSession {
+	if got := r.ProjectPhysicalSessionName(registry, *project); got != correctiveAProjectSession {
 		t.Fatalf("collision-safe Project session = %q, want %q", got, correctiveAProjectSession)
 	}
 	if err := coresessions.ValidateSessionName(correctiveAProjectSession); err != nil {
 		t.Fatalf("full-UID collision suffix violates existing tmux session-name rules: %v", err)
 	}
 	project.Status.Session = &coremetadata.SessionProjection{Name: correctiveAProjectSession, Live: false}
-	if got := r.projectPhysicalSessionName(registry, *project); got != correctiveAProjectSession {
+	if got := r.ProjectPhysicalSessionName(registry, *project); got != correctiveAProjectSession {
 		t.Fatalf("repeat allocation churned %q to %q", correctiveAProjectSession, got)
 	}
 
 	contaminated := []observedResourceProjectSession{{id: "$1", name: "home", uid: correctiveAProjectUID, root: projectRoot}}
 	refused := refusedResourceProjectSessions(registry, contaminated, r)
-	if !refused["home"] || r.refusedSessionDivergence["home"] != resourcegraph.DivergenceContaminated || !strings.Contains(r.refusedSessionReasons["home"], "ControlSession") {
-		t.Fatalf("contaminated control observation was not a typed D4 refusal: refused=%v divergence=%q reason=%q", refused, r.refusedSessionDivergence["home"], r.refusedSessionReasons["home"])
+	if !refused["home"] || r.RefusedSessionDivergence["home"] != resourcegraph.DivergenceContaminated || !strings.Contains(r.RefusedSessionReasons["home"], "ControlSession") {
+		t.Fatalf("contaminated control observation was not a typed D4 refusal: refused=%v divergence=%q reason=%q", refused, r.RefusedSessionDivergence["home"], r.RefusedSessionReasons["home"])
 	}
 }
 
@@ -173,12 +176,12 @@ func TestHomeDualRootClaimResolutionIsRegistryOrderIndependent(t *testing.T) {
 	}
 
 	for index, ordered := range orders {
-		r := &registryReconciler{sessionNameFor: func(string) string { return "home" }}
-		claim := r.resolveRegistrySessionClaim(ordered, "home")
+		r := &registryReconciler{SessionNameFor: func(string) string { return "home" }}
+		claim := r.ResolveRegistrySessionClaim(ordered, "home")
 		if claim.Kind != registrySessionClaimControl || claim.UID != correctiveAControlUID {
 			t.Fatalf("order %d claim = %+v, want exact ControlSession", index, claim)
 		}
-		if got := r.projectPhysicalSessionName(ordered, *project); got != correctiveAProjectSession {
+		if got := r.ProjectPhysicalSessionName(ordered, *project); got != correctiveAProjectSession {
 			t.Fatalf("order %d physical Project session = %q, want %q", index, got, correctiveAProjectSession)
 		}
 	}
@@ -237,7 +240,7 @@ func TestHomeProjectExplicitMaterializationUsesCollisionSafeSessionAndRepeatsNoo
 		newReconciler:  correctiveAReconciler(projectRoot),
 		newOperationID: func() (string, error) { return "op-corrective-a", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
+			return &materializer{Mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 	}
 
@@ -263,24 +266,24 @@ func TestUnrelatedObservationFailureBecomesTypedD6AndDoesNotStopReconcile(t *tes
 	registry := coremetadata.NewRegistry()
 	addCorrectiveAIncidentRegistry(t, &registry, t.TempDir())
 	r := &registryReconciler{
-		liveSessions: func(context.Context) (map[string]bool, error) {
+		LiveSessions: func(context.Context) (map[string]bool, error) {
 			return map[string]bool{"broken": true, "home": true}, nil
 		},
-		observeLegacy: func(_ context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+		ObserveLegacy: func(_ context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 			if session == "broken" {
 				return coremetadata.LegacySession{}, intmetadata.LegacyTargets{}, errors.New("malformed generic observation")
 			}
 			return coremetadata.LegacySession{Session: session}, intmetadata.LegacyTargets{}, nil
 		},
-		mirror:         intmetadata.NewMirror(newFakeTmux()),
-		sessionNameFor: func(string) string { return "home" },
+		Mirror:         intmetadata.NewMirror(newFakeTmux()),
+		SessionNameFor: func(string) string { return "home" },
 	}
 	mutator := reconcileFixtureMutator()
-	if err := r.reconcile(context.Background(), &registry, mutator, "op-d6"); err != nil {
+	if err := r.Reconcile(context.Background(), &registry, mutator, "op-d6"); err != nil {
 		t.Fatalf("unrelated observation failure escaped containment: %v", err)
 	}
-	if !r.refusedSessions["broken"] || r.refusedSessionDivergence["broken"] != resourcegraph.DivergenceUnknown || !strings.Contains(r.refusedSessionReasons["broken"], "malformed generic observation") {
-		t.Fatalf("generic observation refusal = %v / %q / %q", r.refusedSessions, r.refusedSessionDivergence["broken"], r.refusedSessionReasons["broken"])
+	if !r.RefusedSessions["broken"] || r.RefusedSessionDivergence["broken"] != resourcegraph.DivergenceUnknown || !strings.Contains(r.RefusedSessionReasons["broken"], "malformed generic observation") {
+		t.Fatalf("generic observation refusal = %v / %q / %q", r.RefusedSessions, r.RefusedSessionDivergence["broken"], r.RefusedSessionReasons["broken"])
 	}
 	items := resourceProjectForeignItems(registry, []observedResourceProjectSession{{id: "$broken", name: "broken"}}, r)
 	if len(items) != 1 || items[0].Divergence != resourcegraph.DivergenceUnknown || !strings.Contains(items[0].Reason, "malformed generic observation") {

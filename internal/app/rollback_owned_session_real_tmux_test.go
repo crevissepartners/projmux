@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -11,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -102,7 +102,7 @@ func TestRollbackRemovesAnOwnedSessionThroughRealTmux(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}
 			routed := explicitTmuxRunner{Runner: shellTmuxExecRunner{env: func() []string { return environment }}, Target: target}
 			var warnings bytes.Buffer
-			runtime := &materializer{mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target, Warn: &warnings}}
+			runtime := &materializer{Mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target, Warn: &warnings}}
 			if err := runtime.GuardExactRoute(ctx, false); err != nil {
 				t.Fatalf("bind isolated app route: %v", err)
 			}

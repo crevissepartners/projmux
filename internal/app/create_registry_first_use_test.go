@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"fmt"
@@ -14,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -58,7 +59,7 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 		}
 	}
 	roots := slices.Clone(f.roots)
-	typedMirror := runtimeMutationMetadataMirror{runner: explicitTmuxRunner{
+	typedMirror := runtimeMutationMetadataMirror{Runner: explicitTmuxRunner{
 		Runner: f.tmux, Target: tmuxTransport{Kind: tmuxSocketPath, Value: f.tmux.socketPath, Source: tmuxSocketPathSource},
 	}}
 	return &createCommand{
@@ -75,21 +76,21 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 			},
 		},
 		reconciler: &registryReconciler{
-			discoverRoots: func() ([]string, error) { return roots, nil },
-			liveSessions: func(context.Context) (map[string]bool, error) {
+			DiscoverRoots: func() ([]string, error) { return roots, nil },
+			LiveSessions: func(context.Context) (map[string]bool, error) {
 				return f.tmux.sessionNames(), nil
 			},
-			observeLegacy:  observe,
-			mirror:         mirror,
-			mirrorProject:  typedMirror.MirrorProject,
-			mirrorWindow:   typedMirror.MirrorWindow,
-			mirrorPane:     typedMirror.MirrorPane,
-			shell:          "/bin/zsh",
-			sessionNameFor: filepath.Base,
+			ObserveLegacy:      observe,
+			Mirror:             mirror,
+			MirrorProjectWrite: typedMirror.MirrorProject,
+			MirrorWindowWrite:  typedMirror.MirrorWindow,
+			MirrorPaneWrite:    typedMirror.MirrorPane,
+			Shell:              "/bin/zsh",
+			SessionNameFor:     filepath.Base,
 		},
 		runtime: &materializer{
 
-			mirror: mirror, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: f.tmux,
+			Mirror: mirror, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: f.tmux,
 
 				Sessions: &fakeSessionMaterializer{tmux: f.tmux},
 				Target:   tmuxTransport{Kind: tmuxSocketPath, Value: f.tmux.socketPath, Source: tmuxSocketPathSource},

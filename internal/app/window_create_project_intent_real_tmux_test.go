@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -15,8 +13,12 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -180,11 +182,11 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 		store:      store.store(),
 		reconciler: newRegistryReconciler(routed, inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket))),
 		runtime: &materializer{
-			mirror: intmetadata.NewMirror(routed),
+			Mirror: intmetadata.NewMirror(routed),
 
-			configPath: configPath,
-			lookupEnv:  lookupEnv,
-			executable: func() (string, error) { return "", errors.New("no supervisor in this test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed,
+			ConfigPath: configPath,
+			LookupEnv:  lookupEnv,
+			Executable: func() (string, error) { return "", errors.New("no supervisor in this test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed,
 				Sessions: inttmux.NewClient(routed, inttmux.WithSocketName(defaultAppSocket)), Target: target,
 
 				Warn: io.MultiWriter(testWarnWriter{t}, warnings)},
@@ -213,9 +215,9 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 		// never run from a test.
 		client := inttmux.NewClient(exact, inttmux.WithSocketName(route.SocketName))
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
-		command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
+		command.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
 		command.runtime.Runner = exact
-		command.runtime.mirror = intmetadata.NewMirror(exact)
+		command.runtime.Mirror = intmetadata.NewMirror(exact)
 		command.runtime.Sessions = client
 		command.runtime.Target = route.Target
 		command.runtime.ExpectedSocketPath = route.ExpectedSocketPath

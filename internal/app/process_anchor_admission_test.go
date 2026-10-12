@@ -1,12 +1,12 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -23,7 +23,7 @@ func TestProcessAdmissionCreatePaneAnchor(t *testing.T) {
 			tmux := newFakeTmux()
 			create, _ := newTestResourceCreateCommand(t, store, tmux)
 			create.processRuntime = runtime
-			create.reconciler.processes = runtime.inventory()
+			create.reconciler.Processes = runtime.inventory()
 			routeCalls := 0
 			create.bindExplicitRuntime = func(context.Context) error { routeCalls++; return nil }
 			create.bindRuntime = create.bindExplicitRuntime

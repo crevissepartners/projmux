@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -15,7 +13,10 @@ import (
 	"testing"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -164,11 +165,11 @@ func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmu
 			store:      store.store(),
 			reconciler: newRegistryReconciler(routed, client),
 			runtime: &materializer{
-				mirror:    intmetadata.NewMirror(routed),
-				lookupEnv: lookupEnv,
+				Mirror:    intmetadata.NewMirror(routed),
+				LookupEnv: lookupEnv,
 				// No supervisor binary in a unit test: the Pane runs its command
 				// directly.
-				executable: func() (string, error) { return "", errors.New("no supervisor in this test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
+				Executable: func() (string, error) { return "", errors.New("no supervisor in this test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
 					Warn: testWarnWriter{t}},
 			},
 			anchorTarget: func(anchor string) activeTargetLookup {
@@ -193,9 +194,9 @@ func newSplitFocusRealTmux(t *testing.T, ctx context.Context) *splitFocusRealTmu
 			client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 			command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 			// Keep the reconciler off the real $HOME Project discovery.
-			command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
+			command.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
 			command.runtime.Runner = exact
-			command.runtime.mirror = intmetadata.NewMirror(exact)
+			command.runtime.Mirror = intmetadata.NewMirror(exact)
 			command.runtime.Sessions = client
 			command.runtime.Target = route.Target
 			command.runtime.ExpectedSocketPath = route.ExpectedSocketPath

@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"bytes"
 	"context"
@@ -16,9 +14,14 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -198,23 +201,23 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 	return &createCommand{
 		store: store.store(),
 		reconciler: &registryReconciler{
-			discoverRoots: func() ([]string, error) { return nil, nil },
-			liveSessions: func(context.Context) (map[string]bool, error) {
+			DiscoverRoots: func() ([]string, error) { return nil, nil },
+			LiveSessions: func(context.Context) (map[string]bool, error) {
 				return tmux.sessionNames(), nil
 			},
-			observeLegacy: func(context.Context, string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+			ObserveLegacy: func(context.Context, string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 				return coremetadata.LegacySession{}, intmetadata.LegacyTargets{}, nil
 			},
-			mirror:         mirror,
-			shell:          "/bin/zsh",
-			sessionNameFor: filepath.Base,
+			Mirror:         mirror,
+			Shell:          "/bin/zsh",
+			SessionNameFor: filepath.Base,
 		},
 		runtime: &materializer{
 
-			mirror: mirror,
+			Mirror: mirror,
 
-			executable: func() (string, error) { return testSupervisorBinary, nil },
-			lookupEnv:  func(string) string { return "" }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux,
+			Executable: func() (string, error) { return testSupervisorBinary, nil },
+			LookupEnv:  func(string) string { return "" }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux,
 
 				Sessions:   sessions,
 				Target:     tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
@@ -1081,7 +1084,7 @@ func TestCanonicalCreatePaneAmbiguousLayoutReceiptWritesZeroResizes(t *testing.T
 				return out
 			}
 			create.runtime.Runner = probe
-			if _, err := create.runtime.observeSplitLayoutBatch(context.Background(), tmux.sessions[0].windows[0].panes[0].id); err == nil || !strings.Contains(err.Error(), test.want) {
+			if _, err := create.runtime.ObserveSplitLayoutBatch(context.Background(), tmux.sessions[0].windows[0].panes[0].id); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("strict layout receipt error = %v, want %q", err, test.want)
 			}
 			probe.layoutCalls, probe.receiptCalls = 0, 0
@@ -1237,11 +1240,11 @@ func TestCanonicalCreatePaneMultiPaneLayoutUsesBoundedBatchInsideRegistryUpdate(
 	}
 	geometry := make([]aiPaneGeometry, 0, len(window.panes))
 	for _, pane := range window.panes {
-		geometry = append(geometry, aiPaneGeometry{id: pane.id, left: pane.left, top: pane.top, width: pane.width, height: pane.height})
+		geometry = append(geometry, aiPaneGeometry{Id: pane.id, Left: pane.left, Top: pane.top, Width: pane.width, Height: pane.height})
 	}
 	wantOrder := make([]string, 0, len(window.panes))
-	for _, pane := range splitLayoutPeers(geometry, aiPaneGeometry{id: target.id, left: target.left, top: target.top, width: target.width, height: target.height}, "right") {
-		wantOrder = append(wantOrder, pane.id)
+	for _, pane := range splitLayoutPeers(geometry, aiPaneGeometry{Id: target.id, Left: target.left, Top: target.top, Width: target.width, Height: target.height}, "right") {
+		wantOrder = append(wantOrder, pane.Id)
 	}
 	if !slices.Equal(resized, wantOrder) {
 		t.Fatalf("multi-Pane typed resize order = %v, want receipt order %v", resized, wantOrder)
@@ -1453,7 +1456,7 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		window := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 		var warnings bytes.Buffer
 		runtime := &materializer{
-			mirror: intmetadata.NewMirror(tmux), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux, Warn: &warnings,
+			Mirror: intmetadata.NewMirror(tmux), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux, Warn: &warnings,
 				Target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}, ExpectedSocketPath: tmux.socketPath,
 				SocketName:     defaultAppSocket,
 				RouteAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}},

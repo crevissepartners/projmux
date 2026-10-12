@@ -74,7 +74,7 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 		RegistryPath:      *registryPath,
 		DialogueReplyOnly: *dialogueReplyOnly,
 	}
-	if !spec.valid() || spec.AgentUID == "" || spec.OperationID == "" {
+	if !spec.Valid() || spec.AgentUID == "" || spec.OperationID == "" {
 		return usageError("internal activation-exec requires --pane-uid, --agent-uid, --generation, and --operation-id")
 	}
 	if err := exactActivationRegistryPath(spec.RegistryPath); err != nil {

@@ -1,14 +1,17 @@
 package app
 
 import (
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	"context"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
 
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	"github.com/crevissepartners/projmux/internal/core/controller"
@@ -251,14 +254,14 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		newReconciler = newRegistryReconciler
 	}
 	reconciler := newReconciler(recorder, sessions)
-	reconciler.processes = p.processes.Clone()
+	reconciler.Processes = p.processes.Clone()
 	exactSocketPath := p.exactSocketPath
-	reconciler.sessionSocketPath = func() string { return exactSocketPath }
-	reconciler.initializeRefusalBookkeeping()
-	reconciler.refuseForeign = true
-	reconciler.targetLiveOnly = true
-	reconciler.approvedOrphanImport = p.approvedOrphanImport
-	reconciler.atomicAuthorshipPromotion = true
+	reconciler.SessionSocketPath = func() string { return exactSocketPath }
+	reconciler.InitializeRefusalBookkeeping()
+	reconciler.RefuseForeign = true
+	reconciler.TargetLiveOnly = true
+	reconciler.ApprovedOrphanImport = p.approvedOrphanImport
+	reconciler.AtomicAuthorshipPromotion = true
 	projectSessions, err := observeResourceProjectSessions(ctx, recorder)
 	if err != nil {
 		if p.materializeProject == "" || !isMissingTmuxServer(err) {
@@ -281,14 +284,14 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		}
 		return resourceReconcilePlan{registry: before.Clone(), items: items, materialization: topology}, nil
 	}
-	reconciler.refusedSessions = refusedResourceProjectSessions(before, projectSessions, reconciler)
-	reconciler.exactProjects = map[string]string{}
+	reconciler.RefusedSessions = refusedResourceProjectSessions(before, projectSessions, reconciler)
+	reconciler.ExactProjects = map[string]string{}
 	for _, session := range projectSessions {
-		if reconciler.refusedSessions[session.name] || session.uid == "" {
+		if reconciler.RefusedSessions[session.name] || session.uid == "" {
 			continue
 		}
 		if _, ok := before.Project(session.uid); ok {
-			reconciler.exactProjects[session.name] = session.uid
+			reconciler.ExactProjects[session.name] = session.uid
 		}
 	}
 	scopedBefore := scopeResourceRegistry(before, projectSessions, reconciler)
@@ -313,7 +316,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		}
 		return uid, err
 	}
-	if err := reconciler.reconcile(ctx, &scopedAfter, mutator, "reconcile-resources"); err != nil {
+	if err := reconciler.Reconcile(ctx, &scopedAfter, mutator, "reconcile-resources"); err != nil {
 		return resourceReconcilePlan{}, err
 	}
 	after := mergeScopedResourceRegistry(before, scopedBefore, scopedAfter, projectSessions, reconciler)
@@ -542,7 +545,7 @@ func scopeResourceRegistry(registry coremetadata.Registry, sessions []observedRe
 func resourceProjectUIDsForSessions(registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) map[string]bool {
 	projects := map[string]bool{}
 	for _, session := range sessions {
-		if reconciler.refusedSessions[session.name] {
+		if reconciler.RefusedSessions[session.name] {
 			continue
 		}
 		if project, ok := resourceProjectForSession(registry, session, reconciler); ok {
@@ -621,7 +624,7 @@ func mergeScopedResourceRegistry(before, scopedBefore, scopedAfter coremetadata.
 	// status changes for that graph.
 	activeAfter := resourceProjectUIDsForSessions(scopedAfter, sessions, reconciler)
 	for _, session := range sessions {
-		if !reconciler.refusedSessions[session.name] {
+		if !reconciler.RefusedSessions[session.name] {
 			continue
 		}
 		// Every refused session is diagnostic-only, so preserve its entire
@@ -830,7 +833,7 @@ func resourceProjectForSession(registry coremetadata.Registry, session observedR
 		// merge this command must refuse.
 		return nil, false
 	}
-	uid := reconciler.projectsBySessionName(registry)[session.name]
+	uid := reconciler.ProjectsBySessionName(registry)[session.name]
 	if uid == "" {
 		return nil, false
 	}
@@ -838,7 +841,7 @@ func resourceProjectForSession(registry coremetadata.Registry, session observedR
 }
 
 func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) map[string]bool {
-	reconciler.initializeRefusalBookkeeping()
+	reconciler.InitializeRefusalBookkeeping()
 	counts := map[string]int{}
 	claims := map[string]int{}
 	for _, session := range sessions {
@@ -851,25 +854,25 @@ func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []o
 	}
 	refused := map[string]bool{}
 	for _, session := range sessions {
-		claim := reconciler.resolveRegistrySessionClaim(registry, session.name)
+		claim := reconciler.ResolveRegistrySessionClaim(registry, session.name)
 		if claim.Kind == registrySessionClaimControl {
 			if session.uid != "" || session.root != "" {
 				refused[session.name] = true
-				reconciler.refuseSession(session.name, resourcegraph.DivergenceContaminated,
+				reconciler.RefuseSession(session.name, resourcegraph.DivergenceContaminated,
 					"exact ControlSession carries a foreign Project identity claim")
 			}
 			continue
 		}
 		if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" && claims[claim] > 1 {
 			refused[session.name] = true
-			reconciler.refuseSession(session.name, resourcegraph.DivergenceContaminated,
+			reconciler.RefuseSession(session.name, resourcegraph.DivergenceContaminated,
 				"multiple live sessions resolve to the same exact Registry Project")
 			continue
 		}
 		if session.uid == "" {
 			if session.root == "" && claim.Kind == registrySessionClaimRefused {
 				refused[session.name] = true
-				reconciler.refuseSession(session.name, claim.Divergence, claim.Reason)
+				reconciler.RefuseSession(session.name, claim.Divergence, claim.Reason)
 			}
 			continue
 		}
@@ -877,10 +880,10 @@ func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []o
 		if !ok || session.uid != expected.Metadata.UID || counts[session.uid] > 1 {
 			refused[session.name] = true
 			if _, known := registry.Project(session.uid); !known {
-				reconciler.refuseSession(session.name, resourcegraph.DivergenceOrphanMirror,
+				reconciler.RefuseSession(session.name, resourcegraph.DivergenceOrphanMirror,
 					"live session carries a Project uid absent from the authoritative Registry")
 			} else {
-				reconciler.refuseSession(session.name, resourcegraph.DivergenceContaminated,
+				reconciler.RefuseSession(session.name, resourcegraph.DivergenceContaminated,
 					"live session carries a Project uid outside its exact Registry identity")
 			}
 		}
@@ -902,27 +905,11 @@ func resourceProjectSessionClaim(registry coremetadata.Registry, session observe
 	return ""
 }
 
-func resourceSessionProjectClaims(registry coremetadata.Registry, sessionName string, reconciler *registryReconciler) []string {
-	var claims []string
-	for _, project := range registry.Projects {
-		name := ""
-		if project.Status.Session != nil {
-			name = strings.TrimSpace(project.Status.Session.Name)
-		}
-		if name == "" && reconciler.sessionNameFor != nil {
-			name = strings.TrimSpace(reconciler.sessionNameFor(project.Spec.Root))
-		}
-		if name == sessionName {
-			claims = append(claims, project.Metadata.UID)
-		}
-	}
-	slices.Sort(claims)
-	return claims
-}
+var resourceSessionProjectClaims = mutationruntime.ResourceSessionProjectClaims
 
 func planResourceProjectMirrors(ctx context.Context, recorder *resourcePlanTmuxRunner, registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) error {
 	for _, session := range sessions {
-		if reconciler.refusedSessions[session.name] {
+		if reconciler.RefusedSessions[session.name] {
 			continue
 		}
 		project, ok := resourceProjectForSession(registry, session, reconciler)
@@ -931,16 +918,16 @@ func planResourceProjectMirrors(ctx context.Context, recorder *resourcePlanTmuxR
 		}
 		switch {
 		case session.uid == "":
-			if err := reconciler.mirror.MirrorProject(ctx, session.id, *project); err != nil {
+			if err := reconciler.Mirror.MirrorProject(ctx, session.id, *project); err != nil {
 				return err
 			}
 		case session.meta != project.Metadata.Name:
-			if err := reconciler.mirror.RenameProject(ctx, session.id, project.Metadata.Name); err != nil {
+			if err := reconciler.Mirror.RenameProject(ctx, session.id, project.Metadata.Name); err != nil {
 				return err
 			}
 		}
 		if session.root != project.Spec.Root {
-			if err := reconciler.mirror.RebindProject(ctx, session.id, project.Spec.Root); err != nil {
+			if err := reconciler.Mirror.RebindProject(ctx, session.id, project.Spec.Root); err != nil {
 				return err
 			}
 		}
@@ -950,7 +937,7 @@ func planResourceProjectMirrors(ctx context.Context, recorder *resourcePlanTmuxR
 
 func planResourceBoundMirrorDrift(ctx context.Context, recorder *resourcePlanTmuxRunner, registry coremetadata.Registry, reconciler *registryReconciler) error {
 	for _, object := range recorder.objects {
-		if object.uid == "" || reconciler.refusedSessions[object.session] {
+		if object.uid == "" || reconciler.RefusedSessions[object.session] {
 			continue
 		}
 		switch object.kind {
@@ -960,7 +947,7 @@ func planResourceBoundMirrorDrift(ctx context.Context, recorder *resourcePlanTmu
 				continue
 			}
 			if intmetadata.TmuxTruthyOption(object.automatic) {
-				if err := reconciler.mirror.DisableAutomaticRename(ctx, object.target); err != nil {
+				if err := reconciler.Mirror.DisableAutomaticRename(ctx, object.target); err != nil {
 					return err
 				}
 				recorder.setLastWriteBefore(object.automatic)
@@ -980,7 +967,7 @@ func planResourceBoundMirrorDrift(ctx context.Context, recorder *resourcePlanTmu
 			if !ok || object.nameMirror == pane.Metadata.Name {
 				continue
 			}
-			if err := reconciler.mirror.RenamePane(ctx, object.target, pane.Metadata.Name); err != nil {
+			if err := reconciler.Mirror.RenamePane(ctx, object.target, pane.Metadata.Name); err != nil {
 				return err
 			}
 			recorder.setLastWriteBefore(object.nameMirror)
@@ -1002,13 +989,13 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 	}
 	var items []resourceReconcileItem
 	for _, session := range sessions {
-		if !reconciler.refusedSessions[session.name] {
+		if !reconciler.RefusedSessions[session.name] {
 			continue
 		}
-		if reconciler.refusedSessionDivergence[session.name] == resourcegraph.DivergenceOrphanMirror {
+		if reconciler.RefusedSessionDivergence[session.name] == resourcegraph.DivergenceOrphanMirror {
 			continue
 		}
-		reason := strings.TrimSpace(reconciler.refusedSessionReasons[session.name])
+		reason := strings.TrimSpace(reconciler.RefusedSessionReasons[session.name])
 		if reason == "" {
 			reason = "live session carries a Project uid outside its exact Registry identity"
 		}
@@ -1026,7 +1013,7 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 				reason = "live session carries a Project uid absent from the authoritative Registry"
 			}
 		}
-		divergence := reconciler.refusedSessionDivergence[session.name]
+		divergence := reconciler.RefusedSessionDivergence[session.name]
 		if !divergence.Valid() {
 			if _, ok := registry.Project(session.uid); !ok && session.uid != "" {
 				divergence = resourcegraph.DivergenceOrphanMirror
@@ -1867,7 +1854,7 @@ func (r *resourcePlanTmuxRunner) planItems(before coremetadata.Registry, normali
 
 func (r *resourcePlanTmuxRunner) foreignItems(registry coremetadata.Registry, reconciler *registryReconciler) []resourceReconcileItem {
 	known := registryUIDSet(registry)
-	bySession := reconciler.projectsBySessionName(registry)
+	bySession := reconciler.ProjectsBySessionName(registry)
 	for session, root := range r.sessionRoots {
 		if project, ok := registry.ProjectByRoot(root); ok {
 			bySession[session] = project.Metadata.UID

@@ -787,7 +787,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if err != nil {
 		return pass, err
 	}
-	reconciler.refuseForeign = true
+	reconciler.RefuseForeign = true
 	if err := requireAutomaticRecoveryPaths("hook-mirror-repair", "hook-status-projection"); err != nil {
 		return pass, err
 	}
@@ -808,7 +808,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 		if _, err := absorbTerminationReceipts(working, mutator, receipts); err != nil {
 			return err
 		}
-		return reconciler.reconcile(ctx, working, mutator, operationID)
+		return reconciler.Reconcile(ctx, working, mutator, operationID)
 	})
 	lock.End()
 	if err != nil {

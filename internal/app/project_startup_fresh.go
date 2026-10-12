@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"errors"
@@ -9,9 +7,13 @@ import (
 	"os"
 	"strings"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
+
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -436,7 +438,7 @@ func (s *registryProjectFreshStarter) requireClosedProject(ctx context.Context, 
 		}
 	}
 	exactRunner := explicitTmuxRunner{Runner: s.runner, Target: target}
-	if _, found, err := (&materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exactRunner}}).preflightSessionOwnership(ctx, *project, sessionName); err != nil {
+	if _, found, err := (&materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exactRunner}}).PreflightSessionOwnership(ctx, *project, sessionName); err != nil {
 		return fmt.Errorf("project fresh start: target Project must be exactly closed before Open fresh; nothing was deleted: %w", err)
 	} else if found {
 		return fmt.Errorf("project fresh start: target Project session %q is live; close it before Open fresh; nothing was deleted", sessionName)

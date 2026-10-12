@@ -19,23 +19,23 @@ import (
 // newTestReconciler builds a reconciler over an explicit root list and an
 // in-memory tmux server.
 func newTestReconciler(tmux *fakeTmux, roots []string) *registryReconciler {
-	typed := runtimeMutationMetadataMirror{runner: explicitTmuxRunner{
+	typed := runtimeMutationMetadataMirror{Runner: explicitTmuxRunner{
 		Runner: tmux, Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
 	}}
 	return &registryReconciler{
-		discoverRoots: func() ([]string, error) { return roots, nil },
-		liveSessions: func(context.Context) (map[string]bool, error) {
+		DiscoverRoots: func() ([]string, error) { return roots, nil },
+		LiveSessions: func(context.Context) (map[string]bool, error) {
 			return tmux.sessionNames(), nil
 		},
-		observeLegacy: func(context.Context, string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+		ObserveLegacy: func(context.Context, string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 			return coremetadata.LegacySession{}, intmetadata.LegacyTargets{}, nil
 		},
-		mirror:         intmetadata.NewMirror(tmux),
-		mirrorProject:  typed.MirrorProject,
-		mirrorWindow:   typed.MirrorWindow,
-		mirrorPane:     typed.MirrorPane,
-		shell:          "/bin/zsh",
-		sessionNameFor: filepath.Base,
+		Mirror:             intmetadata.NewMirror(tmux),
+		MirrorProjectWrite: typed.MirrorProject,
+		MirrorWindowWrite:  typed.MirrorWindow,
+		MirrorPaneWrite:    typed.MirrorPane,
+		Shell:              "/bin/zsh",
+		SessionNameFor:     filepath.Base,
 	}
 }
 
@@ -96,7 +96,7 @@ func TestReconcileNeverRegistersADiscoveredWorkdir(t *testing.T) {
 
 	registry := coremetadata.NewRegistry()
 	mutator := reconcileFixtureMutator()
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if len(registry.Projects) != 0 {
@@ -110,7 +110,7 @@ func TestReconcileNeverRegistersADiscoveredWorkdir(t *testing.T) {
 	// Registering one candidate explicitly registers that candidate and nothing
 	// adjacent to it, and a later pass still adds none of its siblings.
 	explicit := registerFixtureProject(t, &registry, mutator, roots[1])
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if len(registry.Projects) != 1 {
@@ -152,7 +152,7 @@ func TestReconcileRefreshesStatusSessionAndMissingRoot(t *testing.T) {
 	registry := coremetadata.NewRegistry()
 	registerFixtureProject(t, &registry, mutator, live)
 	registerFixtureProject(t, &registry, mutator, gone)
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	for _, project := range registry.Projects {
@@ -174,7 +174,7 @@ func TestReconcileRefreshesStatusSessionAndMissingRoot(t *testing.T) {
 	if err := os.RemoveAll(gone); err != nil {
 		t.Fatalf("remove root: %v", err)
 	}
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestAnUnobservableOrRootlessSessionIsSkippedRatherThanFailingTheCreate(t *t
 	tmux.addSession("scratch")  // no project path
 	tmux.addSession("vanished") // records a root that no longer exists
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = func(_ context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
+	reconciler.ObserveLegacy = func(_ context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 		switch name {
 		case "vanished":
 			return coremetadata.LegacySession{Session: name, Root: filepath.Join(base, "not-here")}, intmetadata.LegacyTargets{}, nil
@@ -223,7 +223,7 @@ func TestAnUnobservableOrRootlessSessionIsSkippedRatherThanFailingTheCreate(t *t
 
 	registry := coremetadata.NewRegistry()
 	mutator := reconcileFixtureMutator()
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	// Neither strange session is importable, and the discovered workdir is not a
@@ -299,7 +299,7 @@ func TestReconcileConvergesRuntimeBindingsWithNoHookFired(t *testing.T) {
 
 	reconcileOnce := func(operationID string) {
 		t.Helper()
-		if err := reconciler.reconcile(context.Background(), &registry, mutator, operationID); err != nil {
+		if err := reconciler.Reconcile(context.Background(), &registry, mutator, operationID); err != nil {
 			t.Fatalf("reconcile %s: %v", operationID, err)
 		}
 	}
@@ -391,7 +391,7 @@ func TestReconcileFailsClosedWhenTheInventoryCannotBeRead(t *testing.T) {
 	// pass that trusted the failed query would condition at least that one.
 	registry := runtimeBindingRegistry(t, root)
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	assertRuntimeConditions(t, registry, nil)

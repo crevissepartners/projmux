@@ -93,14 +93,14 @@ func typedMirrorCases() []typedMirrorCase {
 // mirror is exactly the pre-scope writer.
 func newScopedTypedMirror(runtime *materializer, runner tmuxCommandRunner, scoped bool) runtimeMutationMetadataMirror {
 	mirror := runtimeMutationMetadataMirror{
-		runner: explicitTmuxRunner{Runner: runner, Target: runtime.Target},
-		route: runtimeMutationRoute{
+		Runner: explicitTmuxRunner{Runner: runner, Target: runtime.Target},
+		Route: runtimeMutationRoute{
 			Target: runtime.Target, ExpectedSocketPath: runtime.ExpectedSocketPath,
 			SocketName: runtime.SocketName, Authority: runtime.RouteAuthority,
 		},
 	}
 	if scoped {
-		mirror.scope = runtime
+		mirror.Scope = runtime
 	}
 	return mirror
 }
@@ -113,8 +113,8 @@ func TestTypedMetadataMirrorReusesTheTransactionProofOnlyUntilItsOwnWrite(t *tes
 			t.Parallel()
 			ctx := context.Background()
 			runtime, server, _ := newRouteIdentityFixture()
-			runtime.openRouteIdentityCache("op-mirror")
-			defer runtime.closeRouteIdentityCache()
+			runtime.OpenRouteIdentityCache("op-mirror")
+			defer runtime.CloseRouteIdentityCache()
 			if err := runtime.GuardExactRoute(ctx, false, runtime.ExpectedSocketPath); err != nil {
 				t.Fatalf("first transaction proof: %v", err)
 			}
@@ -180,8 +180,8 @@ func TestTypedMetadataMirrorRefusesServerReplacementBeforeTheNextWriteLikeUncach
 					ctx := context.Background()
 					runtime, server, paneID := newRouteIdentityFixture()
 					if scoped {
-						runtime.openRouteIdentityCache("op-mirror-drift")
-						defer runtime.closeRouteIdentityCache()
+						runtime.OpenRouteIdentityCache("op-mirror-drift")
+						defer runtime.CloseRouteIdentityCache()
 						if err := runtime.GuardExactRoute(ctx, false, runtime.ExpectedSocketPath); err != nil {
 							t.Fatalf("first transaction proof: %v", err)
 						}
@@ -225,7 +225,7 @@ func TestTypedMetadataMirrorRefusesServerReplacementBeforeTheNextWriteLikeUncach
 func createWindowWithBindHook(t *testing.T, cacheOff bool, after func(*callBudgetFixture)) (callBudgetFixture, createDriftOutcome, int) {
 	t.Helper()
 	fixture := newCallBudgetFixture(t, 1)
-	fixture.create.runtime.routeIdentityDisabled = cacheOff
+	fixture.create.runtime.RouteIdentityDisabled = cacheOff
 	bindEnd := -1
 	bind := fixture.create.bindExplicitRuntime
 	fixture.create.bindExplicitRuntime = func(ctx context.Context) error {
@@ -356,7 +356,7 @@ func TestCreateLeaseClearReusesTheCommitProofAndReprovesAfterItsWrite(t *testing
 			t.Parallel()
 			run := func(cacheOff bool) (createDriftOutcome, string) {
 				f := newCallBudgetFixture(t, 1)
-				f.create.runtime.routeIdentityDisabled = cacheOff
+				f.create.runtime.RouteIdentityDisabled = cacheOff
 				var warnings strings.Builder
 				f.create.runtime.Warn = &warnings
 				f.create.runtime.AfterGuardedWrite = func() {

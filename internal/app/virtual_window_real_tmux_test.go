@@ -50,8 +50,8 @@ func TestVirtualWindowRequestedPaneRealTmux(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-			command.runtime.executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
+			command.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
+			command.runtime.Executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
 			command.agents = virtualTmuxTestLauncher{newFakeAgentLauncher()}
 			args := []string{"pane", "--project", "uid:" + project.Metadata.UID, "--window", "uid:" + project.Spec.PrimaryWindowRef}
 			if agent {
@@ -151,8 +151,8 @@ func TestOpenAttachVirtualWindowStartsMissingServerRealTmux(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			create.runtime.configPath = configPath
-			create.runtime.executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
+			create.runtime.ConfigPath = configPath
+			create.runtime.Executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
 			verb.switcher.managedStopStore = store.store()
 			verb.switcher.materializeVirtualWindow = func(_ context.Context, uid string) (virtualWindowShellMaterialization, error) {
 				result, err := create.materializeVirtualShellResult(uid)
@@ -214,8 +214,8 @@ func TestVirtualWindowMaterializeExitAndFocusAgainRealTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-	create.runtime.executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
+	create.reconciler.DiscoverRoots = func() ([]string, error) { return nil, nil }
+	create.runtime.Executable = func() (string, error) { return "", errors.New("fixture has no supervisor binary") }
 	_, _, err = runRoute(t, create, "pane", "--project", "uid:"+project.Metadata.UID, "--window", "uid:"+windowUID, "--", "/bin/sh")
 	if err != nil {
 		t.Fatal(err)

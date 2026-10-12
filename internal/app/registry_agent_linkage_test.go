@@ -89,10 +89,10 @@ func TestReconcileGivesEveryLiveAgentPaneAnAgentAndAnAgentColumn(t *testing.T) {
 	secondAgent := addLivePane(tmux, window, "claude", aiPaneOptions("claude", "sess-2"))
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -164,12 +164,12 @@ func TestAutomaticReconcilePreservesCanonicalShellWithGenericAgentMarker(t *test
 
 	registryBefore, tmuxBefore := store.registry.Clone(), tmux.state()
 	reconciler := reconcileFixtureReconciler(root, "alpha")(tmux, inttmux.NewClient(tmux))
-	reconciler.refuseForeign = true
+	reconciler.RefuseForeign = true
 	// A production pass records the server its route verified; this one
 	// observes the fixture's server, so the seeded projection stays converged.
-	reconciler.sessionSocketPath = func() string { return tmux.socketPath }
+	reconciler.SessionSocketPath = func() string { return tmux.socketPath }
 	for pass := 1; pass <= 2; pass++ {
-		if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-canonical-shell"); err != nil {
+		if err := reconciler.Reconcile(context.Background(), &store.registry, store.mutator(), "op-canonical-shell"); err != nil {
 			t.Fatalf("automatic reconcile pass %d: %v", pass, err)
 		}
 		if !reflect.DeepEqual(registryBefore, store.registry) || tmux.state() != tmuxBefore || tmuxMutationCallCount(tmux) != 0 {
@@ -198,17 +198,17 @@ func TestAgentLinkageIsIdempotentAcrossPasses(t *testing.T) {
 	addLivePane(tmux, session.windows[0], "claude", aiPaneOptions("claude", "sess-1"))
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 	mutator := fixtureMutator()
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	afterFirst := registry.Clone()
 	tmuxAfterFirst := tmux.state()
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if !reflect.DeepEqual(registry, afterFirst) {
@@ -276,10 +276,10 @@ func TestAgentLinkageNeedsProjmuxAuthorshipNotACommandName(t *testing.T) {
 			pane := addLivePane(tmux, session.windows[0], tt.command, tt.opts)
 
 			reconciler := newTestReconciler(tmux, []string{root})
-			reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+			reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 			registry := driftedRegistry(t, root)
 
-			if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+			if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
 
@@ -315,7 +315,7 @@ func TestReconcileToleratesAnAgentLinkItCannotComplete(t *testing.T) {
 	agentPane := addLivePane(tmux, session.windows[0], "claude", aiPaneOptions("claude", "sess-1"))
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
 	mutator := fixtureMutator()
@@ -326,7 +326,7 @@ func TestReconcileToleratesAnAgentLinkItCannotComplete(t *testing.T) {
 		return coremetadata.NewUID(kind)
 	}
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("a failed agent link failed the whole reconcile: %v", err)
 	}
 	if len(registry.Agents) != 0 {
@@ -363,10 +363,10 @@ func TestLinkedAgentGoesOfflineWhenItsPaneDiesAndStaysQueryable(t *testing.T) {
 	addLivePane(tmux, window, "claude", aiPaneOptions("claude", "sess-1"))
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 
-	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if len(registry.Agents) != 1 {
@@ -426,11 +426,11 @@ func TestALinkedPaneJoinsTheManagedPaneLifecycle(t *testing.T) {
 	addLivePane(tmux, window, "claude", aiPaneOptions("claude", "sess-1"))
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
+	reconciler.ObserveLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
 	mutator := fixtureMutator()
 
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if len(registry.Agents) != 1 {
@@ -441,7 +441,7 @@ func TestALinkedPaneJoinsTheManagedPaneLifecycle(t *testing.T) {
 
 	// The pane exits and a later mutation route reconciles.
 	window.panes = window.panes[:len(window.panes)-1]
-	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+	if err := reconciler.Reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 

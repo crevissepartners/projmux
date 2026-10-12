@@ -1,7 +1,5 @@
 package app
 
-import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
 import (
 	"context"
 	"go/ast"
@@ -12,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const routeIdentityPaneUID = "pan-route-identity"
@@ -358,16 +357,16 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 		{
 			name: "transaction end",
 			trigger: func(runtime *materializer, _ *fakeTmux, _ string) {
-				runtime.closeRouteIdentityCache()
-				runtime.openRouteIdentityCache("op-next")
+				runtime.CloseRouteIdentityCache()
+				runtime.OpenRouteIdentityCache("op-next")
 			},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			runtime, server, paneID := newRouteIdentityFixture()
-			runtime.openRouteIdentityCache("op-trigger")
-			defer runtime.closeRouteIdentityCache()
+			runtime.OpenRouteIdentityCache("op-trigger")
+			defer runtime.CloseRouteIdentityCache()
 			if err := unsetLegacyTopic(runtime, server, paneID); err != nil {
 				t.Fatalf("warm transaction proof: %v", err)
 			}
@@ -411,8 +410,8 @@ func TestMaterializerRouteGuardReprovesIdentityAfterEveryGuardedWrite(t *testing
 		t.Helper()
 		runtime, server, paneID := newRouteIdentityFixture()
 		if open {
-			runtime.openRouteIdentityCache("op-count")
-			defer runtime.closeRouteIdentityCache()
+			runtime.OpenRouteIdentityCache("op-count")
+			defer runtime.CloseRouteIdentityCache()
 		}
 		server.calls = nil
 		for range actions {
@@ -537,8 +536,8 @@ func TestCachedRouteGuardRefusalsKeepTheirErrorFamily(t *testing.T) {
 			refuse := func(open bool) (string, []string, runtimeRouteIdentityStats) {
 				runtime, server, paneID := newRouteIdentityFixture()
 				if open {
-					runtime.openRouteIdentityCache("op-refusal")
-					defer runtime.closeRouteIdentityCache()
+					runtime.OpenRouteIdentityCache("op-refusal")
+					defer runtime.CloseRouteIdentityCache()
 				}
 				test.arrange(server)
 				server.calls = nil
@@ -570,8 +569,8 @@ func TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof(t *testing.T) {
 	t.Parallel()
 
 	runtime, server, paneID := newRouteIdentityFixture()
-	runtime.openRouteIdentityCache("op-stale")
-	defer runtime.closeRouteIdentityCache()
+	runtime.OpenRouteIdentityCache("op-stale")
+	defer runtime.CloseRouteIdentityCache()
 	if err := unsetLegacyTopic(runtime, server, paneID); err != nil {
 		t.Fatalf("warm transaction proof: %v", err)
 	}
@@ -601,7 +600,7 @@ func TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof(t *testing.T) {
 	}
 
 	// A full proof detects the stale cache with the uncached wording.
-	gotGuard := runtime.revalidatedTargetRouteGuard(action)(context.Background())
+	gotGuard := runtime.RevalidatedTargetRouteGuard(action)(context.Background())
 	if gotGuard == nil || gotGuard.Error() != wantGuard.Error() {
 		t.Fatalf("full proof over stale cache = %v, want %v", gotGuard, wantGuard)
 	}
@@ -631,15 +630,15 @@ func TestSplitLayoutRevalidationNeverReusesTransactionIdentity(t *testing.T) {
 	t.Parallel()
 
 	runtime, server, paneID := newRouteIdentityFixture()
-	runtime.openRouteIdentityCache("op-layout")
-	defer runtime.closeRouteIdentityCache()
+	runtime.OpenRouteIdentityCache("op-layout")
+	defer runtime.CloseRouteIdentityCache()
 	if err := unsetLegacyTopic(runtime, server, paneID); err != nil {
 		t.Fatalf("warm transaction proof: %v", err)
 	}
 	action := MaterializeMutationAction(mutationWriteLayout, runtime.BoundMutationTarget("pane", paneID, routeIdentityPaneUID),
 		"exact layout", "Pane size", "-t", paneID, "-x", "40")
 	start := len(server.calls)
-	if err := runtime.revalidatedTargetRouteGuard(action)(context.Background()); err != nil {
+	if err := runtime.RevalidatedTargetRouteGuard(action)(context.Background()); err != nil {
 		t.Fatalf("revalidated guard: %v", err)
 	}
 	if reads := routeIdentityReads(server.calls[start:]); reads != 4 {
@@ -767,7 +766,7 @@ func fakeTmuxPaneSet(tmux *fakeTmux) []string {
 func runCreateUnderDrift(t *testing.T, scenario createDriftScenario, cacheOff bool, driftAfter int) createDriftOutcome {
 	t.Helper()
 	create, store, tmux := scenario.build(t)
-	create.runtime.routeIdentityDisabled = cacheOff
+	create.runtime.RouteIdentityDisabled = cacheOff
 	outcome := createDriftOutcome{guardedWrite: map[int]string{}}
 	start := len(tmux.calls)
 	create.runtime.AfterGuardedWrite = func() {
@@ -854,7 +853,7 @@ func TestRouteIdentityCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *test
 		store := newFakeResourceStore(t)
 		tmux := newFakeTmux()
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
-		create.runtime.routeIdentityDisabled = cacheOff
+		create.runtime.RouteIdentityDisabled = cacheOff
 		var warnings strings.Builder
 		create.runtime.Warn = &warnings
 		var got result
@@ -862,8 +861,8 @@ func TestRouteIdentityCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *test
 		// The final reconcile pass starts after every guarded write and its
 		// post-effect proof, and it issues no guarded write before commit. Its
 		// opening live-session read is therefore the no-write window.
-		live := create.reconciler.liveSessions
-		create.reconciler.liveSessions = func(ctx context.Context) (map[string]bool, error) {
+		live := create.reconciler.LiveSessions
+		create.reconciler.LiveSessions = func(ctx context.Context) (map[string]bool, error) {
 			got.liveCalls++
 			if got.liveCalls == flipAt {
 				tmux.serverPID = "5252"
