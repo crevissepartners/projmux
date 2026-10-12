@@ -575,7 +575,7 @@ func (r *processAgentCreateResult) waitProcessAgentWithAttention(ctx context.Con
 	var attentionSnapshot processhost.Snapshot
 	attentionSeen := false
 	startAttention := func() {
-		if attention == nil || attentionDone != nil {
+		if attention == nil || attentionDone != nil || ctx.Err() != nil {
 			return
 		}
 		attentionDirty, retryAttention = false, nil

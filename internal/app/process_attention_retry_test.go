@@ -260,3 +260,28 @@ func TestProcessOwnedControlResponseFailureStopsProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessOwnedAttentionDoesNotStartAfterOwnerCancellation(t *testing.T) {
+	store, b := sessionBindingFixture(t, aiModeCodex)
+	h := &attentionRetryHandle{newGenerationOwnedHandle(store, aiModeCodex, b)}
+	owner := &processAgentCreateResult{Binding: b, Handle: h, Provider: aiModeCodex, registryPath: store.Path()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var attempts atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		_, err := owner.waitProcessAgentWithAttention(ctx, func(processhost.Snapshot) error { cancel(); return nil }, func() error { attempts.Add(1); return nil })
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("owner cancellation did not finish")
+	}
+	if attempts.Load() != 0 || h.stops.Load() != 1 {
+		t.Fatalf("attention attempts=%d stops=%d", attempts.Load(), h.stops.Load())
+	}
+}
