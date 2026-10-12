@@ -119,11 +119,18 @@ func (claim *deferredProcessClaim) markInflight(ref string) error {
 		return err
 	}
 	defer unlock()
-	if err = claim.command.checkDeferredClaim(claim.record.Agent, claim); err != nil {
-		return err
-	}
 	record, err := readDeferredClaim(claim.path)
 	if err != nil {
+		return err
+	}
+	if ref == "" {
+		// Stop prevents birth, but the same exact owner must still clear a
+		// cancelled pre-birth selection or a settled delivery witness. This
+		// cannot admit input, clear StopRequested, or touch a replacement claim.
+		if !deferredClaimIdentityEqual(record, claim.record) || !deferredClaimLive(record) {
+			return deferredRefused("deferred claim changed before inflight cleanup")
+		}
+	} else if err = claim.command.checkDeferredClaim(claim.record.Agent, claim); err != nil {
 		return err
 	}
 	if ref != "" && record.Inflight != "" {

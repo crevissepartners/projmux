@@ -130,13 +130,21 @@ func deferredClaimOwned() error {
 	return fmt.Errorf("%s: %w: deferred process Agent has a live claimant", processResumeOwned, processhost.ErrResumeRefused)
 }
 
+// Inflight and StopRequested are mutable witnesses, not claim identity.
+// Cleanup may clear an inflight witness after Stop, while birth stays refused.
+func deferredClaimIdentityEqual(a, b deferredClaimRecord) bool {
+	a.Inflight, b.Inflight = "", ""
+	a.StopRequested, b.StopRequested = false, false
+	return a == b
+}
+
 func (c *agentCommand) checkDeferredClaim(uid string, claim *deferredProcessClaim) error {
 	record, err := readDeferredClaim(c.deferredClaimPath(uid))
 	if err != nil {
 		return err
 	}
 	if claim != nil {
-		if claim.command != c || claim.record.Agent != uid || record.Nonce != claim.record.Nonce || record.Binding != claim.record.Binding || record.Process != claim.record.Process || record.Provider != claim.record.Provider || record.Session != claim.record.Session || record.Thread != claim.record.Thread || record.Detached != claim.record.Detached || record.StopRequested || !deferredClaimLive(record) {
+		if claim.command != c || claim.record.Agent != uid || !deferredClaimIdentityEqual(record, claim.record) || record.StopRequested || !deferredClaimLive(record) {
 			return fmt.Errorf("%s: %w: deferred claim changed", processResumeRefused, processhost.ErrResumeRefused)
 		}
 	} else if deferredClaimLive(record) {

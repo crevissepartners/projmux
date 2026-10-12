@@ -39,6 +39,15 @@ func cleanupDetachedResume(t *testing.T, f processCreateCLI, ref string) {
 	})
 }
 
+// Ownership output precedes asynchronous snapshot persistence. Resume tests
+// retire a confirmed conversation, rather than race EOF against initial init.
+func awaitDetachedInitialConversation(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
+	t.Helper()
+	awaitProcessResumeRecord(t, ctx, f, ref, func(r *coremetadata.ProcessSessionRecord) bool {
+		return r.ConnectionID != "" && (r.SessionID != "" || r.ThreadID != "") && r.TurnID == ""
+	})
+}
+
 func TestDetachedProcessResumeSameConversationCLI(t *testing.T) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
@@ -49,6 +58,7 @@ func TestDetachedProcessResumeSameConversationCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first dialogue"))
+			awaitDetachedInitialConversation(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			cleanupDetachedResume(t, f, first.ref)
@@ -113,6 +123,7 @@ func TestDetachedProcessResumeClaimStopWithoutChildCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			awaitDetachedInitialConversation(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old, _ := f.store.LoadReadOnly()
 			a, _ := old.Agent(strings.TrimPrefix(first.ref, "uid:"))
@@ -172,6 +183,7 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			awaitDetachedInitialConversation(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source"))
@@ -274,6 +286,7 @@ func TestDetachedProcessResumeFailurePreservesConversationCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			awaitDetachedInitialConversation(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old, _ := f.store.LoadReadOnly()
 			for _, args := range [][]string{{"agent", "resume", first.ref, "--detach", "-o", "pane-id"}, {"agent", "resume", first.ref, "--detach", "-o", "invalid"}, {"agent", "resume", first.ref, "--detach", "--dialogue-reply-only"}, {"agent", "resume", first.ref, "--detach", "--wait-for-peer", "--", "invalid"}} {
@@ -458,6 +471,7 @@ func TestDetachedProcessResumeClaimOutputRollbackCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			awaitDetachedInitialConversation(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old, err := f.store.LoadReadOnly()
 			if err != nil {
@@ -492,6 +506,7 @@ func TestDetachedProcessResumeStaleClaimStopCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "codex", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+	awaitDetachedInitialConversation(t, ctx, f, first.ref)
 	first.shutdown(t)
 	cleanupDetachedResume(t, f, first.ref)
 	detachedResumeCLI(t, ctx, f, "agent", "resume", first.ref, "--detach", "--wait-for-peer")
