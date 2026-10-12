@@ -26,7 +26,7 @@ func TestVirtualWindowStatusAndOpenPreserveProcessChildren(t *testing.T) {
 				}
 				view := Build(Input{Graph: resourcegraph.Resolve(reg, inv)})
 				row, ok := view.Row("uid:win-main")
-				if !ok || row.Status != StatusVirtual || row.Live || row.Active || row.Runtime != nil || !reflect.DeepEqual(row.Actions, []Action{ActionOpen, ActionDelete}) {
+				if !ok || row.Status != resourcegraph.StatusUnknown || row.Live || row.Active || row.Runtime != nil || !reflect.DeepEqual(row.Actions, []Action{ActionDelete}) {
 					t.Fatalf("virtual Window = %+v", row)
 				}
 				child, ok := view.Row("uid:agent-one")

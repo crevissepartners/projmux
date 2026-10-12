@@ -248,7 +248,14 @@ func (v registryNavigationView) actionEntries(row registryview.Row, socket strin
 func (v registryNavigationView) actionEntry(row registryview.Row, action registryview.Action, socket string, insideTmux bool) intpickercompat.Entry {
 	switch action {
 	case registryview.ActionOpen:
-		if row.Kind == registryview.RowKindWindow && row.Status == registryview.StatusVirtual {
+		if row.Kind == registryview.RowKindProject && row.IsLive() && row.Runtime == nil {
+			if insideTmux {
+				return runtimeUnavailableAction(v.locale, "Open",
+					"unavailable - already inside a tmux client; open the Project from the Projects list")
+			}
+			return intpickercompat.Entry{Label: settingsLabelLocale(v.locale, settingsGlyphOpen, settingsColorType, "Open", row.Name), Value: navActionStart}
+		}
+		if row.Kind == registryview.RowKindWindow && (row.Status == registryview.StatusVirtual || (row.IsLive() && row.Runtime == nil)) {
 			if !insideTmux {
 				text, _ := i18n.NewLocalizer(v.locale).Text(i18n.KeyWindowOpenRequiresClient)
 				return runtimeUnavailableAction(v.locale, "Open", text.String()+" · projmux attach project uid:"+registryNavigationProjectUID(v.view, row))

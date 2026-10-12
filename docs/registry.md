@@ -33,6 +33,35 @@ its process Agents through their existing owner-host Stop and Wait path.
 `reconcile` and `doctor` do not classify a virtual Window's absent tmux
 projection as drift or unrealized topology.
 
+## Derived Window and Project status
+
+Window and Project status is read-time evidence, not a stored lifecycle phase.
+An exact tmux binding or a live descendant Pane (tmux or process) makes the
+container `live`. A failed process observation contributes `unknown` only to
+containers with a declared process descendant and no known live runtime.
+With no live evidence, successful empty/offline observations yield `offline`;
+failed tmux observations still yield `unknown`. `missing-root` retains priority.
+Agent phase alone never proves that a process is running.
+
+A Window's `live` boolean adds live descendant evidence to its existing tmux
+liveness. Its `active` boolean
+still comes only from the bound tmux Window's active bit, and its `runtime`
+remains a tmux coordinate; a process-only live Window has no such coordinate.
+A bound Window retains `live=true` (and its observed `active` bit) even when
+`missing-root` takes priority in status.
+
+Navigation uses tmux presence separately from aggregate status. A live
+process-only Project or Window offers `open,delete`, not `start,delete`.
+Open reuses the existing Project attach or virtual Window focus route to
+materialize tmux when eligible. Unknown offers only `delete`; missing roots
+require `rebind`. Agent and Pane state and actions retain their existing rules.
+
+For a virtual Window with successfully observed offline process children,
+registry navigation retains the existing `virtual` display and `open,delete`,
+while CLI `get windows` reports `offline`. Live process children make both
+surfaces `live`; failed process observations make both `unknown` with only
+`delete`.
+
 ## Process evidence
 
 `get pane -o json` and `get panes -o json` expose the stored model. The same

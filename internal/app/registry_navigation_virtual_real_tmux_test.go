@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 )
 
-func TestRegistryNavigationOpenVirtualWindowMovesRealClient(t *testing.T) {
+func TestRegistryNavigationOpenHeadlessLiveWindowMovesRealClient(t *testing.T) {
 	liveguard.RequireActive(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
@@ -72,8 +73,15 @@ func TestRegistryNavigationOpenVirtualWindowMovesRealClient(t *testing.T) {
 		}
 		return create.materializeVirtualShell(uid)
 	}
-	row, ok := registryview.Build(registryview.Input{Graph: resourcegraph.Resolve(store.registry, resourcegraph.Inventory{})}).Row("uid:" + value.Spec.PrimaryWindowRef)
-	if !ok || !row.Allows(registryview.ActionOpen) || row.Status != registryview.StatusVirtual {
+	windowBefore, _ := store.registry.Window(value.Spec.PrimaryWindowRef)
+	processPane, _ := store.registry.Pane(windowBefore.Spec.AnchorPaneRef)
+	binding := processPane.Status.ProcessSession.Binding
+	activation := coremetadata.ProcessActivation{Binding: binding, HostProcess: coremetadata.ProcessIdentity{PID: 987651, OwnerUID: uint32(os.Getuid()), Start: "host-birth"}, Child: coremetadata.ProcessIdentity{PID: 987652, OwnerUID: uint32(os.Getuid()), Start: "child-birth"}}
+	processPane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, Process: &activation, AgentUID: binding.AgentUID, Generation: binding.Generation, OperationID: binding.OperationID}
+	key := resourcegraph.ProcessKey{Host: binding.HostInstanceID, Pane: processPane.Metadata.UID, Generation: binding.Generation}
+	inventory := resourcegraph.Inventory{Transport: resourcegraph.Transport{Kind: resourcegraph.TransportSocketPath, Value: server.socket}, Processes: resourcegraph.ProcessInventory{Declared: []resourcegraph.ProcessKey{key}, Observed: []resourcegraph.ProcessObservation{{Key: key, Status: resourcegraph.StatusLive}}}}
+	row, ok := registryview.Build(registryview.Input{Graph: resourcegraph.Resolve(store.registry, inventory)}).Row("uid:" + value.Spec.PrimaryWindowRef)
+	if !ok || !row.Allows(registryview.ActionOpen) || row.Status != resourcegraph.StatusLive {
 		t.Fatalf("row=%+v", row)
 	}
 	nav := &registryNavigationCommand{focus: focus}

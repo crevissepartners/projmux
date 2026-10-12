@@ -80,7 +80,7 @@ const (
 	ActionRuntime Action = "runtime"
 )
 
-// StatusVirtual is an intentional process-only Window, independent of tmux observation.
+// StatusVirtual marks an intentional process-only Window observed without live children.
 const StatusVirtual resourcegraph.Status = "virtual"
 
 // Row is one navigation row.
@@ -127,7 +127,7 @@ type Row struct {
 	// Role is the Pane role, shell or agent.
 	Role string `json:"role,omitempty"`
 	// Status is the runtime overlay on the exact observed host, or StatusVirtual
-	// for an intentional process-only Window.
+	// for an intentional process-only Window observed without live children.
 	Status resourcegraph.Status `json:"status"`
 	// Live and Active are independent read-time facts for Window rows. Active
 	// is exact window_active evidence, never an inference from stored metadata.
@@ -366,8 +366,8 @@ func (b *builder) projects() {
 			Status:      project.Status,
 			MissingRoot: project.MissingRoot,
 			Runtime:     project.Runtime,
-			Actions:     resourceActions(RowKindProject, project.Status, project.MissingRoot),
-			Reason:      statusReason(project.Status, project.MissingRoot),
+			Actions:     containerActions(RowKindProject, project.Status, project.MissingRoot, project.Runtime != nil),
+			Reason:      containerReason(project.Status, project.MissingRoot, project.Runtime != nil),
 		})
 		b.windows(project, projectID)
 	}
@@ -444,9 +444,9 @@ func (b *builder) windows(project resourcegraph.ProjectNode, projectID string) {
 		}
 		windowID := rowID(window.Window.Metadata.UID)
 		status := window.Status
-		actions := resourceActions(RowKindWindow, status, window.MissingRoot)
-		reason := statusReason(status, window.MissingRoot)
-		if b.registry.IsVirtualWindow(window.Window.Metadata.UID) {
+		actions := containerActions(RowKindWindow, status, window.MissingRoot, window.Runtime != nil)
+		reason := containerReason(status, window.MissingRoot, window.Runtime != nil)
+		if b.registry.IsVirtualWindow(window.Window.Metadata.UID) && status != resourcegraph.StatusLive && status != resourcegraph.StatusUnknown {
 			status = StatusVirtual
 			if !window.MissingRoot {
 				reason = "a process anchor intentionally has no tmux Window"
@@ -646,7 +646,20 @@ func (b *builder) runtimeLink() {
 	})
 }
 
-// resourceActions decides eligibility from resource state.
+// containerActions keeps navigation separate from aggregate liveness. Open can
+// materialize tmux for an already running process-only container; start is for a
+// container observed offline with no tmux runtime. Unknown never offers either.
+func containerActions(kind RowKind, status resourcegraph.Status, missingRoot, hasTmux bool) []Action {
+	if missingRoot || status == resourcegraph.StatusMissingRoot || status == resourcegraph.StatusUnknown {
+		return resourceActions(kind, status, missingRoot)
+	}
+	if hasTmux || status == resourcegraph.StatusLive {
+		return []Action{ActionOpen, ActionDelete}
+	}
+	return []Action{ActionStart, ActionDelete}
+}
+
+// resourceActions decides eligibility from resource state for leaf rows.
 //
 // There are exactly three inputs and no fourth: the kind, the row's observed
 // status, and whether the owning Project lost its root. Which host answered and
@@ -674,6 +687,13 @@ func resourceActions(kind RowKind, status resourcegraph.Status, missingRoot bool
 	default:
 		return []Action{revive, ActionDelete}
 	}
+}
+
+func containerReason(status resourcegraph.Status, missingRoot, hasTmux bool) string {
+	if status == resourcegraph.StatusLive && !missingRoot && !hasTmux {
+		return "a live descendant Pane was observed"
+	}
+	return statusReason(status, missingRoot)
 }
 
 // statusReason states, in one clause, why a row carries the status it does.

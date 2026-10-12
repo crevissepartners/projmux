@@ -176,3 +176,56 @@ func (r *resolver) projectProcesses() {
 		}
 	}
 }
+
+// aggregateContainerStatus adds descendant execution evidence without assigning
+// a tmux coordinate to a process host. Missing roots keep their existing priority;
+// a known live runtime proves liveness even if another observation failed. Only
+// declared process children contribute process uncertainty to their ancestors.
+func (r *resolver) aggregateContainerStatus() {
+	type evidence struct{ live, unknown bool }
+	windows := map[string]evidence{}
+	projects := map[string]evidence{}
+	for _, pane := range r.panes {
+		add := func(previous evidence) evidence {
+			previous.live = previous.live || pane.Status == StatusLive
+			previous.unknown = previous.unknown || (pane.Process != nil && pane.Status == StatusUnknown)
+			return previous
+		}
+		windows[pane.WindowUID] = add(windows[pane.WindowUID])
+		if pane.ProjectUID != "" {
+			projects[pane.ProjectUID] = add(projects[pane.ProjectUID])
+		}
+	}
+	derive := func(status Status, e evidence) Status {
+		switch {
+		case status == StatusMissingRoot:
+			return status
+		case status == StatusLive || e.live:
+			return StatusLive
+		case e.unknown:
+			return StatusUnknown
+		default:
+			return status
+		}
+	}
+	for i := range r.windows {
+		node := &r.windows[i]
+		if node.Class != ClassConflict {
+			node.Status = derive(node.Status, windows[node.Window.Metadata.UID])
+		}
+		if node.Status == StatusLive {
+			node.Live = true
+		}
+		if node.Live && node.ProjectUID != "" {
+			e := projects[node.ProjectUID]
+			e.live = true
+			projects[node.ProjectUID] = e
+		}
+	}
+	for i := range r.projects {
+		node := &r.projects[i]
+		if node.Class != ClassConflict {
+			node.Status = derive(node.Status, projects[node.Project.Metadata.UID])
+		}
+	}
+}
