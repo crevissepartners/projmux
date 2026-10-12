@@ -180,7 +180,7 @@ func TestResolveProjectsExactWindowLiveAndActiveAsOrthogonalFacts(t *testing.T) 
 		t.Fatalf("offline Window projection = status=%q live=%t active=%t", offline.Status, offline.Live, offline.Active)
 	}
 	missing := windowNode(t, graph, "win-gone-1")
-	if missing.Status != StatusMissingRoot || missing.Live || !missing.Active {
+	if missing.Status != StatusMissingRoot || !missing.Live || !missing.Active {
 		t.Fatalf("missing-root live Window projection = status=%q live=%t active=%t", missing.Status, missing.Live, missing.Active)
 	}
 	if err := graph.ValidateWindowRuntimeState(); err != nil {

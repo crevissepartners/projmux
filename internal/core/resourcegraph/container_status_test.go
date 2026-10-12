@@ -110,3 +110,18 @@ func TestContainerStatusOfflineProcessAndMissingRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestContainerStatusMissingRootPreservesTmuxLiveness(t *testing.T) {
+	reg := testRegistry(t)
+	reg.Projects[0].Status.Conditions = reg.Projects[2].Status.Conditions
+	inv := liveInventory(HostModeAppOwned)
+	inv.Windows[0].Active = true
+	graph := Resolve(reg, inv)
+	node := windowNode(t, graph, "win-alpha-1")
+	if node.Status != StatusMissingRoot || !node.Live || !node.Active || node.Runtime == nil {
+		t.Fatalf("missing root erased tmux facts: %+v", node)
+	}
+	if err := graph.ValidateWindowRuntimeState(); err != nil {
+		t.Fatal(err)
+	}
+}

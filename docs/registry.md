@@ -43,11 +43,12 @@ With no live evidence, successful empty/offline observations yield `offline`;
 failed tmux observations still yield `unknown`. `missing-root` retains priority.
 Agent phase alone never proves that a process is running.
 
-A Window's `live` boolean follows its derived status. Its `active` boolean
+A Window's `live` boolean adds live descendant evidence to its existing tmux
+liveness. Its `active` boolean
 still comes only from the bound tmux Window's active bit, and its `runtime`
 remains a tmux coordinate; a process-only live Window has no such coordinate.
-A bound active Window can retain `active=true` while `missing-root` makes its
-status non-live.
+A bound Window retains `live=true` (and its observed `active` bit) even when
+`missing-root` takes priority in status.
 
 Navigation uses tmux presence separately from aggregate status. A live
 process-only Project or Window offers `open,delete`, not `start,delete`.

@@ -213,7 +213,9 @@ func (r *resolver) aggregateContainerStatus() {
 		if node.Class != ClassConflict {
 			node.Status = derive(node.Status, windows[node.Window.Metadata.UID])
 		}
-		node.Live = node.Status == StatusLive
+		if node.Status == StatusLive {
+			node.Live = true
+		}
 		if node.Live && node.ProjectUID != "" {
 			e := projects[node.ProjectUID]
 			e.live = true
