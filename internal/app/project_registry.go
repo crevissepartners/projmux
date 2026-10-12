@@ -221,7 +221,7 @@ func (r *registryReconciler) sharedGuardedWrites() (uint64, bool) {
 	if r.typedMirror == nil || r.typedMirror.scope == nil {
 		return 0, false
 	}
-	return r.typedMirror.scope.guardedWrites, true
+	return r.typedMirror.scope.GuardedWrites, true
 }
 
 // unwrittenPassSnapshot returns this pass's snapshot only when it provably

@@ -387,12 +387,12 @@ func registryCreatorPane(working *coremetadata.Registry, paneID string) (string,
 // It returns that Pane's process id.
 func (c *createCommand) confirmCreatorAnchor(ctx context.Context, paneID string) (int, string) {
 	runtime := c.runtime
-	if runtime == nil || runtime.runner == nil || strings.TrimSpace(runtime.expectedSocketPath) == "" ||
-		runtime.routeAuthority == nil || runtime.routeAuthority.Class != runtimeMutationRouteApp ||
-		strings.TrimSpace(runtime.routeAuthority.ServerPID) == "" {
+	if runtime == nil || runtime.Runner == nil || strings.TrimSpace(runtime.ExpectedSocketPath) == "" ||
+		runtime.RouteAuthority == nil || runtime.RouteAuthority.Class != runtimeMutationRouteApp ||
+		strings.TrimSpace(runtime.RouteAuthority.ServerPID) == "" {
 		return 0, creatorSkipServerUnproven
 	}
-	out, err := runtime.routedRunner().Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
+	out, err := runtime.RoutedRunner().Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
 		tmuxRowFormat("#{socket_path}", "#{pid}", "#{pane_id}", "#{pane_pid}"))
 	if err != nil {
 		return 0, creatorSkipAnchorQueryFailed
@@ -402,7 +402,7 @@ func (c *createCommand) confirmCreatorAnchor(ctx context.Context, paneID string)
 		return 0, creatorSkipAnchorQueryFailed
 	}
 	row := rows[0]
-	if row[0] != runtime.expectedSocketPath || row[1] != runtime.routeAuthority.ServerPID {
+	if row[0] != runtime.ExpectedSocketPath || row[1] != runtime.RouteAuthority.ServerPID {
 		return 0, creatorSkipServerMismatch
 	}
 	if row[2] != paneID {

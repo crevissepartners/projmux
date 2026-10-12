@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -492,15 +494,7 @@ func observeExactManagedRuntimeStopTarget(ctx context.Context, runner tmuxComman
 
 // guardPrintedRuntimeMutationRouteWithIdentity is the same guard, allowed to
 // reuse an identity this transaction already proved against tmux.
-func guardPrintedRuntimeMutationRouteWithIdentity(
-	ctx context.Context,
-	runner tmuxCommandRunner,
-	route runtimeMutationRoute,
-	action plannedRuntimeMutation,
-	identity *runtimeRouteIdentityCache,
-) error {
-	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, false, identity)
-}
+var guardPrintedRuntimeMutationRouteWithIdentity = mutationruntime.GuardPrintedRuntimeMutationRouteWithIdentity
 
 // guardPrintedRuntimeMutationRouteBeforeMarkerWrite is deliberately limited to
 // the route-marker verb. It keeps the printable/execution tuple checks exact,

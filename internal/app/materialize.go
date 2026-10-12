@@ -1,16 +1,17 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -20,15 +21,6 @@ import (
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
-
-// sessionMaterializer is the observation half of the persistent runtime. The
-// concrete tmux Client also implements persistentSessionLifecycle below: it
-// prepares and completes the public hook contract, while this package alone
-// plans and executes the managed new-session mutation.
-type sessionMaterializer interface {
-	SessionExists(ctx context.Context, sessionName string) (bool, error)
-	EnsureSession(ctx context.Context, sessionName, cwd string) error
-}
 
 type persistentSessionLifecycle interface {
 	PreparePersistentSessionCreate(context.Context, string, string, string, map[string]string) (inttmux.PersistentSessionCreateRequest, bool, error)
@@ -40,36 +32,36 @@ type sessionStartupFinalizer interface {
 	FinalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd, operationMarker string) error
 }
 
-func (m *materializer) finalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd string, ledger *runtimeLedger) error {
+func (m *materializer) finalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd string, ledger *RuntimeLedger) error {
 	if !result.Created {
 		return nil
 	}
-	finalizer, ok := m.sessions.(sessionStartupFinalizer)
+	finalizer, ok := m.Sessions.(sessionStartupFinalizer)
 	if !ok {
 		return errors.New("materialize tmux session: startup finalization is unavailable")
 	}
-	action := materializeMutationAction(mutationFinalizeSession,
-		m.boundMutationTarget("session", result.SessionID, "session:"+sessionName),
-		"same create-operation lease="+ledger.operationMarker,
+	action := MaterializeMutationAction(mutationFinalizeSession,
+		m.BoundMutationTarget("session", result.SessionID, "session:"+sessionName),
+		"same create-operation lease="+ledger.OperationMarker,
 		"startup hook contract is finalized once",
-		"-t", result.SessionID, finalizeOperationEnvironment, ledger.operationMarker)
-	if err := m.runMaterializeMutation(ctx, action, func() error {
-		out, err := m.read(ctx, "show-environment", "-t", result.SessionID)
+		"-t", result.SessionID, finalizeOperationEnvironment, ledger.OperationMarker)
+	if err := m.RunMaterializeMutation(ctx, action, func() error {
+		out, err := m.ReadTmux(ctx, "show-environment", "-t", result.SessionID)
 		if err != nil {
 			return err
 		}
-		if sessionEnvironmentValue(out, createOperationEnvironment) != ledger.operationMarker {
+		if sessionEnvironmentValue(out, createOperationEnvironment) != ledger.OperationMarker {
 			return errors.New("create-operation lease changed")
 		}
 		return nil
 	}, func() error {
-		if err := finalizer.FinalizeSessionStartup(ctx, result, sessionName, cwd, ledger.operationMarker); err != nil {
+		if err := finalizer.FinalizeSessionStartup(ctx, result, sessionName, cwd, ledger.OperationMarker); err != nil {
 			return err
 		}
-		_, err := runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
+		_, err := runRuntimeMutationCommand(ctx, m.MutationRunner(action), action)
 		return err
 	}, func(ctx context.Context) (bool, error) {
-		out, err := m.read(ctx, "list-panes", "-s", "-t", result.SessionID, "-F",
+		out, err := m.ReadTmux(ctx, "list-panes", "-s", "-t", result.SessionID, "-F",
 			tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}",
 				"#{E:"+createOperationEnvironment+"}", "#{E:"+finalizeOperationEnvironment+"}"))
 		if err != nil {
@@ -79,7 +71,7 @@ func (m *materializer) finalizeSessionStartup(ctx context.Context, result intmux
 		matched := 0
 		for _, row := range rows {
 			if row[0] == result.SessionID && row[1] == result.WindowID && row[2] == result.PaneID &&
-				row[3] == ledger.operationMarker && row[4] == ledger.operationMarker {
+				row[3] == ledger.OperationMarker && row[4] == ledger.OperationMarker {
 				matched++
 			}
 		}
@@ -104,83 +96,7 @@ type liveSessionIdentity struct {
 // the tmux object still carries the same Projmux uid this operation mirrored
 // onto it. A pre-existing session, a window another operation created, and an
 // id that tmux has since recycled are all left alone.
-type runtimeLedger struct {
-	created          []runtimeObject
-	operationMarker  string
-	markedSessionIDs []string
-	// currentWindows is the transaction-local stable-UID resolution already
-	// proved by ensureProjectRuntime (or by an exact Window creation in this
-	// transaction). It lets later Pane materialization consume the same current
-	// locator without another list-windows round trip while the Registry lock is
-	// held. It is never carried across transactions.
-	currentWindows map[string]runtimeOwner
-}
-
-func newRuntimeLedger(operationID string) *runtimeLedger {
-	return newRuntimeLedgerAt(operationID, time.Now())
-}
-
-// newRuntimeLedgerAt builds the ledger with an explicit clock reading for the
-// operation marker. The create transaction passes its injected clock here so a
-// test can compare two transactions byte for byte without crossing a second
-// boundary; every other caller keeps newRuntimeLedger's wall clock.
-func newRuntimeLedgerAt(operationID string, now time.Time) *runtimeLedger {
-	return &runtimeLedger{
-		operationMarker: newCreateOperationMarkerAt(operationID, now),
-		currentWindows:  make(map[string]runtimeOwner),
-	}
-}
-
-func (l *runtimeLedger) record(kind runtimeObjectKind, id, uid string) {
-	if l == nil || strings.TrimSpace(id) == "" {
-		return
-	}
-	l.created = append(l.created, runtimeObject{Kind: kind, ID: id, UID: uid})
-}
-
-// entries returns the ledger in creation order.
-func (l *runtimeLedger) entries() []runtimeObject {
-	if l == nil {
-		return nil
-	}
-	return l.created
-}
-
-func (l *runtimeLedger) markSession(session string) {
-	if l == nil || strings.TrimSpace(session) == "" {
-		return
-	}
-	if slices.Contains(l.markedSessionIDs, session) {
-		return
-	}
-	l.markedSessionIDs = append(l.markedSessionIDs, session)
-}
-
-func (l *runtimeLedger) resetCurrentWindows() {
-	if l == nil {
-		return
-	}
-	l.currentWindows = make(map[string]runtimeOwner)
-}
-
-func (l *runtimeLedger) observeCurrentWindow(uid string, owner runtimeOwner) {
-	if l == nil || strings.TrimSpace(uid) == "" || exactTmuxHandle(owner.SessionID, "$") == "" ||
-		exactTmuxHandle(owner.WindowID, "@") == "" {
-		return
-	}
-	if l.currentWindows == nil {
-		l.currentWindows = make(map[string]runtimeOwner)
-	}
-	l.currentWindows[strings.TrimSpace(uid)] = owner
-}
-
-func (l *runtimeLedger) currentWindow(uid string) (runtimeOwner, bool) {
-	if l == nil {
-		return runtimeOwner{}, false
-	}
-	owner, ok := l.currentWindows[strings.TrimSpace(uid)]
-	return owner, ok
-}
+type RuntimeLedger = mutationruntime.RuntimeLedger
 
 // materializer turns offline Project/Window/Pane metadata into detached tmux
 // objects.
@@ -190,20 +106,10 @@ func (l *runtimeLedger) currentWindow(uid string) (runtimeOwner, bool) {
 // client or pane is focused, so the operator's view is byte-identical before
 // and after a create.
 type materializer struct {
-	runner   tmuxCommandRunner
-	mirror   intmetadata.Mirror
-	sessions sessionMaterializer
-	// target is the immutable logical route shared by runner, mirror, and
-	// sessions. Every printable action carries it and every write reobserves
-	// the server's #{socket_path} through that same route first.
-	target tmuxTransport
-	// expectedSocketPath is the exact invocation identity resolved before the
-	// plan. It closes the gap where an -L name could be retargeted between
-	// planning and execution.
-	expectedSocketPath string
-	// warn receives non-fatal rollback diagnostics. Progress and warnings are
-	// stderr-only; stdout stays empty until the operation succeeds.
-	warn io.Writer
+	mutationruntime.MaterializeRuntime
+
+	mirror intmetadata.Mirror
+
 	// executable resolves this build's own binary for the managed process
 	// supervisor a launched pane execs. Nil means os.Executable.
 	executable func() (string, error)
@@ -212,103 +118,17 @@ type materializer struct {
 	lookupEnv func(string) string
 	// configPath optionally pins the generated app tmux config in tests and
 	// embedded callers. Production resolves the same internal XDG path lazily.
-	configPath     string
-	socketName     string
-	routeAuthority *runtimeMutationRouteAuthority
-	// routeIdentity reuses, within one runtime-mutation transaction, an exact
-	// server identity this materializer already proved against tmux. It is nil
-	// outside a transaction, and a nil cache reads tmux on every guard.
-	routeIdentity *runtimeRouteIdentityCache
+	configPath string
+
 	// routeIdentityDisabled is a test seam that keeps openRouteIdentityCache
 	// from opening a cache, so every guard reads tmux as it did before reuse
 	// existed. Production leaves it false.
 	routeIdentityDisabled bool
-	// afterGuardedWrite is a test seam that runs after every guarded Apply this
-	// materializer executes. Production leaves it nil.
-	afterGuardedWrite func()
-	// identityMemo is open only while one identity-write plan runs (see
-	// scopeIdentityObservations). It is nil everywhere else.
-	identityMemo *identityObservationMemo
+
 	// paneDefaults is the default-shell/default-command pair a create read
 	// before taking the Registry lock (prefetchPaneDefaults). It is nil outside
 	// that create's transaction.
 	paneDefaults *paneDefaultsMemo
-	// guardedWrites counts every Apply and Undo that passed through
-	// guardedWriteSteps. A reader that observed tmux when the count was n knows
-	// no guarded write of ours followed while it is still n.
-	guardedWrites uint64
-}
-
-// identityObservationMemo keeps, for one identity-write plan, the latest
-// $/@/% identity-bundle observation of each target that no write of ours has
-// followed. Every guarded Apply/Undo empties it (guardedWriteSteps), so an
-// entry is never older than the previous guarded write.
-//
-// A bind or an effect reobservation may answer from any entry. A guard -- the
-// read that brackets a write -- reads tmux unless the entry was itself read by
-// a guard after the latest write: the first guard after a write always reads,
-// and the further guards of the same all-guards-before-first-write batch
-// repeat that read with no write in between, so they reuse it.
-type identityObservationMemo struct {
-	entries map[string]identityObservationEntry
-}
-
-type identityObservationEntry struct {
-	observation materializeIdentityObservation
-	guarded     bool
-}
-
-// scopeIdentityObservations opens the memo for one identity-write plan and
-// returns its close. A nested call keeps the outer scope.
-func (m *materializer) scopeIdentityObservations() func() {
-	if m == nil || m.identityMemo != nil {
-		return func() {}
-	}
-	m.identityMemo = &identityObservationMemo{entries: map[string]identityObservationEntry{}}
-	return func() { m.identityMemo = nil }
-}
-
-// forgetIdentityObservations empties the memo after a guarded write.
-func (m *materializer) forgetIdentityObservations() {
-	if m == nil || m.identityMemo == nil {
-		return
-	}
-	clear(m.identityMemo.entries)
-}
-
-// guardedWriteSteps is the materializer's guarded-write seam: every materializer
-// plan passes its steps through it on the way into executeRuntimeMutationPlan.
-// Each Apply and Undo it returns is a guarded write, and each one drops every
-// identity proof this transaction could reuse. The step's post-effect
-// reobservation, and any later guard, therefore proves the route against tmux
-// again: no guarded write relies on a proof older than the previous guarded
-// write.
-func (m *materializer) guardedWriteSteps(steps []runtimeMutationStep) []runtimeMutationStep {
-	guarded := slices.Clone(steps)
-	for i := range guarded {
-		if apply := guarded[i].Apply; apply != nil {
-			guarded[i].Apply = func(ctx context.Context) error {
-				err := apply(ctx)
-				m.guardedWrites++
-				m.invalidateRouteIdentity("guarded-write")
-				m.forgetIdentityObservations()
-				if m.afterGuardedWrite != nil {
-					m.afterGuardedWrite()
-				}
-				return err
-			}
-		}
-		if undo := guarded[i].Undo; undo != nil {
-			guarded[i].Undo = func(ctx context.Context) error {
-				err := undo(ctx)
-				m.guardedWrites++
-				m.invalidateRouteIdentity("guarded-write")
-				m.forgetIdentityObservations()
-				return err
-			}
-		}
-	}
-	return guarded
 }
 
 // openRouteIdentityCache begins one transaction's identity-reuse scope. The
@@ -319,10 +139,10 @@ func (m *materializer) openRouteIdentityCache(operationID string) {
 		return
 	}
 	if m.routeIdentityDisabled {
-		m.routeIdentity = nil
+		m.RouteIdentity = nil
 		return
 	}
-	m.routeIdentity = newRuntimeRouteIdentityCache(operationID)
+	m.RouteIdentity = newRuntimeRouteIdentityCache(operationID)
 }
 
 // closeRouteIdentityCache ends the scope. It is idempotent, and everything
@@ -331,30 +151,8 @@ func (m *materializer) closeRouteIdentityCache() {
 	if m == nil {
 		return
 	}
-	m.routeIdentity.Close()
-	m.routeIdentity = nil
-}
-
-// invalidateRouteIdentity drops every cached proof. Callers use it when the
-// route itself is re-resolved or rebound onto a different server.
-func (m *materializer) invalidateRouteIdentity(reason string) {
-	if m == nil {
-		return
-	}
-	m.routeIdentity.Invalidate(reason)
-}
-
-// exactRouteIdentityKey names the identity guardExactRouteOwnership proves when
-// it requires the logical marker. A route without a bound physical socket or a
-// captured server generation is not cacheable.
-func (m *materializer) exactRouteIdentityKey(target tmuxTransport) (runtimeRouteIdentityKey, bool) {
-	if m == nil || m.routeAuthority == nil {
-		return runtimeRouteIdentityKey{}, false
-	}
-	return runtimeRouteIdentityKeyForRoute(routeIdentityScopeExactRoute, runtimeMutationRoute{
-		Target: target, ExpectedSocketPath: m.expectedSocketPath,
-		SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
-	})
+	m.RouteIdentity.Close()
+	m.RouteIdentity = nil
 }
 
 // reproveReusedRouteIdentity bounds the window a reused proof leaves open. When
@@ -363,125 +161,14 @@ func (m *materializer) exactRouteIdentityKey(target tmuxTransport) (runtimeRoute
 // and the caller unwinds through the runtime ledger like any other failure. A
 // transaction that reused nothing issues no extra tmux call.
 func (m *materializer) reproveReusedRouteIdentity(ctx context.Context) error {
-	if m == nil || m.routeIdentity.Snapshot().Reuses == 0 {
+	if m == nil || m.RouteIdentity.Snapshot().Reuses == 0 {
 		return nil
 	}
-	m.invalidateRouteIdentity("commit-reproof")
-	if err := m.guardExactRoute(ctx, false, m.expectedSocketPath); err != nil {
+	m.InvalidateRouteIdentity("commit-reproof")
+	if err := m.GuardExactRoute(ctx, false, m.ExpectedSocketPath); err != nil {
 		return fmt.Errorf("runtime mutation plan: route identity refused commit after reused proofs: %w", err)
 	}
 	return nil
-}
-
-func (m *materializer) read(ctx context.Context, args ...string) (string, error) {
-	out, err := m.routedRunner().Run(ctx, "tmux", args...)
-	return strings.TrimSpace(string(out)), err
-}
-
-func (m *materializer) routedRunner() tmuxCommandRunner {
-	if m.expectedSocketPath != "" {
-		return m.runnerAtPhysicalSocket(m.expectedSocketPath)
-	}
-	return m.runner
-}
-
-func (m *materializer) exactMutationRoute() (tmuxTransport, string, error) {
-	target := m.target
-	if target.Flag() == "" || target.Value == "" {
-		switch runner := m.runner.(type) {
-		case explicitTmuxRunner:
-			target = runner.Target
-		case *explicitTmuxRunner:
-			target = runner.Target
-		}
-	}
-	switch target.Flag() {
-	case "-L":
-		if strings.TrimSpace(target.Value) == "" {
-			break
-		}
-		return target, "-L=" + target.Value, nil
-	case "-S":
-		if filepath.IsAbs(target.Value) {
-			target.Value = filepath.Clean(target.Value)
-			return target, "-S=" + target.Value, nil
-		}
-	}
-	return tmuxTransport{}, "", errors.New("materializer requires an exact -L socket name or absolute -S socket path")
-}
-
-func (m *materializer) boundMutationTarget(kind, id, uid string) runtimeMutationTarget {
-	_, route, _ := m.exactMutationRoute()
-	target := runtimeMutationTarget{Socket: route, PhysicalSocket: printableRuntimeMutationSocket(m.expectedSocketPath), Kind: kind, ID: id, UID: uid}
-	if m.routeAuthority != nil {
-		target.RouteAuthority = m.routeAuthority.Printable()
-	}
-	return target
-}
-
-// mutationRunner returns the execution authority printed by one action.  The
-// only action allowed to execute before a physical socket exists is the
-// create-session declaration; every later action is transported through the
-// exact absolute -S identity captured by the first post-create observation.
-func (m *materializer) mutationRunner(action plannedRuntimeMutation) tmuxCommandRunner {
-	if filepath.IsAbs(action.Target.PhysicalSocket) {
-		return m.runnerAtPhysicalSocket(action.Target.PhysicalSocket)
-	}
-	return m.runner
-}
-
-func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(context.Context) error {
-	return func(ctx context.Context) error {
-		target, _, err := m.exactMutationRoute()
-		if err != nil {
-			return err
-		}
-		if action.Target.PhysicalSocket == runtimeMutationSocketAbsentBeforeCreate {
-			if m.expectedSocketPath != "" || m.routeAuthority != nil ||
-				action.Target.Socket != target.Flag()+"="+target.Value || action.Target.RouteAuthority != "" {
-				return errors.New("materializer absent-before-create authority disagrees with printable target")
-			}
-			probe := m.runnerAtTarget(target)
-			if _, err := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}"); err != nil {
-				if inttmux.IsNoServerFailure(err) {
-					return nil
-				}
-				return fmt.Errorf("materializer absent-before-create authority is unknown: %w", err)
-			}
-			return errors.New("materializer absent-before-create server appeared after planning")
-		}
-		wantSocket := target.Flag() + "=" + target.Value
-		if action.Verb == mutationWriteRouteMarker {
-			wantSocket = "-S=" + m.expectedSocketPath
-		}
-		if m.routeAuthority == nil || action.Target.PhysicalSocket != m.expectedSocketPath ||
-			action.Target.RouteAuthority != m.routeAuthority.Printable() || action.Target.Socket != wantSocket {
-			return errors.New("materializer printable route authority disagrees with captured server generation")
-		}
-		if action.Verb == mutationWriteRouteMarker || action.Verb == mutationKillOwned {
-			probe := m.runnerAtPhysicalSocket(m.expectedSocketPath)
-			pathOut, err := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
-			if err != nil || strings.TrimSpace(string(pathOut)) != m.expectedSocketPath {
-				return errors.New("materializer printed physical socket drifted")
-			}
-			pidOut, err := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
-			if err != nil || strings.TrimSpace(string(pidOut)) != m.routeAuthority.ServerPID {
-				return errors.New("materializer printed server generation drifted")
-			}
-			if action.Verb == mutationWriteRouteMarker {
-				owned, err := probe.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
-				if err != nil || strings.TrimSpace(string(owned)) != "1" {
-					return errors.New("materializer route-marker target is not app-owned")
-				}
-			}
-			return nil
-		}
-		route := runtimeMutationRoute{
-			Target: target, ExpectedSocketPath: m.expectedSocketPath,
-			SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
-		}
-		return guardPrintedRuntimeMutationRouteWithIdentity(ctx, m.baseRunner(), route, action, m.routeIdentity)
-	}
 }
 
 // revalidatedTargetRouteGuard is targetRouteGuard for a guard whose contract is
@@ -490,258 +177,11 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 // drops any identity reused in this transaction first, so the guard always
 // reads tmux; a successful proof is recorded again for later guards.
 func (m *materializer) revalidatedTargetRouteGuard(action plannedRuntimeMutation) func(context.Context) error {
-	guard := m.targetRouteGuard(action)
+	guard := m.TargetRouteGuard(action)
 	return func(ctx context.Context) error {
-		m.invalidateRouteIdentity("pre-write-revalidation")
+		m.InvalidateRouteIdentity("pre-write-revalidation")
 		return guard(ctx)
 	}
-}
-
-func (m *materializer) runnerAtPhysicalSocket(path string) tmuxCommandRunner {
-	return m.runnerAtTarget(tmuxTransport{Kind: tmuxSocketPath, Value: filepath.Clean(path), Source: tmuxSocketPathSource})
-}
-
-func (m *materializer) runnerAtTarget(target tmuxTransport) tmuxCommandRunner {
-	return explicitTmuxRunner{Runner: m.baseRunner(), Target: target}
-}
-
-func (m *materializer) baseRunner() tmuxCommandRunner {
-	base := m.runner
-	for {
-		switch routed := base.(type) {
-		case explicitTmuxRunner:
-			base = routed.Runner
-			continue
-		case *explicitTmuxRunner:
-			base = routed.Runner
-			continue
-		}
-		break
-	}
-	return base
-}
-
-func (m *materializer) guardExactRoute(ctx context.Context, allowNoServer bool, plannedPhysical ...string) error {
-	return m.guardExactRouteOwnership(ctx, allowNoServer, true, plannedPhysical...)
-}
-
-func (m *materializer) guardExactAppRoute(ctx context.Context, allowNoServer bool, plannedPhysical ...string) error {
-	return m.guardExactRouteOwnership(ctx, allowNoServer, false, plannedPhysical...)
-}
-
-func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServer, requireLogical bool, plannedPhysical ...string) error {
-	if len(plannedPhysical) == 1 {
-		planned := strings.TrimSpace(plannedPhysical[0])
-		if planned == runtimeMutationSocketAbsentBeforeCreate {
-			if !allowNoServer || m.expectedSocketPath != "" {
-				return errors.New("printed absent-before-create socket disagrees with bound materializer route")
-			}
-		} else if filepath.Clean(planned) != filepath.Clean(m.expectedSocketPath) {
-			return fmt.Errorf("printed physical socket %q disagrees with materializer route %q", planned, m.expectedSocketPath)
-		}
-	}
-	// The printable checks above are pure and always run. Only the tmux read set
-	// below is reusable, and only when this transaction already proved the exact
-	// same identity. The app-route variant is deliberately never cached: it does
-	// not read the logical marker, so it cannot answer for the full identity.
-	if requireLogical {
-		target, _, err := m.exactMutationRoute()
-		if err != nil {
-			return err
-		}
-		if key, ok := m.exactRouteIdentityKey(target); ok && m.routeIdentity.Reuse(key) {
-			return nil
-		}
-	}
-	if err := m.proveExactRouteOwnership(ctx, allowNoServer, requireLogical, plannedPhysical...); err != nil {
-		m.routeIdentity.Invalidate("exact-route-probe-error")
-		return err
-	}
-	if requireLogical {
-		// The proof may have bound the route authority, so the key is built from
-		// what was actually proved rather than from the pre-proof state.
-		if target, _, err := m.exactMutationRoute(); err == nil {
-			if key, ok := m.exactRouteIdentityKey(target); ok {
-				m.routeIdentity.Record(key)
-			}
-		}
-	}
-	return nil
-}
-
-func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServer, requireLogical bool, plannedPhysical ...string) error {
-	target, route, err := m.exactMutationRoute()
-	if err != nil {
-		return err
-	}
-	probe := m.runner
-	// physicalObservation is true only when the #{socket_path} read below goes
-	// through the exact absolute -S socket the resolved-route proof would read
-	// it through. Only then may that proof take this value instead of reading it
-	// again (see guardResolvedRuntimeMutationRouteObserved).
-	physicalObservation := false
-	if m.expectedSocketPath != "" {
-		probe = m.mutationRunner(plannedRuntimeMutation{Target: runtimeMutationTarget{PhysicalSocket: m.expectedSocketPath}})
-		physicalObservation = filepath.IsAbs(m.expectedSocketPath)
-	}
-	// With a captured server generation and that exact physical socket, the
-	// whole proof is one tmux invocation: the socket path and every value the
-	// rest of this proof compares are read together through the one runner the
-	// separate reads would each have used, with no tmux call in between. A
-	// failed sequence reports the socket-path read's text, the first read. Any
-	// other route keeps a lone socket-path read, because what follows it (a
-	// rebind or a route re-resolution) decides which runner reads the rest. So
-	// does a nested resolved-route proof that will reuse this transaction's
-	// earlier proof: it compares nothing past the socket path, so nothing more
-	// is read.
-	var folded *resolvedRouteObservation
-	var observedOut []byte
-	var observeErr error
-	if physicalObservation && m.routeAuthority != nil && !m.resolvedRouteProofWouldReuse(target, requireLogical) {
-		authority := m.routeAuthority
-		if authority.Class == runtimeMutationRouteApp && !requireLogical {
-			// The app-route variant reads the generation and the app marker only.
-			var sections []string
-			sections, observeErr = readTmuxSequence(ctx, probe, routeReadSocketPath, routeReadServerPID, routeReadAppMarker)
-			if observeErr == nil {
-				folded = &resolvedRouteObservation{Socket: sections[0], Pid: sections[1], App: sections[2]}
-			}
-		} else {
-			var read resolvedRouteObservation
-			if read, observeErr = readResolvedRouteObservation(ctx, probe, authority); observeErr == nil {
-				folded = &read
-			}
-		}
-		if observeErr == nil {
-			observedOut = []byte(folded.Socket)
-		}
-	} else {
-		observedOut, observeErr = probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
-	}
-	if observeErr != nil {
-		if allowNoServer && m.expectedSocketPath == "" && m.routeAuthority == nil && inttmux.IsNoServerFailure(observeErr) {
-			return nil
-		}
-		return fmt.Errorf("reobserve exact tmux route %s: %w", route, observeErr)
-	}
-	if len(plannedPhysical) == 1 && strings.TrimSpace(plannedPhysical[0]) == runtimeMutationSocketAbsentBeforeCreate {
-		return errors.New("materializer absent-before-create server appeared after planning")
-	}
-	observed := strings.TrimSpace(string(observedOut))
-	if !filepath.IsAbs(observed) || filepath.Clean(observed) != observed {
-		return fmt.Errorf("reobserve exact tmux route %s: socket path %q is not absolute and clean", route, observed)
-	}
-	if m.expectedSocketPath == "" {
-		// A create-session plan may begin with no server. The first successful
-		// observation after creation binds the immutable physical identity; no
-		// -L basename inference participates.
-		m.expectedSocketPath = observed
-	}
-	if m.expectedSocketPath != "" && observed != filepath.Clean(m.expectedSocketPath) {
-		return fmt.Errorf("tmux socket drifted: observed %q, planned invocation %q", observed, filepath.Clean(m.expectedSocketPath))
-	}
-	// Once the logical declaration has resolved to a physical server, every
-	// ownership read must use that exact physical authority. Reusing the -L
-	// probe here would permit an alias replacement between socket observation
-	// and the app/logical marker reads.
-	probe = m.runnerAtPhysicalSocket(m.expectedSocketPath)
-	if m.routeAuthority == nil && requireLogical {
-		bound, err := resolveExistingRuntimeMutationRoute(ctx, m.baseRunner(), target, nil)
-		if err != nil {
-			return err
-		}
-		if bound.ExpectedSocketPath != m.expectedSocketPath || bound.Authority == nil {
-			return errors.New("materializer exact route has no server-generation authority")
-		}
-		// Re-resolving the route rebinds the server generation this materializer
-		// speaks for, so every earlier proof is void.
-		m.invalidateRouteIdentity("route-re-resolution")
-		// The re-resolution issued its own reads after the socket observation
-		// above, so no observation stands in for the nested proof.
-		folded = nil
-		m.target = bound.Target
-		target = bound.Target
-		m.socketName = bound.SocketName
-		m.routeAuthority = bound.Authority
-	}
-	if m.routeAuthority != nil {
-		if m.routeAuthority.Class == runtimeMutationRouteApp && !requireLogical {
-			pid, owned := "", ""
-			if folded != nil {
-				pid, owned = folded.Pid, folded.App
-			} else {
-				// One invocation through probe; a failed sequence reports the
-				// generation read's text, the first read.
-				sections, err := readTmuxSequence(ctx, probe, routeReadServerPID, routeReadAppMarker)
-				if err != nil {
-					return errors.New("runtime mutation route: exact app server generation drifted")
-				}
-				pid, owned = sections[0], sections[1]
-			}
-			if strings.TrimSpace(pid) != m.routeAuthority.ServerPID {
-				return errors.New("runtime mutation route: exact app server generation drifted")
-			}
-			if strings.TrimSpace(owned) != "1" {
-				return errors.New("runtime mutation route: exact server is not app-owned")
-			}
-			return nil
-		}
-		// When the socket path was read above through the same exact physical
-		// socket, the same invocation also read the server generation and both
-		// markers, and the nested proof takes them all. Otherwise it reads its
-		// whole set itself, in one invocation.
-		return guardResolvedRuntimeMutationRouteObserved(ctx, m.baseRunner(), runtimeMutationRoute{
-			Target: target, ExpectedSocketPath: m.expectedSocketPath,
-			SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
-		}, false, m.routeIdentity, folded)
-	}
-	if requireLogical {
-		if err := guardRuntimeMutationServerOwnership(ctx, probe, target); err != nil {
-			return err
-		}
-	} else {
-		owned, err := probe.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
-		if err != nil {
-			return fmt.Errorf("runtime mutation route: read app ownership marker: %w", err)
-		}
-		if strings.TrimSpace(string(owned)) != "1" {
-			return errors.New("runtime mutation route: exact server is not app-owned")
-		}
-	}
-	switch target.Flag() {
-	case "-S":
-		if observed != target.Value {
-			return fmt.Errorf("tmux socket drifted: observed %q, planned %q", observed, target.Value)
-		}
-	case "-L":
-		// The logical route is proved by expectedSocketPath, which was resolved
-		// independently or bound at the first post-create observation.
-	}
-	return nil
-}
-
-// resolvedRouteProofWouldReuse reports whether the nested resolved-route proof
-// proveExactRouteOwnership hands off to would answer from the identity cache.
-// The app-route variant has no nested proof.
-func (m *materializer) resolvedRouteProofWouldReuse(target tmuxTransport, requireLogical bool) bool {
-	if m.routeAuthority.Class == runtimeMutationRouteApp && !requireLogical {
-		return false
-	}
-	key, cacheable := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, runtimeMutationRoute{
-		Target: target, ExpectedSocketPath: m.expectedSocketPath,
-		SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
-	})
-	return cacheable && m.routeIdentity.WouldReuse(key)
-}
-
-func (m *materializer) logicalSocketName(target tmuxTransport) string {
-	if strings.TrimSpace(m.socketName) != "" {
-		return strings.TrimSpace(m.socketName)
-	}
-	if target.Flag() == "-L" {
-		return target.Value
-	}
-	return ""
 }
 
 func (m *materializer) generatedAppConfigPath() (string, error) {
@@ -764,629 +204,6 @@ func (m *materializer) generatedAppConfigPath() (string, error) {
 		return "", fmt.Errorf("generated app tmux config %q is not a regular file", path)
 	}
 	return path, nil
-}
-
-func materializeMutationAction(kind runtimeMutationVerb, target runtimeMutationTarget, guard, _ string, args ...string) plannedRuntimeMutation {
-	action := newRuntimeMutation(1, kind, target)
-	bindRuntimeMutationGuard(&action, guard)
-	action.Operands = slices.Clone(args)
-	return action
-}
-
-func (m *materializer) runMutation(ctx context.Context, action plannedRuntimeMutation) ([]byte, error) {
-	var output []byte
-	err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
-		Action:           action,
-		TargetRouteGuard: m.targetRouteGuard(action),
-		Reobserve:        func(ctx context.Context) (bool, error) { return m.observeMutationEffect(ctx, action) },
-		Guard: func(ctx context.Context) error {
-			if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
-				return err
-			}
-			err := m.guardMutationAction(ctx, action)
-			if action.Verb != mutationKillOwned {
-				return err
-			}
-			// An owned kill's goal is the exact object's absence; a concurrent
-			// removal after Reobserve is converged, not drift.
-			return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
-				return m.observeMutationEffect(ctx, action)
-			})
-		},
-		Apply: func(ctx context.Context) error {
-			var err error
-			output, err = runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
-			return err
-		},
-	}}))
-	return output, err
-}
-
-func (m *materializer) runMaterializeMutation(ctx context.Context, action plannedRuntimeMutation, guard, execute func() error, observer ...func(context.Context) (bool, error)) error {
-	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
-		Action:           action,
-		TargetRouteGuard: m.targetRouteGuard(action),
-		Reobserve: func(ctx context.Context) (bool, error) {
-			observed, supported, err := m.observeMaterializeMutationEffect(ctx, action)
-			if err != nil {
-				return observed, err
-			}
-			if supported {
-				if !observed {
-					return false, nil
-				}
-				// Receipt-bearing effects need their call-site invariant as part
-				// of Reobserve. Otherwise a matching marker/name/value can skip
-				// Guard on a recycled target or mismatched create receipt.
-				if materializeEffectRequiresInvariant(action.Verb) {
-					if len(observer) != 1 || observer[0] == nil {
-						return false, errors.New("materialize mutation receipt observer is unavailable")
-					}
-					return observer[0](ctx)
-				}
-				return true, nil
-			}
-			if len(observer) != 1 || observer[0] == nil {
-				return false, fmt.Errorf("materializer has no live effect observer for %q", action.Verb)
-			}
-			return observer[0](ctx)
-		},
-		Guard: func(context.Context) error {
-			if err := m.guardExactRoute(ctx, action.Verb == mutationCreateSession, action.Target.PhysicalSocket); err != nil {
-				return err
-			}
-			if guard == nil {
-				return errors.New("materialize mutation guard is unavailable")
-			}
-			return guard()
-		},
-		Apply: func(context.Context) error {
-			return execute()
-		},
-	}}))
-}
-
-func materializeEffectRequiresInvariant(verb runtimeMutationVerb) bool {
-	switch verb {
-	case mutationCreateSession, mutationFinalizeSession, mutationWriteProjectAnchor, mutationRenameWindow:
-		return true
-	default:
-		return false
-	}
-}
-
-func (m *materializer) observeMutationEffect(ctx context.Context, action plannedRuntimeMutation) (bool, error) {
-	observed, supported, err := m.observeMaterializeMutationEffect(ctx, action)
-	if err != nil {
-		return false, err
-	}
-	if !supported {
-		return false, fmt.Errorf("materializer has no effect observer for %q", action.Verb)
-	}
-	return observed, nil
-}
-
-func (m *materializer) observeMaterializeMutationEffect(ctx context.Context, action plannedRuntimeMutation) (bool, bool, error) {
-	if action.Target.PhysicalSocket != runtimeMutationSocketAbsentBeforeCreate {
-		if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
-			return false, true, err
-		}
-	}
-	switch action.Verb {
-	case mutationCreateSession:
-		exists, err := m.sessions.SessionExists(ctx, action.Target.ID)
-		if err != nil || !exists {
-			return false, true, err
-		}
-		// The create declaration may print absent-before-create, but its first
-		// successful post-effect observation must bind and prove the physical
-		// app-owned socket before any follow-up plan row can be constructed.
-		if err := m.guardExactAppRoute(ctx, false); err != nil {
-			return false, true, err
-		}
-		marker := ""
-		for i := 0; i+1 < len(action.Operands); i++ {
-			if action.Operands[i] == "-e" && strings.HasPrefix(action.Operands[i+1], createOperationEnvironment+"=") {
-				marker = strings.TrimPrefix(action.Operands[i+1], createOperationEnvironment+"=")
-			}
-		}
-		out, err := m.mutationRunner(plannedRuntimeMutation{Target: m.boundMutationTarget("session", action.Target.ID, action.Target.UID)}).Run(ctx, "tmux", "show-environment", "-t", action.Target.ID)
-		return err == nil && marker != "" && sessionEnvironmentValue(string(out), createOperationEnvironment) == marker, true, err
-	case mutationFinalizeSession:
-		out, err := m.routedRunner().Run(ctx, "tmux", "show-environment", "-t", action.Target.ID)
-		if err != nil {
-			return false, true, err
-		}
-		want := ""
-		if len(action.Operands) > 0 {
-			want = action.Operands[len(action.Operands)-1]
-		}
-		return want != "" && sessionEnvironmentValue(string(out), finalizeOperationEnvironment) == want, true, nil
-	case mutationWriteIdentity, mutationWriteProjectAnchor, mutationTombstonePane, mutationRestorePane:
-		option, want, unset, err := runtimeMutationOptionEffect(action)
-		if err != nil {
-			return false, true, err
-		}
-		got, err := m.readMutationEffectOption(ctx, action.Target.ID, option)
-		if err != nil {
-			return false, true, err
-		}
-		if action.Verb == mutationWriteIdentity {
-			matches, err := m.observeMaterializeIdentityTarget(ctx, action.Target)
-			if err != nil {
-				return false, true, err
-			}
-			if !matches {
-				return false, true, nil
-			}
-		}
-		if unset {
-			if got != "" {
-				return false, true, nil
-			}
-			return got == "", true, nil
-		}
-		return materializeOptionEffectObserved(option, want, got), true, nil
-	case mutationRenameWindow:
-		if len(action.Operands) == 0 {
-			return false, true, errors.New("rename effect operands are incomplete")
-		}
-		matches, err := m.observeMaterializeIdentityTarget(ctx, action.Target)
-		if err != nil {
-			return false, true, err
-		}
-		if !matches {
-			return false, true, nil
-		}
-		got, err := m.readMutationEffectOption(ctx, action.Target.ID, "window_name")
-		return got == action.Operands[len(action.Operands)-1], true, err
-	case mutationWriteLease:
-		if len(action.Operands) < 2 {
-			return false, true, errors.New("lease effect operands are incomplete")
-		}
-		out, err := m.routedRunner().Run(ctx, "tmux", "show-environment", "-t", action.Target.ID)
-		return err == nil && sessionEnvironmentValue(string(out), action.Operands[len(action.Operands)-2]) == action.Operands[len(action.Operands)-1], true, err
-	case mutationClearLease:
-		out, err := m.routedRunner().Run(ctx, "tmux", "show-environment", "-t", action.Target.ID)
-		if err != nil {
-			return false, true, err
-		}
-		if len(action.Operands) == 0 {
-			return false, true, errors.New("clear-lease effect operands are incomplete")
-		}
-		got := sessionEnvironmentValue(string(out), action.Operands[len(action.Operands)-1])
-		if action.LeaseMarker != "" {
-			// An owner-checked clear is done once the variable no longer holds
-			// our marker: absent, or another operation's lease it must keep.
-			return got != action.LeaseMarker, true, nil
-		}
-		return got == "", true, nil
-	case mutationWriteLayout:
-		if len(action.Operands) < 4 {
-			return false, true, errors.New("layout effect operands are incomplete")
-		}
-		format := "#{pane_width}"
-		if action.Operands[len(action.Operands)-2] == "-y" {
-			format = "#{pane_height}"
-		}
-		got, err := m.read(ctx, "display-message", "-p", "-t", action.Target.ID, "-F", format)
-		if err != nil {
-			return false, true, fmt.Errorf("reobserve mutation effect %s on %s: %w", format, action.Target.ID, err)
-		}
-		return got == action.Operands[len(action.Operands)-1], true, nil
-	case mutationKillOwned:
-		// Each kind carries its own argv, flags included. -a widens
-		// list-windows and list-panes past the current session, but
-		// list-sessions is already server wide and rejects -a outright, so a
-		// flag shared across the three kinds failed every session reobserve:
-		// rollback then stopped on an unknown observation before its kill and
-		// left the created session on the server it had just started.
-		var out []byte
-		var err error
-		runner := m.routedRunner()
-		switch action.Target.Kind {
-		case "window":
-			out, err = runner.Run(ctx, "tmux", "list-windows", "-a", "-F", "#{window_id}")
-		case "pane":
-			out, err = runner.Run(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_id}")
-		case "session":
-			out, err = runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
-		default:
-			return false, true, errors.New("owned kill effect has an unknown target kind")
-		}
-		if err != nil {
-			if inttmux.IsNoServerFailure(err) {
-				return true, true, nil
-			}
-			return false, true, err
-		}
-		for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-			if strings.TrimSpace(line) == action.Target.ID {
-				return false, true, nil
-			}
-		}
-		return true, true, nil
-	}
-	return false, false, nil
-}
-
-func materializeOptionEffectObserved(option, want, got string) bool {
-	if option != tmuxopts.AutomaticRenameWindow && option != tmuxopts.RemainOnExitPane {
-		return got == want
-	}
-	wantValue, wantOK := exactTmuxBoolean(want)
-	gotValue, gotOK := exactTmuxBoolean(got)
-	return wantOK && gotOK && wantValue == gotValue
-}
-
-func exactTmuxBoolean(value string) (bool, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "on", "yes", "true":
-		return true, true
-	case "0", "off", "no", "false":
-		return false, true
-	default:
-		return false, false
-	}
-}
-
-func runtimeMutationOptionEffect(action plannedRuntimeMutation) (option, want string, unset bool, err error) {
-	if slices.Contains(action.Operands, "-u") {
-		if len(action.Operands) < 1 {
-			return "", "", false, errors.New("identity unset effect operands are incomplete")
-		}
-		option = action.Operands[len(action.Operands)-1]
-		if strings.TrimSpace(option) == "" || strings.HasPrefix(option, "-") {
-			return "", "", false, errors.New("identity unset effect has no exact option")
-		}
-		return option, "", true, nil
-	}
-	if len(action.Operands) < 2 {
-		return "", "", false, errors.New("identity effect operands are incomplete")
-	}
-	option, want = action.Operands[len(action.Operands)-2], action.Operands[len(action.Operands)-1]
-	if strings.TrimSpace(option) == "" || strings.HasPrefix(option, "-") {
-		return "", "", false, errors.New("identity effect has no exact option")
-	}
-	return option, want, false, nil
-}
-
-// readMutationEffectOption is the strict observation half of the plan seam.
-// Unlike option, it never maps an unreadable target to an absent option: an
-// observation error is unknown authority and executeRuntimeMutationPlan must
-// refuse before the first write.
-func (m *materializer) readMutationEffectOption(ctx context.Context, target, option string) (string, error) {
-	got, err := m.read(ctx, "display-message", "-p", "-t", target, "-F", "#{"+option+"}")
-	if err != nil {
-		return "", fmt.Errorf("reobserve mutation effect option %s on %s: %w", option, target, err)
-	}
-	return got, nil
-}
-
-func materializeIdentityOwnershipOption(kind string) (string, error) {
-	switch runtimeObjectKind(kind) {
-	case runtimeSession:
-		return tmuxopts.ProjectUIDSession, nil
-	case runtimeWindow:
-		return tmuxopts.WindowUID, nil
-	case runtimePane:
-		return tmuxopts.PaneUID, nil
-	default:
-		return "", fmt.Errorf("identity effect has unsupported target kind %q", kind)
-	}
-}
-
-type materializeIdentityObservation struct {
-	uid    string
-	parent string
-}
-
-func (m *materializer) readMaterializeIdentityObservation(ctx context.Context, kind, target string) (materializeIdentityObservation, error) {
-	ownershipOption, err := materializeIdentityOwnershipOption(kind)
-	if err != nil {
-		return materializeIdentityObservation{}, err
-	}
-	var format string
-	switch runtimeObjectKind(kind) {
-	case runtimeSession:
-		format = tmuxRowFormat("#{session_id}", "#{"+ownershipOption+"}", "#{"+tmuxopts.SessionRole+"}")
-	case runtimeWindow:
-		format = tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+ownershipOption+"}",
-			"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}")
-	case runtimePane:
-		format = tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+ownershipOption+"}",
-			"#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}")
-	}
-	out, err := m.read(ctx, "display-message", "-p", "-t", target, "-F", format)
-	if err != nil {
-		return materializeIdentityObservation{}, fmt.Errorf("observe exact %s identity target %s: %w", kind, target, err)
-	}
-	switch runtimeObjectKind(kind) {
-	case runtimeSession:
-		rows := splitTmuxRows(out, 3)
-		if len(rows) != 1 || rows[0][0] != target || exactTmuxHandle(rows[0][0], "$") == "" {
-			return materializeIdentityObservation{}, errors.New("session identity target containment is unavailable")
-		}
-		return materializeIdentityObservation{uid: rows[0][1], parent: "session-role=" + rows[0][2]}, nil
-	case runtimeWindow:
-		rows := splitTmuxRows(out, 5)
-		if len(rows) != 1 || exactTmuxHandle(rows[0][0], "$") == "" || rows[0][1] != target || exactTmuxHandle(rows[0][1], "@") == "" {
-			return materializeIdentityObservation{}, errors.New("window identity target containment is unavailable")
-		}
-		return materializeIdentityObservation{uid: rows[0][2], parent: rows[0][0] + "/root=" + rows[0][3] + "/role=" + rows[0][4]}, nil
-	case runtimePane:
-		rows := splitTmuxRows(out, 7)
-		if len(rows) != 1 || exactTmuxHandle(rows[0][0], "$") == "" || exactTmuxHandle(rows[0][1], "@") == "" ||
-			rows[0][2] != target || exactTmuxHandle(rows[0][2], "%") == "" || strings.TrimSpace(rows[0][4]) == "" {
-			return materializeIdentityObservation{}, errors.New("pane identity target containment is unavailable")
-		}
-		return materializeIdentityObservation{uid: rows[0][3], parent: rows[0][0] + "/" + rows[0][1] +
-			"/window-uid=" + rows[0][4] + "/root=" + rows[0][5] + "/role=" + rows[0][6]}, nil
-	default:
-		return materializeIdentityObservation{}, fmt.Errorf("identity effect has unsupported target kind %q", kind)
-	}
-}
-
-// identityObservation reads one target's identity bundle through the memo of
-// the open identity-write plan, if any. forGuard marks the read that brackets a
-// write; see identityObservationMemo.
-func (m *materializer) identityObservation(ctx context.Context, kind, target string, forGuard bool) (materializeIdentityObservation, error) {
-	key := kind + "\x00" + target
-	if memo := m.identityMemo; memo != nil {
-		if entry, ok := memo.entries[key]; ok && (!forGuard || entry.guarded) {
-			return entry.observation, nil
-		}
-	}
-	observation, err := m.readMaterializeIdentityObservation(ctx, kind, target)
-	if memo := m.identityMemo; memo != nil {
-		if err != nil {
-			delete(memo.entries, key)
-		} else {
-			memo.entries[key] = identityObservationEntry{observation: observation, guarded: forGuard}
-		}
-	}
-	return observation, err
-}
-
-func (m *materializer) bindMaterializeIdentityTarget(ctx context.Context, kind, id, uid string) (runtimeMutationTarget, error) {
-	observation, err := m.identityObservation(ctx, kind, id, false)
-	if err != nil {
-		return runtimeMutationTarget{}, err
-	}
-	if observation.uid != "" && observation.uid != uid {
-		return runtimeMutationTarget{}, fmt.Errorf("%s %s carries foreign uid %q, want %q", kind, id, observation.uid, uid)
-	}
-	target := m.boundMutationTarget(kind, id, uid)
-	target.Parent = observation.parent
-	return target, nil
-}
-
-func (m *materializer) observeMaterializeIdentityTarget(ctx context.Context, target runtimeMutationTarget) (bool, error) {
-	observation, err := m.identityObservation(ctx, target.Kind, target.ID, false)
-	if err != nil {
-		return false, err
-	}
-	if observation.parent != target.Parent {
-		return false, fmt.Errorf("%s %s identity parent drifted: observed %q, planned %q", target.Kind, target.ID, observation.parent, target.Parent)
-	}
-	if observation.uid == "" {
-		return false, nil
-	}
-	if observation.uid != target.UID {
-		return false, fmt.Errorf("%s %s carries foreign uid %q, want %q", target.Kind, target.ID, observation.uid, target.UID)
-	}
-	return true, nil
-}
-
-func (m *materializer) guardMaterializeIdentityTarget(ctx context.Context, target runtimeMutationTarget, allowBlankUID bool) error {
-	observation, err := m.identityObservation(ctx, target.Kind, target.ID, true)
-	if err != nil {
-		return err
-	}
-	if observation.parent != target.Parent {
-		return fmt.Errorf("%s %s identity parent drifted: observed %q, planned %q", target.Kind, target.ID, observation.parent, target.Parent)
-	}
-	if observation.uid == "" && allowBlankUID {
-		return nil
-	}
-	if observation.uid != target.UID {
-		return fmt.Errorf("%s uid is %q, want %q", target.Kind, observation.uid, target.UID)
-	}
-	return nil
-}
-
-func (m *materializer) guardMutationAction(ctx context.Context, action plannedRuntimeMutation) error {
-	switch action.Verb {
-	case mutationKillOwned:
-		entry := runtimeObject{Kind: runtimeObjectKind(action.Target.Kind), ID: action.Target.ID, UID: action.Target.UID}
-		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.OwnershipOption()+"}")
-		if err != nil {
-			return err
-		}
-		if got != entry.UID {
-			return fmt.Errorf("ownership uid is %q, want %q", got, entry.UID)
-		}
-	case mutationWriteIdentity:
-		return m.guardMaterializeIdentityTarget(ctx, action.Target, true)
-	case mutationCreateWindow:
-		got, err := m.read(ctx, "display-message", "-p", "-t", action.Target.ID, "-F", "#{session_id}")
-		if err != nil {
-			return err
-		}
-		if exactTmuxHandle(got, "$") == "" {
-			return fmt.Errorf("session target %q is no longer exact", action.Target.ID)
-		}
-	case mutationWriteLease:
-		got, err := m.read(ctx, "display-message", "-p", "-t", action.Target.ID, "-F", "#{session_id}")
-		if err != nil {
-			return err
-		}
-		if got != action.Target.ID {
-			return fmt.Errorf("session identity drifted: got %q, want id=%s", got, action.Target.ID)
-		}
-	case mutationCreatePane, mutationWriteLayout:
-		got, err := m.read(ctx, "display-message", "-p", "-t", action.Target.ID, "-F", "#{pane_id}")
-		if err != nil {
-			return err
-		}
-		if got != action.Target.ID {
-			return fmt.Errorf("anchor Pane is %q, want %q", got, action.Target.ID)
-		}
-	default:
-		return fmt.Errorf("materialize mutation %q has no executable guard", action.Verb)
-	}
-	return nil
-}
-
-// option reads one tmux format value for a target, treating an unreadable
-// target as an empty value rather than an error. Ownership checks want "this is
-// not ours" for a target that has already disappeared.
-func (m *materializer) option(ctx context.Context, target, format string) string {
-	out, err := m.read(ctx, "display-message", "-p", "-t", target, "-F", format)
-	if err != nil {
-		return ""
-	}
-	return out
-}
-
-// rollback removes, in reverse creation order, only the tmux objects this
-// operation created that still carry the uid it mirrored onto them.
-func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
-	entries := ledger.entries()
-	var steps []runtimeMutationStep
-	// serverEnded is set only once the server the plan guarded is proven ended
-	// after a kill of this plan succeeded (see rollbackGuardedServerEnded).
-	// Every ledger object lived on that server, so each later step's target
-	// ended with it: such a step sends that socket nothing more and converges
-	// as absent. ownKilled records that some kill of this plan succeeded; a
-	// server that ended before that keeps every step's own verdict.
-	serverEnded, ownKilled := false, false
-	for i := len(entries) - 1; i >= 0; i-- {
-		entry := entries[i]
-		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.OwnershipOption()+"}")
-		if err != nil {
-			// The object is already gone, so the desired rollback state holds.
-			continue
-		}
-		if got != entry.UID {
-			// The object still exists but no longer belongs to this operation.
-			// Preserve it and make the residual drift explicit.
-			if m.warn != nil {
-				fmt.Fprintf(m.warn, "projmux: rollback preserved %s %s because its ownership uid is %q, want %q\n",
-					entry.Kind, entry.ID, got, entry.UID)
-			}
-			continue
-		}
-		action := materializeMutationAction(mutationKillOwned,
-			m.boundMutationTarget(string(entry.Kind), entry.ID, entry.UID),
-			"same mirrored ownership uid="+entry.UID,
-			"owned created "+string(entry.Kind)+" is absent",
-			"-t", entry.ID)
-		action.Order = len(steps) + 1
-		// killed is set only by this step's own successful kill, never by the
-		// Apply fallback below that explains a failed kill away.
-		killed := false
-		steps = append(steps, runtimeMutationStep{
-			Action:           action,
-			TargetRouteGuard: m.targetRouteGuard(action),
-			Reobserve: func(ctx context.Context) (bool, error) {
-				if serverEnded {
-					return true, nil
-				}
-				absent, err := m.observeMutationEffect(ctx, action)
-				// Killing the server's last session ends the server, so the
-				// post-write route read of the plan's own socket answers with
-				// a teardown response instead of a listing. After this step's
-				// own kill succeeded, that ended server is the absence it
-				// wanted. The pre-write observation (killed is false) and any
-				// other failure keep their verdict.
-				if err != nil && killed && tmuxServerTeardownFailure(err) &&
-					filepath.Clean(action.Target.PhysicalSocket) == filepath.Clean(m.expectedSocketPath) {
-					return true, nil
-				}
-				return absent, err
-			},
-			Guard: func(ctx context.Context) error {
-				if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
-					return err
-				}
-				got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.OwnershipOption()+"}")
-				if err == nil && got != entry.UID {
-					err = fmt.Errorf("ownership uid is %q, want %q", got, entry.UID)
-				}
-				// A concurrent writer may remove the owned object after
-				// Reobserve; its absence is the rollback's goal, not drift.
-				return runtimeMutationAbsenceConverged(ctx, err, func(ctx context.Context) (bool, error) {
-					return m.observeMutationEffect(ctx, action)
-				})
-			},
-			Apply: func(ctx context.Context) error {
-				if serverEnded {
-					return nil
-				}
-				_, err := runRuntimeMutationCommand(ctx, m.runner, action)
-				if err == nil {
-					killed, ownKilled = true, true
-					serverEnded = m.rollbackGuardedServerEnded(ctx, action)
-					return nil
-				}
-				// The read after an earlier own kill can still reach a server
-				// that is ending, and only this kill then meets the teardown.
-				// The same proof, read now, settles it.
-				if ownKilled && tmuxServerTeardownFailure(err) && m.rollbackGuardedServerEnded(ctx, action) {
-					serverEnded = true
-					return nil
-				}
-				// Every guard ran before the first kill, so an earlier kill of
-				// this same plan can remove this object first: tmux removes a
-				// Window with its last Pane, and a session with its last
-				// Window. Its own effect observer then proves the desired
-				// absence, and the plan goes on to the rest of the ledger. A
-				// failure the observer cannot explain away -- the object is
-				// still listed, or the route itself cannot be read -- stops the
-				// plan as before.
-				if absent, observeErr := m.observeMutationEffect(ctx, action); observeErr == nil && absent {
-					return nil
-				}
-				return err
-			},
-		})
-	}
-	if err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps)); err != nil && m.warn != nil {
-		fmt.Fprintf(m.warn, "projmux: rollback stopped before an unguarded runtime write: %v\n", err)
-	}
-}
-
-// rollbackGuardedServerEnded reports whether the server the rollback plan
-// guarded has ended. Callers ask only after a kill of this plan succeeded.
-// Every guard, each kill's own server generation check included, ran before
-// the first write, so the proof is a read of that exact physical socket
-// answering with a teardown response instead of a server. A live server,
-// another socket, or any other failure is no proof.
-func (m *materializer) rollbackGuardedServerEnded(ctx context.Context, action plannedRuntimeMutation) bool {
-	if m.routeAuthority == nil || m.expectedSocketPath == "" ||
-		filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(m.expectedSocketPath) {
-		return false
-	}
-	_, err := m.runnerAtPhysicalSocket(m.expectedSocketPath).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
-	return err != nil && tmuxServerTeardownFailure(err)
-}
-
-// tmuxServerTeardownFailure is the closed set of tmux responses for a server
-// that is ending or has ended: a recognized no-server refusal (teardown
-// finished) or a typed exit whose stderr is exactly "server exited
-// unexpectedly" (teardown in progress). Any other failure, typed or not, is not
-// a teardown.
-func tmuxServerTeardownFailure(err error) bool {
-	if inttmux.IsNoServerFailure(err) {
-		return true
-	}
-	var carrier interface{ CommandFailure() inttmux.CommandFailure }
-	if !errors.As(err, &carrier) {
-		return false
-	}
-	failure := carrier.CommandFailure()
-	return failure.Kind == inttmux.CommandFailureExit && strings.TrimSpace(failure.Stderr) == "server exited unexpectedly"
 }
 
 // sessionFirstPaneActivation issues the activation of the Pane a new session
@@ -1423,17 +240,17 @@ func (m *materializer) ensureSessionLaunching(
 	project coremetadata.Project,
 	sessionName, runtimeCWD, firstWindowName string,
 	firstPane sessionFirstPaneActivation,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	firstCommand ...[]string,
 ) (intmux.NewSessionResult, superviseSpec, error) {
 	// Bind an existing invocation server to its physical socket before the
 	// printable declaration is built. A genuinely absent server remains the
 	// one create-session-only absent-before-create case.
-	if err := m.guardExactRoute(ctx, true); err != nil {
+	if err := m.GuardExactRoute(ctx, true); err != nil {
 		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
-	startsFreshServer := m.expectedSocketPath == ""
-	exists, err := m.sessions.SessionExists(ctx, sessionName)
+	startsFreshServer := m.ExpectedSocketPath == ""
+	exists, err := m.Sessions.SessionExists(ctx, sessionName)
 	if err != nil {
 		return intmux.NewSessionResult{}, superviseSpec{}, fmt.Errorf("check tmux session %q: %w", sessionName, err)
 	}
@@ -1442,7 +259,7 @@ func (m *materializer) ensureSessionLaunching(
 		if err != nil {
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
+		if err := m.MarkCreateOperation(ctx, identity.ID, ledger); err != nil {
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, superviseSpec{}, nil
@@ -1450,17 +267,17 @@ func (m *materializer) ensureSessionLaunching(
 	if identity, found, err := m.preflightSessionOwnership(ctx, project, sessionName); err != nil {
 		return intmux.NewSessionResult{}, superviseSpec{}, err
 	} else if found {
-		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
+		if err := m.MarkCreateOperation(ctx, identity.ID, ledger); err != nil {
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, superviseSpec{}, nil
 	}
-	lifecycle, ok := m.sessions.(persistentSessionLifecycle)
+	lifecycle, ok := m.Sessions.(persistentSessionLifecycle)
 	if !ok {
 		return intmux.NewSessionResult{}, superviseSpec{}, errors.New("materialize tmux session: typed persistent lifecycle seam is unavailable")
 	}
 	request, appeared, err := lifecycle.PreparePersistentSessionCreate(ctx, sessionName, runtimeCWD, project.Spec.Root,
-		map[string]string{createOperationEnvironment: ledger.operationMarker})
+		map[string]string{createOperationEnvironment: ledger.OperationMarker})
 	if err != nil {
 		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
@@ -1469,7 +286,7 @@ func (m *materializer) ensureSessionLaunching(
 		if err != nil {
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
+		if err := m.MarkCreateOperation(ctx, identity.ID, ledger); err != nil {
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, superviseSpec{}, nil
@@ -1519,13 +336,13 @@ func (m *materializer) ensureSessionLaunching(
 	for _, key := range keys {
 		args = append(args, "-e", key+"="+request.Environment[key])
 	}
-	action := materializeMutationAction(mutationCreateSession,
-		m.boundMutationTarget("project-declaration", sessionName, project.Metadata.UID),
+	action := MaterializeMutationAction(mutationCreateSession,
+		m.BoundMutationTarget("project-declaration", sessionName, project.Metadata.UID),
 		"unique Project uid/root or absent session name",
 		"one detached owned session exists", args...)
 	action.Command = launch
 	var rawOutput []byte
-	ensureErr := m.runMaterializeMutation(ctx, action, func() error {
+	ensureErr := m.RunMaterializeMutation(ctx, action, func() error {
 		_, found, guardErr := m.preflightSessionOwnership(ctx, project, sessionName)
 		if guardErr != nil {
 			return guardErr
@@ -1536,7 +353,7 @@ func (m *materializer) ensureSessionLaunching(
 		return nil
 	}, func() error {
 		var runErr error
-		rawOutput, runErr = runRuntimeMutationCommand(ctx, m.runner, action)
+		rawOutput, runErr = runRuntimeMutationCommand(ctx, m.Runner, action)
 		return runErr
 	}, func(ctx context.Context) (bool, error) {
 		resultRows := splitTmuxRows(string(rawOutput), 3)
@@ -1544,7 +361,7 @@ func (m *materializer) ensureSessionLaunching(
 			exactTmuxHandle(resultRows[0][1], "@") == "" || exactTmuxHandle(resultRows[0][2], "%") == "" {
 			return false, nil
 		}
-		out, err := m.read(ctx, "list-panes", "-s", "-t", resultRows[0][0], "-F",
+		out, err := m.ReadTmux(ctx, "list-panes", "-s", "-t", resultRows[0][0], "-F",
 			tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{session_name}",
 				"#{E:"+createOperationEnvironment+"}"))
 		if err != nil {
@@ -1552,7 +369,7 @@ func (m *materializer) ensureSessionLaunching(
 		}
 		rows := splitTmuxRows(out, 5)
 		return len(rows) == 1 && rows[0][0] == resultRows[0][0] && rows[0][1] == resultRows[0][1] &&
-			rows[0][2] == resultRows[0][2] && rows[0][3] == sessionName && rows[0][4] == ledger.operationMarker, nil
+			rows[0][2] == resultRows[0][2] && rows[0][3] == sessionName && rows[0][4] == ledger.OperationMarker, nil
 	})
 	rows := splitTmuxRows(string(rawOutput), 3)
 	result := intmux.NewSessionResult{Created: true}
@@ -1565,7 +382,7 @@ func (m *materializer) ensureSessionLaunching(
 		// session. The -e lease is then exact ownership evidence, so establish
 		// the Project uid and ledger entry before surfacing the original error.
 		if startsFreshServer {
-			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
+			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.OperationMarker); rollbackErr != nil {
 				ensureErr = errors.Join(ensureErr, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 		} else {
@@ -1576,7 +393,7 @@ func (m *materializer) ensureSessionLaunching(
 	}
 	if exactTmuxHandle(result.SessionID, "$") == "" || exactTmuxHandle(result.WindowID, "@") == "" || exactTmuxHandle(result.PaneID, "%") == "" {
 		if startsFreshServer {
-			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
+			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.OperationMarker); rollbackErr != nil {
 				return intmux.NewSessionResult{}, superviseSpec{}, errors.Join(errors.New("materialize tmux session: atomic result is incomplete"), rollbackErr)
 			}
 		} else {
@@ -1586,29 +403,29 @@ func (m *materializer) ensureSessionLaunching(
 		return intmux.NewSessionResult{}, superviseSpec{}, fmt.Errorf("materialize tmux session %q: atomic result is incomplete", sessionName)
 	}
 	if startsFreshServer {
-		if err := m.bindCreatedProjectRouteAuthority(ctx, result, ledger.operationMarker); err != nil {
-			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
+		if err := m.bindCreatedProjectRouteAuthority(ctx, result, ledger.OperationMarker); err != nil {
+			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.OperationMarker); rollbackErr != nil {
 				err = errors.Join(err, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 			lifecycle.AbortPersistentSessionCreate()
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		if err := m.writeCreatedProjectRouteMarker(ctx, result, ledger.operationMarker); err != nil {
-			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
+		if err := m.writeCreatedProjectRouteMarker(ctx, result, ledger.OperationMarker); err != nil {
+			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.OperationMarker); rollbackErr != nil {
 				err = errors.Join(err, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 			lifecycle.AbortPersistentSessionCreate()
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
-		if err := m.guardExactRoute(ctx, false, m.expectedSocketPath); err != nil {
-			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.operationMarker); rollbackErr != nil {
+		if err := m.GuardExactRoute(ctx, false, m.ExpectedSocketPath); err != nil {
+			if rollbackErr := m.recoverCreatedProjectByLease(ctx, result, ledger.OperationMarker); rollbackErr != nil {
 				err = errors.Join(err, fmt.Errorf("created Project owned rollback incomplete: %w", rollbackErr))
 			}
 			lifecycle.AbortPersistentSessionCreate()
 			return intmux.NewSessionResult{}, superviseSpec{}, err
 		}
 	}
-	if err := m.writeCreatedProjectAnchor(ctx, result, project, ledger.operationMarker); err != nil {
+	if err := m.writeCreatedProjectAnchor(ctx, result, project, ledger.OperationMarker); err != nil {
 		m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
 		lifecycle.AbortPersistentSessionCreate()
 		return intmux.NewSessionResult{}, superviseSpec{}, err
@@ -1617,8 +434,8 @@ func (m *materializer) ensureSessionLaunching(
 		m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
 		return intmux.NewSessionResult{}, superviseSpec{}, err
 	}
-	ledger.markSession(result.SessionID)
-	if claimErr := m.claimRuntimeUIDForRollback(ctx, runtimeSession, result.SessionID, project.Metadata.UID, ledger); claimErr != nil {
+	ledger.MarkSession(result.SessionID)
+	if claimErr := m.ClaimRuntimeUIDForRollback(ctx, runtimeSession, result.SessionID, project.Metadata.UID, ledger); claimErr != nil {
 		return intmux.NewSessionResult{}, superviseSpec{}, claimErr
 	}
 	if err := m.mirrorProject(ctx, result.SessionID, project); err != nil {
@@ -1628,16 +445,16 @@ func (m *materializer) ensureSessionLaunching(
 }
 
 func (m *materializer) bindCreatedProjectRouteAuthority(ctx context.Context, result intmux.NewSessionResult, marker string) error {
-	if !filepath.IsAbs(m.expectedSocketPath) || filepath.Clean(m.expectedSocketPath) != m.expectedSocketPath {
+	if !filepath.IsAbs(m.ExpectedSocketPath) || filepath.Clean(m.ExpectedSocketPath) != m.ExpectedSocketPath {
 		return errors.New("created Project route authority has no exact physical socket")
 	}
-	out, err := m.runnerAtPhysicalSocket(m.expectedSocketPath).Run(ctx, "tmux", "display-message", "-p", "-t", result.PaneID, "-F",
+	out, err := m.RunnerAtPhysicalSocket(m.ExpectedSocketPath).Run(ctx, "tmux", "display-message", "-p", "-t", result.PaneID, "-F",
 		tmuxRowFormat("#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}"))
 	if err != nil {
 		return fmt.Errorf("observe created Project route authority: %w", err)
 	}
 	rows := splitTmuxRows(string(out), 6)
-	if len(rows) != 1 || rows[0][0] != m.expectedSocketPath ||
+	if len(rows) != 1 || rows[0][0] != m.ExpectedSocketPath ||
 		rows[0][2] != result.SessionID || rows[0][3] != result.WindowID || rows[0][4] != result.PaneID || rows[0][5] != marker {
 		return errors.New("created Project route authority socket or $/@/% receipt drifted")
 	}
@@ -1645,7 +462,7 @@ func (m *materializer) bindCreatedProjectRouteAuthority(ctx context.Context, res
 	if pidErr != nil || pid <= 0 {
 		return errors.New("created Project route authority server pid is invalid")
 	}
-	m.routeAuthority = &runtimeMutationRouteAuthority{
+	m.RouteAuthority = &runtimeMutationRouteAuthority{
 		Class: runtimeMutationRouteApp, ServerPID: rows[0][1],
 		SessionID: result.SessionID, WindowID: result.WindowID, PaneID: result.PaneID,
 	}
@@ -1653,13 +470,13 @@ func (m *materializer) bindCreatedProjectRouteAuthority(ctx context.Context, res
 }
 
 func (m *materializer) writeCreatedProjectAnchor(ctx context.Context, result intmux.NewSessionResult, project coremetadata.Project, marker string) error {
-	action := materializeMutationAction(mutationWriteProjectAnchor,
-		m.boundMutationTarget("session", result.SessionID, project.Metadata.UID),
+	action := MaterializeMutationAction(mutationWriteProjectAnchor,
+		m.BoundMutationTarget("session", result.SessionID, project.Metadata.UID),
 		"exact created tuple and operation lease="+marker,
 		"Project path anchor equals Registry root",
 		"-t", result.SessionID, "-q", inttmux.ProjectPathSessionOption, project.Spec.Root)
 	observeReceipt := func(ctx context.Context) (bool, error) {
-		out, err := m.read(ctx, "list-panes", "-s", "-t", result.SessionID, "-F",
+		out, err := m.ReadTmux(ctx, "list-panes", "-s", "-t", result.SessionID, "-F",
 			tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}"))
 		rows := splitTmuxRows(out, 4)
 		if err != nil {
@@ -1668,20 +485,20 @@ func (m *materializer) writeCreatedProjectAnchor(ctx context.Context, result int
 		return len(rows) == 1 && rows[0][0] == result.SessionID && rows[0][1] == result.WindowID &&
 			rows[0][2] == result.PaneID && rows[0][3] == marker, nil
 	}
-	return m.runMaterializeMutation(ctx, action, func() error {
+	return m.RunMaterializeMutation(ctx, action, func() error {
 		observed, err := observeReceipt(ctx)
 		if err != nil || !observed {
 			return errors.New("created Project tuple or operation lease drifted before path anchor")
 		}
 		return nil
 	}, func() error {
-		_, err := runRuntimeMutationCommand(ctx, m.runner, action)
+		_, err := runRuntimeMutationCommand(ctx, m.Runner, action)
 		return err
 	}, observeReceipt)
 }
 
 func (m *materializer) observeCreatedProjectReceipt(ctx context.Context, result intmux.NewSessionResult, marker string) (bool, error) {
-	out, err := m.read(ctx, "list-panes", "-s", "-t", result.SessionID, "-F",
+	out, err := m.ReadTmux(ctx, "list-panes", "-s", "-t", result.SessionID, "-F",
 		tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}"))
 	if err != nil {
 		return false, err
@@ -1692,34 +509,34 @@ func (m *materializer) observeCreatedProjectReceipt(ctx context.Context, result 
 }
 
 func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, result intmux.NewSessionResult, marker string) error {
-	target, _, err := m.exactMutationRoute()
+	target, _, err := m.ExactMutationRoute()
 	if err != nil {
 		return err
 	}
-	if target.Flag() != "-L" || strings.TrimSpace(target.Value) == "" || !filepath.IsAbs(m.expectedSocketPath) {
+	if target.Flag() != "-L" || strings.TrimSpace(target.Value) == "" || !filepath.IsAbs(m.ExpectedSocketPath) {
 		return errors.New("created Project route marker requires an exact logical and physical route")
 	}
-	printableTarget := m.boundMutationTarget("session", result.SessionID, "logical:"+target.Value)
-	printableTarget.Socket = "-S=" + m.expectedSocketPath
+	printableTarget := m.BoundMutationTarget("session", result.SessionID, "logical:"+target.Value)
+	printableTarget.Socket = "-S=" + m.ExpectedSocketPath
 	printableTarget.Parent = result.WindowID + "/" + result.PaneID
 	action := newRuntimeMutation(1, mutationWriteRouteMarker, printableTarget)
 	bindRuntimeMutationGuard(&action, "exact created Project tuple and operation lease="+marker)
-	action.Operands = []string{"-S", m.expectedSocketPath, "-gq", runtimeMutationSocketNameOption, target.Value}
+	action.Operands = []string{"-S", m.ExpectedSocketPath, "-gq", runtimeMutationSocketNameOption, target.Value}
 	observeReceipt := func(ctx context.Context) (bool, error) {
-		if err := m.guardExactAppRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
+		if err := m.GuardExactAppRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
 			return false, err
 		}
 		return m.observeCreatedProjectReceipt(ctx, result, marker)
 	}
-	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
+	return executeRuntimeMutationPlan(ctx, m.GuardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
-		TargetRouteGuard: m.targetRouteGuard(action),
+		TargetRouteGuard: m.TargetRouteGuard(action),
 		Reobserve: func(ctx context.Context) (bool, error) {
 			owned, err := observeReceipt(ctx)
 			if err != nil || !owned {
 				return false, err
 			}
-			out, err := m.routedRunner().Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
+			out, err := m.RoutedRunner().Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
 			if err != nil {
 				return false, err
 			}
@@ -1734,7 +551,7 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 			if err != nil || !owned {
 				return errors.New("created Project tuple or operation lease drifted before route marker")
 			}
-			out, err := m.routedRunner().Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
+			out, err := m.RoutedRunner().Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
 			if err != nil {
 				return err
 			}
@@ -1745,7 +562,7 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 			return nil
 		},
 		Apply: func(ctx context.Context) error {
-			_, err := runRuntimeMutationCommand(ctx, m.runner, action)
+			_, err := runRuntimeMutationCommand(ctx, m.Runner, action)
 			return err
 		},
 	}}))
@@ -1759,7 +576,7 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 	if err != nil || !bound {
 		return err
 	}
-	out, err := m.routedRunner().Run(ctx, "tmux", "list-sessions", "-F",
+	out, err := m.RoutedRunner().Run(ctx, "tmux", "list-sessions", "-F",
 		tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}"))
 	if err != nil {
 		if inttmux.IsNoServerFailure(err) {
@@ -1790,15 +607,15 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 	if err := m.bindCreatedProjectRouteAuthority(ctx, result, marker); err != nil {
 		return fmt.Errorf("bind created Project recovery authority: %w", err)
 	}
-	target := m.boundMutationTarget("session", result.SessionID, "lease:"+marker)
+	target := m.BoundMutationTarget("session", result.SessionID, "lease:"+marker)
 	target.Parent = result.WindowID + "/" + result.PaneID
-	action := materializeMutationAction(mutationKillOwned,
+	action := MaterializeMutationAction(mutationKillOwned,
 		target,
 		"exact created Project tuple and operation lease="+marker,
 		"lease-owned created Project session is absent", "-t", result.SessionID)
-	routeGuard := m.targetRouteGuard(action)
+	routeGuard := m.TargetRouteGuard(action)
 	observeAbsent := func(ctx context.Context) (bool, error) {
-		out, err := m.routedRunner().Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
+		out, err := m.RoutedRunner().Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
 		if err != nil {
 			if inttmux.IsNoServerFailure(err) {
 				return true, nil
@@ -1810,7 +627,7 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 		}
 		return true, nil
 	}
-	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps([]runtimeMutationStep{{
+	return executeRuntimeMutationPlan(ctx, m.GuardedWriteSteps([]runtimeMutationStep{{
 		Action:           action,
 		TargetRouteGuard: routeGuard,
 		Reobserve:        observeAbsent,
@@ -1830,7 +647,7 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 			})
 		},
 		Apply: func(ctx context.Context) error {
-			_, err := runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
+			_, err := runRuntimeMutationCommand(ctx, m.MutationRunner(action), action)
 			return err
 		},
 	}}))
@@ -1842,10 +659,10 @@ func (m *materializer) recoverCreatedProjectByLease(ctx context.Context, result 
 // immutable logical declaration discovers only the physical socket; the
 // unique exact $/@/% tuple plus operation lease is the destructive authority.
 func (m *materializer) bindCreatedProjectRecoveryRoute(ctx context.Context) (bool, error) {
-	if filepath.IsAbs(m.expectedSocketPath) && filepath.Clean(m.expectedSocketPath) == m.expectedSocketPath {
+	if filepath.IsAbs(m.ExpectedSocketPath) && filepath.Clean(m.ExpectedSocketPath) == m.ExpectedSocketPath {
 		return true, nil
 	}
-	target, _, err := m.exactMutationRoute()
+	target, _, err := m.ExactMutationRoute()
 	if err != nil {
 		return false, err
 	}
@@ -1853,13 +670,13 @@ func (m *materializer) bindCreatedProjectRecoveryRoute(ctx context.Context) (boo
 		if !filepath.IsAbs(target.Value) || filepath.Clean(target.Value) != target.Value {
 			return false, fmt.Errorf("created Project recovery route is not an absolute clean socket: %q", target.Value)
 		}
-		m.expectedSocketPath = target.Value
+		m.ExpectedSocketPath = target.Value
 		return true, nil
 	}
 	if target.Flag() != "-L" {
 		return false, errors.New("created Project recovery requires an exact logical or physical route")
 	}
-	out, err := m.runnerAtTarget(target).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	out, err := m.RunnerAtTarget(target).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
 		if inttmux.IsNoServerFailure(err) {
 			return false, nil
@@ -1870,7 +687,7 @@ func (m *materializer) bindCreatedProjectRecoveryRoute(ctx context.Context) (boo
 	if !filepath.IsAbs(observed) || filepath.Clean(observed) != observed {
 		return false, fmt.Errorf("created Project recovery observed non-absolute or unclean socket %q", observed)
 	}
-	m.expectedSocketPath = observed
+	m.ExpectedSocketPath = observed
 	return true, nil
 }
 
@@ -1953,7 +770,7 @@ func (m *materializer) refuseUnregisteredSessionClaims(ctx context.Context, sess
 }
 
 func (m *materializer) sessionIdentities(ctx context.Context) ([]liveSessionIdentity, error) {
-	out, err := m.read(ctx, "list-sessions", "-F", tmuxRowFormat(
+	out, err := m.ReadTmux(ctx, "list-sessions", "-F", tmuxRowFormat(
 		"#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.ProjectPathSession+"}"))
 	if err != nil {
 		if inttmux.IsNoServerFailure(err) {
@@ -1975,128 +792,21 @@ func (m *materializer) sessionIdentities(ctx context.Context) ([]liveSessionIden
 	return identities, nil
 }
 
-func (m *materializer) claimRuntimeUID(ctx context.Context, kind runtimeObjectKind, target, uid string) (bool, error) {
-	ownershipOption := runtimeObject{Kind: kind}.OwnershipOption()
-	var args []string
-	switch kind {
-	case runtimeWindow:
-		args = append(args, "-w")
-	case runtimePane:
-		args = append(args, "-p")
-	}
-	args = append(args, "-t", target, "-q", ownershipOption, uid)
-	closeObservations := m.scopeIdentityObservations()
-	defer closeObservations()
-	stable, err := m.bindMaterializeIdentityTarget(ctx, string(kind), target, uid)
-	if err != nil {
-		return false, err
-	}
-	action := materializeMutationAction(mutationWriteIdentity,
-		stable,
-		"exact newly attributed "+string(kind)+" handle",
-		"Registry uid is mirrored for rollback ownership",
-		args...)
-	if _, err := m.runMutation(ctx, action); err != nil {
-		claimErr := fmt.Errorf("claim created tmux %s %s: %w", kind, target, err)
-		if got := m.option(ctx, target, "#{"+ownershipOption+"}"); got == uid {
-			return true, claimErr
-		}
-		return false, claimErr
-	}
-	return true, nil
-}
-
-// claimRuntimeUIDForRollback establishes the UID before recording the object.
-// A tmux command can report failure after applying the option, so an error is
-// followed by an exact readback: a stuck claim enters the ledger and can be
-// rolled back safely; an unstuck claim is preserved as an unowned residual.
-func (m *materializer) claimRuntimeUIDForRollback(ctx context.Context, kind runtimeObjectKind, target, uid string, ledger *runtimeLedger) error {
-	claimed, err := m.claimRuntimeUID(ctx, kind, target, uid)
-	if claimed {
-		ledger.record(kind, target, uid)
-	}
-	if err != nil && !claimed {
-		m.warnUnclaimedHandle(kind, target)
-	}
-	return err
-}
-
 func (m *materializer) mirrorWindow(ctx context.Context, target string, window coremetadata.Window) error {
-	return m.runIdentityWrites(ctx, "window", target, window.Metadata.UID, []identityPlanWrite{
-		{operands: []string{"-w", "-t", target, tmuxopts.AutomaticRenameWindow, "off"}, effect: "automatic rename disabled"},
-		{operands: []string{"-w", "-t", target, "-q", tmuxopts.WindowUID, window.Metadata.UID}, effect: "Window UID mirror equals Registry"},
-		{operands: []string{"-w", "-t", target, "-q", tmuxopts.WindowName, window.Metadata.Name}, effect: "Window stable-name mirror equals Registry"},
+	return m.RunIdentityWrites(ctx, "window", target, window.Metadata.UID, []IdentityPlanWrite{
+		{Operands: []string{"-w", "-t", target, tmuxopts.AutomaticRenameWindow, "off"}, Effect: "automatic rename disabled"},
+		{Operands: []string{"-w", "-t", target, "-q", tmuxopts.WindowUID, window.Metadata.UID}, Effect: "Window UID mirror equals Registry"},
+		{Operands: []string{"-w", "-t", target, "-q", tmuxopts.WindowName, window.Metadata.Name}, Effect: "Window stable-name mirror equals Registry"},
 	})
 }
 
-func (m *materializer) mirrorPane(ctx context.Context, target string, pane coremetadata.Pane) error {
-	if pane.Metadata.OwnerRef == nil {
-		return fmt.Errorf("mirror Pane %s: stable ownerRef is required", pane.Metadata.UID)
-	}
-	writes := []identityPlanWrite{
-		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneUID, pane.Metadata.UID}, effect: "Pane UID mirror equals Registry"},
-		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneName, pane.Metadata.Name}, effect: "Pane stable-name mirror equals Registry"},
-		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneOwnerKind, string(pane.Metadata.OwnerRef.Kind)}, effect: "Pane stable owner kind equals Registry"},
-		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneOwnerUID, pane.Metadata.OwnerRef.UID}, effect: "Pane stable owner uid equals Registry"},
-		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneRole, string(pane.Spec.Role)}, effect: "Pane stable role equals Registry"},
-	}
-	if pane.Spec.Role == coremetadata.PaneRoleAgent {
-		writes = append(writes, identityPlanWrite{
-			operands: []string{"-p", "-t", target, "-q", tmuxopts.AgentUIDPane, pane.Metadata.OwnerRef.UID},
-			effect:   "Pane Agent uid equals Registry owner",
-		}, identityPlanWrite{
-			operands: []string{"-p", "-t", target, tmuxopts.RemainOnExitPane, "on"},
-			effect:   "managed Agent Pane remains as an exact dead anchor until lifecycle replacement",
-		})
-	}
-	return m.runIdentityWrites(ctx, "pane", target, pane.Metadata.UID, writes)
-}
-
-type identityPlanWrite struct {
-	verb     runtimeMutationVerb
-	operands []string
-	effect   string
-}
+type IdentityPlanWrite = mutationruntime.IdentityPlanWrite
 
 func (m *materializer) mirrorProject(ctx context.Context, target string, project coremetadata.Project) error {
-	return m.runIdentityWrites(ctx, "session", target, project.Metadata.UID, []identityPlanWrite{
-		{operands: []string{"-t", target, "-q", tmuxopts.ProjectUIDSession, project.Metadata.UID}, effect: "Project UID mirror equals Registry"},
-		{operands: []string{"-t", target, "-q", tmuxopts.ProjectNameSession, project.Metadata.Name}, effect: "Project name mirror equals Registry"},
+	return m.RunIdentityWrites(ctx, "session", target, project.Metadata.UID, []IdentityPlanWrite{
+		{Operands: []string{"-t", target, "-q", tmuxopts.ProjectUIDSession, project.Metadata.UID}, Effect: "Project UID mirror equals Registry"},
+		{Operands: []string{"-t", target, "-q", tmuxopts.ProjectNameSession, project.Metadata.Name}, Effect: "Project name mirror equals Registry"},
 	})
-}
-
-func (m *materializer) runIdentityWrites(ctx context.Context, kind, target, uid string, writes []identityPlanWrite) error {
-	defer m.scopeIdentityObservations()()
-	stable, err := m.bindMaterializeIdentityTarget(ctx, kind, target, uid)
-	if err != nil {
-		return err
-	}
-	steps := make([]runtimeMutationStep, 0, len(writes))
-	for index, write := range writes {
-		verb := write.verb
-		if verb == "" {
-			verb = mutationWriteIdentity
-		}
-		action := newRuntimeMutation(index+1, verb, stable)
-		bindRuntimeMutationGuard(&action, "exact "+kind+" carries claimed uid="+uid+" before "+write.effect)
-		action.Operands = slices.Clone(write.operands)
-		steps = append(steps, runtimeMutationStep{
-			Action:           action,
-			TargetRouteGuard: m.targetRouteGuard(action),
-			Reobserve:        func(ctx context.Context) (bool, error) { return m.observeMutationEffect(ctx, action) },
-			Guard: func(ctx context.Context) error {
-				if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
-					return err
-				}
-				return m.guardMaterializeIdentityTarget(ctx, action.Target, false)
-			},
-			Apply: func(ctx context.Context) error {
-				_, err := runRuntimeMutationCommand(ctx, m.runner, action)
-				return err
-			},
-		})
-	}
-	return executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps))
 }
 
 func (m *materializer) recordErrorCreatedSession(
@@ -2104,127 +814,41 @@ func (m *materializer) recordErrorCreatedSession(
 	project coremetadata.Project,
 	sessionName string,
 	exactSessionID string,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 ) {
-	if ledger == nil || strings.TrimSpace(ledger.operationMarker) == "" {
+	if ledger == nil || strings.TrimSpace(ledger.OperationMarker) == "" {
 		return
 	}
 	target := exactTmuxHandle(exactSessionID, "$")
 	if target == "" {
-		exists, err := m.sessions.SessionExists(ctx, sessionName)
+		exists, err := m.Sessions.SessionExists(ctx, sessionName)
 		if err != nil || !exists {
 			return
 		}
 		target = sessionName
 	}
-	out, err := m.routedRunner().Run(ctx, "tmux", "show-environment", "-t", target)
-	if err != nil || sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.operationMarker {
+	out, err := m.RoutedRunner().Run(ctx, "tmux", "show-environment", "-t", target)
+	if err != nil || sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.OperationMarker {
 		if exactTmuxHandle(exactSessionID, "$") != "" {
-			m.warnUnclaimedHandle(runtimeSession, exactSessionID)
+			m.WarnUnclaimedHandle(runtimeSession, exactSessionID)
 		}
 		return
 	}
-	ledger.markSession(target)
+	ledger.MarkSession(target)
 	sessionID := exactTmuxHandle(exactSessionID, "$")
 	if sessionID == "" {
-		sessionID = m.option(ctx, target, "#{session_id}")
+		sessionID = m.Option(ctx, target, "#{session_id}")
 	}
 	if sessionID == "" {
-		if m.warn != nil {
-			fmt.Fprintf(m.warn, "projmux: create failed with an owned but unidentifiable tmux session %s; preserved it\n", sessionName)
+		if m.Warn != nil {
+			fmt.Fprintf(m.Warn, "projmux: create failed with an owned but unidentifiable tmux session %s; preserved it\n", sessionName)
 		}
 		return
 	}
-	if claimErr := m.claimRuntimeUIDForRollback(ctx, runtimeSession, sessionID, project.Metadata.UID, ledger); claimErr != nil {
+	if claimErr := m.ClaimRuntimeUIDForRollback(ctx, runtimeSession, sessionID, project.Metadata.UID, ledger); claimErr != nil {
 		return
 	}
 	_ = m.mirrorProject(ctx, sessionID, project)
-}
-
-func (m *materializer) markCreateOperation(ctx context.Context, sessionName string, ledger *runtimeLedger) error {
-	if ledger == nil || strings.TrimSpace(ledger.operationMarker) == "" {
-		return errors.New("materialize tmux session: create-operation lease is missing")
-	}
-	if err := m.guardExactRoute(ctx, false); err != nil {
-		return fmt.Errorf("mark tmux session %q for create operation: %w", sessionName, err)
-	}
-	action := materializeMutationAction(mutationWriteLease,
-		m.boundMutationTarget("session", sessionName, "session:"+sessionName),
-		"exact managed session="+sessionName,
-		"operation lease is installed",
-		"-t", sessionName, createOperationEnvironment, ledger.operationMarker)
-	if _, err := m.runMutation(ctx, action); err != nil {
-		return fmt.Errorf("mark tmux session %q for create operation: %w", sessionName, err)
-	}
-	ledger.markSession(sessionName)
-	return nil
-}
-
-func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtimeLedger) {
-	if ledger == nil {
-		return
-	}
-	var steps []runtimeMutationStep
-	// wrote turns true at the plan's first Apply. Until then, the lease read
-	// below is the latest observation of each session's environment and no
-	// write of ours has followed it; see Reobserve.
-	wrote := false
-	for _, sessionName := range ledger.markedSessionIDs {
-		exists, err := m.sessions.SessionExists(ctx, sessionName)
-		if err != nil || !exists {
-			continue
-		}
-		out, err := m.routedRunner().Run(ctx, "tmux", "show-environment", "-t", sessionName)
-		if err != nil || sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.operationMarker {
-			continue
-		}
-		for _, environment := range []string{finalizeOperationEnvironment, createOperationEnvironment} {
-			if sessionEnvironmentValue(string(out), environment) != ledger.operationMarker {
-				continue
-			}
-			action := materializeMutationAction(mutationClearLease,
-				m.boundMutationTarget("session", sessionName, "session:"+sessionName),
-				"same operation lease="+ledger.operationMarker,
-				"operation lease is absent",
-				"-u", "-t", sessionName, environment)
-			// This clear runs after the Registry lock is released, so the next
-			// create may already own this variable. The lease comparison
-			// therefore lives inside the single tmux write command, never in a
-			// separate read before it.
-			action.LeaseMarker = ledger.operationMarker
-			action.Order = len(steps) + 1
-			steps = append(steps, runtimeMutationStep{
-				Action:           action,
-				TargetRouteGuard: m.targetRouteGuard(action),
-				Reobserve: func(ctx context.Context) (bool, error) {
-					if !wrote {
-						// The lease read above found this exact environment
-						// carrying our marker, and nothing of ours has written
-						// since: the effect (our marker gone) is known pending.
-						// The answer never declares an effect present, so it
-						// cannot skip a write; the write itself compares the
-						// lease again inside tmux.
-						return false, nil
-					}
-					return m.observeMutationEffect(ctx, action)
-				},
-				Guard: func(ctx context.Context) error {
-					// Only the route is guarded here. Another operation's
-					// marker is a normal race, and the owner-checked clear
-					// leaves it in place without a warning.
-					return m.guardExactRoute(ctx, false, action.Target.PhysicalSocket)
-				},
-				Apply: func(ctx context.Context) error {
-					wrote = true
-					_, err := runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
-					return err
-				},
-			})
-		}
-	}
-	if err := executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps)); err != nil && m.warn != nil {
-		fmt.Fprintf(m.warn, "projmux: could not clear guarded create-operation lease(s): %v\n", err)
-	}
 }
 
 // windowIDForUID returns the tmux window id inside sessionName that mirrors uid.
@@ -2239,13 +863,13 @@ func (m *materializer) windowIDForUID(ctx context.Context, sessionName, uid stri
 // windowRuntimeForUID resolves one stable Window UID to its current exact
 // $N/@N containment. Duplicate claims are conflicting identity evidence and
 // never degrade into first-row selection.
-func (m *materializer) windowRuntimeForUID(ctx context.Context, sessionName, uid string) (runtimeOwner, bool, error) {
+func (m *materializer) windowRuntimeForUID(ctx context.Context, sessionName, uid string) (RuntimeOwner, bool, error) {
 	if strings.TrimSpace(uid) == "" {
-		return runtimeOwner{}, false, nil
+		return RuntimeOwner{}, false, nil
 	}
 	inventory, err := m.windowRuntimeInventory(ctx, sessionName)
 	if err != nil {
-		return runtimeOwner{}, false, err
+		return RuntimeOwner{}, false, err
 	}
 	return resolveWindowRuntimeUID(inventory, uid)
 }
@@ -2254,33 +878,33 @@ func (m *materializer) windowRuntimeForUID(ctx context.Context, sessionName, uid
 // Window UID in a session. Create transactions use the shared snapshot to
 // project all existing-live Windows without holding the Registry lock across
 // one tmux round trip per Window.
-func (m *materializer) windowRuntimeInventory(ctx context.Context, sessionName string) (map[string][]runtimeOwner, error) {
-	out, err := m.read(ctx, "list-windows", "-t", sessionName, "-F",
+func (m *materializer) windowRuntimeInventory(ctx context.Context, sessionName string) (map[string][]RuntimeOwner, error) {
+	out, err := m.ReadTmux(ctx, "list-windows", "-t", sessionName, "-F",
 		tmuxRowFormat("#{"+tmuxopts.WindowUID+"}", "#{session_id}", "#{window_id}"))
 	if err != nil {
 		return nil, fmt.Errorf("list tmux windows of session %q: %w", sessionName, err)
 	}
-	inventory := make(map[string][]runtimeOwner)
+	inventory := make(map[string][]RuntimeOwner)
 	for _, fields := range splitTmuxRows(out, 3) {
 		uid := strings.TrimSpace(fields[0])
 		if uid != "" {
-			inventory[uid] = append(inventory[uid], runtimeOwner{SessionID: fields[1], WindowID: fields[2]})
+			inventory[uid] = append(inventory[uid], RuntimeOwner{SessionID: fields[1], WindowID: fields[2]})
 		}
 	}
 	return inventory, nil
 }
 
-func resolveWindowRuntimeUID(inventory map[string][]runtimeOwner, uid string) (runtimeOwner, bool, error) {
+func resolveWindowRuntimeUID(inventory map[string][]RuntimeOwner, uid string) (RuntimeOwner, bool, error) {
 	owners := inventory[strings.TrimSpace(uid)]
 	if len(owners) == 0 {
-		return runtimeOwner{}, false, nil
+		return RuntimeOwner{}, false, nil
 	}
 	if len(owners) != 1 {
-		return runtimeOwner{}, false, fmt.Errorf("window uid %q has ambiguous current runtime containment", uid)
+		return RuntimeOwner{}, false, fmt.Errorf("window uid %q has ambiguous current runtime containment", uid)
 	}
 	owner := owners[0]
 	if exactTmuxHandle(owner.SessionID, "$") == "" || exactTmuxHandle(owner.WindowID, "@") == "" {
-		return runtimeOwner{}, false, fmt.Errorf("window uid %q has malformed current runtime containment", uid)
+		return RuntimeOwner{}, false, fmt.Errorf("window uid %q has malformed current runtime containment", uid)
 	}
 	return owner, true, nil
 }
@@ -2288,7 +912,7 @@ func resolveWindowRuntimeUID(inventory map[string][]runtimeOwner, uid string) (r
 // panesOf lists the panes of a tmux window as (mirrored uid, pane id) rows in
 // tmux order.
 func (m *materializer) panesOf(ctx context.Context, windowID string) ([][2]string, error) {
-	out, err := m.read(ctx, "list-panes", "-t", windowID, "-F",
+	out, err := m.ReadTmux(ctx, "list-panes", "-t", windowID, "-F",
 		tmuxRowFormat("#{"+tmuxopts.PaneUID+"}", "#{pane_id}"))
 	if err != nil {
 		return nil, fmt.Errorf("list tmux panes of window %q: %w", windowID, err)
@@ -2306,12 +930,9 @@ type windowCreateResult struct {
 	PaneID   string
 }
 
-type runtimeOwner struct {
-	SessionID string
-	WindowID  string
-}
+type RuntimeOwner = mutationruntime.RuntimeOwner
 
-type runtimeOwnerSet map[runtimeOwner]struct{}
+type runtimeOwnerSet map[RuntimeOwner]struct{}
 
 type runtimeOwners map[string]runtimeOwnerSet
 
@@ -2330,8 +951,8 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 	if strings.TrimSpace(cwd) != "" {
 		args = append(args, "-c", cwd)
 	}
-	action := materializeMutationAction(mutationCreateWindow,
-		m.boundMutationTarget("window-parent", sessionID, "window-name:"+name),
+	action := MaterializeMutationAction(mutationCreateWindow,
+		m.BoundMutationTarget("window-parent", sessionID, "window-name:"+name),
 		"exact owned session containment="+sessionID,
 		"one detached owned Window and primary Pane exist",
 		args...)
@@ -2342,7 +963,7 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 	// attribution below, so the attribution reuses it instead of reading the
 	// same two server-wide inventories again.
 	var observedAfter *[2]runtimeOwners
-	createErr := m.runMaterializeMutation(ctx, action, func() error {
+	createErr := m.RunMaterializeMutation(ctx, action, func() error {
 		currentWindows, currentPanes, err := m.runtimeOwners(ctx)
 		if err != nil {
 			return err
@@ -2350,10 +971,10 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 		if !equalRuntimeOwners(beforeWindows, currentWindows) || !equalRuntimeOwners(beforePanes, currentPanes) {
 			return fmt.Errorf("runtime owner inventory drifted before Window create")
 		}
-		return m.guardMutationAction(ctx, action)
+		return m.GuardMutationAction(ctx, action)
 	}, func() error {
 		var err error
-		rawOutput, err = runRuntimeMutationCommand(ctx, m.runner, action)
+		rawOutput, err = runRuntimeMutationCommand(ctx, m.Runner, action)
 		return err
 	}, func(ctx context.Context) (bool, error) {
 		output := strings.TrimSpace(string(rawOutput))
@@ -2401,11 +1022,11 @@ func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd strin
 }
 
 func (m *materializer) runtimeOwners(ctx context.Context) (runtimeOwners, runtimeOwners, error) {
-	windowsOut, err := m.read(ctx, "list-windows", "-a", "-F", tmuxRowFormat("#{session_id}", "#{window_id}"))
+	windowsOut, err := m.ReadTmux(ctx, "list-windows", "-a", "-F", tmuxRowFormat("#{session_id}", "#{window_id}"))
 	if err != nil {
 		return nil, nil, err
 	}
-	panesOut, err := m.read(ctx, "list-panes", "-a", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"))
+	panesOut, err := m.ReadTmux(ctx, "list-panes", "-a", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2418,7 +1039,7 @@ func (m *materializer) runtimeOwners(ctx context.Context) (runtimeOwners, runtim
 		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" {
 			return nil, nil, fmt.Errorf("malformed Window owner inventory")
 		}
-		owner := runtimeOwner{SessionID: row[0], WindowID: row[1]}
+		owner := RuntimeOwner{SessionID: row[0], WindowID: row[1]}
 		if windows[row[1]] == nil {
 			windows[row[1]] = runtimeOwnerSet{}
 		}
@@ -2433,7 +1054,7 @@ func (m *materializer) runtimeOwners(ctx context.Context) (runtimeOwners, runtim
 		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" || exactTmuxHandle(row[2], "%") == "" {
 			return nil, nil, fmt.Errorf("malformed Pane owner inventory")
 		}
-		owner := runtimeOwner{SessionID: row[0], WindowID: row[1]}
+		owner := RuntimeOwner{SessionID: row[0], WindowID: row[1]}
 		if panes[row[2]] == nil {
 			panes[row[2]] = runtimeOwnerSet{}
 		}
@@ -2455,8 +1076,8 @@ func attributeCreatedWindow(
 	newPanes := newRuntimeIDs(beforePanes, afterPanes)
 	windowOwners, windowPresent := afterWindows[result.WindowID]
 	paneOwners, panePresent := afterPanes[result.PaneID]
-	wantWindowOwner := runtimeOwner{SessionID: sessionID, WindowID: result.WindowID}
-	wantPaneOwner := runtimeOwner{SessionID: sessionID, WindowID: result.WindowID}
+	wantWindowOwner := RuntimeOwner{SessionID: sessionID, WindowID: result.WindowID}
+	wantPaneOwner := RuntimeOwner{SessionID: sessionID, WindowID: result.WindowID}
 	if len(newWindows) != 1 || newWindows[0] != result.WindowID || len(newPanes) != 1 || newPanes[0] != result.PaneID ||
 		!windowPresent || !windowOwners.contains(wantWindowOwner) || !panePresent || !paneOwners.contains(wantPaneOwner) ||
 		!paneOwnerSetMatchesWindow(paneOwners, windowOwners, result.WindowID) {
@@ -2479,7 +1100,7 @@ func paneOwnerSetMatchesWindow(paneOwners, windowOwners runtimeOwnerSet, windowI
 	return true
 }
 
-func (owners runtimeOwnerSet) contains(owner runtimeOwner) bool {
+func (owners runtimeOwnerSet) contains(owner RuntimeOwner) bool {
 	_, ok := owners[owner]
 	return ok
 }
@@ -2523,20 +1144,13 @@ func equalRuntimeOwners(left, right runtimeOwners) bool {
 }
 
 func (m *materializer) warnUnclaimedOwners(kind string, before, after runtimeOwners) {
-	if m.warn == nil {
+	if m.Warn == nil {
 		return
 	}
 	if residual := newRuntimeIDs(before, after); len(residual) > 0 {
-		fmt.Fprintf(m.warn, "projmux: create attribution failed with unclaimed tmux %s drift; preserved %s; inspect these exact handles before retry or cleanup\n",
+		fmt.Fprintf(m.Warn, "projmux: create attribution failed with unclaimed tmux %s drift; preserved %s; inspect these exact handles before retry or cleanup\n",
 			kind, strings.Join(residual, ", "))
 	}
-}
-
-func (m *materializer) warnUnclaimedHandle(kind runtimeObjectKind, id string) {
-	if m.warn == nil || strings.TrimSpace(id) == "" {
-		return
-	}
-	fmt.Fprintf(m.warn, "projmux: create could not claim tmux %s %s; preserved this exact residual handle for inspection before retry or cleanup\n", kind, id)
 }
 
 func (m *materializer) warnCompositeWindowResult(output string) {
@@ -2545,19 +1159,11 @@ func (m *materializer) warnCompositeWindowResult(output string) {
 		return
 	}
 	if id := exactTmuxHandle(rows[0][0], "@"); id != "" {
-		m.warnUnclaimedHandle(runtimeWindow, id)
+		m.WarnUnclaimedHandle(runtimeWindow, id)
 	}
 	if id := exactTmuxHandle(rows[0][1], "%"); id != "" {
-		m.warnUnclaimedHandle(runtimePane, id)
+		m.WarnUnclaimedHandle(runtimePane, id)
 	}
-}
-
-// splitPlacementFlag maps the closed placement enum onto its tmux split axis.
-func splitPlacementFlag(placement string) string {
-	if placement == placementDown {
-		return "-v"
-	}
-	return "-h"
 }
 
 // admitSplitAnchor limits the invocation target to the anchor being split.
@@ -2574,84 +1180,6 @@ func (t *processTerminalTarget) admitSplitAnchor(anchorPaneID string) error {
 	return t.admit(resourcegraph.ProcessSplit)
 }
 
-// splitPane splits an anchor pane detached and returns the new pane id.
-//
-// `-d` is the whole point: tmux leaves the previously active pane active, so
-// the split is a pure structural mutation with no focus side effect.
-//
-// processAnchor is the invocation's exact process target, or nil for a tmux
-// anchor; a declared process anchor refuses the split before any tmux call.
-func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string, processAnchor *processTerminalTarget) (string, error) {
-	if err := processAnchor.admitSplitAnchor(anchorPaneID); err != nil {
-		return "", err
-	}
-	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
-	if beforeErr != nil {
-		return "", fmt.Errorf("list tmux panes around %q before split: %w", anchorPaneID, beforeErr)
-	}
-	args := []string{"-d", "-P", "-F", "#{pane_id}", splitPlacementFlag(placement), "-t", anchorPaneID}
-	if strings.TrimSpace(cwd) != "" {
-		args = append(args, "-c", cwd)
-	}
-	action := materializeMutationAction(mutationCreatePane,
-		m.boundMutationTarget("pane", anchorPaneID, "anchor:"+anchorPaneID),
-		"exact owned anchor containment="+anchorPaneID,
-		"one detached owned Pane exists",
-		args...)
-	action.Command = slices.Clone(command)
-	var rawID []byte
-	err := m.runMaterializeMutation(ctx, action, func() error {
-		current, err := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
-		if err != nil {
-			return err
-		}
-		if len(before) != len(current) {
-			return errors.New("Pane inventory drifted before split")
-		}
-		for id := range before {
-			if !current[id] {
-				return errors.New("Pane inventory drifted before split")
-			}
-		}
-		return m.guardMutationAction(ctx, action)
-	}, func() error {
-		var err error
-		rawID, err = runRuntimeMutationCommand(ctx, m.runner, action)
-		return err
-	}, func(ctx context.Context) (bool, error) {
-		id := exactTmuxHandle(strings.TrimSpace(string(rawID)), "%")
-		if id == "" {
-			return false, nil
-		}
-		current, err := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
-		if err != nil {
-			return false, err
-		}
-		return !before[id] && current[id], nil
-	})
-	id := strings.TrimSpace(string(rawID))
-	if err != nil {
-		after, listErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
-		if listErr == nil {
-			id = errorCreatedHandle(id, "%", before, after)
-			if id == "" {
-				m.warnUnclaimedRuntime("pane", before, after)
-			}
-		} else {
-			id = ""
-		}
-		return id, fmt.Errorf("split tmux pane %q: %w", anchorPaneID, err)
-	}
-	id = exactTmuxHandle(id, "%")
-	if id == "" {
-		return "", fmt.Errorf("split tmux pane %q: tmux returned no pane id", anchorPaneID)
-	}
-	if before[id] {
-		return "", fmt.Errorf("split tmux pane %q: tmux returned pre-existing pane id %s", anchorPaneID, id)
-	}
-	return id, nil
-}
-
 // retireOwnedPane removes one tmux pane this operation created, guarded by the
 // exact Projmux uid it mirrored onto that pane.
 //
@@ -2664,12 +1192,12 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 // warned about -- a Window left holding a shell the create promised to remove is
 // not the result the caller was told it would get.
 func (m *materializer) retireOwnedPane(ctx context.Context, paneID, paneUID string) error {
-	action := materializeMutationAction(mutationKillOwned,
-		m.boundMutationTarget(string(runtimePane), paneID, paneUID),
+	action := MaterializeMutationAction(mutationKillOwned,
+		m.BoundMutationTarget(string(runtimePane), paneID, paneUID),
 		"same mirrored ownership uid="+paneUID,
 		"owned created pane is absent",
 		"-t", paneID)
-	_, err := m.runMutation(ctx, action)
+	_, err := m.RunMutation(ctx, action)
 	return err
 }
 
@@ -2677,7 +1205,7 @@ func (m *materializer) retireOwnedPane(ctx context.Context, paneID, paneUID stri
 // legacy AI split. It intentionally returns no error: layout observation is
 // outside the create transaction's failure and rollback contract.
 func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, placement string) {
-	if m == nil || m.runner == nil {
+	if m == nil || m.Runner == nil {
 		return
 	}
 	observed, err := m.observeSplitLayoutBatch(ctx, anchorPaneID)
@@ -2699,7 +1227,7 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 	var routeChecked, semanticChecked, effectCached bool
 	var routeErr, semanticErr, effectErr error
 	var effect splitLayoutBatchReceipt
-	batchTarget := m.boundMutationTarget("pane", anchorPaneID, observed.paneUID(anchorPaneID))
+	batchTarget := m.BoundMutationTarget("pane", anchorPaneID, observed.paneUID(anchorPaneID))
 	batchTarget.Parent = observed.sessionID + "/" + observed.windowID
 	readEffect := func(ctx context.Context) (splitLayoutBatchReceipt, error) {
 		if !effectCached {
@@ -2738,9 +1266,9 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 	}
 	for index, resize := range resizes {
 		paneUID := observed.paneUID(resize.paneID)
-		target := m.boundMutationTarget("pane", resize.paneID, paneUID)
+		target := m.BoundMutationTarget("pane", resize.paneID, paneUID)
 		target.Parent = observed.sessionID + "/" + observed.windowID
-		action := materializeMutationAction(mutationWriteLayout,
+		action := MaterializeMutationAction(mutationWriteLayout,
 			target,
 			"exact ordered layout inventory="+observed.raw,
 			"Pane "+resize.paneID+" size "+resize.axis+"="+fmt.Sprintf("%d", resize.size),
@@ -2763,7 +1291,7 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 				effectCached = false
 				// Preserve the established presentation contract: each peer resize
 				// is attempted even when an earlier best-effort resize failed.
-				_, _ = runRuntimeMutationCommand(ctx, m.mutationRunner(action), action)
+				_, _ = runRuntimeMutationCommand(ctx, m.MutationRunner(action), action)
 				return nil
 			},
 		})
@@ -2771,7 +1299,7 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 	// Layout remains best effort: a failed or partial resize cannot turn an
 	// already successful managed create into a topology rollback. The important
 	// boundary is that every attempted write came from one fully guarded plan.
-	_ = executeRuntimeMutationPlan(ctx, m.guardedWriteSteps(steps))
+	_ = executeRuntimeMutationPlan(ctx, m.GuardedWriteSteps(steps))
 }
 
 var splitLayoutBatchFormat = tmuxRowFormat(
@@ -2793,7 +1321,7 @@ type splitLayoutBatchReceipt struct {
 }
 
 func (m *materializer) observeSplitLayoutBatch(ctx context.Context, anchorPaneID string) (splitLayoutBatchReceipt, error) {
-	out, err := m.read(ctx, "list-panes", "-t", anchorPaneID, "-F", splitLayoutBatchFormat)
+	out, err := m.ReadTmux(ctx, "list-panes", "-t", anchorPaneID, "-F", splitLayoutBatchFormat)
 	if err != nil {
 		return splitLayoutBatchReceipt{}, fmt.Errorf("observe split layout receipt: %w", err)
 	}
@@ -2870,54 +1398,6 @@ func (r splitLayoutBatchReceipt) effectObserved(action plannedRuntimeMutation) (
 	default:
 		return false, errors.New("split layout action has an invalid axis")
 	}
-}
-
-func (m *materializer) warnUnclaimedRuntime(kind string, before, after map[string]bool) {
-	if m.warn == nil {
-		return
-	}
-	var residual []string
-	for id := range after {
-		if !before[id] {
-			residual = append(residual, id)
-		}
-	}
-	slices.Sort(residual)
-	if len(residual) > 0 {
-		fmt.Fprintf(m.warn, "projmux: create failed with unclaimed tmux %s drift; preserved %s\n", kind, strings.Join(residual, ", "))
-	}
-}
-
-func (m *materializer) runtimeIDs(ctx context.Context, command, target, format, prefix string) (map[string]bool, error) {
-	out, err := m.read(ctx, command, "-t", target, "-F", format)
-	if err != nil {
-		return nil, err
-	}
-	ids := map[string]bool{}
-	for line := range strings.SplitSeq(out, "\n") {
-		if id := exactTmuxHandle(line, prefix); id != "" {
-			ids[id] = true
-		}
-	}
-	return ids, nil
-}
-
-func errorCreatedHandle(output, prefix string, before, after map[string]bool) string {
-	var candidate string
-	for line := range strings.SplitSeq(output, "\n") {
-		id := exactTmuxHandle(line, prefix)
-		if id == "" {
-			continue
-		}
-		if candidate != "" && candidate != id {
-			return ""
-		}
-		candidate = id
-	}
-	if candidate == "" || before[candidate] || !after[candidate] {
-		return ""
-	}
-	return candidate
 }
 
 // strictTmuxRows is the identity-boundary variant of splitTmuxRows. Inventory

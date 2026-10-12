@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -38,7 +40,7 @@ func newPaneRuntimeFixture(t *testing.T, inventory string) (*tmuxPaneDeleteRunti
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	runtime := &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: runner, Target: target, Getenv: func(string) string { return "" }}}
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value,
 		"display-message", "-p", "-F", "#{socket_path}")] = testDeleteTarget.Value + "\n"
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
@@ -121,7 +123,7 @@ func TestPaneDeleteSocketObservationFailureKeepsSubprocessCause(t *testing.T) {
 				return runtime
 			}
 
-			_, preflightErr := newRuntime().preflight(context.Background(), registry, plan)
+			_, preflightErr := newRuntime().Preflight(context.Background(), registry, plan)
 			if preflightErr == nil {
 				t.Fatal("preflight succeeded; want the socket observation failure")
 			}
@@ -154,11 +156,9 @@ func TestPaneDeleteDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.T)
 		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):      "0\n",
 		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):                  "0\n",
 	}}
-	runtime := &tmuxPaneDeleteRuntime{
-		runner: runner, target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, getenv: func(string) string { return "" },
-	}
+	runtime := &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, Getenv: func(string) string { return "" }}}
 	registry := resourceFixtureRegistry(t)
-	_, err := runtime.preflight(context.Background(), registry, panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
+	_, err := runtime.Preflight(context.Background(), registry, panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
 	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
 		t.Fatalf("forged default delete error = %v", err)
 	}
@@ -172,13 +172,13 @@ func TestPaneDeleteDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.T)
 
 func TestPaneDeletePreExecuteNoServerRefusesInsteadOfCompletingAbsence(t *testing.T) {
 	runtime, runner, _ := newPaneRuntimeFixture(t, "")
-	runtime.expectedSocketPath = testDeleteTarget.Value
-	runtime.expectedLogicalSocket = defaultAppSocket
-	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+	runtime.ExpectedSocketPath = testDeleteTarget.Value
+	runtime.ExpectedLogicalSocket = defaultAppSocket
+	runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "display-message", "-p", "-F", "#{socket_path}")
 	runner.errors = map[string]error{key: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running"}}}
 	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
-	applied, err := runtime.killAll(context.Background(), []paneLiveDeleteTarget{target})
+	applied, err := runtime.KillAll(context.Background(), []paneLiveDeleteTarget{target})
 	if err == nil || applied != 0 {
 		t.Fatalf("pre-execute no-server result = applied %d, err %v; want zero/refusal", applied, err)
 	}
@@ -251,13 +251,13 @@ func (r *lastTargetDeleteRunner) Run(ctx context.Context, name string, args ...s
 func TestPaneDeleteSuccessfulLastKillAcceptsPostApplyNoServerReceipt(t *testing.T) {
 	runner := &lastTargetDeleteRunner{kind: "pane"}
 	runtime := statefulPaneRuntime(t, runner)
-	runtime.expectedSocketPath = testDeleteTarget.Value
-	runtime.expectedLogicalSocket = defaultAppSocket
+	runtime.ExpectedSocketPath = testDeleteTarget.Value
+	runtime.ExpectedLogicalSocket = defaultAppSocket
 	target := paneLiveDeleteTarget{
 		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
 		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
 	}
-	applied, err := runtime.killAll(context.Background(), []paneLiveDeleteTarget{target})
+	applied, err := runtime.KillAll(context.Background(), []paneLiveDeleteTarget{target})
 	if err != nil || applied != 1 || !runner.killed {
 		t.Fatalf("last-Pane kill result = applied %d, killed %t, err %v; want one successful kill", applied, runner.killed, err)
 	}
@@ -275,7 +275,7 @@ func TestPaneDeleteSuccessfulLastKillAcceptsPostApplyNoServerReceipt(t *testing.
 func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testing.T) {
 	runtime, _, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
 
-	siblingPlan, err := runtime.preflight(context.Background(), registry,
+	siblingPlan, err := runtime.Preflight(context.Background(), registry,
 		panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
 	if err != nil {
 		t.Fatalf("sibling preflight: %v", err)
@@ -285,7 +285,7 @@ func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testin
 		t.Fatalf("sibling plan = %#v", siblingPlan)
 	}
 
-	agentPlan, err := runtime.preflight(context.Background(), registry,
+	agentPlan, err := runtime.Preflight(context.Background(), registry,
 		panePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex"))
 	if err != nil {
 		t.Fatalf("Agent preflight: %v", err)
@@ -295,7 +295,7 @@ func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testin
 		t.Fatalf("Agent plan = %#v", agentPlan)
 	}
 
-	lastPlan, err := runtime.preflight(context.Background(), registry,
+	lastPlan, err := runtime.Preflight(context.Background(), registry,
 		panePlanFor(t, registry, coremetadata.KindPane, "pan-beta-zsh"))
 	if err != nil {
 		t.Fatalf("last Pane preflight: %v", err)
@@ -323,7 +323,7 @@ func TestPaneDeleteRuntimePreservesControlSessionOwnerChain(t *testing.T) {
 		{name: "Agent", kind: coremetadata.KindAgent, uid: "agt-home", pane: "pan-home-agent"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			live, err := runtime.preflight(context.Background(), store.registry,
+			live, err := runtime.Preflight(context.Background(), store.registry,
 				panePlanFor(t, store.registry, row.kind, row.uid))
 			if err != nil {
 				t.Fatalf("control-owned %s preflight: %v", row.name, err)
@@ -357,7 +357,7 @@ func TestPaneDeleteRuntimeFailsClosedOnMissingDuplicateForeignAndStaleMirrors(t 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime, runner, registry := newPaneRuntimeFixture(t, test.inventory)
-			_, err := runtime.preflight(context.Background(), registry,
+			_, err := runtime.Preflight(context.Background(), registry,
 				panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-zsh"))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("preflight error = %v, want %q", err, test.want)
@@ -377,7 +377,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 	t.Run("MissingRuntime Pane exact uid", func(t *testing.T) {
 		runtime, _, registry := newPaneRuntimeFixture(t, sibling)
 		markPaneMissingRuntime(t, &registry, "pan-alpha-log")
-		plan, err := runtime.preflight(context.Background(), registry,
+		plan, err := runtime.Preflight(context.Background(), registry,
 			exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
 		if err != nil {
 			t.Fatalf("registry-only Pane preflight: %v", err)
@@ -394,7 +394,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 		agent.Status.Phase = coremetadata.PhaseOffline
 		agent.Status.PaneRef = ""
 		markPaneMissingRuntime(t, &registry, "pan-alpha-codex")
-		plan, err := runtime.preflight(context.Background(), registry,
+		plan, err := runtime.Preflight(context.Background(), registry,
 			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex"))
 		if err != nil {
 			t.Fatalf("registry-only Agent preflight: %v", err)
@@ -407,7 +407,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 
 	t.Run("Offline Agent without retained Pane", func(t *testing.T) {
 		runtime, _, registry := newPaneRuntimeFixture(t, sibling)
-		plan, err := runtime.preflight(context.Background(), registry,
+		plan, err := runtime.Preflight(context.Background(), registry,
 			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-beta-codex"))
 		if err != nil {
 			t.Fatalf("registry-only empty Agent preflight: %v", err)
@@ -426,7 +426,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 		agent.Status.Phase = coremetadata.PhaseFailed
 		agent.Status.PaneRef = ""
 		markPaneMissingRuntime(t, &registry, "pan-alpha-codex")
-		plan, err := runtime.preflight(context.Background(), registry,
+		plan, err := runtime.Preflight(context.Background(), registry,
 			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex"))
 		if err != nil {
 			t.Fatalf("registry-only Failed Agent preflight: %v", err)
@@ -442,7 +442,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 		runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
 		agent, _ := registry.Agent("agt-beta-codex")
 		agent.Status.Phase = coremetadata.PhaseFailed
-		plan, err := runtime.preflight(context.Background(), registry,
+		plan, err := runtime.Preflight(context.Background(), registry,
 			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-beta-codex"))
 		if err != nil {
 			t.Fatalf("registry-only empty Failed Agent preflight: %v", err)
@@ -528,7 +528,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 			if test.prepare != nil {
 				test.prepare(&registry)
 			}
-			_, err := runtime.preflight(context.Background(), registry, test.plan(registry))
+			_, err := runtime.Preflight(context.Background(), registry, test.plan(registry))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("preflight error = %v, want %q", err, test.want)
 			}
@@ -539,7 +539,7 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 	t.Run("MissingRuntime evidence with a unique live mirror uses exact live delete", func(t *testing.T) {
 		runtime, _, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
 		markPaneMissingRuntime(t, &registry, "pan-alpha-log")
-		plan, err := runtime.preflight(context.Background(), registry,
+		plan, err := runtime.Preflight(context.Background(), registry,
 			exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
 		if err != nil {
 			t.Fatalf("live rebound preflight: %v", err)
@@ -670,7 +670,7 @@ func TestPaneDeleteLiveMirrorRefusalNamesTheExactUIDRegistryOnlyForm(t *testing.
 			if test.prepare != nil {
 				test.prepare(&registry)
 			}
-			_, err := runtime.preflight(context.Background(), registry, test.plan(registry))
+			_, err := runtime.Preflight(context.Background(), registry, test.plan(registry))
 			if err == nil || err.Error() != test.want {
 				t.Fatalf("preflight error =\n%v\nwant\n%s", err, test.want)
 			}
@@ -792,12 +792,12 @@ func TestPaneDeleteStandaloneSocketAuthorizesOnlyRegistryOnlyEvidence(t *testing
 			runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value,
 				"show-options", "-gqv", tmuxopts.AppGlobal)] = "\n"
 
-			first, err := runtime.preflight(context.Background(), registry,
+			first, err := runtime.Preflight(context.Background(), registry,
 				exactPanePlanFor(t, registry, test.kind, test.uid))
 			if err != nil {
 				t.Fatalf("standalone Registry-only preflight: %v", err)
 			}
-			second, err := runtime.preflight(context.Background(), registry,
+			second, err := runtime.Preflight(context.Background(), registry,
 				exactPanePlanFor(t, registry, test.kind, test.uid))
 			if err != nil || second.Signature() != first.Signature() {
 				t.Fatalf("standalone locked reobservation = %#v, err %v; first %#v", second, err, first)
@@ -821,7 +821,7 @@ func TestPaneDeleteStandaloneSocketRefusesLiveMirrorBeforeWrite(t *testing.T) {
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value,
 		"show-options", "-gqv", tmuxopts.AppGlobal)] = "\n"
 
-	_, err := runtime.preflight(context.Background(), registry,
+	_, err := runtime.Preflight(context.Background(), registry,
 		exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
 	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
 		t.Fatalf("standalone live-mirror preflight error = %v, want mutation-authority refusal", err)
@@ -839,14 +839,14 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 	runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
 	markPaneMissingRuntime(t, &registry, "pan-alpha-log")
 	plan := exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
-	first, err := runtime.preflight(context.Background(), registry, plan)
+	first, err := runtime.Preflight(context.Background(), registry, plan)
 	if err != nil {
 		t.Fatalf("initial preflight: %v", err)
 	}
 
 	pane, _ := registry.Pane("pan-alpha-log")
 	pane.Status.Activation.Generation = "gen-replaced"
-	second, err := runtime.preflight(context.Background(), registry, plan)
+	second, err := runtime.Preflight(context.Background(), registry, plan)
 	if err != nil {
 		t.Fatalf("generation revalidation: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 
 	pane.Status.Activation.Generation = ""
 	pane.Metadata.OwnerRef.UID = "win-alpha-review"
-	third, err := runtime.preflight(context.Background(), registry, plan)
+	third, err := runtime.Preflight(context.Background(), registry, plan)
 	if err != nil {
 		t.Fatalf("owner revalidation: %v", err)
 	}
@@ -869,13 +869,13 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 	runner.errors = map[string]error{socketKey: appTypedCommandFailure{failure: inttmux.CommandFailure{
 		Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + testDeleteTarget.Value,
 	}}}
-	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
+	if _, err := runtime.Preflight(context.Background(), registry, plan); err == nil ||
 		!strings.Contains(err.Error(), "unavailable (no-server)") {
 		t.Fatalf("typed no-server error = %v", err)
 	}
 
 	runner.errors = map[string]error{socketKey: errors.New("permission denied")}
-	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
+	if _, err := runtime.Preflight(context.Background(), registry, plan); err == nil ||
 		!strings.Contains(err.Error(), "reobserve exact socket identity") {
 		t.Fatalf("permission error = %v", err)
 	}
@@ -884,7 +884,7 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 		"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}")
 	inventoryKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "list-panes", "-a", "-F", format)
 	runner.errors = map[string]error{inventoryKey: errors.New("inventory unavailable")}
-	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
+	if _, err := runtime.Preflight(context.Background(), registry, plan); err == nil ||
 		!strings.Contains(err.Error(), "inventory exact tmux socket") {
 		t.Fatalf("inventory error = %v", err)
 	}
@@ -893,14 +893,14 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 func TestPaneDeleteAuthorityUsesActivationGenerationNotTerminationReceipt(t *testing.T) {
 	registry := resourceFixtureRegistry(t)
 	plan := panePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex")
-	before, err := paneDeleteAuthoritySignature(registry, plan)
+	before, err := mutationruntime.PaneDeleteAuthoritySignature(registry, plan)
 	if err != nil {
 		t.Fatalf("initial authority: %v", err)
 	}
 
 	agent, _ := registry.Agent("agt-alpha-codex")
 	agent.Status.LastTermination = &coremetadata.TerminationEvidence{Generation: "receipt-written-by-delete"}
-	afterReceipt, err := paneDeleteAuthoritySignature(registry, plan)
+	afterReceipt, err := mutationruntime.PaneDeleteAuthoritySignature(registry, plan)
 	if err != nil {
 		t.Fatalf("receipt authority: %v", err)
 	}
@@ -910,7 +910,7 @@ func TestPaneDeleteAuthorityUsesActivationGenerationNotTerminationReceipt(t *tes
 
 	pane, _ := registry.Pane("pan-alpha-codex")
 	pane.Status.Activation.Generation = "replacement-materialization"
-	afterGeneration, err := paneDeleteAuthoritySignature(registry, plan)
+	afterGeneration, err := mutationruntime.PaneDeleteAuthoritySignature(registry, plan)
 	if err != nil {
 		t.Fatalf("generation authority: %v", err)
 	}
@@ -936,7 +936,7 @@ func TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan(t *testing.T) {
 		agent.Status.PaneRef = ""
 		markPaneMissingRuntime(t, &registry, "pan-alpha-codex")
 		plan := exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex")
-		approved, err := runtime.preflight(context.Background(), registry, plan)
+		approved, err := runtime.Preflight(context.Background(), registry, plan)
 		if err != nil {
 			t.Fatalf("Failed Agent dry-run preflight: %v", err)
 		}
@@ -949,7 +949,7 @@ func TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan(t *testing.T) {
 		pane, _ := registry.Pane("pan-alpha-codex")
 		pane.Status.Conditions = nil
 		runner.outputs[inventoryKey] = paneRuntimeInventory()
-		current, err := runtime.preflight(context.Background(), registry, plan)
+		current, err := runtime.Preflight(context.Background(), registry, plan)
 		if err != nil {
 			t.Fatalf("resumed Agent locked preflight: %v", err)
 		}
@@ -964,7 +964,7 @@ func TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan(t *testing.T) {
 		agent, _ := registry.Agent("agt-beta-codex")
 		agent.Status.Phase = coremetadata.PhaseFailed
 		plan := exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-beta-codex")
-		approved, err := runtime.preflight(context.Background(), registry, plan)
+		approved, err := runtime.Preflight(context.Background(), registry, plan)
 		if err != nil {
 			t.Fatalf("zero-Pane Failed Agent dry-run preflight: %v", err)
 		}
@@ -974,7 +974,7 @@ func TestPaneDeleteRuntimeFailedAgentResumeChangesTheSignedPlan(t *testing.T) {
 
 		agent.Status.Phase = coremetadata.PhaseRunning
 		agent.Status.PaneRef = "pan-beta-zsh"
-		_, err = runtime.preflight(context.Background(), registry, plan)
+		_, err = runtime.Preflight(context.Background(), registry, plan)
 		want := `delete agent: registry Agent uid "agt-beta-codex" is Running, not an exact Offline or Failed target; no live managed Pane can authorize deletion and nothing was changed`
 		if err == nil || err.Error() != want {
 			t.Fatalf("resumed zero-Pane Agent locked preflight error =\n%v\nwant\n%s", err, want)
@@ -1001,7 +1001,7 @@ func TestNamedLastPaneCreatesReplacementWithoutRootCascadeConfirmation(t *testin
 
 func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *testing.T) {
 	runtime, runner, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
-	runtime.getenv = func(name string) string {
+	runtime.Getenv = func(name string) string {
 		switch name {
 		case "TMUX":
 			return testDeleteTarget.Value + ",123,0"
@@ -1021,7 +1021,7 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 	plan := panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
 	plan.Implicit = true
 
-	live, err := runtime.preflight(context.Background(), registry, plan)
+	live, err := runtime.Preflight(context.Background(), registry, plan)
 	if err != nil {
 		t.Fatalf("implicit preflight: %v", err)
 	}
@@ -1029,34 +1029,34 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 		t.Fatalf("implicit plan = %#v", live)
 	}
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/foreign.sock\n"
-	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil || !strings.Contains(err.Error(), "exact socket drifted") {
+	if _, err := runtime.Preflight(context.Background(), registry, plan); err == nil || !strings.Contains(err.Error(), "exact socket drifted") {
 		t.Fatalf("foreign socket error = %v", err)
 	}
 }
 
 func TestPaneDeleteRuntimeProducerAnchorBindsRouteWithoutInheritedPaneEnv(t *testing.T) {
 	runtime, runner, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
-	runtime.getenv = func(name string) string {
+	runtime.Getenv = func(name string) string {
 		if name == "TMUX" {
 			return testDeleteTarget.Value + ",123,0"
 		}
 		return ""
 	}
-	runtime.useRouteAnchor("%31")
+	runtime.UseRouteAnchor("%31")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "display-message", "-p", "-F", "#{pid}")] = "123\n"
 	authorityFormat := tmuxRowFormat("#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "display-message", "-p", "-t", "%31", "-F", authorityFormat)] =
 		livePaneInventoryRow(testDeleteTarget.Value, "123", "$1", "@10", "%31")
 
 	plan := panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
-	if _, err := runtime.preflight(context.Background(), registry, plan); err != nil {
+	if _, err := runtime.Preflight(context.Background(), registry, plan); err != nil {
 		t.Fatalf("producer-anchored Pane preflight: %v", err)
 	}
-	if err := runtime.guardSocketIdentity(context.Background()); err != nil {
+	if err := runtime.GuardSocketIdentity(context.Background()); err != nil {
 		t.Fatalf("producer-anchored mutation authority: %v", err)
 	}
-	if runtime.routeAuthority == nil || runtime.routeAuthority.PaneID != "%31" || runtime.routeAuthority.ServerPID != "123" {
-		t.Fatalf("producer-anchored delete authority = %#v", runtime.routeAuthority)
+	if runtime.RouteAuthority == nil || runtime.RouteAuthority.PaneID != "%31" || runtime.RouteAuthority.ServerPID != "123" {
+		t.Fatalf("producer-anchored delete authority = %#v", runtime.RouteAuthority)
 	}
 }
 
@@ -1138,7 +1138,7 @@ func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testin
 		t.Fatal(err)
 	}
 	runner := &lifecycleSiblingCleanupRunner{}
-	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	runtime := &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: runner, Target: target, Getenv: func(string) string { return "" }}}
 	inventory := &exactLifecycleInventory{runtime: runtime}
 	cleanup := paneLiveDeleteTarget{
 		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
@@ -1150,10 +1150,10 @@ func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testin
 	if err := inventory.CleanupLifecycleDeadPane(context.Background(), cleanup); err != nil {
 		t.Fatalf("lifecycle sibling cleanup: %v", err)
 	}
-	if !runner.killed || runtime.routeAnchor != "%31" || runtime.expectedSocketPath != testDeleteTarget.Value || runtime.routeAuthority == nil ||
-		runtime.routeAuthority.ServerPID != "4242" {
+	if !runner.killed || runtime.RouteAnchor != "%31" || runtime.ExpectedSocketPath != testDeleteTarget.Value || runtime.RouteAuthority == nil ||
+		runtime.RouteAuthority.ServerPID != "4242" {
 		t.Fatalf("cleanup route killed=%t anchor=%q path=%q authority=%+v",
-			runner.killed, runtime.routeAnchor, runtime.expectedSocketPath, runtime.routeAuthority)
+			runner.killed, runtime.RouteAnchor, runtime.ExpectedSocketPath, runtime.RouteAuthority)
 	}
 	kills := 0
 	for _, call := range runner.calls {
@@ -1187,11 +1187,11 @@ func TestC2LifecycleFirstWriteGuardRejectsOwnerAndServerPIDDriftWithZeroKill(t *
 		{name: "server PID generation drift", runner: &lifecycleSiblingCleanupRunner{pid: "999"}, prebound: true, wantError: "server generation drifted"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			runtime := &tmuxPaneDeleteRuntime{runner: test.runner, target: target, getenv: func(string) string { return "" }}
+			runtime := &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: test.runner, Target: target, Getenv: func(string) string { return "" }}}
 			if test.prebound {
-				runtime.expectedSocketPath = testDeleteTarget.Value
-				runtime.expectedLogicalSocket = defaultAppSocket
-				runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+				runtime.ExpectedSocketPath = testDeleteTarget.Value
+				runtime.ExpectedLogicalSocket = defaultAppSocket
+				runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 			}
 			err := (&exactLifecycleInventory{runtime: runtime}).CleanupLifecycleDeadPane(context.Background(), cleanup)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
@@ -1228,14 +1228,13 @@ func TestPreexistingLifecycleFirstWriteGuardRechecksOriginalSupervisorAbsence(t 
 		{name: "PID became active", runner: &lifecycleSiblingCleanupRunner{}, alive: true, wantError: "is active or unobservable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			runtime := &tmuxPaneDeleteRuntime{
-				runner: test.runner, target: target, getenv: func(string) string { return "" },
-				processAlive: func(pid int) bool {
+			runtime := &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: test.runner, Target: target, Getenv: func(string) string { return "" },
+				ProcessAlive: func(pid int) bool {
 					if pid != 648421 && test.wantError != "original supervisor PID drifted" {
 						t.Fatalf("process observer PID=%d", pid)
 					}
 					return test.alive
-				},
+				}},
 			}
 			err := (&exactLifecycleInventory{runtime: runtime}).CleanupLifecycleDeadPane(context.Background(), cleanup)
 			if test.wantError == "" {
@@ -1253,11 +1252,11 @@ func TestPreexistingLifecycleFirstWriteGuardRechecksOriginalSupervisorAbsence(t 
 
 func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testing.T) {
 	runtime, _, _ := newPaneRuntimeFixture(t, "")
-	runtime.expectedSocketPath = testDeleteTarget.Value
-	runtime.expectedLogicalSocket = defaultAppSocket
-	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+	runtime.ExpectedSocketPath = testDeleteTarget.Value
+	runtime.ExpectedLogicalSocket = defaultAppSocket
+	runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
-	action := runtime.mutationAction(mutationQueuePaneKill, target, "", "")
+	action := runtime.MutationAction(mutationQueuePaneKill, target, "", "")
 	action.Target.UID = "deleted:" + target.PaneUID
 	action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: testDeleteTarget.Value, LogicalSocket: defaultAppSocket,
 		RouteAuthority: action.Target.RouteAuthority,
@@ -1361,10 +1360,9 @@ func statefulPaneRuntime(t *testing.T, runner tmuxCommandRunner) *tmuxPaneDelete
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &tmuxPaneDeleteRuntime{
-		runner: runner, target: target, getenv: func(string) string { return "" },
-		expectedSocketPath: testDeleteTarget.Value, expectedLogicalSocket: defaultAppSocket,
-		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+	return &tmuxPaneDeleteRuntime{TmuxPaneDeleteRuntime: mutationruntime.TmuxPaneDeleteRuntime{Runner: runner, Target: target, Getenv: func(string) string { return "" },
+		ExpectedSocketPath: testDeleteTarget.Value, ExpectedLogicalSocket: defaultAppSocket,
+		RouteAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}},
 	}
 }
 
@@ -1703,7 +1701,7 @@ func runPaneGuardDriftKillAll(t *testing.T, runner *paneGuardDriftRunner) (int, 
 		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
 		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
 	}
-	return statefulPaneRuntime(t, runner).killAll(context.Background(), []paneLiveDeleteTarget{target})
+	return statefulPaneRuntime(t, runner).KillAll(context.Background(), []paneLiveDeleteTarget{target})
 }
 
 func TestPaneDeleteKillAllTreatsAPaneKilledBetweenReobserveAndGuardAsAbsent(t *testing.T) {

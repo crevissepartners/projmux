@@ -484,7 +484,7 @@ func replayTopologyWindowAgents(
 	launcher topologyAgentLauncher,
 	work *registryTopologyWindowPlan,
 	anchorID, sessionID, windowID string,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	newGeneration func() (string, error),
 	operationID string,
 ) (map[string]string, error) {
@@ -517,8 +517,8 @@ func replayTopologyWindowAgents(
 			// carried name is free for the new Pane.
 			var nameReason string
 			pane, nameReason, err = attachAgentPaneWithName(registry, mutator, replay.agent.Metadata.UID, replay.cwd, replay.paneName, operationID)
-			if nameReason != "" && runtime.warn != nil {
-				fmt.Fprintln(runtime.warn, agentPaneNameNotice(work.window.Metadata.Name+"/"+replay.agent.Metadata.Name, nameReason))
+			if nameReason != "" && runtime.Warn != nil {
+				fmt.Fprintln(runtime.Warn, agentPaneNameNotice(work.window.Metadata.Name+"/"+replay.agent.Metadata.Name, nameReason))
 			}
 		}
 		if err != nil {
@@ -542,20 +542,20 @@ func replayTopologyWindowAgents(
 		if err != nil {
 			return nil, err
 		}
-		paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement, replay.cwd,
+		paneID, splitErr := runtime.SplitPane(ctx, anchorID, defaultPlacement, replay.cwd,
 			runtime.supervisedLaunch(ctx, activation, replay.argv), nil)
 		if paneID != "" {
-			if adoptErr := adoptCreatedPane(ctx, runtime, paneID, sessionID, windowID, pane, ledger); adoptErr != nil {
+			if adoptErr := AdoptCreatedPane(ctx, runtime, paneID, sessionID, windowID, pane, ledger); adoptErr != nil {
 				return nil, errors.Join(splitErr, adoptErr)
 			}
-			observeActivationRuntime(registry, mutator, activation, paneID, runtime.warn)
+			observeActivationRuntime(registry, mutator, activation, paneID, runtime.Warn)
 		}
 		if splitErr != nil {
 			return nil, splitErr
 		}
 		bindings[pane.Metadata.UID] = paneID
 		runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)
-		if err := launcher.BindAgentPaneOnRoute(ctx, runtime.runner, agentPaneBinding{
+		if err := launcher.BindAgentPaneOnRoute(ctx, runtime.Runner, agentPaneBinding{
 			PaneID: paneID, Provider: replay.provider, ContextDir: replay.cwd, Title: replay.title,
 			Topic:          replay.agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
 			TopicManual:    strings.TrimSpace(replay.agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic]) != "",

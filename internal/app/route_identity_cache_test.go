@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"go/ast"
@@ -125,11 +127,10 @@ func newRouteIdentityFixture() (*materializer, *fakeTmux, string) {
 	pane := session.windows[0].panes[0]
 	pane.opts[tmuxopts.PaneUID] = routeIdentityPaneUID
 	target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
-	return &materializer{
-		runner: explicitTmuxRunner{Runner: server, Target: target},
-		target: target, expectedSocketPath: server.socketPath,
-		socketName:     defaultAppSocket,
-		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+	return &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: explicitTmuxRunner{Runner: server, Target: target},
+		Target: target, ExpectedSocketPath: server.socketPath,
+		SocketName:     defaultAppSocket,
+		RouteAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}},
 	}, server, pane.id
 }
 
@@ -139,9 +140,9 @@ func unsetLegacyTopic(runtime *materializer, server *fakeTmux, paneID string) er
 	if _, _, pane := server.pane(paneID); pane != nil {
 		pane.opts[aiPaneTopicOption] = "legacy"
 	}
-	return runtime.runIdentityWrites(context.Background(), "pane", paneID, routeIdentityPaneUID, []identityPlanWrite{{
-		operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
-		effect:   "legacy AI topic projection absent",
+	return runtime.RunIdentityWrites(context.Background(), "pane", paneID, routeIdentityPaneUID, []IdentityPlanWrite{{
+		Operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
+		Effect:   "legacy AI topic projection absent",
 	}})
 }
 
@@ -315,7 +316,7 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 			name: "server pid change",
 			trigger: func(runtime *materializer, server *fakeTmux, _ string) {
 				server.serverPID = "5252"
-				runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "5252"}
+				runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "5252"}
 			},
 		},
 		{
@@ -323,20 +324,20 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 			trigger: func(runtime *materializer, server *fakeTmux, _ string) {
 				server.socketPath = "/tmp/fake-tmux/moved"
 				target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
-				runtime.runner = explicitTmuxRunner{Runner: server, Target: target}
-				runtime.target, runtime.expectedSocketPath = target, server.socketPath
+				runtime.Runner = explicitTmuxRunner{Runner: server, Target: target}
+				runtime.Target, runtime.ExpectedSocketPath = target, server.socketPath
 			},
 		},
 		{
 			name:       "reconnection rebinds the route",
-			trigger:    func(runtime *materializer, _ *fakeTmux, _ string) { runtime.invalidateRouteIdentity("route-bind") },
+			trigger:    func(runtime *materializer, _ *fakeTmux, _ string) { runtime.InvalidateRouteIdentity("route-bind") },
 			wantReason: "route-bind",
 		},
 		{
 			name: "route re-resolution",
 			trigger: func(runtime *materializer, _ *fakeTmux, _ string) {
-				runtime.routeAuthority = nil
-				if err := runtime.guardExactRoute(context.Background(), false, runtime.expectedSocketPath); err != nil {
+				runtime.RouteAuthority = nil
+				if err := runtime.GuardExactRoute(context.Background(), false, runtime.ExpectedSocketPath); err != nil {
 					t.Errorf("re-resolve exact route: %v", err)
 				}
 			},
@@ -346,11 +347,11 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 		{
 			name: "probe error",
 			trigger: func(runtime *materializer, server *fakeTmux, paneID string) {
-				runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "5252"}
+				runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "5252"}
 				if err := unsetLegacyTopic(runtime, server, paneID); err == nil || !strings.Contains(err.Error(), "server generation drifted") {
 					t.Errorf("mismatched generation probe = %v", err)
 				}
-				runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+				runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 			},
 			wantReason: "resolved-route-probe-error",
 		},
@@ -373,7 +374,7 @@ func TestRuntimeRouteIdentityCacheInvalidationTriggers(t *testing.T) {
 			start := len(server.calls)
 			test.trigger(runtime, server, paneID)
 			if test.wantReason != "" {
-				if got := runtime.routeIdentity.Snapshot().LastInvalidation; got != test.wantReason {
+				if got := runtime.RouteIdentity.Snapshot().LastInvalidation; got != test.wantReason {
 					t.Fatalf("last invalidation = %q, want %q", got, test.wantReason)
 				}
 			}
@@ -421,7 +422,7 @@ func TestMaterializerRouteGuardReprovesIdentityAfterEveryGuardedWrite(t *testing
 		}
 		return measurement{
 			reads: routeIdentityReads(server.calls), writes: routeIdentityWrites(server.calls),
-			segments: routeIdentitySegments(server.calls), stats: runtime.routeIdentity.Snapshot(),
+			segments: routeIdentitySegments(server.calls), stats: runtime.RouteIdentity.Snapshot(),
 		}
 	}
 
@@ -461,7 +462,8 @@ func TestMaterializerPlansRunOnlyThroughTheGuardedWriteSeam(t *testing.T) {
 
 	seamFound := false
 	guardedPlans := 0
-	for _, name := range appSourceFiles(t) {
+	files := append(appSourceFiles(t), "../services/mutations/runtime/materialize_shared.go")
+	for _, name := range files {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
@@ -475,10 +477,10 @@ func TestMaterializerPlansRunOnlyThroughTheGuardedWriteSeam(t *testing.T) {
 			if star, ok := receiver.(*ast.StarExpr); ok {
 				receiver = star.X
 			}
-			if ident, ok := receiver.(*ast.Ident); !ok || ident.Name != "materializer" {
+			if ident, ok := receiver.(*ast.Ident); !ok || (ident.Name != "materializer" && ident.Name != "MaterializeRuntime") {
 				continue
 			}
-			if function.Name.Name == "guardedWriteSteps" {
+			if function.Name.Name == "GuardedWriteSteps" {
 				seamFound = true
 				continue
 			}
@@ -487,12 +489,12 @@ func TestMaterializerPlansRunOnlyThroughTheGuardedWriteSeam(t *testing.T) {
 				switch value := node.(type) {
 				case *ast.CallExpr:
 					executor, ok := value.Fun.(*ast.Ident)
-					if !ok || executor.Name != "executeRuntimeMutationPlan" {
+					if !ok || (executor.Name != "executeRuntimeMutationPlan" && executor.Name != "ExecuteRuntimeMutationPlan") {
 						return true
 					}
 					if len(value.Args) == 2 {
 						if inner, ok := value.Args[1].(*ast.CallExpr); ok {
-							if selector, ok := inner.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "guardedWriteSteps" {
+							if selector, ok := inner.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "GuardedWriteSteps" {
 								plans++
 								return true
 							}
@@ -500,7 +502,7 @@ func TestMaterializerPlansRunOnlyThroughTheGuardedWriteSeam(t *testing.T) {
 					}
 					t.Errorf("%s: materializer.%s runs a plan whose steps bypass guardedWriteSteps", name, function.Name.Name)
 				case *ast.Ident:
-					if value.Name == "runtimeMutationStep" {
+					if value.Name == "runtimeMutationStep" || value.Name == "RuntimeMutationStep" {
 						builds = true
 					}
 				}
@@ -544,7 +546,7 @@ func TestCachedRouteGuardRefusalsKeepTheirErrorFamily(t *testing.T) {
 				if err == nil {
 					t.Fatalf("%s was not refused (cache open=%v)", test.name, open)
 				}
-				return err.Error(), routeIdentityWrites(server.calls), runtime.routeIdentity.Snapshot()
+				return err.Error(), routeIdentityWrites(server.calls), runtime.RouteIdentity.Snapshot()
 			}
 			uncached, uncachedWrites, _ := refuse(false)
 			cached, cachedWrites, stats := refuse(true)
@@ -576,11 +578,11 @@ func TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof(t *testing.T) {
 	// The server restarts on the same socket with the same markers after the
 	// write's post-effect proof. That proof is now stale.
 	server.serverPID = "5252"
-	action := materializeMutationAction(mutationWriteLayout, runtime.boundMutationTarget("pane", paneID, routeIdentityPaneUID),
+	action := MaterializeMutationAction(mutationWriteLayout, runtime.BoundMutationTarget("pane", paneID, routeIdentityPaneUID),
 		"exact layout", "Pane size", "-t", paneID, "-x", "40")
 	// A guard with no write since that proof reuses it without reading tmux.
 	start := len(server.calls)
-	if err := runtime.targetRouteGuard(action)(context.Background()); err != nil {
+	if err := runtime.TargetRouteGuard(action)(context.Background()); err != nil {
 		t.Fatalf("guard after the post-write proof refused without reading tmux: %v", err)
 	}
 	if reads := routeIdentityReads(server.calls[start:]); reads != 0 {
@@ -590,9 +592,9 @@ func TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof(t *testing.T) {
 	// Today's uncached behavior for the same drift is the reference wording.
 	reference, referenceServer, referencePane := newRouteIdentityFixture()
 	referenceServer.serverPID = "5252"
-	referenceAction := materializeMutationAction(mutationWriteLayout, reference.boundMutationTarget("pane", referencePane, routeIdentityPaneUID),
+	referenceAction := MaterializeMutationAction(mutationWriteLayout, reference.BoundMutationTarget("pane", referencePane, routeIdentityPaneUID),
 		"exact layout", "Pane size", "-t", referencePane, "-x", "40")
-	wantGuard := reference.targetRouteGuard(referenceAction)(context.Background())
+	wantGuard := reference.TargetRouteGuard(referenceAction)(context.Background())
 	wantWrite := unsetLegacyTopic(reference, referenceServer, referencePane)
 	if wantGuard == nil || wantWrite == nil {
 		t.Fatalf("reference drift was not refused: guard=%v write=%v", wantGuard, wantWrite)
@@ -604,12 +606,12 @@ func TestStaleRouteIdentityCacheIsCaughtByTheNextFullProof(t *testing.T) {
 		t.Fatalf("full proof over stale cache = %v, want %v", gotGuard, wantGuard)
 	}
 	staleRoute := runtimeMutationRoute{
-		Target: runtime.target, ExpectedSocketPath: runtime.expectedSocketPath,
-		SocketName: runtime.logicalSocketName(runtime.target), Authority: runtime.routeAuthority,
+		Target: runtime.Target, ExpectedSocketPath: runtime.ExpectedSocketPath,
+		SocketName: runtime.LogicalSocketName(runtime.Target), Authority: runtime.RouteAuthority,
 	}
 	for _, scope := range []string{routeIdentityScopeResolvedRoute, routeIdentityScopeExactRoute} {
 		key, ok := runtimeRouteIdentityKeyForRoute(scope, staleRoute)
-		if !ok || runtime.routeIdentity.Reuse(key) {
+		if !ok || runtime.RouteIdentity.Reuse(key) {
 			t.Fatalf("stale %s proof survived detection (cacheable=%v)", scope, ok)
 		}
 	}
@@ -634,7 +636,7 @@ func TestSplitLayoutRevalidationNeverReusesTransactionIdentity(t *testing.T) {
 	if err := unsetLegacyTopic(runtime, server, paneID); err != nil {
 		t.Fatalf("warm transaction proof: %v", err)
 	}
-	action := materializeMutationAction(mutationWriteLayout, runtime.boundMutationTarget("pane", paneID, routeIdentityPaneUID),
+	action := MaterializeMutationAction(mutationWriteLayout, runtime.BoundMutationTarget("pane", paneID, routeIdentityPaneUID),
 		"exact layout", "Pane size", "-t", paneID, "-x", "40")
 	start := len(server.calls)
 	if err := runtime.revalidatedTargetRouteGuard(action)(context.Background()); err != nil {
@@ -661,7 +663,7 @@ func TestCreateTransactionScopesRouteIdentityReuseToOneOperation(t *testing.T) {
 		if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
 			t.Fatalf("create Pane transaction %d: %v", transaction, err)
 		}
-		if create.runtime.routeIdentity != nil {
+		if create.runtime.RouteIdentity != nil {
 			t.Fatalf("transaction %d left its identity scope open", transaction)
 		}
 		var pid, app, logical bool
@@ -768,7 +770,7 @@ func runCreateUnderDrift(t *testing.T, scenario createDriftScenario, cacheOff bo
 	create.runtime.routeIdentityDisabled = cacheOff
 	outcome := createDriftOutcome{guardedWrite: map[int]string{}}
 	start := len(tmux.calls)
-	create.runtime.afterGuardedWrite = func() {
+	create.runtime.AfterGuardedWrite = func() {
 		outcome.guardedWrites++
 		if writes := routeIdentityWrites(tmux.calls[start:]); len(writes) > 0 {
 			outcome.guardedWrite[outcome.guardedWrites] = writes[len(writes)-1]
@@ -854,7 +856,7 @@ func TestRouteIdentityCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *test
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
 		create.runtime.routeIdentityDisabled = cacheOff
 		var warnings strings.Builder
-		create.runtime.warn = &warnings
+		create.runtime.Warn = &warnings
 		var got result
 		flipCall := 0
 		// The final reconcile pass starts after every guarded write and its
@@ -869,7 +871,7 @@ func TestRouteIdentityCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *test
 			}
 			return live(ctx)
 		}
-		create.runtime.afterGuardedWrite = func() {
+		create.runtime.AfterGuardedWrite = func() {
 			if got.flipped {
 				got.guardedAfterFlip++
 			}
@@ -884,7 +886,7 @@ func TestRouteIdentityCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *test
 		if got.flipped {
 			got.writesAfterFlip = routeIdentityWrites(tmux.calls[flipCall:])
 		}
-		if create.runtime.routeIdentity != nil {
+		if create.runtime.RouteIdentity != nil {
 			t.Fatal("transaction left its identity scope open")
 		}
 		got.warnings = warnings.String()
@@ -968,7 +970,7 @@ func TestStaleRouteIdentityDriftDuringCreateRollsBackThroughRuntimeLedger(t *tes
 			}
 			committed := store.writes
 			runner := &staleRestartRunner{base: tmux, restart: func() { test.restart(tmux) }}
-			create.runtime.runner = runner
+			create.runtime.Runner = runner
 			stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
 			if !runner.fired {
 				t.Fatal("fixture never reached the split write")
@@ -984,7 +986,7 @@ func TestStaleRouteIdentityDriftDuringCreateRollsBackThroughRuntimeLedger(t *tes
 			if got := tmux.paneCount(); got != test.wantPanes {
 				t.Fatalf("panes after ledger rollback = %d, want uncached end state %d", got, test.wantPanes)
 			}
-			if create.runtime.routeIdentity != nil {
+			if create.runtime.RouteIdentity != nil {
 				t.Fatal("rollback ran with the identity scope still open")
 			}
 		})

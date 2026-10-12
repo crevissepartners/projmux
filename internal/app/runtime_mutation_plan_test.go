@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -1460,14 +1462,14 @@ func TestMaterializerOptionEffectUsesTmuxCanonicalBooleanWithoutAcceptingUnknown
 			{name: "arbitrary value is unknown", want: "off", got: "disabled", observed: false},
 		} {
 			t.Run(test.name, func(t *testing.T) {
-				if got := materializeOptionEffectObserved(option, test.want, test.got); got != test.observed {
+				if got := mutationruntime.MaterializeOptionEffectObserved(option, test.want, test.got); got != test.observed {
 					t.Fatalf("observed = %t, want %t", got, test.observed)
 				}
 			})
 		}
 	}
-	if !materializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-1") ||
-		materializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-2") {
+	if !mutationruntime.MaterializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-1") ||
+		mutationruntime.MaterializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-2") {
 		t.Fatal("non-boolean option effect lost exact byte comparison")
 	}
 }
@@ -1954,7 +1956,7 @@ func TestRuntimeMutationArgvAcceptsFlagShapedWindowNamesAfterRenameWindowEndOfOp
 	window := runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@2", UID: "win-2", Parent: "$1/root=prj-a/role="}
 	for _, name := range []string{"-L", "-S", "-s", "-t", "-f", "-n", "-Lx", "-Sx", "-sfoo", "-tfoo", "ok-name", "--"} {
 		t.Run(name, func(t *testing.T) {
-			action := materializeMutationAction(mutationRenameWindow, window, "exact owned Window", "", "-t", "@2", "--", name)
+			action := MaterializeMutationAction(mutationRenameWindow, window, "exact owned Window", "", "-t", "@2", "--", name)
 			argv, err := runtimeMutationArgv(action)
 			if err != nil {
 				t.Fatalf("runtimeMutationArgv(%q) refused the canonical rename: %v", action.Operands, err)
@@ -2130,10 +2132,10 @@ func TestQueuedMutationEffectReobservesAbsenceAfterMarkerClearRace(t *testing.T)
 
 func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 	production := newCreateCommand().runtime
-	if _, route, err := production.exactMutationRoute(); err != nil || route != "-L="+defaultAppSocket {
+	if _, route, err := production.ExactMutationRoute(); err != nil || route != "-L="+defaultAppSocket {
 		t.Fatalf("production materializer route = %q, %v; want -L=%s", route, err, defaultAppSocket)
 	}
-	if got := production.boundMutationTarget("session", "session-name", "uid:project").Socket; got != "-L="+defaultAppSocket {
+	if got := production.BoundMutationTarget("session", "session-name", "uid:project").Socket; got != "-L="+defaultAppSocket {
 		t.Fatalf("production printable target route = %q, want -L=%s", got, defaultAppSocket)
 	}
 
@@ -2141,15 +2143,15 @@ func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 	sessions := &fakeSessionMaterializer{tmux: server}
 	session := server.addSession("drift")
 	runtime := &materializer{
-		runner: server, mirror: intmetadata.NewMirror(server), sessions: sessions,
-		target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
-		expectedSocketPath: server.socketPath,
-		socketName:         defaultAppSocket,
-		routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+		mirror: intmetadata.NewMirror(server), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server, Sessions: sessions,
+			Target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
+			ExpectedSocketPath: server.socketPath,
+			SocketName:         defaultAppSocket,
+			RouteAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}},
 	}
 	server.calls = nil
 	server.socketPath = "/tmp/fake-tmux/foreign"
-	err := runtime.markCreateOperation(context.Background(), session.id, newRuntimeLedger("op-drift"))
+	err := runtime.MarkCreateOperation(context.Background(), session.id, NewRuntimeLedger("op-drift"))
 	if err == nil || !strings.Contains(err.Error(), "socket drifted") {
 		t.Fatalf("socket drift guard error = %v", err)
 	}
@@ -2163,18 +2165,17 @@ func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 func TestMaterializerAbsentDeclarationRefusesServerAppearingBeforeWrite(t *testing.T) {
 	server := newFakeTmux()
 	server.addSession("appeared")
-	runtime := &materializer{
-		runner: server,
-		target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
+	runtime := &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server,
+		Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}},
 	}
-	action := materializeMutationAction(mutationCreateSession, runtime.boundMutationTarget(
+	action := MaterializeMutationAction(mutationCreateSession, runtime.BoundMutationTarget(
 		"project-declaration", "appeared", "prj-appeared",
 	), "unique Project declaration", "exact atomic create result",
 		"-f", "/tmp/projmux-generated.conf", "-d", "-s", "appeared")
 	writes := 0
 	err := executeRuntimeMutationPlan(context.Background(), []runtimeMutationStep{{
 		Action:           action,
-		TargetRouteGuard: runtime.targetRouteGuard(action),
+		TargetRouteGuard: runtime.TargetRouteGuard(action),
 		Reobserve:        func(context.Context) (bool, error) { return false, nil },
 		Guard:            func(context.Context) error { return nil },
 		Apply:            func(context.Context) error { writes++; return nil },
@@ -2197,11 +2198,10 @@ func TestMaterializerUnsetIdentityRequiresReadableOwnedTargetBeforeReplan(t *tes
 		pane := session.windows[0].panes[0]
 		pane.opts[tmuxopts.PaneUID] = ownerUID
 		target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
-		return &materializer{
-			runner: explicitTmuxRunner{Runner: server, Target: target},
-			target: target, expectedSocketPath: server.socketPath,
-			socketName:     defaultAppSocket,
-			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+		return &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: explicitTmuxRunner{Runner: server, Target: target},
+			Target: target, ExpectedSocketPath: server.socketPath,
+			SocketName:     defaultAppSocket,
+			RouteAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}},
 		}, server, pane.id
 	}
 	assertZeroWrites := func(t *testing.T, server *fakeTmux) {
@@ -2218,9 +2218,9 @@ func TestMaterializerUnsetIdentityRequiresReadableOwnedTargetBeforeReplan(t *tes
 		runtime, server, paneID := newFixture(t, uid)
 		server.fail = []string{"display-message", "-t", paneID, "#{" + aiPaneTopicOption + "}"}
 		server.failMessage = "identity option observation unavailable"
-		err := runtime.runIdentityWrites(context.Background(), "pane", paneID, uid, []identityPlanWrite{{
-			operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
-			effect:   "legacy AI topic projection absent",
+		err := runtime.RunIdentityWrites(context.Background(), "pane", paneID, uid, []IdentityPlanWrite{{
+			Operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
+			Effect:   "legacy AI topic projection absent",
 		}})
 		if err == nil || !strings.Contains(err.Error(), "observation unknown before first write") ||
 			!strings.Contains(err.Error(), "identity option observation unavailable") {
@@ -2231,9 +2231,9 @@ func TestMaterializerUnsetIdentityRequiresReadableOwnedTargetBeforeReplan(t *tes
 
 	t.Run("absent option on recycled foreign uid refuses", func(t *testing.T) {
 		runtime, server, paneID := newFixture(t, "pan-recycled-foreign")
-		err := runtime.runIdentityWrites(context.Background(), "pane", paneID, "pan-identity", []identityPlanWrite{{
-			operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
-			effect:   "legacy AI topic projection absent",
+		err := runtime.RunIdentityWrites(context.Background(), "pane", paneID, "pan-identity", []IdentityPlanWrite{{
+			Operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
+			Effect:   "legacy AI topic projection absent",
 		}})
 		if err == nil || !strings.Contains(err.Error(), "foreign uid \"pan-recycled-foreign\", want \"pan-identity\"") {
 			t.Fatalf("recycled foreign unset observation = %v", err)
@@ -2252,11 +2252,10 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 		}
 		target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
 		sessions := &fakeSessionMaterializer{tmux: server}
-		return &materializer{
-			runner: explicitTmuxRunner{Runner: server, Target: target}, sessions: sessions,
-			target: target, expectedSocketPath: server.socketPath,
-			socketName:     defaultAppSocket,
-			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+		return &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: explicitTmuxRunner{Runner: server, Target: target}, Sessions: sessions,
+			Target: target, ExpectedSocketPath: server.socketPath,
+			SocketName:     defaultAppSocket,
+			RouteAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}},
 		}, server, sessions, result
 	}
 	assertNoWrite := func(t *testing.T, server *fakeTmux) {
@@ -2293,7 +2292,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 		startupCalls := 0
 		sessions.startup = func() { startupCalls++ }
 		server.calls = nil
-		err := runtime.finalizeSessionStartup(context.Background(), result, "receipt", "/work/receipt", newRuntimeLedger("op-receipt"))
+		err := runtime.finalizeSessionStartup(context.Background(), result, "receipt", "/work/receipt", NewRuntimeLedger("op-receipt"))
 		if err == nil || !strings.Contains(err.Error(), "create-operation lease changed") {
 			t.Fatalf("matching finalize marker with wrong receipt = %v", err)
 		}
@@ -2306,13 +2305,13 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 	t.Run("matching create marker without atomic result cannot replan empty", func(t *testing.T) {
 		runtime, server, _, result := newFixture()
 		server.session(result.SessionID).env[createOperationEnvironment] = "op-receipt"
-		action := materializeMutationAction(mutationCreateSession,
-			runtime.boundMutationTarget("project-declaration", "receipt", "prj-receipt"),
+		action := MaterializeMutationAction(mutationCreateSession,
+			runtime.BoundMutationTarget("project-declaration", "receipt", "prj-receipt"),
 			"unique Project declaration", "exact atomic create result",
 			"-d", "-P", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"),
 			"-s", "receipt", "-e", createOperationEnvironment+"=op-receipt")
 		guardCalls, applyCalls := 0, 0
-		err := runtime.runMaterializeMutation(context.Background(), action, func() error {
+		err := runtime.RunMaterializeMutation(context.Background(), action, func() error {
 			guardCalls++
 			return errors.New("existing declaration refuses create")
 		}, func() error {
@@ -2335,18 +2334,18 @@ func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testi
 	routed := explicitTmuxRunner{Runner: server, Target: target}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	runtime := &materializer{
-		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: sessions, target: target,
+		mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: sessions, Target: target},
 	}
 	project := coremetadata.Project{
 		Metadata: coremetadata.ObjectMeta{UID: "prj-first", Name: "first"},
 		Spec:     coremetadata.ProjectSpec{Root: "/work/first"},
 	}
-	result, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, "", newRuntimeLedger("op-first"))
+	result, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, "", NewRuntimeLedger("op-first"))
 	if err != nil {
 		t.Fatalf("first-session materialize: %v", err)
 	}
-	if exactTmuxHandle(result.SessionID, "$") == "" || runtime.expectedSocketPath != server.socketPath {
-		t.Fatalf("created result/physical binding = %#v / %q", result, runtime.expectedSocketPath)
+	if exactTmuxHandle(result.SessionID, "$") == "" || runtime.ExpectedSocketPath != server.socketPath {
+		t.Fatalf("created result/physical binding = %#v / %q", result, runtime.ExpectedSocketPath)
 	}
 	created := false
 	for _, call := range server.calls {
@@ -2380,8 +2379,9 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		target := tmuxTransport{Kind: tmuxSocketName, Value: "phase10-fresh", Source: tmuxSocketNameSource}
 		routed := explicitTmuxRunner{Runner: server, Target: target}
 		runtime := &materializer{
-			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
-			target: target, configPath: configPath,
+			mirror:     intmetadata.NewMirror(routed),
+			configPath: configPath, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
+				Target: target},
 		}
 		project := coremetadata.Project{
 			Metadata: coremetadata.ObjectMeta{UID: "prj-fresh", Name: "fresh"},
@@ -2392,13 +2392,13 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 
 	t.Run("config precedes create and marker precedes managed identity", func(t *testing.T) {
 		runtime, server, project, configPath := newFixture(t, "1", "")
-		ledger := newRuntimeLedger("op-fresh")
+		ledger := NewRuntimeLedger("op-fresh")
 		result, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", ledger)
 		if err != nil {
 			t.Fatalf("fresh Project materialize: %v", err)
 		}
-		if server.socketName != "phase10-fresh" || runtime.expectedSocketPath != server.socketPath {
-			t.Fatalf("fresh route binding = marker %q physical %q", server.socketName, runtime.expectedSocketPath)
+		if server.socketName != "phase10-fresh" || runtime.ExpectedSocketPath != server.socketPath {
+			t.Fatalf("fresh route binding = marker %q physical %q", server.socketName, runtime.ExpectedSocketPath)
 		}
 		createIndex, markerIndex, identityIndex := -1, -1, -1
 		for index, call := range server.calls {
@@ -2428,7 +2428,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		}
 
 		server.calls = nil
-		if err := runtime.writeCreatedProjectRouteMarker(context.Background(), result, ledger.operationMarker); err != nil {
+		if err := runtime.writeCreatedProjectRouteMarker(context.Background(), result, ledger.OperationMarker); err != nil {
 			t.Fatalf("repeat route marker: %v", err)
 		}
 		for _, call := range server.calls {
@@ -2443,12 +2443,12 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		server.fail = []string{"new-session"}
 		server.failAfterMutation = true
 		server.failMessage = "synchronous hook failed after create"
-		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-after-effect"))
+		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-after-effect"))
 		if err == nil || !strings.Contains(err.Error(), "synchronous hook failed after create") {
 			t.Fatalf("fresh create after-effect error = %v", err)
 		}
-		if runtime.expectedSocketPath != server.socketPath {
-			t.Fatalf("recovery physical route = %q, want %q", runtime.expectedSocketPath, server.socketPath)
+		if runtime.ExpectedSocketPath != server.socketPath {
+			t.Fatalf("recovery physical route = %q, want %q", runtime.ExpectedSocketPath, server.socketPath)
 		}
 		if server.session("fresh") != nil {
 			t.Fatal("after-effect create failure leaked its uniquely leased session")
@@ -2546,7 +2546,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		if err := os.Remove(configPath); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-existing")); err != nil {
+		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-existing")); err != nil {
 			t.Fatalf("materialize on existing app server: %v", err)
 		}
 		foundCreate := false
@@ -2575,7 +2575,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime, server, project, _ := newFixture(t, test.appMarker, test.logicalMarker)
-			_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-refuse"))
+			_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-refuse"))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("fresh forged config error = %v, want %q", err, test.want)
 			}
@@ -2596,7 +2596,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		if err := os.Remove(configPath); err != nil {
 			t.Fatal(err)
 		}
-		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", newRuntimeLedger("op-missing-config"))
+		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "", NewRuntimeLedger("op-missing-config"))
 		if err == nil || !strings.Contains(err.Error(), "is unavailable") {
 			t.Fatalf("missing generated config error = %v", err)
 		}
@@ -2657,9 +2657,9 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 			routed := explicitTmuxRunner{Runner: server, Target: target}
 			runtime := &materializer{
-				runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server}, target: target,
+				mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server}, Target: target},
 			}
-			if _, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, test.windowName, newRuntimeLedger("op-first-window")); err != nil {
+			if _, err := runtime.ensureSessionAt(context.Background(), project, "first", project.Spec.Root, test.windowName, NewRuntimeLedger("op-first-window")); err != nil {
 				t.Fatalf("materialize session: %v", err)
 			}
 			argv := newSessionArgv(t, server)
@@ -2690,14 +2690,17 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 		target := tmuxTransport{Kind: tmuxSocketName, Value: "first-window-fresh", Source: tmuxSocketNameSource}
 		routed := explicitTmuxRunner{Runner: server, Target: target}
 		runtime := &materializer{
-			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
-			target: target, configPath: configPath,
+			mirror:     intmetadata.NewMirror(routed),
+			configPath: configPath, MaterializeRuntime:
+
+			// The printable declaration itself: -f stays operand 0 and -n is an
+			// ordinary value-carrying operand after the one -s session operand.
+			mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
+				Target: target},
 		}
 
-		// The printable declaration itself: -f stays operand 0 and -n is an
-		// ordinary value-carrying operand after the one -s session operand.
-		declared := materializeMutationAction(mutationCreateSession,
-			runtime.boundMutationTarget("project-declaration", "fresh", project.Metadata.UID),
+		declared := MaterializeMutationAction(mutationCreateSession,
+			runtime.BoundMutationTarget("project-declaration", "fresh", project.Metadata.UID),
 			"unique Project declaration", "one detached owned session exists",
 			"-f", configPath, "-d", "-P", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"),
 			"-s", "fresh", "-n", "w-first", "-c", project.Spec.Root, "-e", createOperationEnvironment+"=op-declared")
@@ -2715,7 +2718,7 @@ func TestMaterializerCreateSessionNamesTheFirstWindow(t *testing.T) {
 			t.Fatalf("assembled fresh create-session argv = %#v", assembled)
 		}
 
-		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "w-first", newRuntimeLedger("op-fresh-first-window")); err != nil {
+		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, "w-first", NewRuntimeLedger("op-fresh-first-window")); err != nil {
 			t.Fatalf("fresh Project materialize with first-Window name: %v", err)
 		}
 		argv := newSessionArgv(t, server)
@@ -2736,10 +2739,8 @@ func TestMaterializerDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.
 		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):                  "0\n",
 	}}
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
-	runtime := &materializer{
-		runner: explicitTmuxRunner{Runner: base, Target: target}, target: target, expectedSocketPath: path,
-	}
-	err := runtime.markCreateOperation(context.Background(), "$1", newRuntimeLedger("op-forged-default"))
+	runtime := &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: explicitTmuxRunner{Runner: base, Target: target}, Target: target, ExpectedSocketPath: path}}
+	err := runtime.MarkCreateOperation(context.Background(), "$1", NewRuntimeLedger("op-forged-default"))
 	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
 		t.Fatalf("forged default materializer error = %v", err)
 	}
@@ -2816,21 +2817,21 @@ func TestStandaloneInheritedRouteMaterializesWithPrintablePIDAndPaneAuthority(t 
 
 	routed := explicitTmuxRunner{Runner: server, Target: route.Target}
 	runtime := &materializer{
-		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
-		target: route.Target, expectedSocketPath: route.ExpectedSocketPath, routeAuthority: route.Authority,
+		mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: &fakeSessionMaterializer{tmux: server},
+			Target: route.Target, ExpectedSocketPath: route.ExpectedSocketPath, RouteAuthority: route.Authority},
 	}
 	project := coremetadata.Project{
 		Metadata: coremetadata.ObjectMeta{UID: "prj-standalone", Name: "standalone"},
 		Spec:     coremetadata.ProjectSpec{Root: t.TempDir()},
 	}
-	result, err := runtime.ensureSessionAt(context.Background(), project, "standalone-project", project.Spec.Root, "", newRuntimeLedger("op-standalone"))
+	result, err := runtime.ensureSessionAt(context.Background(), project, "standalone-project", project.Spec.Root, "", NewRuntimeLedger("op-standalone"))
 	if err != nil {
 		t.Fatalf("materialize on inherited standalone route: %v", err)
 	}
 	if exactTmuxHandle(result.SessionID, "$") == "" || server.session("standalone-project") == nil || server.session("driver") == nil {
 		t.Fatalf("standalone materialization result=%#v sessions=%#v", result, server.sessionNames())
 	}
-	printable := runtime.boundMutationTarget("session", result.SessionID, project.Metadata.UID)
+	printable := runtime.BoundMutationTarget("session", result.SessionID, project.Metadata.UID)
 	if printable.Socket != "-S="+server.socketPath || printable.PhysicalSocket != server.socketPath || printable.RouteAuthority != wantAuthority {
 		t.Fatalf("standalone printable target = %#v", printable)
 	}
@@ -3450,42 +3451,42 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"SetOption": true, "SetHook": true,
 	}
 	requiredPlanSites := map[string]bool{
-		"materialize.go:finalizeSessionStartup":                                true,
-		"materialize.go:rollback":                                              true,
-		"materialize.go:ensureSessionLaunching":                                true,
-		"materialize.go:writeCreatedProjectRouteMarker":                        true,
-		"materialize.go:recoverCreatedProjectByLease":                          true,
-		"materialize.go:claimRuntimeUID":                                       true,
-		"materialize.go:mirrorWindow":                                          true,
-		"materialize.go:mirrorPane":                                            true,
-		"materialize.go:recordErrorCreatedSession":                             true,
-		"materialize.go:markCreateOperation":                                   true,
-		"materialize.go:clearCreateOperations":                                 true,
-		"materialize.go:newWindow":                                             true,
-		"materialize.go:splitPane":                                             true,
-		"materialize.go:equalizeSplitLayout":                                   true,
-		"delete_pane_runtime.go:killAll":                                       true,
-		"delete_pane_runtime.go:tombstoneSelfKill":                             true,
-		"delete_pane_runtime.go:restoreSelfKill":                               true,
-		"delete_pane_runtime.go:queueSelfKill":                                 true,
-		"../services/mutations/runtime/delete_window_runtime.go:KillAll":       true,
-		"../services/mutations/runtime/delete_window_runtime.go:QueueSelfKill": true,
-		"runtime_stop.go:executeManagedRuntimeStop":                            true,
-		"shell.go:provisionAppSession":                                         true,
-		"shell.go:prepareControlSession":                                       true,
-		"shell.go:rollbackControlBootstrap":                                    true,
-		"create_intent.go:renameWindowFromIntent":                              true,
-		"rename.go:renameService":                                              true,
-		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":                true,
-		"tmux.go:writeRuntimeMutationRouteMarker":                              true,
-		"control_session.go:executeControlSessionIdentityPlan":                 true,
-		"runtime_metadata_mirror.go:MirrorWindow":                              true,
-		"runtime_metadata_mirror.go:MirrorPane":                                true,
-		"runtime_metadata_mirror.go:MirrorProject":                             true,
-		"controller_runtime_mutation.go:executeControllerRuntimeMutations":     true,
-		"resource_controller.go:converge":                                      true,
-		"controller_trigger.go:runAutomaticMirrorRecovery":                     true,
-		"registry_topology_materialize.go:execute":                             true,
+		"materialize.go:finalizeSessionStartup":                                     true,
+		"../services/mutations/runtime/materialize_shared.go:Rollback":              true,
+		"materialize.go:ensureSessionLaunching":                                     true,
+		"materialize.go:writeCreatedProjectRouteMarker":                             true,
+		"materialize.go:recoverCreatedProjectByLease":                               true,
+		"../services/mutations/runtime/materialize_shared.go:ClaimRuntimeUID":       true,
+		"materialize.go:mirrorWindow":                                               true,
+		"../services/mutations/runtime/materialize_shared.go:MirrorPaneIdentity":    true,
+		"materialize.go:recordErrorCreatedSession":                                  true,
+		"../services/mutations/runtime/materialize_shared.go:MarkCreateOperation":   true,
+		"../services/mutations/runtime/materialize_shared.go:ClearCreateOperations": true,
+		"materialize.go:newWindow":                                                  true,
+		"../services/mutations/runtime/materialize_shared.go:SplitPane":             true,
+		"materialize.go:equalizeSplitLayout":                                        true,
+		"../services/mutations/runtime/delete_pane_runtime.go:KillAll":              true,
+		"delete_pane_runtime.go:tombstoneSelfKill":                                  true,
+		"delete_pane_runtime.go:restoreSelfKill":                                    true,
+		"delete_pane_runtime.go:queueSelfKill":                                      true,
+		"../services/mutations/runtime/delete_window_runtime.go:KillAll":            true,
+		"../services/mutations/runtime/delete_window_runtime.go:QueueSelfKill":      true,
+		"runtime_stop.go:executeManagedRuntimeStop":                                 true,
+		"shell.go:provisionAppSession":                                              true,
+		"shell.go:prepareControlSession":                                            true,
+		"shell.go:rollbackControlBootstrap":                                         true,
+		"create_intent.go:renameWindowFromIntent":                                   true,
+		"rename.go:renameService":                                                   true,
+		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":                     true,
+		"tmux.go:writeRuntimeMutationRouteMarker":                                   true,
+		"control_session.go:executeControlSessionIdentityPlan":                      true,
+		"runtime_metadata_mirror.go:MirrorWindow":                                   true,
+		"runtime_metadata_mirror.go:MirrorPane":                                     true,
+		"runtime_metadata_mirror.go:MirrorProject":                                  true,
+		"controller_runtime_mutation.go:executeControllerRuntimeMutations":          true,
+		"resource_controller.go:converge":                                           true,
+		"controller_trigger.go:runAutomaticMirrorRecovery":                          true,
+		"registry_topology_materialize.go:execute":                                  true,
 	}
 	// These are semantic exemptions, keyed to one exact source function and
 	// verb. They are intentionally not a broad verb allowlist.
@@ -3500,7 +3501,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/tmux/client.go:createDetachedSession:helper:NewEphemeralSession":        "attach.ephemeral-create",
 		"attach.go:executeAutoAttachPlan:helper:KillSession":                                     "attach.ephemeral-prune",
 		"prune.go:runEphemeral:helper:KillSession":                                               "standalone.prune",
-		"materialize.go:read:variable-argv":                                                      "runtime.observation",
+		"../services/mutations/runtime/materialize_shared.go:ReadTmux:variable-argv":             "runtime.observation",
 		"../services/mutations/runtime/runtime_mutation_route.go:ReadTmuxSequence:variable-argv": "runtime.observation",
 		"tmux.go:managedIngestMigrationAIForRoute:variable-argv":                                 "config.migration",
 		"tmux.go:runApply:source-file":                                                           "config.apply-source",
@@ -3700,8 +3701,8 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 						}
 					}
 				}
-				if ok && (selector.Sel.Name == "runMutation" || selector.Sel.Name == "runMaterializeMutation" ||
-					selector.Sel.Name == "runIdentityWrites" || selector.Sel.Name == "claimRuntimeUIDForRollback" ||
+				if ok && (selector.Sel.Name == "runMutation" || selector.Sel.Name == "RunMutation" || selector.Sel.Name == "runMaterializeMutation" || selector.Sel.Name == "RunMaterializeMutation" ||
+					selector.Sel.Name == "runIdentityWrites" || selector.Sel.Name == "RunIdentityWrites" || selector.Sel.Name == "claimRuntimeUIDForRollback" || selector.Sel.Name == "ClaimRuntimeUIDForRollback" || selector.Sel.Name == "MirrorPaneIdentity" ||
 					selector.Sel.Name == "mirrorProject") {
 					usesPlanSeam = true
 				}
@@ -3740,7 +3741,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 						rawMutations = append(rawMutations, "helper:"+selector.Sel.Name)
 					}
 				}
-				if !ok || (selector.Sel.Name != "Run" && selector.Sel.Name != "read") {
+				if !ok || (selector.Sel.Name != "Run" && selector.Sel.Name != "read" && selector.Sel.Name != "ReadTmux") {
 					return true
 				}
 				beforeRaw := len(rawMutations)
@@ -3904,12 +3905,12 @@ func TestOwnedKillReobserveArgvMatchesEachTargetKind(t *testing.T) {
 			recorder := &recordingTmuxRunner{outputs: map[string]string{
 				recordedTmuxCallKey("tmux", wantArgv...): row.id + "\n",
 			}}
-			runtime := &materializer{runner: explicitTmuxRunner{Runner: recorder, Target: target}, target: target}
-			action := materializeMutationAction(mutationKillOwned,
-				runtime.boundMutationTarget(row.kind, row.id, "uid-"+row.kind),
+			runtime := &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: explicitTmuxRunner{Runner: recorder, Target: target}, Target: target}}
+			action := MaterializeMutationAction(mutationKillOwned,
+				runtime.BoundMutationTarget(row.kind, row.id, "uid-"+row.kind),
 				"same mirrored ownership uid", "owned created "+row.kind+" is absent", "-t", row.id)
 
-			observed, supported, err := runtime.observeMaterializeMutationEffect(context.Background(), action)
+			observed, supported, err := runtime.ObserveMaterializeMutationEffect(context.Background(), action)
 			if err != nil || !supported || observed {
 				t.Fatalf("present %s reobserve = (%t, %t, %v), want (false, true, nil)", row.kind, observed, supported, err)
 			}
@@ -3919,7 +3920,7 @@ func TestOwnedKillReobserveArgvMatchesEachTargetKind(t *testing.T) {
 			}
 
 			recorder.outputs[recordedTmuxCallKey("tmux", wantArgv...)] = "\n"
-			observed, supported, err = runtime.observeMaterializeMutationEffect(context.Background(), action)
+			observed, supported, err = runtime.ObserveMaterializeMutationEffect(context.Background(), action)
 			if err != nil || !supported || !observed {
 				t.Fatalf("absent %s reobserve = (%t, %t, %v), want (true, true, nil)", row.kind, observed, supported, err)
 			}

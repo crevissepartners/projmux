@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -100,20 +102,20 @@ func TestRollbackRemovesAnOwnedSessionThroughRealTmux(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}
 			routed := explicitTmuxRunner{Runner: shellTmuxExecRunner{env: func() []string { return environment }}, Target: target}
 			var warnings bytes.Buffer
-			runtime := &materializer{runner: routed, mirror: intmetadata.NewMirror(routed), target: target, warn: &warnings}
-			if err := runtime.guardExactRoute(ctx, false); err != nil {
+			runtime := &materializer{mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target, Warn: &warnings}}
+			if err := runtime.GuardExactRoute(ctx, false); err != nil {
 				t.Fatalf("bind isolated app route: %v", err)
 			}
 
-			ledger := newRuntimeLedger("op-owned-rollback")
-			if err := runtime.claimRuntimeUIDForRollback(ctx, runtimeSession, sessionID, "prj-owned-rollback", ledger); err != nil {
+			ledger := NewRuntimeLedger("op-owned-rollback")
+			if err := runtime.ClaimRuntimeUIDForRollback(ctx, runtimeSession, sessionID, "prj-owned-rollback", ledger); err != nil {
 				t.Fatalf("claim created session %s: %v", sessionID, err)
 			}
-			if entries := ledger.entries(); len(entries) != 1 || entries[0].ID != sessionID {
+			if entries := ledger.Entries(); len(entries) != 1 || entries[0].ID != sessionID {
 				t.Fatalf("ledger = %#v, want one session %s", entries, sessionID)
 			}
 
-			runtime.rollback(ctx, ledger)
+			runtime.Rollback(ctx, ledger)
 
 			// C-2's failure signature. It is the whole point of the argv fix:
 			// a rejected list-sessions made the pre-write observation unknown,

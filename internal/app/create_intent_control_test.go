@@ -390,7 +390,7 @@ func TestCanonicalWindowCreateBindsInvocationRouteBeforeRuntimeMutationObservati
 	bound := false
 	bindCalls := 0
 	fx.create.runtimeBound = false
-	fx.create.runtime.runner = routeBindingAssertionRunner{t: t, bound: &bound, inner: fx.tmux}
+	fx.create.runtime.Runner = routeBindingAssertionRunner{t: t, bound: &bound, inner: fx.tmux}
 	fx.create.bindRuntime = func(context.Context) error {
 		bindCalls++
 		bound = true
@@ -745,10 +745,10 @@ func TestCanonicalWindowRenameAlreadyMatchingRefusesRecycledParentBeforeWrite(t 
 	_, window, _ := fx.tmux.pane(fx.originID)
 	window.name = "renamed"
 	runner := &canonicalRenameRecycleRunner{inner: fx.tmux, anchorPaneID: fx.originID}
-	fx.create.runtime.runner = runner
-	fx.create.runtime.expectedSocketPath = fx.tmux.socketPath
-	fx.create.runtime.socketName = defaultAppSocket
-	fx.create.runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+	fx.create.runtime.Runner = runner
+	fx.create.runtime.ExpectedSocketPath = fx.tmux.socketPath
+	fx.create.runtime.SocketName = defaultAppSocket
+	fx.create.runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 
 	err := fx.create.renameWindowFromIntent(windowRenameIntent{
 		anchorPaneID: fx.originID,

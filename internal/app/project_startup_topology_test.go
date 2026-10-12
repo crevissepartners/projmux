@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -241,7 +243,7 @@ func newProjectStartupTopologyFixture(t *testing.T) (*registryProjectTopologyMat
 		newReconciler:  reconcileFixtureReconciler(root, "beta"),
 		newOperationID: func() (string, error) { return "op-startup", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
+			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),

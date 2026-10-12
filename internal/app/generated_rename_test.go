@@ -52,9 +52,9 @@ func runGeneratedRename(t *testing.T, fx canonicalRootFixture, kind coremetadata
 	}
 	// Production binds the exact app route in ensureRuntimeRoute from the
 	// inherited run-shell environment; the fixture states the same authority.
-	fx.create.runtime.expectedSocketPath = fx.tmux.socketPath
-	fx.create.runtime.socketName = defaultAppSocket
-	fx.create.runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: fx.tmux.serverPID}
+	fx.create.runtime.ExpectedSocketPath = fx.tmux.socketPath
+	fx.create.runtime.SocketName = defaultAppSocket
+	fx.create.runtime.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: fx.tmux.serverPID}
 	cmd := &tmuxCommand{
 		runner: fx.tmux,
 		stdin:  strings.NewReader(keybinding.GeneratedRenameResponseSentinel + response + "\n"),

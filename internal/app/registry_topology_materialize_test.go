@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"fmt"
 	"io"
@@ -60,7 +62,7 @@ func newTopologyMaterializeFixtureWithSessions(t *testing.T) (*resourceReconcile
 		newReconciler:  reconcileFixtureReconciler(root, "beta"),
 		newOperationID: func() (string, error) { return "op-topology", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
+			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 	}
 	return command, store, server, runner, root, logs, sessions

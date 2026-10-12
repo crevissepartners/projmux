@@ -1202,7 +1202,7 @@ func TestResumeReusesTheCreateRuntimeRatherThanASecondMaterializer(t *testing.T)
 	}
 	// The materializer is the object that owns `-d`, so sharing it is what makes
 	// "resume never moves the client" the same guarantee create already has.
-	if app.create.runtime == nil || app.create.runtime.runner == nil || app.create.runtime.sessions == nil {
+	if app.create.runtime == nil || app.create.runtime.Runner == nil || app.create.runtime.Sessions == nil {
 		t.Fatal("the shared runtime is not fully wired")
 	}
 }

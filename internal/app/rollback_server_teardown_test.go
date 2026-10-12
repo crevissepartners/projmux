@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -85,7 +87,7 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 		// afterEnd answers every command once the last session is killed.
 		afterEnd func(socket string) error
 		// arrange seeds the server and returns this operation's ledger.
-		arrange func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger
+		arrange func(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger
 		check   func(t *testing.T, seam *serverEndingRollbackSeam, warnings string)
 	}{
 		{
@@ -105,14 +107,14 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
 			},
-			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger {
 				first := seam.addSession("first")
 				first.opts[tmuxopts.ProjectUIDSession] = "prj-first"
 				second := seam.addSession("second")
 				second.opts[tmuxopts.ProjectUIDSession] = "prj-second"
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeSession, first.id, "prj-first")
-				ledger.record(runtimeSession, second.id, "prj-second")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeSession, first.id, "prj-first")
+				ledger.Record(runtimeSession, second.id, "prj-second")
 				return ledger
 			},
 			check: wantServerEndedWithoutStop,
@@ -125,13 +127,13 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
 			},
-			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger {
 				session := seam.addSession("owned")
 				session.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
 				window := seedLiveWindow(t, seam.fakeTmux, session, "win-owned", "pan-owned")
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeWindow, window.id, "win-owned")
-				ledger.record(runtimeSession, session.id, "prj-owned")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeWindow, window.id, "win-owned")
+				ledger.Record(runtimeSession, session.id, "prj-owned")
 				return ledger
 			},
 			check: func(t *testing.T, seam *serverEndingRollbackSeam, warnings string) {
@@ -149,14 +151,14 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
 			},
-			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger {
 				seam.staleReadsAfterEnd = 1
 				session := seam.addSession("owned")
 				session.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
 				window := seedLiveWindow(t, seam.fakeTmux, session, "win-owned", "pan-owned")
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeWindow, window.id, "win-owned")
-				ledger.record(runtimeSession, session.id, "prj-owned")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeWindow, window.id, "win-owned")
+				ledger.Record(runtimeSession, session.id, "prj-owned")
 				return ledger
 			},
 			check: func(t *testing.T, seam *serverEndingRollbackSeam, warnings string) {
@@ -177,7 +179,7 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
 			},
-			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger {
 				seam.externalEndAtKill = 1
 				return lastOwnedSessionLedger(t, seam)
 			},
@@ -192,15 +194,15 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			afterEnd: func(socket string) error {
 				return typed(inttmux.CommandFailureExit, "no server running on "+socket)
 			},
-			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+			arrange: func(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger {
 				seam.externalEndAtKill = 2
 				first := seam.addSession("first")
 				first.opts[tmuxopts.ProjectUIDSession] = "prj-first"
 				second := seam.addSession("second")
 				second.opts[tmuxopts.ProjectUIDSession] = "prj-second"
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeSession, first.id, "prj-first")
-				ledger.record(runtimeSession, second.id, "prj-second")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeSession, first.id, "prj-first")
+				ledger.Record(runtimeSession, second.id, "prj-second")
 				return ledger
 			},
 			check: func(t *testing.T, seam *serverEndingRollbackSeam, warnings string) {
@@ -227,14 +229,14 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 			seam.afterEnd = tt.afterEnd(seam.socketPath)
 			var warnings bytes.Buffer
 			runtime := &materializer{
-				runner: seam, mirror: intmetadata.NewMirror(seam), warn: &warnings,
-				target:             tmuxTransport{Kind: tmuxSocketPath, Value: seam.socketPath, Source: tmuxSocketPathSource},
-				expectedSocketPath: seam.socketPath,
-				socketName:         defaultAppSocket,
-				routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: seam.serverPID},
+				mirror: intmetadata.NewMirror(seam), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: seam, Warn: &warnings,
+					Target:             tmuxTransport{Kind: tmuxSocketPath, Value: seam.socketPath, Source: tmuxSocketPathSource},
+					ExpectedSocketPath: seam.socketPath,
+					SocketName:         defaultAppSocket,
+					RouteAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: seam.serverPID}},
 			}
 			ledger := tt.arrange(t, seam)
-			runtime.rollback(context.Background(), ledger)
+			runtime.Rollback(context.Background(), ledger)
 			if !seam.ended {
 				t.Fatalf("no kill ended the server: %#v", seam.calls)
 			}
@@ -243,11 +245,11 @@ func TestRollbackTreatsTheServerItsOwnKillEndedAsAbsent(t *testing.T) {
 	}
 }
 
-func lastOwnedSessionLedger(t *testing.T, seam *serverEndingRollbackSeam) *runtimeLedger {
+func lastOwnedSessionLedger(t *testing.T, seam *serverEndingRollbackSeam) *RuntimeLedger {
 	session := seam.addSession("owned")
 	session.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
-	ledger := &runtimeLedger{}
-	ledger.record(runtimeSession, session.id, "prj-owned")
+	ledger := &RuntimeLedger{}
+	ledger.Record(runtimeSession, session.id, "prj-owned")
 	return ledger
 }
 

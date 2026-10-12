@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -196,7 +198,7 @@ func TestHomeDualRootIncidentDoesNotBlockUnrelatedCreateAgent(t *testing.T) {
 
 	create, launcher := newTestAgentCreateCommand(t, store, tmux)
 	create.reconciler = correctiveAReconciler(projectRoot)(tmux, inttmux.NewClient(tmux))
-	create.runtime.sessions = &fakeSessionMaterializer{tmux: tmux}
+	create.runtime.Sessions = &fakeSessionMaterializer{tmux: tmux}
 	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--interactive-only")
 	if err != nil || !strings.Contains(stdout, "agent/") {
 		t.Fatalf("unrelated create agent failed: stdout=%q err=%v", stdout, err)
@@ -235,7 +237,7 @@ func TestHomeProjectExplicitMaterializationUsesCollisionSafeSessionAndRepeatsNoo
 		newReconciler:  correctiveAReconciler(projectRoot),
 		newOperationID: func() (string, error) { return "op-corrective-a", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
-			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
+			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: sessions, Warn: warn}}
 		},
 	}
 

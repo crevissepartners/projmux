@@ -763,11 +763,11 @@ func (i *exactLifecycleInventory) CleanupLifecycleDeadPane(ctx context.Context, 
 	}
 	// Bind the runtime mutation route from the exact retained dead Pane before
 	// building the kill plan; an absent route can never authorize cleanup.
-	i.runtime.useRouteAnchor(target.PaneID)
-	if err := i.runtime.guardSocketIdentity(ctx); err != nil {
+	i.runtime.UseRouteAnchor(target.PaneID)
+	if err := i.runtime.GuardSocketIdentity(ctx); err != nil {
 		return fmt.Errorf("bind exact dead Agent Pane cleanup route: %w", err)
 	}
-	return i.runtime.kill(ctx, target)
+	return i.runtime.Kill(ctx, target)
 }
 
 func lifecycleObservedDeadPanes(ctx context.Context, inventory livePaneInventory, event lifecycleDirtyEvent) (lifecycleDeadPaneSnapshot, error) {
@@ -876,8 +876,8 @@ func lifecycleInventory(runner tmuxCommandRunner, target tmuxTransport) livePane
 		routed = explicitTmuxRunner{Runner: runner, Target: target}
 	}
 	runtime := newTmuxPaneDeleteRuntime()
-	runtime.runner = runner
-	runtime.useExactTarget(target)
+	runtime.Runner = runner
+	runtime.UseExactTarget(target)
 	return &exactLifecycleInventory{Mirror: intmetadata.NewMirror(routed), runtime: runtime}
 }
 

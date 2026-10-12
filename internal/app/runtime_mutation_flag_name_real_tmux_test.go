@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"os"
@@ -67,8 +69,8 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 
 	target := tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}
 	routed := explicitTmuxRunner{Runner: shellTmuxExecRunner{env: func() []string { return environment }}, Target: target}
-	runtime := &materializer{runner: routed, mirror: intmetadata.NewMirror(routed), target: target}
-	if err := runtime.guardExactRoute(ctx, false); err != nil {
+	runtime := &materializer{mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target}}
+	if err := runtime.GuardExactRoute(ctx, false); err != nil {
 		t.Fatalf("bind isolated app route: %v", err)
 	}
 
@@ -81,7 +83,7 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 			t.Fatalf("create Window %q: %v", name, err)
 		}
 		window := coremetadata.Window{Metadata: coremetadata.ObjectMeta{UID: "win-flag-" + string(rune('a'+index)), Name: name}}
-		if _, err := runtime.claimRuntimeUID(ctx, runtimeWindow, created.WindowID, window.Metadata.UID); err != nil {
+		if _, err := runtime.ClaimRuntimeUID(ctx, runtimeWindow, created.WindowID, window.Metadata.UID); err != nil {
 			t.Fatalf("claim Window %q: %v", name, err)
 		}
 		if err := runtime.mirrorWindow(ctx, created.WindowID, window); err != nil {

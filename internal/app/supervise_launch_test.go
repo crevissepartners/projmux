@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -61,15 +63,17 @@ func (r *stubDefaultsRunner) Run(_ context.Context, name string, args ...string)
 
 func newLaunchMaterializer(runner tmuxCommandRunner, warn *strings.Builder) *materializer {
 	return &materializer{
-		runner:     runner,
-		warn:       warn,
+
 		executable: func() (string, error) { return testSupervisorBinary, nil },
-		lookupEnv:  func(string) string { return "" },
+		lookupEnv:  func(string) string { return "" }, MaterializeRuntime:
+
+		// TestShellPaneLaunchReproducesTmuxDefaultCommandSemantics is the parity half
+		// of supervising a pane that was created with no command of its own.
+		mutationruntime.MaterializeRuntime{Runner: runner,
+			Warn: warn},
 	}
 }
 
-// TestShellPaneLaunchReproducesTmuxDefaultCommandSemantics is the parity half
-// of supervising a pane that was created with no command of its own.
 func TestShellPaneLaunchReproducesTmuxDefaultCommandSemantics(t *testing.T) {
 	t.Parallel()
 

@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -250,14 +252,14 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 	if r.preflightErr != nil {
 		return paneLiveDeletePlan{}, r.preflightErr
 	}
-	authority, err := paneDeleteAuthoritySignature(registry, plan)
+	authority, err := mutationruntime.PaneDeleteAuthoritySignature(registry, plan)
 	if err != nil {
 		return paneLiveDeletePlan{}, err
 	}
 	out := paneLiveDeletePlan{SocketPath: testDeleteTarget.Value, Authority: authority}
 	registryOnly := map[string]bool{}
 	for _, target := range plan.Targets {
-		candidate, ok, err := registryOnlyPaneTarget(registry, plan, target)
+		candidate, ok, err := mutationruntime.RegistryOnlyPaneTarget(registry, plan, target)
 		if err != nil {
 			return paneLiveDeletePlan{}, err
 		}
@@ -269,24 +271,24 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 			out.RegistryOnly = append(out.RegistryOnly, candidate)
 		}
 	}
-	planned := plannedPaneDeletes(plan)
+	planned := mutationruntime.PlannedPaneDeletes(plan)
 	selectedByWindow := map[string]int{}
 	lastByWindow := map[string]string{}
 	windowByPane := map[string]string{}
 	rootByWindow := map[string]string{}
 	for _, item := range planned {
-		_, window, root, err := paneRegistryAncestry(registry, item.paneUID)
+		_, window, root, err := mutationruntime.PaneRegistryAncestry(registry, item.PaneUID)
 		if err != nil {
 			return paneLiveDeletePlan{}, err
 		}
-		windowByPane[item.paneUID] = window.Metadata.UID
+		windowByPane[item.PaneUID] = window.Metadata.UID
 		rootByWindow[window.Metadata.UID] = root.UID
 		selectedByWindow[window.Metadata.UID]++
-		lastByWindow[window.Metadata.UID] = item.paneUID
+		lastByWindow[window.Metadata.UID] = item.PaneUID
 	}
 	paneCount := map[string]int{}
 	for _, pane := range registry.Panes {
-		_, window, _, err := paneRegistryAncestry(registry, pane.Metadata.UID)
+		_, window, _, err := mutationruntime.PaneRegistryAncestry(registry, pane.Metadata.UID)
 		if err == nil {
 			paneCount[window.Metadata.UID]++
 		}
@@ -303,22 +305,22 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 	}
 	lastEndingWindow := map[string]string{}
 	for _, item := range planned {
-		windowUID := windowByPane[item.paneUID]
-		if selectedByWindow[windowUID] == paneCount[windowUID] && lastByWindow[windowUID] == item.paneUID {
+		windowUID := windowByPane[item.PaneUID]
+		if selectedByWindow[windowUID] == paneCount[windowUID] && lastByWindow[windowUID] == item.PaneUID {
 			lastEndingWindow[rootByWindow[windowUID]] = windowUID
 		}
 	}
 	for _, item := range planned {
-		if r.offlineUIDs[item.resourceUID] {
-			if registryOnly[item.resourceUID] {
+		if r.offlineUIDs[item.ResourceUID] {
+			if registryOnly[item.ResourceUID] {
 				continue
 			}
-			return paneLiveDeletePlan{}, fmt.Errorf("registry Pane uid %q has no exact live tmux Pane mirror", item.paneUID)
+			return paneLiveDeletePlan{}, fmt.Errorf("registry Pane uid %q has no exact live tmux Pane mirror", item.PaneUID)
 		}
-		_, window, root, _ := paneRegistryAncestry(registry, item.paneUID)
+		_, window, root, _ := mutationruntime.PaneRegistryAncestry(registry, item.PaneUID)
 		paneIndex := 0
 		for i := range registry.Panes {
-			if registry.Panes[i].Metadata.UID == item.paneUID {
+			if registry.Panes[i].Metadata.UID == item.PaneUID {
 				paneIndex = i
 				break
 			}
@@ -345,15 +347,15 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 				}
 			}
 		}
-		endsWindow := selectedByWindow[window.Metadata.UID] == paneCount[window.Metadata.UID] && lastByWindow[window.Metadata.UID] == item.paneUID
+		endsWindow := selectedByWindow[window.Metadata.UID] == paneCount[window.Metadata.UID] && lastByWindow[window.Metadata.UID] == item.PaneUID
 		out.Targets = append(out.Targets, paneLiveDeleteTarget{
-			ResourceUID: item.resourceUID, PaneUID: item.paneUID, PaneID: fmt.Sprintf("%%%d", paneIndex+30),
+			ResourceUID: item.ResourceUID, PaneUID: item.PaneUID, PaneID: fmt.Sprintf("%%%d", paneIndex+30),
 			WindowUID: window.Metadata.UID, WindowID: fmt.Sprintf("@%d", windowIndex+10),
 			SessionID: fmt.Sprintf("$%d", rootIndex+20), SessionName: root.Session, RootKind: root.Kind, RootUID: root.UID,
 			EndsWindow: endsWindow,
 			EndsSession: endsWindow && endingWindows[root.UID] == windowCount[root.UID] &&
 				lastEndingWindow[root.UID] == window.Metadata.UID,
-			Self: item.paneUID == r.selfUID,
+			Self: item.PaneUID == r.selfUID,
 		})
 	}
 	return out, nil

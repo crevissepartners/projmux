@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -741,14 +743,14 @@ func TestShellPrepareFailureThroughMaterializerKeepsTmuxCode(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 			routed := explicitTmuxRunner{Runner: server, Target: target}
 			runtime := &materializer{
-				runner: routed, mirror: intmetadata.NewMirror(routed), target: target,
-				sessions: sessionCheckFailure{fakeSessionMaterializer: &fakeSessionMaterializer{tmux: server}, err: realTmuxExitFailure(t, tt.stderr)},
+				mirror: intmetadata.NewMirror(routed), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Target: target,
+					Sessions: sessionCheckFailure{fakeSessionMaterializer: &fakeSessionMaterializer{tmux: server}, err: realTmuxExitFailure(t, tt.stderr)}},
 			}
 			project := coremetadata.Project{
 				Metadata: coremetadata.ObjectMeta{UID: "prj-project", Name: "project"},
 				Spec:     coremetadata.ProjectSpec{Root: "/work/project"},
 			}
-			_, prepareErr := runtime.ensureSessionAt(context.Background(), project, "repos-project", project.Spec.Root, "", newRuntimeLedger("op-shell"))
+			_, prepareErr := runtime.ensureSessionAt(context.Background(), project, "repos-project", project.Spec.Root, "", NewRuntimeLedger("op-shell"))
 			if prepareErr == nil || !strings.Contains(prepareErr.Error(), `check tmux session "repos-project"`) {
 				t.Fatalf("ensureSessionAt error = %v, want the session check failure", prepareErr)
 			}

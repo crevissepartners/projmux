@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"encoding/json"
@@ -43,10 +45,10 @@ func TestProcessAdmissionCreatePaneAnchor(t *testing.T) {
 func TestProcessAdmissionSplitAnchor(t *testing.T) {
 	reg, runtime, paneUID := processInventoryFixture(t)
 	tmux := newFakeTmux()
-	materializer := &materializer{runner: tmux}
+	materializer := &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux}}
 	target := &processTerminalTarget{runtime: runtime, registry: reg, paneUID: paneUID}
 	before, _ := json.Marshal(reg)
-	id, err := materializer.splitPane(context.Background(), "", "right", "/fixture", nil, target)
+	id, err := materializer.SplitPane(context.Background(), "", "right", "/fixture", nil, target)
 	after, _ := json.Marshal(reg)
 	t.Logf("anchor=%s id=%q error=%v tmux_calls=%d registry_writes=0 calls=%v", paneUID, id, err, len(tmux.calls), tmux.calls)
 	if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || !strings.Contains(err.Error(), "same Window") || id != "" || len(tmux.calls) != 0 || string(before) != string(after) {
@@ -111,17 +113,17 @@ func TestProcessAdmissionMixedSplitAnchor(t *testing.T) {
 		sibling.Status.Activation.RuntimeID = tmuxAnchor
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
 		m := create.runtime
-		m.expectedSocketPath = tmux.socketPath
-		m.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}
+		m.ExpectedSocketPath = tmux.socketPath
+		m.RouteAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}
 		before, _ := json.Marshal(store.registry)
 		if process {
 			target := &processTerminalTarget{runtime: runtime, registry: store.registry.Clone(), paneUID: pane.Metadata.UID}
-			id, err := m.splitPane(context.Background(), pane.Status.Activation.RuntimeID, "right", "/srv/beta", nil, target)
+			id, err := m.SplitPane(context.Background(), pane.Status.Activation.RuntimeID, "right", "/srv/beta", nil, target)
 			if err == nil || !strings.Contains(err.Error(), "process-split-unsupported") || id != "" || len(tmux.calls) != 0 {
 				t.Fatalf("process split: id=%q err=%v calls=%v", id, err, tmux.calls)
 			}
 		}
-		id, err := m.splitPane(context.Background(), tmuxAnchor, "right", "/srv/beta", nil, nil)
+		id, err := m.SplitPane(context.Background(), tmuxAnchor, "right", "/srv/beta", nil, nil)
 		if err != nil || id == "" {
 			t.Fatalf("tmux sibling split: id=%q err=%v calls=%v", id, err, tmux.calls)
 		}

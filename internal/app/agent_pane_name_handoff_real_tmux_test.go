@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -287,8 +289,8 @@ func TestContinueReplayCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 		newGeneration:  coremetadata.NewGeneration,
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			return &materializer{
-				runner: exact, mirror: intmetadata.NewMirror(exact), sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), target: target, warn: warn,
-				executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") },
+				mirror:     intmetadata.NewMirror(exact),
+				executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: defaultTmuxClientWithSocketRunner(exact, server.logical), Target: target, Warn: warn},
 			}
 		},
 	}
@@ -361,10 +363,11 @@ func TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 		store:      store.store(),
 		reconciler: newRegistryReconciler(routed, client),
 		runtime: &materializer{
-			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: client, target: target,
-			warn:       testWarnWriter{t},
+			mirror: intmetadata.NewMirror(routed),
+
 			executable: func() (string, error) { return "", errors.New("no supervisor in the name handoff test") },
-			lookupEnv:  lookupEnv,
+			lookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
+				Warn: testWarnWriter{t}},
 		},
 		shell:          "/bin/sh",
 		sessionNameFor: filepath.Base,
@@ -382,13 +385,13 @@ func TestAgentResumeCarriesOldAgentPaneNamesThroughRealTmux(t *testing.T) {
 		create.reconciler = newRegistryReconcilerWithRoute(exact, exactClient, route)
 		// Keep the reconciler off the real $HOME Project discovery.
 		create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-		create.runtime.runner = exact
+		create.runtime.Runner = exact
 		create.runtime.mirror = intmetadata.NewMirror(exact)
-		create.runtime.sessions = exactClient
-		create.runtime.target = route.Target
-		create.runtime.expectedSocketPath = route.ExpectedSocketPath
-		create.runtime.socketName = route.SocketName
-		create.runtime.routeAuthority = route.Authority
+		create.runtime.Sessions = exactClient
+		create.runtime.Target = route.Target
+		create.runtime.ExpectedSocketPath = route.ExpectedSocketPath
+		create.runtime.SocketName = route.SocketName
+		create.runtime.RouteAuthority = route.Authority
 		return nil
 	}
 	create.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

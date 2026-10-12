@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -192,7 +194,7 @@ func TestRealTmuxRegistryContinueFieldFidelity(t *testing.T) {
 		// hook configuration.
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			client := inttmux.NewClient(exact, inttmux.WithSocketName(logical))
-			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: client, target: target, warn: warn}
+			return &materializer{mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: client, Target: target, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),

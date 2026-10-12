@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"fmt"
@@ -86,11 +88,12 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 			sessionNameFor: filepath.Base,
 		},
 		runtime: &materializer{
-			runner:   f.tmux,
-			mirror:   mirror,
-			sessions: &fakeSessionMaterializer{tmux: f.tmux},
-			target:   tmuxTransport{Kind: tmuxSocketPath, Value: f.tmux.socketPath, Source: tmuxSocketPathSource},
-			warn:     io.Discard,
+
+			mirror: mirror, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: f.tmux,
+
+				Sessions: &fakeSessionMaterializer{tmux: f.tmux},
+				Target:   tmuxTransport{Kind: tmuxSocketPath, Value: f.tmux.socketPath, Source: tmuxSocketPathSource},
+				Warn:     io.Discard},
 		},
 		shell:          "/bin/zsh",
 		sessionNameFor: filepath.Base,
@@ -378,7 +381,7 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 		wg.Go(func() {
 			<-start
 			cmd := fixture.command(nil)
-			cmd.runtime.warn = warnings[i]
+			cmd.runtime.Warn = warnings[i]
 			stdout, _, err := runRoute(t, cmd,
 				"pane", "--project", "alpha", "--window", "shared", "--create-window", "-o", "uid")
 			outs[i], errs[i] = stdout, err

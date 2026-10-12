@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -62,18 +64,18 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 		name string
 		// arrange seeds the server and returns the ledger this operation
 		// recorded plus the check of the state rollback must leave.
-		arrange func(t *testing.T, seam *rollbackTmuxSeam) (*runtimeLedger, func(t *testing.T, warnings string))
+		arrange func(t *testing.T, seam *rollbackTmuxSeam) (*RuntimeLedger, func(t *testing.T, warnings string))
 	}{
 		{
 			name: "a Window removed with its last Pane lets the session kill run",
-			arrange: func(t *testing.T, seam *rollbackTmuxSeam) (*runtimeLedger, func(*testing.T, string)) {
+			arrange: func(t *testing.T, seam *rollbackTmuxSeam) (*RuntimeLedger, func(*testing.T, string)) {
 				session := seam.addSession("owned")
 				session.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
 				created := seedLiveWindow(t, seam.fakeTmux, session, "win-owned", "pan-owned")
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeSession, session.id, "prj-owned")
-				ledger.record(runtimeWindow, created.id, "win-owned")
-				ledger.record(runtimePane, created.panes[0].id, "pan-owned")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeSession, session.id, "prj-owned")
+				ledger.Record(runtimeWindow, created.id, "win-owned")
+				ledger.Record(runtimePane, created.panes[0].id, "pan-owned")
 				return ledger, func(t *testing.T, warnings string) {
 					if seam.session("owned") != nil {
 						t.Fatalf("rollback left the session it created:\n%s", seam.state())
@@ -86,15 +88,15 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 		},
 		{
 			name: "an object carrying another uid is preserved and the rest rolls back",
-			arrange: func(t *testing.T, seam *rollbackTmuxSeam) (*runtimeLedger, func(*testing.T, string)) {
+			arrange: func(t *testing.T, seam *rollbackTmuxSeam) (*RuntimeLedger, func(*testing.T, string)) {
 				owned := seam.addSession("owned")
 				owned.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
 				other := seam.addSession("other")
 				window := seedLiveWindow(t, seam.fakeTmux, other, "win-owned", "pan-owned")
 				window.opts[tmuxopts.WindowUID] = "win-someone-else"
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeSession, owned.id, "prj-owned")
-				ledger.record(runtimeWindow, window.id, "win-owned")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeSession, owned.id, "prj-owned")
+				ledger.Record(runtimeWindow, window.id, "win-owned")
 				return ledger, func(t *testing.T, warnings string) {
 					if _, got := seam.window(window.id); got == nil {
 						t.Fatal("rollback removed a Window that carries another uid")
@@ -110,14 +112,14 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 		},
 		{
 			name: "a lost server stops the plan as before",
-			arrange: func(t *testing.T, seam *rollbackTmuxSeam) (*runtimeLedger, func(*testing.T, string)) {
+			arrange: func(t *testing.T, seam *rollbackTmuxSeam) (*RuntimeLedger, func(*testing.T, string)) {
 				session := seam.addSession("owned")
 				session.opts[tmuxopts.ProjectUIDSession] = "prj-owned"
 				created := seedLiveWindow(t, seam.fakeTmux, session, "win-owned", "pan-owned")
 				seam.failKillWindow = true
-				ledger := &runtimeLedger{}
-				ledger.record(runtimeSession, session.id, "prj-owned")
-				ledger.record(runtimeWindow, created.id, "win-owned")
+				ledger := &RuntimeLedger{}
+				ledger.Record(runtimeSession, session.id, "prj-owned")
+				ledger.Record(runtimeWindow, created.id, "win-owned")
 				return ledger, func(t *testing.T, warnings string) {
 					if !strings.Contains(warnings, "rollback stopped before an unguarded runtime write") ||
 						!strings.Contains(warnings, "server exited unexpectedly") && !strings.Contains(warnings, "typed tmux command failure") {
@@ -134,14 +136,14 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 			seam := &rollbackTmuxSeam{fakeTmux: newFakeTmux()}
 			var warnings bytes.Buffer
 			runtime := &materializer{
-				runner: seam, mirror: intmetadata.NewMirror(seam), warn: &warnings,
-				target:             tmuxTransport{Kind: tmuxSocketPath, Value: seam.socketPath, Source: tmuxSocketPathSource},
-				expectedSocketPath: seam.socketPath,
-				socketName:         defaultAppSocket,
-				routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: seam.serverPID},
+				mirror: intmetadata.NewMirror(seam), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: seam, Warn: &warnings,
+					Target:             tmuxTransport{Kind: tmuxSocketPath, Value: seam.socketPath, Source: tmuxSocketPathSource},
+					ExpectedSocketPath: seam.socketPath,
+					SocketName:         defaultAppSocket,
+					RouteAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: seam.serverPID}},
 			}
 			ledger, check := tt.arrange(t, seam)
-			runtime.rollback(context.Background(), ledger)
+			runtime.Rollback(context.Background(), ledger)
 			check(t, warnings.String())
 		})
 	}
@@ -152,11 +154,11 @@ func TestRollbackContinuesPastAnObjectAnEarlierKillRemoved(t *testing.T) {
 // writer.
 func ownedKillRaceMaterializer(server *fakeTmux, warn *bytes.Buffer) *materializer {
 	return &materializer{
-		runner: server, mirror: intmetadata.NewMirror(server), warn: warn,
-		target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
-		expectedSocketPath: server.socketPath,
-		socketName:         defaultAppSocket,
-		routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
+		mirror: intmetadata.NewMirror(server), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: server, Warn: warn,
+			Target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
+			ExpectedSocketPath: server.socketPath,
+			SocketName:         defaultAppSocket,
+			RouteAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID}},
 	}
 }
 
@@ -198,11 +200,11 @@ func TestRollbackTreatsAnOwnedSessionRemovedBetweenReobserveAndGuardAsAbsent(t *
 	// Read 1 is rollback's pre-plan ownership check; read 2 is the Guard's.
 	// A concurrent writer kills the session between Reobserve and that read.
 	onNthOwnershipRead(server, vanishing.id, tmuxopts.ProjectUIDSession, 2, func(f *fakeTmux) { removeFakeSession(f, vanishing.id) })
-	ledger := &runtimeLedger{}
-	ledger.record(runtimeSession, remaining.id, "prj-remaining")
-	ledger.record(runtimeSession, vanishing.id, "prj-vanishing")
+	ledger := &RuntimeLedger{}
+	ledger.Record(runtimeSession, remaining.id, "prj-remaining")
+	ledger.Record(runtimeSession, vanishing.id, "prj-vanishing")
 	var warnings bytes.Buffer
-	ownedKillRaceMaterializer(server, &warnings).rollback(context.Background(), ledger)
+	ownedKillRaceMaterializer(server, &warnings).Rollback(context.Background(), ledger)
 	if warnings.Len() != 0 {
 		t.Fatalf("rollback warned on a session a concurrent writer already removed: %q", warnings.String())
 	}
@@ -221,10 +223,10 @@ func TestRollbackStillRefusesAnOwnedSessionWhoseUIDDriftedBetweenReobserveAndGua
 	onNthOwnershipRead(server, owned.id, tmuxopts.ProjectUIDSession, 2, func(*fakeTmux) {
 		owned.opts[tmuxopts.ProjectUIDSession] = "prj-someone-else"
 	})
-	ledger := &runtimeLedger{}
-	ledger.record(runtimeSession, owned.id, "prj-owned")
+	ledger := &RuntimeLedger{}
+	ledger.Record(runtimeSession, owned.id, "prj-owned")
 	var warnings bytes.Buffer
-	ownedKillRaceMaterializer(server, &warnings).rollback(context.Background(), ledger)
+	ownedKillRaceMaterializer(server, &warnings).Rollback(context.Background(), ledger)
 	if !strings.Contains(warnings.String(), `guard refused action "kill-owned" before first write`) ||
 		!strings.Contains(warnings.String(), `ownership uid is "prj-someone-else", want "prj-owned"`) {
 		t.Fatalf("warning = %q; want the drifted owner refused at the guard", warnings.String())

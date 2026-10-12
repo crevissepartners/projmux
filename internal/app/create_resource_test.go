@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -208,14 +210,16 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 			sessionNameFor: filepath.Base,
 		},
 		runtime: &materializer{
-			runner:     tmux,
-			mirror:     mirror,
-			sessions:   sessions,
-			target:     tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
-			socketName: defaultAppSocket,
-			warn:       testWarnWriter{t},
+
+			mirror: mirror,
+
 			executable: func() (string, error) { return testSupervisorBinary, nil },
-			lookupEnv:  func(string) string { return "" },
+			lookupEnv:  func(string) string { return "" }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux,
+
+				Sessions:   sessions,
+				Target:     tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
+				SocketName: defaultAppSocket,
+				Warn:       testWarnWriter{t}},
 		},
 		shell:          "/bin/zsh",
 		sessionNameFor: filepath.Base,
@@ -1076,7 +1080,7 @@ func TestCanonicalCreatePaneAmbiguousLayoutReceiptWritesZeroResizes(t *testing.T
 				}
 				return out
 			}
-			create.runtime.runner = probe
+			create.runtime.Runner = probe
 			if _, err := create.runtime.observeSplitLayoutBatch(context.Background(), tmux.sessions[0].windows[0].panes[0].id); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("strict layout receipt error = %v, want %q", err, test.want)
 			}
@@ -1125,7 +1129,7 @@ func TestCanonicalCreatePaneLayoutInventoryDriftWritesZeroResizes(t *testing.T) 
 			}
 		}
 	}
-	create.runtime.runner = probe
+	create.runtime.Runner = probe
 	baseUpdate := create.store.update
 	create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
 		inRegistryUpdate = true
@@ -1155,7 +1159,7 @@ func TestCanonicalCreatePaneLayoutServerGenerationDriftWritesZeroResizes(t *test
 		t.Fatalf("prepare generation-drift fixture: %v", err)
 	}
 	probe := &layoutLockProbeRunner{base: tmux, driftPID: true}
-	create.runtime.runner = probe
+	create.runtime.Runner = probe
 	stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
 	if err != nil {
 		t.Fatalf("best-effort route drift escaped create: %v", err)
@@ -1176,7 +1180,7 @@ func TestCanonicalCreatePaneMultiPaneLayoutUsesBoundedBatchInsideRegistryUpdate(
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 	inRegistryUpdate := false
 	probe := &layoutLockProbeRunner{base: tmux, inRegistryUpdate: &inRegistryUpdate}
-	create.runtime.runner = probe
+	create.runtime.Runner = probe
 	baseUpdate := create.store.update
 	create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
 		inRegistryUpdate = true
@@ -1449,18 +1453,18 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		window := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 		var warnings bytes.Buffer
 		runtime := &materializer{
-			runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings,
-			target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}, expectedSocketPath: tmux.socketPath,
-			socketName:     defaultAppSocket,
-			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID},
+			mirror: intmetadata.NewMirror(tmux), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: tmux, Warn: &warnings,
+				Target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}, ExpectedSocketPath: tmux.socketPath,
+				SocketName:     defaultAppSocket,
+				RouteAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID}},
 		}
 
-		ledger := &runtimeLedger{}
-		ledger.record(runtimeWindow, window.id, "win-alpha-main")
+		ledger := &RuntimeLedger{}
+		ledger.Record(runtimeWindow, window.id, "win-alpha-main")
 		// Another operation re-bound the window between creation and rollback.
 		window.opts[tmuxopts.WindowUID] = "win-someone-else"
 
-		runtime.rollback(context.Background(), ledger)
+		runtime.Rollback(context.Background(), ledger)
 		if _, got := tmux.window(window.id); got == nil {
 			t.Fatal("rollback removed a window that no longer carried this operation's uid")
 		}
@@ -1470,7 +1474,7 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 
 		// With the uid restored it is this operation's object again.
 		window.opts[tmuxopts.WindowUID] = "win-alpha-main"
-		runtime.rollback(context.Background(), ledger)
+		runtime.Rollback(context.Background(), ledger)
 		if _, got := tmux.window(window.id); got != nil {
 			t.Fatal("rollback kept an object this operation created")
 		}
@@ -1592,7 +1596,7 @@ func TestSessionResultErrorUsesExactHandleAndPreservesUnknownOwnership(t *testin
 		tmux := newFakeTmux()
 		create, sessions := newTestResourceCreateCommand(t, store, tmux)
 		var warnings bytes.Buffer
-		create.runtime.warn = &warnings
+		create.runtime.Warn = &warnings
 		sessions.createErr = errors.New("owner verification failed")
 		sessions.createErrResult = true
 		sessions.postCreate = func() {
@@ -1820,7 +1824,7 @@ func TestUIDClaimFailurePreservesUnownedResidualAndRegistry(t *testing.T) {
 			beforeRegistry := store.snapshot()
 			create, _ := newTestResourceCreateCommand(t, store, tmux)
 			var warnings bytes.Buffer
-			create.runtime.warn = &warnings
+			create.runtime.Warn = &warnings
 			tmux.fail = test.fail
 
 			stdout, _, err := runRoute(t, create, test.args...)
@@ -1886,7 +1890,7 @@ func TestUIDClaimAfterApplyErrorRollsBackExactOwnedObject(t *testing.T) {
 			registryBefore, runtimeBefore := store.snapshot(), tmux.state()
 			create, _ := newTestResourceCreateCommand(t, store, tmux)
 			var warnings bytes.Buffer
-			create.runtime.warn = &warnings
+			create.runtime.Warn = &warnings
 			tmux.fail = test.fail
 			tmux.failAfterMutation = true
 
@@ -1971,12 +1975,12 @@ func TestErrorCreatedHandleRejectsAmbiguousOrPreexistingIDs(t *testing.T) {
 		"diagnostic only":    "hook failed after split",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := errorCreatedHandle(output, "%", before, after); got != "" {
+			if got := mutationruntime.ErrorCreatedHandle(output, "%", before, after); got != "" {
 				t.Fatalf("errorCreatedHandle(%q) = %q, want fail-closed empty handle", output, got)
 			}
 		})
 	}
-	if got := errorCreatedHandle("%8\n'exit 7' returned 7", "%", before, after); got != "%8" {
+	if got := mutationruntime.ErrorCreatedHandle("%8\n'exit 7' returned 7", "%", before, after); got != "%8" {
 		t.Fatalf("single exact created handle = %q, want %%8", got)
 	}
 }
@@ -2709,7 +2713,7 @@ func TestNewWindowAttributionMatrixPreservesPreexistingIdentity(t *testing.T) {
 			tmux.newWindowResult = test.output
 			create, _ := newTestResourceCreateCommand(t, store, tmux)
 			var warnings bytes.Buffer
-			create.runtime.warn = &warnings
+			create.runtime.Warn = &warnings
 			beforeWindowIDs, beforePaneIDs := map[string]bool{}, map[string]bool{}
 			for _, candidateSession := range tmux.sessions {
 				for _, window := range candidateSession.windows {
@@ -2806,7 +2810,7 @@ func TestAttributeCreatedWindowUsesLinkedOwnerSetsWithoutWeakeningPaneOwnership(
 		t.Fatalf("linked owner-set attribution = %+v / %v", result, err)
 	}
 
-	afterPanes["%3"][runtimeOwner{SessionID: "$1", WindowID: "@9"}] = struct{}{}
+	afterPanes["%3"][RuntimeOwner{SessionID: "$1", WindowID: "@9"}] = struct{}{}
 	if _, err := attributeCreatedWindow(tmuxRowFormat("@3", "%3"), "$1", beforeWindows, beforePanes, afterWindows, afterPanes); err == nil {
 		t.Fatal("Pane handle shared across different Window owners was accepted")
 	}

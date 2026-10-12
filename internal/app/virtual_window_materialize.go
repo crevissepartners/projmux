@@ -14,7 +14,7 @@ import (
 // materializeVirtualPane uses the requested Pane as the Window's first runtime
 // Pane. The surrounding create transaction owns both the metadata and rollback
 // ledger; no temporary shell or second definition of runtime ownership is used.
-func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, ledger *runtimeLedger, project coremetadata.Project, windowUID string, pane coremetadata.Pane, activation superviseSpec, command []string) (string, error) {
+func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, ledger *RuntimeLedger, project coremetadata.Project, windowUID string, pane coremetadata.Pane, activation superviseSpec, command []string) (string, error) {
 	window, ok := reg.Window(windowUID)
 	if !ok {
 		return "", errors.New("materialize virtual Window: Window disappeared")
@@ -45,24 +45,24 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 		made, err := c.runtime.newWindow(ctx, created.SessionID, window.Metadata.Name, pane.Spec.CWD, c.runtime.supervisedLaunch(ctx, activation, command))
 		windowID, paneID = made.WindowID, made.PaneID
 		if windowID != "" {
-			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); claimErr != nil {
+			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); claimErr != nil {
 				return "", errors.Join(err, claimErr)
 			}
 		}
 		if err != nil {
 			return "", err
 		}
-	} else if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); err != nil {
+	} else if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); err != nil {
 		return "", err
 	}
 	markSupervisedSpawn(ctx)
-	if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
+	if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
 		return "", err
 	}
 	if err := c.runtime.mirrorWindow(ctx, windowID, *window); err != nil {
 		return "", err
 	}
-	if err := c.runtime.mirrorPane(ctx, paneID, pane); err != nil {
+	if err := c.runtime.MirrorPaneIdentity(ctx, paneID, pane); err != nil {
 		return "", err
 	}
 	if _, err := mut.SetWindowAnchor(reg, windowUID, pane.Metadata.UID); err != nil {
@@ -71,9 +71,9 @@ func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremet
 	if _, err := mut.ObserveWindowRuntimeBinding(reg, windowUID, created.SessionID, windowID); err != nil {
 		return "", err
 	}
-	ledger.observeCurrentWindow(windowUID, runtimeOwner{SessionID: created.SessionID, WindowID: windowID})
-	observeActivationRuntime(reg, mut, activation, paneID, c.runtime.warn)
-	if _, err := mut.BindLiveProjectSession(reg, project.Metadata.UID, sessionName, c.runtime.expectedSocketPath); err != nil {
+	ledger.ObserveCurrentWindow(windowUID, RuntimeOwner{SessionID: created.SessionID, WindowID: windowID})
+	observeActivationRuntime(reg, mut, activation, paneID, c.runtime.Warn)
+	if _, err := mut.BindLiveProjectSession(reg, project.Metadata.UID, sessionName, c.runtime.ExpectedSocketPath); err != nil {
 		return "", err
 	}
 	if err := c.runtime.finalizeSessionStartup(ctx, created, sessionName, project.Spec.Root, ledger); err != nil {
@@ -102,16 +102,16 @@ func virtualWindowCreator(runner tmuxCommandRunner, lookup func(string) string, 
 			}
 			exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
 			client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
-			c.runtime.invalidateRouteIdentity("virtual-window-navigation")
+			c.runtime.InvalidateRouteIdentity("virtual-window-navigation")
 			c.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 			c.reconciler.shareRouteIdentityScope(c.runtime)
-			c.reconciler.sessionSocketPath = func() string { return c.runtime.expectedSocketPath }
-			c.runtime.runner, c.runtime.mirror, c.runtime.sessions = exact, intmetadata.NewMirror(exact), client
-			c.runtime.target, c.runtime.expectedSocketPath, c.runtime.socketName, c.runtime.routeAuthority = route.Target, route.ExpectedSocketPath, route.SocketName, route.Authority
+			c.reconciler.sessionSocketPath = func() string { return c.runtime.ExpectedSocketPath }
+			c.runtime.Runner, c.runtime.mirror, c.runtime.Sessions = exact, intmetadata.NewMirror(exact), client
+			c.runtime.Target, c.runtime.ExpectedSocketPath, c.runtime.SocketName, c.runtime.RouteAuthority = route.Target, route.ExpectedSocketPath, route.SocketName, route.Authority
 			return nil
 		}
 	}
-	c.runtime.warn = io.Discard
+	c.runtime.Warn = io.Discard
 	return c, nil
 }
 
@@ -138,7 +138,7 @@ func (c *createCommand) materializeVirtualShellResult(windowUID string) (virtual
 	if !found {
 		return result, fmt.Errorf("materialize Window uid:%s: not in Registry", windowUID)
 	}
-	err = c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mut coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err = c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mut coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		if !working.IsVirtualWindow(windowUID) {
 			return nil
 		}

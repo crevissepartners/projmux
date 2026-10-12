@@ -306,8 +306,8 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 			return fmt.Errorf("delete %s: live tmux deletion is not configured", token)
 		}
 		c.panes.useExactTarget(target)
-		if anchored, ok := c.panes.(interface{ useRouteAnchor(string) }); ok {
-			anchored.useRouteAnchor(c.routeAnchor)
+		if anchored, ok := c.panes.(interface{ UseRouteAnchor(string) }); ok {
+			anchored.UseRouteAnchor(c.routeAnchor)
 		}
 		panePlan, err = c.panes.preflight(context.Background(), registry, plan)
 		if err != nil {

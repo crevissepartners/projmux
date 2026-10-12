@@ -210,7 +210,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		// The fresh-path ownership proof: there is no origin Pane to re-prove.
 		guards = []createPreReconcile{c.exactProjectOwnershipGuard(projectUID)}
 	}
-	err = c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err = c.transact(diagnostics.CreateKindWindow, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		var project coremetadata.Project
 		if projectUID == "" {
 			if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
@@ -246,7 +246,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 			return activationErr
 		}
 		if projectUID == "" {
-			if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
+			if err := c.runtime.MarkCreateOperation(ctx, scope.sessionID, ledger); err != nil {
 				return err
 			}
 		} else {
@@ -266,7 +266,7 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		if created.WindowID == "" {
 			return createErr
 		}
-		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, window.Metadata.UID, ledger); claimErr != nil {
+		if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, window.Metadata.UID, ledger); claimErr != nil {
 			return errors.Join(createErr, claimErr)
 		}
 		if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, window); mirrorErr != nil {
@@ -279,13 +279,13 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 			return errors.Join(createErr, bindingErr)
 		}
 		window = projected
-		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, panes[0].Metadata.UID, ledger); claimErr != nil {
+		if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, panes[0].Metadata.UID, ledger); claimErr != nil {
 			return errors.Join(createErr, claimErr)
 		}
-		if mirrorErr := c.runtime.mirrorPane(ctx, created.PaneID, panes[0]); mirrorErr != nil {
+		if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, created.PaneID, panes[0]); mirrorErr != nil {
 			return errors.Join(createErr, mirrorErr)
 		}
-		observeActivationRuntime(working, mutator, activation, created.PaneID, c.runtime.warn)
+		observeActivationRuntime(working, mutator, activation, created.PaneID, c.runtime.Warn)
 		if createErr != nil {
 			return createErr
 		}
@@ -350,12 +350,12 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, rename
 	displayName := name
 	// A rename is not a create: it shares the transaction and writes no
 	// create.outcome.
-	err = c.transact(createKindUnrecorded, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *runtimeLedger) error {
+	err = c.transact(createKindUnrecorded, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *RuntimeLedger) error {
 		_, ok := working.Window(scope.windowUID)
 		if !ok {
 			return usageError("canonical rename: origin Window disappeared; nothing was changed")
 		}
-		row, readErr := c.runtime.read(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
+		row, readErr := c.runtime.ReadTmux(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
 			tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
 		if readErr != nil {
 			return readErr
@@ -365,31 +365,31 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, rename
 			return usageError("canonical rename: exact Window containment changed before planning; nothing was changed")
 		}
 		windowID := rows[0][1]
-		stableTarget, bindErr := c.runtime.bindMaterializeIdentityTarget(ctx, "window", windowID, scope.windowUID)
+		stableTarget, bindErr := c.runtime.BindMaterializeIdentityTarget(ctx, "window", windowID, scope.windowUID)
 		if bindErr != nil {
 			return bindErr
 		}
-		action := materializeMutationAction(mutationRenameWindow,
+		action := MaterializeMutationAction(mutationRenameWindow,
 			stableTarget,
 			"exact root="+string(scope.rootKind)+"/"+scope.rootUID+";session="+scope.sessionID+";window="+windowID+"/"+scope.windowUID,
 			"exact owned Window display name="+displayName,
 			"-t", windowID, "--", displayName)
 		observeContainment := func(ctx context.Context) (bool, error) {
-			observed, err := c.runtime.read(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
+			observed, err := c.runtime.ReadTmux(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
 				tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
 			if err != nil {
 				return false, err
 			}
 			return observed == row, nil
 		}
-		if err := c.runtime.runMaterializeMutation(ctx, action, func() error {
+		if err := c.runtime.RunMaterializeMutation(ctx, action, func() error {
 			observed, err := observeContainment(ctx)
 			if err != nil || !observed {
 				return errors.New("exact Window containment drifted before rename")
 			}
 			return nil
 		}, func() error {
-			_, err := runRuntimeMutationCommand(ctx, c.runtime.runner, action)
+			_, err := runRuntimeMutationCommand(ctx, c.runtime.Runner, action)
 			return err
 		}, observeContainment); err != nil {
 			return err
@@ -578,7 +578,7 @@ func (c *createCommand) canonicalIntentRuntimeSession(ctx context.Context, paneI
 	if c == nil || c.runtime == nil {
 		return liveSessionIdentity{}, errors.New("canonical create: runtime materializer is not configured")
 	}
-	out, err := c.runtime.read(ctx, "display-message", "-p", "-t", paneID, "-F",
+	out, err := c.runtime.ReadTmux(ctx, "display-message", "-p", "-t", paneID, "-F",
 		tmuxRowFormat("#{session_id}", "#{session_name}"))
 	if err != nil {
 		return liveSessionIdentity{}, usageError(fmt.Sprintf(
@@ -730,7 +730,7 @@ func (c *createCommand) canonicalIntentGuards(scope canonicalIntentScope) []crea
 func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, launchDir string, stdout io.Writer) (createdPaneRuntime, error) {
 	var result createResult
 	var created createdPaneRuntime
-	err := c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err := c.transact(diagnostics.CreateKindPane, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
 		}
@@ -759,19 +759,19 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 		if err != nil {
 			return err
 		}
-		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
+		if err := c.runtime.MarkCreateOperation(ctx, scope.sessionID, ledger); err != nil {
 			return err
 		}
-		paneID, err := c.runtime.splitPane(ctx, scope.anchorPaneID, intent.placement, cwd,
+		paneID, err := c.runtime.SplitPane(ctx, scope.anchorPaneID, intent.placement, cwd,
 			c.runtime.supervisedLaunch(ctx, activation, nil), nil)
 		if paneID != "" {
-			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
+			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
 			}
-			if mirrorErr := c.runtime.mirrorPane(ctx, paneID, pane); mirrorErr != nil {
+			if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
-			observeActivationRuntime(working, mutator, activation, paneID, c.runtime.warn)
+			observeActivationRuntime(working, mutator, activation, paneID, c.runtime.Warn)
 		}
 		if err != nil {
 			return err
@@ -799,7 +799,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	}
 	var result createResult
 	var opened intentAgentOpened
-	err = c.transact(diagnostics.CreateKindAgent, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+	err = c.transact(diagnostics.CreateKindAgent, func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *RuntimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
 		}
@@ -1053,7 +1053,7 @@ func (c *createCommand) openIntentAgent(
 	ctx context.Context,
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
-	ledger *runtimeLedger,
+	ledger *RuntimeLedger,
 	operationID string,
 	scope canonicalIntentScope,
 	plan intentAgentPlan,
@@ -1303,23 +1303,23 @@ func (c *createCommand) openIntentAgent(
 		}
 	}
 	if !target.leaseHeld {
-		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
+		if err := c.runtime.MarkCreateOperation(ctx, scope.sessionID, ledger); err != nil {
 			return intentAgentOpened{}, err
 		}
 	}
-	paneID, err := c.runtime.splitPane(ctx, target.anchorPaneID, target.placement, workspace.CWD,
+	paneID, err := c.runtime.SplitPane(ctx, target.anchorPaneID, target.placement, workspace.CWD,
 		c.runtime.supervisedLaunch(ctx, activation, launchArgv), nil)
 	if paneID != "" {
 		// The supervised child now runs and will want the Registry lock
 		// this transaction holds; create.outcome measures the rest of the hold.
 		markSupervisedSpawn(ctx)
-		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
+		if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 			return intentAgentOpened{}, errors.Join(err, claimErr)
 		}
-		if mirrorErr := c.runtime.mirrorPane(ctx, paneID, pane); mirrorErr != nil {
+		if mirrorErr := c.runtime.MirrorPaneIdentity(ctx, paneID, pane); mirrorErr != nil {
 			return intentAgentOpened{}, errors.Join(err, mirrorErr)
 		}
-		observeActivationRuntime(working, mutator, activation, paneID, c.runtime.warn)
+		observeActivationRuntime(working, mutator, activation, paneID, c.runtime.Warn)
 	}
 	if err != nil {
 		return intentAgentOpened{}, err
@@ -1337,7 +1337,7 @@ func (c *createCommand) openIntentAgent(
 	opened := intentAgentOpened{agent: agent, pane: pane, paneID: paneID, notices: notices,
 		sessionHistory: sessionHistory, sessionHistoryOK: sessionHistoryOK}
 	if usedNative {
-		if err := bindNativeCodexPaneOnRoute(ctx, plan.nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
+		if err := bindNativeCodexPaneOnRoute(ctx, plan.nativeLauncher, c.runtime.Runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
 			return intentAgentOpened{}, fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", canonicalCreateAgent, paneID, err)
 		}
 		if plan.nativeLifecycleCapable {
@@ -1346,16 +1346,16 @@ func (c *createCommand) openIntentAgent(
 					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
 					Generation: activation.Generation, ThreadID: nativeThreadID,
 				},
-				Route: c.runtime.target, NativeRoute: plan.nativeRoute,
+				Route: c.runtime.Target, NativeRoute: plan.nativeRoute,
 			}
 		}
 	} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title,
 		declaredPlainCodexLane(provider, flags, ""), flags); err != nil {
 		return intentAgentOpened{}, fmt.Errorf("%s: bind Agent Pane %s presentation metadata: %w", canonicalCreateAgent, paneID, err)
 	}
-	if err := c.runtime.runIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []identityPlanWrite{
-		{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption}, effect: "legacy AI topic projection absent"},
-		{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicManualOption}, effect: "legacy manual-topic projection absent"},
+	if err := c.runtime.RunIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []IdentityPlanWrite{
+		{Operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption}, Effect: "legacy AI topic projection absent"},
+		{Operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicManualOption}, Effect: "legacy manual-topic projection absent"},
 	}); err != nil {
 		return intentAgentOpened{}, fmt.Errorf("%s: clear compatibility topic projections on Pane %s: %w", canonicalCreateAgent, paneID, err)
 	}

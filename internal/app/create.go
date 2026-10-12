@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -222,13 +224,15 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		processRuntime: newProcessPaneRuntime(),
 		reconciler:     newRegistryReconciler(routed, client),
 		runtime: &materializer{
-			runner:     routed,
-			mirror:     intmetadata.NewMirror(routed),
-			sessions:   client,
-			target:     target,
-			warn:       os.Stderr,
+
+			mirror: intmetadata.NewMirror(routed),
+
 			executable: os.Executable,
-			lookupEnv:  lookupEnv,
+			lookupEnv:  lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed,
+
+				Sessions: client,
+				Target:   target,
+				Warn:     os.Stderr},
 		},
 		activeTarget:            defaultActiveTargetLookup(),
 		anchorTarget:            defaultAnchoredActiveTargetLookup,
@@ -252,20 +256,20 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 		// Binding the route reconnects the materializer to a freshly resolved
 		// server, so no identity proved before this point may be reused.
-		command.runtime.invalidateRouteIdentity("route-bind")
+		command.runtime.InvalidateRouteIdentity("route-bind")
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 		command.reconciler.shareRouteIdentityScope(command.runtime)
 		// A route resolved before any server exists has no path yet; the
 		// materializer binds it from new-session's own #{socket_path}. The
 		// reconcile pass after the create's writes records that bound value.
-		command.reconciler.sessionSocketPath = func() string { return command.runtime.expectedSocketPath }
-		command.runtime.runner = exact
+		command.reconciler.sessionSocketPath = func() string { return command.runtime.ExpectedSocketPath }
+		command.runtime.Runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
-		command.runtime.sessions = client
-		command.runtime.target = route.Target
-		command.runtime.expectedSocketPath = route.ExpectedSocketPath
-		command.runtime.socketName = route.SocketName
-		command.runtime.routeAuthority = route.Authority
+		command.runtime.Sessions = client
+		command.runtime.Target = route.Target
+		command.runtime.ExpectedSocketPath = route.ExpectedSocketPath
+		command.runtime.SocketName = route.SocketName
+		command.runtime.RouteAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"bytes"
 	"context"
@@ -142,8 +144,9 @@ func TestGeneratedWindowRenameProjectsFlagShapedNamesThroughRealTmux(t *testing.
 			store:      store.store(),
 			reconciler: newRegistryReconciler(routed, client),
 			runtime: &materializer{
-				runner: routed, mirror: intmetadata.NewMirror(routed), sessions: client, target: target,
-				warn: testWarnWriter{t}, executable: os.Executable, lookupEnv: lookupEnv,
+				mirror:     intmetadata.NewMirror(routed),
+				executable: os.Executable, lookupEnv: lookupEnv, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: routed, Sessions: client, Target: target,
+					Warn: testWarnWriter{t}},
 			},
 			anchorTarget: func(anchor string) activeTargetLookup {
 				return anchoredActiveTargetLookup(anchor, lookupEnv, intmetadata.NewMirror(physical))
@@ -164,13 +167,13 @@ func TestGeneratedWindowRenameProjectsFlagShapedNamesThroughRealTmux(t *testing.
 			command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 			// Keep the reconciler off the real $HOME Project discovery.
 			command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
-			command.runtime.runner = exact
+			command.runtime.Runner = exact
 			command.runtime.mirror = intmetadata.NewMirror(exact)
-			command.runtime.sessions = client
-			command.runtime.target = route.Target
-			command.runtime.expectedSocketPath = route.ExpectedSocketPath
-			command.runtime.socketName = route.SocketName
-			command.runtime.routeAuthority = route.Authority
+			command.runtime.Sessions = client
+			command.runtime.Target = route.Target
+			command.runtime.ExpectedSocketPath = route.ExpectedSocketPath
+			command.runtime.SocketName = route.SocketName
+			command.runtime.RouteAuthority = route.Authority
 			return nil
 		}
 		command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

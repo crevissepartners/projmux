@@ -1,5 +1,7 @@
 package app
 
+import mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 import (
 	"context"
 	"errors"
@@ -78,10 +80,9 @@ func routeSequenceTarget() tmuxTransport {
 
 func newRouteSequenceMaterializer(runner tmuxCommandRunner, class string) *materializer {
 	target := routeSequenceTarget()
-	return &materializer{
-		runner: explicitTmuxRunner{Runner: runner, Target: target},
-		target: target, expectedSocketPath: routeSequenceSocket, socketName: defaultAppSocket,
-		routeAuthority: &runtimeMutationRouteAuthority{Class: class, ServerPID: "4242"},
+	return &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: explicitTmuxRunner{Runner: runner, Target: target},
+		Target: target, ExpectedSocketPath: routeSequenceSocket, SocketName: defaultAppSocket,
+		RouteAuthority: &runtimeMutationRouteAuthority{Class: class, ServerPID: "4242"}},
 	}
 }
 
@@ -101,7 +102,7 @@ func TestExactRouteProofIsOneTmuxInvocation(t *testing.T) {
 
 	runner := newRouteProofRunner()
 	runtime := newRouteSequenceMaterializer(runner, runtimeMutationRouteApp)
-	if err := runtime.guardExactRoute(context.Background(), false, routeSequenceSocket); err != nil {
+	if err := runtime.GuardExactRoute(context.Background(), false, routeSequenceSocket); err != nil {
 		t.Fatalf("guardExactRoute() = %v", err)
 	}
 	if len(runner.execs) != 1 {
@@ -248,7 +249,7 @@ func TestRouteProofRefusalsKeepTheirTextInOneInvocation(t *testing.T) {
 			exact := newRouteProofRunner()
 			test.mutate(exact)
 			runtime := newRouteSequenceMaterializer(exact, test.class)
-			check("exact-route proof", runtime.proveExactRouteOwnership(context.Background(), false, !test.appRoute, routeSequenceSocket), test.wantExact)
+			check("exact-route proof", runtime.ProveExactRouteOwnership(context.Background(), false, !test.appRoute, routeSequenceSocket), test.wantExact)
 			if test.appRoute {
 				return
 			}
@@ -271,7 +272,7 @@ func TestRouteReadSequenceRefusesAValueThatPrintsTheBoundary(t *testing.T) {
 	runner := newRouteProofRunner()
 	runner.app = routeProofValue("1\n" + routeReadBoundary + "\n" + defaultAppSocket)
 	runtime := newRouteSequenceMaterializer(runner, runtimeMutationRouteApp)
-	err := runtime.guardExactRoute(context.Background(), false, routeSequenceSocket)
+	err := runtime.GuardExactRoute(context.Background(), false, routeSequenceSocket)
 	want := fmt.Sprintf("reobserve exact tmux route -S=%s: tmux read sequence returned 5 sections, want 4", routeSequenceSocket)
 	if err == nil || err.Error() != want {
 		t.Fatalf("boundary-printing marker = %v, want %q", err, want)
@@ -370,7 +371,7 @@ func TestPaneDefaultsPrefetchAnswersOnlyForItsSocket(t *testing.T) {
 
 	ctx := context.Background()
 	runner := &paneDefaultsRunner{shell: "/bin/fish"}
-	runtime := &materializer{runner: runner, expectedSocketPath: routeSequenceSocket, lookupEnv: func(string) string { return "" }}
+	runtime := &materializer{lookupEnv: func(string) string { return "" }, MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: runner, ExpectedSocketPath: routeSequenceSocket}}
 	clearMemo := runtime.prefetchPaneDefaults(ctx)
 	if len(runner.execs) != 1 {
 		t.Fatalf("prefetch issued %d tmux execs, want 1", len(runner.execs))
@@ -381,7 +382,7 @@ func TestPaneDefaultsPrefetchAnswersOnlyForItsSocket(t *testing.T) {
 		t.Fatalf("memoized launch = %v, %v after %d execs; want the prefetched /bin/fish and no read", resolved.argv, err, len(runner.execs))
 	}
 
-	runtime.expectedSocketPath = "/tmp/fake-tmux/rebound"
+	runtime.ExpectedSocketPath = "/tmp/fake-tmux/rebound"
 	resolved, err = runtime.defaultPaneCommand(ctx)
 	if err != nil || !slices.Equal(resolved.argv, []string{"/bin/changed"}) || len(runner.execs) != 3 {
 		t.Fatalf("launch after the route changed = %v, %v after %d execs; want two fresh reads", resolved.argv, err, len(runner.execs))
@@ -392,7 +393,7 @@ func TestPaneDefaultsPrefetchAnswersOnlyForItsSocket(t *testing.T) {
 	}
 
 	failing := &paneDefaultsRunner{err: errors.New("injected tmux failure")}
-	runtime = &materializer{runner: failing, expectedSocketPath: routeSequenceSocket}
+	runtime = &materializer{MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: failing, ExpectedSocketPath: routeSequenceSocket}}
 	defer runtime.prefetchPaneDefaults(ctx)()
 	if runtime.paneDefaults != nil {
 		t.Fatal("a failed prefetch left a memo")
