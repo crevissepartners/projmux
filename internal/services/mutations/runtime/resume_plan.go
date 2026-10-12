@@ -46,40 +46,40 @@ package runtime
 // of scope. So projmux checks everything it can see -- a ref exists, it names a
 // known provider, that provider is enabled, its conversation id is well formed,
 // its binary is installed -- and hands the rest to the provider's resume argv.
-func planAgentResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent, retiringProcess ...bool) (agentResumePlan, error) {
-	name := agent.Metadata.Name
+func PlanAgentResume(spelling string, registry coremetadata.Registry, agent *coremetadata.Agent, retiringProcess ...bool) (AgentResumePlan, error) {
+	Name := agent.Metadata.Name
 
 	// (d) An Agent whose provider hook never ran has nothing to revive. This is
 	// the most important refusal in the route: the tempting behavior is to start
 	// a fresh conversation "since there is nothing to resume", and that is
 	// exactly the silent context loss `create` and `resume` are separate verbs
 	// to prevent. The message names the other verb rather than performing it.
-	ref := agent.Status.SessionRef
-	if ref.Empty() {
-		return agentResumePlan{}, fmt.Errorf(
+	Ref := agent.Status.SessionRef
+	if Ref.Empty() {
+		return AgentResumePlan{}, fmt.Errorf(
 			"%s: agent/%s has no provider session ref, so there is no conversation to resume; "+
 				"projmux records one the first time that Agent's provider hook fires. "+
 				"To start a new conversation instead, run `projmux create agent --provider <provider>`, which mints a new Agent",
-			spelling, name)
+			spelling, Name)
 	}
-	conversationID := strings.TrimSpace(ref.ConversationID())
-	if conversationID == "" {
-		return agentResumePlan{}, fmt.Errorf(
+	ConversationID := strings.TrimSpace(Ref.ConversationID())
+	if ConversationID == "" {
+		return AgentResumePlan{}, fmt.Errorf(
 			"%s: agent/%s has a %s session ref that carries no conversation id; it cannot be resumed",
-			spelling, name, ref.Provider)
+			spelling, Name, Ref.Provider)
 	}
-	provider := strings.TrimSpace(ref.Provider)
-	if provider == "" {
-		return agentResumePlan{}, fmt.Errorf(
-			"%s: agent/%s has a session ref with no provider discriminator; it cannot be resumed", spelling, name)
+	Provider := strings.TrimSpace(Ref.Provider)
+	if Provider == "" {
+		return AgentResumePlan{}, fmt.Errorf(
+			"%s: agent/%s has a session ref with no provider discriminator; it cannot be resumed", spelling, Name)
 	}
 	// spec.provider is cross-checked only when the Agent declares one. Phase 0
 	// deliberately kept an Agent whose provider never normalized recordable, and
 	// punishing it here would undo that leniency.
-	if declared := strings.TrimSpace(agent.Spec.Provider); declared != "" && declared != provider {
-		return agentResumePlan{}, fmt.Errorf(
+	if declared := strings.TrimSpace(agent.Spec.Provider); declared != "" && declared != Provider {
+		return AgentResumePlan{}, fmt.Errorf(
 			"%s: agent/%s is a %s Agent but its session ref is a %s conversation; refusing to resume a mismatched conversation",
-			spelling, name, declared, provider)
+			spelling, Name, declared, Provider)
 	}
 
 	// A resumable Agent has already given its Pane up. A surviving paneRef means
@@ -87,59 +87,59 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 	// the first, so this refuses rather than guessing which one is real.
 	if paneUID := strings.TrimSpace(agent.Status.PaneRef); paneUID != "" && !(len(retiringProcess) == 1 && retiringProcess[0] && registry.IsVirtualWindow(agent.Metadata.OwnerUID())) {
 		if pane, ok := registry.Pane(paneUID); ok {
-			return agentResumePlan{}, fmt.Errorf(
+			return AgentResumePlan{}, fmt.Errorf(
 				"%s: agent/%s is %s but still owns managed pane/%s; refusing to bind a second managed Pane",
-				spelling, name, agent.Status.Phase, pane.Metadata.Name)
+				spelling, Name, agent.Status.Phase, pane.Metadata.Name)
 		}
 	}
 
 	window, ok := registry.Window(agent.Metadata.OwnerUID())
 	if !ok {
-		return agentResumePlan{}, fmt.Errorf("%s: agent/%s has no owning Window in the registry", spelling, name)
+		return AgentResumePlan{}, fmt.Errorf("%s: agent/%s has no owning Window in the registry", spelling, Name)
 	}
-	project, ok := registry.Project(window.Metadata.OwnerUID())
+	Project, ok := registry.Project(window.Metadata.OwnerUID())
 	if !ok {
-		return agentResumePlan{}, fmt.Errorf("%s: window/%s has no owning Project in the registry", spelling, window.Metadata.Name)
+		return AgentResumePlan{}, fmt.Errorf("%s: window/%s has no owning Project in the registry", spelling, window.Metadata.Name)
 	}
 	// The same rule `create` applies: a Project whose root has disappeared is
 	// preserved and still resolves, but nothing may be materialized under a
 	// directory tmux cannot enter. The check is restated with this route's own
 	// spelling rather than borrowed, so the message names the verb the operator
 	// actually ran.
-	if condition, ok := project.HasCondition(coremetadata.ConditionMissingRoot); ok && condition.Status == coremetadata.ConditionTrue {
-		return agentResumePlan{}, usageError(fmt.Sprintf(
+	if condition, ok := Project.HasCondition(coremetadata.ConditionMissingRoot); ok && condition.Status == coremetadata.ConditionTrue {
+		return AgentResumePlan{}, usageError(fmt.Sprintf(
 			"%s: project/%s carries a MissingRoot condition for %q; rebind it before resuming an Agent under it",
-			spelling, project.Metadata.Name, project.Spec.Root))
+			spelling, Project.Metadata.Name, Project.Spec.Root))
 	}
 	// Resume uses the stable role-agnostic Window anchor. There is no fallback to
 	// the active, last-used, or an alternate live Pane.
-	anchorUID := strings.TrimSpace(window.Spec.AnchorPaneRef)
-	if anchorUID == "" {
-		return agentResumePlan{}, usageError(fmt.Sprintf(
+	AnchorUID := strings.TrimSpace(window.Spec.AnchorPaneRef)
+	if AnchorUID == "" {
+		return AgentResumePlan{}, usageError(fmt.Sprintf(
 			"%s: window/%s (project/%s) has no anchorPaneRef, so there is no anchor to split",
-			spelling, window.Metadata.Name, project.Metadata.Name))
+			spelling, window.Metadata.Name, Project.Metadata.Name))
 	}
-	if anchor, ok := registry.WindowAnchor(window.Metadata.UID); !ok || anchor.Metadata.UID != anchorUID {
-		return agentResumePlan{}, usageError(fmt.Sprintf(
+	if anchor, ok := registry.WindowAnchor(window.Metadata.UID); !ok || anchor.Metadata.UID != AnchorUID {
+		return AgentResumePlan{}, usageError(fmt.Sprintf(
 			"%s: window/%s (project/%s) anchorPaneRef %q is dangling or cross-Window",
-			spelling, window.Metadata.Name, project.Metadata.Name, anchorUID))
+			spelling, window.Metadata.Name, Project.Metadata.Name, AnchorUID))
 	}
 
-	return agentResumePlan{
-		agentUID:       agent.Metadata.UID,
-		agentName:      name,
-		provider:       provider,
-		conversationID: conversationID,
-		ref:            ref.Clone(),
-		projectUID:     project.Metadata.UID,
-		projectRoot:    project.Spec.Root,
-		project:        project.Clone(),
-		workspace:      agent.Spec.Workspace,
-		topic:          agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
-		windowUID:      window.Metadata.UID,
-		anchorUID:      anchorUID,
-		shared:         sharedConversationAgents(registry, agent.Metadata.UID, ref),
-		annotations:    agent.Metadata.Annotations,
+	return AgentResumePlan{
+		AgentUID:       agent.Metadata.UID,
+		AgentName:      Name,
+		Provider:       Provider,
+		ConversationID: ConversationID,
+		Ref:            Ref.Clone(),
+		ProjectUID:     Project.Metadata.UID,
+		ProjectRoot:    Project.Spec.Root,
+		Project:        Project.Clone(),
+		Workspace:      agent.Spec.Workspace,
+		Topic:          agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
+		WindowUID:      window.Metadata.UID,
+		AnchorUID:      AnchorUID,
+		Shared:         SharedConversationAgents(registry, agent.Metadata.UID, Ref),
+		Annotations:    agent.Metadata.Annotations,
 	}, nil
 }
 
@@ -149,20 +149,20 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 // The order is the point: it makes the disclosure byte-identical regardless of
 // the order the Agents happen to sit in the registry file, which is what a
 // determinism assertion can pin.
-func sharedConversationAgents(registry coremetadata.Registry, selfUID string, ref *coremetadata.AgentSessionRef) []string {
-	type row struct{ uid, name string }
+func SharedConversationAgents(registry coremetadata.Registry, selfUID string, Ref *coremetadata.AgentSessionRef) []string {
+	type row struct{ uid, Name string }
 	var rows []row
 	for i := range registry.Agents {
 		other := registry.Agents[i]
-		if other.Metadata.UID == selfUID || !other.Status.SessionRef.SameConversation(ref) {
+		if other.Metadata.UID == selfUID || !other.Status.SessionRef.SameConversation(Ref) {
 			continue
 		}
-		rows = append(rows, row{uid: other.Metadata.UID, name: other.Metadata.Name})
+		rows = append(rows, row{uid: other.Metadata.UID, Name: other.Metadata.Name})
 	}
 	slices.SortStableFunc(rows, func(a, b row) int { return cmp.Compare(a.uid, b.uid) })
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, fmt.Sprintf("agent/%s (uid:%s)", r.name, r.uid))
+		out = append(out, fmt.Sprintf("agent/%s (uid:%s)", r.Name, r.uid))
 	}
 	return out
 }

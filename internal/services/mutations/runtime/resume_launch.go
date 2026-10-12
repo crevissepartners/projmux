@@ -1,75 +1,75 @@
 package runtime
 
 // agentResumeLaunch is one planned resume launch.
-type agentResumeLaunch struct {
-	title string
-	argv  []string
+type AgentResumeLaunch struct {
+	Title string
+	Argv  []string
 	// personaUnavailable is set when the Agent records a persona this launch
 	// could not re-pass. It never fails the resume: the Agent comes back
 	// without its persona and the consumer discloses personaNotice.
-	personaUnavailable *persona.Error
+	PersonaUnavailable *persona.Error
 	// effortInvalid is the recorded effort this launch did not re-pass
 	// because Claude would not take it. Like personaUnavailable it never
 	// fails the resume: the consumer discloses effortNotice.
 	// effortSkipped reports that effortInvalid holds such a value, which may
 	// itself be empty.
-	effortInvalid string
-	effortSkipped bool
+	EffortInvalid string
+	EffortSkipped bool
 	// profileName and profileDigest are the profile this launch re-applied
 	// and the digest of the content it applied, both empty when the Agent
 	// records no profile. Every consumer records the digest on the Agent.
-	profileName   string
-	profileDigest string
+	ProfileName   string
+	ProfileDigest string
 	// projectLinksUnavailable is set when the launch annotations name Project
 	// label link rules whose snapshot this launch could not pass. Like
 	// personaUnavailable it never fails the resume: the consumer discloses
 	// projectLinksNotice.
-	projectLinksUnavailable error
+	ProjectLinksUnavailable error
 	// agentGuidanceUnavailable is set when the launch annotations name agent
 	// guidance whose snapshot this launch could not pass. Like
 	// projectLinksUnavailable it never fails the resume: the consumer
 	// discloses agentGuidanceNotice.
-	agentGuidanceUnavailable error
+	AgentGuidanceUnavailable error
 }
 
 // agentGuidanceNotice is the one-line disclosure of agent guidance the resume
 // could not pass, or "" when there is nothing to disclose.
-func (l agentResumeLaunch) agentGuidanceNotice(label string) string {
-	if l.agentGuidanceUnavailable == nil {
+func (l AgentResumeLaunch) AgentGuidanceNotice(label string) string {
+	if l.AgentGuidanceUnavailable == nil {
 		return ""
 	}
-	return agentGuidanceNotice(label, l.agentGuidanceUnavailable)
+	return AgentGuidanceNotice(label, l.AgentGuidanceUnavailable)
 }
 
 // projectLinksNotice is the one-line disclosure of Project label link rules
 // the resume could not pass, or "" when there is nothing to disclose.
-func (l agentResumeLaunch) projectLinksNotice(label string) string {
-	if l.projectLinksUnavailable == nil {
+func (l AgentResumeLaunch) ProjectLinksNotice(label string) string {
+	if l.ProjectLinksUnavailable == nil {
 		return ""
 	}
-	return projectLinksNotice(label, l.projectLinksUnavailable)
+	return ProjectLinksNotice(label, l.ProjectLinksUnavailable)
 }
 
 // personaNotice is the one-line disclosure of a persona the resume could not
 // re-pass, or "" when there is nothing to disclose. label names the Agent the
 // way the consumer's neighbouring notices do.
-func (l agentResumeLaunch) personaNotice(label string) string {
-	if l.personaUnavailable == nil {
+func (l AgentResumeLaunch) PersonaNotice(label string) string {
+	if l.PersonaUnavailable == nil {
 		return ""
 	}
 	return fmt.Sprintf("projmux: agent/%s resumed without its instructions %s (%s): %s",
-		label, l.personaUnavailable.Name, l.personaUnavailable.Reason, l.personaUnavailable.Detail)
+		label, l.PersonaUnavailable.Name, l.PersonaUnavailable.Reason, l.PersonaUnavailable.Detail)
 }
 
 // effortNotice is the one-line disclosure of a recorded effort the resume did
 // not re-pass, or "" when there is nothing to disclose. label names the Agent
 // the way personaNotice does.
-func (l agentResumeLaunch) effortNotice(label string) string {
-	if !l.effortSkipped {
+func (l AgentResumeLaunch) EffortNotice(label string) string {
+	if !l.EffortSkipped {
 		return ""
 	}
 	return fmt.Sprintf("projmux: agent/%s resumed without its effort %q (%s): not one of %s",
-		label, l.effortInvalid, claudeEffortReasonInvalid, strings.Join(claudeEffortLevels, ", "))
+		label, l.EffortInvalid, claudeEffortReasonInvalid, strings.Join(ClaudeEffortLevels, ", "))
 }
 
 // PlanAgentResume builds the provider resume launch for one stored conversation.
@@ -112,25 +112,25 @@ func (l agentResumeLaunch) effortNotice(label string) string {
 // rebuilt and passed as --settings, and the launch reports the digest it
 // applied. A profile that is gone or invalid fails the resume with
 // profile-resume-unavailable; there is no resume without its permissions.
-func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string) (agentResumeLaunch, error) {
-	return c.PlanAgentResumeWithModel(provider, workspace, conversationID, annotations, "")
+func (c *aiCommand) PlanAgentResume(Provider string, Workspace coremetadata.AgentWorkspace, ConversationID string, Annotations map[string]string) (AgentResumeLaunch, error) {
+	return c.PlanAgentResumeWithModel(Provider, Workspace, ConversationID, Annotations, "")
 }
 
 // PlanAgentResumeWithModel is PlanAgentResume with model passed once, where
 // create puts it: ahead of the effort. The model is validated by the
 // `agent resume` preflight and recorded by the rebind transaction, not here.
-func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremetadata.AgentWorkspace, conversationID string, annotations map[string]string, model string) (agentResumeLaunch, error) {
-	mode := normalizeAIMode(provider)
-	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
+func (c *aiCommand) PlanAgentResumeWithModel(Provider string, Workspace coremetadata.AgentWorkspace, ConversationID string, Annotations map[string]string, Model string) (AgentResumeLaunch, error) {
+	mode := NormalizeAIMode(Provider)
+	resumeArgv, err := ResumeArgsForAgent(mode, ConversationID)
 	if err != nil {
-		return agentResumeLaunch{}, err
+		return AgentResumeLaunch{}, err
 	}
 	agentBin := c.findAgentBinary(mode)
 	if agentBin == "" {
 		// No displayMessage here: this route is detached and non-interactive, so
 		// the diagnostic belongs on the error the caller propagates rather than
 		// in a tmux status line the operator may not be looking at.
-		return agentResumeLaunch{}, errors.New(c.missingAgentRunnerMessage(mode))
+		return AgentResumeLaunch{}, errors.New(c.missingAgentRunnerMessage(mode))
 	}
 	resumeArgv[0] = agentBin
 	// The workspace half of the argv comes from the same provider grammar the
@@ -138,56 +138,56 @@ func (c *aiCommand) PlanAgentResumeWithModel(provider string, workspace coremeta
 	// cannot be spelled two ways. There is no payload on this route -- the
 	// conversation id is the provider's own resume option, not an operand -- so
 	// no option terminator participates.
-	workspaceArgs, err := providerLaunchArgs(mode, coremetadata.AgentWorkspace{
-		CWD:                     strings.TrimSpace(workspace.CWD),
-		AdditionalWritableRoots: workspace.AdditionalWritableRoots,
+	workspaceArgs, err := ProviderLaunchArgs(mode, coremetadata.AgentWorkspace{
+		CWD:                     strings.TrimSpace(Workspace.CWD),
+		AdditionalWritableRoots: Workspace.AdditionalWritableRoots,
 	}, nil)
 	if err != nil {
-		return agentResumeLaunch{}, err
+		return AgentResumeLaunch{}, err
 	}
 	// The model, the effort and the persona go where create puts them, before the
 	// workspace arguments, so Claude's variadic --add-dir cannot take them.
 	// The system prompt snapshot mode an attached persona recorded goes right
 	// after them, for the same reason.
-	effort, effortInvalid, effortSkipped := claudeResumeEffort(mode, annotations)
-	personaFile, personaUnavailable := c.resumePersonaSnapshot(mode, annotations)
+	Effort, EffortInvalid, EffortSkipped := ClaudeResumeEffort(mode, Annotations)
+	personaFile, PersonaUnavailable := c.ResumePersonaSnapshot(mode, Annotations)
 	// A Claude Agent launched with its Project's label link rules gets the
 	// snapshot its digest annotation names, alone or after the persona in one
 	// composite file: Claude keeps only the last --append-system-prompt-file.
-	systemPromptFile, projectLinksUnavailable := c.resumeProjectSystemPromptFile(mode, annotations, personaFile)
+	systemPromptFile, ProjectLinksUnavailable := c.resumeProjectSystemPromptFile(mode, Annotations, personaFile)
 	// The agent guidance its digest annotation names goes in front of that
 	// file, in one composite, for the same reason.
-	systemPromptFile, agentGuidanceUnavailable := c.resumeGuidanceSystemPromptFile(mode, annotations, systemPromptFile)
-	profileName, profileDigest, settingsFile, codexPolicy, err := c.resumeProfileSettings(mode, annotations)
+	systemPromptFile, AgentGuidanceUnavailable := c.resumeGuidanceSystemPromptFile(mode, Annotations, systemPromptFile)
+	ProfileName, ProfileDigest, settingsFile, codexPolicy, err := c.resumeProfileSettings(mode, Annotations)
 	if err != nil {
-		return agentResumeLaunch{}, err
+		return AgentResumeLaunch{}, err
 	}
-	prefix := append(claudeLaunchOptionArgs(model, effort, systemPromptFile), claudeSettingsArgs(settingsFile)...)
+	prefix := append(ClaudeLaunchOptionArgs(Model, Effort, systemPromptFile), ClaudeSettingsArgs(settingsFile)...)
 	if mode == aiModeCodex {
-		prefix = append(codexLaunchOptionArgs(model, effort), codexCLIProfileArgs(codexPolicy)...)
+		prefix = append(CodexLaunchOptionArgs(Model, Effort), CodexCLIProfileArgs(codexPolicy)...)
 	}
-	if prefix = append(prefix, claudeResumeSnapshotArgs(mode, annotations)...); len(prefix) > 0 {
+	if prefix = append(prefix, ClaudeResumeSnapshotArgs(mode, Annotations)...); len(prefix) > 0 {
 		workspaceArgs = append(prefix, workspaceArgs...)
 	}
 	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
-	plan, err := c.planAgentLaunch(mode, workspace.CWD, nil, resumeArgv, filepath.Dir(agentBin))
+	plan, err := c.planAgentLaunch(mode, Workspace.CWD, nil, resumeArgv, filepath.Dir(agentBin))
 	if err != nil {
-		return agentResumeLaunch{}, err
+		return AgentResumeLaunch{}, err
 	}
-	return agentResumeLaunch{
-		title: plan.title, argv: plan.commandArgs, personaUnavailable: personaUnavailable,
-		effortInvalid: effortInvalid, effortSkipped: effortSkipped,
-		profileName: profileName, profileDigest: profileDigest,
-		projectLinksUnavailable: projectLinksUnavailable, agentGuidanceUnavailable: agentGuidanceUnavailable,
+	return AgentResumeLaunch{
+		Title: plan.Title, Argv: plan.commandArgs, PersonaUnavailable: PersonaUnavailable,
+		EffortInvalid: EffortInvalid, EffortSkipped: EffortSkipped,
+		ProfileName: ProfileName, ProfileDigest: ProfileDigest,
+		ProjectLinksUnavailable: ProjectLinksUnavailable, AgentGuidanceUnavailable: AgentGuidanceUnavailable,
 	}, nil
 }
 
 // resumePersonaSnapshot returns the persona snapshot a resumed Agent started
 // with, or why it cannot be re-passed. An Agent without a persona annotation
 // costs nothing; one with it costs the annotation read and one stat.
-func (c *aiCommand) resumePersonaSnapshot(mode string, annotations map[string]string) (string, *persona.Error) {
-	name := annotations[coremetadata.AnnotationAgentPersona]
-	if name == "" {
+func (c *aiCommand) ResumePersonaSnapshot(mode string, Annotations map[string]string) (string, *persona.Error) {
+	Name := Annotations[coremetadata.AnnotationAgentPersona]
+	if Name == "" {
 		return "", nil
 	}
 	if mode == aiModeCodex {
@@ -199,20 +199,20 @@ func (c *aiCommand) resumePersonaSnapshot(mode string, annotations map[string]st
 		return "", nil
 	}
 	if mode != aiModeClaude {
-		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: name,
+		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: Name,
 			Detail: "is not re-passed: instructions apply only to --provider " + aiModeClaude}
 	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: name, Detail: "snapshot cannot be located: " + err.Error()}
+		return "", &persona.Error{Reason: persona.ReasonUnavailable, Name: Name, Detail: "snapshot cannot be located: " + err.Error()}
 	}
-	path, err := persona.NewDefaultStore(paths).RecordedSnapshotPath(annotations[coremetadata.AnnotationAgentPersonaDigest])
+	path, err := persona.NewDefaultStore(paths).RecordedSnapshotPath(Annotations[coremetadata.AnnotationAgentPersonaDigest])
 	if err != nil {
 		var unavailable *persona.Error
 		if !errors.As(err, &unavailable) {
 			unavailable = &persona.Error{Reason: persona.ReasonUnavailable, Detail: err.Error()}
 		}
-		unavailable.Name = name
+		unavailable.Name = Name
 		return "", unavailable
 	}
 	return path, nil
@@ -221,18 +221,18 @@ func (c *aiCommand) resumePersonaSnapshot(mode string, annotations map[string]st
 func (c *aiCommand) BindResumedAgentPaneOnRoute(
 	ctx context.Context,
 	runner tmuxCommandRunner,
-	paneID, provider, contextDir, title, conversationID string,
+	paneID, Provider, contextDir, Title, ConversationID string,
 ) error {
-	return c.BindResumedAgentPaneWithSourceOnRoute(ctx, runner, paneID, provider, contextDir, title, conversationID, "")
+	return c.BindResumedAgentPaneWithSourceOnRoute(ctx, runner, paneID, Provider, contextDir, Title, ConversationID, "")
 }
 
 func (c *aiCommand) BindResumedAgentPaneWithSourceOnRoute(
 	ctx context.Context,
 	runner tmuxCommandRunner,
-	paneID, provider, contextDir, title, conversationID, source string,
+	paneID, Provider, contextDir, Title, ConversationID, Source string,
 ) error {
 	return c.BindAgentPaneOnRoute(ctx, runner, agentPaneBinding{
-		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
-		ConversationID: conversationID, ResumeSource: source,
+		PaneID: paneID, Provider: Provider, ContextDir: contextDir, Title: Title,
+		ConversationID: ConversationID, ResumeSource: Source,
 	})
 }

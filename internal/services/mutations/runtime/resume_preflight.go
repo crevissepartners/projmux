@@ -1,7 +1,7 @@
 package runtime
 
 // requireResumablePhase enforces the Agent lifecycle gate of resume.
-func requireResumablePhase(spelling string, agent *coremetadata.Agent) error {
+func RequireResumablePhase(spelling string, agent *coremetadata.Agent) error {
 	if slices.Contains(resumableAgentPhases, agent.Status.Phase) {
 		return nil
 	}

@@ -1,6 +1,6 @@
 package runtime
 
-func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
+func ResumeArgsForAgent(mode, resumeID string) ([]string, error) {
 	switch mode {
 	case aiModeClaude:
 		return claude.ResumeArgs(resumeID)
