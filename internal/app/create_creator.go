@@ -255,39 +255,9 @@ func (r creatorRecord) withAnnotations(base map[string]string) map[string]string
 	return out
 }
 
-// forAgent is the record for one allocated Agent. The creator is never the
-// created Agent itself: if the record would name it, the keys are removed from
-// the stored Agent and nothing is recorded on its Pane. Every basis already
-// resolves its Agent before allocation, so this is a guarantee, not a path.
-func (r creatorRecord) forAgent(working *coremetadata.Registry, agentUID string) creatorRecord {
-	if r.agentUID == "" || r.agentUID != agentUID {
-		return r
-	}
-	if stored, ok := working.Agent(agentUID); ok {
-		for key := range r.annotations() {
-			delete(stored.Metadata.Annotations, key)
-		}
-	}
-	return creatorRecord{observed: r.observed}
-}
 
-// annotatePane records the same keys on the managed Pane the create just
-// attached, in the working Registry of the same transaction.
-func (r creatorRecord) annotatePane(working *coremetadata.Registry, pane coremetadata.Pane) coremetadata.Pane {
-	annotations := r.annotations()
-	if annotations == nil || working == nil {
-		return pane
-	}
-	stored, ok := working.Pane(pane.Metadata.UID)
-	if !ok {
-		return pane
-	}
-	if stored.Metadata.Annotations == nil {
-		stored.Metadata.Annotations = map[string]string{}
-	}
-	maps.Copy(stored.Metadata.Annotations, annotations)
-	return stored.Clone()
-}
+
+
 
 // report prints what a committed create owes stderr: the pane-chain skip line
 // when nothing was recorded, and one line for a declaration it did not use.

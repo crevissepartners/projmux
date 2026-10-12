@@ -347,30 +347,7 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 		token, strings.Join(createKinds, ", "), strings.Join(cli.ProviderCreateShortcuts(), ", ")))
 }
 
-// requireCanonicalProvider enforces the canonical Provider enum.
-//
-// The picker adapters get their own message because refusing them as "unknown"
-// would hide the actual model: they are selection surfaces that end in one of
-// these providers, not providers.
-func requireCanonicalProvider(spelling, raw string) (string, error) {
-	provider := strings.ToLower(strings.TrimSpace(raw))
-	if provider == "" {
-		return "", usageError(fmt.Sprintf("%s requires --provider (%s); the saved split mode is not a canonical default",
-			spelling, strings.Join(cli.AgentProviders(), ", ")))
-	}
-	if cli.IsPickerAdapter(provider) {
-		return "", usageError(fmt.Sprintf("%s: %q is an interactive picker, not a provider; choose one of %s for `projmux %s --provider`",
-			spelling, provider, strings.Join(cli.AgentProviders(), ", "), spelling))
-	}
-	if provider == aiModeShell {
-		return "", usageError(fmt.Sprintf("%s: a shell surface is a Pane, not an Agent; use `projmux create pane`", spelling))
-	}
-	if !cli.IsAgentProvider(provider) {
-		return "", usageError(fmt.Sprintf("%s: unknown provider %q; accepted providers: %s",
-			spelling, provider, strings.Join(cli.AgentProviders(), ", ")))
-	}
-	return provider, nil
-}
+
 
 // resolveInitialWindowProvider fixes the surface a `create window` opens with.
 //

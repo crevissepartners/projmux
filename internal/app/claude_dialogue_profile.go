@@ -24,20 +24,7 @@ import (
 // generation of the same Agent is launched reply-only from that record.
 const claudeDialogueReplyOnlyFlag = mutationruntime.DialogueReplyOnlyFlag
 
-// withDialogueReplyOnlyAnnotation adds the reply-only record to base, the
-// Agent annotations a create already records. Without the mode it returns
-// base itself (nil included), so an ordinary create records nothing new.
-func withDialogueReplyOnlyAnnotation(enabled bool, base map[string]string) map[string]string {
-	if !enabled {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, 1)
-	}
-	out[coremetadata.AnnotationAgentDialogueReplyOnly] = coremetadata.DialogueReplyOnlyOn
-	return out
-}
+
 
 type claudeDialogueLauncher interface {
 	PlanClaudeDialogueLaunch(coremetadata.AgentWorkspace, string) (string, []string, error)
@@ -227,36 +214,7 @@ func claudeDialoguePrefixArgs(argv0, profile string, args []string) ([]string, b
 	return append([]string{"internal", "claude-reply-tool", "execute"}, args...), true
 }
 
-func (c *aiCommand) PlanClaudeDialogueLaunch(workspace coremetadata.AgentWorkspace, conversation string) (string, []string, error) {
-	if err := requireClaudeDialogueMode(aiModeClaude, true, nil); err != nil {
-		return "", nil, err
-	}
-	provider := c.findAgentBinary(aiModeClaude)
-	if provider == "" {
-		return "", nil, errors.New(c.missingAgentRunnerMessage(aiModeClaude))
-	}
-	candidate, err := os.Executable()
-	if err != nil {
-		return "", nil, err
-	}
-	native, err := providerLaunchArgs(aiModeClaude, workspace, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	if conversation != "" {
-		resume, err := resumeArgsForAgent(aiModeClaude, conversation)
-		if err != nil {
-			return "", nil, err
-		}
-		native = append(native, resume[1:]...)
-	}
-	argv := append([]string{candidate, "internal", "claude-dialogue-exec", "--", provider}, native...)
-	plan, err := c.planAgentLaunch(aiModeClaude, workspace.CWD, nil, argv, filepath.Dir(provider))
-	if err != nil {
-		return "", nil, fmt.Errorf("claude reply-only launch: %w", err)
-	}
-	return plan.title, plan.commandArgs, nil
-}
+
 
 // A next-activation opt-in never leaks through the inherited environment.
 // Preserve an ordinary user's official shell prefix outside this mode.
