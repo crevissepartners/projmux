@@ -75,7 +75,6 @@ const (
 // already a flagSetNameExceptions row reuses that row's routes. It is closed:
 // a row no site uses is stale.
 var publicReasonExceptions = map[string]publicReasonException{
-	`internal/app/create_resource.go primaryWindowRef spelling`: {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	// Dynamic spellings: the canonical `<verb> <kind|provider>` spelling the
 	// dispatch built, handed to a shared helper.
 	`internal/app/agent_profile.go (*createCommand).prepareProfileSettings spelling`:              {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
@@ -489,13 +488,13 @@ func publicReasonCallee(call *ast.CallExpr) string {
 }
 
 // publicReasonArg is the reason expression of a rejection constructor:
-// usageError(reason), errors.New(reason), fmt.Errorf(format, ...), and the
+// usageError(reason), createUsage(reason), errors.New(reason), fmt.Errorf(format, ...), and the
 // Detail of a metadata InputError (usagecmd). Anything else returns nil.
 func publicReasonArg(node ast.Node) ast.Expr {
 	switch n := node.(type) {
 	case *ast.CallExpr:
 		switch publicReasonCallee(n) {
-		case "usageError", "errors.New":
+		case "usageError", "createUsage", "errors.New":
 			if len(n.Args) == 1 {
 				return n.Args[0]
 			}
@@ -899,5 +898,26 @@ func TestNotifyRoutesNameTheirRouteInRefusals(t *testing.T) {
 		if strings.Contains(stderr.String(), "`notify ") {
 			t.Errorf("%v: stderr names a retired `notify ...` route: %q", row.argv, stderr.String())
 		}
+	}
+}
+
+func TestPublicRouteReasonGuardRecognizesMovedCreateHelper(t *testing.T) {
+	const src = `package runtime
+func createUsage(message string) error { return nil }
+func broken() error { return createUsage("notify push requires a target") }
+func valid() error { return createUsage("create window requires a Project") }
+`
+	pkgs := []flagParseGuardPackage{{importPath: flagParseGuardModule + "/internal/services/mutations/runtime", scan: true, files: []flagParseGuardFile{{name: "synthetic/create.go", src: []byte(src)}}}}
+	eval, problems := newFlagSetNameEval(pkgs)
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	sites, problems := publicReasonCollect(pkgs, eval)
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	failures, _ := publicReasonProblems(sites, nil)
+	if len(sites) != 2 || len(failures) != 1 || !strings.Contains(failures[0], "notify push") {
+		t.Fatalf("sites %+v failures %v", sites, failures)
 	}
 }

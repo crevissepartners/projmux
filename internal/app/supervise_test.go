@@ -866,3 +866,51 @@ func TestSuperviseRouteIsReachableThroughTheInternalNamespace(t *testing.T) {
 }
 
 func exitCodePtr(code int) *int { return &code }
+
+func TestShellSupervisorExplicitRegistryJournalAndCLIFallback(t *testing.T) {
+	for _, scenario := range []string{"cli-shell", "sdk-shell", "cli-agent", "agent-missing-path"} {
+		t.Run(scenario, func(t *testing.T) {
+			ambient := t.TempDir()
+			explicit := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", ambient)
+			spec := superviseSpec{PaneUID: "pane-test", Generation: "gen-test", OperationID: "op-test"}
+			if scenario == "sdk-shell" || scenario == "cli-agent" {
+				spec.RegistryPath = intmetadata.PathFor(explicit)
+			}
+			if scenario == "cli-agent" || scenario == "agent-missing-path" {
+				spec.AgentUID = "agent-test"
+			}
+			supervisor := newSuperviseCommand(nil)
+			var stderr bytes.Buffer
+			supervisor.recordOutcome(spec, processOutcome{ExitCode: 0}, &stderr)
+			ambientPath := filepath.Join(ambient, "projmux", terminationJournalFile)
+			explicitPath := filepath.Join(explicit, terminationJournalFile)
+			want := explicitPath
+			if scenario == "cli-shell" {
+				want = ambientPath
+			}
+			if scenario == "agent-missing-path" {
+				if stderr.Len() == 0 {
+					t.Fatal("missing Agent path silently fell back")
+				}
+				for _, p := range []string{ambientPath, explicitPath} {
+					if _, err := os.Stat(p); !os.IsNotExist(err) {
+						t.Fatal("invalid Agent journal wrote")
+					}
+				}
+				return
+			}
+			rows, err := (terminationJournal{path: want}).read()
+			if err != nil || len(rows) != 1 || rows[0].PaneUID != spec.PaneUID {
+				t.Fatalf("journal %s %+v %v", want, rows, err)
+			}
+			other := ambientPath
+			if want == ambientPath {
+				other = explicitPath
+			}
+			if _, err := os.Stat(other); !os.IsNotExist(err) {
+				t.Fatalf("journal wrote unselected path: %s", other)
+			}
+		})
+	}
+}

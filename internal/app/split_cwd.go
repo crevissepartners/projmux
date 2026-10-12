@@ -2,8 +2,8 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"path/filepath"
 	"strings"
@@ -157,34 +157,7 @@ func (c *createCommand) splitPaneLaunchDir(ctx context.Context, anchorPaneID, ro
 // itself returns the stored root spelling, so it launches exactly like the
 // project source.
 func resolveSplitPaneCWD(root, live string, readErr error) (string, string) {
-	root = strings.TrimSpace(root)
-	if readErr != nil {
-		return root, splitCWDUnreadableNotice(root, readErr)
-	}
-	live = strings.TrimSpace(live)
-	if live == "" {
-		return root, splitCWDUnreadableNotice(root, errors.New("tmux reported no directory"))
-	}
-	canonicalRoot, err := canonicalExistingDir(root)
-	if err != nil {
-		return root, splitCWDUnreadableNotice(root, fmt.Errorf("the Project root %w", err))
-	}
-	canonicalLive, err := canonicalExistingDir(live)
-	if err != nil {
-		return root, splitCWDUnreadableNotice(root, fmt.Errorf("%q %w", live, err))
-	}
-	if canonicalLive == canonicalRoot {
-		return root, ""
-	}
-	if pathWithinTree(canonicalRoot, canonicalLive) {
-		return canonicalLive, ""
-	}
-	return root, fmt.Sprintf("split started in Project root %q: active Pane directory %q is outside it", root, live)
-}
-
-func splitCWDUnreadableNotice(root string, err error) string {
-	return fmt.Sprintf("split started in Project root %q: active Pane directory could not be read: %s",
-		root, strings.Join(strings.Fields(err.Error()), " "))
+	return mutationruntime.ResolveSplitPaneCWD(root, live, readErr)
 }
 
 // splitCWDNoticeLine is the one stderr line a CLI split create prints per

@@ -15,71 +15,7 @@ import (
 // Pane. The surrounding create transaction owns both the metadata and rollback
 // ledger; no temporary shell or second definition of runtime ownership is used.
 func (c *createCommand) materializeVirtualPane(ctx context.Context, reg *coremetadata.Registry, mut coremetadata.Mutator, ledger *RuntimeLedger, project coremetadata.Project, windowUID string, pane coremetadata.Pane, activation superviseSpec, command []string) (string, error) {
-	window, ok := reg.Window(windowUID)
-	if !ok {
-		return "", errors.New("materialize virtual Window: Window disappeared")
-	}
-	if err := c.ensureRuntimeRoute(ctx); err != nil {
-		return "", err
-	}
-	sessionName := c.reconciler.ProjectPhysicalSessionName(*reg, project)
-	if sessionName == "" {
-		return "", errors.New("materialize virtual Window: no physical session name")
-	}
-	created, _, err := c.runtime.EnsureSessionLaunching(ctx, project, sessionName, pane.Spec.CWD, window.Metadata.Name, func() (superviseSpec, error) { return activation, nil }, ledger, command)
-	if err != nil {
-		return "", err
-	}
-	windowID, paneID := created.WindowID, created.PaneID
-	if !created.Created {
-		// Refuse an unexpected live claim rather than creating a duplicate UID.
-		inventory, err := c.runtime.WindowRuntimeInventory(ctx, created.SessionID)
-		if err != nil {
-			return "", err
-		}
-		if _, found, err := resolveWindowRuntimeUID(inventory, windowUID); err != nil {
-			return "", err
-		} else if found {
-			return "", fmt.Errorf("virtual Window uid:%s already has a runtime", windowUID)
-		}
-		made, err := c.runtime.NewWindow(ctx, created.SessionID, window.Metadata.Name, pane.Spec.CWD, c.runtime.SupervisedLaunch(ctx, activation, command))
-		windowID, paneID = made.WindowID, made.PaneID
-		if windowID != "" {
-			if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); claimErr != nil {
-				return "", errors.Join(err, claimErr)
-			}
-		}
-		if err != nil {
-			return "", err
-		}
-	} else if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, windowUID, ledger); err != nil {
-		return "", err
-	}
-	markSupervisedSpawn(ctx)
-	if err := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
-		return "", err
-	}
-	if err := c.runtime.MirrorWindowIdentity(ctx, windowID, *window); err != nil {
-		return "", err
-	}
-	if err := c.runtime.MirrorPaneIdentity(ctx, paneID, pane); err != nil {
-		return "", err
-	}
-	if _, err := mut.SetWindowAnchor(reg, windowUID, pane.Metadata.UID); err != nil {
-		return "", err
-	}
-	if _, err := mut.ObserveWindowRuntimeBinding(reg, windowUID, created.SessionID, windowID); err != nil {
-		return "", err
-	}
-	ledger.ObserveCurrentWindow(windowUID, RuntimeOwner{SessionID: created.SessionID, WindowID: windowID})
-	observeActivationRuntime(reg, mut, activation, paneID, c.runtime.Warn)
-	if _, err := mut.BindLiveProjectSession(reg, project.Metadata.UID, sessionName, c.runtime.ExpectedSocketPath); err != nil {
-		return "", err
-	}
-	if err := c.runtime.FinalizeSessionStartup(ctx, created, sessionName, project.Spec.Root, ledger); err != nil {
-		return "", err
-	}
-	return paneID, nil
+	return c.createExecution().MaterializeVirtualPane(ctx, reg, mut, ledger, project, windowUID, pane, activation, command)
 }
 
 // virtualWindowCreator binds navigation's declared socket through the same

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"reflect"
 	"strings"
 	"testing"
@@ -54,11 +55,11 @@ func TestProcessVirtualWindowReservationAndRollback(t *testing.T) {
 				if err := topology.planWindow(context.Background(), tmux, store.registry, project, *w, 0, nil, nil); err != nil || len(topology.windows) != 0 || topology.hasRefusal() {
 					t.Fatalf("virtual topology materialized: %+v %v", topology, err)
 				}
-				_, err := command.planPaneTargets(store.registry, project, createScope{project: opts.Project}, resourceCreateFlags{windows: repeatedFlag{"uid:" + w.Metadata.UID}}, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, canonicalCreateAgent)
+				_, err := command.createExecution().PlanPaneTargets(store.registry, project, mutationruntime.CreateScope{Project: opts.Project}, mutationruntime.CreateSelection{Windows: []string{"uid:" + w.Metadata.UID}}, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, canonicalCreateAgent)
 				if err != nil {
 					t.Fatalf("virtual Window admission: %v", err)
 				}
-				_, err = command.planPaneTargets(store.registry, project, createScope{project: opts.Project}, resourceCreateFlags{windows: repeatedFlag{"uid:" + w.Metadata.UID}, panes: repeatedFlag{"uid:" + result.Binding.Pane}}, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, canonicalCreateAgent)
+				_, err = command.createExecution().PlanPaneTargets(store.registry, project, mutationruntime.CreateScope{Project: opts.Project}, mutationruntime.CreateSelection{Windows: []string{"uid:" + w.Metadata.UID}, Panes: []string{"uid:" + result.Binding.Pane}}, selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, canonicalCreateAgent)
 				var capability resourcegraph.ProcessCapabilityError
 				if !errors.As(err, &capability) || capability.Action != resourcegraph.ProcessCreatePane {
 					t.Fatalf("explicit process Pane admission: %v", err)

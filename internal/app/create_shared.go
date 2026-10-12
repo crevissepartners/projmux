@@ -17,8 +17,6 @@ type materializer = mutationruntime.Materializer
 type sessionFirstPaneActivation = mutationruntime.SessionFirstPaneActivation
 type IdentityPlanWrite = mutationruntime.IdentityPlanWrite
 
-var resolveWindowRuntimeUID = mutationruntime.ResolveWindowRuntimeUID
-
 type runtimeOwnerSet = mutationruntime.RuntimeOwnerSet
 type runtimeOwners = mutationruntime.RuntimeOwners
 

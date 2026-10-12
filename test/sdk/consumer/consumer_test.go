@@ -395,3 +395,21 @@ func TestExternalStopProjectConsumer(t *testing.T) {
 		t.Fatalf("input refusal %v", err)
 	}
 }
+
+func TestExternalShellCreateConsumer(t *testing.T) {
+	client, err := projmux.NewClient(projmux.Options{StateDir: t.TempDir(), ConfigDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var window core.CreateWindowResult
+	window, err = client.CreateWindow(context.Background(), core.CreateWindowRequest{Project: "named", Name: "shell", Labels: []string{"team=one"}})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateExecutableInvalid || window.Window.Metadata.UID != "" {
+		t.Fatalf("window %+v %v", window, err)
+	}
+	var pane core.CreatePaneResult
+	pane, err = client.CreatePane(context.Background(), core.CreatePaneRequest{Project: "named", Window: "shell", Pane: "uid:anchor", Name: "child", Placement: "down", CwdFrom: "pane"})
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateExecutableInvalid || pane.Pane.Metadata.UID != "" {
+		t.Fatalf("pane %+v %v", pane, err)
+	}
+}

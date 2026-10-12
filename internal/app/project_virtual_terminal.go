@@ -3,21 +3,15 @@ package app
 import (
 	"context"
 	"errors"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
 func terminalWindows(reg coremetadata.Registry, projectUID string) []coremetadata.Window {
-	var windows []coremetadata.Window
-	for _, window := range reg.WindowsOf(projectUID) {
-		if !reg.IsVirtualWindow(window.Metadata.UID) {
-			windows = append(windows, window)
-		}
-	}
-	return windows
+	return mutationruntime.TerminalWindows(reg, projectUID)
 }
-
 func (c *switchCommand) prepareVirtualTerminalProject(ctx context.Context, target string) (virtualWindowShellMaterialization, error) {
 	return c.prepareVirtualTerminalProjectOnRoute(ctx, target, nil)
 }
