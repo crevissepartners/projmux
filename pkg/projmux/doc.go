@@ -40,6 +40,7 @@
 // StopProject ends one explicitly selected Project's persistent tmux session.
 // StopProjectRequest.SocketPath overrides Options.SocketPath; empty routing uses
 // the app-owned projmux socket with server generation and Project UID guards.
+// On success, Interruptions contains only evidence remaining in the Registry.
 // Its receipt always reports focus unchanged. Project stop ends only the tmux
 // session; Running Agent interruption evidence is recorded exactly as in CLI.
 // A Running process descendant may therefore be projected Offline/interrupted

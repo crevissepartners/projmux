@@ -116,13 +116,18 @@ func StopProject(ctx context.Context, runner TmuxCommandRunner, target ManagedRu
 	if store == nil {
 		return result, errors.New("project stop Registry store is not configured")
 	}
+	var attempted []ProjectStopInterruption
 	execution := *store
 	execution.Interruptions = func(op string, items []ProjectStopInterruption) {
+		if attempted == nil {
+			attempted = append([]ProjectStopInterruption{}, items...)
+		}
 		result.OperationID = op
 		result.Interruptions = append([]ProjectStopInterruption{}, items...)
 	}
 	err := ExecuteManagedRuntimeStop(context.WithoutCancel(ctx), runner, target, ManagedRuntimeStopRegistryAuthority(store.Load), &execution)
 	if err != nil {
+		result.Interruptions = attempted
 		return result, err
 	}
 	result.Stopped = true

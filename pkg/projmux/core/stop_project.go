@@ -17,7 +17,8 @@ type ProjectStopInterruption struct {
 }
 
 // StopProjectResult carries the CLI stop receipt with focus unchanged and the
-// interruption evidence summary. On failure, an OperationID and Interruptions
+// interruption evidence summary. On success, Interruptions contains only retained
+// evidence. On failure, an OperationID and Interruptions
 // describe attempted evidence; they may have been compensated or retained when
 // runtime effects could not be proved. Stopped reports a successful operation,
 // and false does not guarantee the runtime survived a failed kill.

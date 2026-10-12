@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -245,4 +246,50 @@ func TestProjectStopProcessDescendantObservation(t *testing.T) {
 		t.Fatal("fixture process was stopped")
 	}
 	t.Logf("CLI process descendant phase=%s termination=%s; fixture PID remains alive", agent.Status.Phase, agent.Status.LastTermination.Classification)
+}
+
+func TestSDKStopProjectInterruptionSummaryAfterCompensation(t *testing.T) {
+	for _, converged := range []bool{true, false} {
+		t.Run(fmt.Sprintf("converged=%t", converged), func(t *testing.T) {
+			fixture := freshStartFixtureStore(t)
+			activateRuntimeStopAgent(t, fixture, "generation-summary")
+			if err := fixture.registry.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			runner := &exactManagedStopRunner{physical: "/fixture/sdk-stop/socket", logical: defaultAppSocket, rootUID: "prj-alpha"}
+			if converged {
+				runner.goneAfterRead = 1
+			} else {
+				runner.applyErr = errors.New("injected kill failure")
+			}
+			target := managedRuntimeStopTarget{SessionID: "$1", SessionName: "alpha", RootKind: metadata.KindProject, RootUID: "prj-alpha", Route: runtimeMutationRoute{Target: tmuxTransport{Kind: tmuxSocketPath, Value: runner.physical, Source: tmuxSocketPathSource}, SocketName: defaultAppSocket, ExpectedSocketPath: runner.physical, Authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
+			project, _ := fixture.registry.Project("prj-alpha")
+			result, err := mutationruntime.StopProject(context.Background(), runner, target, stopServiceStore(fixture.store()), *project)
+			if converged {
+				if err != nil || !result.Stopped || len(result.Interruptions) != 0 {
+					t.Fatalf("converged result: %+v, %v", result, err)
+				}
+				for _, call := range runner.calls {
+					if len(call.args) > 2 && call.args[2] == "kill-session" {
+						t.Fatal("converged stop attempted kill")
+					}
+				}
+			} else {
+				if err == nil || result.Stopped || len(result.Interruptions) != 1 {
+					t.Fatalf("failed result must retain attempted summary: %+v, %v", result, err)
+				}
+			}
+			if result.OperationID == "" {
+				t.Fatal("missing admitted operation ID")
+			}
+			pane, _ := fixture.registry.Pane("pan-alpha-codex")
+			agent, _ := fixture.registry.Agent("agt-alpha-codex")
+			if pane.Status.LastTermination != nil || agent.Status.LastTermination != nil || agent.Status.Phase != metadata.PhaseRunning {
+				t.Fatalf("compensation left evidence or changed phase: %+v %+v", pane.Status, agent.Status)
+			}
+			if err := fixture.registry.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

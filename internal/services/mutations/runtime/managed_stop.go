@@ -132,6 +132,9 @@ func ExecuteManagedRuntimeStop(ctx context.Context, runner TmuxCommandRunner, ta
 				coremetadata.TerminationSourceControlAction, coremetadata.TerminationInterrupted, operationID,
 				ProjectStopInterruptionSummary(interruptions), compensationErr))
 		}
+		if stopStore.Interruptions != nil {
+			stopStore.Interruptions(operationID, nil)
+		}
 		return cause
 	}
 
