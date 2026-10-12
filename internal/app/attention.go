@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	attentionStateOption      = "@projmux_attention_state"
 	attentionAckOption        = "@projmux_attention_ack"
 	attentionFocusArmedOption = "@projmux_attention_focus_armed"
 	attentionStateBusy        = "busy"

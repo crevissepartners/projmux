@@ -128,7 +128,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		reportTarget.Mode = "socket-path"
 	}
 	planner := resourceReconcilePlanner{
-		reader:               explicitTmuxRunner{runner: c.runner, target: target},
+		reader:               explicitTmuxRunner{Runner: c.runner, Target: target},
 		store:                c.resources,
 		newReconciler:        c.newReconciler,
 		materializeProject:   firstRepeatedValue(opts.materializeProjects),

@@ -59,10 +59,6 @@ const (
 	aiPaneAgentOption            = "@projmux_ai_agent"
 	aiPaneLaunchAuthorshipOption = tmuxopts.AgentLaunchAuthorshipPane
 	aiPaneContextOption          = "@projmux_ai_context"
-	aiPaneStateOption            = "@projmux_ai_state"
-	aiPaneBadgeKindOption        = "@projmux_ai_badge_kind"
-	aiPaneTopicOption            = "@projmux_ai_topic"
-	aiPaneTopicManualOption      = "@projmux_ai_topic_manual"
 	aiPaneHookActiveOption       = "@projmux_ai_hook_active"
 	aiPaneThreadIDOption         = "@projmux_ai_thread_id"
 	aiPaneSessionIDOption        = "@projmux_ai_session_id"
@@ -4350,10 +4346,6 @@ func readExternalCommand(ctx context.Context, name string, args ...string) ([]by
 		return []byte(path + "\n"), nil
 	}
 	return tmuxexec.CommandContext(ctx, name, args...).CombinedOutput()
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func shellEnv(name, value string) string {

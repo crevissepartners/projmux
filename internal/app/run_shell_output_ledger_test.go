@@ -241,6 +241,7 @@ func TestRunShellSourceSitesAreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk package dir: %v", err)
 	}
+	names = append(names, mutationRuntimeSourceFiles(t)...)
 	sites := runShellSourceSites()
 	used := make([]bool, len(sites))
 	for _, name := range names {

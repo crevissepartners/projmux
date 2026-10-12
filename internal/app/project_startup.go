@@ -276,8 +276,8 @@ func validateSidebarProjectOpenRoute(
 		return err
 	}
 	anchor = strings.TrimSpace(anchor)
-	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != anchor ||
-		exactTmuxHandle(route.authority.SessionID, "$") == "" || exactTmuxHandle(route.authority.WindowID, "@") == "" {
+	if route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp || route.Authority.PaneID != anchor ||
+		exactTmuxHandle(route.Authority.SessionID, "$") == "" || exactTmuxHandle(route.Authority.WindowID, "@") == "" {
 		return errors.New("runtime mutation route: sidebar anchor has no exact app-owned $/@/% authority")
 	}
 	if readRegistry == nil {
@@ -287,7 +287,7 @@ func validateSidebarProjectOpenRoute(
 	if err != nil {
 		return fmt.Errorf("runtime mutation route: read sidebar anchor ownership: %w", err)
 	}
-	mirror := intmetadata.NewMirror(explicitTmuxRunner{runner: runner, target: route.target})
+	mirror := intmetadata.NewMirror(explicitTmuxRunner{Runner: runner, Target: route.Target})
 	paneUID, paneErr := mirror.ResolvePaneUID(ctx, anchor)
 	windowUID, windowErr := mirror.ResolveWindowUID(ctx, anchor)
 	if paneErr != nil || windowErr != nil {
@@ -341,8 +341,8 @@ func validateSidebarProjectOpenRoute(
 	default:
 		return errors.New("runtime mutation route: sidebar anchor has a foreign root owner")
 	}
-	if (window.Status.RuntimeSessionID != "" && window.Status.RuntimeSessionID != route.authority.SessionID) ||
-		(window.Status.RuntimeID != "" && window.Status.RuntimeID != route.authority.WindowID) {
+	if (window.Status.RuntimeSessionID != "" && window.Status.RuntimeSessionID != route.Authority.SessionID) ||
+		(window.Status.RuntimeID != "" && window.Status.RuntimeID != route.Authority.WindowID) {
 		return errors.New("runtime mutation route: sidebar anchor Registry/runtime ownership mismatch")
 	}
 	return nil
@@ -593,15 +593,15 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 	if store == nil || runner == nil {
 		return errors.New("canonical Project session materializer is not configured")
 	}
-	if route.target.Flag() == "" || route.target.Value == "" || strings.TrimSpace(route.socketName) == "" {
+	if route.Target.Flag() == "" || route.Target.Value == "" || strings.TrimSpace(route.SocketName) == "" {
 		return errors.New("canonical Project session materializer has no exact app-owned route")
 	}
-	routed := explicitTmuxRunner{runner: runner, target: route.target}
-	client := defaultTmuxClientWithSocketRunner(routed, route.socketName, recorder)
+	routed := explicitTmuxRunner{Runner: runner, Target: route.Target}
+	client := defaultTmuxClientWithSocketRunner(routed, route.SocketName, recorder)
 	runtime := &materializer{
 		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: client,
-		target: route.target, expectedSocketPath: route.expectedSocketPath, warn: io.Discard,
-		socketName: route.socketName, routeAuthority: route.authority,
+		target: route.Target, expectedSocketPath: route.ExpectedSocketPath, warn: io.Discard,
+		socketName: route.SocketName, routeAuthority: route.Authority,
 		executable: os.Executable, lookupEnv: os.Getenv,
 	}
 	operationID, err := newCreateOperationID()
@@ -654,7 +654,7 @@ func (c *switchCommand) openProjectSession(ctx context.Context, sessionName stri
 		if err != nil {
 			return err
 		}
-		exact := explicitTmuxRunner{runner: c.tmuxRunner, target: target}
+		exact := explicitTmuxRunner{Runner: c.tmuxRunner, Target: target}
 		lookup := func(name string) string {
 			if name == inttmux.SwitchTargetClientEnv {
 				return client
@@ -906,20 +906,20 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		if routeErr != nil {
 			return false, routeErr
 		}
-		m.target = route.target
-		m.expectedSocketPath = route.expectedSocketPath
-		m.socketName = route.socketName
-		m.routeAuthority = route.authority
+		m.target = route.Target
+		m.expectedSocketPath = route.ExpectedSocketPath
+		m.socketName = route.SocketName
+		m.routeAuthority = route.Authority
 	}
 	if err := requireAutomaticRecoveryPaths("project-open-materialize", "project-open-skip-item"); err != nil {
 		return false, err
 	}
 	route := runtimeMutationRoute{
-		target: m.target, expectedSocketPath: m.expectedSocketPath,
-		socketName: m.socketName, authority: m.routeAuthority,
+		Target: m.target, ExpectedSocketPath: m.expectedSocketPath,
+		SocketName: m.socketName, Authority: m.routeAuthority,
 	}
 	var recoveryErr error
-	if route.expectedSocketPath != "" && route.authority != nil {
+	if route.ExpectedSocketPath != "" && route.Authority != nil {
 		_, recoveryErr = runLockedAutomaticMirrorRecovery(ctx, m.resources, m.runner, m.target, controller.RecoveryProjectOpen, route)
 	} else {
 		_, recoveryErr = runLockedAutomaticMirrorRecovery(ctx, m.resources, m.runner, m.target, controller.RecoveryProjectOpen)
@@ -928,7 +928,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		return false, recoveryErr
 	}
 	planner := resourceReconcilePlanner{
-		reader:             explicitTmuxRunner{runner: m.runner, target: m.target},
+		reader:             explicitTmuxRunner{Runner: m.runner, Target: m.target},
 		store:              m.resources,
 		newReconciler:      m.newReconciler,
 		materializeProject: projectRef,

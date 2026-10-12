@@ -772,7 +772,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if err != nil {
 		return pass, err
 	}
-	routed := explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
+	routed := explicitTmuxRunner{Runner: r.runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
 	newReconciler := r.newReconciler
 	if newReconciler == nil {
 		reconciler := newRegistryReconcilerWithRoute(routed, inttmux.NewClient(routed), route)
@@ -872,7 +872,7 @@ func (r *controllerTriggerRunner) lowerProjectSessionsEndedOnHookServer(ctx cont
 	if len(mutator.LowerProjectSessionsEndedOnServer(&probe, target.Value, nil)) == 0 {
 		return 0, nil
 	}
-	present, reachable, err := listHookServerSessionNames(ctx, explicitTmuxRunner{runner: r.runner, target: target})
+	present, reachable, err := listHookServerSessionNames(ctx, explicitTmuxRunner{Runner: r.runner, Target: target})
 	if err != nil || !reachable {
 		return 0, err
 	}
@@ -884,7 +884,7 @@ func (r *controllerTriggerRunner) lowerProjectSessionsEndedOnHookServer(ctx cont
 	if err != nil {
 		return 0, err
 	}
-	verified := explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
+	verified := explicitTmuxRunner{Runner: r.runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
 	lowered := 0
 	lock := beginApplyLock(ctx, diagnostics.ApplyLockKindSessionLower)
 	_, err = r.store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
@@ -896,7 +896,7 @@ func (r *controllerTriggerRunner) lowerProjectSessionsEndedOnHookServer(ctx cont
 			return err
 		}
 		lock.Phase(diagnostics.ApplyLockPhaseCommit)
-		lowered = len(mutator.LowerProjectSessionsEndedOnServer(working, route.expectedSocketPath, present))
+		lowered = len(mutator.LowerProjectSessionsEndedOnServer(working, route.ExpectedSocketPath, present))
 		return nil
 	})
 	lock.End()
@@ -916,7 +916,7 @@ func listHookServerSessionNames(ctx context.Context, routed explicitTmuxRunner) 
 		if tmuxSessionAbsent(err) || tmuxServerUnreachable(err) {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("list sessions on %s: %w", routed.target.Label(), err)
+		return nil, false, fmt.Errorf("list sessions on %s: %w", routed.Target.Label(), err)
 	}
 	present := map[string]bool{}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
@@ -933,7 +933,7 @@ func listHookServerSessionNames(ctx context.Context, routed explicitTmuxRunner) 
 // missing root; hook triggers may only continue identities the Registry already
 // records.
 func (r *controllerTriggerRunner) convergeControlTargets(ctx context.Context, target tmuxTransport, declareHome bool) (controlSessionConvergence, error) {
-	routed := explicitTmuxRunner{runner: r.runner, target: target}
+	routed := explicitTmuxRunner{Runner: r.runner, Target: target}
 	out, err := routed.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		if tmuxSessionAbsent(err) || tmuxServerUnreachable(err) {
@@ -1062,7 +1062,7 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 			return 0, err
 		}
 	}
-	exactTarget := tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}
+	exactTarget := tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}
 	inventory := intmetadata.NewInventoryObserver(runner, exactTarget.ExplicitProjection()).Observe(ctx)
 	inventory.Transport = target.ExplicitProjection()
 	markApplyLockPhase(ctx, diagnostics.ApplyLockPhasePlan)

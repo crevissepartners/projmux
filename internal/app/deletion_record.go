@@ -39,9 +39,6 @@ const deletionRecordsFile = mutations.DeletionRecordsFile
 const deletionViaCLI = mutations.DeletionViaCLI
 const deletionViaUI = mutations.DeletionViaUI
 const deletionViaPrune = mutations.DeletionViaPrune
-const deletionOperationDeleteWindow = mutations.DeletionOperationDeleteWindow
-const deletionOperationDeletePane = mutations.DeletionOperationDeletePane
-const deletionOperationDeleteAgent = mutations.DeletionOperationDeleteAgent
 const deletionOperationUnregisterProject = mutations.DeletionOperationUnregisterProject
 const deletionOperationDeleteProject = mutations.DeletionOperationDeleteProject
 const deletionOperationPruneAgent = mutations.DeletionOperationPruneAgent
@@ -99,7 +96,7 @@ func deletionAnchorConfirm(runner tmuxCommandRunner, route tmuxTransport, lookup
 		if route.Kind == resourcegraph.TransportSocketPath && route.Value != socketPath {
 			return 0, creatorSkipServerMismatch
 		}
-		out, err := (explicitTmuxRunner{runner: runner, target: route}).Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
+		out, err := (explicitTmuxRunner{Runner: runner, Target: route}).Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
 			tmuxRowFormat("#{socket_path}", "#{pid}", "#{pane_id}", "#{pane_pid}", "#{"+tmuxopts.PaneUID+"}"))
 		if err != nil {
 			return 0, creatorSkipAnchorQueryFailed

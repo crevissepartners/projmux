@@ -739,7 +739,7 @@ func TestShellPrepareFailureThroughMaterializerKeepsTmuxCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := newFakeTmux()
 			target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
-			routed := explicitTmuxRunner{runner: server, target: target}
+			routed := explicitTmuxRunner{Runner: server, Target: target}
 			runtime := &materializer{
 				runner: routed, mirror: intmetadata.NewMirror(routed), target: target,
 				sessions: sessionCheckFailure{fakeSessionMaterializer: &fakeSessionMaterializer{tmux: server}, err: realTmuxExitFailure(t, tt.stderr)},

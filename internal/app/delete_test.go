@@ -234,11 +234,11 @@ func (r *fakePaneDeleteRuntime) prepareReplacements(_ context.Context, replaceme
 	for i, replacement := range replacements {
 		created = append(created, runtimeObject{Kind: runtimePane, ID: fmt.Sprintf("%%replacement-%d", i+1), UID: replacement.Pane.Metadata.UID})
 	}
-	return paneReplacementReceipt{created: created}, nil
+	return paneReplacementReceipt{Created: created}, nil
 }
 
 func (r *fakePaneDeleteRuntime) rollbackReplacements(_ context.Context, receipt paneReplacementReceipt) error {
-	r.rolledBackReplacements += len(receipt.created)
+	r.rolledBackReplacements += len(receipt.Created)
 	return r.replacementRollbackErr
 }
 
@@ -416,13 +416,13 @@ type fakeWindowDeleteRuntime struct {
 	boundTarget   tmuxTransport
 }
 
-func (r *fakeWindowDeleteRuntime) useExactTarget(target tmuxTransport) { r.boundTarget = target }
+func (r *fakeWindowDeleteRuntime) UseExactTarget(target tmuxTransport) { r.boundTarget = target }
 
 func newFixtureWindowDeleteRuntime() *fakeWindowDeleteRuntime {
 	return &fakeWindowDeleteRuntime{}
 }
 
-func (r *fakeWindowDeleteRuntime) preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (windowLiveDeletePlan, error) {
+func (r *fakeWindowDeleteRuntime) Preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (windowLiveDeletePlan, error) {
 	r.preflights++
 	if r.preflightHook != nil {
 		r.preflightHook(r.preflights)
@@ -925,7 +925,7 @@ func TestDeletePaneAndAgentLockedRevalidationRaceTable(t *testing.T) {
 	}
 }
 
-func (r *fakeWindowDeleteRuntime) killAll(_ context.Context, targets []windowLiveDeleteTarget) (int, error) {
+func (r *fakeWindowDeleteRuntime) KillAll(_ context.Context, targets []windowLiveDeleteTarget) (int, error) {
 	for i, target := range targets {
 		if r.killHook != nil {
 			r.killHook(target)
@@ -941,7 +941,7 @@ func (r *fakeWindowDeleteRuntime) killAll(_ context.Context, targets []windowLiv
 	return len(targets), nil
 }
 
-func (r *fakeWindowDeleteRuntime) queueSelfKill(_ context.Context, targets []windowLiveDeleteTarget) error {
+func (r *fakeWindowDeleteRuntime) QueueSelfKill(_ context.Context, targets []windowLiveDeleteTarget) error {
 	if r.queueHook != nil {
 		r.queueHook(targets)
 	}

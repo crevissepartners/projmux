@@ -36,11 +36,11 @@ func executeUnmanagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, 
 	if err != nil {
 		return false, err
 	}
-	observeTarget := route.target
-	if route.expectedSocketPath != "" {
-		observeTarget = tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}
+	observeTarget := route.Target
+	if route.ExpectedSocketPath != "" {
+		observeTarget = tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}
 	}
-	routed := explicitTmuxRunner{runner: runner, target: observeTarget}
+	routed := explicitTmuxRunner{Runner: runner, Target: observeTarget}
 	observe := func(ctx context.Context) (unmanagedRuntimeStopObservation, bool, error) {
 		out, err := routed.Run(ctx, "tmux", "list-sessions", "-F", tmuxRowFormat(
 			"#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}",

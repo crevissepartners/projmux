@@ -694,7 +694,7 @@ func TestCodexLifecycleAuthorityWriteCompensatesFirstMiddleLastOnExactRoutes(t *
 					targetFlag: route.Flag(), targetValue: route.Value, options: maps.Clone(before),
 					failWrite: failWrite, failureCommand: -1,
 				}
-				sink := aiCodexLifecycleSink{command: command, runner: explicitTmuxRunner{runner: raw, target: route}}
+				sink := aiCodexLifecycleSink{command: command, runner: explicitTmuxRunner{Runner: raw, Target: route}}
 				if err := sink.SetAuthority(identity, codexAuthorityControlPlane, "epoch-current", "ready"); err == nil {
 					t.Fatal("injected authority write failure returned nil")
 				}

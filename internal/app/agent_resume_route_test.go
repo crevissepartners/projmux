@@ -69,11 +69,11 @@ func TestResumeRoutePolicyDropsTheAnchorRequirement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exact-object policy refused a live app server over a dead ambient anchor: %v", err)
 	}
-	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != pid {
-		t.Fatalf("exact-object route authority = %#v", route.authority)
+	if route.Authority == nil || route.Authority.Class != runtimeMutationRouteApp || route.Authority.ServerPID != pid {
+		t.Fatalf("exact-object route authority = %#v", route.Authority)
 	}
-	if route.authority.PaneID != "" {
-		t.Fatalf("exact-object route adopted an ambient anchor Pane %q", route.authority.PaneID)
+	if route.Authority.PaneID != "" {
+		t.Fatalf("exact-object route adopted an ambient anchor Pane %q", route.Authority.PaneID)
 	}
 	for _, call := range exact.calls {
 		if len(call.args) > 4 && call.args[len(call.args)-4] == "-t" {

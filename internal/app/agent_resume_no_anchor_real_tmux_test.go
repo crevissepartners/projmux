@@ -96,7 +96,7 @@ func TestAgentResumeNeedsNoAnchorPaneThroughRealTmux(t *testing.T) {
 	}
 
 	target := tmuxTransport{Kind: tmuxSocketName, Value: server.logical, Source: tmuxSocketNameSource}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	client := defaultTmuxClientWithRunner(routed)
 	create := &createCommand{
 		store:      store.store(),
@@ -120,17 +120,17 @@ func TestAgentResumeNeedsNoAnchorPaneThroughRealTmux(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		exact := explicitTmuxRunner{runner: runner, target: route.target}
-		exactClient := defaultTmuxClientWithSocketRunner(exact, route.socketName)
+		exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
+		exactClient := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 		create.reconciler = newRegistryReconcilerWithRoute(exact, exactClient, route)
 		create.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
 		create.runtime.runner = exact
 		create.runtime.mirror = intmetadata.NewMirror(exact)
 		create.runtime.sessions = exactClient
-		create.runtime.target = route.target
-		create.runtime.expectedSocketPath = route.expectedSocketPath
-		create.runtime.socketName = route.socketName
-		create.runtime.routeAuthority = route.authority
+		create.runtime.target = route.Target
+		create.runtime.expectedSocketPath = route.ExpectedSocketPath
+		create.runtime.socketName = route.SocketName
+		create.runtime.routeAuthority = route.Authority
 		return nil
 	}
 	create.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

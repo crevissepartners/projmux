@@ -873,7 +873,7 @@ func lifecycleObservedLiveWindowSessions(ctx context.Context, inventory livePane
 func lifecycleInventory(runner tmuxCommandRunner, target tmuxTransport) livePaneInventory {
 	routed := runner
 	if target.Flag() != "" && target.Value != "" {
-		routed = explicitTmuxRunner{runner: runner, target: target}
+		routed = explicitTmuxRunner{Runner: runner, Target: target}
 	}
 	runtime := newTmuxPaneDeleteRuntime()
 	runtime.runner = runner

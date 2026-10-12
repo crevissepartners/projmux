@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode"
 
+	"slices"
+
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/setupcmd"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -18,7 +20,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
-	"slices"
 )
 
 const keybindingProtectedActionVisibleReason = "shipped/default trigger uses a reserved key"
@@ -2634,14 +2635,14 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 	}
 	ctx := context.Background()
 	route, routeErr := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
-	if routeErr != nil || route.expectedSocketPath == "" {
+	if routeErr != nil || route.ExpectedSocketPath == "" {
 		if routeErr == nil {
 			routeErr = errors.New("Settings live reload has no exact physical socket")
 		}
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
 		return prepared, live, routeErr
 	}
-	if route.authority != nil && route.authority.Class == runtimeMutationRouteStandalone {
+	if route.Authority != nil && route.Authority.Class == runtimeMutationRouteStandalone {
 		routeErr = errors.New("Settings live reload refuses an operator-owned standalone tmux server")
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
 		return prepared, live, routeErr
@@ -2654,7 +2655,7 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload guard", guardErr)}
 		return prepared, live, guardErr
 	}
-	if _, reloadErr := c.tmuxRunner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "source-file", configPath); reloadErr != nil {
+	if _, reloadErr := c.tmuxRunner.Run(ctx, "tmux", "-S", route.ExpectedSocketPath, "source-file", configPath); reloadErr != nil {
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload", reloadErr)}
 		return prepared, live, reloadErr
 	}
@@ -2673,7 +2674,7 @@ func (c *settingsCommand) retireCurrentTmuxKeySequenceState(ctx context.Context,
 		if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); err != nil {
 			return "", err
 		}
-		out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", option)
+		out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", route.ExpectedSocketPath, "show-options", "-gqv", option)
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", option, err)
 		}
@@ -2691,7 +2692,7 @@ func (c *settingsCommand) retireCurrentTmuxKeySequenceState(ctx context.Context,
 		if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); err != nil {
 			return err
 		}
-		if _, err := c.tmuxRunner.Run(ctx, "tmux", append([]string{"-S", route.expectedSocketPath}, command[1:]...)...); err != nil {
+		if _, err := c.tmuxRunner.Run(ctx, "tmux", append([]string{"-S", route.ExpectedSocketPath}, command[1:]...)...); err != nil {
 			return fmt.Errorf("%s: %w", strings.Join(command[1:], " "), err)
 		}
 	}

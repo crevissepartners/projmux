@@ -213,7 +213,7 @@ func newCreateCommand() *createCommand {
 // in-memory server so it exercises the exact production route bind.
 func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string) *createCommand {
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	client := defaultTmuxClientWithRunner(routed)
 	home, _ := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
@@ -248,8 +248,8 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		if err != nil {
 			return err
 		}
-		exact := explicitTmuxRunner{runner: runner, target: route.target}
-		client := defaultTmuxClientWithSocketRunner(exact, route.socketName)
+		exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
+		client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 		// Binding the route reconnects the materializer to a freshly resolved
 		// server, so no identity proved before this point may be reused.
 		command.runtime.invalidateRouteIdentity("route-bind")
@@ -262,10 +262,10 @@ func newCreateCommandOn(runner tmuxCommandRunner, lookupEnv func(string) string)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
 		command.runtime.sessions = client
-		command.runtime.target = route.target
-		command.runtime.expectedSocketPath = route.expectedSocketPath
-		command.runtime.socketName = route.socketName
-		command.runtime.routeAuthority = route.authority
+		command.runtime.target = route.Target
+		command.runtime.expectedSocketPath = route.ExpectedSocketPath
+		command.runtime.socketName = route.SocketName
+		command.runtime.routeAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

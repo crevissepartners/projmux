@@ -93,7 +93,7 @@ func TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup(t *tes
 	if relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		t.Fatalf("isolated tmux socket %q escaped root %q", socketPath, root)
 	}
-	route := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: socketPath, Source: tmuxSocketPathSource}}
+	route := explicitTmuxRunner{Runner: runner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: socketPath, Source: tmuxSocketPathSource}}
 	if _, err := route.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, tmuxopts.PaneUID, "pan-alpha-codex"); err != nil {
 		t.Fatal(err)
 	}

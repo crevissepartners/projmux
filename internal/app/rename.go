@@ -210,7 +210,7 @@ func (c *renameCommand) renameService() mutations.Renamer {
 			if err != nil {
 				return mutations.WindowRenameRoute{}, err
 			}
-			routed := explicitTmuxRunner{runner: c.tmuxRunner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
+			routed := explicitTmuxRunner{Runner: c.tmuxRunner, Target: tmuxTransport{Kind: tmuxSocketPath, Value: route.ExpectedSocketPath, Source: tmuxSocketPathSource}}
 			actionFor := func(s mutations.WindowRenameStep, order int) plannedRuntimeMutation {
 				target := runtimeMutationTarget{Kind: string(runtimeWindow), ID: s.WindowID, UID: s.UID, Parent: s.Parent}
 				bindRuntimeMutationRouteTarget(&target, route)
@@ -223,7 +223,7 @@ func (c *renameCommand) renameService() mutations.Renamer {
 				action.Operands = s.Operands
 				return action
 			}
-			return mutations.WindowRenameRoute{SocketPath: route.expectedSocketPath, Runner: routed,
+			return mutations.WindowRenameRoute{SocketPath: route.ExpectedSocketPath, Runner: routed,
 				Check: func(ctx context.Context, s mutations.WindowRenameStep) error {
 					return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, actionFor(s, 1))
 				},

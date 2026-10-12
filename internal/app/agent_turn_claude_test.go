@@ -88,7 +88,7 @@ func claudeTurnFixture(t *testing.T) (*agentCommand, *fakeResourceStore, *claude
 	stateDir := t.TempDir()
 	cmd.controlPaths = func() (config.Paths, error) { return config.Paths{StateDir: stateDir}, nil }
 	cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) {
-		return runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: "claude-turn-test", Source: tmuxSocketNameSource}}, nil
+		return runtimeMutationRoute{Target: tmuxTransport{Kind: tmuxSocketName, Value: "claude-turn-test", Source: tmuxSocketNameSource}}, nil
 	}
 	runner := &claudeTurnRunner{uid: "pan-alpha-codex", runtime: "%7"}
 	cmd.controlRunner = runner

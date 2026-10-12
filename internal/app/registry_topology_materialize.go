@@ -634,7 +634,7 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		return outcome, err
 	}
 	ledger := newRuntimeLedger(operationID)
-	routed := explicitTmuxRunner{runner: r.runner, target: r.target}
+	routed := explicitTmuxRunner{Runner: r.runner, Target: r.target}
 	newRuntime := r.newMaterializer
 	if newRuntime == nil {
 		newRuntime = defaultTopologyMaterializer(r.target, r.diagnostics)
@@ -687,10 +687,10 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		// be false about it.
 		current.materialization.writeNotices(r.notices)
 		route := runtimeMutationRoute{
-			target: r.target, expectedSocketPath: r.expectedSocketPath,
-			socketName: r.socketName, authority: r.routeAuthority,
+			Target: r.target, ExpectedSocketPath: r.expectedSocketPath,
+			SocketName: r.socketName, Authority: r.routeAuthority,
 		}
-		if len(current.writes) != 0 && (route.expectedSocketPath == "" || route.authority == nil) {
+		if len(current.writes) != 0 && (route.ExpectedSocketPath == "" || route.Authority == nil) {
 			outcome.failedStage = "controller.identity"
 			return errors.New("materialized controller writes require exact runtime generation authority")
 		}
@@ -839,9 +839,9 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 		diagnostics:        c.diagnostics,
 		runner:             c.runner,
 		target:             target,
-		expectedSocketPath: route.expectedSocketPath,
-		socketName:         route.socketName,
-		routeAuthority:     route.authority,
+		expectedSocketPath: route.ExpectedSocketPath,
+		socketName:         route.SocketName,
+		routeAuthority:     route.Authority,
 		newOperationID:     c.newOperationID,
 		newGeneration:      c.newGeneration,
 		newMaterializer:    c.newMaterializer,
@@ -875,7 +875,7 @@ func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner
 	if runner == nil {
 		return runtimeMutationRoute{}, errors.New("resource materialization requires a tmux runner")
 	}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
 		if inttmux.IsNoServerFailure(err) {
@@ -883,12 +883,12 @@ func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner
 			// returns and the materializer binds #{socket_path}. An explicit -S
 			// declaration already names the immutable path the create must use.
 			if target.Flag() == "-L" {
-				return runtimeMutationRoute{target: target, socketName: target.Value}, nil
+				return runtimeMutationRoute{Target: target, SocketName: target.Value}, nil
 			}
 			if target.Flag() == "-S" {
 				path := filepath.Clean(strings.TrimSpace(target.Value))
 				if filepath.IsAbs(path) && path == target.Value {
-					return runtimeMutationRoute{target: target, expectedSocketPath: path, socketName: defaultAppSocket}, nil
+					return runtimeMutationRoute{Target: target, ExpectedSocketPath: path, SocketName: defaultAppSocket}, nil
 				}
 			}
 		}

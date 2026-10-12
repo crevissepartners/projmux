@@ -51,7 +51,7 @@ func inheritedAgentReviewBindingLookup(lookupEnv func(string) string, runner tmu
 	if err != nil || !target.Present() {
 		return nil
 	}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	return &tmuxAgentReviewBindingLookup{lookup: intmetadata.NewMirror(routed), runner: routed}
 }
 

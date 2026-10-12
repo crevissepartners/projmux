@@ -100,14 +100,14 @@ func virtualWindowCreator(runner tmuxCommandRunner, lookup func(string) string, 
 			if err != nil {
 				return err
 			}
-			exact := explicitTmuxRunner{runner: runner, target: route.target}
-			client := defaultTmuxClientWithSocketRunner(exact, route.socketName)
+			exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
+			client := defaultTmuxClientWithSocketRunner(exact, route.SocketName)
 			c.runtime.invalidateRouteIdentity("virtual-window-navigation")
 			c.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 			c.reconciler.shareRouteIdentityScope(c.runtime)
 			c.reconciler.sessionSocketPath = func() string { return c.runtime.expectedSocketPath }
 			c.runtime.runner, c.runtime.mirror, c.runtime.sessions = exact, intmetadata.NewMirror(exact), client
-			c.runtime.target, c.runtime.expectedSocketPath, c.runtime.socketName, c.runtime.routeAuthority = route.target, route.expectedSocketPath, route.socketName, route.authority
+			c.runtime.target, c.runtime.expectedSocketPath, c.runtime.socketName, c.runtime.routeAuthority = route.Target, route.ExpectedSocketPath, route.SocketName, route.Authority
 			return nil
 		}
 	}

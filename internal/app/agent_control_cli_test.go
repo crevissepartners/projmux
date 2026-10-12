@@ -206,7 +206,7 @@ func TestAgentControlCLIPublicTurnsDispatchFromBothSupportedTmuxFrames(t *testin
 				}
 				cmd.controlBinding = nil
 				cmd.controlRunner = tmux
-				cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{target: target}, nil }
+				cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{Target: target}, nil }
 				var calls []agentControlRequest
 				cmd.controlCall = func(_ context.Context, stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
 					if stateDir != "/tmp/projmux-phase6-cli" || !endpoint.Same(phase6CLIEndpoint()) || identity != phase6CLIIdentity() || request.Identity != identity || request.Epoch != "epoch-1" {
@@ -319,7 +319,7 @@ func TestAgentControlCLIMalformedTmuxFramesCallNoAppServer(t *testing.T) {
 			target := tmuxTransport{Kind: tmuxSocketName, Value: "exact-control", Source: tmuxSocketNameSource}
 			cmd.controlBinding = nil
 			cmd.controlRunner = &exactControlRouteRunner{target: target, frame: []byte(test.frame)}
-			cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{target: target}, nil }
+			cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{Target: target}, nil }
 			calls := 0
 			cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
 				calls++
@@ -592,7 +592,7 @@ func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
 			cmd.controlBinding = nil
 			cmd.controlRunner = tmux
 			cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) {
-				return runtimeMutationRoute{target: target}, nil
+				return runtimeMutationRoute{Target: target}, nil
 			}
 			binding, err := cmd.resolveControlBinding("agent turn interrupt", "uid:agt-alpha-codex")
 			if err != nil {

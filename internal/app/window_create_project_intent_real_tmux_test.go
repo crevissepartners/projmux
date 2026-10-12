@@ -171,7 +171,7 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 	lookupEnv := func(string) string { return "" }
 	runner := shellTmuxExecRunner{env: func() []string { return environment }}
 	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	resumes := newFakeResumeLauncher()
 	warnings := &bytes.Buffer{}
 	command := &createCommand{
@@ -203,19 +203,19 @@ func newProjectIntentRealTmuxOn(t *testing.T, ctx context.Context, freshConfig s
 		if err != nil {
 			return err
 		}
-		exact := explicitTmuxRunner{runner: runner, target: route.target}
+		exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
 		// No lifecycle hook runner: the operator's own post-create hooks must
 		// never run from a test.
-		client := inttmux.NewClient(exact, inttmux.WithSocketName(route.socketName))
+		client := inttmux.NewClient(exact, inttmux.WithSocketName(route.SocketName))
 		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 		command.reconciler.discoverRoots = func() ([]string, error) { return nil, nil }
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
 		command.runtime.sessions = client
-		command.runtime.target = route.target
-		command.runtime.expectedSocketPath = route.expectedSocketPath
-		command.runtime.socketName = route.socketName
-		command.runtime.routeAuthority = route.authority
+		command.runtime.target = route.Target
+		command.runtime.expectedSocketPath = route.ExpectedSocketPath
+		command.runtime.socketName = route.SocketName
+		command.runtime.routeAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }

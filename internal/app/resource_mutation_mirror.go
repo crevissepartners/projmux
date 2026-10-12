@@ -40,7 +40,7 @@ func inheritedResourceMutationMirror(lookupEnv func(string) string, runner tmuxC
 	if err != nil || !target.Present() {
 		return nil
 	}
-	routed := explicitTmuxRunner{runner: runner, target: target}
+	routed := explicitTmuxRunner{Runner: runner, Target: target}
 	return intmetadata.NewMirror(routed)
 }
 

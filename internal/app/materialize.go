@@ -21,14 +21,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
-// tmuxCommandRunner is the narrow subprocess seam the materializer shares with
-// the resource metadata mirror. Production wires the same ExecRunner into both,
-// so a test can replace one object and observe every tmux call the operation
-// makes.
-type tmuxCommandRunner interface {
-	Run(ctx context.Context, name string, args ...string) ([]byte, error)
-}
-
 // sessionMaterializer is the observation half of the persistent runtime. The
 // concrete tmux Client also implements persistentSessionLifecycle below: it
 // prepares and completes the public hook contract, while this package alone
@@ -47,8 +39,6 @@ type persistentSessionLifecycle interface {
 type sessionStartupFinalizer interface {
 	FinalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd, operationMarker string) error
 }
-
-const finalizeOperationEnvironment = "__projmux_finalize_operation"
 
 func (m *materializer) finalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd string, ledger *runtimeLedger) error {
 	if !result.Created {
@@ -105,26 +95,6 @@ type liveSessionIdentity struct {
 	Name string
 	UID  string
 	Root string
-}
-
-// runtimeObjectKind names one class of tmux object an operation can create.
-type runtimeObjectKind string
-
-const (
-	runtimeSession runtimeObjectKind = "session"
-	runtimeWindow  runtimeObjectKind = "window"
-	runtimePane    runtimeObjectKind = "pane"
-)
-
-// runtimeObject is one ledger entry: a tmux object this operation created,
-// pinned by its stable tmux id and by the Projmux uid mirrored onto it.
-type runtimeObject struct {
-	Kind runtimeObjectKind
-	// ID is the stable tmux handle ($N, @N, %N). Indexes are deliberately not
-	// used: they shift when a sibling is created or destroyed.
-	ID string
-	// UID is the Projmux uid mirrored onto ID at creation time.
-	UID string
 }
 
 // runtimeLedger records the tmux objects one operation created so a later
@@ -210,19 +180,6 @@ func (l *runtimeLedger) currentWindow(uid string) (runtimeOwner, bool) {
 	}
 	owner, ok := l.currentWindows[strings.TrimSpace(uid)]
 	return owner, ok
-}
-
-// ownershipOption is the mirrored option that proves this operation owns a
-// runtime object.
-func (o runtimeObject) ownershipOption() string {
-	switch o.Kind {
-	case runtimeSession:
-		return tmuxopts.ProjectUIDSession
-	case runtimeWindow:
-		return tmuxopts.WindowUID
-	default:
-		return tmuxopts.PaneUID
-	}
 }
 
 // materializer turns offline Project/Window/Pane metadata into detached tmux
@@ -374,7 +331,7 @@ func (m *materializer) closeRouteIdentityCache() {
 	if m == nil {
 		return
 	}
-	m.routeIdentity.close()
+	m.routeIdentity.Close()
 	m.routeIdentity = nil
 }
 
@@ -384,7 +341,7 @@ func (m *materializer) invalidateRouteIdentity(reason string) {
 	if m == nil {
 		return
 	}
-	m.routeIdentity.invalidate(reason)
+	m.routeIdentity.Invalidate(reason)
 }
 
 // exactRouteIdentityKey names the identity guardExactRouteOwnership proves when
@@ -395,8 +352,8 @@ func (m *materializer) exactRouteIdentityKey(target tmuxTransport) (runtimeRoute
 		return runtimeRouteIdentityKey{}, false
 	}
 	return runtimeRouteIdentityKeyForRoute(routeIdentityScopeExactRoute, runtimeMutationRoute{
-		target: target, expectedSocketPath: m.expectedSocketPath,
-		socketName: m.logicalSocketName(target), authority: m.routeAuthority,
+		Target: target, ExpectedSocketPath: m.expectedSocketPath,
+		SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
 	})
 }
 
@@ -406,7 +363,7 @@ func (m *materializer) exactRouteIdentityKey(target tmuxTransport) (runtimeRoute
 // and the caller unwinds through the runtime ledger like any other failure. A
 // transaction that reused nothing issues no extra tmux call.
 func (m *materializer) reproveReusedRouteIdentity(ctx context.Context) error {
-	if m == nil || m.routeIdentity.snapshot().Reuses == 0 {
+	if m == nil || m.routeIdentity.Snapshot().Reuses == 0 {
 		return nil
 	}
 	m.invalidateRouteIdentity("commit-reproof")
@@ -433,9 +390,9 @@ func (m *materializer) exactMutationRoute() (tmuxTransport, string, error) {
 	if target.Flag() == "" || target.Value == "" {
 		switch runner := m.runner.(type) {
 		case explicitTmuxRunner:
-			target = runner.target
+			target = runner.Target
 		case *explicitTmuxRunner:
-			target = runner.target
+			target = runner.Target
 		}
 	}
 	switch target.Flag() {
@@ -457,7 +414,7 @@ func (m *materializer) boundMutationTarget(kind, id, uid string) runtimeMutation
 	_, route, _ := m.exactMutationRoute()
 	target := runtimeMutationTarget{Socket: route, PhysicalSocket: printableRuntimeMutationSocket(m.expectedSocketPath), Kind: kind, ID: id, UID: uid}
 	if m.routeAuthority != nil {
-		target.RouteAuthority = m.routeAuthority.printable()
+		target.RouteAuthority = m.routeAuthority.Printable()
 	}
 	return target
 }
@@ -498,7 +455,7 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 			wantSocket = "-S=" + m.expectedSocketPath
 		}
 		if m.routeAuthority == nil || action.Target.PhysicalSocket != m.expectedSocketPath ||
-			action.Target.RouteAuthority != m.routeAuthority.printable() || action.Target.Socket != wantSocket {
+			action.Target.RouteAuthority != m.routeAuthority.Printable() || action.Target.Socket != wantSocket {
 			return errors.New("materializer printable route authority disagrees with captured server generation")
 		}
 		if action.Verb == mutationWriteRouteMarker || action.Verb == mutationKillOwned {
@@ -520,8 +477,8 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 			return nil
 		}
 		route := runtimeMutationRoute{
-			target: target, expectedSocketPath: m.expectedSocketPath,
-			socketName: m.logicalSocketName(target), authority: m.routeAuthority,
+			Target: target, ExpectedSocketPath: m.expectedSocketPath,
+			SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
 		}
 		return guardPrintedRuntimeMutationRouteWithIdentity(ctx, m.baseRunner(), route, action, m.routeIdentity)
 	}
@@ -545,7 +502,7 @@ func (m *materializer) runnerAtPhysicalSocket(path string) tmuxCommandRunner {
 }
 
 func (m *materializer) runnerAtTarget(target tmuxTransport) tmuxCommandRunner {
-	return explicitTmuxRunner{runner: m.baseRunner(), target: target}
+	return explicitTmuxRunner{Runner: m.baseRunner(), Target: target}
 }
 
 func (m *materializer) baseRunner() tmuxCommandRunner {
@@ -553,10 +510,10 @@ func (m *materializer) baseRunner() tmuxCommandRunner {
 	for {
 		switch routed := base.(type) {
 		case explicitTmuxRunner:
-			base = routed.runner
+			base = routed.Runner
 			continue
 		case *explicitTmuxRunner:
-			base = routed.runner
+			base = routed.Runner
 			continue
 		}
 		break
@@ -592,12 +549,12 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 		if err != nil {
 			return err
 		}
-		if key, ok := m.exactRouteIdentityKey(target); ok && m.routeIdentity.reuse(key) {
+		if key, ok := m.exactRouteIdentityKey(target); ok && m.routeIdentity.Reuse(key) {
 			return nil
 		}
 	}
 	if err := m.proveExactRouteOwnership(ctx, allowNoServer, requireLogical, plannedPhysical...); err != nil {
-		m.routeIdentity.invalidate("exact-route-probe-error")
+		m.routeIdentity.Invalidate("exact-route-probe-error")
 		return err
 	}
 	if requireLogical {
@@ -605,7 +562,7 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 		// what was actually proved rather than from the pre-proof state.
 		if target, _, err := m.exactMutationRoute(); err == nil {
 			if key, ok := m.exactRouteIdentityKey(target); ok {
-				m.routeIdentity.record(key)
+				m.routeIdentity.Record(key)
 			}
 		}
 	}
@@ -647,7 +604,7 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 			var sections []string
 			sections, observeErr = readTmuxSequence(ctx, probe, routeReadSocketPath, routeReadServerPID, routeReadAppMarker)
 			if observeErr == nil {
-				folded = &resolvedRouteObservation{socket: sections[0], pid: sections[1], app: sections[2]}
+				folded = &resolvedRouteObservation{Socket: sections[0], Pid: sections[1], App: sections[2]}
 			}
 		} else {
 			var read resolvedRouteObservation
@@ -656,7 +613,7 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 			}
 		}
 		if observeErr == nil {
-			observedOut = []byte(folded.socket)
+			observedOut = []byte(folded.Socket)
 		}
 	} else {
 		observedOut, observeErr = probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
@@ -693,7 +650,7 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		if err != nil {
 			return err
 		}
-		if bound.expectedSocketPath != m.expectedSocketPath || bound.authority == nil {
+		if bound.ExpectedSocketPath != m.expectedSocketPath || bound.Authority == nil {
 			return errors.New("materializer exact route has no server-generation authority")
 		}
 		// Re-resolving the route rebinds the server generation this materializer
@@ -702,16 +659,16 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		// The re-resolution issued its own reads after the socket observation
 		// above, so no observation stands in for the nested proof.
 		folded = nil
-		m.target = bound.target
-		target = bound.target
-		m.socketName = bound.socketName
-		m.routeAuthority = bound.authority
+		m.target = bound.Target
+		target = bound.Target
+		m.socketName = bound.SocketName
+		m.routeAuthority = bound.Authority
 	}
 	if m.routeAuthority != nil {
 		if m.routeAuthority.Class == runtimeMutationRouteApp && !requireLogical {
 			pid, owned := "", ""
 			if folded != nil {
-				pid, owned = folded.pid, folded.app
+				pid, owned = folded.Pid, folded.App
 			} else {
 				// One invocation through probe; a failed sequence reports the
 				// generation read's text, the first read.
@@ -734,8 +691,8 @@ func (m *materializer) proveExactRouteOwnership(ctx context.Context, allowNoServ
 		// markers, and the nested proof takes them all. Otherwise it reads its
 		// whole set itself, in one invocation.
 		return guardResolvedRuntimeMutationRouteObserved(ctx, m.baseRunner(), runtimeMutationRoute{
-			target: target, expectedSocketPath: m.expectedSocketPath,
-			socketName: m.logicalSocketName(target), authority: m.routeAuthority,
+			Target: target, ExpectedSocketPath: m.expectedSocketPath,
+			SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
 		}, false, m.routeIdentity, folded)
 	}
 	if requireLogical {
@@ -771,10 +728,10 @@ func (m *materializer) resolvedRouteProofWouldReuse(target tmuxTransport, requir
 		return false
 	}
 	key, cacheable := runtimeRouteIdentityKeyForRoute(routeIdentityScopeResolvedRoute, runtimeMutationRoute{
-		target: target, expectedSocketPath: m.expectedSocketPath,
-		socketName: m.logicalSocketName(target), authority: m.routeAuthority,
+		Target: target, ExpectedSocketPath: m.expectedSocketPath,
+		SocketName: m.logicalSocketName(target), Authority: m.routeAuthority,
 	})
-	return cacheable && m.routeIdentity.wouldReuse(key)
+	return cacheable && m.routeIdentity.WouldReuse(key)
 }
 
 func (m *materializer) logicalSocketName(target tmuxTransport) string {
@@ -1242,7 +1199,7 @@ func (m *materializer) guardMutationAction(ctx context.Context, action plannedRu
 	switch action.Verb {
 	case mutationKillOwned:
 		entry := runtimeObject{Kind: runtimeObjectKind(action.Target.Kind), ID: action.Target.ID, UID: action.Target.UID}
-		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.ownershipOption()+"}")
+		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.OwnershipOption()+"}")
 		if err != nil {
 			return err
 		}
@@ -1306,7 +1263,7 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 	serverEnded, ownKilled := false, false
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
-		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.ownershipOption()+"}")
+		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.OwnershipOption()+"}")
 		if err != nil {
 			// The object is already gone, so the desired rollback state holds.
 			continue
@@ -1353,7 +1310,7 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 				if err := m.guardExactRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
 					return err
 				}
-				got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.ownershipOption()+"}")
+				got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.OwnershipOption()+"}")
 				if err == nil && got != entry.UID {
 					err = fmt.Errorf("ownership uid is %q, want %q", got, entry.UID)
 				}
@@ -2019,7 +1976,7 @@ func (m *materializer) sessionIdentities(ctx context.Context) ([]liveSessionIden
 }
 
 func (m *materializer) claimRuntimeUID(ctx context.Context, kind runtimeObjectKind, target, uid string) (bool, error) {
-	ownershipOption := runtimeObject{Kind: kind}.ownershipOption()
+	ownershipOption := runtimeObject{Kind: kind}.OwnershipOption()
 	var args []string
 	switch kind {
 	case runtimeWindow:
@@ -2945,19 +2902,6 @@ func (m *materializer) runtimeIDs(ctx context.Context, command, target, format, 
 	return ids, nil
 }
 
-func exactTmuxHandle(output, prefix string) string {
-	output = strings.TrimSpace(output)
-	if len(output) < 2 || !strings.HasPrefix(output, prefix) {
-		return ""
-	}
-	for _, r := range strings.TrimPrefix(output, prefix) {
-		if r < '0' || r > '9' {
-			return ""
-		}
-	}
-	return output
-}
-
 func errorCreatedHandle(output, prefix string, before, after map[string]bool) string {
 	var candidate string
 	for line := range strings.SplitSeq(output, "\n") {
@@ -2974,42 +2918,6 @@ func errorCreatedHandle(output, prefix string, before, after map[string]bool) st
 		return ""
 	}
 	return candidate
-}
-
-// The field separator of the materializer's own list queries, in the two
-// spellings tmux distinguishes.
-//
-// A format must carry the escaped spelling. tmux renders a non-printable byte in
-// list output as its octal escape, so a raw 0x1F in the format comes back raw on
-// tmux 3.6 and as the four literal characters `\037` on tmux 3.5a, while the
-// escaped spelling comes back identically on both. Parsing folds the escaped
-// spelling back to the raw byte, which also accepts the raw form.
-const (
-	tmuxRowSep       = "\x1f"
-	tmuxRowSepFormat = "\\037"
-)
-
-// tmuxRowFormat joins format fields with the separator tmux prints verbatim.
-func tmuxRowFormat(fields ...string) string {
-	return strings.Join(fields, tmuxRowSepFormat)
-}
-
-// splitTmuxRows parses a tmux list output into rows of exactly want fields.
-func splitTmuxRows(output string, want int) [][]string {
-	output = strings.ReplaceAll(output, tmuxRowSepFormat, tmuxRowSep)
-	var rows [][]string
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, tmuxRowSep)
-		if len(fields) != want {
-			continue
-		}
-		rows = append(rows, fields)
-	}
-	return rows
 }
 
 // strictTmuxRows is the identity-boundary variant of splitTmuxRows. Inventory

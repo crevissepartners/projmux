@@ -244,7 +244,7 @@ func runContinueReplay(t *testing.T, root, logs string, cacheOff bool, driftAfte
 			outcome.scopeClosedAt = len(outcome.calls)
 		}
 		if outcome.firstReuseAt < 0 && probe.runtime != nil {
-			if stats := probe.runtime.routeIdentity.snapshot(); stats.Reuses > 0 {
+			if stats := probe.runtime.routeIdentity.Snapshot(); stats.Reuses > 0 {
 				outcome.firstReuseAt, outcome.proofsAtFirstReuse = len(outcome.calls), stats.Proofs
 			}
 		}
@@ -321,7 +321,7 @@ func TestContinueReplayProvesItsFirstRouteIdentityAgainstTmux(t *testing.T) {
 			if cache == nil {
 				return
 			}
-			if stats := cache.snapshot(); stats.Proofs > proved.Proofs || stats.Reuses > proved.Reuses {
+			if stats := cache.Snapshot(); stats.Proofs > proved.Proofs || stats.Reuses > proved.Reuses {
 				proved = stats
 			}
 			if reusedKey {
@@ -339,7 +339,7 @@ func TestContinueReplayProvesItsFirstRouteIdentityAgainstTmux(t *testing.T) {
 			// the materializer guards on. The probe names the same route target,
 			// so a miss cannot invalidate anything the replay is relying on; it
 			// simply asks again on the next call until the proof is there.
-			if cache.reuse(key) {
+			if cache.Reuse(key) {
 				provenKey, reusedKey = key, true
 			}
 		}
@@ -396,13 +396,13 @@ func TestContinueReplayProvesItsFirstRouteIdentityAgainstTmux(t *testing.T) {
 		{name: "guard scope", mutate: func(k *runtimeRouteIdentityKey) { k.Scope = routeIdentityScopeResolvedRoute }},
 	} {
 		cache := newRuntimeRouteIdentityCache("op-continue")
-		cache.record(provenKey)
-		if !cache.reuse(provenKey) {
+		cache.Record(provenKey)
+		if !cache.Reuse(provenKey) {
 			t.Fatalf("the replay's own proven tuple %#v was not reusable", provenKey)
 		}
 		differing := provenKey
 		drift.mutate(&differing)
-		if cache.reuse(differing) {
+		if cache.Reuse(differing) {
 			t.Fatalf("differing %s reused the Continue replay's proof", drift.name)
 		}
 	}
@@ -548,7 +548,7 @@ func TestContinueReplayCommitReproofRefusesDriftBeforeCommitWithoutAWrite(t *tes
 			if cache == nil {
 				return
 			}
-			stats := cache.snapshot()
+			stats := cache.Snapshot()
 			if flippedAt >= 0 {
 				return
 			}

@@ -144,7 +144,7 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 	ledger.Runtime = setupInstalledRecoveryRuntime(t, fixture, input.Binary, run)
 	save()
 	route, err := resolveExactObjectRuntimeMutationRoute(ctx, inttmux.ExecRunner{}, os.Getenv)
-	if err != nil || route.expectedSocketPath != ledger.Runtime.Socket || route.target.Value != ledger.Runtime.Name || route.authority == nil {
+	if err != nil || route.ExpectedSocketPath != ledger.Runtime.Socket || route.Target.Value != ledger.Runtime.Name || route.Authority == nil {
 		t.Fatalf("zero-input exact route proof failed: %s", recoveryError(err))
 	}
 	processes, err := fixture.OwnedProcesses()
@@ -152,7 +152,7 @@ func TestInstalledManagedCodexConnectionDiagnostic(t *testing.T) {
 		t.Fatal("zero-input process proof unavailable")
 	}
 	for _, process := range processes {
-		if process.Kind == codexinstalled.ProcessOwnedExecutable && strconv.Itoa(process.PID) == route.authority.ServerPID {
+		if process.Kind == codexinstalled.ProcessOwnedExecutable && strconv.Itoa(process.PID) == route.Authority.ServerPID {
 			ledger.TmuxProcess = process
 		}
 	}

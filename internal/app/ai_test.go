@@ -79,7 +79,7 @@ func TestProductionAIPaneBindersUseOnlySuppliedExactRuntimeRoute(t *testing.T) {
 	tmux := newFakeTmux()
 	session := tmux.addSession("agent-bind")
 	paneID := session.windows[0].panes[0].id
-	routed := explicitTmuxRunner{runner: tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
+	routed := explicitTmuxRunner{Runner: tmux, Target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
 	cmd := testAICommand(t.TempDir())
 
 	if err := cmd.BindManagedAgentPaneOnRoute(context.Background(), routed, paneID, aiModeCodex, "/repo", "fresh"); err != nil {
@@ -1958,7 +1958,7 @@ func TestBindAgentPaneOnRouteWritesCanonicalLaunchReceipt(t *testing.T) {
 
 	tmux := newFakeTmux()
 	paneID := tmux.addSession("launch-receipt").windows[0].panes[0].id
-	runner := explicitTmuxRunner{runner: tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
+	runner := explicitTmuxRunner{Runner: tmux, Target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
 	cmd := testAICommand(t.TempDir())
 	if err := cmd.BindAgentPaneOnRoute(context.Background(), runner, agentPaneBinding{
 		PaneID: paneID, Provider: aiModeCodex, ContextDir: "/repo", Title: "phase one",

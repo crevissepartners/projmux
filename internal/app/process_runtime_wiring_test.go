@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"io"
 	"net"
 	"os"
@@ -16,6 +13,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -106,7 +107,7 @@ func TestProcessRuntimeControllerDeclarationsUseSameSnapshot(t *testing.T) {
 	stored.Status.Activation.Generation = "process-generation"
 	process := resourcegraph.ProcessInventory{Declared: []resourcegraph.ProcessKey{{Host: "unknown-host", Pane: pane.Metadata.UID, Generation: "process-generation"}}}
 	target := tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}
-	planner := resourceReconcilePlanner{reader: explicitTmuxRunner{runner: runner, target: target}, store: store.store(), newReconciler: reconcileFixtureReconciler(root, "alpha"), materializeProject: "uid:" + project.Metadata.UID, exactTarget: target}
+	planner := resourceReconcilePlanner{reader: explicitTmuxRunner{Runner: runner, Target: target}, store: store.store(), newReconciler: reconcileFixtureReconciler(root, "alpha"), materializeProject: "uid:" + project.Metadata.UID, exactTarget: target}
 	kernel := newResourceControllerKernel(runner, store.store(), planner, target)
 	kernel.observe = func(ctx context.Context) resourcegraph.Inventory {
 		return intmetadata.NewInventoryObserver(runner, target.ExplicitProjection()).Observe(ctx)

@@ -57,7 +57,7 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 	}
 	roots := slices.Clone(f.roots)
 	typedMirror := runtimeMutationMetadataMirror{runner: explicitTmuxRunner{
-		runner: f.tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: f.tmux.socketPath, Source: tmuxSocketPathSource},
+		Runner: f.tmux, Target: tmuxTransport{Kind: tmuxSocketPath, Value: f.tmux.socketPath, Source: tmuxSocketPathSource},
 	}}
 	return &createCommand{
 		store: &resourceStore{

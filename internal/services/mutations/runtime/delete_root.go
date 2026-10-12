@@ -1,4 +1,4 @@
-package app
+package runtime
 
 import (
 	"fmt"
@@ -15,43 +15,43 @@ import (
 // its runtime through spec.session and must not carry a Project uid mirror.
 // Keeping the kind beside the uid prevents the live preflight from flattening a
 // control-owned descendant into the old Project-only transport policy.
-type deleteRootOwner struct {
+type DeleteRootOwner struct {
 	Kind    coremetadata.Kind
 	UID     string
 	Session string
 }
 
-func deleteRootForWindow(registry coremetadata.Registry, window coremetadata.Window) (deleteRootOwner, error) {
+func DeleteRootForWindow(registry coremetadata.Registry, window coremetadata.Window) (DeleteRootOwner, error) {
 	owner := window.Metadata.OwnerRef
 	if owner == nil {
-		return deleteRootOwner{}, fmt.Errorf("registry Window uid %q has no managed root owner", window.Metadata.UID)
+		return DeleteRootOwner{}, fmt.Errorf("registry Window uid %q has no managed root owner", window.Metadata.UID)
 	}
 	switch owner.Kind {
 	case coremetadata.KindProject:
 		project, ok := registry.Project(owner.UID)
 		if !ok {
-			return deleteRootOwner{}, fmt.Errorf("registry Window uid %q has no owning Project %q", window.Metadata.UID, owner.UID)
+			return DeleteRootOwner{}, fmt.Errorf("registry Window uid %q has no owning Project %q", window.Metadata.UID, owner.UID)
 		}
 		session := ""
 		if project.Status.Session != nil {
 			session = strings.TrimSpace(project.Status.Session.Name)
 		}
-		return deleteRootOwner{Kind: owner.Kind, UID: owner.UID, Session: session}, nil
+		return DeleteRootOwner{Kind: owner.Kind, UID: owner.UID, Session: session}, nil
 	case coremetadata.KindControlSession:
 		control, ok := registry.ControlSession(owner.UID)
 		if !ok {
-			return deleteRootOwner{}, fmt.Errorf("registry Window uid %q has no owning ControlSession %q", window.Metadata.UID, owner.UID)
+			return DeleteRootOwner{}, fmt.Errorf("registry Window uid %q has no owning ControlSession %q", window.Metadata.UID, owner.UID)
 		}
-		return deleteRootOwner{
+		return DeleteRootOwner{
 			Kind: owner.Kind, UID: owner.UID, Session: strings.TrimSpace(control.Spec.Session),
 		}, nil
 	default:
-		return deleteRootOwner{}, fmt.Errorf("registry Window uid %q has unsupported root owner kind %q uid %q",
+		return DeleteRootOwner{}, fmt.Errorf("registry Window uid %q has unsupported root owner kind %q uid %q",
 			window.Metadata.UID, owner.Kind, owner.UID)
 	}
 }
 
-func (o deleteRootOwner) validateLiveSession(spelling, liveKind, liveID, resourceUID, projectMirror, sessionName string) error {
+func (o DeleteRootOwner) ValidateLiveSession(spelling, liveKind, liveID, resourceUID, projectMirror, sessionName string) error {
 	switch o.Kind {
 	case coremetadata.KindProject:
 		if projectMirror != "" && projectMirror != o.UID {

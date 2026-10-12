@@ -162,7 +162,7 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 			return namer.SessionName(root)
 		},
 	}
-	routeSocketPath := route.expectedSocketPath
+	routeSocketPath := route.ExpectedSocketPath
 	reconciler.sessionSocketPath = func() string { return routeSocketPath }
 	if _, recording := runner.(*resourcePlanTmuxRunner); recording {
 		// Project identity is already an explicit resource-plan item. Repeating

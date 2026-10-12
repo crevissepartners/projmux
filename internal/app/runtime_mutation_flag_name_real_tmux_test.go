@@ -66,7 +66,7 @@ func TestMaterializerCreatesFlagShapedWindowNamesThroughRealTmux(t *testing.T) {
 	}
 
 	target := tmuxTransport{Kind: tmuxSocketPath, Value: socket, Source: tmuxSocketPathSource}
-	routed := explicitTmuxRunner{runner: shellTmuxExecRunner{env: func() []string { return environment }}, target: target}
+	routed := explicitTmuxRunner{Runner: shellTmuxExecRunner{env: func() []string { return environment }}, Target: target}
 	runtime := &materializer{runner: routed, mirror: intmetadata.NewMirror(routed), target: target}
 	if err := runtime.guardExactRoute(ctx, false); err != nil {
 		t.Fatalf("bind isolated app route: %v", err)

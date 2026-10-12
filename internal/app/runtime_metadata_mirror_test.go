@@ -111,7 +111,7 @@ func newMetadataMirrorPlanFixture() (*metadataMirrorPlanRunner, runtimeMutationM
 		options: map[string]string{},
 	}
 	target := tmuxTransport{Kind: tmuxSocketPath, Value: runner.path, Source: tmuxSocketPathSource}
-	return runner, runtimeMutationMetadataMirror{runner: explicitTmuxRunner{runner: runner, target: target}}
+	return runner, runtimeMutationMetadataMirror{runner: explicitTmuxRunner{Runner: runner, Target: target}}
 }
 
 func TestTypedMetadataMirrorProjectIsOrderedGuardedAndRepeatEmpty(t *testing.T) {

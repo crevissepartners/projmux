@@ -71,7 +71,7 @@ func newRecoveryHarness(t *testing.T) *recoveryHarness {
 	command.lookupEnv = func(string) string { return "" }
 	command.runner = runner
 	command.observeFragments = func(ctx context.Context, target tmuxTransport) ([]intmetadata.IdentityFragment, error) {
-		return intmetadata.NewMirror(explicitTmuxRunner{runner: runner, target: target}).ObserveIdentityFragments(ctx)
+		return intmetadata.NewMirror(explicitTmuxRunner{Runner: runner, Target: target}).ObserveIdentityFragments(ctx)
 	}
 	return &recoveryHarness{t: t, command: command, store: store, dir: dir, tmux: runner}
 }

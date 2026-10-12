@@ -339,8 +339,8 @@ func (t codexHookDeliveryTarget) args(args ...string) []string {
 // repeated, and the answer names a cause instead of a process exit status.
 func (t codexHookDeliveryTarget) contained(paneID string) (bool, string) {
 	runner := explicitTmuxRunner{
-		runner: aiCommandMuxBackend{runCommand: t.command.runCommand, readCommand: t.command.readCommand},
-		target: t.transport,
+		Runner: aiCommandMuxBackend{runCommand: t.command.runCommand, readCommand: t.command.readCommand},
+		Target: t.transport,
 	}
 	output, err := runner.Run(context.Background(), "tmux",
 		"display-message", "-p", "-t", paneID, "-F", codexHookDeliveryRouteFormat)

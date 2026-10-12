@@ -19,7 +19,7 @@ func TestResourceAgentBindingNeverStartsLegacyTitleWatcher(t *testing.T) {
 	t.Parallel()
 	tmux := newFakeTmux()
 	paneID := tmux.addSession("agent-bind").windows[0].panes[0].id
-	runner := explicitTmuxRunner{runner: tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
+	runner := explicitTmuxRunner{Runner: tmux, Target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
 	cmd := testAICommand(t.TempDir())
 	for _, binding := range []agentPaneBinding{
 		{PaneID: paneID, Provider: aiModeCodex, ContextDir: "/work", Title: "codex:work"},

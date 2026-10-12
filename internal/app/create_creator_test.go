@@ -77,14 +77,14 @@ func bindCreatorTestRoute(command *createCommand, runner tmuxCommandRunner, look
 			return err
 		}
 		resolved = route
-		exact := explicitTmuxRunner{runner: runner, target: route.target}
+		exact := explicitTmuxRunner{Runner: runner, Target: route.Target}
 		command.reconciler.mirror = intmetadata.NewMirror(exact)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
-		command.runtime.target = route.target
-		command.runtime.expectedSocketPath = route.expectedSocketPath
-		command.runtime.socketName = route.socketName
-		command.runtime.routeAuthority = route.authority
+		command.runtime.target = route.Target
+		command.runtime.expectedSocketPath = route.ExpectedSocketPath
+		command.runtime.socketName = route.SocketName
+		command.runtime.routeAuthority = route.Authority
 		return nil
 	}
 	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
@@ -240,8 +240,8 @@ func TestExplicitCreateFromAnAgentPaneRecordsTheCreatorOnEveryNewAgentAndItsPane
 			if got := creatorQueryCount(fx.tmux); got != 1 {
 				t.Fatalf("creator tmux queries = %d, want exactly one per create invocation", got)
 			}
-			if fx.route.authority == nil || fx.route.authority.PaneID != "" {
-				t.Fatalf("explicit route authority = %#v, want no ambient Pane containment", fx.route.authority)
+			if fx.route.Authority == nil || fx.route.Authority.PaneID != "" {
+				t.Fatalf("explicit route authority = %#v, want no ambient Pane containment", fx.route.Authority)
 			}
 		})
 	}

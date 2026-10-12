@@ -124,9 +124,9 @@ func TestManagedRuntimeStopUsesOnePrintedPhysicalObservationAndRegistryAuthority
 	target := managedRuntimeStopTarget{
 		SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
 		Route: runtimeMutationRoute{
-			target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, socketName: defaultAppSocket,
-			expectedSocketPath: runner.physical,
-			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+			Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, SocketName: defaultAppSocket,
+			ExpectedSocketPath: runner.physical,
+			Authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 		},
 	}
 	authorityReads := 0
@@ -232,9 +232,9 @@ func TestTwoAgentProjectStopPrewriteFailureCommitsNoPartialRegistryAndKillsNothi
 	}
 	runner := &exactManagedStopRunner{physical: "/tmp/projmux-stop", logical: defaultAppSocket, rootUID: "prj-alpha"}
 	target := managedRuntimeStopTarget{SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
-		Route: runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
-			socketName: defaultAppSocket, expectedSocketPath: runner.physical,
-			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
+		Route: runtimeMutationRoute{Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
+			SocketName: defaultAppSocket, ExpectedSocketPath: runner.physical,
+			Authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
 	err := executeManagedRuntimeStop(context.Background(), runner, target,
 		managedRuntimeStopRegistryAuthority(failed.snapshot), failed)
 	if err == nil || !strings.Contains(err.Error(), "zero tmux mutations") || runner.killed {
@@ -271,9 +271,9 @@ func TestProjectStopFailureCompensatesOnlyWhenExactSessionIsProvedLive(t *testin
 				applyErr: errors.New("injected kill-session failure"), applyKills: test.applyKills,
 			}
 			target := managedRuntimeStopTarget{SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
-				Route: runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
-					socketName: defaultAppSocket, expectedSocketPath: runner.physical,
-					authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
+				Route: runtimeMutationRoute{Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
+					SocketName: defaultAppSocket, ExpectedSocketPath: runner.physical,
+					Authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
 			stopStore := store.store()
 			err := executeManagedRuntimeStop(context.Background(), runner, target,
 				managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore)
@@ -371,9 +371,9 @@ func TestProjectStopGenerationDriftAfterPrewriteRefusesKill(t *testing.T) {
 		},
 	}
 	target := managedRuntimeStopTarget{SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
-		Route: runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
-			socketName: defaultAppSocket, expectedSocketPath: runner.physical,
-			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
+		Route: runtimeMutationRoute{Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
+			SocketName: defaultAppSocket, ExpectedSocketPath: runner.physical,
+			Authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
 	stopStore := store.store()
 	err := executeManagedRuntimeStop(context.Background(), runner, target,
 		managedRuntimeStopRegistryAuthority(stopStore.snapshot), stopStore)
@@ -399,9 +399,9 @@ func TestManagedRuntimeStopRegistryAuthorityDriftRefusesBeforeWrite(t *testing.T
 	target := managedRuntimeStopTarget{
 		SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "uid:project",
 		Route: runtimeMutationRoute{
-			target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, socketName: defaultAppSocket,
-			expectedSocketPath: runner.physical,
-			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+			Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, SocketName: defaultAppSocket,
+			ExpectedSocketPath: runner.physical,
+			Authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 		},
 	}
 	err := executeManagedRuntimeStop(context.Background(), runner, target,
@@ -468,9 +468,9 @@ func TestProjectStopSurfaceExecutorMatchesLifecycleTableAndGenericCopyStaysGener
 
 func runtimeStopProjectTarget(runner *exactManagedStopRunner) managedRuntimeStopTarget {
 	return managedRuntimeStopTarget{SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
-		Route: runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
-			socketName: defaultAppSocket, expectedSocketPath: runner.physical,
-			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
+		Route: runtimeMutationRoute{Target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
+			SocketName: defaultAppSocket, ExpectedSocketPath: runner.physical,
+			Authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}}}
 }
 
 func assertRuntimeStopSessionProjection(t *testing.T, store *fakeResourceStore, projectUID string, want *coremetadata.SessionProjection) {

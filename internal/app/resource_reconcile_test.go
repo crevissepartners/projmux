@@ -1542,7 +1542,7 @@ func TestApprovedD3ModeStillPlansNoBlankD2Import(t *testing.T) {
 		t.Fatalf("socket target: %v", err)
 	}
 	planner := resourceReconcilePlanner{
-		reader:        explicitTmuxRunner{runner: command.runner, target: target},
+		reader:        explicitTmuxRunner{Runner: command.runner, Target: target},
 		store:         command.resources,
 		newReconciler: command.newReconciler,
 	}
