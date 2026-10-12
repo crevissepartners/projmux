@@ -7,7 +7,8 @@
 // rule set is, and of how a label resolves to a link. The rules belong to the
 // Project, and every surface shares them: a Claude Agent's system prompt shows
 // them, and a client that edits them, such as the web client, reads and writes
-// them through this package. There is no CLI edit command.
+// them through this package. The public link-rules commands and SDK use the
+// same management service.
 //
 // The JSON format, with every field always written:
 //
@@ -511,7 +512,7 @@ func (s Store) Load(uid string) (Rules, error) {
 	if len(content) > MaxFileSize {
 		return Rules{}, fmt.Errorf("read project links %q: %s is at least %d bytes; the limit is %d bytes", uid, path, MaxFileSize+1, MaxFileSize)
 	}
-	rules, err := decodeProjectLinks(content)
+	rules, err := Decode(content)
 	if err != nil {
 		return Rules{}, fmt.Errorf("read project links %q: %s is not valid project links JSON: %w", uid, path, err)
 	}
@@ -530,8 +531,9 @@ type projectLinksFile struct {
 	Links []Link          `json:"links"`
 }
 
-// decodeProjectLinks parses exactly one JSON object with no unknown fields.
-func decodeProjectLinks(content []byte) (Rules, error) {
+// Decode parses the stored JSON format: exactly one value with no unknown fields.
+// It does not validate rules; callers use Rules.Validate before writing.
+func Decode(content []byte) (Rules, error) {
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var stored projectLinksFile

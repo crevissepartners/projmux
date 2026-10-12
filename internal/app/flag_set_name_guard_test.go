@@ -31,6 +31,7 @@ const flagSetNameDynamicReason = "the name is the canonical spelling built from 
 // flagSetNameExceptions is keyed by flagParseGuardSite.key(). It is closed: a
 // row no site uses is stale.
 var flagSetNameExceptions = map[string]flagSetNameException{
+	`internal/app/link_rules.go parseLinkRulesArgs param fs of parseLinkRulesArgs`:                    {routes: []string{"link-rules show", "link-rules set", "link-rules delete"}, reason: "parseLinkRulesArgs receives the FlagSet named after the dispatched, validated link-rules verb"},
 	`internal/app/agent_message.go (*agentCommand).runMessageSend spelling`:                           {routes: []string{"agent message send"}, reason: "the name comes from the spelling argument runMessageSend is handed"},
 	`internal/app/agent_message.go (*agentCommand).runMessageStatus spelling`:                         {routes: []string{"agent message status"}, reason: "the name comes from the spelling argument runMessageStatus is handed"},
 	`internal/app/agent_message.go (*agentCommand).runWait spelling`:                                  {routes: []string{"agent wait"}, reason: "the name comes from the spelling argument runWait is handed"},

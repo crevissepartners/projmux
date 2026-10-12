@@ -112,8 +112,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Window focus now names the virtual Window materialization it permits.
-	const want = "f413d2e18aa1c7707b9c3d8466f9837afbf3d2d32cb7aea3579a89110eeafbb7"
+	// Adds link-rules show/set/delete with JSON projection to the public graph.
+	const want = "71836d0db8e44e3f44882ec8181f663d03f125c9737a85ed8b8139945202847f"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

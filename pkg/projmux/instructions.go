@@ -120,10 +120,13 @@ const (
 // Refusal describes a rejected operation. Use errors.As and Code, rather than
 // matching Error text. Other filesystem errors and context cancellation remain
 // ordinary errors. Users names the profiles blocking a deletion.
+// Field and Reason optionally describe a link rule validation or confirmation refusal.
 type Refusal struct {
 	Code    Code
 	Name    string
 	Users   []string
+	Field   string
+	Reason  string
 	message string
 }
 

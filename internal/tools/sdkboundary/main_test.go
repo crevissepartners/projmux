@@ -32,6 +32,8 @@ func TestImplementationAllowlist(t *testing.T) {
 		{module + "/internal/core/usage/adapters/codex", false, false},
 		{module + "/pkg/projmux", false, true},
 		{module + "/internal/services/instructions", false, true},
+		{module + "/internal/services/projectlinks", false, true},
+		{module + "/internal/services/projectlinks/escape", false, false},
 		{module + "/internal/services/runtime", false, true},
 		{module + "/internal/services/agentcatalog", false, true},
 		{module + "/internal/services/agentcatalog/escape", false, false},

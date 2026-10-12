@@ -148,6 +148,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/pkg/projmux",
 		module + "/internal/services/instructions",
 		module + "/internal/services/profiles",
+		module + "/internal/services/projectlinks",
 		module + "/internal/core/metadata",
 		module + "/internal/core/persona",
 		module + "/internal/core/profile",

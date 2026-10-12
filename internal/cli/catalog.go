@@ -2052,6 +2052,18 @@ var routes = []Route{
 		},
 	},
 	{
+		Effects: unchangedEffects(CardinalityUnchanged), Name: "link-rules", Invocation: InvocationRefusal,
+		CanonicalOrder: 31, Summary: "Show, replace, and delete one Project's label link rules", Disposition: DispositionCanonical,
+		Notes:     []string{"Project refs are explicit names or uid:<project>; the Project must be registered. Set reads the stored JSON format (urls is a map), atomically replaces the whole file, and --dry-run previews the same validation without writing. Delete requires --yes and is idempotent. JSON lists are always arrays; unreadable files are refused rather than shown as empty rules.", "Validation refusals carry invalid-link-rules, a field, and a reason (exit 2). Stored file read refusals carry link-rules-unreadable (exit 1). These commands never contact tmux or change Agents."},
+		Usage:     []string{"projmux link-rules show <project-ref> [-o text|json]", "projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]", "projmux link-rules delete <project-ref> --yes [-o text|json]"},
+		Canonical: []string{"link-rules show", "link-rules set", "link-rules delete"},
+		Children: []Route{
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "show", Invocation: InvocationExplicit, Summary: "Show rules, example links, placeholders, and Project variables", Usage: []string{"projmux link-rules show <project-ref> [-o text|json]"}, Canonical: []string{"link-rules show"}, Outputs: []OutputMode{OutputModeJSON}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "set", Invocation: InvocationExplicit, Summary: "Validate and replace rules from stored-format JSON; omitted input reads stdin", Usage: []string{"projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]"}, Canonical: []string{"link-rules set"}, Outputs: []OutputMode{OutputModeJSON}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "delete", Invocation: InvocationExplicit, Summary: "Delete the rule file and show the resulting empty rules", Usage: []string{"projmux link-rules delete <project-ref> --yes [-o text|json]"}, Canonical: []string{"link-rules delete"}, Outputs: []OutputMode{OutputModeJSON}},
+		},
+	},
+	{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "pin",
 		Invocation:     InvocationRefusal,

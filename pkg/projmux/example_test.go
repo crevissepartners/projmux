@@ -103,3 +103,19 @@ func ExampleClient_WriteProfile() {
 	_, _ = client.ReadProfile(ctx, "reviewer")
 	_ = client.DeleteProfile(ctx, "reviewer", true)
 }
+
+// Preview validates exactly what a subsequent write would store without creating a file.
+func ExampleClient_WriteProjectLinkRules() {
+	client, err := projmux.NewClient(projmux.Options{})
+	if err != nil {
+		panic(err)
+	}
+	preview, err := client.WriteProjectLinkRules(context.Background(), "my-project", core.ProjectLinkRules{
+		Repo:  []string{"https://github.com/example/repo"},
+		Links: []core.ProjectLink{{LabelKey: "pr", Template: "{repo}/pull/{value}"}},
+	}, true)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(preview.DryRun, preview.Links[0].Example)
+}

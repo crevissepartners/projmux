@@ -160,6 +160,9 @@ var settingsLayerGuardArgv = [][]string{
 	{"persona", "edit", "reviewer"},
 	{"persona", "delete", "reviewer", "--yes"},
 
+	{"link-rules", "show", "alpha"},
+	{"link-rules", "set", "alpha", "--file", "{tmp}/link-rules.json", "--dry-run"},
+	{"link-rules", "delete", "alpha", "--yes"},
 	{"profile", "list"},
 	{"profile", "set", "reviewer", "--file", "{tmp}/profile.toml"},
 	{"profile", "show", "reviewer"},
@@ -496,6 +499,9 @@ func newSettingsLayerGuardEnv(t *testing.T) *settingsLayerGuardEnv {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(env.tmp, "profile.toml"), []byte("effort = \"high\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env.tmp, "link-rules.json"), []byte(`{"links":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return env

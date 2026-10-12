@@ -161,6 +161,7 @@ func TestClassifyCoversEveryTopLevelRule(t *testing.T) {
 		{args: []string{"open", "project"}},
 		{args: []string{"persona", "set"}},
 		{args: []string{"profile", "set"}},
+		{args: []string{"link-rules", "set"}, changing: true},
 		{args: []string{"rebind", "project"}},
 		{args: []string{"reconcile", "resources"}},
 		{args: []string{"rename", "pane"}},
