@@ -1614,7 +1614,7 @@ var routes = []Route{
 				Effects:          deleteChildEffects(),
 				Name:             "agent",
 				Invocation:       InvocationNatural,
-				Summary:          "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
+				Summary:          "Delete Agents and their managed Panes; projmux.io/protected labels refuse deletion; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
 				CanonicalSummary: "Delete an Agent and its managed Panes",
 				Aliases:          []string{"agents"},
 				Usage:            []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},

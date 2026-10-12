@@ -68,6 +68,7 @@ func TestProcessRuntimeDescribeGolden(t *testing.T) {
 			"Status:          " + status + "\n" +
 			"Provider:        codex\n" +
 			"Phase:           Running\n" +
+			"Protected:       false\n" +
 			"Interaction:     unknown\n" +
 			"Activation:      not_requested\n" +
 			"WorkspaceCWD:    /srv/alpha\n" +

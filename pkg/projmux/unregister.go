@@ -55,6 +55,9 @@ func (c *Client) UnregisterProject(ctx context.Context, req core.UnregisterReque
 		return out, resourceRefusal(err)
 	}
 	plan := mutations.BuildDeletePlan(reg, metadata.KindProject, resolution)
+	if err := mutations.ValidateDeleteProtection(reg, plan); err != nil {
+		return out, deleteRefusal(CodeAgentProtected, err)
+	}
 	preview := mutations.PreviewDelete(plan)
 	if err := unregisterCopy(preview, &out.Plan); err != nil {
 		return out, err

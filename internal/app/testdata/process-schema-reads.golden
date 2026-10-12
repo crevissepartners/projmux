@@ -125,6 +125,7 @@ Owner:           project/alpha window/window-01
 Status:          offline
 Provider:        codex
 Phase:           Running
+Protected:       false
 Interaction:     unknown
 Activation:      not_requested
 WorkspaceCWD:    /srv/alpha

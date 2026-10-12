@@ -265,6 +265,9 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 			spelling, strings.Join(unmatched, ", "), strings.ToLower(string(kind))))
 	}
 	plan := buildDeletePlan(registry, kind, resolution)
+	if err := mutations.ValidateDeleteProtection(registry, mutations.DeletePlan(plan)); err != nil {
+		return err
+	}
 	plan.Unnamed = implicit
 	plan.Implicit = implicit && !*all
 	plan.ExactUID = explicitUIDTargetRefs(flags.targetRefs())

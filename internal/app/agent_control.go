@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"io"
 	"os"
 	"slices"
@@ -483,6 +484,8 @@ func (c *agentCommand) callProcessForegroundAction(reg coremetadata.Registry, ag
 
 func processTurnAcceptance(result processForegroundResult) error {
 	switch {
+	case result.DeleteRefusal != "":
+		return &mutations.Failure{Code: mutations.CodeAgentProtected, Cause: errors.New(result.DeleteRefusal)}
 	case result.Accepted:
 		return nil
 	case result.Busy:

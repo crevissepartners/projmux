@@ -101,6 +101,9 @@ func (c *DeleteExecutor) Execute(ctx context.Context, spelling string, plan Dele
 	var actor mutations.DeletionActor
 	var affected []mutations.DeletionAffected
 	if err := c.Mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, planUIDs(plan)); len(recordedIntent) == 0 && err != nil {
+			return err
+		}
 		if c.Allow != nil {
 			if err := c.Allow(*working, plan); err != nil {
 				return err
@@ -290,4 +293,12 @@ func (c *DeleteExecutor) mapMetadataError(err error) error {
 // NeedsDeleteConfirmation is shared by prompt and noninteractive admission.
 func NeedsDeleteConfirmation(plan DeletePlan, panes PaneLiveDeletePlan) bool {
 	return plan.NeedsConfirmation() || panes.EndsWindows() > 0 || panes.EndsSessions() > 0
+}
+
+func planUIDs(plan DeletePlan) []string {
+	var uids []string
+	for _, target := range plan.Targets {
+		uids = append(uids, target.Match.UID)
+	}
+	return uids
 }

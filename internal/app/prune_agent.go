@@ -12,6 +12,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // pruneAgentObservation takes one read-only observation of the exact tmux
@@ -218,6 +219,13 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	// Selection only reads: the Registry value is the loaded copy and the tmux
 	// observation is read-only, so the default listing opens no transaction.
 	plan := selectPruneAgents(registry, c.now().UTC(), criteria, c.observe)
+	var protectedUIDs []string
+	for _, entry := range append(append([]pruneAgentCandidate{}, plan.candidates...), plan.unknown...) {
+		protectedUIDs = append(protectedUIDs, entry.UID)
+	}
+	if err := mutations.ValidateDeleteTargets(registry, coremetadata.KindAgent, protectedUIDs); err != nil {
+		return err
+	}
 	if !*yes {
 		return writePruneAgentPlan(stdout, spelling, criteria, plan, true)
 	}
@@ -241,6 +249,9 @@ func (c *pruneAgentCommand) Run(args []string, stdout, stderr io.Writer) error {
 			// session ref that was recorded, or a clock that moved an Agent across
 			// the age bound changes the plan, and the whole run is refused rather
 			// than executed on stale evidence.
+			if err := mutations.ValidateDeleteTargets(*working, coremetadata.KindAgent, protectedUIDs); err != nil {
+				return err
+			}
 			current := selectPruneAgents(*working, c.now().UTC(), criteria, c.observe)
 			if len(current.unknown) > 0 {
 				return current.observationRefusal(spelling)

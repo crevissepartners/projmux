@@ -50,6 +50,9 @@ func Unregister(ctx context.Context, plan DeletePlan, resolution selector.Resolu
 	var actor DeletionActor
 	var affected []DeletionAffected
 	err := opts.Mutate(coremetadata.KindProject, oldUIDs, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if err := ValidateDeleteProtection(*working, BuildDeletePlan(*working, coremetadata.KindProject, resolution)); err != nil {
+			return err
+		}
 		if current := BuildDeletePlan(*working, coremetadata.KindProject, resolution).Signature(); current != plan.Signature() {
 			return &Failure{Code: "unregister-plan-changed", Cause: errors.New("delete project: the unregister plan changed between preflight and execution; nothing was deleted")}
 		}

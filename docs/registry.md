@@ -205,3 +205,34 @@ An ancestry read failure after observing a candidate prints
 print `creator not recorded: process-child-identity-mismatch` or
 `process-binding-mismatch`; ambiguous matches print `process-child-ambiguous`.
 Observation failures preserve create stdout, routing and exit status.
+
+### Agent deletion protection
+
+Set `projmux label agent <ref> projmux.io/protected=true` to protect an Agent.
+The presence of `projmux.io/protected` protects it regardless of value (including
+`false` or an empty value). Only removing the label disables protection:
+`projmux label agent <ref> projmux.io/protected-`.
+
+Explicit deletion, unregister and prune refuse the whole operation with
+`agent-protected` when its plan removes a protected Agent, including Window and
+Project cascades. Previews also refuse and identify the Agent and exact removal
+command. Prune refuses the whole candidate set so no unprotected candidate is
+partially removed. There is no bypass flag. A plain Pane deletion that leaves
+its Agent Offline is allowed; deletion of the final Pane in a virtual Window
+is refused when the resulting cascade would remove a protected Agent.
+
+Protection is checked again under execution admission before runtime effects.
+For tmux deletion, durable termination intent is the admission point (or the
+locked Registry deletion for a plan with no live target). For process deletion,
+the first owner checks the entire plan under the admission lock before accepting
+deletion Stop. That admission permits the entire operation; subsequent hosts
+retain binding and plan checks without rechecking protection.
+A label attached after admission does not cancel an already admitted deletion.
+Process deletion uses a dedicated owner admission before Stop. Ordinary Stop,
+resume and restart retain their existing behavior. `get agents` marks protected
+names with `[projmux.io/protected]`; `describe agent` reports `Protected`.
+Structured reads retain the protection label in `metadata.labels` without a
+Registry schema change.
+
+Automatic rollback, lifecycle cleanup, Fresh replacement and recovery protection
+are a separate follow-up; this explicit deletion contract does not cover them.

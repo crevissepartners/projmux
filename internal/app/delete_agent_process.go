@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"io"
 	"slices"
 	"strings"
@@ -157,15 +159,23 @@ func processBirthAlive(birth coremetadata.ProcessIdentity) bool {
 	return err == nil && current == birth
 }
 
-// stopProcessAgentOwner sends the existing host control "stop" to the exact
+// stopProcessAgentOwner sends deletion-specific Stop admission to the exact
 // owner socket. Socket identity and kernel peer birth are verified by the
 // shared caller; a stale or unreachable host is never rediscovered.
-func stopProcessAgentOwner(_ context.Context, reg coremetadata.Registry, agent coremetadata.Agent) error {
+func stopProcessAgentOwner(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent) error {
 	control := &agentCommand{controlPaths: config.DefaultPathsFromEnv}
 	var err error
 	switch agent.Spec.Provider {
 	case aiModeClaude, aiModeCodex:
-		_, err = control.callProcessTurn(reg, agent, agent.Spec.Provider, "stop", "")
+		admission, ok := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
+		if !ok {
+			return processhost.ErrStale
+		}
+		payload, marshalErr := json.Marshal(admission)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, err = control.callProcessTurn(reg, agent, agent.Spec.Provider, "delete-stop", string(payload))
 	default:
 		err = processhost.ErrStale
 	}
@@ -323,6 +333,12 @@ func processTerminationSignature(receipt *coremetadata.TerminationEvidence) stri
 }
 
 func (d *processAgentDeleter) classifyPlan(registry coremetadata.Registry, plan deletePlan) ([]processDeleteTarget, error) {
+	if err := mutations.ValidateDeleteTargets(registry, plan.Kind, plan.Uids()); err != nil {
+		return nil, err
+	}
+	return d.classifyAdmittedPlan(registry, plan)
+}
+func (d *processAgentDeleter) classifyAdmittedPlan(registry coremetadata.Registry, plan deletePlan) ([]processDeleteTarget, error) {
 	if plan.Kind == coremetadata.KindWindow {
 		for _, target := range plan.Targets {
 			if !registry.IsVirtualWindow(target.Match.UID) {
@@ -352,6 +368,14 @@ type processDeleteOutcome struct {
 // retirement, reclassifies outside the lock, and deletes the whole plan in one
 // transaction that must reproduce the reclassified Registry evidence.
 func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targets []processDeleteTarget, actor func(*coremetadata.Registry) DeletionActor) (processDeleteOutcome, error) {
+	registryBeforeStop, err := d.store.load()
+	if err != nil {
+		return processDeleteOutcome{}, err
+	}
+	if err := mutations.ValidateDeleteTargets(registryBeforeStop, plan.Kind, plan.Uids()); err != nil {
+		return processDeleteOutcome{}, err
+	}
+	ctx = context.WithValue(ctx, processDeleteAdmissionKey{}, processDeleteAdmission{Kind: plan.Kind, UIDs: plan.Uids(), Signature: plan.Signature()})
 	stopped := map[string]bool{}
 	for _, target := range targets {
 		if target.Runtime != processDeleteRuntimeRunning {
@@ -361,6 +385,9 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 			return processDeleteOutcome{}, err
 		}
 		stopped[target.Agent] = true
+		admission := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
+		admission.Admitted = true
+		ctx = context.WithValue(ctx, processDeleteAdmissionKey{}, admission)
 	}
 	registry, err := d.store.load()
 	if err != nil {
@@ -369,7 +396,7 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 	if current := buildDeletePlan(registry, plan.Kind, resolutionOf(plan)).Signature(); current != plan.Signature() {
 		return processDeleteOutcome{}, processDeleteRefusal(processDeleteRefusedToken, "", "delete agent: the cascade plan changed before deletion; nothing was deleted")
 	}
-	final, err := d.classifyPlan(registry, plan)
+	final, err := d.classifyAdmittedPlan(registry, plan)
 	if err != nil {
 		return processDeleteOutcome{}, err
 	}
@@ -389,6 +416,9 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 	approved := processDeleteSignature(registry, plan)
 	outcome := processDeleteOutcome{targets: final}
 	err = d.store.mutate(plan.Kind, plan.Uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, plan.Uids()); len(stopped) == 0 && err != nil {
+			return err
+		}
 		if current := buildDeletePlan(*working, plan.Kind, resolutionOf(plan)).Signature(); current != plan.Signature() {
 			return processDeleteRefusal(processDeleteRefusedToken, "", "the cascade plan changed between preflight and deletion; nothing was deleted")
 		}
@@ -426,7 +456,7 @@ func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targ
 func (d *processAgentDeleter) stopAndWait(ctx context.Context, target processDeleteTarget) error {
 	ctx, cancel := context.WithTimeout(ctx, d.waitLimit)
 	defer cancel()
-	admission := time.Now().Add(d.stopAdmission)
+	admissionDeadline := time.Now().Add(d.stopAdmission)
 	var err error
 	for {
 		registry, loadErr := d.store.load()
@@ -437,8 +467,17 @@ func (d *processAgentDeleter) stopAndWait(ctx context.Context, target processDel
 		if !ok {
 			return processDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning, "registry Agent uid %q disappeared before Stop; nothing was changed", target.Agent)
 		}
+		admission, ok := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
+		if !ok {
+			plan := buildDeletePlan(registry, coremetadata.KindAgent, selector.Resolution{Kind: coremetadata.KindAgent, Matches: []selector.Match{{Kind: coremetadata.KindAgent, UID: target.Agent}}})
+			admission = processDeleteAdmission{Kind: plan.Kind, UIDs: plan.Uids(), Signature: plan.Signature()}
+			ctx = context.WithValue(ctx, processDeleteAdmissionKey{}, admission)
+		}
+		if err := mutations.ValidateDeleteTargets(registry, admission.Kind, admission.UIDs); !admission.Admitted && err != nil {
+			return err
+		}
 		err = d.stop(ctx, registry, *agent)
-		if err == nil || !errors.Is(err, processhost.ErrStale) || !time.Now().Before(admission) || ctx.Err() != nil {
+		if err == nil || !errors.Is(err, processhost.ErrStale) || !time.Now().Before(admissionDeadline) || ctx.Err() != nil {
 			break
 		}
 		select {
@@ -447,6 +486,10 @@ func (d *processAgentDeleter) stopAndWait(ctx context.Context, target processDel
 		}
 	}
 	if err != nil {
+		var protection *mutations.Failure
+		if errors.As(err, &protection) && protection.Code == mutations.CodeAgentProtected {
+			return err
+		}
 		if strings.HasPrefix(err.Error(), processDeleteHostUnavailableToken+":") {
 			return &processDeleteError{Token: processDeleteHostUnavailableToken, Runtime: processDeleteRuntimeRunning, cause: err}
 		}

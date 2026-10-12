@@ -185,4 +185,9 @@
 // execution and compensation ignore cancellation; a partial kill failure can
 // return Committed=false with runtime effects and retained Registry resources.
 // The SDK never infers a caller Pane or queues self-kill.
+// Agent deletion protection is the presence of metadata.labels["projmux.io/protected"].
+// Delete and UnregisterProject return CodeAgentProtected in preview and execution
+// when the plan removes a protected Agent. PreflightDelete checks the same graph,
+// including process Agents and Projects, without runtime access. Frontends call
+// it before provider Stop, then recheck under effect admission at execution.
 package projmux

@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	CodeAgentProtected           Code = mutations.CodeAgentProtected
 	CodeDeleteKindUnsupported    Code = "delete-kind-unsupported"
 	CodeDeleteProcessUnsupported Code = "delete-process-unsupported"
 	CodeDeleteTransportRequired  Code = "delete-transport-required"
@@ -65,6 +66,9 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 		return out, resourceRefusal(err)
 	}
 	plan := mutationruntime.DeletePlan(mutations.BuildDeletePlan(reg, metadata.Kind(req.Kind), resolution))
+	if err := mutations.ValidateDeleteProtection(reg, mutations.DeletePlan(plan)); err != nil {
+		return out, deleteRefusal(CodeAgentProtected, err)
+	}
 	switch req.Kind {
 	case core.KindWindow:
 		plan.ExactUID = query.Windows[0].UID != ""
@@ -161,6 +165,10 @@ func deleteRefusal(code Code, err error) error {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+	var failure *mutations.Failure
+	if errors.As(err, &failure) && failure.Code == mutations.CodeAgentProtected {
+		code = CodeAgentProtected
 	}
 	var r *Refusal
 	if errors.As(err, &r) {
