@@ -174,6 +174,18 @@ func ActionEligibility(registry coremetadata.Registry, agent coremetadata.Agent,
 		if agent.Status.Phase != coremetadata.PhaseRunning || strings.TrimSpace(agent.Status.PaneRef) == "" {
 			return false, "requires a Running Agent with a current managed Pane"
 		}
+	case "stop":
+		pane, ok := registry.Pane(agent.Status.PaneRef)
+		if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Status.ProcessSession == nil {
+			return false, "requires a process Agent"
+		}
+		if pane.Status.Activation.IsZero() && agent.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
+			return true, "exact process Wait is already recorded"
+		}
+		if pane.Status.Activation.Process == nil || agent.Status.Phase != coremetadata.PhaseRunning {
+			return false, "requires a live process owner or exact stopped Wait evidence"
+		}
+		return true, "exact process generation requires durable Wait confirmation"
 	case "resume":
 		if !slices.Contains([]coremetadata.AgentPhase{coremetadata.PhaseOffline, coremetadata.PhaseFailed}, agent.Status.Phase) {
 			return false, "requires an Offline or Failed Agent"

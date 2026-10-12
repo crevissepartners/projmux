@@ -2,7 +2,31 @@
 
 `projmux create agent --host process` runs one Claude or Codex Agent without
 tmux, for scripts and CI. The creating command is the Agent's **owner**: it
-stays in the foreground, and the Agent lives exactly as long as that command.
+stays in the foreground by default, and the Agent lives exactly as long as that command.
+Add `--detach` to create an independent owner and return after verified startup.
+For example:
+
+```sh
+projmux create agent --host process --detach --provider codex --project alpha --window workers --name build-helper -- "Review the build failures"
+projmux agent stop uid:<agent>
+```
+
+Detached creation also supports `--create-window`. It returns exit 0 after the
+owner identity, generation, hook, and initial input admission are confirmed.
+Stdin can be `/dev/null`; caller exit, terminal HUP, and termination of the
+caller provider group do not stop the new Agent. Its owner has no caller
+stdin/stdout/stderr descriptor and keeps a private bounded diagnostic log in
+`<state-dir>/process-owners/`. Provider content and the initial task are not
+written to that log. Later provider exit is read through termination records.
+
+`agent stop` accepts one exact process Agent, waits for actual provider Wait
+and owner retirement, and preserves the Agent, Pane, and conversation. An
+already stopped target with exact Wait evidence is a no-op. An unknown owner
+or stale generation is refused; inspect it with `describe agent` before retrying.
+Use ordinary foreground `agent resume` to continue the preserved conversation.
+Detached resume/relaunch and direct `create window --detach` are unsupported.
+Detachment does not promise survival across reboot, logout, or termination of
+a whole service/cgroup.
 This page covers what you see and do while such an Agent runs. Creation flags,
 output, exit codes, and the opt-in `post-create` hook contract are in
 [Process Host Post-Create](hooks.md#process-host-post-create). The Registry
@@ -35,6 +59,7 @@ its exact Agent reference:
 | Answer a permission request | `projmux agent approval list <agent-ref>`, then `projmux agent approval answer <agent-ref> <request-id> --allow` or `--deny` |
 | Coordinate from another Agent | `projmux agent message send <agent-ref> --source <agent-ref> -- <text>` |
 | Change a Claude launch configuration | `projmux agent relaunch <agent-ref> --model <model> -- <first-prompt>` (foreground caller; busy Agents require `--yes`) |
+| Stop and preserve its conversation | `projmux agent stop <agent-ref>` |
 | Inspect it | `projmux describe agent <agent-ref>` |
 
 `agent turn start` delivers your text as a plain user turn. `agent message send`
@@ -168,8 +193,8 @@ signal lifetime), and
 `Coordination` (the Claude coordination version the owner's build speaks). An
 answer without these fields comes from an owner that predates them and is read
 as protocol 0; an answer without `Coordination` alone leaves that version
-unknown. Public create, resume, deferred claim, and relaunch commands continue
-to own foreground lifetimes; this observation adds no detached launch command.
+unknown. Public creation with `--detach` reports `OwnerMode=detached`; ordinary
+create, resume, deferred claim, and relaunch retain foreground lifetimes.
 
 `Status` in `describe` and `get` is `live` while the owner answers and
 `offline` after the owner recorded the provider's exit. When the owner cannot
@@ -190,7 +215,7 @@ install-preflight`. When the new build would migrate the Registry to a newer
 build does not speak, and at least one owner is live, the install stops with
 exit 1. The binary and the live config stay unchanged, and the message lists
 the owners and how to stop them: end each foreground owner (Ctrl-C or close its
-standard input), install again, then `projmux agent resume <agent-ref>`.
+standard input), or use `agent stop` for an exact process Agent, install again, then `projmux agent resume <agent-ref>`.
 `projmux delete agent <agent-ref>` also stops an owner, but it removes the
 Agent, which then cannot be resumed. An owner whose coordination version is
 unknown does not stop an install. A live owner is the recorded host process of

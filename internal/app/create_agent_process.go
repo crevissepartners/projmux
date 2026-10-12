@@ -928,6 +928,9 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err != nil {
 		return err
 	}
+	if flags.detach {
+		return c.runDetachedProcessCreate(request, mode, stdout, stderr)
+	}
 	ctx, cancel := processForegroundLifetime()
 	defer cancel()
 	result, err := c.startProcessAgent(ctx, request)
@@ -948,13 +951,17 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err = c.writeProcessCreateResult(stdout, stderr, mode, result); err != nil {
 		return c.failProcessCreate(&result, err)
 	}
-	return processOwnedWait{owner: &result, binding: result.Binding, changed: func(snapshot processhost.Snapshot) error {
+	return waitCreatedProcessAgent(ctx, cancel, &result, control, processStdinEOFTrigger, stderr)
+}
+
+func waitCreatedProcessAgent(ctx context.Context, cancel context.CancelFunc, result *processAgentCreateResult, control processCreateControl, trigger processOwnerTrigger, stderr io.Writer) error {
+	return processOwnedWait{owner: result, binding: result.Binding, changed: func(snapshot processhost.Snapshot) error {
 		if err := result.recordProcessSnapshot(snapshot); err != nil {
 			return err
 		}
 		return control.syncControls(context.WithoutCancel(ctx))
 	}, controls: control.syncControls, attention: func() error { return control.attention.sync(result.Handle, result.Binding) },
-		endedElsewhere: true, fail: func(err error) error { return processCreateCleanupError(result, err) }}.run(ctx, cancel, processStdinEOFTrigger, stderr)
+		endedElsewhere: true, fail: func(err error) error { return processCreateCleanupError(*result, err) }}.run(ctx, cancel, trigger, stderr)
 }
 
 func (c *createCommand) failProcessCreate(result *processAgentCreateResult, cause error) error {
@@ -1022,7 +1029,7 @@ func submitProcessInitialPrompt(ctx context.Context, result processAgentCreateRe
 	return result.Handle.Turn(ctx, processhost.Authority{Binding: result.Binding, Connection: snapshot.Connection, Session: snapshot.Session}, result.Binding.Operation+"-initial", strings.Join(payload, " "))
 }
 
-func (c *createCommand) writeProcessCreateResult(stdout, stderr io.Writer, mode cli.OutputMode, result processAgentCreateResult) error {
+func (c *createCommand) writeProcessCreateResult(stdout, stderr io.Writer, mode cli.OutputMode, result processAgentCreateResult, detached ...bool) error {
 	if err := writeSplitCWDNotices(stderr, result.Notices); err != nil {
 		return err
 	}
@@ -1031,7 +1038,7 @@ func (c *createCommand) writeProcessCreateResult(stdout, stderr io.Writer, mode 
 		if mode == cli.OutputModeDefault {
 			ownership = stdout
 		}
-		if _, err := fmt.Fprintf(ownership, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", result.Binding.Agent, result.Binding.Pane); err != nil {
+		if _, err := fmt.Fprintf(ownership, "agent uid:%s pane uid:%s runtime=process foreground=%s\n", result.Binding.Agent, result.Binding.Pane, processCreateOwnershipMode(detached)); err != nil {
 			return err
 		}
 	}
@@ -1072,4 +1079,11 @@ func processWaitExit(snapshot processhost.Snapshot) error {
 
 func processCreateUnsupportedScope(flags resourceCreateFlags) bool {
 	return len(flags.projects) > 1 || len(flags.windows) > 1 || len(flags.panes) > 0 || len(flags.selectors) > 0 || flags.allWindows || flags.placementSet || flags.cwdFrom != "" || flags.dialogueReplyOnly || flags.interactiveOnly
+}
+
+func processCreateOwnershipMode(detached []bool) string {
+	if len(detached) > 0 && detached[0] {
+		return "detached"
+	}
+	return "owned"
 }

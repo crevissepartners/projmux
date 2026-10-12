@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 245 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 246 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -120,6 +120,7 @@ Allowed effects:
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
+projmux agent stop <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [-o <mode>] [-- <prompt>]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
@@ -153,6 +154,7 @@ Subcommands:
 | --- | --- |
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
+| [`projmux agent stop`](#projmux-agent-stop) | Stop one exact process Agent after its provider Wait; preserve the Agent, Pane, and conversation |
 | [`projmux agent resume`](#projmux-agent-resume) | Resume one retired process Agent in the foreground, or rebind an Offline or Failed tmux Agent |
 | [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
@@ -167,7 +169,7 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent status`
 
@@ -211,6 +213,29 @@ Allowed effects:
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 ```
+
+### `projmux agent stop`
+
+Stop one exact process Agent after its provider Wait; preserve the Agent, Pane, and conversation
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=stopped`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent stop <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+```
+
+Process Agents only; tmux targets are refused before a control write. Success requires the exact generation's durable provider Wait and kernel retirement of its owner and provider. A target already stopped with that evidence is a no-op. Unknown or stale owners never become successful stops. Resume uses the preserved conversation.
 
 ### `projmux agent resume`
 
@@ -1493,7 +1518,7 @@ Allowed effects:
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create agent [--host tmux|process] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent [--host tmux|process] [--detach] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
@@ -1617,10 +1642,12 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create agent [--host tmux|process] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create agent [--host tmux|process] [--detach] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
 --host defaults to tmux and keeps existing behavior. --host process owns one foreground Claude or Codex Agent without tmux; Antigravity is refused as process-provider-unsupported. It requires an exact Project or Window, and accepts --create-window --window <exact name> to ensure a virtual Window when absent (an existing name is reused). It refuses fan-out, Pane anchors, placement, interactive modes, and -o pane-id before creation.
+
+create agent --host process --detach returns exit 0 after verified startup and ownership; its Agent stays alive after stdin EOF, caller exit, terminal HUP, or caller provider group termination. Ownership reports foreground=detached; provider exit is read through existing termination records. agent stop stops one exact process generation after actual Wait and preserves its conversation. Direct create window --detach and tmux detach are unsupported. Reboot, logout, and service/cgroup-wide termination survival are not guaranteed.
 
 Process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
 

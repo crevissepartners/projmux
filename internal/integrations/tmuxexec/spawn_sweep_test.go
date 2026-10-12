@@ -23,6 +23,8 @@ import (
 var nonTmuxSpawnSites = map[string]string{
 	"internal/tools/sdkboundary.checkPackage": "build-time compiler export-data query: GO list -deps -export only; the tmux dependency path is an allowlist string, not a tmux invocation",
 	// projmux's own executable or its helper routes
+	"internal/app.launchProcessDetached":                  "own executable: fixed private process-agent-launch route; never a tmux client",
+	"internal/app.runProcessDetachedEntry":                "own executable: fixed private process-agent-owner route; never a tmux client",
 	"internal/app.launchAgentMessageRelease":              "own executable: internal message release route",
 	"internal/app.startCodexLifecycleObserverProcess":     "own executable: Codex lifecycle observer route",
 	"internal/app.runClaudeDialogueExec":                  "own executable observer and the Claude dialogue argv",
