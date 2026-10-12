@@ -1,15 +1,9 @@
 package app
 
 import (
-	"errors"
-	"fmt"
-	"io/fs"
-	"maps"
-	"os"
-	"path/filepath"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 )
 
@@ -80,13 +74,7 @@ type projectLinksLaunch struct {
 // are the Agent annotations the launch compares against (nil on a fresh
 // create).
 func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
-	if normalizeAIMode(provider) != aiModeClaude || !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
-		return projectLinksLaunch{}
-	}
-	launch := c.loadProjectLinks(project)
-	launch.recorded = recorded[coremetadata.AnnotationAgentProjectLinkRulesDigest]
-	launch.project = c.loadProjectGuidance(project, recorded)
-	return launch
+	return localProjectLinksLaunch(c.sharedGuidance().PlanProjectLinks(provider, project, recorded))
 }
 
 // PlanCodexProjectLinks reads project's current rules for a Codex fresh
@@ -94,80 +82,14 @@ func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Proje
 // Claude create. A Codex resume never asks: a thread keeps the developer
 // instructions it was started with.
 func (c *aiCommand) PlanCodexProjectLinks(project coremetadata.Project) projectLinksLaunch {
-	if !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
-		return projectLinksLaunch{}
-	}
-	launch := c.loadProjectLinks(project)
-	launch.project = c.loadProjectGuidance(project, nil)
-	return launch
-}
-
-// loadProjectLinks is the active launch of project's current rules: their
-// rendered text, digest and content-addressed snapshot, or why they could not
-// be read.
-func (c *aiCommand) loadProjectLinks(project coremetadata.Project) projectLinksLaunch {
-	launch := projectLinksLaunch{active: true}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	launch.store = projectlinks.NewDefaultSnapshotStore(paths)
-	rules, err := projectlinks.NewDefaultStore(paths).Load(project.Metadata.UID)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	rendered := projectlinks.Render(rules, projectlinks.ProjectOf(project))
-	if len(rendered) == 0 {
-		return launch
-	}
-	snapshot, err := launch.store.WriteSnapshot(rendered)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, rendered
-	return launch
-}
-
-// changed reports that the Agent's recorded digest is not the current one:
-// rules added, changed or removed.
-func (l projectLinksLaunch) changed() bool {
-	return l.active && l.unavailable == nil && l.digest != l.recorded
+	return localProjectLinksLaunch(c.sharedGuidance().PlanCodexProjectLinks(project))
 }
 
 // withCreateFile sets systemPromptFile for a fresh create that also carries
 // the persona p. A composite that cannot be written makes the rules
 // unavailable, so the create still launches, with the persona alone.
 func (l projectLinksLaunch) withCreateFile(p personaLaunch) projectLinksLaunch {
-	var prefix []byte
-	if p.name != "" {
-		prefix = []byte(p.content)
-	}
-	if l.project.on() {
-		snapshot, err := l.project.store.WriteComposite(prefix, l.project.digest)
-		if err != nil {
-			l.project.unavailable = err
-		} else {
-			l.systemPromptFile = snapshot.Path
-			prefix = []byte(l.project.developerInstructions(string(prefix)))
-		}
-	}
-	if !l.active || l.unavailable != nil || l.digest == "" {
-		return l
-	}
-	if len(prefix) == 0 {
-		l.systemPromptFile = l.snapshotPath
-		return l
-	}
-	composite, err := l.store.WriteComposite(prefix, l.digest)
-	if err != nil {
-		l.unavailable = err
-		return l
-	}
-	l.systemPromptFile = composite.Path
-	return l
+	return localProjectLinksLaunch(l.shared().WithCreateFile(p.shared()))
 }
 
 // developerInstructions are the developer instructions a Codex fresh create
@@ -177,30 +99,14 @@ func (l projectLinksLaunch) withCreateFile(p personaLaunch) projectLinksLaunch {
 // itself, so a create in a Project without rules sends exactly what it sent
 // before.
 func (l projectLinksLaunch) developerInstructions(persona string) string {
-	persona = l.project.developerInstructions(persona)
-	if !l.active || l.unavailable != nil || l.digest == "" {
-		return persona
-	}
-	if persona == "" {
-		return string(l.text)
-	}
-	return persona + projectlinks.CompositeSeparator + string(l.text)
+	return l.shared().DeveloperInstructions(persona)
 }
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
 // Without rules it returns base itself, so a create in a Project without rules
 // stores exactly what it stored before -- nil included.
 func (l projectLinksLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	base = l.project.withCreateAnnotation(base)
-	if !l.active || l.unavailable != nil || l.digest == "" || base[coremetadata.AnnotationAgentProjectLinkRulesDigest] == l.digest {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, 1)
-	}
-	out[coremetadata.AnnotationAgentProjectLinkRulesDigest] = l.digest
-	return out
+	return l.shared().WithCreateAnnotation(base)
 }
 
 // resumeLaunchAnnotations are the annotations a resume launch reads, given
@@ -210,71 +116,23 @@ func (l projectLinksLaunch) withCreateAnnotation(base map[string]string) map[str
 // rules drop the digest so the Agent launches without rules while its record
 // stays as it was. Otherwise base itself is returned.
 func (l projectLinksLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
-	base = l.project.resumeLaunchAnnotations(base)
-	if !l.active {
-		return base
-	}
-	if l.unavailable != nil {
-		if _, ok := base[coremetadata.AnnotationAgentProjectLinkRulesDigest]; !ok {
-			return base
-		}
-		out := maps.Clone(base)
-		delete(out, coremetadata.AnnotationAgentProjectLinkRulesDigest)
-		return out
-	}
-	if !l.changed() {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, 2)
-	}
-	if l.digest == "" {
-		delete(out, coremetadata.AnnotationAgentProjectLinkRulesDigest)
-	} else {
-		out[coremetadata.AnnotationAgentProjectLinkRulesDigest] = l.digest
-	}
-	out[coremetadata.AnnotationAgentSystemPromptSnapshot] = coremetadata.SystemPromptSnapshotOff
-	return out
+	return l.shared().ResumeLaunchAnnotations(base)
 }
 
 // record writes, inside the resume transaction, the digest and snapshot mode
 // resumeLaunchAnnotations launched with. Nothing changes when the rules are
 // the recorded ones or could not be read.
 func (l projectLinksLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
-	if err := l.project.record(registry, mutator, agentUID); err != nil {
-		return err
-	}
-	if !l.changed() {
-		return nil
-	}
-	if _, err := mutator.SetAgentProjectLinkRules(registry, agentUID, l.digest); err != nil {
-		return MapMetadataError(err)
-	}
-	return nil
+	return l.shared().Record(registry, mutator, agentUID)
 }
 
 // notice is the one-line disclosure of rules the launch could not read, or ""
 // when there is nothing to disclose. label names the Agent the way the
 // persona notice does.
-func (l projectLinksLaunch) notice(label string) string {
-	if !l.active || l.unavailable == nil {
-		return l.project.notice(label)
-	}
-	notice := projectLinksNotice(label, l.unavailable)
-	if projectNotice := l.project.notice(label); projectNotice != "" {
-		notice += "\n" + projectNotice
-	}
-	return notice
-}
+func (l projectLinksLaunch) notice(label string) string { return l.shared().Notice(label) }
 
 func projectLinksNotice(label string, err error) string {
-	var projectErr *projectGuidanceUnavailable
-	if errors.As(err, &projectErr) {
-		return projectGuidanceNotice(label, err)
-	}
-	return fmt.Sprintf("projmux: agent/%s launched without its Project's label link rules (%s): %v",
-		label, projectLinksReasonUnavailable, err)
+	return mutationruntime.ProjectLinksNotice(label, err)
 }
 
 // planProjectLinksWith asks launcher for project's rules when it has the
@@ -370,21 +228,5 @@ func (c *aiCommand) resumeSystemPromptFile(mode string, annotations map[string]s
 // directory RecordedSnapshotPath already proved it a regular file of, so
 // the read cannot leave that directory.
 func readPersonaSnapshot(path string) ([]byte, error) {
-	root, err := os.OpenRoot(filepath.Dir(path))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no instructions snapshot at %s", path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	file, err := root.Open(filepath.Base(path))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no instructions snapshot at %s", path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return persona.ReadLimited(file)
+	return mutationruntime.ReadPersonaSnapshot(path)
 }

@@ -203,4 +203,14 @@
 // when the plan removes a protected Agent. PreflightDelete checks the same graph,
 // including process Agents and Projects, without runtime access. Frontends call
 // it before provider Stop, then recheck under effect admission at execution.
+// CreateAgent creates one tmux Claude, Antigravity, payload-free Codex or
+// InteractiveOnly Codex Agent in explicit Project/Window scope. Creator is a
+// uid: declaration only; no Pane or process-chain caller is inferred. Native
+// observed Codex creation (prompted default Codex and Codex instructions) is
+// not yet in the SDK (613-B): CodeCreateNativeCodexUnsupported refuses it
+// before effects; use projmux create agent for those combinations.
+// After commit, failed activation confirmation preserves the Agent and Pane.
+// CreateAgent returns the committed result and CodeCreateActivationUnconfirmed
+// together. Callers must inspect both the result and error before retrying.
+
 package projmux

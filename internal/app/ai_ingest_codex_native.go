@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -34,25 +35,25 @@ import (
 )
 
 const (
-	aiPaneCodexAuthorityOption = "@projmux_codex_authority"
-	aiPaneCodexEpochOption     = "@projmux_codex_authority_epoch"
-	aiPaneCodexReasonOption    = "@projmux_codex_authority_reason"
+	aiPaneCodexAuthorityOption = mutationruntime.AiPaneCodexAuthorityOption
+	aiPaneCodexEpochOption     = mutationruntime.AiPaneCodexEpochOption
+	aiPaneCodexReasonOption    = mutationruntime.AiPaneCodexReasonOption
 	aiPaneCodexDroppedOption   = "@projmux_codex_progress_dropped"
 	aiPaneCodexUnknownOption   = "@projmux_codex_progress_unknown"
 	aiPaneCodexOverflowOption  = "@projmux_codex_progress_overflow"
-	aiPaneCodexDeclaredOption  = "@projmux_codex_native_declared"
+	aiPaneCodexDeclaredOption  = mutationruntime.AiPaneCodexDeclaredOption
 
 	codexAuthorityPending      = "pending"
 	codexAuthorityControlPlane = agentcontrol.AuthorityControlPlane
 	codexAuthorityInvalidating = "invalidating"
-	codexAuthorityHook         = "provider-hook"
+	codexAuthorityHook         = mutationruntime.CodexAuthorityHook
 
 	// codexNativeUnexplainedReason is the hook-observation reason a managed
 	// Codex Pane carries when nothing declared why it has no native binding.
 	// It is the only reason that counts as an unexplained native fallback, so
 	// a real regression stays visible instead of being absorbed by a
 	// by-design exception.
-	codexNativeUnexplainedReason = "native-fallback"
+	codexNativeUnexplainedReason = mutationruntime.CodexNativeUnexplainedReason
 
 	// The declared reasons below are the by-design plain-CLI lanes. Each one
 	// is a decision the operator or an upstream gate made before any provider

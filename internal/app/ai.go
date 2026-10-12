@@ -40,7 +40,6 @@ import (
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -56,17 +55,17 @@ const (
 
 	aiResumeNewValue = "new"
 
-	aiPaneManagedOption          = "@projmux_ai_managed"
-	aiPaneAgentOption            = "@projmux_ai_agent"
-	aiPaneLaunchAuthorshipOption = tmuxopts.AgentLaunchAuthorshipPane
-	aiPaneContextOption          = "@projmux_ai_context"
+	aiPaneManagedOption          = mutationruntime.AiPaneManagedOption
+	aiPaneAgentOption            = mutationruntime.AiPaneAgentOption
+	aiPaneLaunchAuthorshipOption = mutationruntime.AiPaneLaunchAuthorshipOption
+	aiPaneContextOption          = mutationruntime.AiPaneContextOption
 	aiPaneHookActiveOption       = "@projmux_ai_hook_active"
-	aiPaneThreadIDOption         = "@projmux_ai_thread_id"
-	aiPaneSessionIDOption        = "@projmux_ai_session_id"
-	aiPaneResumeIDOption         = "@projmux_ai_resume_id"
-	aiPaneResumeSourceOption     = "@projmux_ai_resume_source"
+	aiPaneThreadIDOption         = mutationruntime.AiPaneThreadIDOption
+	aiPaneSessionIDOption        = mutationruntime.AiPaneSessionIDOption
+	aiPaneResumeIDOption         = mutationruntime.AiPaneResumeIDOption
+	aiPaneResumeSourceOption     = mutationruntime.AiPaneResumeSourceOption
 	aiPaneTranscriptPathOption   = "@projmux_ai_transcript_path"
-	aiPaneResumeUpdatedAtOption  = "@projmux_ai_resume_updated_at"
+	aiPaneResumeUpdatedAtOption  = mutationruntime.AiPaneResumeUpdatedAtOption
 
 	canonicalCreateTargetClientEnv = keybinding.CanonicalCreateTargetClientEnv
 
@@ -2269,27 +2268,9 @@ type agentLaunchPlan struct {
 	commandArgs []string
 }
 
-// planAgentLaunch builds the launch for one provider without creating anything.
-//
-// A failure here -- a missing agent binary, an unusable exec argv -- happens
-// before any mutation, which is what lets the create routes guarantee a failed
-// launch leaves zero resources behind.
 func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgvOverride []string, pathPrependOverride string) (agentLaunchPlan, error) {
-	execArgv := append([]string(nil), execArgvOverride...)
-	pathPrepend := pathPrependOverride
-	if len(execArgv) == 0 {
-		var err error
-		execArgv, pathPrepend, err = c.agentExecArgv(mode, extraArgs)
-		if err != nil {
-			return agentLaunchPlan{}, err
-		}
-	}
-	title := c.buildAgentTitle(mode, contextDir)
-	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
-	if err != nil {
-		return agentLaunchPlan{}, err
-	}
-	return agentLaunchPlan{title: title, command: command, commandArgs: commandArgs}, nil
+	p, e := c.sharedAgentCommand().PlanLaunch(mode, contextDir, extraArgs, execArgvOverride, pathPrependOverride)
+	return agentLaunchPlan{title: p.Title, command: p.Command, commandArgs: p.CommandArgs}, e
 }
 
 // The three methods below are the seam the canonical `create agent` route
@@ -2305,64 +2286,27 @@ func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgv
 // of the provider's own parser: Claude's variadic `--add-dir` eats a payload
 // appended straight after it and starts a session with no task at all.
 func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error) {
-	extra, err := providerLaunchArgs(provider, workspace, payload)
-	if err != nil {
-		return "", nil, err
-	}
-	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
-	if err != nil {
-		return "", nil, err
-	}
-	return plan.title, plan.commandArgs, nil
+	return c.sharedAgentLaunch().PlanAgentLaunch(provider, workspace, payload)
 }
 
 // PlanAgentLaunchWithOptions applies model and effort to Claude or Codex.
 // Claude alone accepts the persona snapshot path. Options precede workspace
 // arguments so Claude's variadic --add-dir cannot consume them.
 func (c *aiCommand) PlanAgentLaunchWithOptions(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile string) (title string, argv []string, err error) {
-	return c.PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, "")
+	return c.sharedAgentLaunch().PlanAgentLaunchWithOptions(provider, workspace, payload, model, effort, personaFile)
 }
 
 // PlanAgentLaunchWithSettings is PlanAgentLaunchWithOptions that also passes
 // a profile's Claude settings snapshot as --settings. An empty settingsFile
 // adds nothing, which is exactly PlanAgentLaunchWithOptions.
 func (c *aiCommand) PlanAgentLaunchWithSettings(provider string, workspace coremetadata.AgentWorkspace, payload []string, model, effort, personaFile, settingsFile string) (title string, argv []string, err error) {
-	mode := normalizeAIMode(provider)
-	if mode != aiModeClaude && mode != aiModeCodex {
-		return "", nil, fmt.Errorf("provider %q does not accept --model, --effort, or --instructions", provider)
-	}
-	if mode == aiModeCodex && (personaFile != "" || settingsFile != "") {
-		return "", nil, fmt.Errorf("provider %q does not accept Claude instructions or settings options", provider)
-	}
-	extra, err := providerLaunchArgs(provider, workspace, payload)
-	if err != nil {
-		return "", nil, err
-	}
-	options := append(claudeLaunchOptionArgs(model, effort, personaFile), claudeSettingsArgs(settingsFile)...)
-	if mode == aiModeCodex {
-		options = codexLaunchOptionArgs(model, effort)
-	}
-	extra = append(options, extra...)
-	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
-	if err != nil {
-		return "", nil, err
-	}
-	return plan.title, plan.commandArgs, nil
+	return c.sharedAgentLaunch().PlanAgentLaunchWithSettings(provider, workspace, payload, model, effort, personaFile, settingsFile)
 }
 
 // PlanCodexAgentLaunchWithPolicy plans a plain Codex CLI create with the
 // profile permissions ahead of workspace options and any prompt.
 func (c *aiCommand) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy) (string, []string, error) {
-	extra, err := providerLaunchArgs(aiModeCodex, workspace, payload)
-	if err != nil {
-		return "", nil, err
-	}
-	options := append(codexLaunchOptionArgs(model, effort), codexCLIProfileArgs(policy)...)
-	plan, err := c.planAgentLaunch(aiModeCodex, workspace.CWD, append(options, extra...), nil, "")
-	if err != nil {
-		return "", nil, err
-	}
-	return plan.title, plan.commandArgs, nil
+	return c.sharedAgentLaunch().PlanCodexAgentLaunchWithPolicy(workspace, payload, model, effort, policy)
 }
 
 // AwaitAgentActivation waits only for exact provider-hook evidence committed to
@@ -2371,69 +2315,7 @@ func (c *aiCommand) PlanCodexAgentLaunchWithPolicy(workspace coremetadata.AgentW
 // does not inspect pane_title, capture-pane, semantic tmux presentation, or
 // provider conversation content.
 func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
-	if runner == nil {
-		return false, "provider-hook", errors.New("agent activation observer is not configured")
-	}
-	if c.loadRegistry == nil {
-		return false, "provider-hook", errors.New("agent activation Registry observer is not configured")
-	}
-	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", "#{"+tmuxopts.PaneUID+"}")
-	if err != nil {
-		return false, "provider-hook", fmt.Errorf("read managed Pane identity: %w", err)
-	}
-	paneUID := strings.TrimSpace(string(out))
-	if paneUID == "" {
-		return false, "provider-hook", errors.New("managed Pane carries no resource identity")
-	}
-	initial, loadErr := c.loadRegistry()
-	if loadErr != nil {
-		return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
-	}
-	paneID = strings.TrimSpace(paneID)
-	first := checkAgentActivationBinding(initial, paneUID, paneID, nil)
-	if !first.bound() {
-		return false, "provider-hook", &agentActivationBindingError{
-			stage: agentBindingStageBeforeAwaiting, paneUID: paneUID, paneID: paneID, check: first,
-		}
-	}
-	expect := &agentActivationBindingExpectation{AgentUID: first.AgentUID, Generation: first.Generation}
-	agentUID := first.AgentUID
-	startupDeadline := c.nowTime().Add(startupTimeout)
-	var acknowledgementDeadline time.Time
-	for {
-		registry, loadErr := c.loadRegistry()
-		if loadErr != nil {
-			return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
-		}
-		if current := checkAgentActivationBinding(registry, paneUID, paneID, expect); !current.bound() {
-			return false, "provider-hook", &agentActivationBindingError{
-				stage: agentBindingStageWhileAwaiting, paneUID: paneUID, paneID: paneID, check: current,
-			}
-		}
-		agent, present := registry.Agent(agentUID)
-		if present && agent.Status.Activation.State == coremetadata.ActivationAcknowledged &&
-			agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) {
-			return true, "provider-hook", nil
-		}
-		if acknowledgementDeadline.IsZero() && present &&
-			agent.Status.Activation.State == coremetadata.ActivationPending &&
-			agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) &&
-			!agent.Status.Activation.ObservedAt.IsZero() {
-			// The Registry timestamp is the provider's exact SessionStart commit,
-			// not the observer's later poll, so polling cannot silently extend the
-			// five-second acknowledgement budget.
-			acknowledgementDeadline = agent.Status.Activation.ObservedAt.Add(acknowledgementTimeout)
-		}
-		if err := ctx.Err(); err != nil {
-			return false, "provider-hook", err
-		}
-		now := c.nowTime()
-		if (!acknowledgementDeadline.IsZero() && !now.Before(acknowledgementDeadline)) ||
-			(acknowledgementDeadline.IsZero() && !now.Before(startupDeadline)) {
-			return false, "provider-hook", nil
-		}
-		c.sleepFor(50 * time.Millisecond)
-	}
+	return c.sharedAgentLaunch().AwaitAgentActivation(ctx, runner, paneID, startupTimeout, acknowledgementTimeout)
 }
 
 func (c *aiCommand) nowTime() time.Time {
@@ -2669,118 +2551,9 @@ func (c *aiCommand) popupSize(widthPercent, widthMin, heightPercent, heightMin i
 	return c.popupAxisSize("width", widthPercent, widthMin), c.popupAxisSize("height", heightPercent, heightMin)
 }
 
-func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
-	switch mode {
-	case aiModeClaude:
-		if title := strings.TrimSpace(c.env("CLAUDE_THREAD_TITLE")); title != "" {
-			return "claude:" + title
-		}
-		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
-			return "claude:" + title
-		}
-		if contextDir != "" {
-			return "claude:" + filepath.Base(contextDir)
-		}
-		return "claude"
-	case aiModeCodex:
-		if title := strings.TrimSpace(c.env("CODEX_THREAD_TITLE")); title != "" {
-			return "codex:" + title
-		}
-		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
-			return "codex:" + title
-		}
-		if contextDir != "" {
-			return "codex:" + filepath.Base(contextDir)
-		}
-		return "codexcli"
-	case aiModeAntigravity:
-		if title := strings.TrimSpace(c.env("ANTIGRAVITY_THREAD_TITLE")); title != "" {
-			return "antigravity:" + title
-		}
-		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
-			return "antigravity:" + title
-		}
-		if contextDir != "" {
-			return "antigravity:" + filepath.Base(contextDir)
-		}
-		return "antigravity"
-	default:
-		return mode
-	}
-}
+type agentPaneBinding = mutationruntime.AgentPaneBinding
 
-func (c *aiCommand) agentSplitCommand(mode, pathPrepend, contextDir, title string, execArgv []string) ([]string, []string, error) {
-	command := c.agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
-	commandShell := posixCommandShell(c.lookupEnv)
-	return append([]string{commandShell, "-lc"}, command), []string{commandShell, "-lc", command}, nil
-}
-
-func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title string, execArgv []string) string {
-	titleVar := "__" + mode + "_title"
-	parts := []string{}
-	// nvm/fnm/asdf/volta colocate `node` with the agent CLI; non-interactive
-	// login shells may not source their init scripts, so without this prepend
-	// the agent's `env node` shebang can fail and the pane exits immediately.
-	if pathPrepend != "" && pathPrepend != "." && pathPrepend != "/" {
-		parts = append(parts, "export PATH="+shellQuote(pathPrepend)+`":$PATH"`)
-	}
-	if contextDir != "" {
-		parts = append(parts, "cd "+shellQuote(contextDir))
-	}
-	execParts := make([]string, 0, len(execArgv)+1)
-	execParts = append(execParts, "exec")
-	for _, arg := range execArgv {
-		execParts = append(execParts, shellQuote(arg))
-	}
-	parts = append(parts,
-		titleVar+"="+shellQuote(title),
-		`printf '\033]0;%s\007' "$`+titleVar+`"`,
-		strings.Join(execParts, " "),
-	)
-	return strings.Join(parts, " && ")
-}
-
-// agentPaneBinding is the one typed materialization contract shared by create,
-// resume, topology replay, and native Codex binding. The supplied runner has
-// already been bound to one explicit logical tmux route; this value contains
-// resource/presentation state only and therefore cannot reopen socket authority.
-type agentPaneBinding struct {
-	PaneID         string
-	Provider       string
-	ContextDir     string
-	Title          string
-	Topic          string
-	TopicManual    bool
-	ConversationID string
-	ResumeSource   string
-	ThreadID       string
-	NativeCodex    bool
-	// CodexNativeDeclared names the by-design reason this managed Codex Pane
-	// has no native binding, from the closed declared vocabulary. It is empty
-	// for every other binding, and an empty value is what makes a hook
-	// observation count as an unexplained native fallback.
-	CodexNativeDeclared string
-	UpdatedAt           time.Time
-}
-
-type agentPaneBindError struct {
-	Operation    string
-	Cause        error
-	Compensation error
-}
-
-func (e *agentPaneBindError) Error() string {
-	if e == nil {
-		return "managed Agent Pane binding failed"
-	}
-	message := fmt.Sprintf("managed Agent Pane binding failed at %s: %v", e.Operation, e.Cause)
-	if e.Compensation != nil {
-		message += fmt.Sprintf("; compensation failed: %v", e.Compensation)
-	}
-	return message
-}
-
-func (e *agentPaneBindError) Unwrap() error { return e.Cause }
+type agentPaneBindError = mutationruntime.AgentPaneBindError
 
 type agentPaneOptionWrite struct {
 	option string
@@ -2788,169 +2561,12 @@ type agentPaneOptionWrite struct {
 	unset  bool
 }
 
-// BindAgentPaneOnRoute applies the complete managed-Agent option set as one
-// all-or-error result. If any write fails, every preceding write is restored in
-// reverse order on the same exact runner. The surrounding materializer may then
-// roll back the Pane itself without leaving a partially authoritative live
-// object behind.
 func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
-	paneID := strings.TrimSpace(binding.PaneID)
-	if paneID == "" {
-		return errors.New("managed Agent Pane binding requires an exact Pane runtime id")
-	}
-	if runner == nil {
-		return errors.New("managed Agent Pane binding requires an exact tmux runner")
-	}
-	binding.Provider = normalizeAIMode(binding.Provider)
-	binding.ContextDir = strings.TrimSpace(binding.ContextDir)
-	binding.Topic = strings.TrimSpace(binding.Topic)
-	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
-	binding.ResumeSource = strings.TrimSpace(binding.ResumeSource)
-	binding.ThreadID = strings.TrimSpace(binding.ThreadID)
-	if binding.UpdatedAt.IsZero() && binding.ConversationID != "" {
-		binding.UpdatedAt = c.nowTime().UTC()
-	}
-
-	writes := []struct {
-		option string
-		value  string
-		unset  bool
-	}{
-		{option: aiPaneManagedOption, value: "1"},
-		{option: aiPaneAgentOption, value: binding.Provider},
-		{option: aiPaneLaunchAuthorshipOption, value: "1"},
-		{option: aiPaneContextOption, value: binding.ContextDir},
-		{option: aiPaneTopicOption, value: binding.Topic, unset: binding.Topic == ""},
-		{option: aiPaneTopicManualOption, value: "on", unset: !binding.TopicManual},
-		{option: aiPaneStateOption, value: "idle"},
-		{option: aiPaneSessionIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
-		{option: aiPaneResumeIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
-		{option: aiPaneResumeSourceOption, value: binding.ResumeSource, unset: binding.ResumeSource == ""},
-		{option: aiPaneResumeUpdatedAtOption, unset: binding.UpdatedAt.IsZero()},
-		{option: aiPaneThreadIDOption, value: binding.ThreadID, unset: binding.ThreadID == ""},
-		{option: aiPaneCodexAuthorityOption, unset: true},
-		{option: aiPaneCodexEpochOption, unset: true},
-		{option: aiPaneCodexReasonOption, unset: true},
-		{option: aiPaneCodexDeclaredOption, unset: true},
-	}
-	if !binding.UpdatedAt.IsZero() {
-		writes[10].value = binding.UpdatedAt.UTC().Format(time.RFC3339)
-	}
-	if binding.Provider == aiModeCodex {
-		writes[12] = struct {
-			option string
-			value  string
-			unset  bool
-		}{option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
-		writes[14] = struct {
-			option string
-			value  string
-			unset  bool
-		}{option: aiPaneCodexReasonOption, value: codexNativeUnexplainedReason}
-		if declared := codexNativeDeclaredReason(binding.CodexNativeDeclared); declared != "" {
-			writes[15] = struct {
-				option string
-				value  string
-				unset  bool
-			}{option: aiPaneCodexDeclaredOption, value: declared}
-		}
-	}
-	if binding.NativeCodex {
-		if binding.ThreadID == "" || binding.ConversationID == "" {
-			return errors.New("native Codex Pane binding requires an exact thread identity")
-		}
-		writes[12] = struct {
-			option string
-			value  string
-			unset  bool
-		}{option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
-		writes[14] = struct {
-			option string
-			value  string
-			unset  bool
-		}{option: aiPaneCodexReasonOption, value: "observer-starting"}
-	}
-
-	titleBefore, err := readAgentPaneFieldOnRoute(ctx, runner, paneID, "#{pane_title}")
-	if err != nil {
-		return &agentPaneBindError{Operation: "read Pane title", Cause: err}
-	}
-	before := make(map[string]string, len(writes))
-	for _, write := range writes {
-		value, readErr := readAgentPaneOptionOnRoute(ctx, runner, paneID, write.option)
-		if readErr != nil {
-			return &agentPaneBindError{Operation: "read Pane option " + write.option, Cause: readErr}
-		}
-		before[write.option] = value
-	}
-
-	applied := make([]struct {
-		option string
-		value  string
-		unset  bool
-	}, 0, len(writes))
-	titleApplied := false
-	writeBindingOption := func(write struct {
-		option string
-		value  string
-		unset  bool
-	}) error {
-		args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
-		if write.unset {
-			args = []string{"set-option", "-p", "-u", "-t", paneID, write.option}
-		}
-		if _, err := runner.Run(ctx, "tmux", args...); err != nil {
-			return fmt.Errorf("write Pane option %s: %w", write.option, err)
-		}
-		return nil
-	}
-	compensate := func() error {
-		var failures []error
-		for i := len(applied) - 1; i >= 0; i-- {
-			prior := before[applied[i].option]
-			restore := struct {
-				option string
-				value  string
-				unset  bool
-			}{option: applied[i].option, value: prior, unset: prior == ""}
-			if restoreErr := writeBindingOption(restore); restoreErr != nil {
-				failures = append(failures, restoreErr)
-			}
-		}
-		if titleApplied {
-			if _, restoreErr := runner.Run(ctx, "tmux", "select-pane", "-T", titleBefore, "-t", paneID); restoreErr != nil {
-				failures = append(failures, fmt.Errorf("restore Pane title: %w", restoreErr))
-			}
-		}
-		return errors.Join(failures...)
-	}
-	if _, err := runner.Run(ctx, "tmux", "select-pane", "-T", binding.Title, "-t", paneID); err != nil {
-		return &agentPaneBindError{Operation: "set Pane title", Cause: err}
-	}
-	titleApplied = true
-	for _, write := range writes {
-		if err := writeBindingOption(write); err != nil {
-			return &agentPaneBindError{Operation: "set Pane option " + write.option, Cause: err, Compensation: compensate()}
-		}
-		applied = append(applied, write)
-	}
-	return nil
-}
-
-func readAgentPaneFieldOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, format string) (string, error) {
-	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, format)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\r\n"), nil
+	return c.sharedAgentLaunch().BindAgentPaneOnRoute(ctx, runner, binding)
 }
 
 func readAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option string) (string, error) {
-	out, err := runner.Run(ctx, "tmux", "show-options", "-pqv", "-t", paneID, option)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\r\n"), nil
+	return mutationruntime.ReadAgentPaneOptionOnRoute(ctx, runner, paneID, option)
 }
 
 func writeAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID string, write agentPaneOptionWrite) error {
@@ -2985,28 +2601,7 @@ func (c *aiCommand) agentAvailable(mode string) bool {
 }
 
 func (c *aiCommand) findAgentBinary(mode string) string {
-	provider, ok := aiprovider.Lookup(mode)
-	if !ok || !provider.PickerEligible || strings.TrimSpace(provider.BinaryName) == "" {
-		return ""
-	}
-	binName := provider.BinaryName
-
-	home := c.homeOrEmpty()
-	if path := firstExecutable(
-		c.readTrimmed("command", "-v", binName),
-		filepath.Join(home, ".npm-global", "bin", binName),
-		filepath.Join(home, ".local", "bin", binName),
-	); path != "" {
-		return path
-	}
-	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
-		return path
-	}
-	if provider.ID == aiprovider.Codex {
-		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
-		return newestExecutable(matches)
-	}
-	return ""
+	return c.sharedAgentCommand().FindAgentBinary(mode)
 }
 
 func (c *aiCommand) missingAgentRunnerMessage(mode string) string {
@@ -4356,54 +3951,7 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-func isExecutable(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
-}
-
-func firstExecutable(paths ...string) string {
-	for _, path := range paths {
-		if isExecutable(path) {
-			return path
-		}
-	}
-	return ""
-}
-
-// nodeManagerCandidates lists the per-version bin paths that common Node
-// version managers install an npm-distributed Agent CLI into.
-func nodeManagerCandidates(home, binName string) []string {
-	if home == "" || binName == "" {
-		return nil
-	}
-	var candidates []string
-	globs := []string{
-		filepath.Join(home, ".nvm", "versions", "node", "*", "bin", binName),
-		filepath.Join(home, ".fnm", "node-versions", "*", "installation", "bin", binName),
-		filepath.Join(home, ".asdf", "installs", "nodejs", "*", "bin", binName),
-	}
-	for _, pattern := range globs {
-		matches, _ := filepath.Glob(pattern)
-		candidates = append(candidates, matches...)
-	}
-	return append(candidates, filepath.Join(home, ".volta", "bin", binName))
-}
-
-func newestExecutable(paths []string) string {
-	var newestPath string
-	var newestMod time.Time
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-			continue
-		}
-		if newestPath == "" || info.ModTime().After(newestMod) {
-			newestPath = path
-			newestMod = info.ModTime()
-		}
-	}
-	return newestPath
-}
+var isExecutable = mutationruntime.IsExecutable
 
 var parsePositiveInt = mutationruntime.ParsePositiveInt
 
@@ -4447,4 +3995,16 @@ func printRouteNotes(w io.Writer, route string) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, note)
 	}
+}
+
+func (c *aiCommand) sharedAgentLaunch() *mutationruntime.AgentLaunchService {
+	return &mutationruntime.AgentLaunchService{LoadRegistry: c.loadRegistry, Sleep: c.sleepFor, Now: c.nowTime, DeclaredReason: codexNativeDeclaredReason,
+		Plan: func(provider, cwd string, extra []string) (string, []string, error) {
+			plan, err := c.planAgentLaunch(provider, cwd, extra, nil, "")
+			return plan.title, plan.commandArgs, err
+		}}
+}
+
+func (c *aiCommand) sharedAgentCommand() *mutationruntime.AgentCommandPlanner {
+	return &mutationruntime.AgentCommandPlanner{ExecArgv: c.agentExecArgv, LookupEnv: c.env, HomeDir: c.homeOrEmpty(), CommandShell: posixCommandShell(c.lookupEnv), LookupBinary: func(bin string) string { return c.readTrimmed("command", "-v", bin) }}
 }

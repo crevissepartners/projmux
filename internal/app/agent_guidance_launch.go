@@ -1,18 +1,10 @@
 package app
 
 import (
-	"errors"
-	"fmt"
-	"io"
-	"io/fs"
-	"maps"
-	"os"
-	"path/filepath"
-	"strings"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 )
 
 // agentGuidanceReasonUnavailable is the reason token of a launch that went
@@ -78,12 +70,7 @@ type agentGuidanceLaunch struct {
 // content-addressed snapshot. recorded are the Agent annotations the launch
 // compares against (nil on a fresh create).
 func (c *aiCommand) PlanAgentGuidance(provider string, recorded map[string]string) agentGuidanceLaunch {
-	if normalizeAIMode(provider) != aiModeClaude {
-		return agentGuidanceLaunch{}
-	}
-	launch := c.loadAgentGuidance()
-	launch.recorded = recorded[coremetadata.AnnotationAgentGuidanceDigest]
-	return launch
+	return localAgentGuidanceLaunch(c.sharedGuidance().PlanAgentGuidance(provider, recorded))
 }
 
 // PlanCodexAgentGuidance reads the current guidance for a Codex fresh create
@@ -91,54 +78,11 @@ func (c *aiCommand) PlanAgentGuidance(provider string, recorded map[string]strin
 // create. A Codex resume never asks: a thread keeps the developer
 // instructions it was started with.
 func (c *aiCommand) PlanCodexAgentGuidance() agentGuidanceLaunch {
-	return c.loadAgentGuidance()
-}
-
-// loadAgentGuidance is the active launch of the current guidance: its text,
-// digest and content-addressed snapshot, or why it could not be read.
-func (c *aiCommand) loadAgentGuidance() agentGuidanceLaunch {
-	return c.loadAgentGuidanceWith(agentguidance.Store.Load)
+	return localAgentGuidanceLaunch(c.sharedGuidance().PlanCodexAgentGuidance())
 }
 
 func (c *aiCommand) PlanProcessAgentGuidance() agentGuidanceLaunch {
-	return c.loadAgentGuidanceWith(agentguidance.Store.LoadProcess)
-}
-
-func (c *aiCommand) loadAgentGuidanceWith(load func(agentguidance.Store) (agentguidance.Guidance, error)) agentGuidanceLaunch {
-	launch := agentGuidanceLaunch{active: true}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	launch.store = agentguidance.NewDefaultStore(paths)
-	guidance, err := load(launch.store)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	if guidance.Off() {
-		return launch
-	}
-	snapshot, err := launch.store.WriteSnapshot(guidance.Text)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, guidance.Text
-	return launch
-}
-
-// on reports that the launch sends the current guidance: active, readable
-// and not off.
-func (l agentGuidanceLaunch) on() bool {
-	return l.active && l.unavailable == nil && l.digest != ""
-}
-
-// changed reports that the Agent's recorded digest is not the current one:
-// guidance added, changed or turned off.
-func (l agentGuidanceLaunch) changed() bool {
-	return l.active && l.unavailable == nil && l.digest != l.recorded
+	return localAgentGuidanceLaunch(c.sharedGuidance().PlanProcessAgentGuidance())
 }
 
 // withCreateFile sets systemPromptFile for a fresh create whose launch would
@@ -147,36 +91,7 @@ func (l agentGuidanceLaunch) changed() bool {
 // written makes the guidance unavailable, so the create still launches, with
 // base alone.
 func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
-	if !l.on() {
-		return l
-	}
-	if base == "" {
-		l.systemPromptFile = l.snapshotPath
-		return l
-	}
-	composite, err := composeAgentGuidance(l.store, l.digest, base)
-	if err != nil {
-		l.unavailable = err
-		return l
-	}
-	l.systemPromptFile = composite
-	return l
-}
-
-// developerInstructions are the developer instructions a Codex fresh create
-// starts its thread with, given persona, what it would send without guidance
-// (the persona content and the Project's label link rules, "" for none): the
-// guidance, then projectlinks.CompositeSeparator and persona, each part
-// present only when the create has it. Without guidance it is persona itself,
-// so a create with the guidance off sends exactly what it sent before.
-func (l agentGuidanceLaunch) developerInstructions(persona string) string {
-	if !l.on() {
-		return persona
-	}
-	if persona == "" {
-		return string(l.text)
-	}
-	return string(l.text) + projectlinks.CompositeSeparator + persona
+	return localAgentGuidanceLaunch(l.shared().WithCreateFile(base))
 }
 
 // codexDeveloperInstructions are the developer instructions a Codex fresh
@@ -187,58 +102,18 @@ func (l agentGuidanceLaunch) developerInstructions(persona string) string {
 // itself, identity left out, so a create with the guidance off sends exactly
 // what it sent before.
 func (l agentGuidanceLaunch) codexDeveloperInstructions(agentUID, rest string) string {
-	if !l.on() {
-		return rest
-	}
-	identity := codexAgentIdentity(agentUID)
-	if rest != "" {
-		identity += projectlinks.CompositeSeparator + rest
-	}
-	return l.developerInstructions(identity)
+	return l.shared().CodexDeveloperInstructions(agentUID, rest)
 }
 
-// codexSocketCommands are the commands the identity paragraph names as taking
-// `--socket projmux`. Each one defines a socket flag; a static test holds
-// them to that.
-var codexSocketCommands = []string{"delete pane", "agent relaunch"}
+var codexSocketCommands = mutationruntime.CodexSocketCommands
 
-// codexNoSocketCommand is the command the identity paragraph tells a Codex
-// Agent not to pass `--socket` to: it defines no socket flag, and outside
-// tmux it routes to the app socket itself (defaultRuntimeMutationRoute).
-const codexNoSocketCommand = "create agent"
-
-// codexAgentIdentity is the paragraph that tells a Codex Agent its own Agent
-// UID and how to name itself and its targets: a Codex shell command runs in
-// the shared app server, not in the Agent's pane, so projmux cannot infer
-// either from the environment.
-func codexAgentIdentity(agentUID string) string {
-	examples := make([]string, 0, len(codexSocketCommands))
-	for _, command := range codexSocketCommands {
-		examples = append(examples, "`projmux "+command+"`")
-	}
-	return fmt.Sprintf(`# Your projmux identity
-
-Your projmux Agent UID is `+"`%[1]s`"+`.
-
-- When you create an agent with `+"`projmux create agent`"+`, add `+"`--creator uid:%[1]s`"+` so projmux records you as its creator.
-- When you send a message with `+"`projmux agent message send`"+`, add `+"`--source uid:%[1]s`"+` so the message is sent from you.
-- Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on. Add `+"`--socket projmux`"+` only to a command that defines that flag, such as %[2]s; do not add it to %[3]s, which has no such flag and uses the `+"`%[4]s`"+` app socket itself.
-`, agentUID, strings.Join(examples, " or "), "`projmux "+codexNoSocketCommand+"`", defaultAppSocket)
-}
+const codexNoSocketCommand = mutationruntime.CodexNoSocketCommand
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
 // Without guidance it returns base itself, so a create with the guidance off
 // stores exactly what it stored before -- nil included.
 func (l agentGuidanceLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	if !l.on() || base[coremetadata.AnnotationAgentGuidanceDigest] == l.digest {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, 1)
-	}
-	out[coremetadata.AnnotationAgentGuidanceDigest] = l.digest
-	return out
+	return l.shared().WithCreateAnnotation(base)
 }
 
 // resumeLaunchAnnotations are the annotations a resume launch reads, given
@@ -248,59 +123,23 @@ func (l agentGuidanceLaunch) withCreateAnnotation(base map[string]string) map[st
 // Unreadable guidance drops the digest so the Agent launches without guidance
 // while its record stays as it was. Otherwise base itself is returned.
 func (l agentGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
-	if !l.active {
-		return base
-	}
-	if l.unavailable != nil {
-		if _, ok := base[coremetadata.AnnotationAgentGuidanceDigest]; !ok {
-			return base
-		}
-		out := maps.Clone(base)
-		delete(out, coremetadata.AnnotationAgentGuidanceDigest)
-		return out
-	}
-	if !l.changed() {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, 2)
-	}
-	if l.digest == "" {
-		delete(out, coremetadata.AnnotationAgentGuidanceDigest)
-	} else {
-		out[coremetadata.AnnotationAgentGuidanceDigest] = l.digest
-	}
-	out[coremetadata.AnnotationAgentSystemPromptSnapshot] = coremetadata.SystemPromptSnapshotOff
-	return out
+	return l.shared().ResumeLaunchAnnotations(base)
 }
 
 // record writes, inside the resume transaction, the digest and snapshot mode
 // resumeLaunchAnnotations launched with. Nothing changes when the guidance is
 // the recorded one or could not be read.
 func (l agentGuidanceLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
-	if !l.changed() {
-		return nil
-	}
-	if _, err := mutator.SetAgentGuidance(registry, agentUID, l.digest); err != nil {
-		return MapMetadataError(err)
-	}
-	return nil
+	return l.shared().Record(registry, mutator, agentUID)
 }
 
 // notice is the one-line disclosure of guidance the launch could not read, or
 // "" when there is nothing to disclose. label names the Agent the way the
 // persona notice does.
-func (l agentGuidanceLaunch) notice(label string) string {
-	if !l.active || l.unavailable == nil {
-		return ""
-	}
-	return agentGuidanceNotice(label, l.unavailable)
-}
+func (l agentGuidanceLaunch) notice(label string) string { return l.shared().Notice(label) }
 
 func agentGuidanceNotice(label string, err error) string {
-	return fmt.Sprintf("projmux: agent/%s launched without the agent guidance (%s): %v",
-		label, agentGuidanceReasonUnavailable, err)
+	return mutationruntime.AgentGuidanceNotice(label, err)
 }
 
 // planAgentGuidanceWith asks launcher for the guidance when it has the seam,
@@ -402,15 +241,7 @@ func (c *aiCommand) resumeGuidanceSystemPromptFile(mode string, annotations map[
 // composeAgentGuidance writes the composite of the guidance digest names and
 // the content of base, and returns its path.
 func composeAgentGuidance(store agentguidance.Store, digest, base string) (string, error) {
-	content, err := readSystemPromptPart(base)
-	if err != nil {
-		return "", err
-	}
-	composite, err := store.WriteComposite(digest, content)
-	if err != nil {
-		return "", err
-	}
-	return composite.Path, nil
+	return mutationruntime.ComposeAgentGuidance(store, digest, base)
 }
 
 // readSystemPromptPart reads one file a Claude launch would pass as its
@@ -418,28 +249,5 @@ func composeAgentGuidance(store agentguidance.Store, digest, base string) (strin
 // bounded like every rules snapshot read. The file is opened inside its own
 // directory, so the read cannot leave that directory.
 func readSystemPromptPart(path string) ([]byte, error) {
-	root, err := os.OpenRoot(filepath.Dir(path))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no system prompt file at %s", path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	file, err := root.Open(filepath.Base(path))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no system prompt file at %s", path)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, projectlinks.MaxSnapshotSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(content) > projectlinks.MaxSnapshotSize {
-		return nil, fmt.Errorf("system prompt file %s is larger than %d bytes", path, projectlinks.MaxSnapshotSize)
-	}
-	return content, nil
+	return mutationruntime.ReadSystemPromptPart(path)
 }

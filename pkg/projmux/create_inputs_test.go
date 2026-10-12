@@ -56,3 +56,11 @@ func TestRefusalJSONMeaningPreserved(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateResultEmptyExecutionFails(t *testing.T) {
+	_, err := createFirstResult(nil)
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeCreateExecutionFailed {
+		t.Fatalf("%T %v", err, err)
+	}
+}

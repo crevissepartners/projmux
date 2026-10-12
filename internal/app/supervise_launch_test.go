@@ -274,3 +274,38 @@ func supervisedIdentity(argv []string) (string, string) {
 	}
 	return paneUID, generation
 }
+
+func TestAgentSupervisedLaunchKeepsExplicitRegistryAuthority(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "ambient"))
+	ambient, err := mutationruntime.CreatorRegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit := intmetadata.PathFor(filepath.Join(root, "sdk"))
+	var emptyLaunch string
+	for _, path := range []string{"", ambient, explicit} {
+		spec := superviseSpec{PaneUID: "pane-one", AgentUID: "agent-one", Generation: "gen-one", OperationID: "op-one", RegistryPath: path}
+		launch := newLaunchMaterializer(&stubDefaultsRunner{shell: "/bin/sh"}, &strings.Builder{}).SupervisedLaunch(context.Background(), spec, []string{"provider"})
+		want := path
+		if want == "" {
+			want = ambient
+		}
+		got := ""
+		for i, arg := range launch {
+			if arg == "--registry-path" && i+1 < len(launch) {
+				got = launch[i+1]
+			}
+		}
+		if got != want {
+			t.Fatalf("explicit=%q resolved=%q want=%q", path, got, want)
+		}
+		serialized := strings.Join(launch, "\x00")
+		if path == "" {
+			emptyLaunch = serialized
+		} else if path == ambient && serialized != emptyLaunch {
+			t.Fatal("CLI ambient authority changed argv")
+		}
+	}
+}

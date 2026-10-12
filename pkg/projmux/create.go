@@ -52,7 +52,11 @@ func (c *Client) createWindow(ctx context.Context, req core.CreateWindowRequest,
 	if err != nil {
 		return result, createRefusal(err, "CreateWindowRequest")
 	}
-	projection, err := c.createProjection(socket, core.KindWindow, rows[0])
+	first, err := createFirstResult(rows)
+	if err != nil {
+		return result, err
+	}
+	projection, err := c.createProjection(socket, core.KindWindow, first)
 	if err != nil {
 		return result, err
 	}
@@ -116,7 +120,11 @@ func (c *Client) createPane(ctx context.Context, req core.CreatePaneRequest, run
 	if err != nil {
 		return result, createRefusal(err, "CreatePaneRequest")
 	}
-	projection, err := c.createProjection(socket, core.KindPane, out.Results[0])
+	first, err := createFirstResult(out.Results)
+	if err != nil {
+		return result, err
+	}
+	projection, err := c.createProjection(socket, core.KindPane, first)
 	if err != nil {
 		return result, err
 	}
@@ -180,6 +188,14 @@ func (c *Client) createInputs(ctx context.Context, prefix, project, name string,
 func createRefusal(err error, prefix string) error {
 	if err == nil {
 		return nil
+	}
+	var activation *mutationruntime.ActivationConfirmationFailure
+	if errors.As(err, &activation) {
+		return &Refusal{Code: CodeCreateActivationUnconfirmed, message: err.Error(), cause: err}
+	}
+	var agent *mutationruntime.AgentCreateRefusal
+	if errors.As(err, &agent) {
+		return &Refusal{Code: Code(agent.Reason), message: err.Error(), cause: err}
 	}
 	var failed *mutations.Failure
 	if errors.As(err, &failed) {

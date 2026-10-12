@@ -61,6 +61,7 @@ type Options struct {
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
 	projmuxExecutable string
+	agentEnvironment  map[string]string
 
 	discoveryHome      string
 	discoveryEnv       map[string]string
@@ -108,7 +109,7 @@ func NewClient(options Options) (*Client, error) {
 	defaults := mutations.CaptureProjectDefaults(options.DefaultShell, options.HomeDir)
 	namer := sessions.NewNamer(defaults.HomeDir)
 	discoveryEnv := projectcandidates.CaptureEnvironment()
-	return &Client{projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	return &Client{agentEnvironment: mutations.CaptureAgentEnvironment(), projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

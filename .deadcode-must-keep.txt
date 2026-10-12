@@ -7,8 +7,11 @@
 # mandatory. This file suppresses only its exact, reason-bearing symbols when
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
+
 Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+AgentInputFields.RequireInteractiveOnlyProvider	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+AgentInputFields.RequireProfileLane	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 AgentInteraction.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentProgress.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentWorkspace.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -23,6 +26,7 @@ Binding.valid	Internal processhost implementation retained for owned-process and
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
 BuildSwitchPickerItems	Backend-neutral switch picker row builder retained as the test seam over the live switchPickerItem projection.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
+CaptureAgentEnvironment	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 CaptureEnvironment	Captured project discovery environment retained for public SDK client construction and covered by captured-input parity.
 CaptureProjectDefaults	Captured defaults for the external v0 SDK NewClient; verified by explicit overrides, construction-time environment isolation and the SDK environment-reference guard.
 Catalog.Keys	Whole-catalog key enumeration retained as the test seam that pins the shipped default catalog key coverage.
@@ -36,6 +40,7 @@ Client.AnswerQuestion	Public v0 Agent question SDK entrypoint/adapter or preserv
 Client.Bind	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Capabilities	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
+Client.CreateAgent	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 Client.CreatePane	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.CreateProject	Public v0 Project registration SDK entrypoint; verified by SDK/CLI byte parity, write-free reuse and GOWORK=off external consumer tests.
 Client.CreateWindow	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
@@ -71,6 +76,7 @@ Client.WriteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercis
 Client.WriteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
+Client.createAgent	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 Client.createDiscoveryRoots	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createInputs	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createPane	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
@@ -170,6 +176,8 @@ Host.Start	Owned processhost preparation seam retained for real-process and Clau
 Host.StartCodex	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 InheritedEnv	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 InstalledTestEnvReads	Test-only guard API retained: it keeps each package's provider opt-in gates closed over the variables its installed tests read.
+IsAgentProvider	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+IsPickerAdapter	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 IsProjectConfigTrusted	Ambient trust-store read retained as the test seam over the live loadTrustedProjects path.
 IsResponseError	Typed server-refusal classifier retained for dedicated processhost control until public activation supplies an importer.
 IsSharedOutputMode	Closed shared -o catalog membership predicate retained as the seam that keeps route-local projections out of the shared enum.
@@ -260,6 +268,12 @@ RunGuarded	Test-only guard API retained: every test package that links the Regis
 RunTests	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 Runner.ListWindows	Structured window inventory read retained as the test seam that pins the live format join and pane target argument builders.
 RuntimeKoreanStringAuditOptions	Runtime Korean profile of the governance string audit; it scopes the live guard over shipped Go sources.
+SDKAgentPlanner.Initialize	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+SDKAgentPlanner.Prepare	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+SDKAgentPlanner.PrepareSnapshots	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+SDKAgentPlanner.ProfileReceipt	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+SDKAgentPlanner.RequireEnabled	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+SDKAgentPlanner.SettingsService	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 SaveAINewWindowModeFile	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 ServeSupervisor	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
@@ -327,6 +341,7 @@ committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it 
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
 copyUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 createCommand.recordOperatorCreator	In-process operator creator seam for an operator client layered on projmux that runs creates on the operator's behalf; argv has no spelling of it by design (TestNoArgvPathBuildsAnOperatorCreator), so main reaches it only from tests.
+createFirstResult	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 createReceipt	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 createRefusal	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
@@ -372,6 +387,7 @@ newClientWithEnv	Environment injection constructor retained as the only seam tha
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 newProcessAttentionStore	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
+normalizeProviderToken	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 notificationRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLiveReportLocale retained as the notify row classification seam.
 notifySidebarEntriesWithLive	Fallback-locale collapsed-entry projection of the live notify sidebar read model retained as the classification seam.

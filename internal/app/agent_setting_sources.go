@@ -1,7 +1,7 @@
 package app
 
 import (
-	"maps"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
@@ -17,26 +17,7 @@ import (
 // included -- so it stores exactly what it stored before sources were
 // recorded. Otherwise it returns a new map and never writes into base.
 func withCreateSettingSources(flags resourceCreateFlags, base map[string]string) map[string]string {
-	fromProfile := func(filled bool) string {
-		if filled {
-			return coremetadata.SettingSourceProfile
-		}
-		return coremetadata.SettingSourceFlag
-	}
-	sources := map[string]string{}
-	if flags.profileLaunch.active() {
-		sources[coremetadata.AnnotationAgentProfileSource] = flags.profileLaunch.source
-	}
-	if flags.personaLaunch.name != "" {
-		sources[coremetadata.AnnotationAgentInstructionsSource] = fromProfile(flags.personaOption == "profile")
-	}
-	if flags.model != "" {
-		sources[coremetadata.AnnotationAgentModelSource] = fromProfile(flags.profileLaunch.filledModel)
-	}
-	if flags.effort != "" {
-		sources[coremetadata.AnnotationAgentEffortSource] = fromProfile(flags.profileLaunch.filledEffort)
-	}
-	return withSettingSources(base, sources)
+	return mutationruntime.WithCreateSettingSources(flags.sharedAgentSettingsFlags(), base)
 }
 
 // withInheritedSettingSources adds to base the source of every launch setting
@@ -64,13 +45,5 @@ func withInheritedSettingSources(inherited, base map[string]string) map[string]s
 }
 
 func withSettingSources(base, sources map[string]string) map[string]string {
-	if len(sources) == 0 {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, len(sources))
-	}
-	maps.Copy(out, sources)
-	return out
+	return mutationruntime.WithSettingSources(base, sources)
 }

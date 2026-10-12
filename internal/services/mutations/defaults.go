@@ -23,3 +23,12 @@ func CaptureProjectDefaults(shell, home string) ProjectDefaults {
 	}
 	return ProjectDefaults{Shell: strings.TrimSpace(shell), HomeDir: home}
 }
+
+// CaptureAgentEnvironment captures provider launch defaults without reading credentials.
+func CaptureAgentEnvironment() map[string]string {
+	out := map[string]string{}
+	for _, key := range []string{"PATH", "SHELL", "CODEX_HOME", "CLAUDE_THREAD_TITLE", "CODEX_THREAD_TITLE", "ANTIGRAVITY_THREAD_TITLE", "AI_THREAD_TITLE"} {
+		out[key] = os.Getenv(key)
+	}
+	return out
+}

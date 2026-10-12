@@ -32,29 +32,6 @@ type paneTarget struct {
 	virtual      bool
 }
 
-// panePlan is the preflight result of a `create pane` fan-out.
-type panePlan struct {
-	query              selector.Query
-	targets            []paneTarget
-	missingWindowNames []string
-}
-
-// selectedWindowUIDs is the planner's target decision, in planner order.
-//
-// It is the authority the operation receipt quotes. Deriving the selected set
-// from the created results instead would agree only on the happy path and only
-// for the routes that create one resource per target Window, and it would make
-// the same argv report a different selection per provider the moment a provider
-// refuses. Quoting the planner keeps `create pane`, `create agent`, and the
-// three provider shortcuts reporting one identical set for one identical argv.
-func (p panePlan) selectedWindowUIDs() []string {
-	shared := mutationruntime.PanePlan{}
-	for _, target := range p.targets {
-		shared.Targets = append(shared.Targets, target.shared())
-	}
-	return shared.SelectedWindowUIDs()
-}
-
 // windowRequest describes one Window creation.
 type windowRequest struct {
 	name        string
@@ -85,16 +62,7 @@ func (f resourceCreateFlags) sharedSelection() mutationruntime.CreateSelection {
 func (p paneTarget) shared() mutationruntime.PaneTarget {
 	return mutationruntime.PaneTarget{WindowUID: p.windowUID, AnchorUID: p.anchorUID, StoredAnchor: p.storedAnchor, Virtual: p.virtual}
 }
-func localPaneTarget(p mutationruntime.PaneTarget) paneTarget {
-	return paneTarget{p.WindowUID, p.AnchorUID, p.StoredAnchor, p.Virtual}
-}
-func localPanePlan(p mutationruntime.PanePlan) panePlan {
-	out := panePlan{query: p.Query, missingWindowNames: p.MissingWindowNames}
-	for _, t := range p.Targets {
-		out.targets = append(out.targets, localPaneTarget(t))
-	}
-	return out
-}
+
 func (w windowWork) shared() mutationruntime.WindowWork {
 	return mutationruntime.WindowWork{Window: w.window, Initial: w.initial, Payload: w.payload, Activation: w.activation, InitialPaneID: w.initialPaneID}
 }
@@ -206,23 +174,6 @@ func (c *createCommand) exactProjectOwnershipGuard(projectUID string) createPreR
 	return func(ctx context.Context, reg coremetadata.Registry, mut coremetadata.Mutator, op string) (liveSessionIdentity, error) {
 		return c.createExecution().ExactProjectOwnershipGuard(projectUID)(ctx, reg, mut, op)
 	}
-}
-
-func (c *createCommand) resolveSplitTargets(
-	working *coremetadata.Registry,
-	mutator coremetadata.Mutator,
-	project coremetadata.Project,
-	scope createScope,
-	flags resourceCreateFlags,
-	fanOut selector.Target,
-	spelling, operationID string,
-) (panePlan, []windowWork, error) {
-	v, ws, err := c.createExecution().ResolveSplitTargets(working, mutator, project, scope.shared(), flags.sharedSelection(), fanOut, spelling, operationID)
-	var local []windowWork
-	for _, w := range ws {
-		local = append(local, localWindowWork(w))
-	}
-	return localPanePlan(v), local, err
 }
 
 func localShellResults(rows []mutationruntime.ShellCreateResource) []createResult {

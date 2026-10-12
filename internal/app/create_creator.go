@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"maps"
 	"os"
@@ -195,11 +196,10 @@ func parseCreatorFlag(spelling, value string) (string, error) {
 // working Registry is refused, whatever else the create would record: the
 // argv is wrong on its own terms.
 func (c *createCommand) decideCreator(ctx context.Context, spelling string, working *coremetadata.Registry, declared string) (creatorRecord, error) {
-	if declared != "" {
-		if _, ok := working.Agent(declared); !ok {
-			return creatorRecord{}, usageError(fmt.Sprintf("%s --creator uid:%s names no Agent in the Registry; nothing was created", spelling, declared))
-		}
+	if _, err := mutationruntime.DeclaredAgentCreator(working, declared, spelling, "--creator"); err != nil {
+		return creatorRecord{}, err
 	}
+
 	if c != nil && c.operatorCreatorClient != "" {
 		record := newOperatorCreator(c.operatorCreatorClient)
 		if declared != "" {
@@ -260,33 +260,17 @@ func (r creatorRecord) withAnnotations(base map[string]string) map[string]string
 // the stored Agent and nothing is recorded on its Pane. Every basis already
 // resolves its Agent before allocation, so this is a guarantee, not a path.
 func (r creatorRecord) forAgent(working *coremetadata.Registry, agentUID string) creatorRecord {
-	if r.agentUID == "" || r.agentUID != agentUID {
-		return r
+	shared := mutationruntime.AgentCreatorRecord{Annotations: r.annotations()}.ForAgent(working, agentUID)
+	if r.agentUID == agentUID && shared.Annotations == nil {
+		return creatorRecord{observed: r.observed}
 	}
-	if stored, ok := working.Agent(agentUID); ok {
-		for key := range r.annotations() {
-			delete(stored.Metadata.Annotations, key)
-		}
-	}
-	return creatorRecord{observed: r.observed}
+	return r
 }
 
 // annotatePane records the same keys on the managed Pane the create just
 // attached, in the working Registry of the same transaction.
 func (r creatorRecord) annotatePane(working *coremetadata.Registry, pane coremetadata.Pane) coremetadata.Pane {
-	annotations := r.annotations()
-	if annotations == nil || working == nil {
-		return pane
-	}
-	stored, ok := working.Pane(pane.Metadata.UID)
-	if !ok {
-		return pane
-	}
-	if stored.Metadata.Annotations == nil {
-		stored.Metadata.Annotations = map[string]string{}
-	}
-	maps.Copy(stored.Metadata.Annotations, annotations)
-	return stored.Clone()
+	return (mutationruntime.AgentCreatorRecord{Annotations: r.annotations()}).AnnotatePane(working, pane)
 }
 
 // report prints what a committed create owes stderr: the pane-chain skip line

@@ -26,7 +26,7 @@ import (
 //     (managed-Agent interaction commit);
 //   - create_intent.go openIntentAgent (resume-picker create, and native
 //     Codex create through the intent path);
-//   - create_agent.go createAgent (native Codex fresh create).
+//   - create_agent_execution.go createAgent (native Codex fresh create).
 //
 //   - process_agent_session.go updateProcessAgentSession (process owner
 //     initialization and writer backfill).

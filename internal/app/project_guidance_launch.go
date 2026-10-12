@@ -2,15 +2,13 @@ package app
 
 import (
 	"errors"
-	"fmt"
-	"maps"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 )
 
-const projectGuidanceReasonUnavailable = "project-guidance-unavailable"
+const projectGuidanceReasonUnavailable = mutationruntime.ProjectGuidanceReasonUnavailable
 
 // projectGuidanceLaunch travels with the Project prompt layer (projectLinksLaunch)
 // so every create, resume and replay reads and records the same Project ownership.
@@ -24,97 +22,18 @@ type projectGuidanceLaunch struct {
 }
 
 func (c *aiCommand) loadProjectGuidance(project coremetadata.Project, recorded map[string]string) projectGuidanceLaunch {
-	if !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
-		return projectGuidanceLaunch{}
-	}
-	launch := projectGuidanceLaunch{active: true, recorded: recorded[coremetadata.AnnotationAgentProjectGuidanceDigest]}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	launch.store = agentguidance.NewDefaultProjectStore(paths)
-	guidance, err := launch.store.Load(project.Metadata.UID)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	if guidance.Off() {
-		return launch
-	}
-	snapshot, err := launch.store.WriteSnapshot(guidance.Text)
-	if err != nil {
-		launch.unavailable = err
-		return launch
-	}
-	launch.digest, launch.text = snapshot.Digest, guidance.Text
-	return launch
-}
-
-func (l projectGuidanceLaunch) on() bool { return l.active && l.unavailable == nil && l.digest != "" }
-func (l projectGuidanceLaunch) changed() bool {
-	return l.active && l.unavailable == nil && l.digest != l.recorded
-}
-
-func (l projectGuidanceLaunch) developerInstructions(persona string) string {
-	if !l.on() {
-		return persona
-	}
-	if persona == "" {
-		return string(l.text)
-	}
-	return persona + projectlinks.CompositeSeparator + string(l.text)
-}
-
-func (l projectGuidanceLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	if !l.on() || base[coremetadata.AnnotationAgentProjectGuidanceDigest] == l.digest {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string)
-	}
-	out[coremetadata.AnnotationAgentProjectGuidanceDigest] = l.digest
-	return out
+	return localProjectGuidanceLaunch(c.sharedGuidance().LoadProjectGuidance(project, recorded))
 }
 
 func (l projectGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
-	if !l.active || (!l.changed() && l.unavailable == nil) {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string)
-	}
-	if l.digest == "" || l.unavailable != nil {
-		delete(out, coremetadata.AnnotationAgentProjectGuidanceDigest)
-	} else {
-		out[coremetadata.AnnotationAgentProjectGuidanceDigest] = l.digest
-	}
-	// Even unavailable instructions must not revive their recorded provider
-	// snapshot. The durable annotations are preserved until a readable launch.
-	out[coremetadata.AnnotationAgentSystemPromptSnapshot] = coremetadata.SystemPromptSnapshotOff
-	return out
+	return l.shared().ResumeLaunchAnnotations(base)
 }
 
 func (l projectGuidanceLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
-	if !l.changed() {
-		return nil
-	}
-	_, err := mutator.SetAgentProjectGuidance(registry, agentUID, l.digest)
-	return MapMetadataError(err)
+	return l.shared().Record(registry, mutator, agentUID)
 }
 
-func (l projectGuidanceLaunch) notice(label string) string {
-	if !l.active || l.unavailable == nil {
-		return ""
-	}
-	return projectGuidanceNotice(label, l.unavailable)
-}
-
-func projectGuidanceNotice(label string, err error) string {
-	return fmt.Sprintf("projmux: agent/%s launched without its Project's common instructions (%s): %v", label, projectGuidanceReasonUnavailable, err)
-}
+func (l projectGuidanceLaunch) notice(label string) string { return l.shared().Notice(label) }
 
 // projectGuidanceUnavailable distinguishes a missing recorded Project snapshot
 // from a missing link-rule snapshot at the shared composite-file seam.

@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -28,15 +25,7 @@ const claudeDialogueReplyOnlyFlag = mutationruntime.DialogueReplyOnlyFlag
 // Agent annotations a create already records. Without the mode it returns
 // base itself (nil included), so an ordinary create records nothing new.
 func withDialogueReplyOnlyAnnotation(enabled bool, base map[string]string) map[string]string {
-	if !enabled {
-		return base
-	}
-	out := maps.Clone(base)
-	if out == nil {
-		out = make(map[string]string, 1)
-	}
-	out[coremetadata.AnnotationAgentDialogueReplyOnly] = coremetadata.DialogueReplyOnlyOn
-	return out
+	return mutationruntime.WithDialogueReplyOnlyAnnotation(enabled, base)
 }
 
 type claudeDialogueLauncher interface {
@@ -44,19 +33,7 @@ type claudeDialogueLauncher interface {
 }
 
 func requireClaudeDialogueMode(provider string, enabled bool, payload []string) error {
-	if !enabled {
-		return nil
-	}
-	if provider != aiModeClaude {
-		return usageError("--dialogue-reply-only requires a Claude Agent/provider")
-	}
-	if len(payload) != 0 {
-		return usageError("--dialogue-reply-only starts with a fixed readiness turn and accepts no initial payload")
-	}
-	if runtime.GOOS != "linux" {
-		return errors.New("claude reply-only activation requires Linux process birth and pinned executable support")
-	}
-	return nil
+	return (mutationruntime.AgentInputFields{}).RequireDialogueMode(provider, enabled, payload)
 }
 
 func hasClaudeDialogueModeFlag(args []string) bool {
@@ -228,34 +205,7 @@ func claudeDialoguePrefixArgs(argv0, profile string, args []string) ([]string, b
 }
 
 func (c *aiCommand) PlanClaudeDialogueLaunch(workspace coremetadata.AgentWorkspace, conversation string) (string, []string, error) {
-	if err := requireClaudeDialogueMode(aiModeClaude, true, nil); err != nil {
-		return "", nil, err
-	}
-	provider := c.findAgentBinary(aiModeClaude)
-	if provider == "" {
-		return "", nil, errors.New(c.missingAgentRunnerMessage(aiModeClaude))
-	}
-	candidate, err := os.Executable()
-	if err != nil {
-		return "", nil, err
-	}
-	native, err := providerLaunchArgs(aiModeClaude, workspace, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	if conversation != "" {
-		resume, err := resumeArgsForAgent(aiModeClaude, conversation)
-		if err != nil {
-			return "", nil, err
-		}
-		native = append(native, resume[1:]...)
-	}
-	argv := append([]string{candidate, "internal", "claude-dialogue-exec", "--", provider}, native...)
-	plan, err := c.planAgentLaunch(aiModeClaude, workspace.CWD, nil, argv, filepath.Dir(provider))
-	if err != nil {
-		return "", nil, fmt.Errorf("claude reply-only launch: %w", err)
-	}
-	return plan.title, plan.commandArgs, nil
+	return c.sharedAgentCommand().PlanDialogueLaunch(workspace, conversation, os.Executable)
 }
 
 // A next-activation opt-in never leaks through the inherited environment.

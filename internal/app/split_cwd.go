@@ -77,22 +77,6 @@ var splitCWDConfigSeam = splitCWDConfigReaders{
 	global:  hooks.LoadGlobalConfig,
 }
 
-// cliSplitCWDSource resolves where a CLI split starts: `--cwd-from` alone.
-//
-// A CLI result is determined by its arguments. `create pane`, `create agent`
-// and the provider shortcuts therefore open no config file at all on this
-// route, and with no flag every CLI split starts in the owner Project root.
-// Scripts and automation must not change behavior because a human changed a
-// Settings value, so the `[ai] split_cwd_from` tiers below are deliberately
-// out of reach here. `--cwd-from pane` still obeys the owner Project root rule
-// and still prints the fallback notice.
-func cliSplitCWDSource(flagValue string) splitCWDSource {
-	if source, ok := parseSplitCWDSource(flagValue); ok {
-		return source
-	}
-	return splitCWDFromProject
-}
-
 // resolveUISplitCWDSource picks a UI split's start source: an explicit
 // per-call value, then `[ai] split_cwd_from` in the owner Project root's
 // `.projmux/config.toml`, then the global config, then project. The project
@@ -158,12 +142,6 @@ func (c *createCommand) splitPaneLaunchDir(ctx context.Context, anchorPaneID, ro
 // project source.
 func resolveSplitPaneCWD(root, live string, readErr error) (string, string) {
 	return mutationruntime.ResolveSplitPaneCWD(root, live, readErr)
-}
-
-// splitCWDNoticeLine is the one stderr line a CLI split create prints per
-// anchor whose Pane directory fell back to the root.
-func splitCWDNoticeLine(spelling, windowName, notice string) string {
-	return fmt.Sprintf("%s: window/%s: %s", spelling, windowName, notice)
 }
 
 // writeSplitCWDNotices prints the committed create's fallback notices. It runs

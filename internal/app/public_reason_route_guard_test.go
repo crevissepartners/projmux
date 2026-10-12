@@ -75,18 +75,16 @@ const (
 // already a flagSetNameExceptions row reuses that row's routes. It is closed:
 // a row no site uses is stale.
 var publicReasonExceptions = map[string]publicReasonException{
+	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequirePersonaLane spelling`:                         {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
+	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireCanonicalProvider c.Option("provider")`:       {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
+	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireProfileLane spelling`:                         {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
+	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireDialogueMode c.Option("dialogue-reply-only")`: {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
+	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireLaunchOptions c.Option("model")`:              {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "agent resume", "agent relaunch"), reason: publicReasonDynamicReason},
+	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireLaunchOptions c.Option("effort")`:             {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "agent resume", "agent relaunch"), reason: publicReasonDynamicReason},
 	// Dynamic spellings: the canonical `<verb> <kind|provider>` spelling the
 	// dispatch built, handed to a shared helper.
-	`internal/app/agent_profile.go (*createCommand).prepareProfileSettings spelling`:              {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/agent_profile.go (*createCommand).selectCreateProfile spelling`:                 {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/agent_profile.go requireProfileLane spelling`:                                   {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/claude_launch_options.go (*createCommand).preparePersonaLaunch spelling`:        {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/claude_launch_options.go requireLaunchOptions spelling`:                         {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "agent resume", "agent relaunch"), reason: publicReasonDynamicReason},
-	`internal/app/claude_launch_options.go requirePersonaLane spelling`:                           {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/app/codex_native_thread.go requireInteractiveOnlyProvider spelling`:                 {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
-	`internal/app/create_creator.go (*createCommand).decideCreator spelling`:                      {routes: publicReasonCreatorRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_creator.go parseCreatorFlag spelling`:                                    {routes: publicReasonCreatorRoutes, reason: publicReasonDynamicReason},
-	`internal/app/create.go requireCanonicalProvider spelling`:                                    {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go (resourceCreateFlags).refuseConflictingWindowScope spelling`: {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go requireExplicitProject spelling`:                             {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/app/create_resource.go splitPayload spelling`:                                       {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
@@ -121,11 +119,11 @@ var publicReasonExceptions = map[string]publicReasonException{
 	`internal/app/usagecmd/usage.go "status"`:                                 {reason: publicReasonHiddenReason},
 
 	// Text that is not a route.
-	`internal/app/agent_activation_binding.go "tmux"`:                                  {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
+	`internal/services/mutations/runtime/create_activation_binding.go "tmux"`:          {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
 	`internal/app/attach.go "runtime attach fallback"`:                                 {reason: "the route `runtime attach` followed by the name of its --fallback flag"},
 	`internal/services/settings/settings.go "agent question window"`:                   {reason: publicReasonNotARoute + ": the agent question window setting"},
 	`internal/app/create.go "agent pane"`:                                              {reason: publicReasonNotARoute + ": the agent pane intent invariant"},
-	`internal/app/create_agent.go "tmux"`:                                              {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
+	`internal/services/mutations/runtime/create_agent_activation.go "tmux"`:            {reason: publicReasonNotARoute + ": the tmux binary's capture-pane command"},
 	`internal/app/registry_recovery.go "reconcile registry checksum"`:                  {reason: "the route `reconcile registry` followed by English (`checksum guards require --source`)"},
 	`internal/app/runtime_mutation_route.go "runtime mutation"`:                        {reason: publicReasonNotARoute + ": the runtime mutation authority invariant"},
 	`internal/services/mutations/runtime/runtime_mutation_route.go "runtime mutation"`: {reason: publicReasonNotARoute + ": the runtime mutation authority invariant"},
@@ -497,6 +495,10 @@ func publicReasonArg(node ast.Node) ast.Expr {
 		case "usageError", "createUsage", "errors.New":
 			if len(n.Args) == 1 {
 				return n.Args[0]
+			}
+		case "createAgentUsage":
+			if len(n.Args) == 2 || len(n.Args) == 3 {
+				return n.Args[1]
 			}
 		case "fmt.Errorf":
 			return n
@@ -906,6 +908,11 @@ func TestPublicRouteReasonGuardRecognizesMovedCreateHelper(t *testing.T) {
 func createUsage(message string) error { return nil }
 func broken() error { return createUsage("notify push requires a target") }
 func valid() error { return createUsage("create window requires a Project") }
+func createAgentUsage(reason,message string) error { return nil }
+func typedBroken() error { return createAgentUsage("reason", "notify push requires a target") }
+func typedValid() error { return createAgentUsage("reason", "create agent requires a Project") }
+func causedBroken() error { return createAgentUsage("reason", "notify push requires a target",nil) }
+func causedValid() error { return createAgentUsage("reason", "create agent requires a Project",nil) }
 `
 	pkgs := []flagParseGuardPackage{{importPath: flagParseGuardModule + "/internal/services/mutations/runtime", scan: true, files: []flagParseGuardFile{{name: "synthetic/create.go", src: []byte(src)}}}}
 	eval, problems := newFlagSetNameEval(pkgs)
@@ -917,7 +924,7 @@ func valid() error { return createUsage("create window requires a Project") }
 		t.Fatal(problems)
 	}
 	failures, _ := publicReasonProblems(sites, nil)
-	if len(sites) != 2 || len(failures) != 1 || !strings.Contains(failures[0], "notify push") {
+	if len(sites) != 6 || len(failures) != 3 || !strings.Contains(failures[0], "notify push") {
 		t.Fatalf("sites %+v failures %v", sites, failures)
 	}
 }
