@@ -168,7 +168,7 @@ func TestDeleteSDKProcessRejectionBeforeAnyEffect(t *testing.T) {
 	if err := m.DeleteWindow(&reg, uid); err != nil {
 		t.Fatal(err)
 	}
-	window, _, _, err := m.CreateProcessWindow(&reg, project, metadata.BootstrapWindow{Name: "process"}, metadata.CreateAgentOptions{Name: "worker", Provider: "codex", OperationID: "op-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen", OperationID: "op-process"})
+	window, agent, pane, err := m.CreateProcessWindow(&reg, project, metadata.BootstrapWindow{Name: "process"}, metadata.CreateAgentOptions{Name: "worker", Provider: "codex", OperationID: "op-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen", OperationID: "op-process"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,14 +177,43 @@ func TestDeleteSDKProcessRejectionBeforeAnyEffect(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	runner := &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s")}
-	result, err := c.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: core.KindWindow, Ref: "uid:" + window.Metadata.UID, SocketPath: runner.path, Confirm: true}, runner)
-	var refusal *Refusal
-	if !errors.As(err, &refusal) || refusal.Code != CodeDeleteProcessUnsupported || result.Committed {
-		t.Fatalf("%+v %v", result, err)
+	for _, tc := range []struct {
+		kind core.Kind
+		uid  string
+	}{{core.KindWindow, window.Metadata.UID}, {core.KindPane, pane.Metadata.UID}, {core.KindAgent, agent.Metadata.UID}} {
+		runner := &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s")}
+		result, err := c.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: tc.kind, Ref: "uid:" + tc.uid, SocketPath: runner.path, Confirm: true}, runner)
+		var refusal *Refusal
+		if !errors.As(err, &refusal) || refusal.Code != CodeDeleteProcessUnsupported || result.Committed {
+			t.Fatalf("%s %+v %v", tc.kind, result, err)
+		}
+		after, _ := os.ReadFile(path)
+		if !bytes.Equal(data, after) || runner.pidReads+runner.kills+runner.queued != 0 {
+			t.Fatal("process refusal touched state/runtime")
+		}
 	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(data, after) || runner.pidReads+runner.kills+runner.queued != 0 {
-		t.Fatal("process refusal touched state/runtime")
+}
+
+func TestDeleteQueryPreservesRequestNamesInUserValues(t *testing.T) {
+	_, _, _, c := deleteFailureFixture(t)
+	for _, req := range []core.DeleteRequest{
+		{Kind: core.KindPane, Ref: "RenameRequest.Ref-user-value"},
+		{Kind: core.KindAgent, Ref: "worker", Project: "RenameRequest.Project-user-value"},
+		{Kind: core.KindPane, Ref: "shell", Window: "RenameRequest.Window-user-value"},
+	} {
+		_, err := c.Delete(context.Background(), req)
+		var r *Refusal
+		if !errors.As(err, &r) || r.Code != CodeResourceNotFound || !strings.Contains(err.Error(), "RenameRequest.") {
+			t.Fatalf("user value changed: %+v %v", req, err)
+		}
+		if strings.Contains(err.Error(), "DeleteRequest.Ref-user-value") || strings.Contains(err.Error(), "DeleteRequest.Project-user-value") || strings.Contains(err.Error(), "DeleteRequest.Window-user-value") {
+			t.Fatal(err)
+		}
+	}
+	for _, kind := range []core.Kind{core.KindWindow, core.KindPane, core.KindAgent} {
+		_, err := deleteQuery(core.DeleteRequest{Kind: kind, Ref: "uid:"})
+		if err == nil || !strings.Contains(err.Error(), "DeleteRequest.Ref") || strings.Contains(err.Error(), "RenameRequest.Ref") {
+			t.Fatalf("input field: %v", err)
+		}
 	}
 }
