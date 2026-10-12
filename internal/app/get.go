@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/projectcandidates"
 	"github.com/crevissepartners/projmux/internal/services/resources"
 )
 
@@ -42,7 +43,8 @@ var getKinds = cli.ChildSpellings("get")
 // handler so stdout, stderr, and the exit code stay identical to the current
 // public spelling.
 type getCommand struct {
-	loadRegistry func() (coremetadata.Registry, error)
+	projectCandidates *projectcandidates.Service
+	loadRegistry      func() (coremetadata.Registry, error)
 	// runtime is the live-tmux observation Window and Pane status is derived
 	// from; see runtime_observation.go.
 	runtime     runtimeLookup
@@ -141,6 +143,8 @@ func (c *getCommand) Run(args []string, stdout, stderr io.Writer) error {
 			args[0], strings.Join(getKinds, ", ")))
 	}
 	switch kind {
+	case "project-candidates":
+		return c.runProjectCandidates(args[1:], stdout, stderr)
 	case "pane":
 		return c.runPane(args[1:], stdout, stderr)
 	case "projects", "windows", "panes", "agents":

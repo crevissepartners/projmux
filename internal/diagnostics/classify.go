@@ -60,7 +60,7 @@ var commandRules = map[string]commandRule{
 	"create":          {subcommands: stringSet("project", "window", "pane", "agent", "notification", "codex", "claude", "antigravity")},
 	"delete":          {subcommands: stringSet("project", "window", "pane", "agent", "notification"), aliases: pluralAliases("project", "window", "pane", "agent", "notification")},
 	"describe":        {subcommands: stringSet("project", "window", "pane", "agent"), aliases: pluralAliases("project", "window", "pane", "agent")},
-	"get":             {subcommands: stringSet("projects", "windows", "panes", "agents", "runtime", "notifications", "pane"), aliases: map[string]string{"project": "projects", "window": "windows", "agent": "agents", "notification": "notifications"}},
+	"get":             {subcommands: stringSet("project-candidates", "projects", "windows", "panes", "agents", "runtime", "notifications", "pane"), aliases: map[string]string{"project-candidate": "project-candidates", "project": "projects", "window": "windows", "agent": "agents", "notification": "notifications"}},
 	"help":            {},
 	"instructions":    {subcommands: stringSet("list", "show", "edit", "set", "delete")},
 	"label":           {subcommands: stringSet("project", "window", "pane", "agent"), aliases: pluralAliases("project", "window", "pane", "agent")},

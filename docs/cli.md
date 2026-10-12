@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 243 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 244 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -2250,6 +2250,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
+projmux get project-candidates [-o json]
 projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
 projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
@@ -2264,6 +2265,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
+| [`projmux get project-candidates`](#projmux-get-project-candidates) | List configured project candidate paths without writing pins or discovery memory |
 | [`projmux get projects`](#projmux-get-projects) | List Project resources as NAME STATUS ACTIONS AGE; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context |
 | [`projmux get windows`](#projmux-get-windows) | List Window resources as NAME STATUS ACTIONS AGE; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
 | [`projmux get panes`](#projmux-get-panes) | List Pane resources as NAME STATUS ACTIONS AGE; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
@@ -2272,7 +2274,32 @@ Subcommands:
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get pane`](#projmux-get-pane) | Read one Pane resource; with no selector inside tmux, the active Pane |
 
-Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get runtime sessions`, `projmux get runtime windows`, `projmux get runtime panes`, `projmux get notifications`, `projmux get pane`
+Canonical spelling: `projmux get project-candidates`, `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get runtime sessions`, `projmux get runtime windows`, `projmux get runtime panes`, `projmux get notifications`, `projmux get pane`
+
+### `projmux get project-candidates`
+
+List configured project candidate paths without writing pins or discovery memory
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=zero-or-more`
+- `domain-effect=null`
+
+```
+projmux get project-candidates [-o json]
+```
+
+Aliases: `project-candidate`
+
+Output modes (`-o`): `json`
 
 ### `projmux get projects`
 

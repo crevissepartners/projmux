@@ -126,7 +126,7 @@ func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 		}
 		children = append(children, child.Name)
 	}
-	want := []string{"projects", "windows", "panes", "agents", "notifications", "pane"}
+	want := []string{"project-candidates", "projects", "windows", "panes", "agents", "notifications", "pane"}
 	if !reflect.DeepEqual(children, want) {
 		t.Fatalf("get kind children = %v, want %v", children, want)
 	}

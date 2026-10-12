@@ -1,7 +1,11 @@
 package app
 
 import (
+	"github.com/crevissepartners/projmux/internal/config"
+	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	service "github.com/crevissepartners/projmux/internal/services/projectcandidates"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -102,7 +106,16 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		return runRoute(t, cmd, args...)
 	}
 
+	runCandidatesGetRoute := func(t *testing.T, args []string) (string, string, error) {
+		t.Helper()
+		home := t.TempDir()
+		s := service.Service{Paths: func() (config.Paths, error) {
+			return config.Paths{ConfigDir: filepath.Join(home, "config"), StateDir: filepath.Join(home, "state")}, nil
+		}, HomeDir: func() (string, error) { return home, nil }, LoadRegistry: func() (metadata.Registry, error) { return metadata.Registry{}, nil }}
+		return runRoute(t, &getCommand{projectCandidates: &s}, args...)
+	}
 	return []kindSpellingCase{
+		{verb: "get", canonical: "project-candidates", alias: "project-candidate", tail: []string{"-o", "json"}, run: runCandidatesGetRoute},
 		{verb: "get", canonical: "projects", alias: "project", tail: []string{"-o", "name"}, run: runGetRoute},
 		{verb: "get", canonical: "windows", alias: "window", tail: []string{"--project", "alpha", "-o", "ref"}, run: runGetRoute},
 		{verb: "get", canonical: "agents", alias: "agent", tail: []string{"-o", "json"}, run: runGetRoute},

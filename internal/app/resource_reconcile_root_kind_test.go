@@ -73,6 +73,7 @@ type rootKindProjectionSite struct {
 // rootKindProjectionSites is the sweep. Sorted by file then function; the
 // exhaustiveness test re-sorts anyway, so the order here is for reading.
 var rootKindProjectionSites = []rootKindProjectionSite{
+	{File: "internal/services/projectcandidates/projectcandidates.go", Func: "Service.List", Source: "Registry", Verdict: rootKindProjectOnly, Why: "configured candidate paths and managed pins have Project roots; ControlSessions have no project root"},
 	{
 		File: "internal/core/metadata/schema.go", Func: "allResourceMeta",
 		Source: "Registry", Verdict: rootKindBoth,
@@ -114,7 +115,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "a pin is uid-or-path and both spellings need a root; pins.KindProject is the only managed pin kind",
 	},
 	{
-		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.Selection",
+		File: "internal/core/pins/selection.go", Func: "Select",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
 		Why: "reads the ProjectRef set ProjectRefsOf already scoped",
 	},
@@ -124,7 +125,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "reads the ProjectRef set ProjectRefsOf already scoped",
 	},
 	{
-		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.DiscoveryPaths",
+		File: "internal/core/pins/discovery.go", Func: "DiscoveryPaths",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
 		Why: "contributes Project roots to discovery; a ControlSession contributes no path by construction",
 	},
@@ -442,14 +443,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        20,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 25,
+		rootKindProjectOnly: 26,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 47; got != want {
+	if got, want := len(rootKindProjectionSites), 48; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

@@ -133,4 +133,7 @@
 // deleting. Refusal carries Code plus optional Field and Reason for invalid rules,
 // confirmation refusals or unreadable files; other storage errors
 // remain ordinary errors. Dry runs check the same encoded size as writes.
+//
+// ListProjectCandidates reads configured paths in discovery order without writing
+// pin preferences or saved discovery memory.
 package projmux

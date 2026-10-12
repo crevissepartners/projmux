@@ -1757,6 +1757,7 @@ var routes = []Route{
 		Summary:        "Read Projmux resources by selector",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
+			"projmux get project-candidates [-o json]",
 			"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]",
 			"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
 			"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
@@ -1766,10 +1767,11 @@ var routes = []Route{
 			"projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
 			"projmux get notifications [--json] [--live] [--limit <n>] [--ui table|sidebar] [--client <tty>] [--severity <severity>]... [--source <source>]...",
 		},
-		Canonical: []string{"get projects", "get windows", "get panes", "get agents",
+		Canonical: []string{"get project-candidates", "get projects", "get windows", "get panes", "get agents",
 			"get runtime sessions", "get runtime windows", "get runtime panes",
 			"get notifications", "get pane"},
 		Children: []Route{
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "project-candidates", Aliases: []string{"project-candidate"}, Invocation: InvocationFanOut, Summary: "List configured project candidate paths without writing pins or discovery memory", Usage: []string{"projmux get project-candidates [-o json]"}, Canonical: []string{"get project-candidates"}, Outputs: []OutputMode{OutputModeJSON}},
 			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources as NAME STATUS ACTIONS AGE; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context", CanonicalSummary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
