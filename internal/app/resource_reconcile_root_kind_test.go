@@ -73,6 +73,7 @@ type rootKindProjectionSite struct {
 // rootKindProjectionSites is the sweep. Sorted by file then function; the
 // exhaustiveness test re-sorts anyway, so the order here is for reading.
 var rootKindProjectionSites = []rootKindProjectionSite{
+	{File: "internal/services/projectcandidates/projectcandidates.go", Func: "Service.List", Source: "Registry", Verdict: rootKindProjectOnly, Why: "configured candidate paths and managed pins have Project roots; ControlSessions have no project root"},
 	{
 		File: "internal/core/metadata/schema.go", Func: "allResourceMeta",
 		Source: "Registry", Verdict: rootKindBoth,
@@ -114,7 +115,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "a pin is uid-or-path and both spellings need a root; pins.KindProject is the only managed pin kind",
 	},
 	{
-		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.Selection",
+		File: "internal/core/pins/selection.go", Func: "Select",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
 		Why: "reads the ProjectRef set ProjectRefsOf already scoped",
 	},
@@ -124,7 +125,7 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "reads the ProjectRef set ProjectRefsOf already scoped",
 	},
 	{
-		File: "internal/app/pincmd/pin_authority.go", Func: "Authority.DiscoveryPaths",
+		File: "internal/core/pins/discovery.go", Func: "DiscoveryPaths",
 		Source: "Resolver", Verdict: rootKindProjectOnly,
 		Why: "contributes Project roots to discovery; a ControlSession contributes no path by construction",
 	},
