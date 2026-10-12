@@ -163,6 +163,14 @@ func TestStopProjectInputCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, ref := range []string{"uid:", " uid: "} {
+		_, err := c.StopProject(context.Background(), core.StopProjectRequest{Ref: ref})
+		var refusal *Refusal
+		if !errors.As(err, &refusal) || refusal.Code != CodeSelectorInvalid || !strings.Contains(err.Error(), "StopProjectRequest.Ref") || strings.Contains(err.Error(), "--project") {
+			t.Fatalf("malformed Ref shape: %v", err)
+		}
+	}
+
 	_, err = c.StopProject(context.Background(), core.StopProjectRequest{})
 	var refusal *Refusal
 	if !errors.As(err, &refusal) || refusal.Code != CodeSelectorInvalid || !strings.Contains(err.Error(), "StopProjectRequest.Ref") {

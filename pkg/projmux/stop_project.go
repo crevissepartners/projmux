@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
@@ -37,6 +38,14 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 	if strings.TrimSpace(req.Ref) == "" {
 		return result, &Refusal{Code: CodeSelectorInvalid, message: "StopProjectRequest.Ref must name one Project"}
 	}
+	// Input shape uses the same parser and named-field rendering as mutationQuery;
+	// the shared resolver still owns selection and its CLI-equivalent outcomes.
+	if ref := strings.TrimSpace(req.Ref); !filepath.IsAbs(ref) {
+		if _, err := selector.ParseRef(metadata.KindProject, ref); err != nil {
+			return result, resourceRefusal(selectorInputError(err, "StopProjectRequest.Ref"))
+		}
+	}
+
 	if req.SocketPath != "" && !filepath.IsAbs(req.SocketPath) {
 		return result, &Refusal{Code: CodeRuntimeRequestInvalid, message: "StopProjectRequest.SocketPath must be absolute"}
 	}

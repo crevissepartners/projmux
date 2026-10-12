@@ -157,7 +157,7 @@ func TestStopProjectSDKNoWriteRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := projectRegistryBytes(t, state)
-	for _, ref := range []string{"alpha", "missing", "uid:", "/absolute/unclaimed"} {
+	for _, ref := range []string{"alpha", "missing", "/absolute/unclaimed"} {
 		_, err := c.StopProject(context.Background(), core.StopProjectRequest{Ref: ref})
 		_, cliErr := sdkStopCLI(t, s, session, ref)
 		var refusal *projmux.Refusal
