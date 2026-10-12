@@ -1,34 +1,34 @@
 package runtime
 
 import (
-"context"
-"errors"
-"fmt"
-"github.com/crevissepartners/projmux/internal/cli"
-"github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/core/persona"
-"github.com/crevissepartners/projmux/internal/core/profile"
-"github.com/crevissepartners/projmux/internal/diagnostics"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-"github.com/crevissepartners/projmux/internal/services/mutations"
-"io"
-"maps"
-"os"
-"regexp"
-"slices"
-"strings"
-"time"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
-intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"context"
+	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/profile"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"io"
+	"maps"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
 )
 
 // requireProfileLane refuses an explicit --profile on the reply-only
 // activation. Like the other argv-only refusals it lands before any file is
 // read.
-func requireProfileLane(spelling string, flags resourceCreateFlags) error {
+func RequireProfileLane(spelling string, flags resourceCreateFlags) error {
 	if flags.profile == "" || flags.profile == profile.ReservedName || !flags.dialogueReplyOnly {
 		return nil
 	}
@@ -37,17 +37,17 @@ func requireProfileLane(spelling string, flags resourceCreateFlags) error {
 }
 
 // claudeEffortLevels is the set `claude --help` lists for --effort.
-var claudeEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+var ClaudeEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
 
 // claudeModelName accepts an alias such as "opus" or a full name such as
 // "claude-opus-5" or "opus[1m]". Anything else could be read by the provider as
 // another option.
-var claudeModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$`)
+var ClaudeModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}$`)
 
 // requireLaunchOptions is the one model and effort validator of create and
 // `agent resume`. outcome ends every refusal: what the refusing verb left
 // untouched ("nothing was created" or "nothing was changed").
-func requireLaunchOptions(spelling, provider, model, effort string, dialogueReplyOnly bool, outcome string) error {
+func RequireLaunchOptions(spelling, provider, model, effort string, dialogueReplyOnly bool, outcome string) error {
 	if model == "" && effort == "" {
 		return nil
 	}
@@ -58,12 +58,12 @@ func requireLaunchOptions(spelling, provider, model, effort string, dialogueRepl
 		return usageError(fmt.Sprintf("%s --model and --effort cannot be combined with --%s; %s",
 			spelling, claudeDialogueReplyOnlyFlag, outcome))
 	}
-	if model != "" && !claudeModelName.MatchString(model) {
+	if model != "" && !ClaudeModelName.MatchString(model) {
 		return usageError(fmt.Sprintf("%s --model %q is not a model name; %s", spelling, model, outcome))
 	}
-	if effort != "" && !slices.Contains(claudeEffortLevels, effort) {
+	if effort != "" && !slices.Contains(ClaudeEffortLevels, effort) {
 		return usageError(fmt.Sprintf("%s --effort must be one of: %s; %s",
-			spelling, strings.Join(claudeEffortLevels, ", "), outcome))
+			spelling, strings.Join(ClaudeEffortLevels, ", "), outcome))
 	}
 	return nil
 }
@@ -79,11 +79,11 @@ func requireLaunchOptions(spelling, provider, model, effort string, dialogueRepl
 //
 // Like requireClaudeLaunchOptions it is an argv-only refusal, so it lands
 // before the persona file is read and before any snapshot is written.
-func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) error {
-	if flags.persona == "" {
+func RequirePersonaLane(spelling, provider string, flags resourceCreateFlags) error {
+	if flags.Instructions == "" {
 		return nil
 	}
-	option := flags.personaOption
+	option := flags.InstructionsOption
 	if option == "" {
 		option = "instructions"
 	}
@@ -115,7 +115,7 @@ func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) er
 // The picker adapters get their own message because refusing them as "unknown"
 // would hide the actual model: they are selection surfaces that end in one of
 // these providers, not providers.
-func requireCanonicalProvider(spelling, raw string) (string, error) {
+func RequireCanonicalProvider(spelling, raw string) (string, error) {
 	provider := strings.ToLower(strings.TrimSpace(raw))
 	if provider == "" {
 		return "", usageError(fmt.Sprintf("%s requires --provider (%s); the saved split mode is not a canonical default",

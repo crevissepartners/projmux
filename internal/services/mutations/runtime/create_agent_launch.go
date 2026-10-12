@@ -1,57 +1,57 @@
 package runtime
 
 import (
-"bytes"
-"context"
-"encoding/base64"
-"encoding/binary"
-"encoding/json"
-"errors"
-"flag"
-"fmt"
-"github.com/crevissepartners/projmux/internal/aiprovider"
-"github.com/crevissepartners/projmux/internal/app/initcmd"
-"github.com/crevissepartners/projmux/internal/app/keybinding"
-"github.com/crevissepartners/projmux/internal/cli"
-"github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/core/aibadge"
-"github.com/crevissepartners/projmux/internal/core/notify"
-"github.com/crevissepartners/projmux/internal/core/registryview"
-"github.com/crevissepartners/projmux/internal/core/selector"
-"github.com/crevissepartners/projmux/internal/diagnostics"
-"github.com/crevissepartners/projmux/internal/i18n"
-"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
-"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
-"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
-"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
-"github.com/crevissepartners/projmux/internal/version"
-"io"
-"os"
-"os/exec"
-"path/filepath"
-"slices"
-"strings"
-"sync"
-"syscall"
-"time"
-"unicode/utf16"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
-inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
+	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/version"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unicode/utf16"
 )
 
 // agentPaneBinding is the one typed materialization contract shared by create,
 // resume, topology replay, and native Codex binding. The supplied runner has
 // already been bound to one explicit logical tmux route; this value contains
 // resource/presentation state only and therefore cannot reopen socket authority.
-type agentPaneBinding struct {
+type AgentPaneBinding struct {
 	PaneID         string
 	Provider       string
 	ContextDir     string
@@ -70,13 +70,13 @@ type agentPaneBinding struct {
 	UpdatedAt           time.Time
 }
 
-type agentPaneBindError struct {
+type AgentPaneBindError struct {
 	Operation    string
 	Cause        error
 	Compensation error
 }
 
-func (e *agentPaneBindError) Error() string {
+func (e *AgentPaneBindError) Error() string {
 	if e == nil {
 		return "managed Agent Pane binding failed"
 	}
@@ -87,14 +87,14 @@ func (e *agentPaneBindError) Error() string {
 	return message
 }
 
-func (e *agentPaneBindError) Unwrap() error { return e.Cause }
+func (e *AgentPaneBindError) Unwrap() error { return e.Cause }
 
 // BindAgentPaneOnRoute applies the complete managed-Agent option set as one
 // all-or-error result. If any write fails, every preceding write is restored in
 // reverse order on the same exact runner. The surrounding materializer may then
 // roll back the Pane itself without leaving a partially authoritative live
 // object behind.
-func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+func (c *AgentLaunchService) BindAgentPaneOnRoute(ctx context.Context, runner TmuxCommandRunner, binding AgentPaneBinding) error {
 	paneID := strings.TrimSpace(binding.PaneID)
 	if paneID == "" {
 		return errors.New("managed Agent Pane binding requires an exact Pane runtime id")
@@ -109,51 +109,51 @@ func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommand
 	binding.ResumeSource = strings.TrimSpace(binding.ResumeSource)
 	binding.ThreadID = strings.TrimSpace(binding.ThreadID)
 	if binding.UpdatedAt.IsZero() && binding.ConversationID != "" {
-		binding.UpdatedAt = c.nowTime().UTC()
+		binding.UpdatedAt = c.NowTime().UTC()
 	}
 
 	writes := []struct {
-		option string
+		Option string
 		value  string
 		unset  bool
 	}{
-		{option: aiPaneManagedOption, value: "1"},
-		{option: aiPaneAgentOption, value: binding.Provider},
-		{option: aiPaneLaunchAuthorshipOption, value: "1"},
-		{option: aiPaneContextOption, value: binding.ContextDir},
-		{option: aiPaneTopicOption, value: binding.Topic, unset: binding.Topic == ""},
-		{option: aiPaneTopicManualOption, value: "on", unset: !binding.TopicManual},
-		{option: aiPaneStateOption, value: "idle"},
-		{option: aiPaneSessionIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
-		{option: aiPaneResumeIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
-		{option: aiPaneResumeSourceOption, value: binding.ResumeSource, unset: binding.ResumeSource == ""},
-		{option: aiPaneResumeUpdatedAtOption, unset: binding.UpdatedAt.IsZero()},
-		{option: aiPaneThreadIDOption, value: binding.ThreadID, unset: binding.ThreadID == ""},
-		{option: aiPaneCodexAuthorityOption, unset: true},
-		{option: aiPaneCodexEpochOption, unset: true},
-		{option: aiPaneCodexReasonOption, unset: true},
-		{option: aiPaneCodexDeclaredOption, unset: true},
+		{Option: aiPaneManagedOption, value: "1"},
+		{Option: aiPaneAgentOption, value: binding.Provider},
+		{Option: aiPaneLaunchAuthorshipOption, value: "1"},
+		{Option: aiPaneContextOption, value: binding.ContextDir},
+		{Option: aiPaneTopicOption, value: binding.Topic, unset: binding.Topic == ""},
+		{Option: aiPaneTopicManualOption, value: "on", unset: !binding.TopicManual},
+		{Option: aiPaneStateOption, value: "idle"},
+		{Option: aiPaneSessionIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
+		{Option: aiPaneResumeIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
+		{Option: aiPaneResumeSourceOption, value: binding.ResumeSource, unset: binding.ResumeSource == ""},
+		{Option: aiPaneResumeUpdatedAtOption, unset: binding.UpdatedAt.IsZero()},
+		{Option: aiPaneThreadIDOption, value: binding.ThreadID, unset: binding.ThreadID == ""},
+		{Option: aiPaneCodexAuthorityOption, unset: true},
+		{Option: aiPaneCodexEpochOption, unset: true},
+		{Option: aiPaneCodexReasonOption, unset: true},
+		{Option: aiPaneCodexDeclaredOption, unset: true},
 	}
 	if !binding.UpdatedAt.IsZero() {
 		writes[10].value = binding.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 	if binding.Provider == aiModeCodex {
 		writes[12] = struct {
-			option string
+			Option string
 			value  string
 			unset  bool
-		}{option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
+		}{Option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
 		writes[14] = struct {
-			option string
+			Option string
 			value  string
 			unset  bool
-		}{option: aiPaneCodexReasonOption, value: codexNativeUnexplainedReason}
+		}{Option: aiPaneCodexReasonOption, value: codexNativeUnexplainedReason}
 		if declared := codexNativeDeclaredReason(binding.CodexNativeDeclared); declared != "" {
 			writes[15] = struct {
-				option string
+				Option string
 				value  string
 				unset  bool
-			}{option: aiPaneCodexDeclaredOption, value: declared}
+			}{Option: aiPaneCodexDeclaredOption, value: declared}
 		}
 	}
 	if binding.NativeCodex {
@@ -161,59 +161,59 @@ func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommand
 			return errors.New("native Codex Pane binding requires an exact thread identity")
 		}
 		writes[12] = struct {
-			option string
+			Option string
 			value  string
 			unset  bool
-		}{option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
+		}{Option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
 		writes[14] = struct {
-			option string
+			Option string
 			value  string
 			unset  bool
-		}{option: aiPaneCodexReasonOption, value: "observer-starting"}
+		}{Option: aiPaneCodexReasonOption, value: "observer-starting"}
 	}
 
-	titleBefore, err := readAgentPaneFieldOnRoute(ctx, runner, paneID, "#{pane_title}")
+	titleBefore, err := ReadAgentPaneFieldOnRoute(ctx, runner, paneID, "#{pane_title}")
 	if err != nil {
-		return &agentPaneBindError{Operation: "read Pane title", Cause: err}
+		return &AgentPaneBindError{Operation: "read Pane title", Cause: err}
 	}
 	before := make(map[string]string, len(writes))
 	for _, write := range writes {
-		value, readErr := readAgentPaneOptionOnRoute(ctx, runner, paneID, write.option)
+		value, readErr := ReadAgentPaneOptionOnRoute(ctx, runner, paneID, write.Option)
 		if readErr != nil {
-			return &agentPaneBindError{Operation: "read Pane option " + write.option, Cause: readErr}
+			return &AgentPaneBindError{Operation: "read Pane option " + write.Option, Cause: readErr}
 		}
-		before[write.option] = value
+		before[write.Option] = value
 	}
 
 	applied := make([]struct {
-		option string
+		Option string
 		value  string
 		unset  bool
 	}, 0, len(writes))
 	titleApplied := false
 	writeBindingOption := func(write struct {
-		option string
+		Option string
 		value  string
 		unset  bool
 	}) error {
-		args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
+		args := []string{"set-option", "-p", "-t", paneID, write.Option, write.value}
 		if write.unset {
-			args = []string{"set-option", "-p", "-u", "-t", paneID, write.option}
+			args = []string{"set-option", "-p", "-u", "-t", paneID, write.Option}
 		}
 		if _, err := runner.Run(ctx, "tmux", args...); err != nil {
-			return fmt.Errorf("write Pane option %s: %w", write.option, err)
+			return fmt.Errorf("write Pane option %s: %w", write.Option, err)
 		}
 		return nil
 	}
 	compensate := func() error {
 		var failures []error
 		for i := len(applied) - 1; i >= 0; i-- {
-			prior := before[applied[i].option]
+			prior := before[applied[i].Option]
 			restore := struct {
-				option string
+				Option string
 				value  string
 				unset  bool
-			}{option: applied[i].option, value: prior, unset: prior == ""}
+			}{Option: applied[i].Option, value: prior, unset: prior == ""}
 			if restoreErr := writeBindingOption(restore); restoreErr != nil {
 				failures = append(failures, restoreErr)
 			}
@@ -226,19 +226,19 @@ func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommand
 		return errors.Join(failures...)
 	}
 	if _, err := runner.Run(ctx, "tmux", "select-pane", "-T", binding.Title, "-t", paneID); err != nil {
-		return &agentPaneBindError{Operation: "set Pane title", Cause: err}
+		return &AgentPaneBindError{Operation: "set Pane title", Cause: err}
 	}
 	titleApplied = true
 	for _, write := range writes {
 		if err := writeBindingOption(write); err != nil {
-			return &agentPaneBindError{Operation: "set Pane option " + write.option, Cause: err, Compensation: compensate()}
+			return &AgentPaneBindError{Operation: "set Pane option " + write.Option, Cause: err, Compensation: compensate()}
 		}
 		applied = append(applied, write)
 	}
 	return nil
 }
 
-func readAgentPaneFieldOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, format string) (string, error) {
+func ReadAgentPaneFieldOnRoute(ctx context.Context, runner TmuxCommandRunner, paneID, format string) (string, error) {
 	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, format)
 	if err != nil {
 		return "", err
@@ -246,7 +246,7 @@ func readAgentPaneFieldOnRoute(ctx context.Context, runner tmuxCommandRunner, pa
 	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
-func readAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option string) (string, error) {
+func ReadAgentPaneOptionOnRoute(ctx context.Context, runner TmuxCommandRunner, paneID, option string) (string, error) {
 	out, err := runner.Run(ctx, "tmux", "show-options", "-pqv", "-t", paneID, option)
 	if err != nil {
 		return "", err
@@ -259,11 +259,11 @@ func readAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, p
 // bounded acknowledgement window; only the initial-task hook acknowledges. It
 // does not inspect pane_title, capture-pane, semantic tmux presentation, or
 // provider conversation content.
-func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
+func (c *AgentLaunchService) AwaitAgentActivation(ctx context.Context, runner TmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
 	if runner == nil {
 		return false, "provider-hook", errors.New("agent activation observer is not configured")
 	}
-	if c.loadRegistry == nil {
+	if c.LoadRegistry == nil {
 		return false, "provider-hook", errors.New("agent activation Registry observer is not configured")
 	}
 	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", "#{"+tmuxopts.PaneUID+"}")
@@ -274,7 +274,7 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 	if paneUID == "" {
 		return false, "provider-hook", errors.New("managed Pane carries no resource identity")
 	}
-	initial, loadErr := c.loadRegistry()
+	initial, loadErr := c.LoadRegistry()
 	if loadErr != nil {
 		return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
 	}
@@ -282,21 +282,21 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 	first := checkAgentActivationBinding(initial, paneUID, paneID, nil)
 	if !first.bound() {
 		return false, "provider-hook", &agentActivationBindingError{
-			stage: agentBindingStageBeforeAwaiting, paneUID: paneUID, paneID: paneID, check: first,
+			Stage: agentBindingStageBeforeAwaiting, paneUID: paneUID, paneID: paneID, check: first,
 		}
 	}
 	expect := &agentActivationBindingExpectation{AgentUID: first.AgentUID, Generation: first.Generation}
 	agentUID := first.AgentUID
-	startupDeadline := c.nowTime().Add(startupTimeout)
+	startupDeadline := c.NowTime().Add(startupTimeout)
 	var acknowledgementDeadline time.Time
 	for {
-		registry, loadErr := c.loadRegistry()
+		registry, loadErr := c.LoadRegistry()
 		if loadErr != nil {
 			return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
 		}
 		if current := checkAgentActivationBinding(registry, paneUID, paneID, expect); !current.bound() {
 			return false, "provider-hook", &agentActivationBindingError{
-				stage: agentBindingStageWhileAwaiting, paneUID: paneUID, paneID: paneID, check: current,
+				Stage: agentBindingStageWhileAwaiting, paneUID: paneUID, paneID: paneID, check: current,
 			}
 		}
 		agent, present := registry.Agent(agentUID)
@@ -316,12 +316,12 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 		if err := ctx.Err(); err != nil {
 			return false, "provider-hook", err
 		}
-		now := c.nowTime()
+		now := c.NowTime()
 		if (!acknowledgementDeadline.IsZero() && !now.Before(acknowledgementDeadline)) ||
 			(acknowledgementDeadline.IsZero() && !now.Before(startupDeadline)) {
 			return false, "provider-hook", nil
 		}
-		c.sleepFor(50 * time.Millisecond)
+		c.SleepFor(50 * time.Millisecond)
 	}
 }
 
@@ -329,7 +329,7 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 // resume launch, whose persona and effort notices a resume-picker create
 // discloses once its Agent has a name. Every other launch returns the zero
 // resume launch, which discloses nothing.
-func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, agentResumeLaunch, error) {
+func (c *createCommand) PlanAgentPaneLaunchWithResume(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, agentResumeLaunch, error) {
 	conversation := strings.TrimSpace(flags.resumeConversation)
 	if flags.dialogueReplyOnly {
 		launcher, ok := c.agents.(claudeDialogueLauncher)

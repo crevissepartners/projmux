@@ -1,12 +1,12 @@
 package runtime
 
 import (
-"fmt"
-"path/filepath"
-"slices"
-"strings"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"fmt"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // refuseStatelessAgentWorkspace is the argv half of resolveAgentWorkspace: the
@@ -16,49 +16,49 @@ mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations
 // always says `create agent`, so a shortcut does too. What needs state (a
 // missing path, a root outside every Project, a duplicate only canonicalization
 // or the owner root reveals) is left to the resolver inside the transaction.
-func refuseStatelessAgentWorkspace(provider, cwd string, additional []string) error {
+func RefuseStatelessAgentWorkspace(provider, cwd string, additional []string) error {
 	spelling := canonicalCreateAgent
-	if len(additional) > 0 && !supportsAdditionalWritableRoots(provider) {
-		return usageError(unsupportedAdditionalRootsError(spelling, provider).Error())
+	if len(additional) > 0 && !SupportsAdditionalWritableRoots(provider) {
+		return usageError(UnsupportedAdditionalRootsError(spelling, provider).Error())
 	}
 	seen := make([]string, 0, len(additional)+1)
 	if strings.TrimSpace(cwd) != "" {
-		if !absoluteWorkspacePath(cwd) {
-			return usageError(agentWorkspacePathError(spelling, "--cwd", cwd, errAgentWorkspaceNotAbsolute).Error())
+		if !AbsoluteWorkspacePath(cwd) {
+			return usageError(AgentWorkspacePathError(spelling, "--cwd", cwd, errAgentWorkspaceNotAbsolute).Error())
 		}
 		seen = append(seen, filepath.Clean(strings.TrimSpace(cwd)))
 	}
 	for _, raw := range additional {
-		if !absoluteWorkspacePath(raw) {
-			return usageError(agentWorkspacePathError(spelling, "--add-dir", raw, errAgentWorkspaceNotAbsolute).Error())
+		if !AbsoluteWorkspacePath(raw) {
+			return usageError(AgentWorkspacePathError(spelling, "--add-dir", raw, errAgentWorkspaceNotAbsolute).Error())
 		}
 		clean := filepath.Clean(strings.TrimSpace(raw))
 		if slices.Contains(seen, clean) {
-			return usageError(duplicateAdditionalRootError(spelling, raw).Error())
+			return usageError(DuplicateAdditionalRootError(spelling, raw).Error())
 		}
 		seen = append(seen, clean)
 	}
 	return nil
 }
 
-func supportsAdditionalWritableRoots(provider string) bool {
+func SupportsAdditionalWritableRoots(provider string) bool {
 	return provider == aiModeCodex || provider == aiModeClaude
 }
 
-func absoluteWorkspacePath(raw string) bool {
+func AbsoluteWorkspacePath(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	return raw != "" && filepath.IsAbs(raw)
 }
 
-func unsupportedAdditionalRootsError(spelling, provider string) error {
+func UnsupportedAdditionalRootsError(spelling, provider string) error {
 	return fmt.Errorf("%s: provider %q does not support additional writable roots", spelling, provider)
 }
 
-func agentWorkspacePathError(spelling, label, raw string, err error) error {
+func AgentWorkspacePathError(spelling, label, raw string, err error) error {
 	return fmt.Errorf("%s: %s %q: %w", spelling, label, raw, err)
 }
 
-func duplicateAdditionalRootError(spelling, raw string) error {
+func DuplicateAdditionalRootError(spelling, raw string) error {
 	return fmt.Errorf("%s: --add-dir %q duplicates the effective workspace or another explicit root", spelling, raw)
 }
 
@@ -66,13 +66,13 @@ func duplicateAdditionalRootError(spelling, raw string) error {
 // routes refuse its stateless cases first (refuseStatelessAgentWorkspace); the
 // checks stay here as the defense for stored values -- a restored UI intent, a
 // resumed or rebound Agent -- whose refusals remain plain errors.
-func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
+func ResolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
 	defaultCWD := strings.TrimSpace(cwd) == ""
 	if defaultCWD {
 		cwd = owner.Spec.Root
 	}
-	if len(additional) > 0 && !supportsAdditionalWritableRoots(provider) {
-		return coremetadata.AgentWorkspace{}, unsupportedAdditionalRootsError(spelling, provider)
+	if len(additional) > 0 && !SupportsAdditionalWritableRoots(provider) {
+		return coremetadata.AgentWorkspace{}, UnsupportedAdditionalRootsError(spelling, provider)
 	}
 
 	ownerRoot, err := canonicalExistingDir(owner.Spec.Root)
@@ -93,7 +93,7 @@ func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, o
 	resolve := func(label, raw string) (string, error) {
 		clean, err := canonicalExistingDir(raw)
 		if err != nil {
-			return "", agentWorkspacePathError(spelling, label, raw, err)
+			return "", AgentWorkspacePathError(spelling, label, raw, err)
 		}
 		for _, root := range authorized {
 			if pathWithinTree(root, clean) {
@@ -114,7 +114,7 @@ func resolveAgentWorkspaceFor(spelling string, registry coremetadata.Registry, o
 			return coremetadata.AgentWorkspace{}, err
 		}
 		if root == effective || slices.Contains(roots, root) {
-			return coremetadata.AgentWorkspace{}, duplicateAdditionalRootError(spelling, raw)
+			return coremetadata.AgentWorkspace{}, DuplicateAdditionalRootError(spelling, raw)
 		}
 		roots = append(roots, root)
 	}

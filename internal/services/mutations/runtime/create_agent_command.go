@@ -1,69 +1,69 @@
 package runtime
 
 import (
-"bytes"
-"context"
-"encoding/base64"
-"encoding/binary"
-"encoding/json"
-"errors"
-"flag"
-"fmt"
-"github.com/crevissepartners/projmux/internal/aiprovider"
-"github.com/crevissepartners/projmux/internal/app/initcmd"
-"github.com/crevissepartners/projmux/internal/app/keybinding"
-"github.com/crevissepartners/projmux/internal/cli"
-"github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/core/aibadge"
-"github.com/crevissepartners/projmux/internal/core/notify"
-"github.com/crevissepartners/projmux/internal/core/registryview"
-"github.com/crevissepartners/projmux/internal/diagnostics"
-"github.com/crevissepartners/projmux/internal/i18n"
-"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
-"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
-"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
-"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
-"github.com/crevissepartners/projmux/internal/version"
-"io"
-"maps"
-"os"
-"os/exec"
-"path/filepath"
-"runtime"
-"slices"
-"strings"
-"sync"
-"syscall"
-"time"
-"unicode/utf16"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
-inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/version"
+	"io"
+	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unicode/utf16"
 )
 
-type agentLaunchPlan struct {
+type AgentLaunchPlan struct {
 	// title is the agent pane title, also the seed of the pane's topic option.
-	title string
+	Title string
 	// command is the argv for a caller that runs the launch in place.
-	command []string
+	Command []string
 	// commandArgs is the argv for a caller that hands the launch to a split.
-	commandArgs []string
+	CommandArgs []string
 }
 
-func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
+func (c *AgentCommandPlanner) BuildAgentTitle(mode, contextDir string) string {
 	switch mode {
 	case aiModeClaude:
-		if title := strings.TrimSpace(c.env("CLAUDE_THREAD_TITLE")); title != "" {
+		if Title := strings.TrimSpace(c.env("CLAUDE_THREAD_TITLE")); title != "" {
 			return "claude:" + title
 		}
-		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
+		if Title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
 			return "claude:" + title
 		}
 		if contextDir != "" {
@@ -71,10 +71,10 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 		}
 		return "claude"
 	case aiModeCodex:
-		if title := strings.TrimSpace(c.env("CODEX_THREAD_TITLE")); title != "" {
+		if Title := strings.TrimSpace(c.env("CODEX_THREAD_TITLE")); title != "" {
 			return "codex:" + title
 		}
-		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
+		if Title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
 			return "codex:" + title
 		}
 		if contextDir != "" {
@@ -82,10 +82,10 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 		}
 		return "codexcli"
 	case aiModeAntigravity:
-		if title := strings.TrimSpace(c.env("ANTIGRAVITY_THREAD_TITLE")); title != "" {
+		if Title := strings.TrimSpace(c.env("ANTIGRAVITY_THREAD_TITLE")); title != "" {
 			return "antigravity:" + title
 		}
-		if title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
+		if Title := strings.TrimSpace(c.env("AI_THREAD_TITLE")); title != "" {
 			return "antigravity:" + title
 		}
 		if contextDir != "" {
@@ -97,13 +97,13 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 	}
 }
 
-func (c *aiCommand) agentSplitCommand(mode, pathPrepend, contextDir, title string, execArgv []string) ([]string, []string, error) {
-	command := c.agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
+func (c *AgentCommandPlanner) AgentSplitCommand(mode, pathPrepend, contextDir, title string, execArgv []string) ([]string, []string, error) {
+	Command := c.AgentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
 	commandShell := posixCommandShell(c.lookupEnv)
 	return append([]string{commandShell, "-lc"}, command), []string{commandShell, "-lc", command}, nil
 }
 
-func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title string, execArgv []string) string {
+func (c *AgentCommandPlanner) AgentLaunchCommandForArgv(mode, pathPrepend, contextDir, title string, execArgv []string) string {
 	titleVar := "__" + mode + "_title"
 	parts := []string{}
 	// nvm/fnm/asdf/volta colocate `node` with the agent CLI; non-interactive
@@ -128,7 +128,7 @@ func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, tit
 	return strings.Join(parts, " && ")
 }
 
-func (c *aiCommand) findAgentBinary(mode string) string {
+func (c *AgentCommandPlanner) FindAgentBinary(mode string) string {
 	provider, ok := aiprovider.Lookup(mode)
 	if !ok || !provider.PickerEligible || strings.TrimSpace(provider.BinaryName) == "" {
 		return ""
@@ -136,31 +136,31 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 	binName := provider.BinaryName
 
 	home := c.homeOrEmpty()
-	if path := firstExecutable(
+	if path := FirstExecutable(
 		c.readTrimmed("command", "-v", binName),
 		filepath.Join(home, ".npm-global", "bin", binName),
 		filepath.Join(home, ".local", "bin", binName),
 	); path != "" {
 		return path
 	}
-	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
+	if path := NewestExecutable(NodeManagerCandidates(home, binName)); path != "" {
 		return path
 	}
 	if provider.ID == aiprovider.Codex {
 		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
-		return newestExecutable(matches)
+		return NewestExecutable(matches)
 	}
 	return ""
 }
 
-func isExecutable(path string) bool {
+func IsExecutable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
-func firstExecutable(paths ...string) string {
+func FirstExecutable(paths ...string) string {
 	for _, path := range paths {
-		if isExecutable(path) {
+		if IsExecutable(path) {
 			return path
 		}
 	}
@@ -169,7 +169,7 @@ func firstExecutable(paths ...string) string {
 
 // nodeManagerCandidates lists the per-version bin paths that common Node
 // version managers install an npm-distributed Agent CLI into.
-func nodeManagerCandidates(home, binName string) []string {
+func NodeManagerCandidates(home, binName string) []string {
 	if home == "" || binName == "" {
 		return nil
 	}
@@ -186,7 +186,7 @@ func nodeManagerCandidates(home, binName string) []string {
 	return append(candidates, filepath.Join(home, ".volta", "bin", binName))
 }
 
-func newestExecutable(paths []string) string {
+func NewestExecutable(paths []string) string {
 	var newestPath string
 	var newestMod time.Time
 	for _, path := range paths {
@@ -207,29 +207,29 @@ func newestExecutable(paths []string) string {
 // A failure here -- a missing agent binary, an unusable exec argv -- happens
 // before any mutation, which is what lets the create routes guarantee a failed
 // launch leaves zero resources behind.
-func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgvOverride []string, pathPrependOverride string) (agentLaunchPlan, error) {
+func (c *AgentCommandPlanner) PlanLaunch(mode, contextDir string, extraArgs, execArgvOverride []string, pathPrependOverride string) (AgentLaunchPlan, error) {
 	execArgv := append([]string(nil), execArgvOverride...)
 	pathPrepend := pathPrependOverride
 	if len(execArgv) == 0 {
 		var err error
 		execArgv, pathPrepend, err = c.agentExecArgv(mode, extraArgs)
 		if err != nil {
-			return agentLaunchPlan{}, err
+			return AgentLaunchPlan{}, err
 		}
 	}
-	title := c.buildAgentTitle(mode, contextDir)
-	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
+	Title := c.BuildAgentTitle(mode, contextDir)
+	Command, commandArgs, err := c.AgentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
 	if err != nil {
-		return agentLaunchPlan{}, err
+		return AgentLaunchPlan{}, err
 	}
-	return agentLaunchPlan{title: title, command: command, commandArgs: commandArgs}, nil
+	return AgentLaunchPlan{Title: title, Command: command, CommandArgs: commandArgs}, nil
 }
 
-func (c *aiCommand) PlanClaudeDialogueLaunch(workspace coremetadata.AgentWorkspace, conversation string) (string, []string, error) {
+func (c *AgentCommandPlanner) PlanDialogueLaunch(workspace coremetadata.AgentWorkspace, conversation string) (string, []string, error) {
 	if err := requireClaudeDialogueMode(aiModeClaude, true, nil); err != nil {
 		return "", nil, err
 	}
-	provider := c.findAgentBinary(aiModeClaude)
+	provider := c.FindAgentBinary(aiModeClaude)
 	if provider == "" {
 		return "", nil, errors.New(c.missingAgentRunnerMessage(aiModeClaude))
 	}
@@ -249,9 +249,9 @@ func (c *aiCommand) PlanClaudeDialogueLaunch(workspace coremetadata.AgentWorkspa
 		native = append(native, resume[1:]...)
 	}
 	argv := append([]string{candidate, "internal", "claude-dialogue-exec", "--", provider}, native...)
-	plan, err := c.planAgentLaunch(aiModeClaude, workspace.CWD, nil, argv, filepath.Dir(provider))
+	plan, err := c.PlanLaunch(aiModeClaude, workspace.CWD, nil, argv, filepath.Dir(provider))
 	if err != nil {
 		return "", nil, fmt.Errorf("claude reply-only launch: %w", err)
 	}
-	return plan.title, plan.commandArgs, nil
+	return plan.Title, plan.CommandArgs, nil
 }

@@ -1,14 +1,14 @@
 package runtime
 
 import (
-"fmt"
-"github.com/crevissepartners/projmux/internal/core/persona"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-"maps"
-"regexp"
-"slices"
-"strings"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"fmt"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"maps"
+	"regexp"
+	"slices"
+	"strings"
 )
 
 // personaLaunch is the persona one Agent create starts with: the stored name,
@@ -20,10 +20,10 @@ coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 // Claude is given the snapshot path on its command line, and Codex is given
 // the content itself as the thread's developer instructions, because putting
 // it in argv would publish it to every reader of `ps`.
-type personaLaunch struct {
-	name     string
-	snapshot persona.Snapshot
-	content  string
+type PersonaLaunch struct {
+	Name     string
+	Snapshot persona.Snapshot
+	Content  string
 }
 
 // withAnnotations adds the two keys that link the new Agent to its persona to
@@ -31,16 +31,16 @@ type personaLaunch struct {
 // Without a persona it returns base itself, so a create without --persona
 // stores exactly what it stored before the flag existed -- nil included.
 // Otherwise it returns a new map and never writes into base.
-func (p personaLaunch) withAnnotations(base map[string]string) map[string]string {
-	if p.name == "" {
+func (p PersonaLaunch) WithAnnotations(base map[string]string) map[string]string {
+	if p.Name == "" {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string, 2)
 	}
-	out[coremetadata.AnnotationAgentPersona] = p.name
-	out[coremetadata.AnnotationAgentPersonaDigest] = p.snapshot.Digest
+	out[coremetadata.AnnotationAgentPersona] = p.Name
+	out[coremetadata.AnnotationAgentPersonaDigest] = p.Snapshot.Digest
 	return out
 }
 
@@ -51,27 +51,27 @@ func (p personaLaunch) withAnnotations(base map[string]string) map[string]string
 // named refuses with its reason token while nothing exists, and a snapshot
 // that cannot be written refuses the same way. A later failure can leave the
 // snapshot behind, which is harmless: it is content addressed.
-func (c *createCommand) preparePersonaLaunch(spelling, name string, optionNames ...string) (personaLaunch, error) {
+func (c *AgentSettings) PreparePersonaLaunch(spelling, name string, optionNames ...string) (PersonaLaunch, error) {
 	option := "instructions"
 	if len(optionNames) > 0 && optionNames[0] != "" {
 		option = optionNames[0]
 	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
+		return PersonaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}
 	store := persona.NewDefaultStore(paths)
 	loaded, err := store.Load(name)
 	if err != nil {
 		if persona.ReasonOf(err) != "" {
 			// The deprecated --persona keeps its old noun.
-			return personaLaunch{}, usageError(fmt.Sprintf("%s --%s: %v; nothing was created", spelling, option, personaRefusalNoun(err, option)))
+			return PersonaLaunch{}, usageError(fmt.Sprintf("%s --%s: %v; nothing was created", spelling, option, personaRefusalNoun(err, option)))
 		}
-		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
+		return PersonaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}
-	snapshot, err := store.WriteSnapshot(loaded.Content)
+	Snapshot, err := store.WriteSnapshot(loaded.Content)
 	if err != nil {
-		return personaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
+		return PersonaLaunch{}, fmt.Errorf("%s --%s: %w; nothing was created", spelling, option, err)
 	}
-	return personaLaunch{name: loaded.Name, snapshot: snapshot, content: string(loaded.Content)}, nil
+	return PersonaLaunch{Name: loaded.Name, Snapshot: snapshot, Content: string(loaded.Content)}, nil
 }

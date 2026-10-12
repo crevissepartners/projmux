@@ -1,20 +1,20 @@
 package runtime
 
 import (
-"context"
-"errors"
-"fmt"
-"github.com/crevissepartners/projmux/internal/aiprovider"
-"github.com/crevissepartners/projmux/internal/cli"
-"github.com/crevissepartners/projmux/internal/core/selector"
-"github.com/crevissepartners/projmux/internal/diagnostics"
-"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
-"io"
-"strings"
-"time"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"context"
+	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/cli"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
+	"io"
+	"strings"
+	"time"
 )
 
 // Provider startup and initial-task acknowledgement are separate bounded
@@ -55,8 +55,8 @@ coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 // These are not a sufficiency proof. They cover the measured envelope up to
 // loadavg ~72 on this machine class; heavier load is explicitly outside it.
 const (
-	agentActivationStartupDeadline         = 35 * time.Second
-	agentActivationAcknowledgementDeadline = 12 * time.Second
+	AgentActivationStartupDeadline         = 35 * time.Second
+	AgentActivationAcknowledgementDeadline = 12 * time.Second
 )
 
 // activationUnconfirmedDiagnosticSteps is the ordered remediation an
@@ -68,22 +68,22 @@ const (
 // afterwards. Reading committed authority is therefore always cheaper and safer
 // than deleting, so deletion is last and conditional on the two reads above it
 // finding no evidence.
-func activationUnconfirmedDiagnosticSteps(target agentActivationTarget) []string {
+func ActivationUnconfirmedDiagnosticSteps(target AgentActivationTarget) []string {
 	return []string{
-		fmt.Sprintf("the Agent and its managed Pane %s were created and are still live; nothing was rolled back", target.paneID),
-		fmt.Sprintf("re-read the committed activation with `projmux describe agent uid:%s` first: a provider hook that arrived after the bound refines it to acknowledged", target.agentUID),
-		fmt.Sprintf("if it is still unconfirmed, look at Pane %s (`tmux capture-pane -p -t %s`) or the provider transcript for the initial task, and retry it through the provider when it never arrived", target.paneID, target.paneID),
-		fmt.Sprintf("only when neither read shows activation evidence, clean up with `projmux delete agent uid:%s --yes`", target.agentUID),
+		fmt.Sprintf("the Agent and its managed Pane %s were created and are still live; nothing was rolled back", target.PaneID),
+		fmt.Sprintf("re-read the committed activation with `projmux describe agent uid:%s` first: a provider hook that arrived after the bound refines it to acknowledged", target.AgentUID),
+		fmt.Sprintf("if it is still unconfirmed, look at Pane %s (`tmux capture-pane -p -t %s`) or the provider transcript for the initial task, and retry it through the provider when it never arrived", target.PaneID, target.PaneID),
+		fmt.Sprintf("only when neither read shows activation evidence, clean up with `projmux delete agent uid:%s --yes`", target.AgentUID),
 	}
 }
 
 // activationUnconfirmedDiagnostic names the exact live resources first and then
 // prints activationUnconfirmedDiagnosticSteps in order.
-func activationUnconfirmedDiagnostic(target agentActivationTarget, reason string) string {
+func ActivationUnconfirmedDiagnostic(target AgentActivationTarget, reason string) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "create agent: agent/%s uid:%s has live managed Pane %s but initial task activation was not confirmed: %s",
-		target.agentName, target.agentUID, target.paneID, reason)
-	for _, step := range activationUnconfirmedDiagnosticSteps(target) {
+		target.AgentName, target.AgentUID, target.PaneID, reason)
+	for _, step := range ActivationUnconfirmedDiagnosticSteps(target) {
 		builder.WriteString("; ")
 		builder.WriteString(step)
 	}

@@ -1,34 +1,34 @@
 package runtime
 
 import (
-"context"
-"errors"
-"fmt"
-"github.com/crevissepartners/projmux/internal/aiprovider"
-"github.com/crevissepartners/projmux/internal/cli"
-"github.com/crevissepartners/projmux/internal/core/operatorclient"
-"github.com/crevissepartners/projmux/internal/core/selector"
-"github.com/crevissepartners/projmux/internal/diagnostics"
-"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
-"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
-"io"
-"maps"
-"os"
-"slices"
-"strconv"
-"strings"
-"time"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"context"
+	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/cli"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
+	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
+	"io"
+	"maps"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // forAgent is the record for one allocated Agent. The creator is never the
 // created Agent itself: if the record would name it, the keys are removed from
 // the stored Agent and nothing is recorded on its Pane. Every basis already
 // resolves its Agent before allocation, so this is a guarantee, not a path.
-func (r creatorRecord) forAgent(working *coremetadata.Registry, agentUID string) creatorRecord {
-	if r.agentUID == "" || r.agentUID != agentUID {
+func (r creatorRecord) ForAgent(working *coremetadata.Registry, agentUID string) creatorRecord {
+	if r.AgentUID == "" || r.AgentUID != agentUID {
 		return r
 	}
 	if stored, ok := working.Agent(agentUID); ok {
@@ -41,7 +41,7 @@ func (r creatorRecord) forAgent(working *coremetadata.Registry, agentUID string)
 
 // annotatePane records the same keys on the managed Pane the create just
 // attached, in the working Registry of the same transaction.
-func (r creatorRecord) annotatePane(working *coremetadata.Registry, pane coremetadata.Pane) coremetadata.Pane {
+func (r creatorRecord) AnnotatePane(working *coremetadata.Registry, pane coremetadata.Pane) coremetadata.Pane {
 	annotations := r.annotations()
 	if annotations == nil || working == nil {
 		return pane
@@ -59,21 +59,21 @@ func (r creatorRecord) annotatePane(working *coremetadata.Registry, pane coremet
 
 // agentWork is one allocated Agent plus its managed Pane, waiting for the
 // runtime phase to give the Pane a live tmux binding.
-type agentWork struct {
-	target     paneTarget
-	windowName string
-	agent      coremetadata.Agent
-	pane       coremetadata.Pane
+type AgentWork struct {
+	Target     paneTarget
+	WindowName string
+	Agent      coremetadata.Agent
+	Pane       coremetadata.Pane
 	// activation is the generation this Agent launch was issued.
-	activation superviseSpec
+	Activation superviseSpec
 }
 
-type agentActivationTarget struct {
-	agentUID   string
-	agentName  string
-	paneUID    string
-	paneID     string
-	generation string
+type AgentActivationTarget struct {
+	AgentUID   string
+	AgentName  string
+	PaneUID    string
+	PaneID     string
+	Generation string
 }
 
 // derivedAgentPaneName is the explicit Pane name `create agent` supplies for
@@ -99,7 +99,7 @@ type agentActivationTarget struct {
 // Nothing else falls back: a *collision* on the derived name is a typed
 // zero-write refusal from the metadata phase, which runs entirely before the
 // first tmux or provider call.
-func derivedAgentPaneName(agentName string) string {
+func DerivedAgentPaneName(agentName string) string {
 	derived := agentName + agentPaneNameSuffix
 	if coremetadata.ValidateName(derived) != nil {
 		return ""
@@ -107,7 +107,7 @@ func derivedAgentPaneName(agentName string) string {
 	return derived
 }
 
-func activationStateForPayload(payload []string) coremetadata.AgentActivationState {
+func ActivationStateForPayload(payload []string) coremetadata.AgentActivationState {
 	if len(payload) == 0 {
 		return coremetadata.ActivationNotRequested
 	}
@@ -122,7 +122,7 @@ func activationStateForPayload(payload []string) coremetadata.AgentActivationSta
 // substitution -- the provider's resume argv instead of its fresh-start argv.
 // Sharing the body is what keeps the split UI from becoming a second definition
 // of what creating an Agent means.
-func (c *createCommand) createAgent(spelling, provider string, flags resourceCreateFlags, shape resourceCreateShape, stdout, stderr io.Writer) error {
+func (c *AgentCreation) CreateAgent(spelling, provider string, flags AgentCreateRequest, shape resourceCreateShape, stdout, stderr io.Writer) error {
 	if c.agents == nil {
 		return errors.New("create agent: the provider launcher is not configured")
 	}
@@ -147,8 +147,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err != nil {
 		return err
 	}
-	if flags.persona != "" {
-		if flags.personaLaunch, err = c.preparePersonaLaunch(spelling, flags.persona, flags.personaOption); err != nil {
+	if flags.Instructions != "" {
+		if flags.personaLaunch, err = c.preparePersonaLaunch(spelling, flags.Instructions, flags.InstructionsOption); err != nil {
 			return err
 		}
 	}
@@ -160,12 +160,12 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	var results []createResult
 	var selectedWindowUIDs []string
 	var notices []string
-	var activationTargets []agentActivationTarget
+	var activationTargets []AgentActivationTarget
 	var nativeLifecycleTargets []codexLifecycleObserverTarget
 	var nativeSessionHistory []sessionhistory.Record
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
-	prompt, nativePromptExact := nativePrompt(flags.payload)
+	prompt, nativePromptExact := nativePrompt(flags.Payload)
 	nativeCreate := nativeCodexFreshCreateRequired(provider, flags)
 	var nativeRoute codexNativeEndpointRoute
 	var creator creatorRecord
@@ -200,7 +200,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		if resolver == nil {
 			resolver = resolveAgentWorkspace
 		}
-		workspace, err := resolver(*working, project, provider, flags.cwd, flags.addDirs)
+		workspace, err := resolver(*working, project, provider, flags.Cwd, flags.AddDirs)
 		if err != nil {
 			return err
 		}
@@ -221,8 +221,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		// over --cwd-from. Otherwise this CLI route follows its own argv:
 		// only --cwd-from decides, and no config file is opened.
 		source := splitCWDFromProject
-		if !flags.cwdSet {
-			source = cliSplitCWDSource(flags.cwdFrom)
+		if !flags.CwdSet {
+			source = cliSplitCWDSource(flags.CwdFrom)
 		}
 
 		// The declared <create, Agent> cell is this route's fan-out cardinality:
@@ -279,53 +279,53 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		if creator, err = c.decideCreator(ctx, spelling, working, flags.creator); err != nil {
 			return err
 		}
-		agents := make([]agentWork, 0, len(plan.targets))
-		for _, target := range plan.targets {
+		agents := make([]AgentWork, 0, len(plan.targets))
+		for _, Target := range plan.targets {
 			window, ok := working.Window(target.windowUID)
 			if !ok {
 				return fmt.Errorf("%s: window %q disappeared during preflight", spelling, target.windowUID)
 			}
-			agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
+			Agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 				// The explicit --name names only the Agent. The managed Pane
 				// takes its name from the Agent's, one derivation later.
-				Name:        flags.name,
+				Name:        flags.Name,
 				Provider:    provider,
 				Labels:      labels,
-				Annotations: flags.agentGuidance.withCreateAnnotation(flags.projectLinks.withCreateAnnotation(withCreateSettingSources(flags, flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(withDialogueReplyOnlyAnnotation(flags.dialogueReplyOnly, creator.annotations())))))))),
+				Annotations: flags.agentGuidance.withCreateAnnotation(flags.projectLinks.withCreateAnnotation(withCreateSettingSources(flags, flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(withDialogueReplyOnlyAnnotation(flags.DialogueReplyOnly, creator.annotations())))))))),
 				Workspace:   workspace,
-				Activation:  activationStateForPayload(flags.payload),
+				Activation:  ActivationStateForPayload(flags.Payload),
 				OperationID: operationID,
 			})
 			if err != nil {
 				return MapMetadataError(err)
 			}
-			agentCreator := creator.forAgent(working, agent.Metadata.UID)
+			agentCreator := creator.ForAgent(working, agent.Metadata.UID)
 			if notice := flags.projectLinks.notice(agent.Metadata.Name); notice != "" {
 				notices = append(notices, notice)
 			}
 			if notice := flags.agentGuidance.notice(agent.Metadata.Name); notice != "" {
 				notices = append(notices, notice)
 			}
-			pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
-				Name:   derivedAgentPaneName(agent.Metadata.Name),
+			Pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
+				Name:   DerivedAgentPaneName(agent.Metadata.Name),
 				CWD:    workspace.CWD,
 				Labels: labels,
 			}, operationID)
 			if err != nil {
 				return MapMetadataError(err)
 			}
-			pane = agentCreator.annotatePane(working, pane)
-			activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
+			pane = agentCreator.AnnotatePane(working, pane)
+			Activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
 			if err != nil {
 				return err
 			}
-			activation.DialogueReplyOnly = flags.dialogueReplyOnly
-			agents = append(agents, agentWork{
-				target:     target,
-				windowName: window.Metadata.Name,
-				agent:      agent,
-				pane:       pane,
-				activation: activation,
+			Activation.DialogueReplyOnly = flags.DialogueReplyOnly
+			agents = append(agents, AgentWork{
+				Target:     target,
+				WindowName: window.Metadata.Name,
+				Agent:      agent,
+				Pane:       pane,
+				Activation: activation,
 			})
 		}
 
@@ -344,14 +344,14 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		}
 		for _, work := range agents {
 			var anchorPaneID string
-			if !work.target.virtual {
+			if !work.Target.virtual {
 				if sessionName == "" {
 					sessionName, err = c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
 					if err != nil {
 						return err
 					}
 				}
-				anchorPaneID, err = c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
+				anchorPaneID, err = c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.Target)
 				if err != nil {
 					return err
 				}
@@ -359,16 +359,16 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			workWorkspace := workspace
 			workTitle := title
 			workLaunchArgv := launchArgv
-			if source == splitCWDFromPane && !work.target.virtual {
+			if source == splitCWDFromPane && !work.Target.virtual {
 				dir, notice := c.splitPaneLaunchDir(ctx, anchorPaneID, project.Spec.Root)
 				if notice != "" {
-					notices = append(notices, splitCWDNoticeLine(spelling, work.windowName, notice))
+					notices = append(notices, splitCWDNoticeLine(spelling, work.WindowName, notice))
 				}
 				if dir != project.Spec.Root {
 					// The Pane directory becomes this Agent's working directory
 					// through the unchanged workspace validation, and its launch is
 					// planned again for that workspace.
-					workWorkspace, err = resolver(*working, project, provider, dir, flags.addDirs)
+					workWorkspace, err = resolver(*working, project, provider, dir, flags.AddDirs)
 					if err != nil {
 						return err
 					}
@@ -376,26 +376,26 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					if err != nil {
 						return err
 					}
-					if stored, ok := working.Agent(work.agent.Metadata.UID); ok {
+					if stored, ok := working.Agent(work.Agent.Metadata.UID); ok {
 						stored.Spec.Workspace = workWorkspace
 					}
-					if stored, ok := working.Pane(work.pane.Metadata.UID); ok {
+					if stored, ok := working.Pane(work.Pane.Metadata.UID); ok {
 						stored.Spec.CWD = workWorkspace.CWD
 					}
-					work.pane.Spec.CWD = workWorkspace.CWD
+					work.Pane.Spec.CWD = workWorkspace.CWD
 				}
 			}
 			var nativeBinding coremetadata.CodexActivationBinding
 			usedNative := false
 			if nativeEligible {
-				if err := mutator.StageCodexEndpoint(working, work.agent.Metadata.UID, nativeRoute.Endpoint); err != nil {
+				if err := mutator.StageCodexEndpoint(working, work.Agent.Metadata.UID, nativeRoute.Endpoint); err != nil {
 					return MapMetadataError(err)
 				}
 				nativeCtx, cancel := prepareNativeContext(ctx)
 				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, codexNativeCreateInput{
-					Workspace: workWorkspace, DeveloperInstructions: flags.agentGuidance.codexDeveloperInstructions(work.agent.Metadata.UID, flags.projectLinks.developerInstructions(flags.personaLaunch.content)),
+					Workspace: workWorkspace, DeveloperInstructions: flags.agentGuidance.codexDeveloperInstructions(work.Agent.Metadata.UID, flags.projectLinks.developerInstructions(flags.personaLaunch.content)),
 					Policy: flags.profileLaunch.codexPolicy, Model: flags.model, Effort: flags.effort,
-					Prompt: prompt, RequestKey: work.activation.Generation,
+					Prompt: prompt, RequestKey: work.Activation.Generation,
 				})
 				cancel()
 				switch {
@@ -405,13 +405,13 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 						return nativeLaunchError(spelling, err)
 					}
 					if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
-						AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID,
-						Generation: work.activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+						AgentUID: work.Agent.Metadata.UID, PaneUID: work.Pane.Metadata.UID,
+						Generation: work.Activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
 						Endpoint: nativeRoute.Endpoint,
 					}); err != nil {
 						return MapMetadataError(err)
 					}
-					if bound, ok := working.Agent(work.agent.Metadata.UID); ok {
+					if bound, ok := working.Agent(work.Agent.Metadata.UID); ok {
 						if row, valid := sessionhistory.ObservedRecordFor(working, bound.Metadata.UID, bound.Status.SessionRef); valid {
 							nativeSessionHistory = append(nativeSessionHistory, row)
 						}
@@ -431,28 +431,28 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				}
 			}
 			var paneID string
-			if work.target.virtual {
-				paneID, err = c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.target.windowUID, work.pane, work.activation, workLaunchArgv)
+			if work.Target.virtual {
+				PaneID, err = c.materializeVirtualPane(ctx, working, mutator, ledger, project, work.Target.windowUID, work.Pane, work.Activation, workLaunchArgv)
 			} else {
-				paneID, err = c.runtime.SplitPane(ctx, anchorPaneID, flags.placement, workWorkspace.CWD, c.runtime.SupervisedLaunch(ctx, work.activation, workLaunchArgv), nil)
+				PaneID, err = c.runtime.SplitPane(ctx, anchorPaneID, flags.Placement, workWorkspace.CWD, c.runtime.SupervisedLaunch(ctx, work.Activation, workLaunchArgv), nil)
 			}
-			if paneID != "" && !work.target.virtual {
+			if paneID != "" && !work.Target.virtual {
 				// The supervised child now runs and will want the Registry lock
 				// this transaction holds; create.outcome measures the rest of the hold.
 				markSupervisedSpawn(ctx)
-				if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
+				if claimErr := c.runtime.ClaimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.Pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
 				}
-				if mirrorErr := c.runtime.Mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
+				if mirrorErr := c.runtime.Mirror.MirrorPane(ctx, paneID, work.Pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
-				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.Warn)
+				observeActivationRuntime(working, mutator, work.Activation, paneID, c.runtime.Warn)
 			}
 			if err != nil {
 				return err
 			}
-			if !work.target.virtual {
-				c.runtime.EqualizeSplitLayout(ctx, anchorPaneID, flags.placement)
+			if !work.Target.virtual {
+				c.runtime.EqualizeSplitLayout(ctx, anchorPaneID, flags.Placement)
 			}
 			// The managed-pane options are what make this pane an agent pane to
 			// the statusbar, the attention tracker, and the notification
@@ -465,8 +465,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				if nativeLifecycleCapable {
 					nativeLifecycleTargets = append(nativeLifecycleTargets, codexLifecycleObserverTarget{
 						Identity: codexLifecycleIdentity{
-							AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
-							Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
+							AgentUID: work.Agent.Metadata.UID, PaneUID: work.Pane.Metadata.UID, RuntimeID: paneID,
+							Generation: work.Activation.Generation, ThreadID: nativeBinding.ThreadID,
 						},
 						Route: c.runtime.Target, NativeRoute: nativeRoute,
 					})
@@ -475,25 +475,25 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				declaredPlainCodexLane(provider, flags, prompt), flags); err != nil {
 				return fmt.Errorf("%s: bind Agent Pane %s presentation metadata: %w", spelling, paneID, err)
 			}
-			if len(flags.payload) > 0 && !usedNative {
-				activationTargets = append(activationTargets, agentActivationTarget{
-					agentUID:   work.agent.Metadata.UID,
-					agentName:  work.agent.Metadata.Name,
-					paneUID:    work.pane.Metadata.UID,
-					paneID:     paneID,
-					generation: work.activation.Generation,
+			if len(flags.Payload) > 0 && !usedNative {
+				activationTargets = append(activationTargets, AgentActivationTarget{
+					AgentUID:   work.Agent.Metadata.UID,
+					AgentName:  work.Agent.Metadata.Name,
+					PaneUID:    work.Pane.Metadata.UID,
+					PaneID:     paneID,
+					Generation: work.Activation.Generation,
 				})
 			}
 			results = append(results, createResult{
 				kind: coremetadata.KindAgent,
-				uid:  work.agent.Metadata.UID,
-				name: work.agent.Metadata.Name,
+				uid:  work.Agent.Metadata.UID,
+				Name: work.Agent.Metadata.Name,
 				// `-o pane-id` is the managed Pane's raw transport handle, which
 				// is what the existing pane launchers and skill bridges consume.
-				paneID:      paneID,
+				PaneID:      paneID,
 				projectName: project.Metadata.Name,
-				windowName:  work.windowName,
-				windowUID:   work.target.windowUID,
+				WindowName:  work.WindowName,
+				windowUID:   work.Target.windowUID,
 			})
 		}
 		return nil
@@ -509,7 +509,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	// The exact Registry binding becomes observable only after the transaction
 	// commits. Starting inside the callback would correctly fail the startup
 	// guard against the pre-transaction snapshot and strand no observer.
-	for _, target := range nativeLifecycleTargets {
+	for _, Target := range nativeLifecycleTargets {
 		nativeLifecycle.startNativeCodexLifecycleObserver(target)
 	}
 	if err := c.confirmAgentActivations(activationTargets); err != nil {

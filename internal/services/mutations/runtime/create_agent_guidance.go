@@ -1,18 +1,18 @@
 package runtime
 
 import (
-"errors"
-"fmt"
-"github.com/crevissepartners/projmux/internal/core/agentguidance"
-"github.com/crevissepartners/projmux/internal/core/persona"
-"github.com/crevissepartners/projmux/internal/core/projectlinks"
-"io"
-"io/fs"
-"maps"
-"os"
-"path/filepath"
-"strings"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/agentguidance"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/persona"
+	"github.com/crevissepartners/projmux/internal/core/projectlinks"
+	"io"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // agentGuidanceLaunch is what one launch does with the agent guidance. The
@@ -29,37 +29,37 @@ coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 // (codexDeveloperInstructions): guidance, then the Agent's identity paragraph
 // (codexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
-type agentGuidanceLaunch struct {
-	active bool
-	store  agentguidance.Store
+type AgentGuidanceLaunch struct {
+	Active bool
+	Store  agentguidance.Store
 	// recorded is the digest the Agent records, "" when it records none.
-	recorded string
+	Recorded string
 	// digest, snapshotPath and text are the current guidance, all empty when
 	// the guidance is off. text is sent only to a Codex thread and is never
 	// put in an argv or the Registry.
-	digest       string
-	snapshotPath string
-	text         []byte
+	Digest       string
+	SnapshotPath string
+	Text         []byte
 	// systemPromptFile is the one file a fresh create hands Claude: the
 	// guidance snapshot, or the composite of the guidance and the file the
 	// create would otherwise pass. Resumes find theirs in the seam from the
 	// digest they launch with.
-	systemPromptFile string
+	SystemPromptFile string
 	// unavailable is why the current guidance could not be read or composed.
 	// The launch goes ahead without guidance and nothing is recorded.
-	unavailable error
+	Unavailable error
 }
 
 // on reports that the launch sends the current guidance: active, readable
 // and not off.
-func (l agentGuidanceLaunch) on() bool {
-	return l.active && l.unavailable == nil && l.digest != ""
+func (l AgentGuidanceLaunch) On() bool {
+	return l.Active && l.Unavailable == nil && l.Digest != ""
 }
 
 // changed reports that the Agent's recorded digest is not the current one:
 // guidance added, changed or turned off.
-func (l agentGuidanceLaunch) changed() bool {
-	return l.active && l.unavailable == nil && l.digest != l.recorded
+func (l AgentGuidanceLaunch) Changed() bool {
+	return l.Active && l.Unavailable == nil && l.Digest != l.Recorded
 }
 
 // withCreateFile sets systemPromptFile for a fresh create whose launch would
@@ -67,20 +67,20 @@ func (l agentGuidanceLaunch) changed() bool {
 // rules composite, else the persona snapshot. A composite that cannot be
 // written makes the guidance unavailable, so the create still launches, with
 // base alone.
-func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
-	if !l.on() {
+func (l AgentGuidanceLaunch) WithCreateFile(base string) AgentGuidanceLaunch {
+	if !l.On() {
 		return l
 	}
 	if base == "" {
-		l.systemPromptFile = l.snapshotPath
+		l.SystemPromptFile = l.SnapshotPath
 		return l
 	}
-	composite, err := composeAgentGuidance(l.store, l.digest, base)
+	composite, err := ComposeAgentGuidance(l.Store, l.Digest, base)
 	if err != nil {
-		l.unavailable = err
+		l.Unavailable = err
 		return l
 	}
-	l.systemPromptFile = composite
+	l.SystemPromptFile = composite
 	return l
 }
 
@@ -90,14 +90,14 @@ func (l agentGuidanceLaunch) withCreateFile(base string) agentGuidanceLaunch {
 // guidance, then projectlinks.CompositeSeparator and persona, each part
 // present only when the create has it. Without guidance it is persona itself,
 // so a create with the guidance off sends exactly what it sent before.
-func (l agentGuidanceLaunch) developerInstructions(persona string) string {
-	if !l.on() {
+func (l AgentGuidanceLaunch) DeveloperInstructions(persona string) string {
+	if !l.On() {
 		return persona
 	}
 	if persona == "" {
-		return string(l.text)
+		return string(l.Text)
 	}
-	return string(l.text) + projectlinks.CompositeSeparator + persona
+	return string(l.Text) + projectlinks.CompositeSeparator + persona
 }
 
 // codexDeveloperInstructions are the developer instructions a Codex fresh
@@ -107,29 +107,29 @@ func (l agentGuidanceLaunch) developerInstructions(persona string) string {
 // part joined by projectlinks.CompositeSeparator. Without guidance it is rest
 // itself, identity left out, so a create with the guidance off sends exactly
 // what it sent before.
-func (l agentGuidanceLaunch) codexDeveloperInstructions(agentUID, rest string) string {
-	if !l.on() {
+func (l AgentGuidanceLaunch) CodexDeveloperInstructions(agentUID, rest string) string {
+	if !l.On() {
 		return rest
 	}
-	identity := codexAgentIdentity(agentUID)
+	identity := CodexAgentIdentity(agentUID)
 	if rest != "" {
 		identity += projectlinks.CompositeSeparator + rest
 	}
-	return l.developerInstructions(identity)
+	return l.DeveloperInstructions(identity)
 }
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
 // Without guidance it returns base itself, so a create with the guidance off
 // stores exactly what it stored before -- nil included.
-func (l agentGuidanceLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	if !l.on() || base[coremetadata.AnnotationAgentGuidanceDigest] == l.digest {
+func (l AgentGuidanceLaunch) WithCreateAnnotation(base map[string]string) map[string]string {
+	if !l.On() || base[coremetadata.AnnotationAgentGuidanceDigest] == l.Digest {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string, 1)
 	}
-	out[coremetadata.AnnotationAgentGuidanceDigest] = l.digest
+	out[coremetadata.AnnotationAgentGuidanceDigest] = l.Digest
 	return out
 }
 
@@ -139,11 +139,11 @@ func (l agentGuidanceLaunch) withCreateAnnotation(base map[string]string) map[st
 // what record writes, so the launch reads what the Agent will record.
 // Unreadable guidance drops the digest so the Agent launches without guidance
 // while its record stays as it was. Otherwise base itself is returned.
-func (l agentGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
-	if !l.active {
+func (l AgentGuidanceLaunch) ResumeLaunchAnnotations(base map[string]string) map[string]string {
+	if !l.Active {
 		return base
 	}
-	if l.unavailable != nil {
+	if l.Unavailable != nil {
 		if _, ok := base[coremetadata.AnnotationAgentGuidanceDigest]; !ok {
 			return base
 		}
@@ -151,17 +151,17 @@ func (l agentGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map
 		delete(out, coremetadata.AnnotationAgentGuidanceDigest)
 		return out
 	}
-	if !l.changed() {
+	if !l.Changed() {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string, 2)
 	}
-	if l.digest == "" {
+	if l.Digest == "" {
 		delete(out, coremetadata.AnnotationAgentGuidanceDigest)
 	} else {
-		out[coremetadata.AnnotationAgentGuidanceDigest] = l.digest
+		out[coremetadata.AnnotationAgentGuidanceDigest] = l.Digest
 	}
 	out[coremetadata.AnnotationAgentSystemPromptSnapshot] = coremetadata.SystemPromptSnapshotOff
 	return out
@@ -170,11 +170,11 @@ func (l agentGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map
 // record writes, inside the resume transaction, the digest and snapshot mode
 // resumeLaunchAnnotations launched with. Nothing changes when the guidance is
 // the recorded one or could not be read.
-func (l agentGuidanceLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
-	if !l.changed() {
+func (l AgentGuidanceLaunch) Record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
+	if !l.Changed() {
 		return nil
 	}
-	if _, err := mutator.SetAgentGuidance(registry, agentUID, l.digest); err != nil {
+	if _, err := mutator.SetAgentGuidance(registry, agentUID, l.Digest); err != nil {
 		return MapMetadataError(err)
 	}
 	return nil
@@ -183,22 +183,22 @@ func (l agentGuidanceLaunch) record(registry *coremetadata.Registry, mutator cor
 // notice is the one-line disclosure of guidance the launch could not read, or
 // "" when there is nothing to disclose. label names the Agent the way the
 // persona notice does.
-func (l agentGuidanceLaunch) notice(label string) string {
-	if !l.active || l.unavailable == nil {
+func (l AgentGuidanceLaunch) Notice(label string) string {
+	if !l.Active || l.Unavailable == nil {
 		return ""
 	}
-	return agentGuidanceNotice(label, l.unavailable)
+	return AgentGuidanceNotice(label, l.Unavailable)
 }
 
 // PlanAgentGuidance reads the current guidance and writes its
 // content-addressed snapshot. recorded are the Agent annotations the launch
 // compares against (nil on a fresh create).
-func (c *aiCommand) PlanAgentGuidance(provider string, recorded map[string]string) agentGuidanceLaunch {
+func (c *GuidanceService) PlanAgentGuidance(provider string, recorded map[string]string) AgentGuidanceLaunch {
 	if normalizeAIMode(provider) != aiModeClaude {
-		return agentGuidanceLaunch{}
+		return AgentGuidanceLaunch{}
 	}
-	launch := c.loadAgentGuidance()
-	launch.recorded = recorded[coremetadata.AnnotationAgentGuidanceDigest]
+	launch := c.LoadAgentGuidance()
+	launch.Recorded = recorded[coremetadata.AnnotationAgentGuidanceDigest]
 	return launch
 }
 
@@ -206,46 +206,46 @@ func (c *aiCommand) PlanAgentGuidance(provider string, recorded map[string]strin
 // and writes its snapshot, exactly as PlanAgentGuidance does for a Claude
 // create. A Codex resume never asks: a thread keeps the developer
 // instructions it was started with.
-func (c *aiCommand) PlanCodexAgentGuidance() agentGuidanceLaunch {
-	return c.loadAgentGuidance()
+func (c *GuidanceService) PlanCodexAgentGuidance() AgentGuidanceLaunch {
+	return c.LoadAgentGuidance()
 }
 
 // loadAgentGuidance is the active launch of the current guidance: its text,
 // digest and content-addressed snapshot, or why it could not be read.
-func (c *aiCommand) loadAgentGuidance() agentGuidanceLaunch {
-	return c.loadAgentGuidanceWith(agentguidance.Store.Load)
+func (c *GuidanceService) LoadAgentGuidance() AgentGuidanceLaunch {
+	return c.LoadAgentGuidanceWith(agentguidance.Store.Load)
 }
 
-func (c *aiCommand) PlanProcessAgentGuidance() agentGuidanceLaunch {
-	return c.loadAgentGuidanceWith(agentguidance.Store.LoadProcess)
+func (c *GuidanceService) PlanProcessAgentGuidance() AgentGuidanceLaunch {
+	return c.LoadAgentGuidanceWith(agentguidance.Store.LoadProcess)
 }
 
-func (c *aiCommand) loadAgentGuidanceWith(load func(agentguidance.Store) (agentguidance.Guidance, error)) agentGuidanceLaunch {
-	launch := agentGuidanceLaunch{active: true}
+func (c *GuidanceService) LoadAgentGuidanceWith(load func(agentguidance.Store) (agentguidance.Guidance, error)) AgentGuidanceLaunch {
+	launch := AgentGuidanceLaunch{Active: true}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
-	launch.store = agentguidance.NewDefaultStore(paths)
-	guidance, err := load(launch.store)
+	launch.Store = agentguidance.NewDefaultStore(paths)
+	guidance, err := load(launch.Store)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
 	if guidance.Off() {
 		return launch
 	}
-	snapshot, err := launch.store.WriteSnapshot(guidance.Text)
+	snapshot, err := launch.Store.WriteSnapshot(guidance.Text)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
-	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, guidance.Text
+	launch.Digest, launch.SnapshotPath, launch.Text = snapshot.Digest, snapshot.Path, guidance.Text
 	return launch
 }
 
-func agentGuidanceNotice(label string, err error) string {
+func AgentGuidanceNotice(label string, err error) string {
 	return fmt.Sprintf("projmux: agent/%s launched without the agent guidance (%s): %v",
 		label, agentGuidanceReasonUnavailable, err)
 }
@@ -254,9 +254,9 @@ func agentGuidanceNotice(label string, err error) string {
 // UID and how to name itself and its targets: a Codex shell command runs in
 // the shared app server, not in the Agent's pane, so projmux cannot infer
 // either from the environment.
-func codexAgentIdentity(agentUID string) string {
-	examples := make([]string, 0, len(codexSocketCommands))
-	for _, command := range codexSocketCommands {
+func CodexAgentIdentity(agentUID string) string {
+	examples := make([]string, 0, len(CodexSocketCommands))
+	for _, command := range CodexSocketCommands {
 		examples = append(examples, "`projmux "+command+"`")
 	}
 	return fmt.Sprintf(`# Your projmux identity
@@ -266,13 +266,13 @@ Your projmux Agent UID is `+"`%[1]s`"+`.
 - When you create an agent with `+"`projmux create agent`"+`, add `+"`--creator uid:%[1]s`"+` so projmux records you as its creator.
 - When you send a message with `+"`projmux agent message send`"+`, add `+"`--source uid:%[1]s`"+` so the message is sent from you.
 - Your shell commands run outside your own pane, in an app server shared with other agents, so projmux cannot tell your pane or agent from the environment: name the pane or agent a command acts on. Add `+"`--socket projmux`"+` only to a command that defines that flag, such as %[2]s; do not add it to %[3]s, which has no such flag and uses the `+"`%[4]s`"+` app socket itself.
-`, agentUID, strings.Join(examples, " or "), "`projmux "+codexNoSocketCommand+"`", defaultAppSocket)
+`, agentUID, strings.Join(examples, " or "), "`projmux "+CodexNoSocketCommand+"`", defaultAppSocket)
 }
 
 // composeAgentGuidance writes the composite of the guidance digest names and
 // the content of base, and returns its path.
-func composeAgentGuidance(store agentguidance.Store, digest, base string) (string, error) {
-	content, err := readSystemPromptPart(base)
+func ComposeAgentGuidance(store agentguidance.Store, digest, base string) (string, error) {
+	Content, err := ReadSystemPromptPart(base)
 	if err != nil {
 		return "", err
 	}
@@ -287,7 +287,7 @@ func composeAgentGuidance(store agentguidance.Store, digest, base string) (strin
 // system prompt (a persona snapshot, a rules snapshot, or their composite),
 // bounded like every rules snapshot read. The file is opened inside its own
 // directory, so the read cannot leave that directory.
-func readSystemPromptPart(path string) ([]byte, error) {
+func ReadSystemPromptPart(path string) ([]byte, error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no system prompt file at %s", path)
@@ -304,7 +304,7 @@ func readSystemPromptPart(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, projectlinks.MaxSnapshotSize+1))
+	Content, err := io.ReadAll(io.LimitReader(file, projectlinks.MaxSnapshotSize+1))
 	if err != nil {
 		return nil, err
 	}
@@ -324,64 +324,64 @@ func readSystemPromptPart(path string) ([]byte, error) {
 // --append-system-prompt-file. A Codex fresh create sends them the same way,
 // after the persona, as the thread's developer instructions
 // (developerInstructions).
-type projectLinksLaunch struct {
+type ProjectLinksLaunch struct {
 	// project is the independent common-instruction layer before link rules.
-	project projectGuidanceLaunch
-	active  bool
-	store   projectlinks.SnapshotStore
+	Project ProjectGuidanceLaunch
+	Active  bool
+	Store   projectlinks.SnapshotStore
 	// recorded is the digest the Agent records, "" when it records none.
-	recorded string
+	Recorded string
 	// digest, snapshotPath and text are the Project's current rendered rules,
 	// all empty when the Project has no rules. text is sent only to a Codex
 	// thread and is never put in an argv or the Registry.
-	digest       string
-	snapshotPath string
-	text         []byte
+	Digest       string
+	SnapshotPath string
+	Text         []byte
 	// systemPromptFile is the one file a fresh create hands Claude: the rules
 	// snapshot, or the composite of the persona and the rules. Resumes find
 	// theirs in the seam from the digest they launch with.
-	systemPromptFile string
+	SystemPromptFile string
 	// unavailable is why the current rules could not be read. The launch goes
 	// ahead without rules and nothing is recorded.
-	unavailable error
+	Unavailable error
 }
 
 // changed reports that the Agent's recorded digest is not the current one:
 // rules added, changed or removed.
-func (l projectLinksLaunch) changed() bool {
-	return l.active && l.unavailable == nil && l.digest != l.recorded
+func (l ProjectLinksLaunch) Changed() bool {
+	return l.Active && l.Unavailable == nil && l.Digest != l.Recorded
 }
 
 // withCreateFile sets systemPromptFile for a fresh create that also carries
 // the persona p. A composite that cannot be written makes the rules
 // unavailable, so the create still launches, with the persona alone.
-func (l projectLinksLaunch) withCreateFile(p personaLaunch) projectLinksLaunch {
+func (l ProjectLinksLaunch) WithCreateFile(p PersonaLaunch) ProjectLinksLaunch {
 	var prefix []byte
-	if p.name != "" {
-		prefix = []byte(p.content)
+	if p.Name != "" {
+		prefix = []byte(p.Content)
 	}
-	if l.project.on() {
-		snapshot, err := l.project.store.WriteComposite(prefix, l.project.digest)
+	if l.Project.On() {
+		snapshot, err := l.Project.Store.WriteComposite(prefix, l.Project.Digest)
 		if err != nil {
-			l.project.unavailable = err
+			l.Project.Unavailable = err
 		} else {
-			l.systemPromptFile = snapshot.Path
-			prefix = []byte(l.project.developerInstructions(string(prefix)))
+			l.SystemPromptFile = snapshot.Path
+			prefix = []byte(l.Project.DeveloperInstructions(string(prefix)))
 		}
 	}
-	if !l.active || l.unavailable != nil || l.digest == "" {
+	if !l.Active || l.Unavailable != nil || l.Digest == "" {
 		return l
 	}
 	if len(prefix) == 0 {
-		l.systemPromptFile = l.snapshotPath
+		l.SystemPromptFile = l.SnapshotPath
 		return l
 	}
-	composite, err := l.store.WriteComposite(prefix, l.digest)
+	composite, err := l.Store.WriteComposite(prefix, l.Digest)
 	if err != nil {
-		l.unavailable = err
+		l.Unavailable = err
 		return l
 	}
-	l.systemPromptFile = composite.Path
+	l.SystemPromptFile = composite.Path
 	return l
 }
 
@@ -391,30 +391,30 @@ func (l projectLinksLaunch) withCreateFile(p personaLaunch) projectLinksLaunch {
 // each part present only when the create has it. Without rules it is persona
 // itself, so a create in a Project without rules sends exactly what it sent
 // before.
-func (l projectLinksLaunch) developerInstructions(persona string) string {
-	persona = l.project.developerInstructions(persona)
-	if !l.active || l.unavailable != nil || l.digest == "" {
+func (l ProjectLinksLaunch) DeveloperInstructions(persona string) string {
+	persona = l.Project.DeveloperInstructions(persona)
+	if !l.Active || l.Unavailable != nil || l.Digest == "" {
 		return persona
 	}
 	if persona == "" {
-		return string(l.text)
+		return string(l.Text)
 	}
-	return persona + projectlinks.CompositeSeparator + string(l.text)
+	return persona + projectlinks.CompositeSeparator + string(l.Text)
 }
 
 // withCreateAnnotation adds the digest a fresh create launched with to base.
 // Without rules it returns base itself, so a create in a Project without rules
 // stores exactly what it stored before -- nil included.
-func (l projectLinksLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	base = l.project.withCreateAnnotation(base)
-	if !l.active || l.unavailable != nil || l.digest == "" || base[coremetadata.AnnotationAgentProjectLinkRulesDigest] == l.digest {
+func (l ProjectLinksLaunch) WithCreateAnnotation(base map[string]string) map[string]string {
+	base = l.Project.WithCreateAnnotation(base)
+	if !l.Active || l.Unavailable != nil || l.Digest == "" || base[coremetadata.AnnotationAgentProjectLinkRulesDigest] == l.Digest {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string, 1)
 	}
-	out[coremetadata.AnnotationAgentProjectLinkRulesDigest] = l.digest
+	out[coremetadata.AnnotationAgentProjectLinkRulesDigest] = l.Digest
 	return out
 }
 
@@ -424,12 +424,12 @@ func (l projectLinksLaunch) withCreateAnnotation(base map[string]string) map[str
 // record writes, so the launch reads what the Agent will record. Unreadable
 // rules drop the digest so the Agent launches without rules while its record
 // stays as it was. Otherwise base itself is returned.
-func (l projectLinksLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
-	base = l.project.resumeLaunchAnnotations(base)
-	if !l.active {
+func (l ProjectLinksLaunch) ResumeLaunchAnnotations(base map[string]string) map[string]string {
+	base = l.Project.ResumeLaunchAnnotations(base)
+	if !l.Active {
 		return base
 	}
-	if l.unavailable != nil {
+	if l.Unavailable != nil {
 		if _, ok := base[coremetadata.AnnotationAgentProjectLinkRulesDigest]; !ok {
 			return base
 		}
@@ -437,17 +437,17 @@ func (l projectLinksLaunch) resumeLaunchAnnotations(base map[string]string) map[
 		delete(out, coremetadata.AnnotationAgentProjectLinkRulesDigest)
 		return out
 	}
-	if !l.changed() {
+	if !l.Changed() {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string, 2)
 	}
-	if l.digest == "" {
+	if l.Digest == "" {
 		delete(out, coremetadata.AnnotationAgentProjectLinkRulesDigest)
 	} else {
-		out[coremetadata.AnnotationAgentProjectLinkRulesDigest] = l.digest
+		out[coremetadata.AnnotationAgentProjectLinkRulesDigest] = l.Digest
 	}
 	out[coremetadata.AnnotationAgentSystemPromptSnapshot] = coremetadata.SystemPromptSnapshotOff
 	return out
@@ -456,14 +456,14 @@ func (l projectLinksLaunch) resumeLaunchAnnotations(base map[string]string) map[
 // record writes, inside the resume transaction, the digest and snapshot mode
 // resumeLaunchAnnotations launched with. Nothing changes when the rules are
 // the recorded ones or could not be read.
-func (l projectLinksLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
-	if err := l.project.record(registry, mutator, agentUID); err != nil {
+func (l ProjectLinksLaunch) Record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
+	if err := l.Project.Record(registry, mutator, agentUID); err != nil {
 		return err
 	}
-	if !l.changed() {
+	if !l.Changed() {
 		return nil
 	}
-	if _, err := mutator.SetAgentProjectLinkRules(registry, agentUID, l.digest); err != nil {
+	if _, err := mutator.SetAgentProjectLinkRules(registry, agentUID, l.Digest); err != nil {
 		return MapMetadataError(err)
 	}
 	return nil
@@ -472,28 +472,28 @@ func (l projectLinksLaunch) record(registry *coremetadata.Registry, mutator core
 // notice is the one-line disclosure of rules the launch could not read, or ""
 // when there is nothing to disclose. label names the Agent the way the
 // persona notice does.
-func (l projectLinksLaunch) notice(label string) string {
-	if !l.active || l.unavailable == nil {
-		return l.project.notice(label)
+func (l ProjectLinksLaunch) Notice(label string) string {
+	if !l.Active || l.Unavailable == nil {
+		return l.Project.Notice(label)
 	}
-	notice := projectLinksNotice(label, l.unavailable)
-	if projectNotice := l.project.notice(label); projectNotice != "" {
-		notice += "\n" + projectNotice
+	Notice := ProjectLinksNotice(label, l.Unavailable)
+	if projectNotice := l.Project.Notice(label); projectNotice != "" {
+		Notice += "\n" + projectNotice
 	}
-	return notice
+	return Notice
 }
 
 // PlanProjectLinks reads project's current rules, renders them with the
 // Project's variables and writes their content-addressed snapshot. recorded
 // are the Agent annotations the launch compares against (nil on a fresh
 // create).
-func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
+func (c *GuidanceService) PlanProjectLinks(provider string, project coremetadata.Project, recorded map[string]string) ProjectLinksLaunch {
 	if normalizeAIMode(provider) != aiModeClaude || !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
-		return projectLinksLaunch{}
+		return ProjectLinksLaunch{}
 	}
-	launch := c.loadProjectLinks(project)
-	launch.recorded = recorded[coremetadata.AnnotationAgentProjectLinkRulesDigest]
-	launch.project = c.loadProjectGuidance(project, recorded)
+	launch := c.LoadProjectLinks(project)
+	launch.Recorded = recorded[coremetadata.AnnotationAgentProjectLinkRulesDigest]
+	launch.Project = c.LoadProjectGuidance(project, recorded)
 	return launch
 }
 
@@ -501,48 +501,48 @@ func (c *aiCommand) PlanProjectLinks(provider string, project coremetadata.Proje
 // create and writes their snapshot, exactly as PlanProjectLinks does for a
 // Claude create. A Codex resume never asks: a thread keeps the developer
 // instructions it was started with.
-func (c *aiCommand) PlanCodexProjectLinks(project coremetadata.Project) projectLinksLaunch {
+func (c *GuidanceService) PlanCodexProjectLinks(project coremetadata.Project) ProjectLinksLaunch {
 	if !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
-		return projectLinksLaunch{}
+		return ProjectLinksLaunch{}
 	}
-	launch := c.loadProjectLinks(project)
-	launch.project = c.loadProjectGuidance(project, nil)
+	launch := c.LoadProjectLinks(project)
+	launch.Project = c.LoadProjectGuidance(project, nil)
 	return launch
 }
 
 // loadProjectLinks is the active launch of project's current rules: their
 // rendered text, digest and content-addressed snapshot, or why they could not
 // be read.
-func (c *aiCommand) loadProjectLinks(project coremetadata.Project) projectLinksLaunch {
-	launch := projectLinksLaunch{active: true}
+func (c *GuidanceService) LoadProjectLinks(project coremetadata.Project) ProjectLinksLaunch {
+	launch := ProjectLinksLaunch{Active: true}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
-	launch.store = projectlinks.NewDefaultSnapshotStore(paths)
+	launch.Store = projectlinks.NewDefaultSnapshotStore(paths)
 	rules, err := projectlinks.NewDefaultStore(paths).Load(project.Metadata.UID)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
 	rendered := projectlinks.Render(rules, projectlinks.ProjectOf(project))
 	if len(rendered) == 0 {
 		return launch
 	}
-	snapshot, err := launch.store.WriteSnapshot(rendered)
+	snapshot, err := launch.Store.WriteSnapshot(rendered)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
-	launch.digest, launch.snapshotPath, launch.text = snapshot.Digest, snapshot.Path, rendered
+	launch.Digest, launch.SnapshotPath, launch.Text = snapshot.Digest, snapshot.Path, rendered
 	return launch
 }
 
-func projectLinksNotice(label string, err error) string {
-	var projectErr *projectGuidanceUnavailable
+func ProjectLinksNotice(label string, err error) string {
+	var projectErr *ProjectGuidanceUnavailable
 	if errors.As(err, &projectErr) {
-		return projectGuidanceNotice(label, err)
+		return ProjectGuidanceNotice(label, err)
 	}
 	return fmt.Sprintf("projmux: agent/%s launched without its Project's label link rules (%s): %v",
 		label, projectLinksReasonUnavailable, err)
@@ -552,7 +552,7 @@ func projectLinksNotice(label string, err error) string {
 // persona read. The file is opened inside its own directory, the snapshot
 // directory RecordedSnapshotPath already proved it a regular file of, so
 // the read cannot leave that directory.
-func readPersonaSnapshot(path string) ([]byte, error) {
+func ReadPersonaSnapshot(path string) ([]byte, error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no instructions snapshot at %s", path)
@@ -575,54 +575,54 @@ func readPersonaSnapshot(path string) ([]byte, error) {
 // projectGuidanceLaunch travels with the Project prompt layer (projectLinksLaunch)
 // so every create, resume and replay reads and records the same Project ownership.
 // It is independent of both global guidance and link rules being enabled.
-type projectGuidanceLaunch struct {
-	active           bool
-	store            agentguidance.ProjectStore
-	recorded, digest string
-	text             []byte
-	unavailable      error
+type ProjectGuidanceLaunch struct {
+	Active           bool
+	Store            agentguidance.ProjectStore
+	Recorded, digest string
+	Text             []byte
+	Unavailable      error
 }
 
-func (l projectGuidanceLaunch) on() bool { return l.active && l.unavailable == nil && l.digest != "" }
+func (l ProjectGuidanceLaunch) On() bool { return l.Active && l.Unavailable == nil && l.Digest != "" }
 
-func (l projectGuidanceLaunch) changed() bool {
-	return l.active && l.unavailable == nil && l.digest != l.recorded
+func (l ProjectGuidanceLaunch) Changed() bool {
+	return l.Active && l.Unavailable == nil && l.Digest != l.Recorded
 }
 
-func (l projectGuidanceLaunch) developerInstructions(persona string) string {
-	if !l.on() {
+func (l ProjectGuidanceLaunch) DeveloperInstructions(persona string) string {
+	if !l.On() {
 		return persona
 	}
 	if persona == "" {
-		return string(l.text)
+		return string(l.Text)
 	}
-	return persona + projectlinks.CompositeSeparator + string(l.text)
+	return persona + projectlinks.CompositeSeparator + string(l.Text)
 }
 
-func (l projectGuidanceLaunch) withCreateAnnotation(base map[string]string) map[string]string {
-	if !l.on() || base[coremetadata.AnnotationAgentProjectGuidanceDigest] == l.digest {
+func (l ProjectGuidanceLaunch) WithCreateAnnotation(base map[string]string) map[string]string {
+	if !l.On() || base[coremetadata.AnnotationAgentProjectGuidanceDigest] == l.Digest {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string)
 	}
-	out[coremetadata.AnnotationAgentProjectGuidanceDigest] = l.digest
+	out[coremetadata.AnnotationAgentProjectGuidanceDigest] = l.Digest
 	return out
 }
 
-func (l projectGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) map[string]string {
-	if !l.active || (!l.changed() && l.unavailable == nil) {
+func (l ProjectGuidanceLaunch) ResumeLaunchAnnotations(base map[string]string) map[string]string {
+	if !l.Active || (!l.Changed() && l.Unavailable == nil) {
 		return base
 	}
 	out := maps.Clone(base)
 	if out == nil {
 		out = make(map[string]string)
 	}
-	if l.digest == "" || l.unavailable != nil {
+	if l.Digest == "" || l.Unavailable != nil {
 		delete(out, coremetadata.AnnotationAgentProjectGuidanceDigest)
 	} else {
-		out[coremetadata.AnnotationAgentProjectGuidanceDigest] = l.digest
+		out[coremetadata.AnnotationAgentProjectGuidanceDigest] = l.Digest
 	}
 	// Even unavailable instructions must not revive their recorded provider
 	// snapshot. The durable annotations are preserved until a readable launch.
@@ -630,63 +630,63 @@ func (l projectGuidanceLaunch) resumeLaunchAnnotations(base map[string]string) m
 	return out
 }
 
-func (l projectGuidanceLaunch) record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
-	if !l.changed() {
+func (l ProjectGuidanceLaunch) Record(registry *coremetadata.Registry, mutator coremetadata.Mutator, agentUID string) error {
+	if !l.Changed() {
 		return nil
 	}
-	_, err := mutator.SetAgentProjectGuidance(registry, agentUID, l.digest)
+	_, err := mutator.SetAgentProjectGuidance(registry, agentUID, l.Digest)
 	return MapMetadataError(err)
 }
 
-func (l projectGuidanceLaunch) notice(label string) string {
-	if !l.active || l.unavailable == nil {
+func (l ProjectGuidanceLaunch) Notice(label string) string {
+	if !l.Active || l.Unavailable == nil {
 		return ""
 	}
-	return projectGuidanceNotice(label, l.unavailable)
+	return ProjectGuidanceNotice(label, l.Unavailable)
 }
 
-func (c *aiCommand) loadProjectGuidance(project coremetadata.Project, recorded map[string]string) projectGuidanceLaunch {
+func (c *GuidanceService) LoadProjectGuidance(project coremetadata.Project, recorded map[string]string) ProjectGuidanceLaunch {
 	if !coremetadata.IsProjectUIDShaped(project.Metadata.UID) {
-		return projectGuidanceLaunch{}
+		return ProjectGuidanceLaunch{}
 	}
-	launch := projectGuidanceLaunch{active: true, recorded: recorded[coremetadata.AnnotationAgentProjectGuidanceDigest]}
+	launch := ProjectGuidanceLaunch{Active: true, Recorded: recorded[coremetadata.AnnotationAgentProjectGuidanceDigest]}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
-	launch.store = agentguidance.NewDefaultProjectStore(paths)
-	guidance, err := launch.store.Load(project.Metadata.UID)
+	launch.Store = agentguidance.NewDefaultProjectStore(paths)
+	guidance, err := launch.Store.Load(project.Metadata.UID)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
 	if guidance.Off() {
 		return launch
 	}
-	snapshot, err := launch.store.WriteSnapshot(guidance.Text)
+	snapshot, err := launch.Store.WriteSnapshot(guidance.Text)
 	if err != nil {
-		launch.unavailable = err
+		launch.Unavailable = err
 		return launch
 	}
-	launch.digest, launch.text = snapshot.Digest, guidance.Text
+	launch.Digest, launch.Text = snapshot.Digest, guidance.Text
 	return launch
 }
 
-func projectGuidanceNotice(label string, err error) string {
+func ProjectGuidanceNotice(label string, err error) string {
 	return fmt.Sprintf("projmux: agent/%s launched without its Project's common instructions (%s): %v", label, projectGuidanceReasonUnavailable, err)
 }
 
 // projectGuidanceUnavailable distinguishes a missing recorded Project snapshot
 // from a missing link-rule snapshot at the shared composite-file seam.
-type projectGuidanceUnavailable struct{ error }
+type ProjectGuidanceUnavailable struct{ error }
 
 // codexSocketCommands are the commands the identity paragraph names as taking
 // `--socket projmux`. Each one defines a socket flag; a static test holds
 // them to that.
-var codexSocketCommands = []string{"delete pane", "agent relaunch"}
+var CodexSocketCommands = []string{"delete pane", "agent relaunch"}
 
 // codexNoSocketCommand is the command the identity paragraph tells a Codex
 // Agent not to pass `--socket` to: it defines no socket flag, and outside
 // tmux it routes to the app socket itself (defaultRuntimeMutationRoute).
-const codexNoSocketCommand = "create agent"
+const CodexNoSocketCommand = "create agent"

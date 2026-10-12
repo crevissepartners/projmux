@@ -1,9 +1,9 @@
 package runtime
 
 import (
-"fmt"
-"strings"
-coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"fmt"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"strings"
 )
 
 // agentActivationBindingReason names the one Registry fact that stopped a Pane
@@ -17,11 +17,11 @@ coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 // then. Naming the fact from the same snapshot the verdict read is what makes
 // the refusal actionable. agentActivationBindingReasons declares the whole set,
 // and a test holds every constant of this type to exactly one entry there.
-type agentActivationBindingReason string
+type AgentActivationBindingReason string
 
 // agentActivationBindingReasons is the whole closed set, in the order
 // checkAgentActivationBinding evaluates it.
-var agentActivationBindingReasons = []agentActivationBindingReason{
+var AgentActivationBindingReasons = []AgentActivationBindingReason{
 	agentBindingPaneMissing,
 	agentBindingPaneActivationCleared,
 	agentBindingRuntimeIDChanged,
@@ -35,16 +35,16 @@ var agentActivationBindingReasons = []agentActivationBindingReason{
 // agentActivationBindingExpectation is the exact binding a caller already
 // holds. A nil expectation accepts whichever Agent and generation the Pane
 // currently carries, which is what the first read of an observer needs.
-type agentActivationBindingExpectation struct {
+type AgentActivationBindingExpectation struct {
 	AgentUID   string
 	Generation string
 }
 
 // agentActivationBindingCheck is one verdict and the facts behind it, all read
 // from a single Registry snapshot.
-type agentActivationBindingCheck struct {
+type AgentActivationBindingCheck struct {
 	// Reason is empty exactly when the binding holds.
-	Reason agentActivationBindingReason
+	Reason AgentActivationBindingReason
 	// Expected and Observed are the two sides of Reason.
 	Expected string
 	Observed string
@@ -60,7 +60,7 @@ type agentActivationBindingCheck struct {
 	PanePresent  bool
 }
 
-func (c agentActivationBindingCheck) bound() bool { return c.Reason == "" }
+func (c AgentActivationBindingCheck) Bound() bool { return c.Reason == "" }
 
 // checkAgentActivationBinding judges the one Agent→Pane materialization a
 // provider acknowledgement may refine. Pane uid is durable and therefore not
@@ -70,23 +70,23 @@ func (c agentActivationBindingCheck) bound() bool { return c.Reason == "" }
 // used -- including the caller's own Agent and generation comparison, which
 // moved here so the reason is named once -- and only their order decides which
 // reason a multiply broken binding reports.
-func checkAgentActivationBinding(registry coremetadata.Registry, paneUID, runtimeID string, expect *agentActivationBindingExpectation) agentActivationBindingCheck {
-	var check agentActivationBindingCheck
+func CheckAgentActivationBinding(registry coremetadata.Registry, paneUID, runtimeID string, expect *AgentActivationBindingExpectation) AgentActivationBindingCheck {
+	var check AgentActivationBindingCheck
 	pane, panePresent := registry.Pane(paneUID)
-	check.PanePresent = panePresent
+	Check.PanePresent = panePresent
 	var activation coremetadata.PaneActivation
 	if panePresent {
 		activation = pane.Status.Activation
 	}
-	check.AgentUID = activation.AgentUID
+	Check.AgentUID = activation.AgentUID
 	if expect != nil {
-		check.AgentUID = expect.AgentUID
+		Check.AgentUID = expect.AgentUID
 	}
 	if check.AgentUID != "" {
 		_, check.AgentPresent = registry.Agent(check.AgentUID)
 	}
-	refuse := func(reason agentActivationBindingReason, expected, observed string) agentActivationBindingCheck {
-		check.Reason, check.Expected, check.Observed = reason, expected, observed
+	refuse := func(reason AgentActivationBindingReason, expected, observed string) AgentActivationBindingCheck {
+		Check.Reason, check.Expected, check.Observed = reason, expected, observed
 		return check
 	}
 	runtimeID = strings.TrimSpace(runtimeID)
@@ -111,10 +111,10 @@ func checkAgentActivationBinding(registry coremetadata.Registry, paneUID, runtim
 		return refuse(agentBindingAgentMissing, "Agent row uid:"+activation.AgentUID, "absent")
 	case agent.Status.Phase != coremetadata.PhaseRunning:
 		return refuse(agentBindingAgentNotRunning, string(coremetadata.PhaseRunning), string(agent.Status.Phase))
-	case agent.Status.PaneRef != paneUID:
+	case agent.Status.PaneRef != PaneUID:
 		return refuse(agentBindingAgentPaneRefChanged, "uid:"+paneUID, "uid:"+agent.Status.PaneRef)
 	}
-	check.Generation = activation.Generation
+	Check.Generation = activation.Generation
 	return check
 }
 
@@ -122,26 +122,26 @@ func checkAgentActivationBinding(registry coremetadata.Registry, paneUID, runtim
 // writer's recheck and the observer's two reads; everything else in the text
 // comes from agentActivationBindingRefusal.
 const (
-	agentBindingStageBeforeAwaiting  = "before awaiting acknowledgement"
-	agentBindingStageWhileAwaiting   = "while awaiting acknowledgement"
-	agentBindingStageBeforeRecording = "before recording activation"
+	AgentBindingStageBeforeAwaiting  = "before awaiting acknowledgement"
+	AgentBindingStageWhileAwaiting   = "while awaiting acknowledgement"
+	AgentBindingStageBeforeRecording = "before recording activation"
 )
 
 // agentActivationBindingError is a refused binding. Error() is
 // agentActivationBindingRefusal, so every consumer prints the same text for
 // the same facts.
-type agentActivationBindingError struct {
+type AgentActivationBindingError struct {
 	// command prefixes the text ("create agent"); empty for the observer, whose
 	// caller owns the prefix.
-	command string
-	stage   string
-	paneUID string
-	paneID  string
-	check   agentActivationBindingCheck
+	Command string
+	Stage   string
+	PaneUID string
+	PaneID  string
+	Check   AgentActivationBindingCheck
 }
 
-func (e *agentActivationBindingError) Error() string {
-	return agentActivationBindingRefusal(e.command, e.stage, e.paneUID, e.paneID, e.check)
+func (e *AgentActivationBindingError) Error() string {
+	return AgentActivationBindingRefusal(e.Command, e.Stage, e.PaneUID, e.PaneID, e.Check)
 }
 
 // agentActivationBindingRefusalSteps is the ordered remediation a refused
@@ -150,7 +150,7 @@ func (e *agentActivationBindingError) Error() string {
 // concurrent writer that moved the Registry, not a dead Agent, so the two cheap
 // reads come first and deletion is last and conditional on both finding no
 // evidence.
-func agentActivationBindingRefusalSteps(agentUID, paneUID, paneID string) []string {
+func AgentActivationBindingRefusalSteps(agentUID, paneUID, paneID string) []string {
 	read := fmt.Sprintf("`projmux describe pane uid:%s`", paneUID)
 	remove := fmt.Sprintf("`projmux delete pane uid:%s --yes`", paneUID)
 	if agentUID != "" {
@@ -169,7 +169,7 @@ func agentActivationBindingRefusalSteps(agentUID, paneUID, paneID string) []stri
 // It names the target identity, the reason with both sides of it, and whether
 // the Agent and Pane rows were still present in the snapshot the verdict read,
 // then prints agentActivationBindingRefusalSteps in order.
-func agentActivationBindingRefusal(command, stage, paneUID, paneID string, check agentActivationBindingCheck) string {
+func AgentActivationBindingRefusal(command, stage, paneUID, paneID string, check AgentActivationBindingCheck) string {
 	var builder strings.Builder
 	if command != "" {
 		builder.WriteString(command + ": ")
@@ -179,17 +179,17 @@ func agentActivationBindingRefusal(command, stage, paneUID, paneID string, check
 		agent = "uid:" + check.AgentUID
 	}
 	fmt.Fprintf(&builder, "activation binding changed %s for Agent %s Pane uid:%s %s: %s (expected %s, observed %s)",
-		stage, agent, paneUID, paneID, check.Reason, check.Expected, check.Observed)
+		Stage, agent, paneUID, paneID, check.Reason, check.Expected, check.Observed)
 	fmt.Fprintf(&builder, "; in that Registry read the Agent row was %s and the Pane row was %s",
-		agentBindingRegistryPresence(check.AgentUID != "" && check.AgentPresent), agentBindingRegistryPresence(check.PanePresent))
-	for _, step := range agentActivationBindingRefusalSteps(check.AgentUID, paneUID, paneID) {
+		AgentBindingRegistryPresence(check.AgentUID != "" && check.AgentPresent), AgentBindingRegistryPresence(check.PanePresent))
+	for _, step := range AgentActivationBindingRefusalSteps(check.AgentUID, paneUID, paneID) {
 		builder.WriteString("; ")
 		builder.WriteString(step)
 	}
 	return builder.String()
 }
 
-func agentBindingRegistryPresence(present bool) string {
+func AgentBindingRegistryPresence(present bool) string {
 	if present {
 		return "present"
 	}
