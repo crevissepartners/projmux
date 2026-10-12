@@ -81,7 +81,9 @@ func (p *processAttentionProjection) sync(handle processAttentionHost, binding p
 	if p.store == nil || p.queue == nil || handle == nil {
 		return errors.New("incomplete process attention projection")
 	}
-	return p.store.update(func(records map[string]processAttentionRecord) error {
+	var projectionErr error
+	err := p.store.update(func(records map[string]processAttentionRecord) (err error) {
+		defer func() { projectionErr = err }()
 		r, ok := records[binding.Pane]
 		if !ok {
 			var err error
@@ -126,6 +128,10 @@ func (p *processAttentionProjection) sync(handle processAttentionHost, binding p
 		records[binding.Pane] = r
 		return nil
 	})
+	if err != nil && projectionErr == nil {
+		return processAttentionWriteError{err}
+	}
+	return err
 }
 
 // Only a live owned host can reconstruct its own record after recovery.
@@ -222,7 +228,12 @@ func (r *processAttentionRecord) reconcilePending(snap processhost.Snapshot, pus
 	return nil
 }
 
-func (p *processAttentionProjection) push(in notify.PushInput) error {
+func (p *processAttentionProjection) push(in notify.PushInput) (err error) {
+	defer func() {
+		if err != nil {
+			err = processAttentionNotifyError{err}
+		}
+	}()
 	entry, _, err := p.queue.Push(in)
 	if err != nil {
 		return err

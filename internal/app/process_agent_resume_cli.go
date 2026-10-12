@@ -123,7 +123,7 @@ func (r *processAgentResumeResult) resumeSynchronization(creator *createCommand)
 		if err := r.owner.recordProcessSnapshot(snapshot); err != nil {
 			return err
 		}
-		return control.sync(context.Background())
+		return control.syncControls(context.Background())
 	}, control.syncControls, func() error { return control.attention.sync(r.Handle, r.Binding) }, nil
 }
 

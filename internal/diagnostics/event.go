@@ -163,7 +163,7 @@ var (
 	// every other family.
 	allowedLevels     = stringSet("info", "warn", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", codexBrokerComponent)
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, attentionSyncEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -334,6 +334,9 @@ func validateEventShape(event Event) error {
 	// the tmux.apply lifecycle.outcome refuses the apply breakdown fields.
 	if err := validateApplyBreakdown(event); err != nil {
 		return err
+	}
+	if event.Event == attentionSyncEvent {
+		return validateAttentionSyncEvent(event)
 	}
 	if event.Event == ownerStopEvent {
 		return validateOwnerStopEvent(event)

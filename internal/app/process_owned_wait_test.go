@@ -100,7 +100,7 @@ func TestProcessOwnedWaitInjectedTriggerStopsAndRecordsWaitOnce(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("trigger did not end the owned Wait")
 			}
-			if handle.stops.Load() != 1 || changed.Load() != 1 || attention.Load() != 1 || controls.Load() < 1 {
+			if handle.stops.Load() != 1 || changed.Load() != 1 || attention.Load() < 2 || controls.Load() < 1 {
 				t.Fatalf("stops=%d changed=%d controls=%d attention=%d", handle.stops.Load(), changed.Load(), controls.Load(), attention.Load())
 			}
 			if !owner.waitRecorded {

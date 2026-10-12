@@ -543,6 +543,10 @@ type processChangeHandle interface {
 // to ask the Registry whether it still holds the generation: only when it does
 // not does the owner stop the provider, and then records no Wait for it.
 func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSnapshot func(processhost.Snapshot) error) (processhost.Snapshot, error) {
+	return r.waitProcessAgentWithAttention(ctx, syncSnapshot, nil)
+}
+
+func (r *processAgentCreateResult) waitProcessAgentWithAttention(ctx context.Context, syncSnapshot func(processhost.Snapshot) error, attention func() error) (processhost.Snapshot, error) {
 	if r.Handle == nil {
 		return processhost.Snapshot{}, errors.New("process host was not started")
 	}
@@ -562,6 +566,23 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 	}()
 	changes, _ := r.Handle.(processChangeHandle)
 	generations, _ := r.Handle.(processGenerationHandle)
+	// One attention write may be in flight. Its bounded IO never holds the
+	// owner loop up; snapshot bursts coalesce while it runs. Only a failed
+	// projection schedules retries, so a caught-up idle owner stays asleep.
+	var attentionDone <-chan error
+	var retryAttention <-chan time.Time
+	attentionDirty, attentionFailed := false, false
+	var attentionSnapshot processhost.Snapshot
+	attentionSeen := false
+	startAttention := func() {
+		if attention == nil || attentionDone != nil {
+			return
+		}
+		attentionDirty, retryAttention = false, nil
+		done := make(chan error, 1)
+		attentionDone = done
+		go func() { done <- attention() }()
+	}
 	var failure, abandoned error
 	var coalesce, recheck, grace, cleanup, check <-chan time.Time
 	var changed <-chan struct{}
@@ -631,6 +652,13 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 				continue
 			}
 			failure = syncSnapshot(snapshot)
+			if failure == nil && !ending && (!attentionSeen || !reflect.DeepEqual(attentionSnapshot, snapshot)) {
+				attentionSnapshot, attentionSeen = snapshot, true
+				attentionDirty = true
+				if retryAttention == nil {
+					startAttention()
+				}
+			}
 			if changes == nil || len(snapshot.Pending) > 0 {
 				recheck = time.After(processOwnedRecheck)
 			}
@@ -647,6 +675,7 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 			failure = errors.Join(failure, r.Handle.Stop(r.Binding))
 			cleanup = time.After(3*processhost.DefaultLimits().Grace + 2*processhost.DefaultLimits().Write)
 			lifetime, changed, coalesce, recheck, grace, check, checked = nil, nil, nil, nil, nil, nil, nil
+			attentionDone, retryAttention = nil, nil
 		}
 		select {
 		case result := <-exited:
@@ -676,6 +705,30 @@ func (r *processAgentCreateResult) waitProcessAgent(ctx context.Context, syncSna
 				continue
 			}
 			startCheck()
+		case err := <-attentionDone:
+			attentionDone = nil
+			if err != nil && (errors.Is(err, processhost.ErrStale) || errors.Is(err, processhost.ErrClosed) || !processAttentionRetryable(err)) {
+				failure = err
+			} else if err != nil {
+				if !attentionFailed {
+					r.stopRecorder.journal.RecordAttentionSync(r.Binding.Agent, processAttentionErrorKind(err), false)
+				}
+				attentionFailed = true
+				retryAttention = time.After(processAttentionRetryInterval)
+			} else {
+				if attentionFailed {
+					r.stopRecorder.journal.RecordAttentionSync(r.Binding.Agent, "", true)
+				}
+				attentionFailed = false
+				if attentionDirty && !ending {
+					startAttention()
+				}
+			}
+		case <-retryAttention:
+			retryAttention = nil
+			if !ending {
+				startAttention()
+			}
 		case <-cleanup:
 			return processhost.Snapshot{}, errors.Join(failure, errors.New("owned process Wait cleanup exceeded its bound"))
 		}
@@ -882,7 +935,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 		if err := result.recordProcessSnapshot(snapshot); err != nil {
 			return err
 		}
-		return control.sync(context.WithoutCancel(ctx))
+		return control.syncControls(context.WithoutCancel(ctx))
 	}, controls: control.syncControls, attention: func() error { return control.attention.sync(result.Handle, result.Binding) },
 		endedElsewhere: true, fail: func(err error) error { return processCreateCleanupError(result, err) }}.run(ctx, cancel, processStdinEOFTrigger, stderr)
 }
