@@ -275,7 +275,7 @@ func (c Renamer) RenameRuntimeWindow(ctx context.Context, uid, name string) (str
 	}
 	if !found {
 		if c.StrictMirror {
-			return "", CommittedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("Window runtime identity was not found"))
+			return "", CommittedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("window runtime identity was not found"))
 		}
 		return "", nil
 	}

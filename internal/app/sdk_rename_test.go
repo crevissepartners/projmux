@@ -188,7 +188,7 @@ func TestRenameSDKExplicitSocketCLIParity(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			var snapshots []string
 			for _, sdk := range []bool{false, true} {
-				state, s, c := renameState(t, reg)
+				state, s, _ := renameState(t, reg)
 				root, err := os.MkdirTemp(os.Getenv("TMUX_TMPDIR"), "sdk-rename-")
 				if err != nil {
 					t.Fatal(err)
@@ -225,7 +225,7 @@ func TestRenameSDKExplicitSocketCLIParity(t *testing.T) {
 					t.Setenv("TMUX", "/poison,999,1")
 					t.Setenv("TMUX_PANE", "%999")
 					// Exercise both request override and Options fallback.
-					c, err = projmux.NewClient(projmux.Options{StateDir: state, SocketPath: filepath.Join(root, "wrong.sock")})
+					c, err := projmux.NewClient(projmux.Options{StateDir: state, SocketPath: filepath.Join(root, "wrong.sock")})
 					if err != nil {
 						t.Fatal(err)
 					}

@@ -102,12 +102,12 @@ func (r *renameSocket) proveProject(ctx context.Context, uid string) (string, bo
 			continue
 		}
 		if row[2] != "" || exactTmuxHandle(row[0], "$") == "" {
-			return "", false, errors.New("Project runtime containment drifted")
+			return "", false, errors.New("project runtime containment drifted")
 		}
 		found = append(found, row[0])
 	}
 	if len(found) != 1 {
-		return "", false, fmt.Errorf("Project runtime UID must match exactly one session, got %d", len(found))
+		return "", false, fmt.Errorf("project runtime UID must match exactly one session, got %d", len(found))
 	}
 	return found[0], true, nil
 }
@@ -126,11 +126,11 @@ func (r *renameSocket) provePane(ctx context.Context, uid string) (string, bool,
 	}
 	w, ok := WindowForPane(reg, pane.Metadata.UID)
 	if !ok {
-		return "", false, errors.New("Pane Window disappeared from Registry")
+		return "", false, errors.New("pane Window disappeared from Registry")
 	}
 	root := w.Metadata.OwnerUID()
 	if _, ok := reg.Project(root); !ok {
-		return "", false, errors.New("Pane requires a Project root")
+		return "", false, errors.New("pane requires a Project root")
 	}
 	out, err := r.Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxRowFormat("#{pane_id}", "#{"+tmuxopts.PaneUID+"}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{session_id}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}"))
 	if err != nil {
@@ -146,12 +146,12 @@ func (r *renameSocket) provePane(ctx context.Context, uid string) (string, bool,
 			continue
 		}
 		if exactTmuxHandle(row[0], "%") == "" || exactTmuxHandle(row[2], "@") == "" || exactTmuxHandle(row[4], "$") == "" || row[3] != w.Metadata.UID || row[5] != root || row[6] != "" {
-			return "", false, errors.New("Pane Project containment drifted")
+			return "", false, errors.New("pane Project containment drifted")
 		}
 		found = append(found, row[0])
 	}
 	if len(found) != 1 {
-		return "", false, fmt.Errorf("Pane runtime UID must match exactly one pane, got %d", len(found))
+		return "", false, fmt.Errorf("pane runtime UID must match exactly one pane, got %d", len(found))
 	}
 	return found[0], true, nil
 }
@@ -161,7 +161,7 @@ func (r *renameSocket) RenameProject(ctx context.Context, target, name string) e
 		return err
 	}
 	if current != target {
-		return errors.New("Project runtime identity drifted before rename")
+		return errors.New("project runtime identity drifted before rename")
 	}
 	if err := intmetadata.NewMirror(r).RenameProject(ctx, target, name); err != nil {
 		return err
@@ -171,14 +171,14 @@ func (r *renameSocket) RenameProject(ctx context.Context, target, name string) e
 		return err
 	}
 	if current != target {
-		return errors.New("Project runtime identity drifted after rename")
+		return errors.New("project runtime identity drifted after rename")
 	}
 	out, err := r.Run(ctx, "tmux", "show-options", "-t", target, "-qv", tmuxopts.ProjectNameSession)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(string(out)) != name {
-		return errors.New("Project mirror name did not converge")
+		return errors.New("project mirror name did not converge")
 	}
 	return nil
 }
@@ -188,7 +188,7 @@ func (r *renameSocket) RenamePane(ctx context.Context, target, name string) erro
 		return err
 	}
 	if current != target {
-		return errors.New("Pane runtime identity drifted before rename")
+		return errors.New("pane runtime identity drifted before rename")
 	}
 	if err := intmetadata.NewMirror(r).RenamePane(ctx, target, name); err != nil {
 		return err
@@ -198,14 +198,14 @@ func (r *renameSocket) RenamePane(ctx context.Context, target, name string) erro
 		return err
 	}
 	if current != target {
-		return errors.New("Pane runtime identity drifted after rename")
+		return errors.New("pane runtime identity drifted after rename")
 	}
 	out, err := r.Run(ctx, "tmux", "show-options", "-p", "-t", target, "-qv", tmuxopts.PaneName)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(string(out)) != name {
-		return errors.New("Pane mirror name did not converge")
+		return errors.New("pane mirror name did not converge")
 	}
 	return nil
 }

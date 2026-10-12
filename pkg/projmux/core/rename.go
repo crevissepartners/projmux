@@ -2,7 +2,9 @@ package core
 
 // RenameRequest selects exactly one resource by an explicit name or uid: ref.
 // Project and Window are optional explicit scopes; Window scopes Panes/Agents.
-// SocketPath overrides Options.SocketPath. With neither, rename is Registry-only.
+// SocketPath overrides Options.SocketPath. With neither, rename is Registry-only:
+// Project and Pane display names are not mirrored and have no notice; only a
+// Window returns a notice, as when CLI rename is invoked outside tmux.
 type RenameRequest struct {
 	Kind       Kind
 	Ref        string
