@@ -36,7 +36,6 @@ import (
 type deletionVia = mutations.DeletionVia
 
 const deletionRecordsFile = mutations.DeletionRecordsFile
-const deletionRecordSchemaVersion = mutations.DeletionRecordSchemaVersion
 const deletionViaCLI = mutations.DeletionViaCLI
 const deletionViaUI = mutations.DeletionViaUI
 const deletionViaPrune = mutations.DeletionViaPrune
@@ -47,11 +46,6 @@ const deletionOperationUnregisterProject = mutations.DeletionOperationUnregister
 const deletionOperationDeleteProject = mutations.DeletionOperationDeleteProject
 const deletionOperationPruneAgent = mutations.DeletionOperationPruneAgent
 const deletionOperationPruneProject = mutations.DeletionOperationPruneProject
-const deletionAffectedDeleted = mutations.DeletionAffectedDeleted
-const deletionSkipStateDirUnavailable = mutations.DeletionSkipStateDirUnavailable
-const deletionSkipAppendFailed = mutations.DeletionSkipAppendFailed
-const deletionSkipOperationIDMissing = mutations.DeletionSkipOperationIDMissing
-const deletionNotRecordedDiagnosticFmt = mutations.DeletionNotRecordedDiagnosticFmt
 
 type DeletionRecord = mutations.DeletionRecord
 type DeletionActor = mutations.DeletionActor
@@ -210,10 +204,4 @@ func recordDeletion(store *resourceStore, record DeletionRecord, stderr io.Write
 	if store != nil {
 		mutations.RecordDeletion(store.stateDir, record, stderr)
 	}
-}
-
-type deletionRecordLog struct{ path string }
-
-func (l deletionRecordLog) append(record DeletionRecord) string {
-	return (mutations.DeletionRecordLog{Path: l.path}).Append(record)
 }

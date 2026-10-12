@@ -25,7 +25,7 @@ func PreviewDelete(plan DeletePlan) DeletePreview {
 		t := DeletePreviewTarget{DeleteResource: DeleteResource{Kind: plan.Kind, UID: target.Match.UID, Name: target.Match.Name}, Descendants: []DeleteResource{}}
 		p.Affected = append(p.Affected, DeletionAffected{Kind: string(plan.Kind), UID: t.UID, Name: t.Name, Action: DeletionAffectedDeleted})
 		for _, d := range target.Descendants {
-			t.Descendants = append(t.Descendants, DeleteResource{Kind: d.Kind, UID: d.UID, Name: d.Name})
+			t.Descendants = append(t.Descendants, DeleteResource(d))
 			p.Affected = append(p.Affected, DeletionAffected{Kind: string(d.Kind), UID: d.UID, Name: d.Name, Action: DeletionAffectedDeleted})
 		}
 		p.Targets = append(p.Targets, t)

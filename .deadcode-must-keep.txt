@@ -312,7 +312,6 @@ copyUsage	Public v0 settings, stored usage or notification SDK entrypoint or its
 createCommand.recordOperatorCreator	In-process operator creator seam for an operator client layered on projmux that runs creates on the operator's behalf; argv has no spelling of it by design (TestNoArgvPathBuildsAnOperatorCreator), so main reaches it only from tests.
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
 defaultUsageDir	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
-deletionRecordLog.append	Durable deletion-log test seam; implementation lives in mutations.DeletionRecordLog.Append.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 executeWindowRenameSteps	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 exitOf	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
