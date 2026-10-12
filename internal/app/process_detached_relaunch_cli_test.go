@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -205,14 +207,25 @@ func TestDetachedProcessRelaunchRollbackCLI(t *testing.T) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
 	}
-	for _, mode := range []string{"claim-output", "provider-output", "caller-cancel", "same-recipe-running-output"} {
+	for _, mode := range []string{"claim-output", "provider-output", "caller-cancel", "same-recipe-running-output", "stale-source"} {
 		t.Run(mode, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, "claude")
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
 			awaitDetachedInitialConversation(t, ctx, f, first.ref)
-			if mode != "same-recipe-running-output" {
+			// The Pane init can precede the Agent's durable conversation pointer.
+			// Capture the source proof only once both identify this conversation.
+			processCLIUntil(t, ctx, func() bool {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					return false
+				}
+				a, found := reg.Agent(strings.TrimPrefix(first.ref, "uid:"))
+				p, ambiguous := processResumePane(reg, strings.TrimPrefix(first.ref, "uid:"))
+				return found && !ambiguous && p != nil && p.Status.ProcessSession != nil && a.Status.SessionRef.ConversationID() != "" && a.Status.SessionRef.ConversationID() == processRelaunchConversation(p.Status.ProcessSession)
+			})
+			if mode != "same-recipe-running-output" && mode != "stale-source" {
 				first.shutdown(t)
 			} else {
 				defer first.shutdown(t)
@@ -237,6 +250,87 @@ func TestDetachedProcessRelaunchRollbackCLI(t *testing.T) {
 			caller, _, err := localipc.Process(os.Getpid())
 			if err != nil {
 				t.Fatal(err)
+			}
+			if mode == "stale-source" {
+				// Reproduce the stale conversation proof without racing readiness.
+				wire.Source.Status.SessionRef = nil
+				pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				own := os.NewFile(uintptr(pair[0]), "stale-caller")
+				child := os.NewFile(uintptr(pair[1]), "stale-owner")
+				defer child.Close()
+				conn, err := net.FileConn(own)
+				_ = own.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+				deadline, _ := ctx.Deadline()
+				if err = conn.SetDeadline(deadline); err != nil {
+					t.Fatal(err)
+				}
+				payload, err := os.CreateTemp(f.root, "stale-request-*")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer payload.Close()
+				if err = os.Remove(payload.Name()); err != nil {
+					t.Fatal(err)
+				}
+				if err = json.NewEncoder(payload).Encode(processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: f.store.Path()}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = payload.Seek(0, io.SeekStart); err != nil {
+					t.Fatal(err)
+				}
+				owner := exec.CommandContext(ctx, f.binary, "internal", "process-agent-owner")
+				owner.ExtraFiles = []*os.File{child, payload}
+				var ownerErrors bytes.Buffer
+				owner.Stderr = &ownerErrors
+				if err = owner.Start(); err != nil {
+					t.Fatal(err)
+				}
+				_ = child.Close()
+				decoder := json.NewDecoder(conn)
+				var identity, ready processDetachedReply
+				if err = decoder.Decode(&identity); err != nil {
+					_ = owner.Process.Kill()
+					_ = owner.Wait()
+					t.Fatal(err)
+				}
+				if !identity.Owner.Valid() || identity.Owner.PID != owner.Process.Pid {
+					t.Fatal("invalid owner handshake")
+				}
+				if err = decoder.Decode(&ready); err != nil || ready.Owner != identity.Owner || ready.Error != "stale process binding or request" || ready.Binding.Agent != "" || ready.Claim != nil || ready.Phase != "" || ready.Stdout != "" {
+					_ = owner.Process.Kill()
+					_ = owner.Wait()
+					t.Fatalf("stale source returned startup/claim success: %+v %v", ready, err)
+				}
+				if err = owner.Wait(); err == nil || !strings.Contains(ownerErrors.String(), "stale process binding or request") {
+					t.Fatalf("stale source not refused: %v %s", err, ownerErrors.String())
+				}
+				if !processIdentityAbsent(identity.Owner, localipc.Process) {
+					t.Fatal("rejected owner survived")
+				}
+				after, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ := after.Agent(agent.Metadata.UID)
+				p, _ := after.Pane(pane.Metadata.UID)
+				otherNext, _ := after.Pane(otherPane.Metadata.UID)
+				if !reflect.DeepEqual(a, agent) || !reflect.DeepEqual(p.Status, pane.Status) || !reflect.DeepEqual(otherNext.Status.Activation, otherPane.Status.Activation) {
+					t.Fatal("early refusal changed existing owners, conversation or Wait")
+				}
+				for _, live := range []coremetadata.ProcessIdentity{pane.Status.Activation.Process.HostProcess, pane.Status.Activation.Process.Child} {
+					current, _, err := localipc.Process(live.PID)
+					if err != nil || current != live {
+						t.Fatal("early refusal stopped existing owner/provider", err)
+					}
+				}
+				return
 			}
 			admission, stop := context.WithCancel(ctx)
 			defer stop()
