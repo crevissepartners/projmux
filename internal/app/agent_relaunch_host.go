@@ -27,6 +27,9 @@ func relaunchCurrentHost(reg coremetadata.Registry, agent coremetadata.Agent) st
 }
 
 func (c *agentCommand) runHostRelaunch(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	if detachedRelaunchSession(c.hostTransferContext) != nil || (c.hostTransferResult != nil && request.dryRun) {
+		return c.dispatchHostTransfer(reg, target, request, stdout, stderr)
+	}
 	_, err := c.runOwnedHostRelaunch(context.Background(), reg, target, request, stdout, stderr)
 	return err
 }
@@ -447,6 +450,7 @@ func sameHostTransferSpec(a, b coremetadata.AgentSpec) bool {
 // source identity that could authorize repeating the transfer immediately.
 func tmuxTransferRecovery(reg coremetadata.Registry, agent coremetadata.Agent, request agentRelaunchRequest) string {
 	previous := request
+	previous.detach = false // The restored source is tmux; detachment cannot apply to it.
 	previous.host, previous.model, previous.effort = "", "", ""
 	previous.profile, previous.instructions, previous.reset, previous.prompt = nil, nil, nil, nil
 	return relaunchRerunCommand(reg, agent, previous)

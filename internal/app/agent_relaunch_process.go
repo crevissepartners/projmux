@@ -63,7 +63,7 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 	result := recipe.result(target, pane, request)
 	deferred := recipe.restart.provider == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
 	changesLayers := recipe.restart.settings.resolution.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
-	if !deferred && recipe.restart.running && request.model == "" && len(recipe.restart.settings.resolution.Reasons) == 0 && !(changesLayers && recipe.restart.settings.resolution.LayersChanged()) && len(request.prompt) == 0 {
+	if !request.detach && !deferred && recipe.restart.running && request.model == "" && len(recipe.restart.settings.resolution.Reasons) == 0 && !(changesLayers && recipe.restart.settings.resolution.LayersChanged()) && len(request.prompt) == 0 {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = pane.Metadata.UID
 		return c.publishHostTransferResult(stdout, request, result)
@@ -343,7 +343,11 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		if prepared != nil {
 			cause = errors.Join(cause, c.restorePromptRelaunch(prepared))
 		}
-		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (foreground owner remains required): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request), cause)
+		ownerHint := "foreground owner remains required"
+		if request.detach {
+			ownerHint = "retry the detached relaunch explicitly"
+		}
+		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (%s): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request), ownerHint, cause)
 	}
 	if err = owned.startProcessResume(ctx, creator, launch.command, launch.config, processRelaunchFirstFrame(launch.prompt)); err != nil {
 		return fail(err)

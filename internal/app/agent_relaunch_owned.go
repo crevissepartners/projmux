@@ -85,6 +85,10 @@ func (c *agentCommand) runOwnedHostRelaunch(ctx context.Context, reg coremetadat
 }
 
 func (c *agentCommand) hostTransferLifetime() (context.Context, context.CancelFunc, func()) {
+	if detachedRelaunchSession(c.hostTransferContext) != nil {
+		ctx, cancel := context.WithCancel(c.hostTransferContext)
+		return ctx, cancel, cancel
+	}
 	if c.hostTransferResult == nil {
 		ctx, cancel := processForegroundLifetime()
 		return ctx, cancel, cancel
@@ -109,6 +113,9 @@ func (c *agentCommand) publishHostTransferResult(stdout io.Writer, request agent
 }
 
 func (c *agentCommand) finishOwnedHostTransfer(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, synchronization processRelaunchSynchronization, result agentRelaunchResult, request agentRelaunchRequest, stdout, stderr io.Writer, fail func(error) error, beforeOwned ...func() error) error {
+	if session := detachedRelaunchSession(ctx); session != nil {
+		return session.finishOwned(ctx, cancel, owned, synchronization, result, request, fail, beforeOwned...)
+	}
 	if c.hostTransferResult != nil {
 		// Remove the admission cancellation bridge before publishing ownership.
 		// A cancellation already admitted still takes the existing exact fail path.
