@@ -147,7 +147,7 @@ type WindowNode struct {
 	ProjectUID string              `json:"projectUID,omitempty"`
 	Class      Class               `json:"class"`
 	Status     Status              `json:"status"`
-	// Live and Active are separate runtime facts. Active is never inferred from
+	// Live follows StatusLive, including live descendant Panes. Active is never inferred from
 	// a stored id/name or from liveness; it is the exact window_active bit on
 	// the one bound tmux Window.
 	Live        bool        `json:"live,omitempty"`
@@ -238,7 +238,7 @@ func (g Graph) ValidateWindowRuntimeState() error {
 	activeByProject := map[string]string{}
 	for _, window := range g.Windows {
 		uid := window.Window.Metadata.UID
-		if window.Active && !window.Live {
+		if window.Active && !window.Live && window.Status != StatusMissingRoot {
 			return fmt.Errorf("window %s is active but not live", uid)
 		}
 		if !window.Active || window.ProjectUID == "" {
@@ -277,6 +277,7 @@ func Resolve(registry coremetadata.Registry, inventory Inventory) Graph {
 	r.resolveClaims()
 	r.buildRegistryNodes()
 	r.projectProcesses()
+	r.aggregateContainerStatus()
 	r.buildRuntimeNodes()
 	return r.graph()
 }

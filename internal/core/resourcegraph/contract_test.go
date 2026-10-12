@@ -37,8 +37,8 @@ func TestResolvePreservesRegistryRowsWhenAScopeIsUnavailable(t *testing.T) {
 			scope: ScopeSessions,
 			drop:  func(inv *Inventory) { inv.Sessions = nil },
 			// The Window and Pane uids are still exact evidence of their own
-			// runtime, so only the Project loses its answer.
-			wantProject: StatusUnknown, wantWindow: StatusLive, wantPane: StatusLive, wantAgent: StatusLive,
+			// runtime and now keep their containing Project live.
+			wantProject: StatusLive, wantWindow: StatusLive, wantPane: StatusLive, wantAgent: StatusLive,
 		},
 		{
 			name:  "windows query failed",
@@ -46,7 +46,7 @@ func TestResolvePreservesRegistryRowsWhenAScopeIsUnavailable(t *testing.T) {
 			drop:  func(inv *Inventory) { inv.Windows = nil },
 			// A pane whose tmux pane is provably there is still live even when
 			// the window inventory could not be read.
-			wantProject: StatusLive, wantWindow: StatusUnknown, wantPane: StatusLive, wantAgent: StatusLive,
+			wantProject: StatusLive, wantWindow: StatusLive, wantPane: StatusLive, wantAgent: StatusLive,
 		},
 		{
 			name:        "panes query failed",
@@ -180,7 +180,7 @@ func TestResolveProjectsExactWindowLiveAndActiveAsOrthogonalFacts(t *testing.T) 
 		t.Fatalf("offline Window projection = status=%q live=%t active=%t", offline.Status, offline.Live, offline.Active)
 	}
 	missing := windowNode(t, graph, "win-gone-1")
-	if missing.Status != StatusMissingRoot || !missing.Live || !missing.Active {
+	if missing.Status != StatusMissingRoot || missing.Live || !missing.Active {
 		t.Fatalf("missing-root live Window projection = status=%q live=%t active=%t", missing.Status, missing.Live, missing.Active)
 	}
 	if err := graph.ValidateWindowRuntimeState(); err != nil {

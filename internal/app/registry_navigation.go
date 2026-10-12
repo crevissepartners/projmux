@@ -287,7 +287,7 @@ func (c *registryNavigationCommand) runFocus(row registryview.Row, socket string
 	if c.focus == nil {
 		return errors.New("registry navigation: the focus handler is not configured")
 	}
-	if row.Kind == registryview.RowKindWindow && row.Status == registryview.StatusVirtual {
+	if row.Kind == registryview.RowKindWindow && (row.Status == registryview.StatusVirtual || (row.IsLive() && row.Runtime == nil)) {
 		args := []string{"window", "uid:" + row.UID}
 		if socket != "" {
 			args = append(args, "--socket", socket)

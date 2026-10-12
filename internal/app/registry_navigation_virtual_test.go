@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/registryview"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/i18n"
 )
 
@@ -79,5 +80,40 @@ func TestRegistryNavigationVirtualOpenActionUsesObservedSocket(t *testing.T) {
 	}
 	if len(picker.seen) != 1 {
 		t.Fatalf("action menus=%d", len(picker.seen))
+	}
+}
+
+// TestRegistryNavigationHeadlessLiveOpenTable pins the picker half of C-2:
+// live process containers use Open and reuse the existing materialization route.
+func TestRegistryNavigationHeadlessLiveOpenTable(t *testing.T) {
+	for _, kind := range []registryview.RowKind{registryview.RowKindProject, registryview.RowKindWindow} {
+		for _, inside := range []bool{false, true} {
+			for _, socket := range []string{"", "/tmp/fake-tmux/primary"} {
+				row := registryview.Row{Kind: kind, UID: "headless", ID: "uid:headless", Status: resourcegraph.StatusLive, Live: kind == registryview.RowKindWindow, Actions: []registryview.Action{registryview.ActionOpen}}
+				nav := registryNavigationView{locale: i18n.FallbackLocale}
+				entry := nav.actionEntry(row, registryview.ActionOpen, socket, inside)
+				allowed := kind == registryview.RowKindProject && !inside || kind == registryview.RowKindWindow && inside && socket != ""
+				if (entry.Value == navActionOpen || entry.Value == navActionStart) != allowed {
+					t.Fatalf("kind=%s inside=%t socket=%q entry=%+v", kind, inside, socket, entry)
+				}
+				if allowed && !strings.Contains(entry.Label, "Open") {
+					t.Fatalf("materialization mislabeled: %+v", entry)
+				}
+				if allowed && kind == registryview.RowKindProject && entry.Value != navActionStart {
+					t.Fatalf("Project did not reuse attach: %+v", entry)
+				}
+			}
+		}
+	}
+	row := registryview.Row{Kind: registryview.RowKindWindow, UID: "win-headless", ID: "uid:win-headless", Status: resourcegraph.StatusLive, Live: true}
+	recorder := &navigationArgvRecorder{}
+	command := &registryNavigationCommand{focus: recorder}
+	var out bytes.Buffer
+	if err := command.runFocus(row, "/tmp/fake-tmux/primary", &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"window", "uid:win-headless", "--socket", "/tmp/fake-tmux/primary"}}
+	if !reflect.DeepEqual(recorder.calls, want) {
+		t.Fatalf("focus=%v", recorder.calls)
 	}
 }
