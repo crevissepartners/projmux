@@ -7,6 +7,11 @@ and humans run the same entrypoints.
 
 - `make test` runs the fast Go unit suite. Apart from the real-tmux tests
   below, these tests avoid tmux, TTY, GUI, and host shell dependencies.
+- Detached process creation adds CLI fixtures for caller EOF/exit, parent
+  provider-group TERM/HUP, exact stop/Wait and repeated stop, create-window,
+  startup hook failure, and caller cancellation. The existing Darwin native
+  job builds the CLI and executes these detached boundary fixtures as well as
+  their unit tests; it does not substitute cross-compilation for execution.
 - `make test-process-host-cli` builds this checkout, copies the binary into a
   temporary root, and runs every top-level test in
   `codex_process_binding_test.go`, `codex_process_ownership_test.go`,

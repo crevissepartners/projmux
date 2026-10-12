@@ -71,6 +71,7 @@ type internalCommand struct {
 	// tmux command string.
 	supervise             rawArgvCommand
 	processHostSupervisor rawArgvCommand
+	detachedCreate        *createCommand
 	activationExec        rawArgvCommand
 	// codexBroker is the Codex endpoint broker runtime. It is the only
 	// internal route whose process outlives the invocation that started it.
@@ -113,6 +114,11 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.popupWaitKey, "internal popup-wait-key", "popup-wait-key", nil, rest, stdout, stderr)
 	case "supervise":
 		return forwardRawArgv(c.supervise, "internal supervise", "supervise", nil, rest, stdout, stderr)
+	case "process-agent-launch", "process-agent-owner":
+		if len(rest) != 0 || c.detachedCreate == nil {
+			return usageError("internal process Agent owner requires its private descriptors")
+		}
+		return runProcessDetachedEntry(args[0], c.detachedCreate)
 	case "process-host-supervisor":
 		return forwardRawArgv(c.processHostSupervisor, "internal process-host-supervisor", "process-host-supervisor", nil, rest, stdout, stderr)
 	case "activation-exec":

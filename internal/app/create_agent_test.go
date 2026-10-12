@@ -1744,6 +1744,7 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.String("provider", "", "")
 			if node == "agent" {
 				fs.String("host", "tmux", "")
+				fs.Bool("detach", false, "")
 			}
 			fs.Var(&out.windows, "window", "")
 			fs.Var(&out.panes, "pane", "")

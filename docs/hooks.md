@@ -1297,7 +1297,16 @@ refs and a `projmux delete agent uid:...` cleanup command on stderr. Configurati
 parse warnings are also printed on the creator's stderr; an invalid file is
 skipped without failing creation.
 
-The command stays in the foreground until provider exit or owner EOF/INT/TERM.
+By default, the command stays in the foreground until provider exit or owner EOF/INT/TERM.
+`create agent --host process --detach` returns exit 0 after startup, hook and
+initial input admission, and the exact owner identity/binding handshake.
+Hook and handshake failures remain nonzero and stop only the new owned
+provider, with actual Wait and rollback evidence or exact remaining refs.
+Detached ownership prints `foreground=detached`; other `-o` projections retain
+their existing format, and `-o none` suppresses displays. The owner continues
+with closed caller stdin, stdout, and stderr; later provider exit is recorded
+in termination evidence. Stop it explicitly with `agent stop <agent-ref>`.
+See [Operating Process-Hosted Agents](process-host-operations.md) for its limits.
 The owner stops its provider at stdin EOF. `</dev/null` or closed stdin (CI
 steps, cron, `nohup`, or a noninteractive shell's `&`) can end it immediately.
 Keep stdin open, for example:

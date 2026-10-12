@@ -220,6 +220,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		// current `usage` route accepts, which is what keeps the two spellings
 		// byte-identical.
 		return forwardRawArgv(c.usage, "agent usage", "usage", nil, rest, stdout, stderr)
+	case "stop":
+		return c.runStop(rest, stdout, stderr)
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
 	case "relaunch":

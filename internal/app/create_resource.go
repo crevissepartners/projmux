@@ -67,6 +67,7 @@ type resourceCreateFlags struct {
 	labels            repeatedFlag
 	name              string
 	host              string
+	detach            bool
 	processWindow     bool
 	placementSet      bool
 	provider          string
@@ -437,6 +438,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	}
 	if shape.host {
 		fs.StringVar(&out.host, "host", "tmux", "tmux (unchanged default) or process (owned foreground; hooks require runtime opt-in)")
+		if spelling == canonicalCreateAgent {
+			fs.BoolVar(&out.detach, "detach", false, "process only: return after startup; keep the Agent alive until agent stop or provider exit")
+		}
 	}
 	if shape.provider {
 		fs.BoolVar(&out.dialogueReplyOnly, claudeDialogueReplyOnlyFlag, false, "claude only: a headless activation with an isolated explicit reply tool, recorded so every resume of the Agent stays reply-only; qualification required")
@@ -556,6 +560,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			return resourceCreateFlags{}, usageError(spelling +
 				" --create-window requires at least one exact-name --window <name>; a uid: reference never names a Window to create")
 		}
+	}
+	if out.detach && out.host != "process" {
+		return resourceCreateFlags{}, usageError("create agent: --detach requires --host process; nothing was created")
 	}
 	return out, nil
 }

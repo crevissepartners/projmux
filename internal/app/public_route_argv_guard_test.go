@@ -137,6 +137,7 @@ const (
 var publicRouteArgvOperandRoutes = []string{
 	"agent status",
 	"agent topic",
+	"agent stop",
 	"agent resume",
 	"agent relaunch",
 	"agent turn start",
