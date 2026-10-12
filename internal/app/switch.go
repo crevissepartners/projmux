@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -18,7 +19,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
@@ -2737,23 +2737,7 @@ func (c *switchCommand) stopManagedProjectSessionOnRoute(
 		return fmt.Errorf("resolve managed Project runtime stop: %w", err)
 	}
 	resolve := func(view registryview.View) (managedRuntimeStopTarget, bool) {
-		for _, row := range projectRowsOf(view) {
-			matches := row.UID == switchRegistrySelectionUID(selection) ||
-				(row.Root != "" && cleanOptionalPath(row.Root) == cleanOptionalPath(selection))
-			if !matches || row.Runtime == nil || exactTmuxHandle(row.Runtime.ID, "$") == "" || strings.TrimSpace(row.UID) == "" {
-				continue
-			}
-			observedName := strings.TrimSpace(row.SessionName)
-			if observedName == "" {
-				observedName = strings.TrimSpace(row.Runtime.Name)
-			}
-			if observedName != strings.TrimSpace(sessionName) {
-				return managedRuntimeStopTarget{}, false
-			}
-			return managedRuntimeStopTarget{SessionID: row.Runtime.ID, SessionName: observedName,
-				RootKind: coremetadata.KindProject, RootUID: row.UID}, true
-		}
-		return managedRuntimeStopTarget{}, false
+		return mutationruntime.ResolveManagedProjectStopTarget(view, selection, sessionName)
 	}
 	// A discovered candidate is not a managed Project. Its historical sidebar
 	// kill remains human runtime maintenance and is classified separately from

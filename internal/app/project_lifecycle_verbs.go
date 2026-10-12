@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // The canonical spellings this file makes executable.
@@ -320,43 +319,11 @@ func (c *projectLifecycleCommand) materialize(ctx context.Context, root, session
 // lifecycle verbs the only Project routes that cannot be reached the way the
 // sidebar reaches them.
 func resolveProjectRef(store *resourceStore, spelling, ref string) (coremetadata.Project, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return coremetadata.Project{}, usageError(spelling + " requires a non-empty Project reference")
+	var load func() (coremetadata.Registry, error)
+	if store != nil {
+		load = store.load
 	}
-	if store == nil || store.load == nil {
-		return coremetadata.Project{}, fmt.Errorf("%s: the resource registry is not configured", spelling)
-	}
-	registry, err := store.load()
-	if err != nil {
-		return coremetadata.Project{}, MapMetadataError(err)
-	}
-	if filepath.IsAbs(ref) {
-		project, ok := registry.ProjectByRoot(cleanOptionalPath(ref))
-		if !ok {
-			return coremetadata.Project{}, usageError(fmt.Sprintf(
-				"%s: no Project claims root %q; register it with `projmux create project --root %s`", spelling, ref, ref))
-		}
-		return *project, nil
-	}
-	parsed, err := selector.ParseRef(coremetadata.KindProject, ref)
-	if err != nil {
-		return coremetadata.Project{}, err
-	}
-	query := selector.Query{Project: &parsed}
-	resolution, err := selector.New(registry).ResolveProjects(query)
-	if err != nil {
-		return coremetadata.Project{}, err
-	}
-	target := selector.Target{Verb: selector.VerbFocus, Kind: coremetadata.KindProject}
-	if err := selector.Enforce(target, selector.DescribeSelector(query), resolution); err != nil {
-		return coremetadata.Project{}, err
-	}
-	project, ok := registry.Project(resolution.Matches[0].UID)
-	if !ok {
-		return coremetadata.Project{}, fmt.Errorf("%s: project %q disappeared during preflight", spelling, resolution.Matches[0].UID)
-	}
-	return *project, nil
+	return mutations.ResolveProjectRef(load, spelling, ref, usageError, MapMetadataError)
 }
 
 // insideTmuxClient reports whether this invocation already has a tmux client.
