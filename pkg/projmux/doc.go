@@ -26,15 +26,17 @@
 //
 // Pass a non-nil context to every operation. Cancellation is checked before
 // admission; a mutation already admitted finishes its atomic store operation.
-// Delete removes explicitly selected tmux Windows through the CLI's deletion
-// planner, exact socket/PID/UID guards, durable intent, rollback and Registry
+// Delete removes explicitly selected tmux Windows, Panes and Agents through
+// the CLI's deletion planner, exact socket/PID/UID guards, durable intent, rollback and Registry
 // transaction. One Ref may select multiple resources, returned in Plan.Targets;
 // more than one requires Confirm, using the same CLI confirmation rule.
 // DeleteRequest.SocketPath overrides Options.SocketPath; empty
 // routing refuses without observing an ambient server. DryRun and missing Confirm
-// return a plan without writing. Process targets and Pane/Agent deletion currently
-// return declared unsupported Codes. The SDK never queues a self-kill. Deletion
-// records use via=sdk; actor is unproven outside an ambient Pane.
+// return a plan without writing. Process targets return declared unsupported
+// Codes. The SDK never queues a self-kill. Deletion records use via=sdk; actor is unproven outside an ambient Pane.
+// Delete requires an explicit socket outside tmux, matching CLI delete; CLI
+// stop project has no socket flags and uses the proved app-owned server, so
+// StopProject defaults to that app socket instead.
 // StopProject ends one explicitly selected Project's persistent tmux session.
 // StopProjectRequest.SocketPath overrides Options.SocketPath; empty routing uses
 // the app-owned projmux socket with server generation and Project UID guards.

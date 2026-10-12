@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"path/filepath"
 	"strings"
 
+	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/services/mutations"

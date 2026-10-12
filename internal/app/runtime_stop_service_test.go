@@ -7,9 +7,7 @@ type projectStopInterruption = mutationruntime.ProjectStopInterruption
 func recordProjectStopInterruptions(s *resourceStore, uid, op string) ([]projectStopInterruption, error) {
 	return mutationruntime.RecordProjectStopInterruptions(stopServiceStore(s), uid, op)
 }
-func verifyProjectStopInterruptions(s *resourceStore, uid string, interruptions []projectStopInterruption, op string) error {
-	return mutationruntime.VerifyProjectStopInterruptions(stopServiceStore(s), uid, interruptions, op)
-}
+
 func projectProjectStopInterruptions(s *resourceStore, interruptions []projectStopInterruption, op string) error {
 	return mutationruntime.ProjectProjectStopInterruptions(stopServiceStore(s), interruptions, op)
 }

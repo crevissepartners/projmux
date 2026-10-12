@@ -155,6 +155,10 @@ func TestStopProjectPIDUIDGuardsAndCancellation(t *testing.T) {
 
 // Keep request shape refusal messages SDK-facing without rewriting user values.
 func TestStopProjectInputCodes(t *testing.T) {
+	if _, err := NewClient(Options{SocketPath: "relative"}); err == nil || !strings.Contains(err.Error(), "SocketPath") {
+		t.Fatalf("relative Options.SocketPath was not rejected by construction: %v", err)
+	}
+
 	c, err := NewClient(Options{StateDir: filepath.Join(t.TempDir(), "state")})
 	if err != nil {
 		t.Fatal(err)
