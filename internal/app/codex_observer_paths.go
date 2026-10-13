@@ -87,29 +87,12 @@ func NativeObservationStateDir(args []string) (stateDir string, explicit bool, e
 	}
 
 	if len(args) >= 3 && args[0] == "internal" && args[1] == "codex-broker" && args[2] == "serve" {
-		for index := 3; index < len(args); index++ {
-			value, found := strings.CutPrefix(args[index], "--state-domain=")
-			if !found {
-				value, found = strings.CutPrefix(args[index], "-state-domain=")
-			}
-			if args[index] == "--state-domain" || args[index] == "-state-domain" {
-				found = true
-				if index+1 >= len(args) {
-					return "", true, fmt.Errorf("native broker requires absolute state domain")
-				}
-				index++
-				value = args[index]
-			}
-			if found {
-				explicit = true
-				stateDir = value
-			}
+		input, err := parseCodexBrokerServeInput(args[3:], io.Discard)
+		if err != nil {
+			return "", true, err
 		}
-		if explicit {
-			if !filepath.IsAbs(stateDir) {
-				return "", true, fmt.Errorf("native broker requires absolute state domain")
-			}
-			return filepath.Clean(stateDir), true, nil
+		if input.Explicit {
+			return filepath.Clean(input.StateDomain), true, nil
 		}
 	}
 	return "", false, nil

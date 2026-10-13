@@ -140,8 +140,15 @@ func (c *codexBrokerCommand) Run(args []string, stdout, stderr io.Writer) error 
 	}
 }
 
-// runServe hosts one broker runtime until it idles out or is signalled.
-func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) error {
+type codexBrokerServeInput struct {
+	StateDomain                                                    string
+	Explicit                                                       bool
+	EndpointStateDomain, EndpointGeneration, EndpointSocket, Image string
+	EndpointDefault                                                bool
+	Idle                                                           time.Duration
+}
+
+func parseCodexBrokerServeInput(args []string, stderr io.Writer) (codexBrokerServeInput, error) {
 	fs := flag.NewFlagSet("internal codex-broker serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	stateDomain := fs.String("state-domain", "", "absolute state domain the runtime singleton is scoped to")
@@ -153,16 +160,34 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	idle := fs.Duration("idle-timeout", 0, "bounded idle shutdown after the last binding is removed")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return err
+			return codexBrokerServeInput{}, err
 		}
-		return flagParseError(err)
+		return codexBrokerServeInput{}, flagParseError(err)
 	}
 	if fs.NArg() != 0 {
-		return usageError("internal codex-broker serve does not accept positional arguments")
+		return codexBrokerServeInput{}, usageError("internal codex-broker serve does not accept positional arguments")
+	}
+	explicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "state-domain" {
+			explicit = true
+		}
+	})
+	if explicit && !filepath.IsAbs(strings.TrimSpace(*stateDomain)) {
+		return codexBrokerServeInput{}, usageError("internal codex-broker requires an absolute --state-domain")
+	}
+	return codexBrokerServeInput{StateDomain: strings.TrimSpace(*stateDomain), Explicit: explicit, EndpointStateDomain: *endpointStateDomain, EndpointGeneration: *endpointGeneration, EndpointSocket: *endpointSocket, EndpointDefault: *endpointDefault, Image: *image, Idle: *idle}, nil
+}
+
+// runServe hosts one broker runtime until it idles out or is signalled.
+func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) error {
+	input, err := parseCodexBrokerServeInput(args, stderr)
+	if err != nil {
+		return err
 	}
 	route := codexBrokerEndpointRoute{
-		StateDomainID: strings.TrimSpace(*endpointStateDomain), EndpointGenerationID: strings.TrimSpace(*endpointGeneration),
-		SocketPath: strings.TrimSpace(*endpointSocket), Default: *endpointDefault,
+		StateDomainID: strings.TrimSpace(input.EndpointStateDomain), EndpointGenerationID: strings.TrimSpace(input.EndpointGeneration),
+		SocketPath: strings.TrimSpace(input.EndpointSocket), Default: input.EndpointDefault,
 	}
 	endpointKey, err := route.endpointKey()
 	if err != nil {
@@ -171,13 +196,13 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	// The image comes from the launcher, never from this process: the client
 	// chose the socket it is waiting on, and a runtime that published anywhere
 	// else would leave that client polling an empty path.
-	discovery, err := c.discoveryFor(*stateDomain, endpointKey, strings.TrimSpace(*image))
+	discovery, err := c.discoveryFor(input.StateDomain, endpointKey, strings.TrimSpace(input.Image))
 	if err != nil {
 		return err
 	}
 	crashSink := startDetachedCrashSink(detachedCrashRoleCodexBrokerServe, func() (string, error) {
-		if strings.TrimSpace(*stateDomain) != "" {
-			return filepath.Clean(*stateDomain), nil
+		if strings.TrimSpace(input.StateDomain) != "" {
+			return filepath.Clean(input.StateDomain), nil
 		}
 		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
 	})
@@ -197,7 +222,7 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	host, err := codexbroker.StartHost(codexbroker.HostConfig{
 		Discovery:   discovery,
 		Broker:      broker,
-		IdleTimeout: *idle,
+		IdleTimeout: input.Idle,
 		// The vintage entry condition of the runtime's own drain. Supplying it
 		// here rather than inside the broker keeps the platform question --
 		// whether this build can read its own executable link at all -- on the

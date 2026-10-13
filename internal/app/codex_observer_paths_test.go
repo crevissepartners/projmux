@@ -387,6 +387,10 @@ func TestNativeObserverExplicitPathsActualChildren(t *testing.T) {
 			{"internal", claudeQuestionPickerRoute, "--state-dir=" + root},
 			{"internal", claudeQuestionPickerRoute, "-config-dir=" + root},
 			{"internal", "codex-broker", "serve", "--state-domain=relative"},
+			{"internal", "codex-broker", "serve", "--state-domain="},
+			{"internal", "codex-broker", "serve", "--state-domain", "   "},
+			{"internal", "codex-broker", "serve", "--state-domain"},
+			{"internal", "codex-broker", "serve", "--state-domain=" + root, "--state-domain="},
 		} {
 			process := exec.CommandContext(ctx, binary, args...)
 			process.Env = cleanObserverEnv()
@@ -524,5 +528,44 @@ func TestNativeQuestionOuterAndPickerFlagFormsAgree(t *testing.T) {
 		if _, explicit, err := NativeObservationStateDir(append([]string{"internal", claudeQuestionPickerRoute}, partial...)); !explicit || err == nil {
 			t.Fatalf("partial equals tuple fell back: %v", partial)
 		}
+	}
+}
+
+func TestNativeBrokerOuterAndServeAdmissionAgree(t *testing.T) {
+	root := t.TempDir()
+	for _, test := range []struct {
+		name            string
+		args            []string
+		valid, explicit bool
+		domain          string
+	}{
+		{name: "omitted", valid: true},
+		{name: "empty", args: []string{"--state-domain="}, explicit: true},
+		{name: "space", args: []string{"--state-domain", "   "}, explicit: true},
+		{name: "relative", args: []string{"-state-domain=relative"}, explicit: true},
+		{name: "partial", args: []string{"--state-domain"}, explicit: true},
+		{name: "absolute", args: []string{"--state-domain=" + root}, valid: true, explicit: true, domain: root},
+		{name: "duplicate valid last", args: []string{"--state-domain=", "-state-domain", root}, valid: true, explicit: true, domain: root},
+		{name: "duplicate empty last", args: []string{"--state-domain", root, "--state-domain="}, explicit: true},
+		{name: "duplicate relative last", args: []string{"--state-domain", root, "--state-domain=relative"}, explicit: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input, err := parseCodexBrokerServeInput(test.args, io.Discard)
+			state, explicit, outerErr := NativeObservationStateDir(append([]string{"internal", "codex-broker", "serve"}, test.args...))
+			if (err == nil) != test.valid || (outerErr == nil) != test.valid || explicit != test.explicit {
+				t.Fatalf("input=%+v/%v outer=%s/%t/%v", input, err, state, explicit, outerErr)
+			}
+			if test.valid {
+				if input.Explicit != test.explicit || input.StateDomain != test.domain || state != test.domain {
+					t.Fatalf("input=%+v outer=%s", input, state)
+				}
+				return
+			}
+			command := newCodexBrokerCommand()
+			command.homeDir = func() (string, error) { t.Fatal("malformed admission read default HOME"); return "", nil }
+			if err := command.runServe(test.args, io.Discard, io.Discard); err == nil {
+				t.Fatal("malformed serve started")
+			}
+		})
 	}
 }
