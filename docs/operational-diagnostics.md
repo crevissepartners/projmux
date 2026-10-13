@@ -646,7 +646,8 @@ Both events use `component=mutation`, `level=info`, `result=success`, and
 exact numeric message `count=N wait_total_ms=N wait_max_ms=N held_total_ms=N
 held_max_ms=N` (count is positive). Wait code is `mutation.lock.wait.slow`, with
 `wait_ms=N held_ms=N`. Each N is a nonnegative decimal integer in milliseconds,
-except count. Beyond the common timestamp, run ID, version, and backend, no
+except count. Numeric messages exceeding the common 512-character bound are
+rejected before storage rather than truncated. Beyond the common timestamp, run ID, version, and backend, no
 identities, paths, arguments, other family fields, or unknown on-disk fields
 are accepted. Other families reject the mutation component and measurement
 codes/sites through their existing closed validators.

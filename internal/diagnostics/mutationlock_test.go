@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -251,6 +252,7 @@ func TestMutationLockClosedShapeRejectsEveryUnrelatedField(t *testing.T) {
 		func(e *Event) { e.Operation = "fixture.unknown" },
 		func(e *Event) { e.Operation = "/private/path" },
 		func(e *Event) { e.Message += " secret=private" },
+		func(e *Event) { e.Message = "wait_ms=" + strings.Repeat("1", maxMessageRunes) + " held_ms=0" },
 		func(e *Event) { e.Code = "mutation.lock.summary" },
 		func(e *Event) { e.Level = "error" },
 		func(e *Event) { e.Result = "error" },
@@ -303,5 +305,68 @@ func TestMutationLockAppendFailureKeepsIntervalAndRateLimit(t *testing.T) {
 	r.Record("fixture.alpha", time.Second, time.Second)
 	if w.calls != 3 {
 		t.Fatalf("slow interval not retained: %d", w.calls)
+	}
+}
+
+func TestMutationLockMessageLimitAcrossStorePaths(t *testing.T) {
+	p := testMutationPolicy(t, "fixture.alpha")
+	w := &mutationLockCaptureWriter{}
+	NewMutationLockRecorder(w, p, "run", "test", nil).Record("fixture.alpha", time.Second, 0)
+	for _, shape := range []struct{ event, code, prefix, suffix string }{
+		{mutationLockWaitEvent, "mutation.lock.wait.slow", "wait_ms=", " held_ms=0"},
+		{mutationLockSummaryEvent, "mutation.lock.summary", "count=1 wait_total_ms=", " wait_max_ms=0 held_total_ms=0 held_max_ms=0"},
+	} {
+		t.Run(shape.event, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "logs", LogFileName)
+			store := NewStoreWithMutationLockPolicy(path, p)
+			boundary := w.events[0]
+			boundary.Event, boundary.Code = shape.event, shape.code
+			boundary.Message = shape.prefix + strings.Repeat("1", maxMessageRunes-len(shape.prefix)-len(shape.suffix)) + shape.suffix
+			oversized := boundary
+			oversized.Message = shape.prefix + "1" + strings.TrimPrefix(boundary.Message, shape.prefix)
+			if err := store.Append(oversized); err == nil {
+				t.Fatal("Append accepted oversized message")
+			}
+			if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("rejected append created directory")
+			}
+			if err := store.Append(boundary); err != nil {
+				t.Fatal(err)
+			}
+			got, err := store.Read()
+			if err != nil || !reflect.DeepEqual(got, []Event{boundary}) {
+				t.Fatalf("boundary Read: %+v %v", got, err)
+			}
+			gotRO, err := store.ReadOnly()
+			if err != nil || !reflect.DeepEqual(gotRO.Events, []Event{boundary}) || gotRO.Malformed != 0 {
+				t.Fatalf("boundary ReadOnly: %+v %v", gotRO, err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Append(oversized); err == nil {
+				t.Fatal("existing Store accepted oversized message")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("rejected append changed journal")
+			}
+			raw, err := json.Marshal(oversized)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, append(append(before, raw...), '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err = store.Read()
+			if err != nil || !reflect.DeepEqual(got, []Event{boundary}) {
+				t.Fatalf("oversized Read: %+v %v", got, err)
+			}
+			gotRO, err = store.ReadOnly()
+			if err != nil || !reflect.DeepEqual(gotRO.Events, []Event{boundary}) || gotRO.Malformed != 1 {
+				t.Fatalf("oversized ReadOnly: %+v %v", gotRO, err)
+			}
+		})
 	}
 }

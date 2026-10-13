@@ -120,6 +120,10 @@ var mutationLockSummaryMessage = regexp.MustCompile(`^count=[1-9][0-9]* wait_tot
 var mutationLockWaitMessage = regexp.MustCompile(`^wait_ms=[0-9]+ held_ms=[0-9]+$`)
 
 func validateMutationLockEvent(event Event, policy *MutationLockPolicy) error {
+	// Numeric messages must survive the shared sanitizer without truncation.
+	if len(event.Message) > maxMessageRunes {
+		return fmt.Errorf("mutation lock message too long")
+	}
 	if event.Level != "info" || event.Component != "mutation" || event.Result != "success" || !policy.permits(event.Operation) {
 		return fmt.Errorf("invalid mutation lock event")
 	}
