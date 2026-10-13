@@ -810,6 +810,19 @@ option takes priority over the saved projdir file.
 The saved projdir file is `$HOME/.config/projmux/projdir`. It does not follow
 `XDG_CONFIG_HOME`; see [Setting Layers](#setting-layers).
 
+## Default Agent Host
+
+`projmux config agent-host` prints `default tmux` or `default process`.
+`projmux config agent-host --default tmux|process` saves the preference in
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-default-host`. Settings > AI >
+Default agent host and the SDK's `ConfigAgentHost` read and write this same
+central file. Missing, empty, or invalid stored content reads as `tmux`;
+invalid command or SDK input is refused before writing.
+
+This release stores the preference only. Agent creation retains its existing
+host behavior; consuming the preference is a separate change. Saving it does
+not move existing Agents or change question and permission settings.
+
 ## Agent Question Answering
 
 How a Claude Agent's `AskUserQuestion` or a Codex Agent's blocking
@@ -1767,7 +1780,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/`, `project-guidance/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `agent-default-host`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/`, `project-guidance/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except

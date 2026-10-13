@@ -1249,18 +1249,19 @@ var routes = []Route{
 		Name:           "config",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 21,
-		Summary:        "Edit AI split-mode, enabled-provider, locale, and agent-question settings; render or apply generated tmux configuration",
+		Summary:        "Edit AI split-mode, enabled-provider, default-agent-host, locale, and agent-question settings; render or apply generated tmux configuration",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux config edit [--get|--set <mode>]",
 			"projmux config providers [--enable <id>|--disable <id>]",
 			"projmux config locale [--set <value>]",
+			"projmux config agent-host [--default <tmux|process>]",
 			"projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]",
 			"projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]",
 			"projmux config render standalone|app [--bin <path>]",
 			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>] [--no-reload]",
 		},
-		Canonical: []string{"config edit", "config providers", "config locale", "config agent-questions", "config agent-approvals", "config render", "config apply"},
+		Canonical: []string{"config edit", "config providers", "config locale", "config agent-questions", "config agent-approvals", "config agent-host", "config render", "config apply"},
 		Children: []Route{
 			{
 				Effects:    unchangedEffects(CardinalityUnchanged),
@@ -1324,6 +1325,15 @@ var routes = []Route{
 					"--window is 60..3600 seconds (default 900); there is no unlimited value. An unanswered request expires with no decision.",
 				},
 				Canonical: []string{"config agent-approvals"},
+			},
+			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
+				Name:       "agent-host",
+				Invocation: InvocationNatural,
+				Summary:    "Show the central default agent host; --default stores tmux or process",
+				Usage:      []string{"projmux config agent-host [--default <tmux|process>]"},
+				Notes:      []string{"Reads and writes agent-default-host in the central config directory. Unset or invalid stored values read as tmux. Prints `default <host>` after a read or save. This setting currently stores the preference only; Agent creation retains its existing host behavior."},
+				Canonical:  []string{"config agent-host"},
 			},
 			{
 				Effects:          unchangedEffects(CardinalityUnchanged),

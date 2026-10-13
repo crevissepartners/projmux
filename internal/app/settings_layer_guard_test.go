@@ -94,6 +94,8 @@ var settingsLayerGuardArgv = [][]string{
 
 	{"config", "providers"},
 	{"config", "providers", "--enable", "codex"},
+	{"config", "agent-host"},
+	{"config", "agent-host", "--default", "process"},
 	{"config", "locale"},
 	{"config", "locale", "--set", "ko-KR"},
 	{"config", "agent-questions"},

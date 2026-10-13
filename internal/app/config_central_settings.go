@@ -174,3 +174,36 @@ func (c *configCommand) centralPolicyService() settings.Service {
 		ApprovalWindow: func(seconds int) error { return saveCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv, seconds) },
 	}
 }
+
+// runAgentHost reads and saves the central host preference. Creation consumes
+// this preference separately; saving it does not change any existing Agent.
+func (c *configCommand) runAgentHost(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("config agent-host", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	host := fs.String("default", "", "store the default agent host")
+	if err := fs.Parse(args); err != nil {
+		return usageRefusal(stderr, "config agent-host", "config agent-host: "+err.Error())
+	}
+	if fs.NArg() != 0 {
+		return usageError("config agent-host does not accept positional arguments: " + strings.Join(fs.Args(), " "))
+	}
+	update := settings.Update{Key: "agent-host"}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "default" {
+			update.DefaultHost = host
+		}
+	})
+	service := c.centralPolicyService()
+	var result settings.Value
+	var err error
+	if update.DefaultHost == nil {
+		result, err = service.Get(context.Background(), update.Key)
+	} else {
+		result, err = service.Set(context.Background(), update)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "default %s\n", result.DefaultHost)
+	return err
+}

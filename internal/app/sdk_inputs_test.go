@@ -16,6 +16,7 @@ func sdkSettingMessageMismatch(sdkErr, cliErr error) bool {
 	// quoted caller data; a locale value error with no CLI flag stays identical.
 	cli := cliErr.Error()
 	for _, p := range []struct{ prefix, field string }{
+		{"config agent-host --default", "ConfigUpdate.DefaultHost"},
 		{"config providers --disable", "ConfigUpdate.Provider"},
 		{"config providers --enable", "ConfigUpdate.Provider"},
 		{"config locale --set", "ConfigUpdate.Locale"},

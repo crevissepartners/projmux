@@ -2562,7 +2562,7 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 			t.Fatalf("AI root entries = %#v, want no Agent questions row", root)
 		}
 	}
-	if got, want := len(root), 5; got != want {
+	if got, want := len(root), 6; got != want {
 		t.Fatalf("AI root entries = %#v, want back row plus AI detail rows", root)
 	}
 	for _, want := range []string{

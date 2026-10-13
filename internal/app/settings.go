@@ -730,6 +730,8 @@ func (c *settingsCommand) withSettingsScopeTabs(options intpickercompat.Options)
 
 func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error {
 	switch {
+	case strings.HasPrefix(value, settingsActionPrefixAgentHost):
+		return c.setAgentHost(strings.TrimPrefix(value, settingsActionPrefixAgentHost), stdout)
 	case strings.HasPrefix(value, settingsActionPrefixAI):
 		mode := strings.TrimPrefix(value, settingsActionPrefixAI)
 		if c.ai == nil {
@@ -857,6 +859,7 @@ func settingsMutationLabel(value string) (string, bool) {
 		prefix string
 		label  string
 	}{
+		{settingsActionPrefixAgentHost, "Default agent host"},
 		{settingsActionPrefixAI, "Default launch target"},
 		{settingsActionPrefixDesktopNotifyMode, "Desktop delivery"},
 		{settingsActionPrefixHooks, "Project automation policy"},

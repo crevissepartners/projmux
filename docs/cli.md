@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 246 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 247 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -63,7 +63,7 @@ projmux <command> [args...]
 | [`projmux agent`](#projmux-agent) | canonical | Manage Agent state, messages, waits, capabilities, integrations, and account usage |
 | [`projmux attention`](#projmux-attention) | canonical | View and manage live tmux pane attention state |
 | [`projmux attach`](#projmux-attach) | canonical | Enter a Project runtime from outside tmux |
-| [`projmux config`](#projmux-config) | canonical | Edit AI split-mode, enabled-provider, locale, and agent-question settings; render or apply generated tmux configuration |
+| [`projmux config`](#projmux-config) | canonical | Edit AI split-mode, enabled-provider, default-agent-host, locale, and agent-question settings; render or apply generated tmux configuration |
 | [`projmux create`](#projmux-create) | canonical | Create Projmux resources |
 | [`projmux delete`](#projmux-delete) | canonical | Delete Projmux resources with an explicit cascade plan |
 | [`projmux describe`](#projmux-describe) | canonical | Describe one Projmux resource |
@@ -1248,7 +1248,7 @@ projmux attach project <ref>
 
 ## `projmux config`
 
-Edit AI split-mode, enabled-provider, locale, and agent-question settings; render or apply generated tmux configuration
+Edit AI split-mode, enabled-provider, default-agent-host, locale, and agent-question settings; render or apply generated tmux configuration
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -1267,6 +1267,7 @@ Allowed effects:
 projmux config edit [--get|--set <mode>]
 projmux config providers [--enable <id>|--disable <id>]
 projmux config locale [--set <value>]
+projmux config agent-host [--default <tmux|process>]
 projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]
 projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]
 projmux config render standalone|app [--bin <path>]
@@ -1282,10 +1283,11 @@ Subcommands:
 | [`projmux config locale`](#projmux-config-locale) | Show the [ui] locale setting and its config.toml; --set stores a new one |
 | [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them |
 | [`projmux config agent-approvals`](#projmux-config-agent-approvals) | Show how agent permission requests are answered and how long a captured one waits; --answering or --window changes them |
+| [`projmux config agent-host`](#projmux-config-agent-host) | Show the central default agent host; --default stores tmux or process |
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
-Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config locale`, `projmux config agent-questions`, `projmux config agent-approvals`, `projmux config render`, `projmux config apply`
+Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config locale`, `projmux config agent-questions`, `projmux config agent-approvals`, `projmux config agent-host`, `projmux config render`, `projmux config apply`
 
 ### `projmux config edit`
 
@@ -1404,6 +1406,29 @@ projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds
 Codex approvals are never captured: the provider holds them, `agent approval list` shows them in either way, and `agent approval review` answers them in either way.
 
 --window is 60..3600 seconds (default 900); there is no unlimited value. An unanswered request expires with no decision.
+
+### `projmux config agent-host`
+
+Show the central default agent host; --default stores tmux or process
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config agent-host [--default <tmux|process>]
+```
+
+Reads and writes agent-default-host in the central config directory. Unset or invalid stored values read as tmux. Prints `default <host>` after a read or save. This setting currently stores the preference only; Agent creation retains its existing host behavior.
 
 ### `projmux config render`
 

@@ -1,6 +1,6 @@
 package core
 
-// ConfigKey identifies one of the four central public config surfaces.
+// ConfigKey identifies one of the central public config surfaces.
 type ConfigKey string
 
 const (
@@ -8,6 +8,7 @@ const (
 	ConfigLocale         ConfigKey = "locale"
 	ConfigAgentQuestions ConfigKey = "agent-questions"
 	ConfigAgentApprovals ConfigKey = "agent-approvals"
+	ConfigAgentHost      ConfigKey = "agent-host"
 )
 
 type ProviderState struct {
@@ -24,6 +25,8 @@ type ConfigValue struct {
 	Source    string
 	Answering string
 	Window    string
+	// DefaultHost is tmux (default) or process for ConfigAgentHost.
+	DefaultHost string
 }
 
 // ConfigUpdate enables/disables Provider, sets Locale, or changes supplied
@@ -36,4 +39,6 @@ type ConfigUpdate struct {
 	Locale    string
 	Answering *string
 	Window    *string
+	// DefaultHost changes ConfigAgentHost; nil preserves its saved value.
+	DefaultHost *string
 }
