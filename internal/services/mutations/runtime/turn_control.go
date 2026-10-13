@@ -70,7 +70,7 @@ func (s TurnService) Execute(ctx context.Context, reg metadata.Registry, a metad
 	}
 	if declared {
 		if (a.Spec.Provider != "codex" && a.Spec.Provider != "claude") || (a.Spec.Provider == "claude" && req.Action != "start" && req.Action != "interrupt") {
-			return out, turnFailure("turn-provider-unsupported", errors.New("Agent provider does not support this process turn action"))
+			return out, turnFailure("turn-provider-unsupported", agentcontrol.RequireCapability("agent turn "+req.Action, a))
 		}
 		out.Process = true
 		if s.Process == nil {

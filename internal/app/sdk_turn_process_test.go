@@ -6,16 +6,19 @@ import (
 	"errors"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestSDKProcessTurnDefaultTransportCLIParityTwoRoots(t *testing.T) {
-	for range 2 {
+	for lane := range 2 {
 		f := newProcessCodexFixture(t, func(root, binary string, env []string) processhost.Command {
 			fixture := strings.Replace(processCodexProviderFixture, " elif method=='turn/interrupt':", " elif method=='turn/steer':reply({'turnId':current})\n elif method=='turn/interrupt':", 1)
 			return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Dir: root, Env: env}
@@ -27,11 +30,43 @@ func TestSDKProcessTurnDefaultTransportCLIParityTwoRoots(t *testing.T) {
 		}
 		cmd := &agentCommand{loadRegistry: f.store.LoadReadOnly, controlPaths: func() (config.Paths, error) { return paths, nil }}
 		ref := "uid:" + f.endpoint.binding.Agent
-		first, err := sdk.DeliverTurn(context.Background(), core.TurnRequest{Ref: ref, Text: "hold"})
+		// Detached owners retain their claim until actual Wait even after child
+		// birth. An existing exact child remains controllable through the SDK.
+		reg, err := f.store.LoadReadOnly()
+		if err != nil {
+			t.Fatal(err)
+		}
+		pane, _ := reg.Pane(f.endpoint.binding.Pane)
+		claimPath := mutationruntime.DeferredClaimPath(intmetadata.PathFor(paths.StateDir), f.endpoint.binding.Agent)
+		if err = os.MkdirAll(filepath.Dir(claimPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		claim := mutationruntime.DeferredClaimRecord{Version: 1, Agent: f.endpoint.binding.Agent, Binding: pane.Status.ProcessSession.Binding, Provider: "codex", Thread: "process-thread", Process: f.endpoint.evidence.HostProcess, Nonce: "born-claim-fixture", Detached: true}
+		if err = mutationruntime.WriteDeferredClaim(claimPath, claim); err != nil {
+			t.Fatal(err)
+		}
+		claimBefore, err := os.ReadFile(claimPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var first core.TurnResult
+		if lane == 0 {
+			first, err = sdk.DeliverTurn(context.Background(), core.TurnRequest{Ref: ref, Text: "hold"})
+		} else {
+			first, err = sdk.StartTurn(context.Background(), core.TurnRequest{Ref: ref, Text: "hold"})
+		}
 		if err != nil || !first.Accepted || first.Mode != "start" || first.ThreadID != "process-thread" || first.TurnID == "" || first.Generation != f.endpoint.binding.Generation {
 			t.Fatalf("start %+v %v", first, err)
 		}
-		f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == first.TurnID })
+		observed := f.wait(t, func(s processhost.Snapshot) bool { return s.Turn != "" })
+		providerTurn := observed.Turn
+		if lane == 0 && first.TurnID != providerTurn {
+			t.Fatal("typed delivery lost provider turn")
+		}
+		if lane == 1 && first.TurnID != first.Operation {
+			t.Fatal("explicit start changed legacy host operation receipt")
+		}
 
 		// With this fixture's absent semantic sink, both callers reject the empty
 		// Registry turn before an interrupt reaches the provider.
@@ -50,7 +85,7 @@ func TestSDKProcessTurnDefaultTransportCLIParityTwoRoots(t *testing.T) {
 		// turn as the production sink does before testing Registry-pinned interrupt.
 		if _, err = f.store.Update(func(reg *coremetadata.Registry) error {
 			p, _ := reg.Pane(f.endpoint.binding.Pane)
-			p.Status.ProcessSession.TurnID = first.TurnID
+			p.Status.ProcessSession.TurnID = providerTurn
 			return nil
 		}); err != nil {
 			t.Fatal(err)
@@ -62,7 +97,7 @@ func TestSDKProcessTurnDefaultTransportCLIParityTwoRoots(t *testing.T) {
 			t.Fatalf("CLI busy %v", err)
 		}
 		second, err := sdk.SteerTurn(context.Background(), core.TurnRequest{Ref: ref, Text: "-- exact bytes"})
-		if err != nil || second.Mode != "steer" || second.TurnID != first.TurnID || second.Acceptance != "provider" || second.Delivery != "unconfirmed" {
+		if err != nil || second.Mode != "steer" || second.TurnID != providerTurn || second.Acceptance != "provider" || second.Delivery != "unconfirmed" {
 			t.Fatalf("steer %+v %v", second, err)
 		}
 		cli, steered, err := cmd.deliverTurn(ref, "CLI input")
@@ -83,6 +118,28 @@ func TestSDKProcessTurnDefaultTransportCLIParityTwoRoots(t *testing.T) {
 		if len(f.pollWire(t)) != before {
 			t.Fatal("pre-effect refusal wrote bytes")
 		}
+
+		// A mismatched kernel birth is a pre-write stale refusal, as on the CLI.
+		var birth string
+		if _, err = f.store.Update(func(reg *coremetadata.Registry) error {
+			p, _ := reg.Pane(f.endpoint.binding.Pane)
+			birth = p.Status.Activation.Process.HostProcess.Start
+			p.Status.Activation.Process.HostProcess.Start += "-wrong"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		stale, err := sdk.SteerTurn(context.Background(), core.TurnRequest{Ref: ref, Text: "kernel stale"})
+		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeTurnStale || stale.OutcomeUnknown || len(f.pollWire(t)) != before {
+			t.Fatalf("kernel refusal %+v %v", stale, err)
+		}
+		if _, err = f.store.Update(func(reg *coremetadata.Registry) error {
+			p, _ := reg.Pane(f.endpoint.binding.Pane)
+			p.Status.Activation.Process.HostProcess.Start = birth
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 		interrupted, err := sdk.InterruptTurn(context.Background(), core.TurnRequest{Ref: ref})
 		if err != nil || !interrupted.Accepted || interrupted.Operation == "" {
 			t.Fatalf("interrupt %+v %v", interrupted, err)
@@ -98,6 +155,14 @@ func TestSDKProcessTurnDefaultTransportCLIParityTwoRoots(t *testing.T) {
 			case `"turn/interrupt"`:
 				interrupts++
 			}
+		}
+
+		claimAfter, err := os.ReadFile(claimPath)
+		if err != nil || !bytes.Equal(claimBefore, claimAfter) {
+			t.Fatal("SDK changed born claim", err)
+		}
+		if _, err = os.Stat(claimPath + ".lock"); !os.IsNotExist(err) {
+			t.Fatal("SDK took claim lifetime lock", err)
 		}
 		if starts != 1 || steers != 2 || interrupts != 1 {
 			t.Fatalf("wire %d %d %d", starts, steers, interrupts)

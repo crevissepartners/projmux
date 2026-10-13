@@ -89,6 +89,12 @@ func CallProcessTurn(ctx context.Context, registryPath string, load func() (meta
 	defer cancel()
 	var response ProcessTurnResponse
 	err = localipc.ExchangeOwnedJSON(ctx, socket, identity, activation.HostProcess, request, &response)
+	if errors.Is(err, localipc.ErrSocketReplaced) {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
+		return out, fmt.Errorf("process-host-unavailable: %w", processhost.ErrStale)
+	}
 	if err != nil {
 		out.OutcomeUnknown = true
 		return out, fmt.Errorf("process-host-unavailable: %w", err)

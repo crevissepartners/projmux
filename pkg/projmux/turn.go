@@ -84,7 +84,12 @@ func (c *Client) turn(ctx context.Context, req core.TurnRequest, action string) 
 	if err != nil {
 		return out, turnRefusal(err, out)
 	}
-	if claim.Agent != "" {
+	born := false
+	if pane, ok := reg.Pane(a.Status.PaneRef); ok && pane.Status.ProcessSession != nil {
+		_, provider, current := reg.CurrentProcessActivation(pane.Status.ProcessSession.Binding)
+		born = current && provider == a.Spec.Provider
+	}
+	if claim.Agent != "" && !born {
 		return out, &Refusal{Code: CodeTurnDeferredUnsupported, AgentUID: a.Metadata.UID, message: "SDK turn control does not start a child-free deferred claim"}
 	}
 	if pane, ok := reg.Pane(a.Status.PaneRef); ok {

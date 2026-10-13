@@ -239,7 +239,10 @@ Cancellation reaches admission, native authority fencing, Registry rechecks and
 bounded transport. Inspect the result even when an error is returned: exact
 refs, turn IDs and observed acceptance survive a later recording failure.
 `OutcomeUnknown` identifies an indeterminate transport or malformed acceptance;
-`Accepted` does not mean provider completion. Inspect current identity before
+`Accepted` does not mean provider completion. For explicit process start or
+interrupt, `Operation` and the legacy CLI-compatible `TurnID` identify the host
+request. Deliver/steer typed receipts instead identify the provider turn; a
+public session read observes that provider turn separately. Inspect current identity before
 recovery rather than automatically resubmitting. `*projmux.Refusal` exposes
 provider/control/transport reason codes; context errors remain ordinary errors.
 These methods invoke shared execution directly, without a CLI subprocess,

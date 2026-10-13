@@ -95,7 +95,7 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	}
 	h := newSessionRefHarness(t, "codex")
 	encoded, _ := json.Marshal(h.registry)
-	suffix := filepath.Base(root)
+	suffix := filepath.Base(filepath.Dir(root)) + "-" + filepath.Base(root)
 	agentUID, paneUID := h.agentUID+"-"+suffix, h.paneUID+"-"+suffix
 	encoded = bytes.ReplaceAll(encoded, []byte(h.agentUID), []byte(agentUID))
 	encoded = bytes.ReplaceAll(encoded, []byte(h.paneUID), []byte(paneUID))
