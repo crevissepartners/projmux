@@ -2,38 +2,21 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"os"
-	"path/filepath"
 	"sync"
-	"time"
 
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
-	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 const deferredHoldReason = "target-awaiting-resume"
 
-type deferredClaimRecord struct {
-	Version                   int
-	Agent                     string
-	Binding                   coremetadata.ProcessBinding
-	Provider, Session, Thread string
-	Process                   coremetadata.ProcessIdentity
-	Nonce                     string
-	// Inflight is persisted before the first provider frame. A replacement
-	// claimant fails it as unknown rather than writing the frame twice.
-	Inflight      string
-	Detached      bool `json:",omitempty"`
-	StopRequested bool `json:",omitempty"`
-}
+type deferredClaimRecord = mutationruntime.DeferredClaimRecord
 
 type deferredProcessClaim struct {
 	mu             sync.Mutex
@@ -46,84 +29,18 @@ type deferredProcessClaim struct {
 }
 
 func (c *agentCommand) deferredClaimPath(uid string) string {
-	if c.messagePaths.registryPath == "" {
-		return ""
-	}
-	digest := sha256.Sum256([]byte(uid))
-	return filepath.Join(filepath.Dir(filepath.Dir(c.messagePaths.registryPath)), "deferred-claims", fmt.Sprintf("%x.json", digest[:]))
+	return mutationruntime.DeferredClaimPath(c.messagePaths.registryPath, uid)
 }
 
-func lockDeferredClaim(path string) (func(), error) {
-	if path == "" {
-		return func() {}, nil
-	}
-	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
-		return nil, err
-	}
-	lock, err := localstate.AcquireFileLock(path+".lock", 2*time.Second, nil)
-	if err != nil {
-		return nil, err
-	}
-	// Closing releases flock. Never unlink its persistent inode.
-	return func() { _ = lock.Close() }, nil
-}
-
+func lockDeferredClaim(path string) (func(), error) { return mutationruntime.LockDeferredClaim(path) }
 func readDeferredClaim(path string) (deferredClaimRecord, error) {
-	var record deferredClaimRecord
-	if path == "" {
-		return record, nil
-	}
-	file, err := os.Open(path) // #nosec G304 -- private state path derived from Agent digest.
-	if errors.Is(err, os.ErrNotExist) {
-		return record, nil
-	}
-	if err != nil {
-		return record, err
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 8193))
-	err = errors.Join(err, file.Close())
-	if err != nil {
-		return record, err
-	}
-	if len(data) > 8192 || json.Unmarshal(data, &record) != nil || record.Version != 1 || record.Nonce == "" || record.Agent == "" || !record.Process.Valid() {
-		return record, fmt.Errorf("%s: %w: damaged deferred claim", processResumeRefused, processhost.ErrResumeRefused)
-	}
-	return record, nil
+	return mutationruntime.ReadDeferredClaim(path)
 }
-
 func writeDeferredClaim(path string, record deferredClaimRecord) error {
-	data, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".claim-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(file.Name()) }()
-	if _, err = file.Write(data); err == nil {
-		err = file.Sync()
-	}
-	err = errors.Join(err, file.Close())
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(file.Name(), path); err != nil {
-		return err
-	}
-	dir, err := os.Open(filepath.Dir(path)) // #nosec G304 -- private claim parent validated by EnsurePrivateDir.
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
+	return mutationruntime.WriteDeferredClaim(path, record)
 }
-
 func deferredClaimLive(record deferredClaimRecord) bool {
-	if record.Nonce == "" {
-		return false
-	}
-	identity, _, err := localipc.Process(record.Process.PID)
-	return err == nil && identity == record.Process
+	return mutationruntime.DeferredClaimLive(record)
 }
 
 func deferredClaimOwned() error {

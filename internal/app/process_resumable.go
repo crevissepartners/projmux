@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"slices"
 	"strings"
 
@@ -97,17 +98,7 @@ func processResumeCandidateToken(registry coremetadata.Registry, agentUID string
 }
 
 func processResumePane(registry coremetadata.Registry, agentUID string) (*coremetadata.Pane, bool) {
-	var found *coremetadata.Pane
-	for i := range registry.Panes {
-		pane := &registry.Panes[i]
-		if pane.Metadata.OwnerUID() == agentUID && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
-			if found != nil {
-				return nil, true // Ambiguous retired generations cannot select authority.
-			}
-			found = pane
-		}
-	}
-	return found, false
+	return mutationruntime.ProcessAgentPane(registry, agentUID)
 }
 
 func processResumeMatches(registry coremetadata.Registry, agent coremetadata.Agent, filter processResumeFilter) bool {

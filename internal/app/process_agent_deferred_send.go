@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"time"
 
@@ -24,8 +25,7 @@ func deferredMessageRoute(record deferredClaimRecord) coremessage.Route {
 }
 
 func deferredClaimMatches(record deferredClaimRecord, registry coremetadata.Registry, uid string) bool {
-	pane, ambiguous := processResumePane(registry, uid)
-	return !ambiguous && record.Agent == uid && pane != nil && pane.Status.ProcessSession != nil && pane.Status.ProcessSession.Binding == record.Binding && pane.Status.ProcessSession.SessionID == record.Session && pane.Status.ProcessSession.ThreadID == record.Thread
+	return mutationruntime.DeferredClaimMatches(record, registry, uid)
 }
 
 // handled=false preserves the original route refusal bytes and exit when no
