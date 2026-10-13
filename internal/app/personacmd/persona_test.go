@@ -169,6 +169,10 @@ func TestPersonaCLIRefusalsCarryTheTokenAndWriteNothing(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), test.reason) {
 				t.Fatalf("err = %v, want %s", err, test.reason)
 			}
+			var cause *persona.Error
+			if !errors.As(errors.Join(errors.New("caller context"), err), &cause) || cause.Reason != test.reason {
+				t.Fatalf("typed cause = %v, want %s", cause, test.reason)
+			}
 			if coremetadata.IsUsageError(err) != test.usage {
 				t.Fatalf("usage error = %v, want %v (%v)", coremetadata.IsUsageError(err), test.usage, err)
 			}
@@ -225,6 +229,13 @@ func TestPersonaEditRefusesOversizedResultAndKeepsTheStoredPersona(t *testing.T)
 	stored, readErr := os.ReadFile(filepath.Join(dir, "reviewer.md"))
 	if readErr != nil || string(stored) != "original" {
 		t.Fatalf("stored persona = %q, %v", stored, readErr)
+	}
+	var cause *persona.Error
+	if !errors.As(err, &cause) || cause.Reason != persona.ReasonTooLarge {
+		t.Fatalf("edit cause = %v", cause)
+	}
+	if edited, readErr := os.ReadFile(seen); readErr != nil || len(edited) != persona.MaxSize+1 {
+		t.Fatalf("kept edit length = %d, err = %v", len(edited), readErr)
 	}
 	// The edit is not thrown away: the error names the kept copy.
 	if !strings.Contains(err.Error(), seen) {
@@ -291,5 +302,30 @@ func TestInstructionsEditKeepsItsSpellingInARefusal(t *testing.T) {
 			t.Errorf("%s edit kept %q, error %v", noun, seen, err)
 		}
 		_ = os.RemoveAll(filepath.Dir(seen))
+	}
+}
+
+func TestRefusalPreservesWrappedCauseAndExactText(t *testing.T) {
+	t.Parallel()
+	for _, noun := range []string{"instructions", "persona"} {
+		for _, reason := range []string{persona.ReasonNameInvalid, persona.ReasonTooLarge, persona.ReasonNotFound} {
+			cause := &persona.Error{Reason: reason, Name: "sample", Detail: "fixture detail"}
+			wrapped := errors.Join(errors.New("outer context"), cause)
+			err := Refusal(noun+" set", wrapped)
+			spelled := error(wrapped)
+			if noun == "persona" {
+				spelled = persona.SpelledAs(wrapped, noun)
+			}
+			if want := noun + " set: " + spelled.Error(); err.Error() != want {
+				t.Fatalf("text = %q, want %q", err.Error(), want)
+			}
+			var got *persona.Error
+			if !errors.As(err, &got) || got.Reason != reason || got.Name != cause.Name || got.Detail != cause.Detail {
+				t.Fatalf("typed cause = %v, want %v", got, cause)
+			}
+			if coremetadata.IsUsageError(err) != (reason != persona.ReasonNotFound) {
+				t.Fatalf("usage classification changed: %v", err)
+			}
+		}
 	}
 }

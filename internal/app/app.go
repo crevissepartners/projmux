@@ -80,12 +80,17 @@ func RunWithLifecycleDiagnostics(args []string, stdout, stderr io.Writer, record
 // exit code 2.
 type UsageError struct {
 	Message string
+	// Err preserves the typed refusal without changing the displayed message.
+	Err error
 }
 
 // Error implements the error interface for UsageError.
 func (e *UsageError) Error() string {
 	return e.Message
 }
+
+// Unwrap returns the refusal cause, if present.
+func (e *UsageError) Unwrap() error { return e.Err }
 
 // MetadataUsageError marks this error for the shared usage-error predicate in
 // internal/core/metadata. Projecting the app's own error type into that marker
@@ -100,6 +105,11 @@ func usageError(message string) error {
 // NewUsageError marks invalid CLI input while preserving its message.
 func NewUsageError(message string) error {
 	return &UsageError{Message: message}
+}
+
+// usageErrorFor preserves cause alongside the CLI message.
+func usageErrorFor(message string, cause error) error {
+	return &UsageError{Message: message, Err: cause}
 }
 
 // flagParseError builds the usage error for a failed Parse of a FlagSet whose

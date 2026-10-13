@@ -32,6 +32,28 @@ const (
 	personaReasonNoConversation = "persona-no-conversation"
 )
 
+// agentPersonaRefusal is the typed cause an `agent persona` usage error carries
+// for a reason token this package owns. It changes nothing the CLI prints: the
+// message is the UsageError's. It lets an in-process caller
+// read the token with errors.As instead of from the text, as *persona.Error
+// does for the persona package's own tokens.
+type agentPersonaRefusal struct {
+	Reason string
+}
+
+func (e *agentPersonaRefusal) Error() string { return e.Reason }
+
+// agentPersonaRefusalCause is the typed cause of a refusal with reason: the
+// persona package's own *persona.Error for its tokens, agentPersonaRefusal
+// for this package's.
+func agentPersonaRefusalCause(reason, name, detail string) error {
+	switch reason {
+	case personaReasonAgentBusy, personaReasonSelfTarget, personaReasonNoConversation:
+		return &agentPersonaRefusal{Reason: reason}
+	}
+	return &persona.Error{Reason: reason, Name: name, Detail: detail}
+}
+
 // Outcomes of one `agent persona` run, as the result line and the JSON
 // "outcome" field spell them.
 const (
@@ -123,7 +145,8 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	}
 	target := agent.Clone()
 	refuse := func(reason, detail string) error {
-		return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, target.Metadata.Name, detail, reason))
+		return usageErrorFor(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, target.Metadata.Name, detail, reason),
+			agentPersonaRefusalCause(reason, request.persona, detail))
 	}
 
 	// Validation. Provider first, because the rest only means something for a
@@ -154,7 +177,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		loaded, err = store.Load(request.persona)
 		if err != nil {
 			if persona.ReasonOf(err) != "" {
-				return usageError(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)))
+				return usageErrorFor(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)), err)
 			}
 			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
 		}
@@ -330,7 +353,7 @@ func parseAgentPersonaArgs(args []string, noun string, stderr io.Writer) (agentP
 	if request.action == "attach" {
 		request.persona = positionals[1]
 		if err := persona.ValidateName(request.persona); err != nil {
-			return agentPersonaRequest{}, usageError(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)))
+			return agentPersonaRequest{}, usageErrorFor(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)), err)
 		}
 	}
 	return request, nil
