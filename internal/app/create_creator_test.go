@@ -474,6 +474,47 @@ func TestIntentCreateFromAnAgentPaneRecordsTheUIOperatorNotThePaneChain(t *testi
 	}
 }
 
+func TestCreateWithoutCreatorProvenanceNeverObservesOrRecordsAmbientCreator(t *testing.T) {
+	t.Parallel()
+	if newCreateCommand().processAncestors == nil {
+		t.Fatal("CLI creator observation missing")
+	}
+	for _, declared := range []bool{false, true} {
+		t.Run(strconv.FormatBool(declared), func(t *testing.T) {
+			fx := newCreatorFixture(t)
+			fx.command.withoutCreatorProvenance()
+			fx.command.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
+				t.Fatal("ambient process ancestry queried")
+				return nil, nil
+			}
+			before := fx.agentUIDs()
+			args := []string{"agent", "--provider", "claude", "--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "-o", "json"}
+			if declared {
+				args = append(args, "--creator", "uid:"+fx.creatorAgent)
+			}
+			stdout, stderr, err := runRoute(t, fx.command, args...)
+			if err != nil || stderr != "" || stdout == "" {
+				t.Fatalf("create = stdout %q stderr %q err %v", stdout, stderr, err)
+			}
+			agents, panes := fx.newAgentsSince(t, before)
+			if len(agents) != 1 {
+				t.Fatalf("new Agents = %d, want 1", len(agents))
+			}
+			if declared {
+				want := coremetadata.ExplicitCreatorAnnotations(fx.creatorAgent)
+				if !maps.Equal(creatorKeysOf(agents[0].Metadata), want) || !maps.Equal(creatorKeysOf(panes[0].Metadata), want) {
+					t.Fatalf("explicit creator annotations lost: Agent %+v Pane %+v", agents[0].Metadata, panes[0].Metadata)
+				}
+			} else {
+				assertNoCreatorKeysAnywhere(t, fx.store)
+			}
+			if got := creatorQueryCount(fx.tmux); got != 0 {
+				t.Fatalf("creator queries = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestProcessAncestryWalksTheRealProcChainToTheParent(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "linux" {
