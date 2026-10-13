@@ -113,7 +113,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
 	// Adds exact process agent stop to the public graph.
-	const want = "db13cc43aff5802b88cfb2bd3c86e1cefb4779afbd7d28df7a51204205b8a2e6"
+	const want = "e08a79b7476f85d4931b48e700e4709c42f5375be23a76286557581de8ed4c76"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

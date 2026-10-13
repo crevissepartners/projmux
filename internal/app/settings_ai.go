@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -31,6 +33,10 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			return nil
 		case action == settingsNoopValue:
 			continue
+		case action == settingsAIAgentHost:
+			if err := c.runAIAgentHostSection(stdout, stderr); err != nil {
+				return err
+			}
 		case action == settingsAIDefaultMode:
 			if err := c.runAIDefaultModeSection(stdout, stderr); err != nil {
 				return err
@@ -450,6 +456,11 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 			Value:     settingsAIResumePicker,
 			SearchKey: "agent resume picker limit sessions resume_picker_limit scan depth cwd resume_scan_depth offline failed",
 		},
+		intpickercompat.Entry{
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavAI+".agent-host", settingsGlyphOpen, settingsColorType, c.currentAgentHost()),
+			Value:     settingsAIAgentHost,
+			SearchKey: "default agent host tmux process central agent-default-host",
+		},
 	)
 	if c.appServerHealth != nil {
 		health := c.appServerHealth(codexHookFallbackAvailable(c.currentAINotifyDiagnostics()))
@@ -675,4 +686,56 @@ func (c *settingsCommand) aiForSettings() aiHookSettingsReader {
 	// nil-ai fallback of a minimally wired aiCommand without naming the
 	// struct here.
 	return newSettingsAIFallback(c.homeDir, c.lookupEnv)
+}
+
+func (c *settingsCommand) agentHostService() settings.Service {
+	return settings.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}
+}
+
+func (c *settingsCommand) currentAgentHost() string {
+	value, _ := c.agentHostService().Get(context.Background(), "agent-host")
+	return value.DefaultHost
+}
+
+func (c *settingsCommand) runAIAgentHostSection(stdout, stderr io.Writer) error {
+	for {
+		entries := []intpickercompat.Entry{c.backEntry()}
+		current := c.currentAgentHost()
+		for _, host := range []string{"tmux", "process"} {
+			glyph, color := settingsGlyphInactive, settingsColorDim
+			if host == current {
+				glyph, color = settingsGlyphToggle, settingsColorAdd
+			}
+			entries = append(entries, intpickercompat.Entry{Label: c.rowLabel(glyph, color, host, ""), Value: settingsActionPrefixAgentHost + host})
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI: "settings-ai-agent-host", Entries: entries, Title: "Default agent host",
+			Prompt: "Settings > AI > ", Footer: projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"}, Bindings: c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		if result.Key != "enter" || strings.TrimSpace(result.Value) == "" {
+			return errSettingsClosed
+		}
+		if result.Value == settingsBackValue {
+			return nil
+		}
+		if !strings.HasPrefix(result.Value, settingsActionPrefixAgentHost) {
+			return fmt.Errorf("unknown agent host settings action: %s", result.Value)
+		}
+		if err := c.executeWithFeedback(result.Value, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *settingsCommand) setAgentHost(host string, stdout io.Writer) error {
+	value, err := c.agentHostService().Set(context.Background(), settings.Update{Key: "agent-host", DefaultHost: &host})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "default %s\n", value.DefaultHost)
+	return err
 }

@@ -267,7 +267,18 @@ func KnownAgentApprovalAnswering(value string) (config.AgentApprovalAnswering, e
 	return "", usageError(fmt.Sprintf("config agent-approvals --answering: unknown way %q; known ways: %s", value, strings.Join(names, ", ")))
 }
 
-// Service executes only the four existing central settings at captured paths.
+// KnownAgentHost validates user input rather than applying stored-value fallback.
+func KnownAgentHost(value string) (config.AgentHost, error) {
+	host := config.AgentHost(strings.ToLower(strings.TrimSpace(value)))
+	switch host {
+	case config.AgentHostTmux, config.AgentHostProcess:
+		return host, nil
+	default:
+		return "", usageError(fmt.Sprintf("config agent-host --default: invalid host %q; want tmux or process", value))
+	}
+}
+
+// Service executes central settings at captured paths.
 type Service struct {
 	Paths func() (config.Paths, error)
 	// Optional policy writers let fronts retain their central settings adapters.
@@ -282,20 +293,22 @@ type ProviderState struct {
 	Enabled bool
 }
 type Value struct {
-	Key       string
-	Providers []ProviderState
-	Locale    string
-	Source    string
-	Answering string
-	Window    string
+	Key         string
+	Providers   []ProviderState
+	Locale      string
+	Source      string
+	Answering   string
+	Window      string
+	DefaultHost string
 }
 type Update struct {
-	Key       string
-	Provider  string
-	Enabled   bool
-	Locale    string
-	Answering *string
-	Window    *string
+	Key         string
+	Provider    string
+	Enabled     bool
+	Locale      string
+	Answering   *string
+	Window      *string
+	DefaultHost *string
 }
 
 func (s Service) Get(ctx context.Context, key string) (Value, error) {
@@ -313,6 +326,8 @@ func (s Service) Get(ctx context.Context, key string) (Value, error) {
 			return out, nil
 		case "agent-questions":
 			return Value{Key: key, Answering: string(config.AgentQuestionAnsweringClaude), Window: AgentQuestionWindowWord(config.DefaultAgentQuestionWindowSeconds)}, nil
+		case "agent-host":
+			return Value{Key: key, DefaultHost: string(config.AgentHostTmux)}, nil
 		case "agent-approvals":
 			return Value{Key: key, Answering: string(config.AgentApprovalAnsweringClaude), Window: strconv.Itoa(config.DefaultAgentApprovalWindowSeconds)}, nil
 		}
@@ -344,6 +359,9 @@ func readValue(p config.Paths, key string) (Value, error) {
 		w, _ := config.LoadAgentQuestionWindowSecondsFile(p.AgentQuestionWindowSecondsFile())
 		out.Answering = string(v)
 		out.Window = AgentQuestionWindowWord(w)
+	case "agent-host":
+		v, _ := config.LoadAgentDefaultHostFile(p.AgentDefaultHostFile())
+		out.DefaultHost = string(v)
 	case "agent-approvals":
 		v, _ := config.LoadAgentApprovalAnsweringFile(p.AgentApprovalAnsweringFile())
 		w, _ := config.LoadAgentApprovalWindowSecondsFile(p.AgentApprovalWindowSecondsFile())
@@ -361,6 +379,7 @@ func (s Service) Set(ctx context.Context, u Update) (Value, error) {
 	// Validate every supplied policy value before the first write.
 	var question config.AgentQuestionAnswering
 	var approval config.AgentApprovalAnswering
+	var host config.AgentHost
 	var seconds int
 	var err error
 	switch u.Key {
@@ -412,6 +431,13 @@ func (s Service) Set(ctx context.Context, u Update) (Value, error) {
 				return Value{}, usageError(fmt.Sprintf("config agent-questions --window: invalid window %q; want %s", *u.Window, AgentQuestionWindowSpellings()))
 			}
 		}
+	case "agent-host":
+		if u.DefaultHost != nil {
+			host, err = KnownAgentHost(*u.DefaultHost)
+			if err != nil {
+				return Value{}, err
+			}
+		}
 	case "agent-approvals":
 		if u.Answering != nil {
 			approval, err = KnownAgentApprovalAnswering(*u.Answering)
@@ -433,6 +459,13 @@ func (s Service) Set(ctx context.Context, u Update) (Value, error) {
 		return Value{}, err
 	}
 	switch u.Key {
+	case "agent-host":
+		if err := ctx.Err(); err != nil {
+			return Value{}, err
+		}
+		if u.DefaultHost != nil {
+			err = config.SaveAgentDefaultHostFile(p.AgentDefaultHostFile(), host)
+		}
 	case "locale":
 		_, err = SaveLocale(filepath.Join(p.ConfigDir, "config.toml"), u.Locale)
 	case "agent-questions":

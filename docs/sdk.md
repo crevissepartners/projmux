@@ -113,3 +113,14 @@ Errors and panics from the callback are ignored; they cannot alter the creation
 result. Keep the callback short: its execution delays the method's return.
 Concurrent Client methods may invoke it concurrently, so synchronize shared sinks.
 The SDK starts no recording goroutine and does not retry failed records.
+
+## Central default host setting
+
+The central default host preference is available through
+`GetConfig(ctx, core.ConfigAgentHost)` and
+`SetConfig(ctx, core.ConfigUpdate{Key: core.ConfigAgentHost, DefaultHost: &host})`.
+`ConfigValue.DefaultHost` is `tmux` (default) or `process`; a nil update pointer
+preserves the saved value. Invalid input returns `CodeConfigValueInvalid`
+and cancellation before admission writes nothing. This API uses the client's
+explicit ConfigDir and the same `agent-default-host` file as the CLI and Settings.
+It stores the preference only; SDK creation keeps its existing tmux contract.

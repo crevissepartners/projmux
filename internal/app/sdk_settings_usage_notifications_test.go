@@ -45,6 +45,8 @@ func settingsCLI(c *configCommand, key core.ConfigKey, args ...string) (string, 
 		err = c.runLocale(args, &out, &stderr)
 	case core.ConfigAgentQuestions:
 		err = c.runAgentQuestions(args, &out, &stderr)
+	case core.ConfigAgentHost:
+		err = c.runAgentHost(args, &out, &stderr)
 	case core.ConfigAgentApprovals:
 		err = c.runAgentApprovals(args, &out, &stderr)
 	}
@@ -90,6 +92,8 @@ func settingLine(v core.ConfigValue, write bool, provider string) string {
 			fmt.Fprintf(&b, "%s %s\n", p.ID, state)
 		}
 		return b.String()
+	case core.ConfigAgentHost:
+		return "default " + v.DefaultHost + "\n"
 	case core.ConfigLocale:
 		if write {
 			return "locale " + v.Locale + "\n"
@@ -103,7 +107,7 @@ func TestSettingsSDKCLIParity(t *testing.T) {
 	ctx := context.Background()
 	c, _, sp := settingsClient(t, t.TempDir())
 	_, cmd, cp := settingsClient(t, t.TempDir())
-	for _, key := range []core.ConfigKey{core.ConfigProviders, core.ConfigLocale, core.ConfigAgentQuestions, core.ConfigAgentApprovals} {
+	for _, key := range []core.ConfigKey{core.ConfigProviders, core.ConfigLocale, core.ConfigAgentQuestions, core.ConfigAgentApprovals, core.ConfigAgentHost} {
 		v, err := c.GetConfig(ctx, key)
 		out, ce := settingsCLI(cmd, key)
 		want := strings.ReplaceAll(settingLine(v, false, ""), sp.ConfigDir, cp.ConfigDir)
@@ -119,6 +123,8 @@ func TestSettingsSDKCLIParity(t *testing.T) {
 		{core.ConfigUpdate{Key: core.ConfigProviders, Provider: "claude", Enabled: false}, []string{"--disable", "claude"}},
 		{core.ConfigUpdate{Key: core.ConfigProviders, Provider: "claude", Enabled: true}, []string{"--enable", "claude"}},
 		{core.ConfigUpdate{Key: core.ConfigProviders, Provider: "claude", Enabled: true}, []string{"--enable", "claude"}},
+		{core.ConfigUpdate{Key: core.ConfigAgentHost, DefaultHost: str(" Process ")}, []string{"--default", " Process "}},
+		{core.ConfigUpdate{Key: core.ConfigAgentHost, DefaultHost: str("tmux")}, []string{"--default", "tmux"}},
 		{core.ConfigUpdate{Key: core.ConfigLocale, Locale: "ko-KR"}, []string{"--set", "ko-KR"}},
 		{core.ConfigUpdate{Key: core.ConfigLocale, Locale: "auto"}, []string{"--set", "auto"}},
 		{core.ConfigUpdate{Key: core.ConfigAgentQuestions, Answering: str("projmux"), Window: str("unlimited")}, []string{"--answering", "projmux", "--window", "unlimited"}},
@@ -134,7 +140,7 @@ func TestSettingsSDKCLIParity(t *testing.T) {
 			t.Fatal("stored bytes differ")
 		}
 	}
-	for _, key := range []core.ConfigKey{core.ConfigProviders, core.ConfigLocale, core.ConfigAgentQuestions, core.ConfigAgentApprovals} {
+	for _, key := range []core.ConfigKey{core.ConfigProviders, core.ConfigLocale, core.ConfigAgentQuestions, core.ConfigAgentApprovals, core.ConfigAgentHost} {
 		v, _ := c.GetConfig(ctx, key)
 		out, err := settingsCLI(cmd, key)
 		if err != nil || out != strings.ReplaceAll(settingLine(v, false, ""), sp.ConfigDir, cp.ConfigDir) {
@@ -163,6 +169,8 @@ func TestSettingsSDKRefusalParity(t *testing.T) {
 	}{
 		{core.ConfigUpdate{Key: core.ConfigProviders, Provider: "unknown"}, []string{"--disable", "unknown"}},
 		{core.ConfigUpdate{Key: core.ConfigProviders, Provider: "", Enabled: true}, []string{"--enable", ""}},
+		{core.ConfigUpdate{Key: core.ConfigAgentHost, DefaultHost: str("bad")}, []string{"--default", "bad"}},
+		{core.ConfigUpdate{Key: core.ConfigAgentHost, DefaultHost: str("")}, []string{"--default", ""}},
 		{core.ConfigUpdate{Key: core.ConfigLocale, Locale: "invalid"}, []string{"--set", "invalid"}},
 		{core.ConfigUpdate{Key: core.ConfigLocale}, []string{"--set", ""}},
 		{core.ConfigUpdate{Key: core.ConfigAgentQuestions, Answering: str("bad")}, []string{"--answering", "bad"}},

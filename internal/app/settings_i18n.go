@@ -109,6 +109,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"show the Runtime row on every render, before Settings":                                   "settings.desc.runtime_diagnostics_always",
 	"Use Project topology":        "settings.text.use_project_topology",
 	"Project topology":            "settings.text.project_topology_row",
+	"Default agent host":          "settings.text.default_agent_host",
 	"Default launch target":       "settings.text.default_launch_target",
 	"Enabled providers":           "settings.text.enabled_providers",
 	"Agent Resume Picker":         "settings.text.agent_resume_picker",

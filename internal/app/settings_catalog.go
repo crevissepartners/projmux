@@ -123,6 +123,7 @@ var settingsDynamicEntryCatalog = []struct {
 }{
 	{settingsActionPrefixRootResult, "", settingsActionMeta("Settings", string(i18n.KeySettingsRootTitle), settingsAxisBoth, settingsOwnerRoot)},
 	{settingsAppearanceAgentUsageProviderPrefix, settingsNavStatusBar + ".agent-usage-hud.provider", settingsNavigationMeta("Agent Usage HUD provider", "settings.node.agent_usage_hud", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixAgentHost, "", settingsActionMeta("Default agent host", "settings.text.default_agent_host", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAI, "", settingsActionMeta("Default launch target", "settings.text.default_launch_target", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIEnabledAgent, "", settingsActionMeta("Enabled providers", "settings.text.enabled_providers", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAINotifyDiagnostic, settingsNavNotifyProviders + ".item", settingsNavigationMeta("Provider Integrations", "settings.text.provider_integrations", settingsAxisGlobal, settingsOwnerNotifications)},
@@ -251,7 +252,7 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			strings.HasPrefix(value, settingsActionPrefixCandidatePinItem) ||
 			strings.HasPrefix(value, settingsActionPrefixRuntimeDiagnostics)
 	case settingsOwnerAI:
-		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
+		return value == settingsAIAgentHost || strings.HasPrefix(value, settingsActionPrefixAgentHost) || value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
 			value == settingsAIResumePicker || value == settingsAIResumePickerLimit ||
 			value == settingsAIResumePickerDepth || value == settingsAISplitCWDFrom ||
 			value == settingsAINotifyDiagnostics ||
@@ -398,6 +399,8 @@ const (
 	settingsKeybindingsBindings                = "keybindings:bindings"
 	settingsKeybindingsDiagnostic              = "keybindings:diagnostic"
 	settingsKeybindingsProbe                   = "keybindings:probe"
+	settingsAIAgentHost                        = "ai-agent-host"
+	settingsActionPrefixAgentHost              = "agent-host:"
 	settingsAIDefaultMode                      = "ai-default-mode"
 	settingsAIEnabledAgents                    = "ai-enabled-agents"
 	settingsAIResumePicker                     = "ai-resume-picker"

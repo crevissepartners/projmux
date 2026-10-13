@@ -166,6 +166,15 @@ func TestExternalSettingsUsageNotificationsConsumer(t *testing.T) {
 	}
 	ctx := context.Background()
 	var value core.ConfigValue
+	host := "process"
+	value, err = c.SetConfig(ctx, core.ConfigUpdate{Key: core.ConfigAgentHost, DefaultHost: &host})
+	if err != nil || value.DefaultHost != host {
+		t.Fatalf("agent host: %+v %v", value, err)
+	}
+	value, err = c.GetConfig(ctx, core.ConfigAgentHost)
+	if err != nil || value.DefaultHost != host {
+		t.Fatalf("agent host read: %+v %v", value, err)
+	}
 	value, err = c.SetConfig(ctx, core.ConfigUpdate{Key: core.ConfigLocale, Locale: "ko-KR"})
 	if err != nil || value.Locale != "ko-KR" {
 		t.Fatalf("%+v %v", value, err)

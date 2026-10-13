@@ -25,17 +25,17 @@ func (c *Client) GetConfig(ctx context.Context, key core.ConfigKey) (core.Config
 }
 
 // SetConfig writes the same files as config providers/locale/agent-questions/
-// agent-approvals. Cancellation before admission writes nothing. Policy writes
+// agent-approvals/agent-host. Cancellation before admission writes nothing. Policy writes
 // finish once admitted; the two policy files are not a multi-file transaction.
 func (c *Client) SetConfig(ctx context.Context, u core.ConfigUpdate) (core.ConfigValue, error) {
-	v, err := (settings.Service{Paths: c.instructions.Paths}).Set(ctx, settings.Update{Key: string(u.Key), Provider: u.Provider, Enabled: u.Enabled, Locale: u.Locale, Answering: u.Answering, Window: u.Window})
+	v, err := (settings.Service{Paths: c.instructions.Paths}).Set(ctx, settings.Update{Key: string(u.Key), Provider: u.Provider, Enabled: u.Enabled, Locale: u.Locale, Answering: u.Answering, Window: u.Window, DefaultHost: u.DefaultHost})
 	if err != nil {
 		return core.ConfigValue{}, settingsRefusal(err)
 	}
 	return publicConfig(v), nil
 }
 func publicConfig(v settings.Value) core.ConfigValue {
-	out := core.ConfigValue{Key: core.ConfigKey(v.Key), Locale: v.Locale, Source: v.Source, Answering: v.Answering, Window: v.Window}
+	out := core.ConfigValue{Key: core.ConfigKey(v.Key), Locale: v.Locale, Source: v.Source, Answering: v.Answering, Window: v.Window, DefaultHost: v.DefaultHost}
 	if v.Providers != nil {
 		out.Providers = make([]core.ProviderState, len(v.Providers))
 		for i, p := range v.Providers {
@@ -55,6 +55,7 @@ func settingsRefusal(err error) error {
 // Translate only generated input prefixes; quoted caller values stay intact.
 func settingsInputMessage(message string) string {
 	for _, p := range []struct{ cli, sdk string }{
+		{"config agent-host --default", "ConfigUpdate.DefaultHost"},
 		{"config providers --enable", "ConfigUpdate.Provider"},
 		{"config providers --disable", "ConfigUpdate.Provider"},
 		{"config locale --set", "ConfigUpdate.Locale"},
