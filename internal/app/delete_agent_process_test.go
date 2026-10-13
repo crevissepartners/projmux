@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -31,8 +33,8 @@ func processDeleteFixture(t *testing.T, provider string) (*coremetadata.Registry
 	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
 	pane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, Generation: binding.Generation, AgentUID: h.agentUID,
 		OperationID: binding.OperationID, Process: &coremetadata.ProcessActivation{Binding: binding,
-			HostProcess: coremetadata.ProcessIdentity{PID: 11, OwnerUID: 1000, Start: "host-start"},
-			Child:       coremetadata.ProcessIdentity{PID: 12, OwnerUID: 1000, Start: "child-start"}}}
+			HostProcess: coremetadata.ProcessIdentity{PID: 11, OwnerUID: uint32(os.Getuid()), Start: "host-start"},
+			Child:       coremetadata.ProcessIdentity{PID: 12, OwnerUID: uint32(os.Getuid()), Start: "child-start"}}}
 	pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: provider, Binding: binding, ResumeState: coremetadata.ProcessResumeUnknown}
 	agent.Status.Phase = coremetadata.PhaseRunning
 	if err := reg.Validate(); err != nil {
@@ -73,12 +75,31 @@ func memoryProcessDeleteStore(reg *coremetadata.Registry) *resourceStore {
 type processDeleteProbe struct {
 	host, child bool
 	stops       int
+	kernelReads int
 	onStop      func() error
 }
 
 func (p *processDeleteProbe) deleter(reg *coremetadata.Registry) *processAgentDeleter {
 	return &processAgentDeleter{
 		store: memoryProcessDeleteStore(reg),
+		// These births are synthetic. Read only fixture lifetime state, never
+		// the machine's unrelated PID 11/12 or its procfs access policy.
+		readIdentity: func(pid int) (coremetadata.ProcessIdentity, int, error) {
+			p.kernelReads++
+			for _, pane := range reg.Panes {
+				activation := pane.Status.Activation.Process
+				if activation == nil {
+					continue
+				}
+				if activation.HostProcess.PID == pid {
+					return activation.HostProcess, 0, nil
+				}
+				if activation.Child.PID == pid {
+					return activation.Child, activation.HostProcess.PID, nil
+				}
+			}
+			return coremetadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
+		},
 		alive: func(birth coremetadata.ProcessIdentity) bool {
 			if birth.Start == "host-start" {
 				return p.host
@@ -190,10 +211,13 @@ func TestProcessDeleteRunningStopsThroughOwnerThenDeletes(t *testing.T) {
 			}
 			out, err = runProcessDelete(reg, deleter, "uid:"+agent, "--yes")
 			if err != nil || probe.stops != 2 || !strings.Contains(out, "runtime=stopped evidence=wait:normal exit=0") || !strings.Contains(out, " runtime=stopped focus=") {
-				t.Fatalf("delete out=%q err=%v stops=%d", out, err, probe.stops)
+				t.Fatalf("delete out=%q err=%v stops=%d currentUID=%d kernelReads=%d cause=%v", out, err, probe.stops, os.Getuid(), probe.kernelReads, errors.Unwrap(err))
 			}
 			if _, ok := reg.Agent(agent); ok {
 				t.Fatal("Agent survived")
+			}
+			if probe.kernelReads < 2 {
+				t.Fatal("exact owner and child retirement reader was not used")
 			}
 		})
 	}

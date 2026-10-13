@@ -32,6 +32,12 @@ func (s *ProcessAgentStopper) stopDetachedClaim(ctx, admission context.Context, 
 		unlock()
 		return false, err
 	}
+	// Delete freezes the claimant observed at preflight. Ordinary Stop keeps
+	// its current-generation admission when no expected claimant is supplied.
+	if s.ExpectedClaimNonce != "" && (record.Nonce != s.ExpectedClaimNonce || record.Process != s.ExpectedClaimOwner) {
+		unlock()
+		return true, fmt.Errorf("expected claim nonce %q owner %+v, observed nonce %q owner %+v: %w", s.ExpectedClaimNonce, s.ExpectedClaimOwner, record.Nonce, record.Process, processhost.ErrStale)
+	}
 	if !record.Detached {
 		unlock()
 		return false, nil
@@ -78,14 +84,28 @@ func (s *ProcessAgentStopper) stopDetachedClaim(ctx, admission context.Context, 
 		unlock()
 		return true, err
 	}
-	record.StopRequested = true
-	if err = WriteDeferredClaim(path, record); err != nil {
+	apply := func() error {
+		if err := admission.Err(); err != nil {
+			return err
+		}
+		record.StopRequested = true
+		if err := WriteDeferredClaim(path, record); err != nil {
+			return err
+		}
+		if s.ClaimStopAdmission == nil {
+			SignalProcessOwner(record.Process)
+		}
+		return nil
+	}
+	if s.ClaimStopAdmission != nil {
+		err = s.ClaimStopAdmission(reg, apply)
+	} else {
+		err = apply()
+	}
+	if err != nil {
 		unlock()
 		return true, err
 	}
-	// Once the durable request is set, checkDeferredClaim refuses all birth
-	// attempts, even if the signal arrives between planning and reservation.
-	SignalProcessOwner(record.Process)
 	unlock()
 	ticker := time.NewTicker(ProcessAgentStopPoll)
 	defer ticker.Stop()

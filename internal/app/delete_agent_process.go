@@ -2,12 +2,9 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/crevissepartners/projmux/internal/services/mutations"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -17,7 +14,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // A process runtime Agent has no tmux half. Its delete is decided by the exact
@@ -56,17 +55,10 @@ const (
 // processDeleteError is the typed refusal of a process Agent delete. Its text
 // is exactly what the CLI prints; Token and Runtime let an in-process caller
 // branch without parsing it. A refusal leaves the Registry unchanged.
-type processDeleteError struct {
-	Token   string
-	Runtime string
-	cause   error
-}
-
-func (e *processDeleteError) Error() string { return e.cause.Error() }
-func (e *processDeleteError) Unwrap() error { return e.cause }
+type processDeleteError = mutationruntime.ProcessDeleteError
 
 func processDeleteRefusal(token, runtime, format string, args ...any) *processDeleteError {
-	return &processDeleteError{Token: token, Runtime: runtime, cause: fmt.Errorf(token+": "+format, args...)}
+	return mutationruntime.ProcessDeleteRefusal(token, runtime, format, args...)
 }
 
 // processDeleteScope narrows the Agent reference like `--project`/`--window`.
@@ -125,9 +117,10 @@ func deleteProcessAgent(ctx context.Context, req processAgentDeleteRequest) (pro
 // processAgentDeleter carries the delete's seams. Production uses the
 // resource store, kernel birth identity, and the owner host's control socket.
 type processAgentDeleter struct {
-	store *resourceStore
-	alive func(coremetadata.ProcessIdentity) bool
-	stop  func(context.Context, coremetadata.Registry, coremetadata.Agent) error
+	store        *resourceStore
+	alive        func(coremetadata.ProcessIdentity) bool
+	readIdentity mutationruntime.ProcessIdentityReader
+	stop         func(context.Context, coremetadata.Registry, coremetadata.Agent) error
 	// waitLimit bounds Stop -> Wait the same way create rollback bounds it.
 	waitLimit time.Duration
 	// stopAdmission bounds retries of a Stop the live host refused as stale:
@@ -163,378 +156,95 @@ func processBirthAlive(birth coremetadata.ProcessIdentity) bool {
 // owner socket. Socket identity and kernel peer birth are verified by the
 // shared caller; a stale or unreachable host is never rediscovered.
 func stopProcessAgentOwner(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent) error {
-	control := &agentCommand{controlPaths: config.DefaultPathsFromEnv}
-	var err error
-	switch agent.Spec.Provider {
-	case aiModeClaude, aiModeCodex:
-		admission, ok := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
-		if !ok {
-			return processhost.ErrStale
-		}
-		payload, marshalErr := json.Marshal(admission)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		_, err = control.callProcessTurn(reg, agent, agent.Spec.Provider, "delete-stop", string(payload))
-	default:
-		err = processhost.ErrStale
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return err
 	}
+	admission, ok := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
+	if !ok {
+		return processhost.ErrStale
+	}
+	err = mutationruntime.CallProcessAgentDeleteStop(ctx, intmetadata.PathFor(paths.StateDir), reg, agent, admission)
 	if errors.Is(err, processhost.ErrClosed) {
-		// The owner is already shutting down; its Wait is what we wait for.
 		return nil
 	}
 	return err
 }
 
-// processDeleteTarget is one classified Agent.
 type processDeleteTarget struct {
-	Agent, Pane, Window string
-	RootKind            coremetadata.Kind
-	RootUID             string
-	Runtime             string
-	Evidence            string
-	HostPID             int
-	binding             coremetadata.ProcessBinding
+	Agent, Pane, Window        string
+	RootKind                   coremetadata.Kind
+	RootUID, Runtime, Evidence string
+	HostPID                    int
+	binding                    coremetadata.ProcessBinding
+	activation                 *coremetadata.ProcessActivation
+	claim                      bool
+	claimNonce                 string
+	claimOwner                 coremetadata.ProcessIdentity
 }
 
-// isProcessAgentPlan reports whether every target is an Agent whose managed
-// Panes are all process runtime Panes. A plan that touches any tmux Pane, or
-// an Agent with no managed Pane, keeps the tmux delete path unchanged.
-func isProcessAgentPlan(registry coremetadata.Registry, plan deletePlan) bool {
-	if plan.Kind != coremetadata.KindAgent || len(plan.Targets) == 0 {
-		return false
-	}
-	for _, target := range plan.Targets {
-		panes := 0
-		for _, descendant := range target.Descendants {
-			if descendant.Kind != coremetadata.KindPane {
-				continue
-			}
-			pane, ok := registry.Pane(descendant.UID)
-			if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
-				return false
-			}
-			panes++
-		}
-		if panes == 0 {
-			return false
-		}
-	}
-	return true
+func processDeleteTargetFromShared(t mutationruntime.ProcessDeleteTarget) processDeleteTarget {
+	return processDeleteTarget{Agent: t.Agent, Pane: t.Pane, Window: t.Window, RootKind: t.RootKind, RootUID: t.RootUID, Runtime: t.Runtime, Evidence: t.Evidence, HostPID: t.HostPID, binding: t.Binding, activation: t.Activation, claim: t.Claim, claimNonce: t.ClaimNonce, claimOwner: t.ClaimOwner}
+}
+func (t processDeleteTarget) shared() mutationruntime.ProcessDeleteTarget {
+	return mutationruntime.ProcessDeleteTarget{Agent: t.Agent, Pane: t.Pane, Window: t.Window, RootKind: t.RootKind, RootUID: t.RootUID, Runtime: t.Runtime, Evidence: t.Evidence, HostPID: t.HostPID, Binding: t.binding, Activation: t.activation, Claim: t.claim, ClaimNonce: t.claimNonce, ClaimOwner: t.claimOwner}
 }
 
-// classify judges one Agent from the Registry and kernel birth evidence.
-// It never probes under the Registry lock; callers revalidate the result with
-// processDeleteSignature inside the transaction.
-func (d *processAgentDeleter) classify(registry coremetadata.Registry, agentUID string) (processDeleteTarget, error) {
-	agent, ok := registry.Agent(agentUID)
-	if !ok {
-		return processDeleteTarget{}, processDeleteRefusal(processDeleteRefusedToken, "", "registry Agent uid %q disappeared; nothing was changed", agentUID)
-	}
-	window, ok := registry.Window(agent.Metadata.OwnerUID())
-	if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow {
-		return processDeleteTarget{}, processDeleteRefusal(processDeleteRefusedToken, "", "registry Agent uid %q has no exact owning Window; nothing was changed", agentUID)
-	}
-	root, err := deleteRootForWindow(registry, *window)
-	if err != nil {
-		return processDeleteTarget{}, processDeleteRefusal(processDeleteRefusedToken, "", "%v; nothing was changed", err)
-	}
-	panes := registry.PanesOf(agentUID)
-	if len(panes) != 1 || panes[0].Metadata.UID != agent.Status.PaneRef || panes[0].Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
-		return processDeleteTarget{}, processDeleteRefusal(processDeleteRefusedToken, "",
-			"registry Agent uid %q does not own exactly its current process Pane; nothing was changed", agentUID)
-	}
-	pane := panes[0]
-	target := processDeleteTarget{Agent: agentUID, Pane: pane.Metadata.UID, Window: window.Metadata.UID, RootKind: root.Kind, RootUID: root.UID}
-	activation := pane.Status.Activation
-	if activation.IsZero() {
-		record := pane.Status.ProcessSession
-		receipt := pane.Status.LastTermination
-		if agent.Status.Phase == coremetadata.PhaseOffline && record != nil &&
-			coremetadata.MatchesProcessWait(record.Binding, receipt) && coremetadata.SameProcessWait(receipt, agent.Status.LastTermination) {
-			target.Runtime, target.binding = processDeleteRuntimeOffline, record.Binding
-			target.Evidence = processWaitEvidence(*receipt)
-			return target, nil
-		}
-		target.Runtime, target.Evidence = processDeleteRuntimeUnknown, "activation-absent"
-		return target, nil
-	}
-	process := activation.Process
-	if activation.Kind != coremetadata.RuntimeProcess || process == nil {
-		return processDeleteTarget{}, processDeleteRefusal(processDeleteRefusedToken, "",
-			"process Pane uid %q carries a non-process activation; nothing was changed", pane.Metadata.UID)
-	}
-	target.binding = process.Binding
-	if d.alive(process.HostProcess) {
-		target.Runtime, target.HostPID = processDeleteRuntimeRunning, process.HostProcess.PID
-		target.Evidence = fmt.Sprintf("owner-host-pid=%d", process.HostProcess.PID)
-		return target, nil
-	}
-	if d.alive(process.Child) {
-		return processDeleteTarget{}, processDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeUnknown,
-			"process Agent uid %q lost its owner host but child pid %d is still alive; its supervisor ends it within the stop grace, retry then; nothing was changed",
-			agentUID, process.Child.PID)
-	}
-	target.Runtime, target.Evidence = processDeleteRuntimeUnknown, "owner-host-and-child-absent"
-	return target, nil
-}
-
-func processWaitEvidence(receipt coremetadata.TerminationEvidence) string {
-	evidence := "wait:" + string(receipt.Classification)
-	if receipt.ExitCode != nil {
-		evidence += fmt.Sprintf(" exit=%d", *receipt.ExitCode)
-	}
-	if receipt.Signal != "" {
-		evidence += " signal=" + receipt.Signal
-	}
-	return evidence
-}
-
-// processDeleteSignature signs the Registry facts a classification read. The
-// locked transaction must reproduce it byte for byte before deleting.
-func processDeleteSignature(registry coremetadata.Registry, plan deletePlan) string {
-	var b strings.Builder
-	b.WriteString(plan.Signature())
-	if plan.Kind == coremetadata.KindWindow {
-		for _, target := range plan.Targets {
-			if window, ok := registry.Window(target.Match.UID); ok {
-				fmt.Fprintf(&b, "|window=%q,anchor=%q,shell=%q,session=%q,runtime=%q", window.Metadata.UID,
-					window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef, window.Status.RuntimeSessionID, window.Status.RuntimeID)
-			}
-		}
-	}
-	for _, uid := range processDeleteAgentUIDs(registry, plan) {
-		agent, ok := registry.Agent(uid)
-		if !ok {
-			fmt.Fprintf(&b, "|agent=%q:absent", uid)
-			continue
-		}
-		fmt.Fprintf(&b, "|agent=%q,owner=%q,phase=%q,pane-ref=%q", agent.Metadata.UID, agent.Metadata.OwnerUID(), agent.Status.Phase, agent.Status.PaneRef)
-		for _, pane := range registry.PanesOf(agent.Metadata.UID) {
-			fmt.Fprintf(&b, ",pane=%q,runtime=%q,activation=%+v,termination=%s", pane.Metadata.UID, pane.Spec.Runtime.EffectiveKind(),
-				pane.Status.Activation.Process, processTerminationSignature(pane.Status.LastTermination))
-			if pane.Status.ProcessSession != nil {
-				fmt.Fprintf(&b, ",binding=%+v", pane.Status.ProcessSession.Binding)
-			}
-		}
-	}
-	return b.String()
-}
-
-func processTerminationSignature(receipt *coremetadata.TerminationEvidence) string {
-	if receipt == nil {
-		return "none"
-	}
-	code := "nil"
-	if receipt.ExitCode != nil {
-		code = fmt.Sprint(*receipt.ExitCode)
-	}
-	return fmt.Sprintf("%s/%s/%s/%s/%s/%s", receipt.Source, receipt.Classification, receipt.Generation, code, receipt.Signal, receipt.ObservedAt.UTC().Format(time.RFC3339Nano))
-}
-
-func (d *processAgentDeleter) classifyPlan(registry coremetadata.Registry, plan deletePlan) ([]processDeleteTarget, error) {
-	if err := mutations.ValidateDeleteTargets(registry, plan.Kind, plan.Uids()); err != nil {
-		return nil, err
-	}
-	return d.classifyAdmittedPlan(registry, plan)
-}
-func (d *processAgentDeleter) classifyAdmittedPlan(registry coremetadata.Registry, plan deletePlan) ([]processDeleteTarget, error) {
-	if plan.Kind == coremetadata.KindWindow {
-		for _, target := range plan.Targets {
-			if !registry.IsVirtualWindow(target.Match.UID) {
-				return nil, processDeleteRefusal(processDeleteRefusedToken, "", "Window uid %q is no longer virtual; nothing was deleted", target.Match.UID)
-			}
-		}
-	}
-	targets := make([]processDeleteTarget, 0, len(plan.Targets))
-	for _, uid := range processDeleteAgentUIDs(registry, plan) {
-		classified, err := d.classify(registry, uid)
-		if err != nil {
-			return nil, err
-		}
-		targets = append(targets, classified)
-	}
-	return targets, nil
-}
-
-// processDeleteOutcome is a committed delete.
 type processDeleteOutcome struct {
-	targets  []processDeleteTarget
-	affected []DeletionAffected
-	actor    DeletionActor
+	Targets  []processDeleteTarget
+	Affected []DeletionAffected
+	Actor    DeletionActor
 }
 
-// execute stops every running target through its owner, waits for the exact
-// retirement, reclassifies outside the lock, and deletes the whole plan in one
-// transaction that must reproduce the reclassified Registry evidence.
-func (d *processAgentDeleter) execute(ctx context.Context, plan deletePlan, targets []processDeleteTarget, actor func(*coremetadata.Registry) DeletionActor) (processDeleteOutcome, error) {
-	registryBeforeStop, err := d.store.load()
-	if err != nil {
-		return processDeleteOutcome{}, err
-	}
-	if err := mutations.ValidateDeleteTargets(registryBeforeStop, plan.Kind, plan.Uids()); err != nil {
-		return processDeleteOutcome{}, err
-	}
-	ctx = context.WithValue(ctx, processDeleteAdmissionKey{}, processDeleteAdmission{Kind: plan.Kind, UIDs: plan.Uids(), Signature: plan.Signature()})
-	stopped := map[string]bool{}
-	for _, target := range targets {
-		if target.Runtime != processDeleteRuntimeRunning {
-			continue
-		}
-		if err := d.stopAndWait(ctx, target); err != nil {
-			return processDeleteOutcome{}, err
-		}
-		stopped[target.Agent] = true
-		admission := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
-		admission.Admitted = true
-		ctx = context.WithValue(ctx, processDeleteAdmissionKey{}, admission)
-	}
-	registry, err := d.store.load()
-	if err != nil {
-		return processDeleteOutcome{}, MapMetadataError(err)
-	}
-	if current := buildDeletePlan(registry, plan.Kind, resolutionOf(plan)).Signature(); current != plan.Signature() {
-		return processDeleteOutcome{}, processDeleteRefusal(processDeleteRefusedToken, "", "delete agent: the cascade plan changed before deletion; nothing was deleted")
-	}
-	final, err := d.classifyAdmittedPlan(registry, plan)
-	if err != nil {
-		return processDeleteOutcome{}, err
-	}
-	for i := range final {
-		if final[i].Runtime == processDeleteRuntimeRunning {
-			return processDeleteOutcome{}, processDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning,
-				"process Agent uid %q became live under owner host pid %d before deletion; nothing was deleted", final[i].Agent, final[i].HostPID)
-		}
-		if stopped[final[i].Agent] {
-			if final[i].Runtime != processDeleteRuntimeOffline {
-				return processDeleteOutcome{}, processDeleteRefusal(processDeleteStopUnconfirmedToken, final[i].Runtime,
-					"process Agent uid %q did not keep its exact Wait receipt after Stop; nothing was deleted", final[i].Agent)
-			}
-			final[i].Runtime = processDeleteRuntimeStopped
-		}
-	}
-	approved := processDeleteSignature(registry, plan)
-	outcome := processDeleteOutcome{targets: final}
-	err = d.store.mutate(plan.Kind, plan.Uids(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if err := mutations.ValidateDeleteTargets(*working, plan.Kind, plan.Uids()); len(stopped) == 0 && err != nil {
-			return err
-		}
-		if current := buildDeletePlan(*working, plan.Kind, resolutionOf(plan)).Signature(); current != plan.Signature() {
-			return processDeleteRefusal(processDeleteRefusedToken, "", "the cascade plan changed between preflight and deletion; nothing was deleted")
-		}
-		if processDeleteSignature(*working, plan) != approved {
-			return processDeleteRefusal(processDeleteRefusedToken, "", "delete agent: process Agent evidence changed between preflight and deletion; nothing was deleted")
-		}
-		if actor != nil {
-			outcome.actor = actor(working)
-		}
-		candidate := working.Clone()
-		for _, uid := range plan.Uids() {
-			if err := deleteResource(&candidate, mutator, plan.Kind, uid); err != nil {
-				return err
-			}
-		}
-		if err := candidate.Validate(); err != nil {
-			return err
-		}
-		outcome.affected = deletionAffectedBetween(*working, candidate)
-		*working = candidate
-		return nil
-	})
-	if err != nil {
-		var refusal *processDeleteError
-		if errors.As(err, &refusal) {
-			return processDeleteOutcome{}, refusal
-		}
-		return processDeleteOutcome{}, err
-	}
-	return outcome, nil
+//lint:ignore U1000 Retain the metadata predicate adapter for existing internal process-control consumers; the shared delete executor also verifies kernel retirement.
+func processWaitRetired(r coremetadata.Registry, t processDeleteTarget) bool {
+	return mutationruntime.ProcessWaitRetired(r, t.shared())
+}
+func (d *processAgentDeleter) stopAndWait(ctx context.Context, t processDeleteTarget) error {
+	return d.shared().StopAndWait(ctx, t.shared())
 }
 
-// stopAndWait asks the owner to Stop and waits, by condition, for the exact
-// Wait receipt of the same binding and the retired activation.
-func (d *processAgentDeleter) stopAndWait(ctx context.Context, target processDeleteTarget) error {
-	ctx, cancel := context.WithTimeout(ctx, d.waitLimit)
-	defer cancel()
-	admissionDeadline := time.Now().Add(d.stopAdmission)
-	var err error
-	for {
-		registry, loadErr := d.store.load()
-		if loadErr != nil {
-			return MapMetadataError(loadErr)
-		}
-		agent, ok := registry.Agent(target.Agent)
-		if !ok {
-			return processDeleteRefusal(processDeleteRefusedToken, processDeleteRuntimeRunning, "registry Agent uid %q disappeared before Stop; nothing was changed", target.Agent)
-		}
-		admission, ok := ctx.Value(processDeleteAdmissionKey{}).(processDeleteAdmission)
-		if !ok {
-			plan := buildDeletePlan(registry, coremetadata.KindAgent, selector.Resolution{Kind: coremetadata.KindAgent, Matches: []selector.Match{{Kind: coremetadata.KindAgent, UID: target.Agent}}})
-			admission = processDeleteAdmission{Kind: plan.Kind, UIDs: plan.Uids(), Signature: plan.Signature()}
-			ctx = context.WithValue(ctx, processDeleteAdmissionKey{}, admission)
-		}
-		if err := mutations.ValidateDeleteTargets(registry, admission.Kind, admission.UIDs); !admission.Admitted && err != nil {
-			return err
-		}
-		err = d.stop(ctx, registry, *agent)
-		if err == nil || !errors.Is(err, processhost.ErrStale) || !time.Now().Before(admissionDeadline) || ctx.Err() != nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(d.poll):
+func isProcessAgentPlan(r coremetadata.Registry, p deletePlan) bool {
+	return mutationruntime.IsProcessAgentPlan(r, mutationruntime.DeletePlan(p))
+}
+func (d *processAgentDeleter) shared() *mutationruntime.ProcessAgentDeleter {
+	path := ""
+	if d.store.stateDir != nil {
+		if root, err := d.store.stateDir(); err == nil {
+			path = intmetadata.PathFor(root)
 		}
 	}
-	if err != nil {
-		var protection *mutations.Failure
-		if errors.As(err, &protection) && protection.Code == mutations.CodeAgentProtected {
-			return err
-		}
-		if strings.HasPrefix(err.Error(), processDeleteHostUnavailableToken+":") {
-			return &processDeleteError{Token: processDeleteHostUnavailableToken, Runtime: processDeleteRuntimeRunning, cause: err}
-		}
-		return processDeleteRefusal(processDeleteHostUnavailableToken, processDeleteRuntimeRunning,
-			"owner host pid %d of process Agent uid %q did not accept Stop: %v; nothing was changed", target.HostPID, target.Agent, err)
-	}
-	ticker := time.NewTicker(d.poll)
-	defer ticker.Stop()
-	for {
-		registry, err := d.store.load()
-		if err == nil && processWaitRetired(registry, target) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return processDeleteRefusal(processDeleteStopUnconfirmedToken, processDeleteRuntimeRunning,
-				"owner host pid %d accepted Stop for process Agent uid %q but no exact Wait receipt was recorded within %s; the Registry is unchanged, retry once the owner exits",
-				target.HostPID, target.Agent, d.waitLimit)
-		case <-ticker.C:
-		}
-	}
+	return &mutationruntime.ProcessAgentDeleter{RegistryPath: path, MapError: MapMetadataError, Load: d.store.load, Mutate: d.store.mutate, Alive: d.alive, ReadIdentity: d.readIdentity, Stop: d.stop, WaitLimit: d.waitLimit, StopAdmission: d.stopAdmission, Poll: d.poll}
 }
 
-func processWaitRetired(registry coremetadata.Registry, target processDeleteTarget) bool {
-	pane, ok := registry.Pane(target.Pane)
-	agent, agentOK := registry.Agent(target.Agent)
-	if !ok || !agentOK || !pane.Status.Activation.IsZero() || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != target.binding {
-		return false
-	}
-	return agent.Status.Phase == coremetadata.PhaseOffline &&
-		coremetadata.MatchesProcessWait(target.binding, pane.Status.LastTermination) &&
-		coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)
+//lint:ignore U1000 Retain the thin classification adapter for existing internal process-control consumers.
+func (d *processAgentDeleter) classify(r coremetadata.Registry, uid string) (processDeleteTarget, error) {
+	t, err := d.shared().Classify(r, uid)
+	return processDeleteTargetFromShared(t), err
 }
-
-func resolutionOf(plan deletePlan) selector.Resolution {
-	resolution := selector.Resolution{Kind: plan.Kind}
-	for _, target := range plan.Targets {
-		resolution.Matches = append(resolution.Matches, target.Match)
+func (d *processAgentDeleter) classifyPlan(r coremetadata.Registry, p deletePlan) ([]processDeleteTarget, error) {
+	targets, err := d.shared().ClassifyPlan(r, mutationruntime.DeletePlan(p))
+	out := make([]processDeleteTarget, len(targets))
+	for i, t := range targets {
+		out[i] = processDeleteTargetFromShared(t)
 	}
-	return resolution
+	return out, err
 }
-
+func (d *processAgentDeleter) execute(ctx context.Context, p deletePlan, targets []processDeleteTarget, actor func(*coremetadata.Registry) DeletionActor) (processDeleteOutcome, error) {
+	shared := make([]mutationruntime.ProcessDeleteTarget, len(targets))
+	for i, t := range targets {
+		shared[i] = t.shared()
+	}
+	result, err := d.shared().Execute(ctx, mutationruntime.DeletePlan(p), shared, actor)
+	out := processDeleteOutcome{Affected: result.Affected, Actor: result.Actor}
+	for _, t := range result.Targets {
+		out.Targets = append(out.Targets, processDeleteTargetFromShared(t))
+	}
+	return out, err
+}
 func (d *processAgentDeleter) record(outcome processDeleteOutcome, plan deletePlan, operationID string, stderr io.Writer) {
-	recordDeletion(d.store, newDeletionRecord(childDeletionOperation(plan.Kind), operationID, d.via, outcome.actor,
-		deletionTargetsOf(plan), outcome.affected), stderr)
+	recordDeletion(d.store, newDeletionRecord(childDeletionOperation(plan.Kind), operationID, d.via, outcome.Actor,
+		deletionTargetsOf(plan), outcome.Affected), stderr)
 }
 
 func (d *processAgentDeleter) deleteOne(ctx context.Context, req processAgentDeleteRequest) (processAgentDeleteResult, error) {
@@ -573,7 +283,7 @@ func (d *processAgentDeleter) deleteOne(ctx context.Context, req processAgentDel
 		return processAgentDeleteResult{}, err
 	}
 	if opts.DryRun {
-		return targets[0].result(true), nil
+		return processDeleteResult(targets[0], true), nil
 	}
 	if req.confirm != nil {
 		if err := req.confirm(targets[0]); err != nil {
@@ -593,10 +303,10 @@ func (d *processAgentDeleter) deleteOne(ctx context.Context, req processAgentDel
 		return processAgentDeleteResult{}, err
 	}
 	d.record(outcome, plan, operationID, req.stderr)
-	return outcome.targets[0].result(false), nil
+	return processDeleteResult(outcome.Targets[0], false), nil
 }
 
-func (t processDeleteTarget) result(dryRun bool) processAgentDeleteResult {
+func processDeleteResult(t processDeleteTarget, dryRun bool) processAgentDeleteResult {
 	return processAgentDeleteResult{Agent: t.Agent, Pane: t.Pane, Runtime: t.Runtime, Evidence: t.Evidence, DryRun: dryRun, target: t}
 }
 
@@ -722,36 +432,6 @@ func writeProcessDeletePlan(stdout io.Writer, spelling string, plan deletePlan, 
 
 // processDeleteAgentUIDs includes the live owners removed by a virtual Window
 // cascade and the owner of a process Pane whose Agent is retained.
-func processDeleteAgentUIDs(reg coremetadata.Registry, plan deletePlan) []string {
-	var out []string
-	add := func(uid string) {
-		if !slices.Contains(out, uid) {
-			out = append(out, uid)
-		}
-	}
-	for _, target := range plan.Targets {
-		switch plan.Kind {
-		case coremetadata.KindAgent:
-			add(target.Match.UID)
-		case coremetadata.KindPane:
-			pane, ok := reg.Pane(target.Match.UID)
-			if ok && pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
-				add(pane.Metadata.OwnerUID())
-			}
-		case coremetadata.KindWindow:
-			for _, agent := range reg.AgentsOf(target.Match.UID) {
-				for _, pane := range reg.PanesOf(agent.Metadata.UID) {
-					if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
-						add(agent.Metadata.UID)
-						break
-					}
-				}
-			}
-		}
-	}
-	return out
-}
-
 func isVirtualDeletePlan(reg coremetadata.Registry, plan deletePlan) bool {
 	if len(plan.Targets) == 0 {
 		return false
@@ -828,11 +508,11 @@ func (c *deleteCommand) runVirtualDelete(spelling string, plan deletePlan, flags
 		return err
 	}
 	d.record(outcome, plan, op, stderr)
-	if err := writeVirtualDeletePlan(stdout, spelling, plan, outcome.targets, false); err != nil {
+	if err := writeVirtualDeletePlan(stdout, spelling, plan, outcome.Targets, false); err != nil {
 		return err
 	}
 	receipt := childDeleteReceipt(plan.Kind, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, false)
-	for _, target := range outcome.targets {
+	for _, target := range outcome.Targets {
 		if target.Runtime == processDeleteRuntimeStopped {
 			receipt.Effects.Runtime = cli.RuntimeStopped
 			break

@@ -168,7 +168,7 @@ func TestDeleteSDKProcessRejectionBeforeAnyEffect(t *testing.T) {
 	if err := m.DeleteWindow(&reg, uid); err != nil {
 		t.Fatal(err)
 	}
-	window, agent, pane, err := m.CreateProcessWindow(&reg, project, metadata.BootstrapWindow{Name: "process"}, metadata.CreateAgentOptions{Name: "worker", Provider: "codex", OperationID: "op-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen", OperationID: "op-process"})
+	window, _, pane, err := m.CreateProcessWindow(&reg, project, metadata.BootstrapWindow{Name: "process"}, metadata.CreateAgentOptions{Name: "worker", Provider: "codex", OperationID: "op-process"}, metadata.ProcessBinding{HostInstanceID: "host", Generation: "gen", OperationID: "op-process"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestDeleteSDKProcessRejectionBeforeAnyEffect(t *testing.T) {
 	for _, tc := range []struct {
 		kind core.Kind
 		uid  string
-	}{{core.KindWindow, window.Metadata.UID}, {core.KindPane, pane.Metadata.UID}, {core.KindAgent, agent.Metadata.UID}} {
+	}{{core.KindWindow, window.Metadata.UID}, {core.KindPane, pane.Metadata.UID}} {
 		runner := &deleteFailureRunner{path: filepath.Join(t.TempDir(), "s")}
 		result, err := c.deleteWithRunner(context.Background(), core.DeleteRequest{Kind: tc.kind, Ref: "uid:" + tc.uid, SocketPath: runner.path, Confirm: true}, runner)
 		var refusal *Refusal

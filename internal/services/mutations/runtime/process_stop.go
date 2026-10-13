@@ -29,12 +29,15 @@ type ProcessIdentityReader func(int) (coremetadata.ProcessIdentity, int, error)
 // ProcessAgentStopper is the shared CLI/SDK exact-generation executor. Paths
 // and readers are explicit. It never deletes resources or writes Offline.
 type ProcessAgentStopper struct {
-	RegistryPath  string
-	ClaimReleased bool
-	Termination   *coremetadata.TerminationEvidence
-	Load          func() (coremetadata.Registry, error)
-	ReadIdentity  ProcessIdentityReader
-	CallStop      func(context.Context, coremetadata.Registry, coremetadata.Agent) error
+	RegistryPath       string
+	ExpectedClaimNonce string
+	ExpectedClaimOwner coremetadata.ProcessIdentity
+	ClaimStopAdmission func(coremetadata.Registry, func() error) error
+	ClaimReleased      bool
+	Termination        *coremetadata.TerminationEvidence
+	Load               func() (coremetadata.Registry, error)
+	ReadIdentity       ProcessIdentityReader
+	CallStop           func(context.Context, coremetadata.Registry, coremetadata.Agent) error
 }
 
 func (s *ProcessAgentStopper) identityReader() ProcessIdentityReader {

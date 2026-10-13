@@ -87,6 +87,7 @@ Client.createOutcomes	Optional public SDK create outcome adapter, reachable from
 Client.createPane	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createProjection	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createWindow	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
+Client.deleteProcess	SDK process Agent Delete adapter retained for external consumer and shared CLI/SDK admission parity.
 Client.deleteWithRunner	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
@@ -217,6 +218,7 @@ NewClient	Public v0 instruction SDK entrypoint or its typed-refusal adapter, ret
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewMutationLockPolicy	Internal immutable acquisition-site policy constructor; verified by caller-copy, invalid-token and Store reader rejection tests.
 NewMutationLockRecorder	Internal caller-declared mutation lock aggregation constructor; exercised by fake clock/writer and concurrency tests.
+NewProcessAgentDeleter	Explicit Registry-root constructor retained for public SDK process Agent deletion without ambient environment reads.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
 NewReader	Runtime SDK production reader wiring retained for external ObserveRuntime consumers; covered by CLI parity and external consumer tests.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
@@ -431,10 +433,13 @@ paneTarget.shared	Existing process runtime wiring fixture calls this CLI adapter
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
+processAgentDeleter.classify	Thin process classification adapter retained for exact native runtime-control consumers.
+processAgentDeleter.stopAndWait	Thin runtime adapter retained for exact native owner-control consumer and copied process CLI retirement proof.
 processApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processUserDeliveryAcceptance	Retained typed receipt validation for the planned foreign-owned Codex deliverProcessUserInput consumer rejects missing or malformed actual Mode/Operation/TurnID without replay or fallback.
+processWaitRetired	Metadata predicate adapter retained for exact owned process control consumers; deletion also proves kernel retirement in the shared executor.
 profileRefusal	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 projectClaudeCoordinationEligibilityAt	Existing CLI projection/probe test seam retained across shared SDK service extraction; existing capability and bounded helper fixture tests verify unchanged behavior.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.

@@ -12,5 +12,3 @@ type paneLiveDeleteTarget = mutationruntime.PaneLiveDeleteTarget
 type paneReplacementReceipt = mutationruntime.PaneReplacementReceipt
 type paneReplacementShell = mutationruntime.PaneReplacementShell
 type runtimeObject = mutationruntime.RuntimeObject
-
-var deleteResource = mutationruntime.DeleteResource
