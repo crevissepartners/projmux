@@ -154,6 +154,16 @@ daemon. No existing Agent create/resume, hook, review, catalog, model, or usage
 consumer uses the native source in this phase. Settings displays the decision
 as a read-only state row; it is not a user-selectable authority.
 
+Native tmux observation uses `internal/services/mutations/runtime.NativeObserverStarter`
+for exact binding admission and startup convergence. Its optional
+`NativeObserverPaths` tuple supplies complete Config, State, Registry-file, and
+Projmux executable paths. A supplied tuple is validated before effects and is
+passed to the observer child and its question picker; the broker's filesystem
+State domain remains separate from the durable Codex endpoint identity. Authority
+fences, history, diagnostics, question policy and records, progress, attention,
+and control use those paths, including broker recovery. Omitted paths retain the
+CLI defaults. This routing seam does not enable SDK native create or resume.
+
 ### UI orchestration
 
 Picker data is modeled independently from row rendering. The app builds

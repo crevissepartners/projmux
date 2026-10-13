@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app"
@@ -16,7 +17,11 @@ func main() {
 	started := time.Now()
 	runID := diagnostics.NewRunID()
 	var store *diagnostics.Store
-	if path, err := diagnostics.DefaultPath(os.Getenv, os.UserHomeDir); err == nil {
+	if stateDir, explicit, err := app.NativeObservationStateDir(os.Args[1:]); explicit {
+		if err == nil {
+			store = diagnostics.NewStore(filepath.Join(stateDir, diagnostics.LogDirName, diagnostics.LogFileName))
+		}
+	} else if path, err := diagnostics.DefaultPath(os.Getenv, os.UserHomeDir); err == nil {
 		store = diagnostics.NewStore(path)
 	}
 	var lifecycle *diagnostics.LifecycleRecorder

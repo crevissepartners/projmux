@@ -142,10 +142,6 @@ func (c *codexBrokerCommand) Run(args []string, stdout, stderr io.Writer) error 
 
 // runServe hosts one broker runtime until it idles out or is signalled.
 func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) error {
-	crashSink := startDetachedCrashSink(detachedCrashRoleCodexBrokerServe, func() (string, error) {
-		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
-	})
-	defer crashSink.Close()
 	fs := flag.NewFlagSet("internal codex-broker serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	stateDomain := fs.String("state-domain", "", "absolute state domain the runtime singleton is scoped to")
@@ -179,6 +175,13 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
+	crashSink := startDetachedCrashSink(detachedCrashRoleCodexBrokerServe, func() (string, error) {
+		if strings.TrimSpace(*stateDomain) != "" {
+			return filepath.Clean(*stateDomain), nil
+		}
+		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
+	})
+	defer crashSink.Close()
 	opener, lifecycle, err := route.openers()
 	if err != nil {
 		return err

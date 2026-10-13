@@ -48,6 +48,10 @@ func resolveAINotifyDedupeSeconds(homeDir func() (string, error), lookupEnv func
 }
 
 func (c *aiCommand) aiNotifyDedupeSeconds() int {
+	if c.nativeObserverPaths != nil {
+		seconds, _ := config.LoadAINotifyDedupeSecondsFileDefault(c.nativeObserverPaths.Paths.AINotifyDedupeSecondsFile(), defaultAINotifyDedupeSeconds)
+		return seconds
+	}
 	return resolveAINotifyDedupeSeconds(c.homeDir, c.lookupEnv).Seconds
 }
 

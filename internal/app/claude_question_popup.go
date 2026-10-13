@@ -5,10 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
@@ -144,12 +148,13 @@ func claudeQuestionAskerOf(registry coremetadata.Registry, agent coremetadata.Ag
 // claudeQuestionPopupTarget names one popup: the client it is drawn on, the
 // Pane it is placed over, the record its picker answers, and who asks.
 type claudeQuestionPopupTarget struct {
-	Client     string
-	PaneID     string
-	QuestionID string
-	AgentUID   string
-	StorePath  string
-	Asker      claudeQuestionAsker
+	ObserverPaths *mutationruntime.NativeObserverPaths
+	Client        string
+	PaneID        string
+	QuestionID    string
+	AgentUID      string
+	StorePath     string
+	Asker         claudeQuestionAsker
 }
 
 // claudeQuestionPopup is the tmux side of way 2. ViewingClient names the
@@ -172,6 +177,7 @@ type claudeQuestionPopup interface {
 // Open tells a popup that showed from one tmux never drew; nil makes it in the
 // temporary directory.
 type tmuxClaudeQuestionPopup struct {
+	observerPaths *mutationruntime.NativeObserverPaths
 	processTarget *processTerminalTarget
 	runner        tmuxRunner
 	executable    func() (string, error)
@@ -243,6 +249,9 @@ func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestion
 	newMarker := p.newMarker
 	if newMarker == nil {
 		newMarker = newClaudeQuestionShownMarker
+		if p.observerPaths != nil {
+			newMarker = func() (string, error) { return newClaudeQuestionShownMarkerIn(p.observerPaths.Paths.StateDir) }
+		}
 	}
 	marker, err := newMarker()
 	if err != nil {
@@ -251,7 +260,15 @@ func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestion
 	defer func() { _ = os.Remove(marker) }()
 	clientSize, sizeErr := p.runner.Run(ctx, "tmux", "display-message", "-p", "-c", strings.TrimSpace(target.Client), "#{client_width} #{client_height}")
 	size := claudeQuestionPopupSizeFor(string(clientSize), sizeErr)
-	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: settingsLocale()}.popupTitle(target.Asker), marker, target, size)
+	locale := i18n.FallbackLocale
+	if p.observerPaths != nil {
+		target.ObserverPaths = p.observerPaths
+		command := &aiCommand{nativeObserverPaths: p.observerPaths, lookupEnv: p.lookupEnv}
+		locale = command.locale()
+	} else {
+		locale = settingsLocale()
+	}
+	args, err := buildClaudeQuestionPopupArgs(binaryPath, claudeQuestionText{locale: locale}.popupTitle(target.Asker), marker, target, size)
 	if err != nil {
 		return err
 	}
@@ -269,8 +286,9 @@ func (p tmuxClaudeQuestionPopup) Open(ctx context.Context, target claudeQuestion
 
 // newClaudeQuestionShownMarker makes an empty marker file in the temporary
 // directory and returns its absolute path.
-func newClaudeQuestionShownMarker() (string, error) {
-	file, err := os.CreateTemp("", "projmux-question-shown-*")
+func newClaudeQuestionShownMarker() (string, error) { return newClaudeQuestionShownMarkerIn("") }
+func newClaudeQuestionShownMarkerIn(dir string) (string, error) {
+	file, err := os.CreateTemp(dir, "projmux-question-shown-*")
 	if err != nil {
 		return "", err
 	}
@@ -337,6 +355,14 @@ func buildClaudeQuestionPopupArgs(binaryPath, title, shown string, target claude
 		"--question", keybinding.TmuxShellQuote(target.QuestionID),
 		"--agent", keybinding.TmuxShellQuote(target.AgentUID),
 		"--store", keybinding.TmuxShellQuote(target.StorePath),
+	}
+	if target.ObserverPaths != nil {
+		if err := target.ObserverPaths.Validate(); err != nil {
+			return nil, err
+		}
+		for _, word := range nativeObserverPathArgs(*target.ObserverPaths) {
+			words = append(words, keybinding.TmuxShellQuote(word))
+		}
 	}
 	if shown = strings.TrimSpace(shown); shown != "" {
 		words = append(words, "--shown", keybinding.TmuxShellQuote(shown))
@@ -510,28 +536,78 @@ func (d *claudeQuestionPopupDriver) stop(answered bool) {
 	d.markEnded()
 }
 
-// runClaudeQuestionPicker is the process entry of the popup route.
-func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
+// claudeQuestionPickerInput carries the popup child routing and request.
+type claudeQuestionPickerInput struct {
+	QuestionID, AgentUID, StorePath, Shown string
+	Paths                                  mutationruntime.NativeObserverPaths
+}
+
+// Both the process entry and its outer diagnostic router use the Go flag
+// parser, including one/two dashes, equals forms, and last duplicate wins.
+func parseClaudeQuestionPickerInput(args []string, stderr io.Writer) (claudeQuestionPickerInput, error) {
+	input := claudeQuestionPickerInput{}
 	fs := flag.NewFlagSet("internal "+claudeQuestionPickerRoute, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	questionID := fs.String("question", "", "question record id")
-	agentUID := fs.String("agent", "", "uid of the Agent that asked")
-	storePath := fs.String("store", "", "question store file")
-	shown := fs.String("shown", "", "marker file to write once the popup runs")
+	fs.StringVar(&input.QuestionID, "question", "", "question record id")
+	fs.StringVar(&input.AgentUID, "agent", "", "uid of the Agent that asked")
+	fs.StringVar(&input.StorePath, "store", "", "question store file")
+	fs.StringVar(&input.Shown, "shown", "", "marker file to write once the popup runs")
+	fs.StringVar(&input.Paths.Paths.ConfigDir, "config-dir", "", "native observer Config directory")
+	fs.StringVar(&input.Paths.Paths.StateDir, "state-dir", "", "native observer State directory")
+	fs.StringVar(&input.Paths.RegistryPath, "registry-path", "", "native observer Registry file")
+	fs.StringVar(&input.Paths.Executable, "projmux-executable", "", "native observer executable")
 	if err := fs.Parse(args); err != nil {
-		return flagParseReported(err)
+		return input, flagParseReported(err)
 	}
+	if fs.NArg() != 0 {
+		return input, usageError("internal " + claudeQuestionPickerRoute + " does not accept positional arguments")
+	}
+	return input, nil
+}
+
+func runClaudeQuestionPicker(args []string, stdout, stderr io.Writer) error {
+	input, err := parseClaudeQuestionPickerInput(args, stderr)
+	if err != nil {
+		return err
+	}
+	paths := input.Paths
+	questionID, agentUID, storePath, shown := &input.QuestionID, &input.AgentUID, &input.StorePath, &input.Shown
+	if nativeObserverPathFlagsPresent(args) {
+		if err := paths.Validate(); err != nil {
+			return err
+		}
+		if filepath.Clean(*storePath) != agentquestion.NewStore(paths.Paths.StateDir).Path() {
+			return errors.New("native question store is outside its explicit state route")
+		}
+	}
+
 	// First of all, tell the hook the popup showed. The flag is optional, so
 	// a hook from before it still runs this picker.
 	markClaudeQuestionPopupShown(*shown)
-	if fs.NArg() != 0 || strings.TrimSpace(*questionID) == "" || strings.TrimSpace(*agentUID) == "" || strings.TrimSpace(*storePath) == "" {
+	if strings.TrimSpace(*questionID) == "" || strings.TrimSpace(*agentUID) == "" || strings.TrimSpace(*storePath) == "" {
 		return usageError("internal " + claudeQuestionPickerRoute + " requires --question <id> --agent <uid> --store <path>")
 	}
-	defer applyNativeUIThemeFromConfig(os.UserHomeDir, os.Getenv, "")()
+	locale := i18n.FallbackLocale
+	if paths != (mutationruntime.NativeObserverPaths{}) {
+		command := &aiCommand{nativeObserverPaths: &paths, lookupEnv: os.Getenv}
+		cfg, err := command.observerGlobalConfig()
+		if err != nil {
+			return err
+		}
+		locale = command.locale()
+		if !testing.Testing() {
+			nativeUIThemeMu.Lock()
+			applyNativeUIThemeLocked(theme.ResolveTheme(cfg.Theme))
+			defer func() { resetNativeUIThemeLocked(); nativeUIThemeMu.Unlock() }()
+		}
+	} else {
+		locale = settingsLocale()
+		defer applyNativeUIThemeFromConfig(os.UserHomeDir, os.Getenv, "")()
+	}
 	picker := claudeQuestionPicker{
 		store:  agentquestion.NewStoreAt(strings.TrimSpace(*storePath)),
 		runner: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		text:   claudeQuestionText{locale: settingsLocale()},
+		text:   claudeQuestionText{locale: locale},
 		out:    stdout,
 		pause:  time.Sleep,
 	}

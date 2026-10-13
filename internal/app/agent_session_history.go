@@ -128,6 +128,9 @@ func (c *createCommand) recordCreateAgentSessionHistory(record sessionhistory.Re
 // aiStateDir is the projmux state directory the hook ingest path writes its
 // own files under, resolved from the same seams as ai-ingest.log.
 func (c *aiCommand) aiStateDir() (string, error) {
+	if c != nil && c.nativeObserverPaths != nil {
+		return c.nativeObserverPaths.Paths.StateDir, c.nativeObserverPaths.Validate()
+	}
 	if c == nil || c.homeDir == nil {
 		return "", errors.New("resolve home directory: not configured")
 	}

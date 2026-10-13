@@ -371,6 +371,7 @@ type codexObserverStartupResult struct {
 }
 
 type codexLifecycleObserverTarget struct {
+	Paths             *mutationruntime.NativeObserverPaths
 	TransferGrant     *codexbroker.NativeTransferGrant
 	readTransferGrant bool
 	Identity          codexLifecycleIdentity
@@ -379,7 +380,7 @@ type codexLifecycleObserverTarget struct {
 }
 
 func (t codexLifecycleObserverTarget) valid() bool {
-	return t.Identity.valid() && t.Route.Flag() != "" && t.Route.Value != "" && t.NativeRoute.valid()
+	return (t.Paths == nil || t.Paths.Validate() == nil) && t.Identity.valid() && t.Route.Flag() != "" && t.Route.Value != "" && t.NativeRoute.valid()
 }
 
 type codexNativeObserver struct {
@@ -2145,7 +2146,7 @@ func (c *aiCommand) codexSemanticPolicyForInteraction(kind coremetadata.AgentInt
 	default:
 		return config.AISemanticNotify
 	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.observerConfigPaths()
 	if err != nil {
 		return config.AISemanticNotify
 	}
@@ -2160,63 +2161,52 @@ func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObser
 	if c == nil || !target.valid() {
 		return codexObserverStartupResult{Status: codexObserverStartupStale}
 	}
+	if target.Paths == nil {
+		target.Paths = c.nativeObserverPaths
+	}
+	if target.Paths != nil && target.Paths.Validate() != nil {
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
+	}
 	identity := target.Identity
 	runner := explicitTmuxRunner{Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, Target: target.Route}
-	sink := aiCodexLifecycleSink{command: c, runner: runner}
-	// The activation may have been replaced between create/resume committing
-	// its binding and reaching this synchronous transition. Pending is itself
-	// an authority write, so prove the same exact Registry + tmux Pane identity
-	// used by every observer projection before touching the runtime.
-	if !sink.BindingCurrent(identity) {
-		return codexObserverStartupResult{Status: codexObserverStartupStale}
+	command := c
+	if target.Paths != nil {
+		var err error
+		command, err = c.withNativeObserverPaths(*target.Paths)
+		if err != nil {
+			return codexObserverStartupResult{Status: codexObserverStartupStale}
+		}
 	}
-	if err := sink.SetAuthority(identity, codexAuthorityPending, "", string(codexObserverReasonConnecting)); err != nil {
-		return codexObserverStartupResult{Status: codexObserverStartupStale}
+	sink := aiCodexLifecycleSink{command: command, runner: runner}
+	starter := mutationruntime.NativeObserverStarter{
+		BindingCurrent: func() bool { return sink.BindingCurrent(identity) },
+		SetAuthority:   func(source, epoch, reason string) error { return sink.SetAuthority(identity, source, epoch, reason) },
+		SetAuthorityFrom: func(from, source, epoch, reason string) (bool, error) {
+			return sink.SetAuthorityFrom(identity, from, source, epoch, reason)
+		},
+		Launch: func() mutationruntime.NativeObserverStartup {
+			executable := command.executable
+			if executable == nil {
+				executable = os.Executable
+			}
+			path, err := executable()
+			result := codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
+			if err == nil {
+				result = startCodexLifecycleObserverProcess(path, target, codexObserverStartupTimeout)
+			}
+			return mutationruntime.NativeObserverStartup{Status: string(result.Status), Epoch: result.Epoch, Reason: result.Reason, Committed: result.committed}
+		},
 	}
-	executable := c.executable
-	if executable == nil {
-		executable = os.Executable
-	}
-	path, err := executable()
-	if err != nil {
-		return convergeCodexObserverStartupFallback(sink, identity, string(codexObserverReasonObserverStartFailed))
-	}
-	result := startCodexLifecycleObserverProcess(path, target, codexObserverStartupTimeout)
-	if result.Status == codexObserverStartupFallback && result.Reason != "" && !result.committed {
-		return convergeCodexObserverStartupFallback(sink, identity, result.Reason)
-	}
-	if result.Status == codexObserverStartupRetrying && !result.committed {
-		return convergeCodexObserverSlowStartup(sink, identity, result)
-	}
-	return result
-}
-
-// convergeCodexObserverSlowStartup is the creator's answer to an observer that
-// is still starting when the creator stops waiting. Provider hooks take over
-// only while the Pane still holds the pending authority this creator wrote: an
-// observer that committed meanwhile, or wrote its own retry reason, is left
-// alone, and a later ready epoch replaces the hook authority written here.
-func convergeCodexObserverSlowStartup(sink aiCodexLifecycleSink, identity codexLifecycleIdentity, result codexObserverStartupResult) codexObserverStartupResult {
-	if _, err := sink.SetAuthorityFrom(identity, codexAuthorityPending, codexAuthorityHook, "", result.Reason); err != nil && !sink.BindingCurrent(identity) {
-		return codexObserverStartupResult{Status: codexObserverStartupStale}
-	}
-	return result
-}
-
-func convergeCodexObserverStartupFallback(sink codexLifecycleSink, identity codexLifecycleIdentity, reason string) codexObserverStartupResult {
-	result := codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: reason}
-	if !sink.BindingCurrent(identity) {
-		return codexObserverStartupResult{Status: codexObserverStartupStale}
-	}
-	if err := sink.SetAuthority(identity, codexAuthorityHook, "", reason); err != nil && !sink.BindingCurrent(identity) {
-		return codexObserverStartupResult{Status: codexObserverStartupStale}
-	}
-	return result
+	result := starter.Start(context.Background())
+	return codexObserverStartupResult{Status: codexObserverStartupStatus(result.Status), Epoch: result.Epoch, Reason: result.Reason, committed: result.Committed}
 }
 
 func startCodexLifecycleObserverProcess(executable string, target codexLifecycleObserverTarget, timeout time.Duration) codexObserverStartupResult {
 	executable, err := validateCodexLifecycleObserverExecutable(executable)
 	if err != nil {
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
+	}
+	if target.Paths != nil && (target.Paths.Validate() != nil || executable != target.Paths.Executable) {
 		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
 	}
 	identity := target.Identity
@@ -2227,6 +2217,9 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 		"--endpoint-generation", target.NativeRoute.Endpoint.EndpointGenerationID,
 		"--endpoint-state", string(target.NativeRoute.State),
 		"--tui-executable", target.NativeRoute.TUIExecutable}
+	if target.Paths != nil {
+		args = append(args, nativeObserverPathArgs(*target.Paths)...)
+	}
 	if target.NativeRoute.Default {
 		args = append(args, "--endpoint-default", "true")
 	} else {
@@ -2251,7 +2244,14 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 		}
 		cmd.Stdin = bytes.NewReader(raw)
 	}
-	cmd.Env = append(withoutInheritedTmuxEnvironment(os.Environ()), codexObserverStartupEnvironment+"=1")
+	env := withoutInheritedTmuxEnvironment(os.Environ())
+	if target.Paths != nil {
+		env = slices.DeleteFunc(env, func(entry string) bool {
+			key, _, _ := strings.Cut(entry, "=")
+			return strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_")
+		})
+	}
+	cmd.Env = append(env, codexObserverStartupEnvironment+"=1")
 	configureCodexObserverProcess(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -2406,10 +2406,13 @@ func withoutInheritedTmuxEnvironment(env []string) []string {
 }
 
 func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserverTarget) error {
-	crashSink := startDetachedCrashSink(detachedCrashRoleCodexBrokerWatch, func() (string, error) {
-		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
-	})
-	defer crashSink.Close()
+	if target.Paths != nil {
+		var err error
+		c, err = c.withNativeObserverPaths(*target.Paths)
+		if err != nil {
+			return err
+		}
+	}
 	if target.readTransferGrant {
 		grant := &codexbroker.NativeTransferGrant{}
 		if json.NewDecoder(io.LimitReader(os.Stdin, 8192)).Decode(grant) != nil {
@@ -2432,7 +2435,26 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	signal.Ignore(syscall.SIGPIPE)
 	runner := explicitTmuxRunner{Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, Target: target.Route}
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
-	session, sessionErr := newCodexBrokerObserverSessionForRoute(target.Identity, "", nil, target.NativeRoute)
+	if !sink.BindingCurrent(target.Identity) {
+		if report := codexObserverStartupReporter(); report != nil {
+			report(codexObserverStartupResult{Status: codexObserverStartupStale})
+		}
+		return nil
+	}
+	crashSink := startDetachedCrashSink(detachedCrashRoleCodexBrokerWatch, func() (string, error) {
+		if target.Paths != nil {
+			return target.Paths.Paths.StateDir, nil
+		}
+		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
+	})
+	defer crashSink.Close()
+	var session *codexBrokerObserverSession
+	var sessionErr error
+	if target.Paths == nil {
+		session, sessionErr = newCodexBrokerObserverSessionForRoute(target.Identity, "", nil, target.NativeRoute)
+	} else {
+		session, sessionErr = newCodexBrokerObserverSessionForPaths(target.Identity, "", nil, target.NativeRoute, target.Paths)
+	}
 	if sessionErr != nil {
 		observer := codexNativeObserver{identity: target.Identity, sink: sink, reportStartup: codexObserverStartupReporter(), transitions: newCodexObserverLogJournal(c.appendAIIngestLog, c.now)}
 		observer.setSessionStartupFallback(sessionErr)
@@ -2440,6 +2462,14 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	}
 	session.transferGrant = target.TransferGrant
 	defer func() { _ = session.Close() }()
+	paths, pathsErr := c.observerConfigPaths()
+	if pathsErr != nil {
+		return pathsErr
+	}
+	popupExecutable := rawExecutablePath
+	if target.Paths != nil {
+		popupExecutable = func() (string, error) { return target.Paths.Executable, nil }
+	}
 	observer := codexNativeObserver{
 		identity:        target.Identity,
 		endpoint:        target.NativeRoute.Endpoint,
@@ -2449,15 +2479,15 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		reportStartup:   codexObserverStartupReporter(),
 		open:            session.Open,
 		questions: &codexQuestionChannel{
-			loadRegistry: c.loadRegistry, store: defaultAgentQuestionStore,
-			popup:     tmuxClaudeQuestionPopup{runner: explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target.Route}, executable: rawExecutablePath, routed: true},
-			answering: questionAnswering, window: claudeQuestionWindow,
+			loadRegistry: c.loadRegistry, store: func() (*agentquestion.Store, error) { return agentquestion.NewStore(paths.StateDir), nil },
+			popup:     tmuxClaudeQuestionPopup{observerPaths: target.Paths, runner: explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target.Route}, executable: popupExecutable, routed: true},
+			answering: func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }, window: func() time.Duration { return claudeQuestionWindowFromPaths(paths) },
 			newID: agentquestion.NewID,
 		},
 		openTimeout: codexBrokerObserverOpenTimeout,
 		transitions: newCodexObserverLogJournal(c.appendAIIngestLog, c.now),
 	}
-	if paths, err := config.DefaultPathsFromEnv(); err == nil {
+	if pathsErr == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
 			return startCodexControlServer(paths.StateDir, observer.endpoint, epoch)
 		}
@@ -2473,6 +2503,20 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 		}
 		value := strings.TrimSpace(args[1])
 		switch args[0] {
+		case "--config-dir", "--state-dir", "--registry-path", "--projmux-executable":
+			if target.Paths == nil {
+				target.Paths = &mutationruntime.NativeObserverPaths{}
+			}
+			switch args[0] {
+			case "--config-dir":
+				target.Paths.Paths.ConfigDir = value
+			case "--state-dir":
+				target.Paths.Paths.StateDir = value
+			case "--registry-path":
+				target.Paths.RegistryPath = value
+			case "--projmux-executable":
+				target.Paths.Executable = value
+			}
 		case "--transfer-grant":
 			if value != "stdin" {
 				return target, errors.New("invalid native transfer input")

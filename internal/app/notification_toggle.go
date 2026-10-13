@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"github.com/crevissepartners/projmux/internal/config"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -186,6 +187,13 @@ func (c *aiCommand) desktopNotifyMode() desktopNotifyMode {
 // formatting) while letting future call sites (e.g. diagnostics) reuse
 // the same resolution path.
 func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNotifySource) {
+	if c.nativeObserverPaths != nil {
+		mode, err := config.LoadDesktopNotifyModeFile(c.nativeObserverPaths.Paths.DesktopNotifyModeFile())
+		if err == nil {
+			return desktopNotifyModeFromConfig(mode), desktopNotifySourceSetting
+		}
+		return desktopNotifyModeNotify, desktopNotifySourceDefault
+	}
 	resolver := desktopNotifyResolver{
 		lookupEnv: c.lookupEnv,
 		readConfigMode: func() (desktopNotifyMode, bool) {

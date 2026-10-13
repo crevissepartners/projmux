@@ -53,7 +53,7 @@ func (c *aiCommand) codexAuthorityFencePath(paneUID string) (string, error) {
 	if strings.TrimSpace(paneUID) == "" {
 		return "", fmt.Errorf("codex authority fence requires pane uid")
 	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.observerConfigPaths()
 	if err != nil {
 		return "", fmt.Errorf("resolve Codex authority fence: %w", err)
 	}

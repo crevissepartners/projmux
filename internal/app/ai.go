@@ -74,6 +74,7 @@ const (
 )
 
 type aiCommand struct {
+	nativeObserverPaths           *mutationruntime.NativeObserverPaths
 	nativePicker                  intpicker.Runner
 	executable                    func() (string, error)
 	lookupEnv                     func(string) string
@@ -178,6 +179,7 @@ func newAICommand() *aiCommand {
 // instead of copying the locks and sharing the maps.
 func (c *aiCommand) cloneSeams() *aiCommand {
 	return &aiCommand{
+		nativeObserverPaths:           c.nativeObserverPaths,
 		nativePicker:                  c.nativePicker,
 		executable:                    c.executable,
 		lookupEnv:                     c.lookupEnv,
@@ -2635,6 +2637,10 @@ func (c *aiCommand) env(name string) string {
 func (c *aiCommand) locale() i18n.Locale {
 	if c == nil {
 		return i18n.FallbackLocale
+	}
+	if c.nativeObserverPaths != nil {
+		cfg, _ := c.observerGlobalConfig()
+		return i18n.ResolveLocale(i18n.LocaleOptions{ConfigOverride: cfg.UI.Locale, LookupEnv: appLocaleLookup(c.lookupEnv)}).Locale
 	}
 	return appLocale(c.homeDir, c.lookupEnv)
 }
