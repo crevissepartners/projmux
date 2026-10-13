@@ -487,14 +487,20 @@ func publicReasonCallee(call *ast.CallExpr) string {
 }
 
 // publicReasonArg is the reason expression of a rejection constructor:
-// usageError(reason), createUsage(reason), errors.New(reason), fmt.Errorf(format, ...), and the
-// Detail of a metadata InputError (usagecmd). Anything else returns nil.
+// usageError(reason), createUsage(reason), usageErrorFor(reason, cause),
+// createAgentUsage(code, reason[, cause]), errors.New(reason),
+// fmt.Errorf(format, ...), and the Detail of a metadata
+// InputError (usagecmd). Anything else returns nil.
 func publicReasonArg(node ast.Node) ast.Expr {
 	switch n := node.(type) {
 	case *ast.CallExpr:
 		switch publicReasonCallee(n) {
 		case "usageError", "createUsage", "errors.New":
 			if len(n.Args) == 1 {
+				return n.Args[0]
+			}
+		case "usageErrorFor":
+			if len(n.Args) == 2 {
 				return n.Args[0]
 			}
 		case "createAgentUsage":
@@ -927,5 +933,25 @@ func causedValid() error { return createAgentUsage("reason", "create agent requi
 	failures, _ := publicReasonProblems(sites, nil)
 	if len(sites) != 6 || len(failures) != 3 || !strings.Contains(failures[0], "notify push") {
 		t.Fatalf("sites %+v failures %v", sites, failures)
+	}
+}
+
+func TestPublicRouteReasonGuardRecognizesUsageErrorCause(t *testing.T) {
+	t.Parallel()
+	const src = `package app
+func refusal() error { return usageErrorFor("notify push requires input", nil) }
+`
+	pkgs := []flagParseGuardPackage{{importPath: "example.test/internal/app", scan: true, files: []flagParseGuardFile{{name: "synthetic/cause.go", src: []byte(src)}}}}
+	eval, problems := newFlagSetNameEval(pkgs)
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	sites, problems := publicReasonCollect(pkgs, eval)
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	failures, _ := publicReasonProblems(sites, nil)
+	if len(failures) != 1 || !strings.Contains(failures[0], `"notify push" is not a catalog route`) {
+		t.Fatalf("cause constructor escaped reason audit: %v", failures)
 	}
 }

@@ -139,15 +139,16 @@ func personaFlagToken(fs *flag.FlagSet, arg string) bool {
 // Refusal maps a persona package refusal onto the CLI's exit codes: a
 // bad name or oversized content is invalid input (exit 2). Every other error,
 // including persona-not-found, keeps its text and exits 1. The reason token is
-// in the text either way. The refusal calls the file instructions, except on
-// the deprecated `persona` spelling, which keeps its old noun.
+// in the text either way, and the refusal stays reachable with errors.As. The
+// refusal calls the file instructions, except on the deprecated `persona`
+// spelling, which keeps its old noun.
 func Refusal(spelling string, err error) error {
 	if strings.HasPrefix(spelling, persona.DeprecatedNoun+" ") {
 		err = persona.SpelledAs(err, persona.DeprecatedNoun)
 	}
 	switch persona.ReasonOf(err) {
 	case persona.ReasonNameInvalid, persona.ReasonTooLarge:
-		return &coremetadata.InputError{Detail: spelling + ": " + err.Error()}
+		return &coremetadata.InputError{Detail: spelling + ": " + err.Error(), Cause: err}
 	default:
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
@@ -397,7 +398,7 @@ func (c *Command) runEdit(args []string, stdout, stderr io.Writer) error {
 			// Keep the edit so the work is not lost; the stored persona
 			// is unchanged.
 			keepTemp = true
-			return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" edit: %v; nothing was written, the edited copy is kept at %s", err, tempPath)}
+			return &coremetadata.InputError{Detail: fmt.Sprintf(c.spelling()+" edit: %v; nothing was written, the edited copy is kept at %s", err, tempPath), Cause: err}
 		}
 		return fmt.Errorf(c.spelling()+" edit: read the edited copy: %w; nothing was written", err)
 	}

@@ -413,6 +413,7 @@ func TestAgentPersonaAttachRefusesABusyAgentWithoutYesAndLeavesNoTrace(t *testin
 			if err == nil || !strings.Contains(err.Error(), personaReasonAgentBusy) || !IsUsageError(err) {
 				t.Fatalf("busy attach err = %v, want a %s usage refusal", err, personaReasonAgentBusy)
 			}
+			assertPersonaRefusalCause(t, err, personaReasonAgentBusy)
 			f.assertNothingChanged(t, before, beforeAnnotations)
 
 			stdout, _, err := runRoute(t, f.command, "persona", "attach", "uid:"+personaAttachAgent, "go-reviewer", "--dry-run", "-o", "json")
@@ -507,6 +508,7 @@ func TestAgentPersonaRefusalsCarryTheirReasonTokenAndLeaveNoTrace(t *testing.T) 
 			if err == nil || !strings.Contains(err.Error(), test.reason) || !IsUsageError(err) {
 				t.Fatalf("attach err = %v, want a %s usage refusal", err, test.reason)
 			}
+			assertPersonaRefusalCause(t, err, test.reason)
 			f.assertNothingChanged(t, before, beforeAnnotations)
 		})
 	}
@@ -999,5 +1001,64 @@ func TestManagedPaneMirrorLiveReadsTheExactDeleteInventory(t *testing.T) {
 	}
 	if _, err := managedPaneMirrorLive(context.Background(), runtime, personaAttachPane); err == nil || !strings.Contains(err.Error(), "lost server") {
 		t.Fatalf("failed inventory err = %v, want the tmux error", err)
+	}
+}
+
+// assertPersonaRefusalCause also checks reachability through an outer wrapper.
+func assertPersonaRefusalCause(t *testing.T, err error, reason string) {
+	t.Helper()
+	wrapped := errors.Join(errors.New("caller context"), err)
+	switch reason {
+	case personaReasonAgentBusy, personaReasonSelfTarget, personaReasonNoConversation:
+		var cause *agentPersonaRefusal
+		if !errors.As(wrapped, &cause) || cause.Reason != reason {
+			t.Fatalf("typed app cause = %v, want %s", cause, reason)
+		}
+	default:
+		var cause *persona.Error
+		if !errors.As(wrapped, &cause) || cause.Reason != reason {
+			t.Fatalf("typed persona cause = %v, want %s", cause, reason)
+		}
+	}
+}
+
+func TestAgentPersonaInputRefusalsPreserveCausesAndSpelling(t *testing.T) {
+	for _, noun := range []string{"instructions", "persona"} {
+		for _, reason := range []string{persona.ReasonNameInvalid, persona.ReasonTooLarge} {
+			t.Run(noun+"/"+reason, func(t *testing.T) {
+				f := newPersonaAttachFixture(t)
+				name := "../invalid"
+				if reason == persona.ReasonTooLarge {
+					name = "oversized"
+					store := personaStoreFor(t, f.planner)
+					// A stored file can outgrow the limit outside this command.
+					paths, err := configPaths(f.planner.homeDir, f.planner.lookupEnv)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := store.Write(name, []byte("original")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(paths.ConfigDir, persona.DirName, name+".md"), []byte(strings.Repeat("x", persona.MaxSize+1)), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before, annotations := f.store.snapshot(), f.agent(t).Metadata.Annotations
+				stdout, stderr, err := runRoute(t, f.command, noun, "attach", "uid:"+personaAttachAgent, name)
+				if err == nil || !IsUsageError(err) || stdout != "" || stderr != "" {
+					t.Fatalf("refusal stdout=%q stderr=%q err=%v", stdout, stderr, err)
+				}
+				var cause *persona.Error
+				if !errors.As(err, &cause) {
+					t.Fatalf("missing typed cause: %v", err)
+				}
+				want := "agent " + noun + " attach: " + persona.SpelledAs(cause, noun).Error() + "; nothing was changed"
+				if err.Error() != want {
+					t.Fatalf("text = %q, want %q", err.Error(), want)
+				}
+				assertPersonaRefusalCause(t, err, reason)
+				f.assertNothingChanged(t, before, annotations)
+			})
+		}
 	}
 }
