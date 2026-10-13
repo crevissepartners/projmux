@@ -620,6 +620,37 @@ jq -rR 'fromjson? | select(.event == "codex.broker.refusal") | .code' "$(projmux
 Replace `.code` with `"\(.source) \(.operation) \(.code)"` to split the
 counts by receiving process and operation.
 
+## Mutation lock measurements
+
+Internal callers may declare a closed inventory with `NewMutationLockPolicy`,
+then pass that immutable policy to `NewMutationLockRecorder` and
+`NewStoreWithMutationLockPolicy`. The inventory is copied; tokens are lowercase
+ASCII names with optional dot, underscore, or hyphen separators, at most 96
+bytes, with no empty segments or duplicates. Declare stable acquisition sites,
+never user input, identities, paths, or secrets. There is no default inventory.
+`NewStore` and readers with a different inventory reject these records. Policies
+are fixed per Store, including `Append`, `Read`, and `ReadOnly`; journal paths,
+retention, and the default CLI behavior retain their existing contracts.
+
+The recorder measures completed acquisitions supplied by the caller; it does
+not acquire locks or add CLI instrumentation. Its first completion after each
+ten-minute interval emits `mutation.lock.summary` for each active site, in
+inventory order. Idle sites emit nothing. Waits strictly over 250 ms also emit
+`mutation.lock.wait`, at most once per site per minute. Summary resets preserve
+that rate limit. Negative wait and held durations are clamped to zero. Calls to
+`Record` are serialized; nil recorders and absent writers are safe. Appends are
+best-effort, including interval resets and rate limits after append failure.
+
+Both events use `component=mutation`, `level=info`, `result=success`, and
+`operation=<declared site>`. Summary code is `mutation.lock.summary`, with the
+exact numeric message `count=N wait_total_ms=N wait_max_ms=N held_total_ms=N
+held_max_ms=N` (count is positive). Wait code is `mutation.lock.wait.slow`, with
+`wait_ms=N held_ms=N`. Each N is a nonnegative decimal integer in milliseconds,
+except count. Beyond the common timestamp, run ID, version, and backend, no
+identities, paths, arguments, other family fields, or unknown on-disk fields
+are accepted. Other families reject the mutation component and measurement
+codes/sites through their existing closed validators.
+
 ## Storage and retention
 
 The path is

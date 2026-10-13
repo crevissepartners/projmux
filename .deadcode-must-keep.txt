@@ -207,14 +207,19 @@ MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tes
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironment retained as the registry schema migration seam.
+MutationLockRecorder.Record	Internal caller-declared mutation lock measurement seam; concurrent, boundary, closed-policy and best-effort tests preserve its contract.
+MutationLockRecorder.emit	Internal mutation lock recorder writer path; retained with Record and verified by failure, rate-limit and Store round-trip tests.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewClient	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
+NewMutationLockPolicy	Internal immutable acquisition-site policy constructor; verified by caller-copy, invalid-token and Store reader rejection tests.
+NewMutationLockRecorder	Internal caller-declared mutation lock aggregation constructor; exercised by fake clock/writer and concurrency tests.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
 NewReader	Runtime SDK production reader wiring retained for external ObserveRuntime consumers; covered by CLI parity and external consumer tests.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewSDKCreate	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
+NewStoreWithMutationLockPolicy	Internal fixed-policy journal constructor; Append, Read and ReadOnly use the same closed inventory, verified by round-trip and rejection tests.
 NewWithConfig	Credential and endpoint injection constructor retained as the only seam that exercises the live Claude usage adapter without real credentials.
 NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
 NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
