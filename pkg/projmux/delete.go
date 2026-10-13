@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/core/receipt"
+	"path/filepath"
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -26,7 +28,7 @@ const (
 	CodeDeleteExecutionFailed    Code = "delete-execution-failed"
 )
 
-// Delete removes tmux Windows, Panes or Agents selected by one explicit ref.
+// Delete removes tmux Windows/Panes/Agents or one exact process Agent.
 // DryRun writes nothing. Confirm is required unless the CLI's leaf Pane rule
 // exempts the plan. Cancellation is effective before admission only; admitted
 // execution and compensation finish regardless of cancellation. Partial kill
@@ -79,6 +81,9 @@ func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, r
 	}
 	if err := unregisterCopy(mutations.PreviewDelete(mutations.DeletePlan(plan)), &out.Plan); err != nil {
 		return out, err
+	}
+	if mutationruntime.IsProcessAgentPlan(reg, plan) {
+		return c.deleteProcess(ctx, req, reg, plan, out)
 	}
 	if err := deleteTmuxOnly(reg, plan); err != nil {
 		return out, err
@@ -163,7 +168,11 @@ func deleteRefusal(code Code, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	// A refused admission returns the caller's context error directly. An
+	// admitted process retirement failure keeps the public typed SDK refusal,
+	// even when its preserved cause contains a deadline/cancellation error.
+	var processFailure *mutationruntime.ProcessDeleteError
+	if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && !errors.As(err, &processFailure) {
 		return err
 	}
 	var failure *mutations.Failure
@@ -205,4 +214,50 @@ func deleteTmuxOnly(reg metadata.Registry, plan mutationruntime.DeletePlan) erro
 }
 func deleteQuery(req core.DeleteRequest) (selector.Query, error) {
 	return mutationQuery(req.Kind, req.Ref, req.Project, req.Window, "DeleteRequest")
+}
+
+func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg metadata.Registry, plan mutationruntime.DeletePlan, out core.DeleteResult) (core.DeleteResult, error) {
+	if !plan.ExactUID || len(plan.Targets) != 1 {
+		return out, deleteRefusal(CodeDeleteRuntimeRefused, mutationruntime.ProcessDeleteRefusal("process-delete-refused", "", "delete agent requires one exact uid: Agent reference"))
+	}
+	if req.SocketPath != "" && !filepath.IsAbs(req.SocketPath) {
+		return out, &Refusal{Code: CodeRuntimeRequestInvalid, message: "DeleteRequest.SocketPath must be absolute"}
+	}
+	executor := mutationruntime.NewProcessAgentDeleter(store.PathFor(c.paths.StateDir))
+	targets, err := executor.ClassifyPlan(reg, plan)
+	if err != nil {
+		return out, deleteRefusal(CodeDeleteRuntimeRefused, err)
+	}
+	if req.DryRun {
+		return out, nil
+	}
+	if !req.Confirm {
+		return out, &Refusal{Code: CodeConfirmationRequired, message: "DeleteRequest.Confirm is required; use DryRun to review the deletion plan first"}
+	}
+	operation, err := (&mutationruntime.DeleteExecutor{}).MintOperationID()
+	if err != nil {
+		return out, err
+	}
+	outcome, err := executor.Execute(ctx, plan, targets, nil)
+	if err != nil {
+		return out, deleteRefusal(CodeDeleteExecutionFailed, err)
+	}
+	out.Committed = true
+	out.OperationID = operation
+	if err = unregisterCopy(outcome.Affected, &out.Plan.Affected); err != nil {
+		return out, err
+	}
+	r := mutationruntime.ChildDeleteReceipt(plan.Kind, plan, mutationruntime.WindowLiveDeletePlan{}, mutationruntime.PaneLiveDeletePlan{}, false)
+	for _, t := range outcome.Targets {
+		if t.Runtime == "stopped" {
+			r.Effects.Runtime = receipt.RuntimeStopped
+		}
+	}
+	if err = unregisterCopy(r, &out.Receipt); err != nil {
+		return out, err
+	}
+	var warnings bytes.Buffer
+	mutations.RecordDeletion(func() (string, error) { return c.paths.StateDir, nil }, mutations.NewDeletionRecord(mutationruntime.ChildDeletionOperation(plan.Kind), operation, mutations.DeletionViaSDK, outcome.Actor, mutations.DeletionTargetsOf(mutations.DeletePlan(plan)), outcome.Affected), &warnings)
+	out.Notice = strings.TrimSuffix(warnings.String(), "\n")
+	return out, nil
 }

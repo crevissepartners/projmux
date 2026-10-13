@@ -5,6 +5,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/config"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"github.com/crevissepartners/projmux/pkg/projmux"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -343,4 +348,232 @@ func TestProcessDeleteCleanupGuidanceActualCLI(t *testing.T) {
 		t.Fatalf("guidance --yes: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	f.requireDeleted(t, owner)
+}
+
+// SDK and CLI share the exact delete-stop owner admission and actual retirement.
+func TestProcessDeleteSDKRunningAndOfflineActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		for _, offline := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/offline=%t", provider, offline), func(t *testing.T) {
+				f := newProcessDeleteCLI(t, provider)
+				f.ownerArgs = append(f.ownerArgs, "--", "initial task")
+				ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+				defer cancel()
+				owner := f.startOwner(t, ctx)
+				before := f.registry(t)
+				pane, _ := before.Pane(owner.pane)
+				activation := *pane.Status.Activation.Process
+				if offline {
+					_ = owner.input.Close()
+					if err := owner.wait(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				paths, err := config.DefaultPathsFromEnv()
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, err := projmux.NewClient(projmux.Options{ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, HomeDir: f.root})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Explicit roots stay bound even with poisoned ambient routing.
+				poison := filepath.Join(f.root, "poison")
+				if err = os.Mkdir(poison, 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("PROJMUX_STATE_DIR", poison)
+				t.Setenv("HOME", poison)
+				req := core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:" + owner.agent, DryRun: true}
+				result, err := c.Delete(ctx, req)
+				if err != nil || result.Committed || len(result.Plan.Targets) != 1 {
+					t.Fatalf("dry %+v %v", result, err)
+				}
+				f.requireKept(t, owner)
+				req.DryRun = false
+				req.Confirm = true
+				result, err = c.Delete(ctx, req)
+				if err != nil || !result.Committed {
+					t.Fatalf("delete %+v %v", result, err)
+				}
+				if !offline {
+					if err = owner.wait(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				f.requireDeleted(t, owner)
+				if !mutationruntime.ProcessActivationAbsent(activation, localipc.Process) {
+					t.Fatal("kernel owner/child still alive")
+				}
+				if result.Receipt.Target.UID != owner.agent || (result.Receipt.Effects.Runtime == core.RuntimeStopped) != (!offline) {
+					t.Fatalf("receipt %+v", result.Receipt)
+				}
+				entries, _ := os.ReadDir(poison)
+				if len(entries) != 0 {
+					t.Fatal("ambient root written")
+				}
+			})
+		}
+	}
+}
+
+func TestProcessDeleteClaimSDKCLIProjectionAndNoFakeWait(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		for _, sdk := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/sdk=%t", provider, sdk), func(t *testing.T) {
+				f := deferredResumeCLIFixture(t, provider)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+				awaitDetachedInitialConversation(t, ctx, f, first.ref)
+				first.shutdown(t)
+				cleanupDetachedResume(t, f, first.ref)
+				detachedResumeCLI(t, ctx, f, "agent", "resume", first.ref, "--detach", "--wait-for-peer")
+				uid := strings.TrimPrefix(first.ref, "uid:")
+				path := mutationruntime.DeferredClaimPath(f.store.Path(), uid)
+				claim, err := mutationruntime.ReadDeferredClaim(path)
+				if err != nil || !mutationruntime.DeferredClaimLive(claim) {
+					t.Fatalf("claim %+v %v", claim, err)
+				}
+				before, _ := f.store.LoadReadOnly()
+				a, _ := before.Agent(uid)
+				p, _ := before.Pane(a.Status.PaneRef)
+				wait := p.Status.LastTermination.Clone()
+				dry := detachedResumeCLI(t, ctx, f, "delete", "agent", first.ref, "--dry-run")
+				if !bytes.Contains(dry, []byte("runtime=offline evidence=wait:")) || bytes.Contains(dry, []byte("would stop")) {
+					t.Fatalf("claim projection changed: %s", dry)
+				}
+				// A copied baseline verifies the exact public dry-run bytes on this same UID.
+				if baseline := os.Getenv("PMX_TEST_BASELINE_CLI"); baseline != "" {
+					old, err := exec.CommandContext(ctx, baseline, "delete", "agent", first.ref, "--dry-run").CombinedOutput()
+					if err != nil || !bytes.Equal(old, dry) {
+						t.Fatalf("baseline dry changed: %v old%s new%s", err, old, dry)
+					}
+				}
+				current, _ := mutationruntime.ReadDeferredClaim(path)
+				if current.StopRequested || !mutationruntime.DeferredClaimLive(claim) {
+					t.Fatal("dry requested claim stop")
+				}
+				// Protection is checked before the private claim admission, too.
+				_, err = f.store.Update(func(r *coremetadata.Registry) error {
+					a, _ := r.Agent(uid)
+					if a.Metadata.Labels == nil {
+						a.Metadata.Labels = map[string]string{}
+					}
+					a.Metadata.Labels[coremetadata.LabelProtected] = "true"
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				paths, err := config.DefaultPathsFromEnv()
+				if err != nil {
+					t.Fatal(err)
+				}
+				client, err := projmux.NewClient(projmux.Options{ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, HomeDir: f.root})
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: first.ref, Confirm: true})
+				var refusal *projmux.Refusal
+				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeAgentProtected {
+					t.Fatalf("protected %v", err)
+				}
+				current, _ = mutationruntime.ReadDeferredClaim(path)
+				if current.StopRequested || !mutationruntime.DeferredClaimLive(claim) {
+					t.Fatal("protected stopped claim")
+				}
+				_, err = f.store.Update(func(r *coremetadata.Registry) error {
+					a, _ := r.Agent(uid)
+					delete(a.Metadata.Labels, coremetadata.LabelProtected)
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sdk {
+					result, err := client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: first.ref, Confirm: true})
+					if err != nil || !result.Committed || result.Receipt.Effects.Runtime != core.RuntimeUnchanged {
+						t.Fatalf("SDK claim %+v %v", result, err)
+					}
+				} else {
+					out := detachedResumeCLI(t, ctx, f, "delete", "agent", first.ref, "--yes")
+					if !bytes.Contains(out, []byte("runtime=offline evidence=wait:")) || !bytes.Contains(out, []byte("no process was signaled")) || !bytes.Contains(out, []byte("runtime=unchanged")) {
+						t.Fatalf("CLI claim %s", out)
+					}
+				}
+				if !mutationruntime.ProcessIdentityAbsent(claim.Process, localipc.Process) {
+					t.Fatal("delete returned before claimant kernel retirement")
+				}
+				if latest, err := mutationruntime.ReadDeferredClaim(path); err != nil || latest.Nonce != "" {
+					t.Fatalf("claim retained %+v %v", latest, err)
+				}
+				after, _ := f.store.LoadReadOnly()
+				if _, ok := after.Agent(uid); ok {
+					t.Fatal("Agent retained")
+				}
+				if _, ok := after.Pane(p.Metadata.UID); ok {
+					t.Fatal("Pane retained")
+				}
+				// The only retirement witness belongs to the original born generation.
+				_, err = mutationruntime.ReadProcessRetirement(f.store.Path(), p.Status.ProcessSession.Binding, wait)
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestProcessDeleteClaimBaselineActualCLI(t *testing.T) {
+	baseline := os.Getenv("PMX_TEST_BASELINE_CLI")
+	if baseline == "" {
+		t.Log("baseline comparison is an additional explicit source qualification")
+		return
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			awaitDetachedInitialConversation(t, ctx, f, first.ref)
+			first.shutdown(t)
+			cleanupDetachedResume(t, f, first.ref)
+			detachedResumeCLI(t, ctx, f, "agent", "resume", first.ref, "--detach", "--wait-for-peer")
+			uid := strings.TrimPrefix(first.ref, "uid:")
+			path := mutationruntime.DeferredClaimPath(f.store.Path(), uid)
+			oldClaim, err := mutationruntime.ReadDeferredClaim(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _ := f.store.LoadReadOnly()
+			oldOutput, err := exec.CommandContext(ctx, baseline, "delete", "agent", first.ref, "--yes").CombinedOutput()
+			if err != nil {
+				t.Fatalf("baseline delete %v %s", err, oldOutput)
+			}
+			liveAtReturn := !mutationruntime.ProcessIdentityAbsent(oldClaim.Process, localipc.Process)
+			t.Logf("baseline root=%s claimant-pid=%d claimant-start=%s returned-live=%t output=%s", f.root, oldClaim.Process.PID, oldClaim.Process.Start, liveAtReturn, oldOutput)
+			if _, err = f.store.Update(func(r *coremetadata.Registry) error { *r = before.Clone(); return nil }); err != nil {
+				t.Fatal(err)
+			}
+			detachedResumeCLI(t, ctx, f, "agent", "stop", first.ref)
+			if !mutationruntime.ProcessIdentityAbsent(oldClaim.Process, localipc.Process) {
+				t.Fatal("baseline exact recovery retained claimant")
+			}
+
+			detachedResumeCLI(t, ctx, f, "agent", "resume", first.ref, "--detach", "--wait-for-peer")
+			next, err := mutationruntime.ReadDeferredClaim(path)
+			if err != nil || !mutationruntime.DeferredClaimLive(next) {
+				t.Fatal(err)
+			}
+			newOutput := detachedResumeCLI(t, ctx, f, "delete", "agent", first.ref, "--yes")
+			if !bytes.Equal(oldOutput, newOutput) {
+				t.Fatalf("CLI actual bytes changed: old%s new%s", oldOutput, newOutput)
+			}
+			if !mutationruntime.ProcessIdentityAbsent(next.Process, localipc.Process) {
+				t.Fatal("new delete returned with claimant live")
+			}
+		})
+	}
 }

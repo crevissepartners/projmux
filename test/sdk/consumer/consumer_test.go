@@ -2,6 +2,7 @@ package consumer_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -521,5 +522,55 @@ func TestExternalStopAgentConsumer(t *testing.T) {
 	}
 	if _, err = os.Stat(state); !os.IsNotExist(err) {
 		t.Fatalf("preflight created state: %v", err)
+	}
+}
+
+// This consumer seeds a public resource fixture without importing internal code.
+func TestExternalDeleteProcessAgentConsumer(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	path := filepath.Join(state, "metadata", "registry.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	meta := func(uid, name string, kind core.Kind, owner string) core.ObjectMeta {
+		m := core.ObjectMeta{UID: uid, Name: name}
+		if owner != "" {
+			m.OwnerRef = &core.OwnerRef{Kind: kind, UID: owner}
+		}
+		return m
+	}
+	project := core.Project{APIVersion: "projmux.io/v1alpha1", Kind: core.KindProject, Metadata: meta("project", "project", "", ""), Spec: core.ProjectSpec{Root: root, PrimaryWindowRef: "window"}}
+	window := core.Window{APIVersion: "projmux.io/v1alpha1", Kind: core.KindWindow, Metadata: meta("window", "window", core.KindProject, "project"), Spec: core.WindowSpec{AnchorPaneRef: "pane"}}
+	agent := core.Agent{APIVersion: "projmux.io/v1alpha1", Kind: core.KindAgent, Metadata: meta("agent", "worker", core.KindWindow, "window"), Spec: core.AgentSpec{Provider: "codex"}, Status: core.AgentStatus{Phase: core.PhaseOffline, PaneRef: "pane"}}
+	pane := core.Pane{APIVersion: "projmux.io/v1alpha1", Kind: core.KindPane, Metadata: meta("pane", "worker-pane", core.KindAgent, "agent"), Spec: core.PaneSpec{Runtime: core.PaneRuntimeSpec{Kind: core.RuntimeProcess}, Role: core.PaneRoleAgent}}
+	data, err := json.Marshal(map[string]any{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5, "projects": []core.Project{project}, "windows": []core.Window{window}, "agents": []core.Agent{agent}, "panes": []core.Pane{pane}, "nameReservations": []map[string]any{{"kind": "Project", "uid": "project", "name": "project"}, {"scope": "project", "kind": "Window", "uid": "window", "name": "window"}, {"scope": "project", "kind": "Agent", "uid": "agent", "name": "worker"}, {"scope": "project", "kind": "Pane", "uid": "pane", "name": "worker-pane"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: state, HomeDir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:agent", DryRun: true}
+	preview, err := c.Delete(context.Background(), req)
+	if err != nil || preview.Committed || len(preview.Plan.Targets) != 1 {
+		t.Fatalf("external preview %+v %v", preview, err)
+	}
+	req.DryRun = false
+	req.Confirm = true
+	deleted, err := c.Delete(context.Background(), req)
+	if err != nil || !deleted.Committed || deleted.Receipt.Target.UID != "agent" {
+		t.Fatalf("external delete %+v %v", deleted, err)
+	}
+	for _, ref := range []core.Ref{{Kind: core.KindAgent, Value: "uid:agent"}, {Kind: core.KindPane, Value: "uid:pane"}} {
+		_, err = c.GetResource(context.Background(), ref)
+		var f *projmux.Refusal
+		if !errors.As(err, &f) || f.Code != projmux.CodeResourceNotFound {
+			t.Fatalf("external removal %v", err)
+		}
 	}
 }

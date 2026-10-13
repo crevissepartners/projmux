@@ -361,6 +361,8 @@ func TestProtectedMultiHostOperationAdmission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Distinct owners have distinct synthetic birth PIDs.
+			activation.HostProcess.PID, activation.Child.PID = 21, 22
 			activation.Binding.AgentUID, activation.Binding.PaneUID = second.Metadata.UID, secondPane.Metadata.UID
 			activation.Binding.Generation, activation.Binding.OperationID, activation.Binding.HostInstanceID = "gen-second", "op-second", "host-second"
 			p, _ := reg.Pane(secondPane.Metadata.UID)

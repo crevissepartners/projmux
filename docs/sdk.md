@@ -174,3 +174,39 @@ Registry resources unchanged. Inspect the exact Agent/generation before using
 public resume or delete recovery; uncertain retirement is not automatically
 retried. Claim lock admission honors caller cancellation and deadlines, including
 when another birth or claim release holds the guard.
+
+## Delete a headless Agent
+
+`Client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:...",
+DryRun: true})` previews one exact process Agent without stopping its provider
+or claimant. Set `Confirm: true` and clear `DryRun` to execute the reviewed
+request. Project and Window can scope the exact UID. Process Agent deletion
+requires no tmux socket; an explicitly supplied SocketPath must still be
+absolute. Direct process Pane and Window deletion remains unsupported.
+
+CLI and SDK use the same delete executor and protected `delete-stop` owner
+admission. Protection and the exact cascade are rechecked before Stop or claim
+release. A born provider must record its actual Wait for the same binding, and
+both its owner and child must retire in the kernel before deletion. A child
+that survives its owner refuses deletion. A child-free detached claim is
+released under its birth guard, without a signal or a fabricated Wait, before
+its Agent and managed Pane are removed. Existing empty virtual Window cleanup
+is preserved. Cancellation prevents admission; admitted retirement and deletion
+finish independently of later caller cancellation.
+
+Inactive offline/unknown Registry cleanup keeps existing CLI parity when no
+owner/child witness or claim is available. This differs from `StopAgent`, which
+refuses an unwitnessed retired generation. Present private retirement evidence
+must confirm exact owner/child retirement. Previously, CLI claim deletion could remove Registry resources and return while
+the claimant remained alive. The shared executor now durably requests claim
+release and waits for the claimant to retire before removing those resources.
+The existing CLI runtime/evidence projection, text and receipt remain unchanged
+for claim cleanup; no provider Wait is invented.
+
+The SDK uses its frozen explicit Config/State/Registry roots and never invokes a
+CLI subprocess. Failures preserve their cause and the reviewed exact resources
+in `DeleteResult.Plan`; `Committed: false` can follow an admitted Stop or claim
+release. Inspect those resources and their termination evidence before using
+exact public stop/resume/delete recovery commands. Do not automatically replay
+an uncertain deletion. Successful results carry the deletion receipt,
+OperationID and any best-effort deletion-record warning in Notice.

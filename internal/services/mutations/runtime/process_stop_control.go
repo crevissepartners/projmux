@@ -10,6 +10,7 @@ import (
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 var ErrProcessStopUnsupported = errors.New("process-host-unsupported-action")
@@ -21,9 +22,15 @@ type processStopRequest struct {
 	Action, Operation, Prompt, Turn string
 }
 type processStopEnvelope struct{ Foreground *processStopRequest }
-type processStopResponse struct{ Accepted, Stale, Busy, Closed, Unsupported bool }
+type processStopResponse struct {
+	Accepted, Stale, Busy, Closed, Unsupported bool
+	DeleteRefusal                              string
+}
 
 func CallProcessAgentStop(ctx context.Context, registryPath string, reg coremetadata.Registry, agent coremetadata.Agent) error {
+	return callProcessAgentStopAction(ctx, registryPath, reg, agent, "stop", "")
+}
+func callProcessAgentStopAction(ctx context.Context, registryPath string, reg coremetadata.Registry, agent coremetadata.Agent, action, prompt string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -55,7 +62,7 @@ func CallProcessAgentStop(ctx context.Context, registryPath string, reg coremeta
 	if provider == "codex" {
 		sessionID = session.ThreadID
 	}
-	request := processStopEnvelope{Foreground: &processStopRequest{Authority: processhost.Authority{Binding: binding, Connection: b.OperationID, Session: sessionID}, Action: "stop", Operation: "op-" + hex.EncodeToString(nonce[:]), Turn: session.TurnID}}
+	request := processStopEnvelope{Foreground: &processStopRequest{Authority: processhost.Authority{Binding: binding, Connection: b.OperationID, Session: sessionID}, Action: action, Prompt: prompt, Operation: "op-" + hex.EncodeToString(nonce[:]), Turn: session.TurnID}}
 	var result processStopResponse
 	err = localipc.ExchangeOwnedJSON(ctx, socket, identity, activation.HostProcess, request, &result)
 	if errors.Is(err, localipc.ErrSocketReplaced) {
@@ -65,6 +72,8 @@ func CallProcessAgentStop(ctx context.Context, registryPath string, reg coremeta
 		return fmt.Errorf("process-host-unavailable: %w", err)
 	}
 	switch {
+	case result.DeleteRefusal != "":
+		return &mutations.Failure{Code: mutations.CodeAgentProtected, Cause: errors.New(result.DeleteRefusal)}
 	case result.Accepted:
 		return nil
 	case result.Busy:
