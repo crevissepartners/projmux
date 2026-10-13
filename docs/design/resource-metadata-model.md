@@ -697,8 +697,10 @@ Agent session history (Claude and Codex):
   only after the shared transaction returns successfully), and that no other
   code builds an `observed` row with `RecordFor`. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
-  `ai-ingest.log`, a create or process writer prints one
+  `ai-ingest.log`, a CLI create or process writer prints one
   `agent session history not recorded: append-failed` line on stderr.
+  SDK `SDKNativeCreation.Observe` treats append failures as silent best effort:
+  they produce neither a call failure nor a notice.
 - Each line is `{"agentUID","provider","sessionId","transcriptPath","observedAt","source"}`:
   `provider` is `claude` or `codex`, `observedAt` is the ref's RFC 3339 UTC observation
   time, and `transcriptPath` is the path the Claude hook reported (empty for
