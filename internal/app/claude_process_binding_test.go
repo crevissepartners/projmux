@@ -145,9 +145,8 @@ func newProcessClaudeFixture(t *testing.T, command func(string, string) processh
 
 func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) processhost.Command, sharedPath string, lifetime ...processOwnerLifetime) *processClaudeFixture {
 	t.Helper()
-	// Keep copied supervisor/provider paths short on both supported platforms.
-	t.Setenv("TMPDIR", "/tmp")
-	root := t.TempDir()
+	// Allocate a private short root without changing the test environment.
+	root := codexHostMoveFixtureShortState(t, shortTempDomain(t))
 	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
@@ -159,7 +158,7 @@ func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) proces
 	}
 	h := newSessionRefHarness(t, "claude")
 	encoded, _ := json.Marshal(h.registry)
-	suffix := filepath.Base(root)
+	suffix := filepath.Base(filepath.Dir(root)) + "-" + filepath.Base(root)
 	nextAgent, nextPane := h.agentUID+"-"+suffix, h.paneUID+"-"+suffix
 	encoded = bytes.ReplaceAll(encoded, []byte(h.agentUID), []byte(nextAgent))
 	encoded = bytes.ReplaceAll(encoded, []byte(h.paneUID), []byte(nextPane))
@@ -670,8 +669,8 @@ func (a *heldListerAlias) HeldFor(agentUID string) ([]messagestore.Record, error
 // delivers the held record with no resend. A result with nothing held launches
 // nothing.
 func TestClaudeProcessTurnResultRestartsAnEndedHeldRelease(t *testing.T) {
-	// The process fixture comes first: it shortens TMPDIR for its sockets, and
-	// the test's temporary root is fixed by the first TempDir call.
+	// Create the exact process source before configuring its held-message release.
+	// Its private socket root does not depend on the test temporary directory.
 	process := newProcessClaudeFixture(t, nil)
 	process.proof(t)
 	hold := newHoldFixture(t)
@@ -1058,8 +1057,8 @@ func TestClaudeProcessNativePeerJoinsExactRunningTarget(t *testing.T) {
 
 // Consumption must wake an expired release window while the same turn runs.
 func TestClaudeProcessConsumptionRestartsAnEndedHeldRelease(t *testing.T) {
-	// The process fixture comes first: it shortens TMPDIR for its sockets, and
-	// the test's temporary root is fixed by the first TempDir call.
+	// Create the exact process source before configuring its held-message release.
+	// Its private socket root does not depend on the test temporary directory.
 	process := newProcessClaudeFixture(t, func(root, binary string) processhost.Command {
 		script := strings.Replace(processClaudeProviderFixture, "if prompt.startswith('joined'):", "if prompt=='model-boundary':\n   emit({'type':'stream_event','session_id':'process-session','event':{'type':'message_start','message':{'id':'next-model'}}});continue\n  if prompt.startswith('joined'):", 1)
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Env: os.Environ(), Dir: root}
