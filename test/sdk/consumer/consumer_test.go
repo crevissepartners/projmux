@@ -595,7 +595,6 @@ func TestExternalTurnConsumer(t *testing.T) {
 			t.Fatalf("explicit ref: %v", err)
 		}
 	}
-
 }
 
 func externalStopIdentity(t *testing.T, pid int) core.ProcessIdentity {

@@ -37,14 +37,15 @@
 // Delete requires an explicit socket outside tmux, matching CLI delete; CLI
 // stop project has no socket flags and uses the proved app-owned server, so
 // StopProject defaults to that app socket instead.
-// StopProject ends one explicitly selected Project's persistent tmux session.
-// StopProjectRequest.SocketPath overrides Options.SocketPath; empty routing uses
-// the app-owned projmux socket with server generation and Project UID guards.
-// On success, Interruptions contains only evidence remaining in the Registry.
-// Its receipt always reports focus unchanged. Project stop ends only the tmux
-// session; Running Agent interruption evidence is recorded exactly as in CLI.
-// A Running process descendant may therefore be projected Offline/interrupted
-// while its provider survives; StopProject does not control process lifetimes.
+// StopProject stops Running process Agents and the exact persistent tmux session
+// through the shared CLI executor. StopProjectRequest.SocketPath overrides
+// Options.SocketPath; empty routing uses the app-owned projmux socket with server
+// generation and Project UID guards. On success, Interruptions contains only
+// evidence remaining in the Registry. Its receipt always reports focus unchanged.
+// Born process stops require actual Wait and owner/child retirement; child-free
+// claims remain refused. Partial failures retain confirmed Agent stops. Project
+// identity, desired topology, Agent/Pane identities and conversations are
+// preserved. A process-only Project needs no live tmux server.
 // CreateWindow and CreatePane create shell resources through the same CLI
 // transaction, hooks, exact socket/PID/UID guards and rollback. Requests require
 // an explicit Project; CreatePane also requires an explicit Window. Request
