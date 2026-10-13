@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"os"
 	"slices"
@@ -265,68 +266,12 @@ func (c *agentCommand) deliverTurn(ref, text string) (agentControlResponse, bool
 	if strings.TrimSpace(text) == "" {
 		return agentControlResponse{}, false, usageError("agent turn deliver requires text")
 	}
-	reg, agent, err := c.resolveOneAgent("agent turn deliver", ref, selector.VerbReview)
+	reg, a, err := c.resolveOneAgent("agent turn deliver", ref, selector.VerbReview)
 	if err != nil {
 		return agentControlResponse{}, false, err
 	}
-	if err := requireStaticNativeAgentCapability("agent turn deliver", agent); err != nil {
-		return agentControlResponse{}, false, err
-	}
-	if processAgentAnswers(reg, agent) {
-		delivery, err := c.callProcessUserDelivery(reg, agent, text)
-		if err != nil {
-			return agentControlResponse{}, false, err
-		}
-		pane, _ := reg.Pane(agent.Status.PaneRef)
-		response := agentControlResponse{OK: true, ThreadID: pane.Status.ProcessSession.ThreadID, TurnID: delivery.TurnID}
-		steered := delivery.Mode == processhost.UserTurnSteer
-		if steered {
-			response.Acceptance, response.Delivery = agentControlAcceptanceProvider, agentControlDeliveryUnconfirmed
-		}
-		return response, steered, nil
-	}
-	binding, err := c.bindAgentControl("agent turn deliver", reg, agent)
-	if err != nil {
-		return agentControlResponse{}, false, err
-	}
-	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpDeliver, Text: text})
-	if err != nil {
-		return agentControlResponse{}, false, err
-	}
-	steered := response.Acceptance == agentControlAcceptanceProvider
-	if !response.OK && response.Code == "invalid-operation" {
-		response, steered, err = c.legacyTurn(binding, text)
-		if err != nil {
-			return response, false, err
-		}
-	}
-	if err := response.Error(); err != nil {
-		return response, false, addOpenCodexBindingRecovery(err, binding)
-	}
-	if !steered {
-		if err := c.recordStartedCodexTurn(binding, response); err != nil {
-			return response, false, err
-		}
-	}
-	return response, steered, nil
-}
-
-// legacyTurn is the start-then-steer path for an observer that does not know
-// turn-deliver. It costs the extra lifecycle read that deliver exists to
-// avoid, so it runs only after that observer refused the operation outright.
-func (c *agentCommand) legacyTurn(binding exactAgentControlBinding, text string) (agentControlResponse, bool, error) {
-	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpStart, Text: text})
-	if err != nil {
-		return agentControlResponse{}, false, err
-	}
-	if response.OK || response.Code != "turn-in-progress" {
-		return response, false, nil
-	}
-	response, err = c.callControl(binding, agentControlRequest{Operation: agentControlOpSteer, Text: text})
-	if err != nil {
-		return agentControlResponse{}, false, err
-	}
-	return response, response.OK, nil
+	r, err := c.turnService().Execute(context.Background(), reg, a, mutationruntime.TurnRequest{Action: "deliver", Text: text})
+	return agentControlResponse(r.Response), r.Mode == "steer", err
 }
 
 func (c *agentCommand) runTurnInput(args []string, stdout io.Writer) error {
@@ -334,76 +279,47 @@ func (c *agentCommand) runTurnInput(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	binding, handled, err := c.resolveTurnControlBinding(args[0], before[0], text, stdout)
-	if handled || err != nil {
-		return err
-	}
-	op := agentControlOpStart
-	label := agentActionSendTurn
-	if args[0] == "steer" {
-		op, label = agentControlOpSteer, agentActionSteerTurn
-	}
-	response, err := c.callControl(binding, agentControlRequest{Operation: op, Text: text})
+	reg, a, err := c.resolveOneAgent("agent turn "+args[0], before[0], selector.VerbReview)
 	if err != nil {
 		return err
 	}
-	if err := response.Error(); err != nil {
-		return addOpenCodexBindingRecovery(err, binding)
-	}
-	if op == agentControlOpSteer {
-		if response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed {
-			return addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "turn/steer response did not carry the exact provider-acceptance receipt"}, binding)
+	if args[0] == "start" {
+		if handled, err := c.startDeferredUserTurn(reg, a, text, stdout); handled || err != nil {
+			return err
 		}
-		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s acceptance=%s delivery=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID), response.Acceptance, response.Delivery)
+	}
+	r, err := c.turnService().Execute(context.Background(), reg, a, mutationruntime.TurnRequest{Action: args[0], Text: text})
+	if err != nil {
 		return err
 	}
-	if err := c.recordStartedCodexTurn(binding, response); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
-	return err
+	return c.writeTurnResult(stdout, r, args[0])
 }
 
 func (c *agentCommand) runTurnInterrupt(args []string, stdout io.Writer) error {
 	if len(args) != 2 && len(args) != 4 {
 		return usageError("agent turn interrupt requires <agent-ref> [--via <client>]")
 	}
-	registry, agent, err := c.resolveOneAgent("agent turn interrupt", args[1], selector.VerbReview)
+	reg, a, err := c.resolveOneAgent("agent turn interrupt", args[1], selector.VerbReview)
 	if err != nil {
 		return err
 	}
-	if agent.Spec.Provider == aiModeClaude {
+	via := ""
+	if a.Spec.Provider == aiModeClaude {
 		if len(args) != 4 || args[2] != "--via" {
 			return usageError("Claude turn interrupt requires explicit --via <client> (caller-reported source)")
 		}
 		if err := operatorclient.Validate(args[3]); err != nil {
 			return usageError(fmt.Sprintf("Claude turn interrupt --via: %v", err))
 		}
-		return c.interruptClaudeTurn(registry, agent, args[3], stdout)
-	}
-	if len(args) != 2 {
+		via = args[3]
+	} else if len(args) != 2 {
 		return usageError("--via is available only for Claude turn interrupt")
 	}
-	if agent.Spec.Provider == aiModeCodex && processAgentAnswers(registry, agent) {
-		operation, err := c.callProcessTurn(registry, agent, aiModeCodex, "interrupt", "")
-		if err != nil {
-			return err
-		}
-		return c.writeProcessTurn(stdout, agentActionInterruptTurn, agent, operation)
-	}
-	binding, err := c.bindAgentControl("agent turn interrupt", registry, agent)
+	r, err := c.turnService().Execute(context.Background(), reg, a, mutationruntime.TurnRequest{Action: "interrupt", Via: via})
 	if err != nil {
 		return err
 	}
-	response, err := c.callControl(binding, agentControlRequest{Operation: agentControlOpInterrupt})
-	if err != nil {
-		return err
-	}
-	if err := response.Error(); err != nil {
-		return addOpenCodexBindingRecovery(err, binding)
-	}
-	_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(agentActionInterruptTurn), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
-	return err
+	return c.writeTurnResult(stdout, r, "interrupt")
 }
 
 // callProcessTurn sends one operator turn or interrupt to the exact current
@@ -541,33 +457,6 @@ func (c *agentCommand) writeProcessTurn(stdout io.Writer, label string, agent co
 func (c *agentCommand) writeJoinedProcessTurn(stdout io.Writer, label string, agent coremetadata.Agent, operation string, join processTurnJoin) error {
 	_, err := fmt.Fprintf(stdout, "%s agent=uid:%s turn=%s runtime=process delivery=joined running-turn=%s origin=%s\n", c.agentActionText(label), agent.Metadata.UID, operation, join.Turn, join.Origin)
 	return err
-}
-
-// recordStartedCodexTurn commits only monotonic, content-free evidence after
-// the exact control epoch accepted a first input. It reuses the durable
-// endpoint/thread and Pane generation from the pre-write binding, so a current
-// pointer change cannot retarget the acknowledgement.
-func (c *agentCommand) recordStartedCodexTurn(binding exactAgentControlBinding, response agentControlResponse) error {
-	if strings.TrimSpace(response.ThreadID) != binding.Identity.ThreadID || strings.TrimSpace(response.TurnID) == "" {
-		return addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "turn response did not preserve the exact thread identity"}, binding)
-	}
-	return c.mutateAgent(binding.Identity.AgentUID, func(registry *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		changed, err := mutator.RefineCodexActivation(registry, coremetadata.CodexActivationObservation{
-			AgentUID: binding.Identity.AgentUID, PaneUID: binding.Identity.PaneUID,
-			Generation: binding.Identity.Generation, ThreadID: binding.Identity.ThreadID,
-			TurnID: response.TurnID, Endpoint: binding.Endpoint,
-		})
-		if err != nil {
-			return err
-		}
-		if !changed {
-			agent, ok := registry.Agent(binding.Identity.AgentUID)
-			if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || !agent.Status.SessionRef.Codex.HasStartedTurn {
-				return &exactAgentControlBindingError{Reason: "first-turn evidence no longer matches the exact native binding"}
-			}
-		}
-		return nil
-	})
 }
 
 func splitAgentTurnText(args []string) ([]string, string, error) {
@@ -877,47 +766,4 @@ func addOpenCodexRecovery(err error, registry coremetadata.Registry, agent corem
 		return err
 	}
 	return addOpenCodexBindingRecovery(err, exactAgentControlBinding{Identity: codexLifecycleIdentity{PaneUID: pane.Metadata.UID}, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID})
-}
-
-// Resolve once, retaining the same registry snapshot for tmux/Codex.
-func (c *agentCommand) resolveTurnControlBinding(action, ref, text string, stdout io.Writer) (exactAgentControlBinding, bool, error) {
-	reg, agent, err := c.resolveOneAgent("agent turn "+action, ref, selector.VerbReview)
-	if err != nil {
-		return exactAgentControlBinding{}, false, err
-	}
-	if action != "start" {
-		if action == "steer" && agent.Spec.Provider == aiModeCodex && processAgentAnswers(reg, agent) {
-			delivery, err := c.callProcessUserInput(reg, agent, "user-steer", text)
-			if errors.Is(err, processhost.ErrBusy) {
-				err = fmt.Errorf("%w; next: `projmux agent turn start uid:%s -- <text>`", err, agent.Metadata.UID)
-			}
-			if err == nil {
-				if delivery.Mode != processhost.UserTurnSteer {
-					err = processhost.ErrStale
-				} else {
-					pane, _ := reg.Pane(agent.Status.PaneRef)
-					_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s acceptance=%s delivery=%s\n", c.agentActionText(agentActionSteerTurn), safeApprovalDetail(pane.Status.ProcessSession.ThreadID), safeApprovalDetail(delivery.TurnID), agentControlAcceptanceProvider, agentControlDeliveryUnconfirmed)
-				}
-			}
-			return exactAgentControlBinding{}, true, err
-		}
-		binding, err := c.bindAgentControl("agent turn "+action, reg, agent)
-		return binding, false, err
-	}
-	if handled, err := c.startDeferredUserTurn(reg, agent, text, stdout); handled || err != nil {
-		return exactAgentControlBinding{}, handled, err
-	}
-	handled, err := c.startProcessClaudeTurn(reg, agent, text, stdout)
-	if handled || err != nil {
-		return exactAgentControlBinding{}, handled, err
-	}
-	if agent.Spec.Provider == aiModeCodex && processAgentAnswers(reg, agent) {
-		operation, err := c.callProcessTurn(reg, agent, aiModeCodex, "turn", text)
-		if err == nil {
-			err = c.writeProcessTurn(stdout, agentActionSendTurn, agent, operation)
-		}
-		return exactAgentControlBinding{}, true, err
-	}
-	binding, err := c.bindAgentControl("agent turn start", reg, agent)
-	return binding, false, err
 }

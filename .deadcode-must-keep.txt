@@ -7,8 +7,6 @@
 # mandatory. This file suppresses only its exact, reason-bearing symbols when
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
-
-
 Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentInputFields.RequireInteractiveOnlyProvider	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
@@ -50,10 +48,12 @@ Client.Delete	Public v0 Window, Pane and Agent deletion SDK entrypoint or its ex
 Client.DeleteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.DeleteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.DeleteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.DeliverTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.GetUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetUsageHistory	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.InterruptTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.ListApprovals	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.ListInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.ListNotifications	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -71,6 +71,8 @@ Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained 
 Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.StartTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
+Client.SteerTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.StopAgent	Public v0 process Stop API; exercised by exact-generation retirement, cancellation, explicit roots and external consumer tests.
 Client.StopProject	Public v0 Project stop SDK entrypoint; SDK/CLI parity, exact socket/PID/UID guards and external consumer tests.
 Client.UnregisterProject	Public v0 Project unregister entrypoint; verified by external consumer and CLI parity tests.
@@ -95,6 +97,7 @@ Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserve
 Client.questionService	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
+Client.turn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.clone	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexConfig.newAdapter	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -332,7 +335,12 @@ WindowForPane	Public v0 rename SDK entrypoint or exact-socket adapter; retained 
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
+agentCommand.callProcessForegroundAction	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
 agentCommand.callProcessUserDelivery	Planned private web_process_user_input.go:deliverProcessUserInput foreign-owned Codex user-input consumer retains this typed caller to obtain actual Mode/Operation/TurnID once, without replay or fallback; explicit public Turn intent stays unchanged.
+agentCommand.callProcessUserInput	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
+agentCommand.interruptClaudeTurn	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
+agentCommand.interruptProcessClaudeTurn	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
+agentCommand.interruptTmuxClaudeTurn	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
 agentCommand.prepareOwnedClaudeResume	Private S568 no-first-input Claude Resume producer retained for Prepared-to-actual-first-input ownership proofs and the planned web consumer; frozen recipe validation and CLI peer Wait remain unchanged.
 agentCommand.runOwnedProcessRelaunch	Private S568 typed samehost settings producer retained for Preview/Unchanged/Owned/Prepared ownership proofs and the planned web consumer; independent Cancel and exact Wait preserve CLI foreground lifetime.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
@@ -381,11 +389,13 @@ deleteQuery	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exac
 deleteRefusal	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 deleteTmuxOnly	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
+exactClaudePane	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
 executeWindowRenameSteps	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 exitOf	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 finishOwnedChild	Owned-child signals precede actual Wait only after successful exit observation; retained for processhost lifecycle proof.
 formatRelativeAge	Fallback-locale entry point of formatRelativeAgeLocale retained as the status notify age bucket seam.
 formatStatusNotify	Fallback-locale entry point of formatStatusNotifyWithLiveLocale retained as the status notify width tier seam.
+frozenTurnRunner.Run	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
 guardAuditRoot	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardInstallProviderStandIns	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
@@ -430,6 +440,7 @@ ownedStream.Close	Owned processhost Codex preparation retained for dedicated std
 ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 ownedStream.Write	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 paneTarget.shared	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
+parseClaudePaneFrame	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
@@ -505,6 +516,8 @@ tmuxPaneBorderFormat	Default badge-style entry point of tmuxPaneBorderFormatWith
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
 tmuxStandaloneConfig	Default-keymap entry point of tmuxStandaloneConfigWithKeymap retained as the standalone config golden seam.
 tmuxStyledVisiblePaneLabelFormat	Default-theme entry point of tmuxStyledVisiblePaneLabelFormatFor retained as the visible pane label format seam.
+turnRefusal	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
+turnRunner.Run	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 unregisterCopy	Public v0 Project unregister JSON projection conversion; verified by Registry, receipt and record parity.
 unsupportedRootsError	The default-endpoint roots refusal helper remains part of the retained installed protocol qualification contract.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.

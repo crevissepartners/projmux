@@ -83,8 +83,7 @@ func newProcessCodexFixture(t *testing.T, command func(string, string, []string)
 func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int, lifetime ...processOwnerLifetime) *processCodexFixture {
 	t.Helper()
 	// Keep copied supervisor/provider paths short on both supported platforms.
-	t.Setenv("TMPDIR", "/tmp")
-	root := t.TempDir()
+	root := codexHostMoveFixtureShortState(t, os.TempDir(), "/tmp")
 	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
