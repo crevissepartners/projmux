@@ -162,8 +162,8 @@ var (
 	// registry.lock.acquisition may carry it; validateEventShape refuses it on
 	// every other family.
 	allowedLevels     = stringSet("info", "warn", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", codexBrokerComponent)
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, attentionSyncEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent)
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology", "create", "agent", "registry", "mutation", codexBrokerComponent)
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", sessionStateOutcomeEvent, "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped", teardownDecisionEvent, ownerStopEvent, attentionSyncEvent, surfaceUnshownEvent, createOutcomeEvent, agentMessageForeignSourceEvent, claudeRegistrationEvent, claudeHandoffRouteEvent, registryLockAcquisitionEvent, codexBrokerRefusalEvent, mutationLockSummaryEvent, mutationLockWaitEvent)
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -278,7 +278,11 @@ var (
 	)
 )
 
-func sanitizeEvent(in Event, home string) (Event, error) {
+func sanitizeEvent(in Event, home string, policies ...*MutationLockPolicy) (Event, error) {
+	var policy *MutationLockPolicy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	out := in
 	if _, ok := allowedLevels[out.Level]; !ok {
 		return Event{}, fmt.Errorf("invalid diagnostics level")
@@ -292,7 +296,7 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 	if _, ok := allowedResults[out.Result]; !ok {
 		return Event{}, fmt.Errorf("invalid diagnostics result")
 	}
-	if err := validateEventShape(out); err != nil {
+	if err := validateEventShape(out, policy); err != nil {
 		return Event{}, err
 	}
 	if _, ok := allowedBackends[out.MuxBackend]; !ok {
@@ -329,7 +333,17 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 	return out, nil
 }
 
-func validateEventShape(event Event) error {
+func validateEventShape(event Event, policies ...*MutationLockPolicy) error {
+	var policy *MutationLockPolicy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
+	if event.Event == mutationLockSummaryEvent || event.Event == mutationLockWaitEvent {
+		return validateMutationLockEvent(event, policy)
+	}
+	if event.Component == "mutation" {
+		return fmt.Errorf("mutation lock fields on unrelated event")
+	}
 	// Checked before any family's own validator returns, so every family but
 	// the tmux.apply lifecycle.outcome refuses the apply breakdown fields.
 	if err := validateApplyBreakdown(event); err != nil {

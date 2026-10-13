@@ -56,22 +56,31 @@ func DefaultPath(lookupEnv func(string) string, homeDir func() (string, error)) 
 
 // Store owns append, bounded retention, and record reading for one log path.
 type Store struct {
-	path       string
-	lockBudget time.Duration
-	lockRetry  time.Duration
-	now        func() time.Time
-	sleep      func(time.Duration)
+	mutationLockPolicy *MutationLockPolicy
+	path               string
+	lockBudget         time.Duration
+	lockRetry          time.Duration
+	now                func() time.Time
+	sleep              func(time.Duration)
 }
 
 func NewStore(path string) *Store {
 	return &Store{path: path, lockBudget: lockBudget, lockRetry: lockRetry, now: time.Now, sleep: time.Sleep}
 }
 
+// NewStoreWithMutationLockPolicy fixes a closed site policy for every append and
+// read through this Store. NewStore retains its default rejection of the family.
+func NewStoreWithMutationLockPolicy(path string, policy *MutationLockPolicy) *Store {
+	s := NewStore(path)
+	s.mutationLockPolicy = policy
+	return s
+}
+
 // Append writes exactly one complete JSONL record while holding an
 // inter-process lock across permission repair, append, and possible trim.
 func (s *Store) Append(event Event) error {
 	home, _ := os.UserHomeDir()
-	safe, err := sanitizeEvent(event, home)
+	safe, err := sanitizeEvent(event, home, s.mutationLockPolicy)
 	if err != nil {
 		return err
 	}
@@ -174,7 +183,7 @@ func (s *Store) Read() ([]Event, error) {
 	}
 	defer file.Close()
 	home, _ := os.UserHomeDir()
-	return decodeCompleteRecords(file, home).Events, nil
+	return decodeCompleteRecords(file, home, s.mutationLockPolicy).Events, nil
 }
 
 // ReadResult describes a tolerant journal read without exposing malformed
@@ -215,7 +224,7 @@ func (s *Store) ReadOnly() (ReadResult, error) {
 	}
 	home, _ := os.UserHomeDir()
 	limited := &io.LimitedReader{R: file, N: MaxLogSize + 1}
-	result := decodeCompleteRecords(limited, home)
+	result := decodeCompleteRecords(limited, home, s.mutationLockPolicy)
 	if limited.N <= 0 {
 		return ReadResult{}, fmt.Errorf("read diagnostics log: %w", errReadOnlyLimit)
 	}
@@ -250,7 +259,11 @@ func (s *Store) repairPrivateDirs() {
 	bestEffortPrivateDir(logsDir)
 }
 
-func decodeCompleteRecords(reader io.Reader, home string) ReadResult {
+func decodeCompleteRecords(reader io.Reader, home string, policies ...*MutationLockPolicy) ReadResult {
+	var policy *MutationLockPolicy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	buffered := bufio.NewReaderSize(reader, 64*1024)
 	var result ReadResult
 	for {
@@ -258,8 +271,15 @@ func decodeCompleteRecords(reader io.Reader, home string) ReadResult {
 		if len(line) > 0 && line[len(line)-1] == '\n' {
 			line = bytes.TrimSpace(line)
 			var event Event
-			if len(line) > 0 && json.Unmarshal(line, &event) == nil {
-				if safe, validationErr := sanitizeEvent(event, home); validationErr == nil {
+			decodeErr := json.Unmarshal(line, &event)
+			if decodeErr == nil && (event.Event == mutationLockSummaryEvent || event.Event == mutationLockWaitEvent) {
+				// This content-free family also refuses unknown on-disk fields.
+				decoder := json.NewDecoder(bytes.NewReader(line))
+				decoder.DisallowUnknownFields()
+				decodeErr = decoder.Decode(&event)
+			}
+			if len(line) > 0 && decodeErr == nil {
+				if safe, validationErr := sanitizeEvent(event, home, policy); validationErr == nil {
 					result.Events = append(result.Events, safe)
 				} else {
 					result.Malformed++
