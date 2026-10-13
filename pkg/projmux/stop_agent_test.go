@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -39,7 +42,7 @@ func sdkStopFixture(t *testing.T) (*Client, m.Registry, string, string) {
 		pane.Status.LastTermination = wait
 		agent.Status.LastTermination = wait
 		agent.Status.Phase = m.PhaseOffline
-		return nil
+		return mutationruntime.WriteProcessRetirement(store.PathFor(state), m.ProcessActivation{Binding: b, HostProcess: m.ProcessIdentity{PID: 2000000000, OwnerUID: uint32(os.Getuid()), Start: "retired-owner"}, Child: m.ProcessIdentity{PID: 2000000001, OwnerUID: uint32(os.Getuid()), Start: "retired-child"}}, wait)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,5 +139,79 @@ func TestStopAgentSDKUnsupportedCancellationAndOwnerUnavailable(t *testing.T) {
 	r, err = c.StopAgent(context.Background(), core.StopAgentRequest{Ref: "uid:" + uid})
 	if !errors.As(err, &refusal) || refusal.Code != CodeStopAgentWaitUnconfirmed || r.Stopped || r.AgentUID != uid || r.PaneUID != puid {
 		t.Fatalf("unconfirmed %+v %v", r, err)
+	}
+}
+
+func TestStopAgentSDKRetiredOwnerStillLiveAndLegacyUnconfirmed(t *testing.T) {
+	c, reg, uid, puid := sdkStopFixture(t)
+	owner := exec.Command("sleep", "5")
+	if err := owner.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = owner.Process.Kill(); _ = owner.Wait() }()
+	identity, _, err := localipc.Process(owner.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(puid)
+	activation := m.ProcessActivation{Binding: pane.Status.ProcessSession.Binding, HostProcess: identity, Child: m.ProcessIdentity{PID: 2000000001, OwnerUID: uint32(os.Getuid()), Start: "retired-child"}}
+	// Replace only this test's prior synthetic witness, not Registry evidence.
+	dir := filepath.Join(c.paths.StateDir, "process-retirements")
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if err = os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = mutationruntime.WriteProcessRetirement(store.PathFor(c.paths.StateDir), activation, pane.Status.LastTermination); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	r, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + uid})
+	var f *Refusal
+	if r.Stopped || !errors.As(err, &f) || f.Code != CodeStopAgentWaitUnconfirmed || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("owner still live %+v %v", r, err)
+	}
+	current, _, err := localipc.Process(identity.PID)
+	if err != nil || current != identity {
+		t.Fatal("Stop signaled retired owner")
+	}
+	entries, _ = os.ReadDir(dir)
+	for _, e := range entries {
+		if err = os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err = c.StopAgent(context.Background(), core.StopAgentRequest{Ref: "uid:" + uid})
+	if r.Stopped || !errors.As(err, &f) || f.Code != CodeStopAgentWaitUnconfirmed {
+		t.Fatalf("legacy false success %+v %v", r, err)
+	}
+}
+func TestStopAgentSDKClaimGuardDeadlineAndCancel(t *testing.T) {
+	for _, mode := range []string{"deadline", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			c, _, uid, _ := sdkStopFixture(t)
+			path := mutationruntime.DeferredClaimPath(store.PathFor(c.paths.StateDir), uid)
+			unlock, err := mutationruntime.LockDeferredClaim(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan struct{})
+			go func() { time.Sleep(250 * time.Millisecond); unlock(); close(done) }()
+			defer func() { <-done }()
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+			defer cancel()
+			if mode == "cancel" {
+				ctx, cancel = context.WithCancel(context.Background())
+				defer cancel()
+				go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+			}
+			start := time.Now()
+			r, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + uid})
+			if r.Stopped || (!errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)) || time.Since(start) > 200*time.Millisecond {
+				t.Fatalf("guard ignored cancellation %+v %v %s", r, err, time.Since(start))
+			}
+		})
 	}
 }

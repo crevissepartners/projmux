@@ -48,7 +48,7 @@ func TestProcessAgentStopWaitRetirementCancellationAndGeneration(t *testing.T) {
 			if mode == "cancel-before" {
 				cancel()
 			}
-			stopper := ProcessAgentStopper{Load: func() (m.Registry, error) {
+			stopper := ProcessAgentStopper{RegistryPath: filepath.Join(t.TempDir(), "metadata", "registry.json"), Load: func() (m.Registry, error) {
 				reads++
 				if mode == "cancel-at-admission" {
 					cancel()
@@ -101,11 +101,16 @@ func TestProcessAgentStopWaitRetirementCancellationAndGeneration(t *testing.T) {
 	}
 }
 func TestProcessAgentStopIdempotenceAndStalePreflight(t *testing.T) {
-	reg, _, _ := stopFixture()
+	reg, _, original := stopFixture()
+	activation := *original.Status.Activation.Process
 	writeStopWait(&reg)
 	a, p := reg.Agents[0].Clone(), reg.Panes[0].Clone()
 	before := reg.Clone()
-	s := ProcessAgentStopper{Load: func() (m.Registry, error) { return reg, nil }, CallStop: func(context.Context, m.Registry, m.Agent) error { t.Fatal("retired generation controlled"); return nil }}
+	path := filepath.Join(t.TempDir(), "metadata", "registry.json")
+	if err := WriteProcessRetirement(path, activation, p.Status.LastTermination); err != nil {
+		t.Fatal(err)
+	}
+	s := ProcessAgentStopper{RegistryPath: path, Load: func() (m.Registry, error) { return reg, nil }, ReadIdentity: func(int) (m.ProcessIdentity, int, error) { return m.ProcessIdentity{}, 0, localipc.ErrProcessAbsent }, CallStop: func(context.Context, m.Registry, m.Agent) error { t.Fatal("retired generation controlled"); return nil }}
 	if err := s.StopExact(context.Background(), reg, a, p); err != nil || !reflect.DeepEqual(before, reg) {
 		t.Fatal(err)
 	}
@@ -114,6 +119,7 @@ func TestProcessAgentStopIdempotenceAndStalePreflight(t *testing.T) {
 		t.Fatalf("stale retired success: %v", err)
 	}
 }
+
 func TestProcessAgentStopChildFreeClaim(t *testing.T) {
 	reg, a, p := stopFixture()
 	writeStopWait(&reg)

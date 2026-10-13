@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -236,5 +237,39 @@ func assertFileContent(t *testing.T, path, want string) {
 	}
 	if got := string(raw); got != want {
 		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
+}
+
+func TestAcquireFileLockContextReleasesLateGrant(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "guard")
+	held, err := AcquireFileLock(path, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	contended := make(chan struct{})
+	returned := make(chan error, 1)
+	go func() {
+		lock, err := AcquireFileLockContext(ctx, path, time.Second, func() { close(contended) })
+		if lock != nil {
+			_ = lock.Close()
+		}
+		returned <- err
+	}()
+	<-contended
+	cancel()
+	if err = <-returned; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err = held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A late kernel grant must not retain the canceled waiter's descriptor/lock.
+	again, err := AcquireFileLock(path, time.Second, nil)
+	if err != nil {
+		t.Fatal("late waiter retained lock", err)
+	}
+	if err = again.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

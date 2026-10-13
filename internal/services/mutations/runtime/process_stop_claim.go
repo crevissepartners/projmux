@@ -19,8 +19,12 @@ import (
 // provider Wait evidence; no Registry termination record is written here.
 func (s *ProcessAgentStopper) stopDetachedClaim(ctx, admission context.Context, agent coremetadata.Agent, pane coremetadata.Pane) (bool, error) {
 	path := DeferredClaimPath(s.RegistryPath, agent.Metadata.UID)
-	unlock, err := LockDeferredClaim(path)
+	unlock, err := LockDeferredClaimContext(admission, path)
 	if err != nil {
+		return false, err
+	}
+	if err := admission.Err(); err != nil {
+		unlock()
 		return false, err
 	}
 	record, err := ReadDeferredClaim(path)

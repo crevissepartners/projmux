@@ -106,11 +106,20 @@ func (s *ProcessAgentStopper) StopExact(ctx context.Context, reg coremetadata.Re
 		s.ClaimReleased = handled && err == nil
 		return err
 	}
-	if pane.Status.Activation.IsZero() && agent.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
-		return nil
+	if err := admission.Err(); err != nil {
+		return err
 	}
-	if pane.Status.Activation.Process == nil {
-		return stopFailure("agent-stop-wait-unconfirmed", errors.New("agent-stop-wait-unconfirmed: exact process owner unavailable"))
+	var activation coremetadata.ProcessActivation
+	if pane.Status.Activation.Process != nil {
+		activation = *pane.Status.Activation.Process
+	} else if pane.Status.Activation.IsZero() && agent.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
+		var err error
+		activation, err = ReadProcessRetirement(s.RegistryPath, pane.Status.ProcessSession.Binding, pane.Status.LastTermination)
+		if err != nil {
+			return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, err)
+		}
+	} else {
+		return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, errors.New("exact process owner unavailable"))
 	}
 	if agent.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
 		if err := admission.Err(); err != nil {
@@ -120,21 +129,37 @@ func (s *ProcessAgentStopper) StopExact(ctx context.Context, reg coremetadata.Re
 			return err
 		}
 	}
+	witnessed := false
+
 	ticker := time.NewTicker(ProcessAgentStopPoll)
 	defer ticker.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, err)
+		}
 		latest, err := s.Load()
 		if err != nil {
 			return err
 		}
 		current, ok := latest.Pane(pane.Metadata.UID)
 		target, found := latest.Agent(agent.Metadata.UID)
-		if !ok || !found || current.Metadata.OwnerUID() != agent.Metadata.UID || current.Status.ProcessSession == nil || current.Status.ProcessSession.Binding != pane.Status.ProcessSession.Binding {
+		if !ok || !found || current.Metadata.OwnerUID() != agent.Metadata.UID || target.Status.PaneRef != pane.Metadata.UID || current.Status.ProcessSession == nil || current.Status.ProcessSession.Binding != pane.Status.ProcessSession.Binding {
 			return processhost.ErrStale
 		}
 		s.Termination = current.Status.LastTermination.Clone()
-		if target.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(current.Status.ProcessSession.Binding, current.Status.LastTermination) && coremetadata.SameProcessWait(current.Status.LastTermination, target.Status.LastTermination) && ProcessActivationAbsent(*pane.Status.Activation.Process, s.identityReader()) {
-			return nil
+		if target.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(current.Status.ProcessSession.Binding, current.Status.LastTermination) && coremetadata.SameProcessWait(current.Status.LastTermination, target.Status.LastTermination) {
+			if !witnessed {
+				if err := WriteProcessRetirement(s.RegistryPath, activation, current.Status.LastTermination); err != nil {
+					return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, err)
+				}
+				witnessed = true
+			}
+			if ProcessActivationAbsent(activation, s.identityReader()) {
+				if err := ctx.Err(); err != nil {
+					return retirementUnconfirmed(agent.Metadata.UID, pane.Metadata.UID, err)
+				}
+				return nil
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"maps"
 	"os"
@@ -780,6 +781,9 @@ func (r *processAgentCreateResult) persistProcessWait(snapshot processhost.Snaps
 		pane, _ := reg.Pane(r.Binding.Pane)
 		if r.Provider == aiModeClaude && snapshot.Session == "" && agent.Status.SessionRef == nil && pane.Status.ProcessSession.History == nil {
 			pane.Status.ProcessSession.SessionID = ""
+		}
+		if err := mutationruntime.WriteProcessRetirement(r.registryPath, activation, &receipt); err != nil {
+			return err
 		}
 		return intmetadata.DefaultMutator().RecordProcessWait(reg, activation, receipt)
 	})

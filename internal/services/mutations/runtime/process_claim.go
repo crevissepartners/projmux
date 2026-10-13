@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -39,13 +40,19 @@ func DeferredClaimPath(registryPath, uid string) string {
 }
 
 func LockDeferredClaim(path string) (func(), error) {
+	return LockDeferredClaimContext(context.Background(), path)
+}
+func LockDeferredClaimContext(ctx context.Context, path string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if path == "" {
 		return func() {}, nil
 	}
 	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	lock, err := localstate.AcquireFileLock(path+".lock", 2*time.Second, nil)
+	lock, err := localstate.AcquireFileLockContext(ctx, path+".lock", 2*time.Second, nil)
 	if err != nil {
 		return nil, err
 	}

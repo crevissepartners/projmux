@@ -152,3 +152,15 @@ provider survived. Typed `Refusal.Code` distinguishes stale/busy targets,
 unsupported process targets, unconfirmed Wait or claim release, and execution
 failure. Inspect the returned exact refs and generation before using public
 stop/resume/delete recovery; do not automatically replay an uncertain Stop.
+
+Retired generations must retain private evidence of the exact owner and child
+birth identities as well as their actual Wait receipt. The Wait writer preserves
+that evidence before clearing Registry activation; an admitted Stop can also
+preserve its original exact activation when stopping an older running owner.
+CLI and SDK now refuse an already retired legacy generation without this evidence
+with `agent-stop-wait-unconfirmed`, rather than treating Offline plus Wait as
+proof of owner retirement. This refusal sends no control or signal and leaves
+Registry resources unchanged. Inspect the exact Agent/generation before using
+public resume or delete recovery; uncertain retirement is not automatically
+retried. Claim lock admission honors caller cancellation and deadlines, including
+when another birth or claim release holds the guard.
