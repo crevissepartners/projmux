@@ -322,6 +322,9 @@ func (c *aiCommand) wslToastIconPath(iconPath string) string {
 // home's projmux/icons. Without XDG_DATA_HOME or a home directory it returns
 // the missing-HOME reason, and the notification goes out with no icon file.
 func (c *aiCommand) notificationIconDir() (string, error) {
+	if c.nativeObserverPaths != nil {
+		return filepath.Join(c.nativeObserverPaths.Paths.StateDir, "icons"), c.nativeObserverPaths.Validate()
+	}
 	if dataHome, err := config.ResolveDataHome("", c.env("XDG_DATA_HOME")); err == nil {
 		return filepath.Join(dataHome, "projmux", "icons"), nil
 	}

@@ -672,6 +672,11 @@ func normalizeLegacyUpdaterHandoff(args []string) []string {
 }
 
 func shouldRunLegacyHookMigrations(args []string) bool {
+	// An explicit native child owns only its supplied paths, including on
+	// malformed admission. It cannot migrate the ambient CLI configuration.
+	if _, explicit, _ := NativeObservationStateDir(args); explicit {
+		return false
+	}
 	// Help is a strict read-only boundary: exit 0, no operational error, and
 	// no tmux/runtime or filesystem migration access.
 	if cli.HelpRequested(args) {

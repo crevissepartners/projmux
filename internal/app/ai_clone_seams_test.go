@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"os"
 	"reflect"
@@ -130,6 +131,7 @@ type cloneSeamPanes struct{ canonicalPaneCreator }
 func fullyWiredAICommandFixture(t *testing.T) *aiCommand {
 	t.Helper()
 	c := &aiCommand{
+		nativeObserverPaths:    &mutationruntime.NativeObserverPaths{},
 		nativePicker:           &cloneSeamPicker{},
 		executable:             func() (string, error) { return "orig-executable", nil },
 		lookupEnv:              func(string) string { return "orig-env" },

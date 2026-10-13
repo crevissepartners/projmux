@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -113,13 +114,29 @@ type codexBrokerObserverSession struct {
 // corresponding attach transport. Default socket recovery can refresh a live
 // activation; the owner-private rolling-upgrade journal never gates it.
 func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd string, roots []string, route codexNativeEndpointRoute) (*codexBrokerObserverSession, error) {
+	return newCodexBrokerObserverSessionForPaths(identity, cwd, roots, route, nil)
+}
+
+func newCodexBrokerObserverSessionForPaths(identity codexLifecycleIdentity, cwd string, roots []string, route codexNativeEndpointRoute, paths *mutationruntime.NativeObserverPaths) (*codexBrokerObserverSession, error) {
 	if !identity.valid() || !route.valid() {
 		return nil, errors.New("codex generation broker binding requires exact Agent, Pane, endpoint, runtime, generation, and thread identity")
 	}
 	if !codexbroker.Supported() {
 		return nil, errors.New("codex broker runtime requires Unix filesystem semantics")
 	}
-	domain, err := codexBrokerStateDomain(os.Getenv, os.UserHomeDir)
+	var domain, executable string
+	var err error
+	if paths != nil {
+		if err := paths.Validate(); err != nil {
+			return nil, err
+		}
+		domain, executable = paths.Paths.StateDir, paths.Executable
+	} else {
+		domain, err = codexBrokerStateDomain(os.Getenv, os.UserHomeDir)
+		if err == nil {
+			executable, err = os.Executable()
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +144,13 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 	if err != nil {
 		return nil, err
 	}
-	discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+	discoveryFor := func(key codexbroker.EndpointKey) (codexbroker.Discovery, error) {
+		if paths != nil {
+			return codexBrokerDiscoveryForImage(domain, key, codexBrokerImageOf(executable))
+		}
+		return codexBrokerDiscoveryForEndpoint(domain, key)
+	}
+	discovery, err := discoveryFor(key)
 	if err != nil {
 		return nil, err
 	}
@@ -136,22 +159,18 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		path, err := os.Executable()
-		if err != nil {
-			return err
-		}
-		return startCodexBrokerRuntimeProcessForRoute(path, discovery, brokerRoute)
+		return startCodexBrokerRuntimeProcessForRoute(executable, discovery, brokerRoute)
 	}
 	session := newCodexBrokerObserverSessionOn(identity, cwd, roots, discovery, launch)
 	session.endpoint = route.Endpoint
 	if route.Default {
-		session.recoverRoute = (defaultCodexNativeThreadController{}).Current
+		session.recoverRoute = newCodexNativeThreadController(domain).Current
 		session.routeRuntime = func(next codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error) {
 			key, err := next.brokerRoute().endpointKey()
 			if err != nil {
 				return codexbroker.Discovery{}, nil, err
 			}
-			discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+			discovery, err := discoveryFor(key)
 			if err != nil {
 				return codexbroker.Discovery{}, nil, err
 			}
@@ -159,11 +178,7 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				path, err := os.Executable()
-				if err != nil {
-					return err
-				}
-				return startCodexBrokerRuntimeProcessForRoute(path, discovery, next.brokerRoute())
+				return startCodexBrokerRuntimeProcessForRoute(executable, discovery, next.brokerRoute())
 			}
 			return discovery, launch, nil
 		}
