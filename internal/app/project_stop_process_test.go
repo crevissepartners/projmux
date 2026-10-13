@@ -29,7 +29,7 @@ func addProjectStopProcessFixture(t *testing.T, backing *fakeResourceStore) (str
 	agent, _ := backing.registry.Agent("agt-alpha-review")
 	binding := coremetadata.ProcessBinding{HostInstanceID: "host", ProjectUID: "prj-alpha", WindowUID: agent.Metadata.OwnerUID(), AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, Generation: "gen-process", OperationID: "op-process"}
 	pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
-	pane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, Generation: binding.Generation, AgentUID: agent.Metadata.UID, OperationID: binding.OperationID, Process: &coremetadata.ProcessActivation{Binding: binding, HostProcess: coremetadata.ProcessIdentity{PID: 11, OwnerUID: 1000, Start: "host-start"}, Child: coremetadata.ProcessIdentity{PID: 12, OwnerUID: 1000, Start: "child-start"}}}
+	pane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, Generation: binding.Generation, AgentUID: agent.Metadata.UID, OperationID: binding.OperationID, Process: &coremetadata.ProcessActivation{Binding: binding, HostProcess: coremetadata.ProcessIdentity{PID: 11, OwnerUID: uint32(os.Getuid()), Start: "host-start"}, Child: coremetadata.ProcessIdentity{PID: 12, OwnerUID: uint32(os.Getuid()), Start: "child-start"}}}
 	pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: agent.Spec.Provider, Binding: binding, ThreadID: "thread", ConnectionID: binding.OperationID, ResumeState: coremetadata.ProcessResumeUnknown}
 	agent.Status.Phase = coremetadata.PhaseRunning
 	return agent.Metadata.UID, pane.Metadata.UID
@@ -66,6 +66,12 @@ func addSecondProjectStopProcessFixture(t *testing.T, backing *fakeResourceStore
 func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 	return func(ctx context.Context, store *resourceStore, uid string) ([]cli.ReceiptResource, error) {
 		var mutation sync.Mutex
+		copied := *store
+		root := t.TempDir()
+		copied.stateDir = func() (string, error) { return root, nil }
+		originalLoad := store.load
+		copied.load = func() (coremetadata.Registry, error) { mutation.Lock(); defer mutation.Unlock(); return originalLoad() }
+		store = &copied
 		return stopProjectProcessAgentsWith(ctx, store, uid, func(_ context.Context, _ coremetadata.Registry, agent coremetadata.Agent, _, action, _ string) (string, error) {
 			mutation.Lock()
 			defer mutation.Unlock()
@@ -81,7 +87,7 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 			}
 			return "op-stop", nil
 		}, func(int) (coremetadata.ProcessIdentity, int, error) {
-			return coremetadata.ProcessIdentity{}, 0, errors.New("host exited")
+			return coremetadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
 		}, 50*time.Millisecond)
 	}
 }
@@ -258,7 +264,7 @@ func TestProjectStopDispatchesAllStopsBeforeSharedWait(t *testing.T) {
 	addProjectStopProcessFixture(t, backing)
 	addSecondProjectStopProcessFixture(t, backing)
 	var lock sync.Mutex
-	raw := backing.store()
+	raw := projectStopFixtureStore(t, backing)
 	store := *raw
 	store.load = func() (coremetadata.Registry, error) { lock.Lock(); defer lock.Unlock(); return raw.load() }
 	admitted := make(chan struct{}, 2)
@@ -278,7 +284,7 @@ func TestProjectStopDispatchesAllStopsBeforeSharedWait(t *testing.T) {
 	}
 	start := time.Now()
 	_, err := stopProjectProcessAgentsWith(context.Background(), &store, "prj-alpha", stop, func(int) (coremetadata.ProcessIdentity, int, error) {
-		return coremetadata.ProcessIdentity{}, 0, errors.New("gone")
+		return coremetadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
 	}, 80*time.Millisecond)
 	if len(admitted) != 2 || err == nil || time.Since(start) > 500*time.Millisecond {
 		t.Fatalf("admitted=%d duration=%s err=%v", len(admitted), time.Since(start), err)
@@ -298,8 +304,8 @@ func TestProjectStopWaitDeadlineIncludesControlAdmission(t *testing.T) {
 		admitted = time.Now()
 		return "op-stop", nil
 	}
-	_, err := stopProjectProcessAgentsWith(context.Background(), backing.store(), "prj-alpha", stop, func(int) (coremetadata.ProcessIdentity, int, error) {
-		return coremetadata.ProcessIdentity{}, 0, errors.New("gone")
+	_, err := stopProjectProcessAgentsWith(context.Background(), projectStopFixtureStore(t, backing), "prj-alpha", stop, func(int) (coremetadata.ProcessIdentity, int, error) {
+		return coremetadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
 	}, timeout)
 	if err == nil || !strings.Contains(err.Error(), "durable Wait unconfirmed") {
 		t.Fatalf("err=%v", err)
@@ -383,8 +389,8 @@ func TestProjectStopControlAdmissionReceivesSharedDeadline(t *testing.T) {
 		return "", ctx.Err()
 	}
 	start := time.Now()
-	_, err := stopProjectProcessAgentsWith(context.Background(), backing.store(), "prj-alpha", stop, func(int) (coremetadata.ProcessIdentity, int, error) {
-		return coremetadata.ProcessIdentity{}, 0, errors.New("gone")
+	_, err := stopProjectProcessAgentsWith(context.Background(), projectStopFixtureStore(t, backing), "prj-alpha", stop, func(int) (coremetadata.ProcessIdentity, int, error) {
+		return coremetadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
 	}, 50*time.Millisecond)
 	a, okA := deadlines.Load("agt-alpha-review")
 	b, okB := deadlines.Load("agt-process-two")
@@ -446,4 +452,12 @@ func TestProjectStopHostControlRPCUsesParentDeadline(t *testing.T) {
 	if err == nil || time.Since(start) > 700*time.Millisecond {
 		t.Fatalf("RPC ignored shared parent deadline: elapsed=%s err=%v", time.Since(start), err)
 	}
+}
+
+func projectStopFixtureStore(t *testing.T, backing *fakeResourceStore) *resourceStore {
+	t.Helper()
+	s := backing.store()
+	root := t.TempDir()
+	s.stateDir = func() (string, error) { return root, nil }
+	return s
 }

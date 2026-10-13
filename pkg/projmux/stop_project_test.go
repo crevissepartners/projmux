@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
+	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -175,5 +179,67 @@ func TestStopProjectInputCodes(t *testing.T) {
 	var refusal *Refusal
 	if !errors.As(err, &refusal) || refusal.Code != CodeSelectorInvalid || !strings.Contains(err.Error(), "StopProjectRequest.Ref") {
 		t.Fatal(err)
+	}
+}
+
+// A missing tmux executable cannot mask process admission. The selected exact
+// claim still refuses, with typed stale cause and no writes to either root.
+type absentProjectStopRunner struct{ calls int }
+
+func (r *absentProjectStopRunner) Run(context.Context, string, ...string) ([]byte, error) {
+	r.calls++
+	return nil, exec.ErrNotFound
+}
+
+func TestStopProjectProcessOnlyExplicitRootsAndMissingTmux(t *testing.T) {
+	first, reg, uid, puid := sdkStopFixture(t)
+	second, other, _, _ := sdkStopFixture(t)
+	path := store.PathFor(first.paths.StateDir)
+	storage := store.NewStore(path)
+	_, err := storage.Update(func(reg *metadata.Registry) error {
+		a, _ := reg.Agent(uid)
+		p, _ := reg.Pane(puid)
+		a.Status.Phase = metadata.PhaseRunning
+		a.Status.LastTermination = nil
+		p.Status.LastTermination = nil
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poison := t.TempDir()
+	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PROJMUX_CONFIG_DIR", "PROJMUX_STATE_DIR", "PROJMUX_REGISTRY_PATH", "TMUX", "TMUX_PANE"} {
+		t.Setenv(key, poison)
+	}
+	runner := &absentProjectStopRunner{}
+	result, err := first.stopProjectWithRunner(context.Background(), core.StopProjectRequest{Ref: "uid:" + reg.Projects[0].Metadata.UID}, runner)
+	var refusal *Refusal
+	var exact *mutationruntime.ProjectProcessStopFailure
+	if !errors.As(err, &refusal) || refusal.Code != CodeProjectStopExecutionFailed || !errors.Is(err, processhost.ErrStale) || !errors.As(err, &exact) || exact.AgentUID != uid || exact.PaneUID != puid || exact.Generation != "generation" || result.Stopped || result.Receipt.Operation != "" || runner.calls == 0 {
+		t.Fatalf("process-only %+v %v", result, err)
+	}
+	_, err = second.stopProjectWithRunner(context.Background(), core.StopProjectRequest{Ref: "uid:" + reg.Projects[0].Metadata.UID}, runner)
+	if !errors.As(err, &refusal) || refusal.Code != CodeResourceNotFound {
+		t.Fatal("borrowed another root")
+	}
+	inactive, err := second.stopProjectWithRunner(context.Background(), core.StopProjectRequest{Ref: "uid:" + other.Projects[0].Metadata.UID}, runner)
+	if !errors.As(err, &refusal) || refusal.Code != CodeProjectNotLive || inactive.Stopped {
+		t.Fatalf("inactive %+v %v", inactive, err)
+	}
+	after, _ := os.ReadFile(path)
+	latest, e := store.NewStore(store.PathFor(second.paths.StateDir)).LoadReadOnly()
+	if string(before) != string(after) || e != nil || !reflect.DeepEqual(other, latest) {
+		t.Fatal("root changed")
+	}
+	entries, e := os.ReadDir(poison)
+	if e != nil || len(entries) != 0 {
+		t.Fatal("ambient root written")
+	}
+	if os.Getenv("HOME") != poison || os.Getenv("PROJMUX_STATE_DIR") != poison {
+		t.Fatal("ambient env changed")
 	}
 }

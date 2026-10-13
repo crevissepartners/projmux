@@ -146,16 +146,16 @@ func TestStopProjectSDKCLIParity(t *testing.T) {
 	}
 }
 
-// Refusal uses the same observed process predicate as CLI interruption filtering.
-// In every refused case, both the Registry bytes and the live tmux session survive.
-func TestStopProjectSDKRunningProcessAgentsZeroWrite(t *testing.T) {
+// Unavailable process owners fail individually while the exact tmux session
+// still stops. Unconfirmed process records remain Running with no fake Wait.
+func TestStopProjectSDKRunningProcessAgentsPartialResult(t *testing.T) {
 	for _, evidence := range []string{"both", "activation-only", "session-only"} {
 		t.Run(evidence, func(t *testing.T) {
 			socket, run := stopAppSocket(t)
 			fixture := freshStartFixtureStore(t)
 			activateRuntimeStopAgent(t, fixture, "gen-tmux")
 			agentUID, paneUID := addProjectStopProcessFixture(t, fixture)
-			secondUID, _ := addSecondProjectStopProcessFixture(t, fixture)
+			secondUID, secondPaneUID := addSecondProjectStopProcessFixture(t, fixture)
 			pane, _ := fixture.registry.Pane(paneUID)
 			if evidence == "activation-only" {
 				pane.Status.ProcessSession = nil
@@ -163,6 +163,9 @@ func TestStopProjectSDKRunningProcessAgentsZeroWrite(t *testing.T) {
 			if evidence == "session-only" {
 				pane.Status.Activation = metadata.PaneActivation{}
 			}
+			firstBefore := pane.Clone()
+			secondBefore, _ := fixture.registry.Pane(secondPaneUID)
+			secondCopy := secondBefore.Clone()
 			home := t.TempDir()
 			session := sessions.NewNamer(home).SessionName(fixture.registry.Projects[0].Spec.Root)
 			fixture.registry.Projects[0].Status.Session = &metadata.SessionProjection{Name: session, Live: true}
@@ -173,29 +176,25 @@ func TestStopProjectSDKRunningProcessAgentsZeroWrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := projectRegistryBytes(t, state)
-			// Refuse even when tmux routing would fail: process admission comes first.
-			for _, route := range []string{socket, filepath.Join(filepath.Dir(socket), "missing")} {
-				result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: route})
-				var refusal *projmux.Refusal
-				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectHasRunningProcessAgents {
-					t.Fatalf("result=%+v error=%v", result, err)
+			result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha"})
+			var refusal *projmux.Refusal
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || result.Stopped || result.Receipt.Operation != core.OperationStopProject || len(result.Receipt.AffectedUIDs) != 1 || result.Receipt.AffectedUIDs[0].Action != core.ActionStopped {
+				t.Fatalf("partial %+v %v", result, err)
+			}
+			after := projectRegistry(t, state)
+			for _, uid := range []string{agentUID, secondUID} {
+				agent, _ := after.Agent(uid)
+				if !strings.Contains(err.Error(), agent.Metadata.Name) || !strings.Contains(err.Error(), uid) || agent.Status.Phase != metadata.PhaseRunning || agent.Status.LastTermination != nil {
+					t.Fatalf("failed Agent %v %v", agent, err)
 				}
-				if sdkJSON(t, result) != sdkJSON(t, core.StopProjectResult{}) {
-					t.Fatalf("refusal reported effects: %+v", result)
-				}
-				for _, uid := range []string{agentUID, secondUID} {
-					agent, _ := fixture.registry.Agent(uid)
-					if !strings.Contains(refusal.Error(), agent.Metadata.Name) || !strings.Contains(refusal.Error(), uid) {
-						t.Fatalf("missing Agent name/UID: %v", refusal)
-					}
-				}
-				if before != projectRegistryBytes(t, state) {
-					t.Fatal("process refusal changed Registry bytes")
-				}
-				if got := run("list-sessions", "-F", "#{session_name}"); !strings.Contains(got, session) || !strings.Contains(got, "bystander") {
-					t.Fatalf("process refusal changed tmux sessions: %s", got)
-				}
+			}
+			firstAfter, _ := after.Pane(paneUID)
+			secondAfter, _ := after.Pane(secondPaneUID)
+			if sdkJSON(t, firstBefore) != sdkJSON(t, firstAfter) || sdkJSON(t, secondCopy) != sdkJSON(t, secondAfter) {
+				t.Fatal("failed process evidence changed")
+			}
+			if got := run("list-sessions", "-F", "#{session_name}"); got != "bystander" {
+				t.Fatalf("tmux partial stop %s", got)
 			}
 		})
 	}
@@ -214,40 +213,43 @@ func TestStopProjectSDKCLIServiceProcessAgentSelectionParity(t *testing.T) {
 			if evidence == "session-only" {
 				pane.Status.Activation = metadata.PaneActivation{}
 			}
-			// All three paths observe this same mixed Registry snapshot.
 			state, _, client := renameState(t, fixture.registry)
 			before := projectRegistryBytes(t, state)
-			_, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: filepath.Join(t.TempDir(), "missing")})
-			var refusal *projmux.Refusal
-			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectHasRunningProcessAgents {
+			socketRoot, err := os.MkdirTemp("/tmp", "ps-")
+			if err != nil {
 				t.Fatal(err)
+			}
+			defer os.RemoveAll(socketRoot)
+			result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: filepath.Join(socketRoot, "missing")})
+			var refusal *projmux.Refusal
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || result.Stopped || result.Receipt.Operation != "" {
+				t.Fatalf("no confirmed stop %+v %v", result, err)
 			}
 			cliTargets := runningProjectProcessAgents(fixture.registry, "prj-alpha")
 			if len(cliTargets) != 1 || cliTargets[0].agent.Metadata.UID != agentUID {
-				t.Fatalf("CLI targets=%+v", cliTargets)
+				t.Fatalf("CLI targets %+v", cliTargets)
 			}
 			for _, agent := range fixture.registry.Agents {
 				if agent.Metadata.UID != "agt-alpha-codex" && agent.Metadata.UID != agentUID {
 					continue
 				}
-				selected := agent.Metadata.UID == cliTargets[0].agent.Metadata.UID
-				if strings.Contains(refusal.Error(), agent.Metadata.UID) != selected {
-					t.Fatalf("SDK/CLI selection differs for %s: %v", agent.Metadata.UID, refusal)
+				if strings.Contains(err.Error(), agent.Metadata.UID) != (agent.Metadata.UID == agentUID) {
+					t.Fatalf("selection differs %v", err)
 				}
 			}
 			interruptions, err := recordProjectStopInterruptions(fixture.store(), "prj-alpha", "op-selection-parity")
 			if err != nil || len(interruptions) != 1 || interruptions[0].AgentUID != "agt-alpha-codex" {
-				t.Fatalf("service tmux selections=%+v err=%v", interruptions, err)
+				t.Fatalf("tmux selections %+v %v", interruptions, err)
 			}
 			if err := mutationruntime.VerifyProjectStopInterruptions(stopServiceStore(fixture.store()), "prj-alpha", interruptions, "op-selection-parity"); err != nil {
 				t.Fatal(err)
 			}
-			processAgent, _ := fixture.registry.Agent(cliTargets[0].agent.Metadata.UID)
+			processAgent, _ := fixture.registry.Agent(agentUID)
 			if processAgent.Status.Phase != metadata.PhaseRunning || processAgent.Status.LastTermination != nil {
-				t.Fatal("service failed to exclude CLI/SDK process selection")
+				t.Fatal("process got fake Wait")
 			}
 			if before != projectRegistryBytes(t, state) {
-				t.Fatal("SDK refusal wrote Registry")
+				t.Fatal("unconfirmed stop changed Registry")
 			}
 		})
 	}
@@ -393,6 +395,7 @@ func TestProjectStopUnavailableProcessDescendantStaysRunning(t *testing.T) {
 	binding := metadata.ProcessBinding{HostInstanceID: "fixture", ProjectUID: "prj-alpha", WindowUID: "win-alpha-main", AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", Generation: "gen-process", OperationID: "op-create"}
 	processPane.Status.Activation = metadata.PaneActivation{Kind: metadata.RuntimeProcess, Generation: binding.Generation, AgentUID: binding.AgentUID, OperationID: binding.OperationID, Process: &metadata.ProcessActivation{Binding: binding, HostProcess: metadata.ProcessIdentity{PID: 11, OwnerUID: 1000, Start: "fixture-host"}, Child: metadata.ProcessIdentity{PID: 12, OwnerUID: 1000, Start: "fixture-child"}}}
 	state, s, _ := renameState(t, fixture.registry)
+	s.stateDir = func() (string, error) { return state, nil }
 	run("new-session", "-d", "-s", "alpha", "tail -f /dev/null")
 	run("set-option", "-t", "alpha", tmuxopts.ProjectUIDSession, "prj-alpha")
 	child := exec.Command("sleep", "300")

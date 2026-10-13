@@ -250,3 +250,38 @@ recovery rather than automatically resubmitting. `*projmux.Refusal` exposes
 provider/control/transport reason codes; context errors remain ordinary errors.
 These methods invoke shared execution directly, without a CLI subprocess,
 provider creation, Stop, resume or daemon changes.
+
+## Stop a Project including headless Agents
+
+`Client.StopProject(ctx, core.StopProjectRequest{Ref: "uid:..."})` stops the
+Project's Running process Agents and its exact persistent tmux session through
+the same batch executor as CLI `stop project`. Explicit ConfigDir, StateDir,
+Registry and socket routing remain frozen on the Client. A process-only Project
+can stop its born Agents when tmux is absent; no CLI subprocess or provider
+executable is started. Project, desired topology, Agent, Pane and conversation
+identities remain available for public CLI resume.
+
+Process Stops dispatch concurrently with one shared deadline, bounded by the
+earlier caller deadline or ten seconds. Cancellation prevents admission;
+admitted Stop and tmux compensation finish independently of later cancellation.
+A child-free claim keeps the CLI Project-stop refusal policy: Running is retained
+and no termination evidence is fabricated. This differs from `StopAgent`'s
+individual claim release. Inactive Projects without a live session or Running
+process Agent retain `CodeProjectNotLive`.
+
+Born success requires the exact generation's actual Wait and both owner and child
+kernel retirement. Previously CLI Project stop could confirm success after an
+unreadable owner identity, or while its child still lived. Such uncertainty now
+refuses success; the existing CLI failure token, timeout text and recovery
+instructions remain stable. Typed causes remain available through error unwrap.
+
+`StopProjectResult.Receipt` includes confirmed Agent stops even when another
+owner or tmux fails. A failed tmux stop leaves the Project receipt action unchanged;
+a successful tmux stop remains reported even when a process owner refuses.
+`Stopped=false` does not mean that every runtime survived. `Interruptions` and
+`OperationID` retain the existing tmux evidence/compensation summary. Inspect the
+exact affected resources and failed Agent names/UIDs before public
+stop/resume/delete recovery; do not automatically replay an uncertain Stop.
+Failures use `CodeProjectStopExecutionFailed` with the original causes.
+`CodeProjectHasRunningProcessAgents` remains exported for source compatibility;
+Running process Agents no longer cause a batch preflight refusal.
