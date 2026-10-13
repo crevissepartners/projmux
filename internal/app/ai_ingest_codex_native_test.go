@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"maps"
 	"os"
 	"path/filepath"
@@ -794,20 +795,20 @@ func TestCodexLifecycleObserverTargetRequiresAndPreservesExactRoute(t *testing.T
 func TestCodexObserverStartupHandshakeParserIsClosed(t *testing.T) {
 	tests := []struct {
 		line string
-		want codexObserverStartupResult
+		want mutationruntime.NativeObserverStartup
 		ok   bool
 	}{
-		{line: codexObserverStartupPrefix + " ready 123-1\n", want: codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: "123-1", committed: true}, ok: true},
-		{line: codexObserverStartupPrefix + " fallback control-unavailable\n", want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "control-unavailable", committed: true}, ok: true},
-		{line: codexObserverStartupPrefix + " retrying unavailable\n", want: codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: "unavailable", committed: true}, ok: true},
-		{line: codexObserverStartupPrefix + " stale\n", want: codexObserverStartupResult{Status: codexObserverStartupStale, committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " ready 123-1\n", want: mutationruntime.NativeObserverStartup{Status: string(codexObserverStartupReady), Epoch: "123-1", Committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " fallback control-unavailable\n", want: mutationruntime.NativeObserverStartup{Status: string(codexObserverStartupFallback), Reason: "control-unavailable", Committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " retrying unavailable\n", want: mutationruntime.NativeObserverStartup{Status: string(codexObserverStartupRetrying), Reason: "unavailable", Committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " stale\n", want: mutationruntime.NativeObserverStartup{Status: string(codexObserverStartupStale), Committed: true}, ok: true},
 		{line: "ready 123-1\n"},
 		{line: codexObserverStartupPrefix + " ready\n"},
 		{line: codexObserverStartupPrefix + " fallback\n"},
 		{line: codexObserverStartupPrefix + " unknown reason\n"},
 	}
 	for _, test := range tests {
-		got, ok := parseCodexObserverStartupLine(test.line)
+		got, ok := mutationruntime.ParseNativeObserverStartupLine(test.line)
 		if ok != test.ok || got != test.want {
 			t.Errorf("parse startup %q = (%+v, %t), want (%+v, %t)", test.line, got, ok, test.want, test.ok)
 		}

@@ -9,7 +9,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
@@ -221,15 +220,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		},
 	}
 	if nativeCreate {
-		shared.Native = &nativeCreationEngine{Controller: c.codexNative, Spelling: spelling, Launcher: nativeLauncher, Route: nativeRoute, Prompt: prompt, Runner: func() tmuxCommandRunner { return c.runtime.Runner },
-			History: func(working *coremetadata.Registry, uid string) []sessionhistory.Record {
-				if bound, ok := working.Agent(uid); ok {
-					if row, valid := sessionhistory.ObservedRecordFor(working, bound.Metadata.UID, bound.Status.SessionRef); valid {
-						return []sessionhistory.Record{row}
-					}
-				}
-				return nil
-			}}
+		shared.Native = &nativeCreationEngine{Controller: c.codexNative, Spelling: spelling, Launcher: nativeLauncher, Route: nativeRoute, Prompt: prompt, Runner: func() tmuxCommandRunner { return c.runtime.Runner }}
+
 	}
 	request := mutationruntime.AgentCreateRequest{CreateSelection: flags.sharedSelection(), Provider: provider, Cwd: flags.cwd, AddDirs: flags.addDirs, Payload: flags.payload, Placement: flags.placement, CwdFrom: flags.cwdFrom, CwdSet: flags.cwdSet, DialogueReplyOnly: flags.dialogueReplyOnly, Labels: labels}
 	if err := c.createTransaction().Transact(mutationruntime.CreateKindAgent, shared.Operation(scope.shared(), request, spelling, &out), c.projectOwnershipGuard(scope)); err != nil {

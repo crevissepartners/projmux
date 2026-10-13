@@ -22,12 +22,6 @@ func requireLaunchOptions(spelling, provider, model, effort string, dialogueRepl
 	return (mutationruntime.AgentInputFields{}).RequireLaunchOptions(spelling, provider, model, effort, dialogueReplyOnly, outcome)
 }
 
-// codexLaunchOptionArgs keeps provider options ahead of the resume subcommand
-// and workspace arguments. Codex accepts model and effort on both CLI lanes.
-func codexLaunchOptionArgs(model, effort string) []string {
-	return mutationruntime.CodexLaunchOptionArgs(model, effort)
-}
-
 // claudeLaunchOptionArgs spells the Claude launch options. personaFile is the
 // persona snapshot path: only the path reaches argv, never the content, so the
 // persona does not show in `ps`.

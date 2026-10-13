@@ -218,12 +218,13 @@
 // prompts. SocketPath overrides Options.SocketPath, or uses the proved app
 // route when empty. Options.ProjmuxExecutable has the create supervisor contract.
 //
-// CreateAgent creates one tmux Claude, Antigravity, payload-free Codex or
-// InteractiveOnly Codex Agent in explicit Project/Window scope. Creator is a
-// uid: declaration only; no Pane or process-chain caller is inferred. Native
-// observed Codex creation (prompted default Codex and Codex instructions) is
-// not yet in the SDK (613-B): CodeCreateNativeCodexUnsupported refuses it
-// before effects; use projmux create agent for those combinations.
+// CreateAgent creates one tmux Claude, Antigravity or Codex Agent in explicit
+// Project/Window scope. Prompted Codex shares the CLI native create transaction,
+// instructions/profile policy and initial turn. Read-only endpoint readiness,
+// proxy and observer children use captured provider environment and explicit
+// Projmux paths; no daemon lifecycle is acquired. Creator is a uid: declaration
+// only; no Pane or process-chain caller is inferred. Plain and InteractiveOnly
+// Codex retain their existing launch lanes. SDK Codex resume remains deferred.
 // After commit, failed activation confirmation preserves the Agent and Pane.
 // CreateAgent returns the committed result and CodeCreateActivationUnconfirmed
 // together. Callers must inspect both the result and error before retrying.

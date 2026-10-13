@@ -2344,27 +2344,10 @@ func (c *aiCommand) PlanNativeCodexResume(route codexNativeEndpointRoute, worksp
 }
 
 func (c *aiCommand) PlanNativeCodexResumeWithOptions(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID, model, effort string) (string, []string, error) {
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" || !route.valid() {
-		return "", nil, errors.New("native Codex thread or generation route is incomplete")
-	}
-	agentBin := filepath.Clean(route.TUIExecutable)
-	workspaceArgs, err := providerLaunchArgs(aiModeCodex, workspace, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	execArgv := append([]string{agentBin}, codexLaunchOptionArgs(model, effort)...)
-	execArgv = append(execArgv, workspaceArgs...)
-	remote := "unix://"
-	if !route.Default {
-		remote += filepath.Clean(route.SocketPath)
-	}
-	execArgv = append(execArgv, "resume", "--remote", remote, threadID)
-	plan, err := c.planAgentLaunch(aiModeCodex, workspace.CWD, nil, execArgv, filepath.Dir(agentBin))
-	if err != nil {
-		return "", nil, err
-	}
-	return plan.title, plan.commandArgs, nil
+	return mutationruntime.PlanNativeCodexAttachment(route.shared(), workspace, threadID, model, effort, func(cwd string, argv []string, prepend string) (string, []string, error) {
+		plan, err := c.planAgentLaunch(aiModeCodex, cwd, nil, argv, prepend)
+		return plan.title, plan.commandArgs, err
+	})
 }
 
 func (c *aiCommand) BindNativeCodexPaneOnRoute(
@@ -2542,29 +2525,8 @@ type agentPaneBinding = mutationruntime.AgentPaneBinding
 
 type agentPaneBindError = mutationruntime.AgentPaneBindError
 
-type agentPaneOptionWrite struct {
-	option string
-	value  string
-	unset  bool
-}
-
 func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
 	return c.sharedAgentLaunch().BindAgentPaneOnRoute(ctx, runner, binding)
-}
-
-func readAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option string) (string, error) {
-	return mutationruntime.ReadAgentPaneOptionOnRoute(ctx, runner, paneID, option)
-}
-
-func writeAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID string, write agentPaneOptionWrite) error {
-	args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
-	if write.unset {
-		args = []string{"set-option", "-p", "-u", "-t", paneID, write.option}
-	}
-	if _, err := runner.Run(ctx, "tmux", args...); err != nil {
-		return fmt.Errorf("write Pane option %s: %w", write.option, err)
-	}
-	return nil
 }
 
 func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {

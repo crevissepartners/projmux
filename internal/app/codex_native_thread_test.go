@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -419,7 +420,7 @@ func (f *fakeNativePaneLauncher) PlanNativeCodexResume(route codexNativeEndpoint
 
 func (f *fakeNativePaneLauncher) PlanNativeCodexResumeWithOptions(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID, model, effort string) (string, []string, error) {
 	f.plans = append(f.plans, fakeNativePanePlan{route: route, workspace: workspace, threadID: threadID, model: model, effort: effort})
-	argv := append([]string{route.TUIExecutable}, codexLaunchOptionArgs(model, effort)...)
+	argv := append([]string{route.TUIExecutable}, mutationruntime.CodexLaunchOptionArgs(model, effort)...)
 	argv = append(argv, "resume", "--remote", "unix://"+route.SocketPath, threadID)
 	return "codex:native", argv, nil
 }

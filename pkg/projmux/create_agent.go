@@ -16,12 +16,14 @@ const (
 	CodeInstructionsProviderUnsupported Code = "persona-provider-unsupported"
 	CodeCreateCreatorInvalid            Code = "create-creator-invalid"
 	CodeCreateActivationUnconfirmed     Code = "create-activation-unconfirmed"
-	CodeCreateNativeCodexUnsupported    Code = "create-native-codex-unsupported"
-	CodeProfileProviderMismatch         Code = "profile-provider-mismatch"
-	CodeProfileLaneUnsupported          Code = "profile-lane-unsupported"
-	CodeProfilePermissionsUnsupported   Code = "profile-permissions-unsupported-provider"
-	CodeProfileCodexCLIUntrusted        Code = "codex-cli-untrusted-approval-unsupported"
-	CodeProfileRoleProfileInvalid       Code = "profile-role-profile-invalid"
+	// CodeCreateNativeCodexUnsupported is retained for source compatibility.
+	CodeCreateNativeCodexUnsupported  Code = "create-native-codex-unsupported"
+	CodeCreateNativeCodexUnavailable  Code = "create-native-codex-unavailable"
+	CodeProfileProviderMismatch       Code = "profile-provider-mismatch"
+	CodeProfileLaneUnsupported        Code = "profile-lane-unsupported"
+	CodeProfilePermissionsUnsupported Code = "profile-permissions-unsupported-provider"
+	CodeProfileCodexCLIUntrusted      Code = "codex-cli-untrusted-approval-unsupported"
+	CodeProfileRoleProfileInvalid     Code = "profile-role-profile-invalid"
 )
 
 // CreateAgent uses the CLI's shared tmux transaction and activation observer.
@@ -93,9 +95,6 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 		return result, createRefusal(err, "CreateAgentRequest")
 	}
 	planner.Provider = provider
-	if provider == "codex" && (!settings.InteractiveOnly && len(settings.Payload) > 0 || settings.Instructions != "") {
-		return result, &Refusal{Code: CodeCreateNativeCodexUnsupported, message: "CreateAgentRequest.Payload and Instructions requiring native Codex observation are not yet available in the SDK; use projmux create agent"}
-	}
 	for _, err := range []error{fields.RequireInteractiveOnlyProvider("create agent", provider, settings.InteractiveOnly), fields.RequireLaunchOptions("create agent", provider, settings.Model, settings.Effort, settings.DialogueReplyOnly, "nothing was created"), fields.RequirePersonaLane("create agent", provider, settings), fields.RequireProfileLane("create agent", settings.Profile, settings.DialogueReplyOnly), fields.RequireDialogueMode(provider, settings.DialogueReplyOnly, settings.Payload), mutationruntime.RefuseStatelessAgentWorkspaceWithFields(provider, req.Cwd, req.AddDirs, "CreateAgentRequest.Cwd", "CreateAgentRequest.AddDirs")} {
 		if err != nil {
 			return result, createRefusal(err, "CreateAgentRequest")
@@ -103,11 +102,6 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	}
 	if err = planner.SettingsService().ResolveCreateProfile("create agent", provider, &planner.Settings); err != nil {
 		return result, createRefusal(err, "CreateAgentRequest")
-	}
-	// Native observations need a detached child with explicit state routing. This
-	// combination is deferred; refuse before snapshots, hooks or any tmux call.
-	if provider == "codex" && (!settings.InteractiveOnly && len(settings.Payload) > 0 || planner.Settings.Instructions != "") {
-		return result, &Refusal{Code: CodeCreateNativeCodexUnsupported, message: "CreateAgentRequest.Payload and Instructions requiring native Codex observation are not yet available in the SDK; use projmux create agent"}
 	}
 	if planner.Settings.ProfileLaunch.Active() {
 		if err = fields.RequireLaunchOptions("create agent", provider, planner.Settings.Model, planner.Settings.Effort, settings.DialogueReplyOnly, "nothing was created"); err != nil {
@@ -126,12 +120,19 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+	planner.Initialize()
+	native, err := planner.PrepareNative(ctx)
+	if err != nil {
+		return result, createRefusal(err, "CreateAgentRequest")
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	// Admission is the last Context boundary, before content-addressed preparation
 	// and the same uncancelled transaction/rollback path the CLI runs.
 	if err := planner.PrepareSnapshots(provider); err != nil {
 		return result, createRefusal(err, "CreateAgentRequest")
 	}
-	planner.Initialize()
 	selection := mutationruntime.CreateSelection{Name: req.Name, Windows: []string{req.Window}}
 	if req.Pane != "" {
 		selection.Panes = []string{req.Pane}
@@ -145,6 +146,9 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	}, Creator: func(_ context.Context, reg *metadata.Registry) (mutationruntime.AgentCreatorRecord, error) {
 		return mutationruntime.DeclaredAgentCreator(reg, creator, "create agent", fields.Option("creator"))
 	}}
+	if native != nil {
+		machine.Native = native.Engine
+	}
 	var out mutationruntime.AgentCreateResult
 	request := mutationruntime.AgentCreateRequest{CreateSelection: selection, Provider: provider, Cwd: req.Cwd, CwdSet: req.Cwd != "", CwdFrom: req.CwdFrom, Placement: placement, AddDirs: req.AddDirs, Payload: req.Payload, DialogueReplyOnly: req.DialogueReplyOnly, Labels: labels}
 	err = transaction.TransactAdmitted(mutationruntime.CreateKindAgent, execution.ProcessAnchorAdmission(scope, selection, "create agent"), machine.Operation(scope, request, "create agent", &out), execution.ProjectOwnershipGuard(scope))
@@ -154,6 +158,9 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	first, err := createFirstResult(out.Results)
 	if err != nil {
 		return result, err
+	}
+	if native != nil {
+		native.Observe(out)
 	}
 	activation := mutationruntime.AgentActivationService{Store: transaction.Store, Runner: execution.Runtime.Runner, Await: planner.Launch.AwaitAgentActivation}
 	activationErr := activation.Confirm(out.ActivationTargets)

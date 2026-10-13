@@ -244,9 +244,9 @@ func TestCreateAgentSDKRefusalsBeforeTransport(t *testing.T) {
 		code projmux.Code
 	}{
 		{core.CreateAgentRequest{Project: "sample", Window: "w"}, projmux.CodeCreateRequestInvalid},
-		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Payload: []string{"hello"}}, projmux.CodeCreateNativeCodexUnsupported},
-		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Instructions: "reviewer"}, projmux.CodeCreateNativeCodexUnsupported},
-		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Profile: "codex-instructions"}, projmux.CodeCreateNativeCodexUnsupported},
+		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Payload: []string{"hello"}}, projmux.CodeCreateNativeCodexUnavailable},
+		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Instructions: "reviewer"}, projmux.CodeInstructionsProviderUnsupported},
+		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Profile: "codex-instructions"}, projmux.CodeInstructionsProviderUnsupported},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "antigravity", Profile: "claude"}, projmux.CodeProfileProviderMismatch},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "claude", Creator: "uid:missing"}, projmux.CodeCreateCreatorInvalid},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "claude", Effort: "bad"}, projmux.CodeCreateRequestInvalid},

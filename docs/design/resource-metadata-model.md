@@ -676,8 +676,8 @@ Agent session history (Claude and Codex):
   (hook ingest) and `persistManagedAgentInteractionWithActivationPolicy`
   (managed-Agent interaction commit) in `internal/app/agent_session_ref.go`,
   `openIntentAgent` (resume-picker create and intent native Codex create) in
-  `internal/app/create_intent.go`, and `createAgent` (native Codex fresh
-  create) in `internal/app/create_agent_execution.go`, and `updateProcessAgentSession`
+  `internal/app/create_intent.go`, and `NativeCreationEngine.Create` (native Codex fresh
+  create) in `internal/services/mutations/runtime/create_native_agent.go`, and `updateProcessAgentSession`
   in `internal/app/process_agent_session.go` (confirmed process owner binding
   and writer backfill). Process initialization commits the existing SessionRef
   alongside processSession; snapshot and Wait writers
@@ -692,7 +692,9 @@ Agent session history (Claude and Codex):
   `TestSessionHistoryObservedRowWritersCarryAffiliation` pins the set of five,
   that each builds its row with `sessionhistory.ObservedRecordFor` (directly or
   through `claudeSessionHistoryRecord`) from its transaction's `working`
-  Registry, that each reaches a post-commit append helper, and that no other
+  Registry, that each reaches a post-commit append helper (the native create
+  carrier is appended by CLI `createAgent` or SDK `SDKNativeCreation.Observe`
+  only after the shared transaction returns successfully), and that no other
   code builds an `observed` row with `RecordFor`. The append runs after the
   commit and never fails its caller: a hook logs one `session-history` line to
   `ai-ingest.log`, a create or process writer prints one

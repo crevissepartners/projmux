@@ -56,7 +56,7 @@ var sessionHistoryObservedRowWriters = []string{
 	"internal/app/process_agent_session.go:updateProcessAgentSession",
 	"internal/app/agent_session_ref.go:persistAgentSessionRef",
 	"internal/app/agent_session_ref.go:persistManagedAgentInteractionWithActivationPolicy",
-	"internal/app/create_agent_execution.go:createAgent",
+	"internal/services/mutations/runtime/create_native_agent.go:Create",
 	"internal/app/create_intent.go:openIntentAgent",
 }
 
@@ -81,7 +81,7 @@ func TestSessionHistoryObservedRowWritersCarryAffiliation(t *testing.T) {
 	const sessionHistoryDir = "internal/integrations/agents/sessionhistory/"
 	funcs := map[string]*ast.FuncDecl{}
 	var builders, bypasses []string
-	for _, dir := range []string{"internal", "cmd"} {
+	for _, dir := range []string{"internal", "cmd", "pkg"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -152,7 +152,12 @@ func TestSessionHistoryObservedRowWritersCarryAffiliation(t *testing.T) {
 			"with one of %v, and then update sessionHistoryObservedRowWriters in this test and the writer list in "+
 			"agent_session_history.go and docs/design/resource-metadata-model.md.", builders, want, sessionHistoryAppendHelpers)
 	}
+
 	for _, key := range want {
+		if key == "internal/services/mutations/runtime/create_native_agent.go:Create" {
+			requireNativeHistoryCarrier(t, funcs)
+			continue
+		}
 		fn := funcs[key]
 		if callsAny(fn, sessionHistoryAppendHelpers...) {
 			continue
@@ -264,6 +269,7 @@ func TestClaudeSessionRefWritersRecordHistory(t *testing.T) {
 			"recordClaudeSessionHistory (or an equivalent post-commit helper) after the commit, and then "+
 			"update claudeSessionRefWriters in this test.", callers, want)
 	}
+
 	for _, key := range want {
 		fn := funcs[key]
 		if !callsAny(fn, "claudeSessionHistoryRecord") {
@@ -1047,5 +1053,95 @@ func TestAgentSessionsProjectListsAnUnregisteredProjectByExactUID(t *testing.T) 
 		if stdout.Len() != 0 {
 			t.Errorf("%s printed %q", ref, stdout.String())
 		}
+	}
+}
+
+// The native service returns staged rows through a typed carrier; its runtime
+// operation cannot append while holding the Registry transaction. Pin both
+// actual post-commit consumers rather than mistaking every method named Create
+// for a history writer.
+func requireNativeHistoryCarrier(t *testing.T, funcs map[string]*ast.FuncDecl) {
+	t.Helper()
+	operation := funcs["internal/services/mutations/runtime/create_shared_create_agent.go:Operation"]
+	if operation == nil || !callsAny(operation, "Create") {
+		t.Fatal("native row carrier lost its transaction producer")
+	}
+	staged := false
+	ast.Inspect(operation, func(node ast.Node) bool {
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, left := range assign.Lhs {
+			if sel, ok := left.(*ast.SelectorExpr); ok && sel.Sel.Name == "NativeHistory" {
+				for _, right := range assign.Rhs {
+					if call, ok := right.(*ast.CallExpr); ok && calleeName(call) == "append" {
+						staged = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	if !staged {
+		t.Fatal("native history must be staged in AgentCreateResult.NativeHistory")
+	}
+	for _, contract := range []struct{ key, commit, append string }{
+		{"internal/app/create_agent_execution.go:createAgent", "Transact", "recordCreateAgentSessionHistory"},
+		{"pkg/projmux/create_agent.go:createAgent", "TransactAdmitted", "Observe"},
+	} {
+		fn := funcs[contract.key]
+		if fn == nil {
+			t.Fatalf("native history consumer missing: %s", contract.key)
+		}
+		var committed, appended token.Pos
+		returnsOnError := false
+		ast.Inspect(fn, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if ok {
+				if calleeName(call) == contract.commit {
+					committed = call.Pos()
+				}
+				if calleeName(call) == contract.append {
+					appended = call.Pos()
+				}
+			}
+			return true
+		})
+		// Pin the immediate error guard of the actual transaction statement,
+		// so a later unrelated result guard cannot satisfy this contract.
+		for index, stmt := range fn.Body.List {
+			if committed < stmt.Pos() || committed > stmt.End() {
+				continue
+			}
+			guard, ok := stmt.(*ast.IfStmt)
+			if !ok && index+1 < len(fn.Body.List) {
+				guard, ok = fn.Body.List[index+1].(*ast.IfStmt)
+			}
+			if !ok || guard.End() >= appended {
+				continue
+			}
+			cond, ok := guard.Cond.(*ast.BinaryExpr)
+			if !ok || cond.Op != token.NEQ {
+				continue
+			}
+			left, leftOK := cond.X.(*ast.Ident)
+			right, rightOK := cond.Y.(*ast.Ident)
+			if !leftOK || !rightOK || left.Name != "err" || right.Name != "nil" {
+				continue
+			}
+			for _, inner := range guard.Body.List {
+				if _, ok := inner.(*ast.ReturnStmt); ok {
+					returnsOnError = true
+				}
+			}
+		}
+		if committed == token.NoPos || appended <= committed || !returnsOnError {
+			t.Fatalf("%s must return on transaction error before appending native history", contract.key)
+		}
+	}
+	observe := funcs["internal/services/mutations/runtime/create_sdk_native.go:Observe"]
+	if observe == nil || !callsAny(observe, "Append") {
+		t.Fatal("SDK native history carrier lost its explicit post-commit append")
 	}
 }

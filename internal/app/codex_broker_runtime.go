@@ -80,7 +80,7 @@ func (route codexBrokerEndpointRoute) openers() (codexbroker.Opener, codexbroker
 			// generation's route before the broker opens any thread barrier.
 			if !defaultBrokerEndpointMatches(route, health.RunningVersion, client.NegotiatedVersion()) {
 				_ = client.Close()
-				return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, err: codexappserver.ErrEndpointChanged}
+				return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, Cause: codexappserver.ErrEndpointChanged}
 			}
 			return client, nil
 		}
