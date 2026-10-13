@@ -139,3 +139,28 @@ func StopProject(ctx context.Context, runner TmuxCommandRunner, target ManagedRu
 func ProjectNotLive(project metadata.Project) error {
 	return fmt.Errorf("stop project: project/%s has no live persistent session; nothing was changed", project.Metadata.Name)
 }
+
+// ExecuteProjectStop is the CLI/SDK batch execution boundary. Preflight stays
+// with each adapter; admitted Stop and tmux compensation ignore caller cancel.
+// Process owners share the earlier caller deadline. Tmux executes even when
+// one process owner refuses, preserving the existing partial-result policy.
+func ExecuteProjectStop(ctx context.Context,
+	process func(context.Context) ([]receipt.ReceiptResource, error),
+	tmuxStop func(context.Context) error,
+) ([]receipt.ReceiptResource, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	execution := context.WithoutCancel(ctx)
+	if deadline, ok := ctx.Deadline(); ok {
+		bounded, cancel := context.WithDeadline(execution, deadline)
+		defer cancel()
+		execution = bounded
+	}
+	stopped, processErr := process(execution)
+	if tmuxStop == nil {
+		return stopped, false, processErr
+	}
+	tmuxErr := tmuxStop(context.WithoutCancel(ctx))
+	return stopped, tmuxErr == nil, errors.Join(processErr, tmuxErr)
+}

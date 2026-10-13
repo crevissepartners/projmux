@@ -2,12 +2,19 @@ package consumer_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -587,5 +594,288 @@ func TestExternalTurnConsumer(t *testing.T) {
 		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid {
 			t.Fatalf("explicit ref: %v", err)
 		}
+	}
+
+}
+
+func externalStopIdentity(t *testing.T, pid int) core.ProcessIdentity {
+	t.Helper()
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(data)[strings.LastIndex(string(data), ")")+2:])
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return core.ProcessIdentity{PID: pid, OwnerUID: uint32(os.Getuid()), Start: "linux:" + strings.TrimSpace(string(boot)) + ":" + fields[19]}
+}
+
+func externalStopSocket(path string) string {
+	digest := sha256.Sum256([]byte(path + "\x00pane\x00generation"))
+	return filepath.Join("/tmp", "pmx-ce-"+hex.EncodeToString(digest[:16]), "codex-host.sock")
+}
+
+// This isolated test-binary protocol fixture owns sleep and records actual Wait.
+// It imports only public SDK types and never runs a provider or reads auth.
+func TestExternalProjectStopOwnerFixture(t *testing.T) {
+	root := os.Getenv("PROJMUX_TEST_PROJECT_STOP_FIXTURE")
+	if root == "" {
+		return
+	}
+	path := filepath.Join(root, "state", "metadata", "registry.json")
+	socket := externalStopSocket(path)
+	if err := os.MkdirAll(filepath.Dir(socket), 0700); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(filepath.Dir(socket))
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err = os.Chmod(socket, 0600); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command("sleep", "30")
+	if err = child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	identities := []core.ProcessIdentity{externalStopIdentity(t, os.Getpid()), externalStopIdentity(t, child.Process.Pid)}
+	if err = json.NewEncoder(os.Stdout).Encode(identities); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var req struct {
+		Foreground struct {
+			Action    string
+			Authority struct {
+				Binding struct{ Agent, Pane, Generation string }
+			}
+		}
+	}
+	if err = json.NewDecoder(conn).Decode(&req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Foreground.Action != "stop" || req.Foreground.Authority.Binding.Agent != "agent" || req.Foreground.Authority.Binding.Pane != "pane" || req.Foreground.Authority.Binding.Generation != "generation" {
+		t.Fatal("wrong exact Stop request")
+	}
+	if err = child.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err = child.Wait(); err == nil {
+		t.Fatal("fixture kill did not reach actual Wait")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reg map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &reg); err != nil {
+		t.Fatal(err)
+	}
+	var agents []core.Agent
+	var panes []core.Pane
+	if err = json.Unmarshal(reg["agents"], &agents); err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(reg["panes"], &panes); err != nil {
+		t.Fatal(err)
+	}
+	code := child.ProcessState.ExitCode()
+	wait := &core.TerminationEvidence{Source: core.TerminationSourceSupervisor, Classification: core.TerminationNormal, ObservedAt: time.Now(), AgentUID: "agent", PaneUID: "pane", Generation: "generation", OperationID: "operation", ExitCode: &code}
+	if code < 0 {
+		wait.ExitCode = nil
+		wait.Signal = "killed"
+	}
+	agents[0].Status.Phase = core.PhaseOffline
+	agents[0].Status.LastTermination = wait
+	panes[0].Status.LastTermination = wait
+	panes[0].Status.Activation = core.PaneActivation{}
+	panes[0].Status.ProcessSession.ResumeState = core.ProcessResumable
+	reg["agents"], err = json.Marshal(agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg["panes"], err = json.Marshal(panes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path+".fixture", raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(path+".fixture", path); err != nil {
+		t.Fatal(err)
+	}
+	if err = json.NewEncoder(conn).Encode(map[string]bool{"Accepted": true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExternalHeadlessProjectStopConsumer(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("kernel-birth protocol fixture uses Linux procfs")
+	}
+	for _, mode := range []string{"born", "partial", "claim"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			state := filepath.Join(root, "state")
+			path := filepath.Join(state, "metadata", "registry.json")
+			fixture := exec.Command(os.Args[0], "-test.run=^TestExternalProjectStopOwnerFixture$")
+			fixture.Env = append(os.Environ(), "PROJMUX_TEST_PROJECT_STOP_FIXTURE="+root)
+			out, err := fixture.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.Stderr = os.Stderr
+			if err = fixture.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			reaped := false
+			defer func() {
+				_ = fixture.Process.Kill()
+				if reaped {
+					return
+				}
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+				}
+			}()
+			var identities []core.ProcessIdentity
+			if err = json.NewDecoder(out).Decode(&identities); err != nil {
+				t.Fatal(err)
+			}
+			go func() { done <- fixture.Wait() }()
+			meta := func(uid, name string, kind core.Kind, owner string) core.ObjectMeta {
+				m := core.ObjectMeta{UID: uid, Name: name}
+				if owner != "" {
+					m.OwnerRef = &core.OwnerRef{Kind: kind, UID: owner}
+				}
+				return m
+			}
+			project := core.Project{APIVersion: "projmux.io/v1alpha1", Kind: core.KindProject, Metadata: meta("project", "project", "", ""), Spec: core.ProjectSpec{Root: root, PrimaryWindowRef: "window"}}
+			window := core.Window{APIVersion: "projmux.io/v1alpha1", Kind: core.KindWindow, Metadata: meta("window", "window", core.KindProject, "project"), Spec: core.WindowSpec{AnchorPaneRef: "pane"}}
+			binding := core.ProcessBinding{HostInstanceID: "host", ProjectUID: "project", WindowUID: "window", AgentUID: "agent", PaneUID: "pane", Generation: "generation", OperationID: "operation"}
+			agent := core.Agent{APIVersion: "projmux.io/v1alpha1", Kind: core.KindAgent, Metadata: meta("agent", "worker", core.KindWindow, "window"), Spec: core.AgentSpec{Provider: "codex"}, Status: core.AgentStatus{Phase: core.PhaseRunning, PaneRef: "pane"}}
+			pane := core.Pane{APIVersion: "projmux.io/v1alpha1", Kind: core.KindPane, Metadata: meta("pane", "worker-pane", core.KindAgent, "agent"), Spec: core.PaneSpec{Runtime: core.PaneRuntimeSpec{Kind: core.RuntimeProcess}, Role: core.PaneRoleAgent}}
+			pane.Status.ProcessSession = &core.ProcessSessionRecord{Provider: "codex", Binding: binding, ThreadID: "conversation", ConnectionID: "operation", ResumeState: core.ProcessResumeUnknown}
+			pane.Status.Activation = core.PaneActivation{Kind: core.RuntimeProcess, Generation: binding.Generation, AgentUID: "agent", OperationID: binding.OperationID, Process: &core.ProcessActivation{Binding: binding, HostProcess: identities[0], Child: identities[1]}}
+			if mode == "claim" {
+				pane.Status.Activation = core.PaneActivation{}
+			}
+			agents := []core.Agent{agent}
+			panes := []core.Pane{pane}
+			reservations := []map[string]any{{"kind": "Project", "uid": "project", "name": "project"}, {"scope": "project", "kind": "Window", "uid": "window", "name": "window"}, {"scope": "project", "kind": "Agent", "uid": "agent", "name": "worker"}, {"scope": "project", "kind": "Pane", "uid": "pane", "name": "worker-pane"}}
+			if mode == "partial" {
+				failed := agent
+				failed.Metadata = meta("failed", "failed", core.KindWindow, "window")
+				failed.Status.PaneRef = "failed-pane"
+				failedPane := pane
+				failedPane.Metadata = meta("failed-pane", "failed-pane", core.KindAgent, "failed")
+				failedPane.Status.Activation = core.PaneActivation{}
+				session := *pane.Status.ProcessSession
+				session.Binding.AgentUID = "failed"
+				session.Binding.PaneUID = "failed-pane"
+				failedPane.Status.ProcessSession = &session
+				agents = append(agents, failed)
+				panes = append(panes, failedPane)
+				reservations = append(reservations, map[string]any{"scope": "project", "kind": "Agent", "uid": "failed", "name": "failed"}, map[string]any{"scope": "project", "kind": "Pane", "uid": "failed-pane", "name": "failed-pane"})
+			}
+			raw, err := json.Marshal(map[string]any{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5, "projects": []core.Project{project}, "windows": []core.Window{window}, "agents": agents, "panes": panes, "nameReservations": reservations})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: state, HomeDir: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			poison := t.TempDir()
+			for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PROJMUX_CONFIG_DIR", "PROJMUX_STATE_DIR", "PROJMUX_REGISTRY_PATH", "TMUX", "TMUX_PANE"} {
+				t.Setenv(key, poison)
+			}
+			result, err := c.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:project", SocketPath: filepath.Join(root, "missing-socket")})
+			if mode == "claim" {
+				var refusal *projmux.Refusal
+				after, readErr := os.ReadFile(path)
+				if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || result.Stopped || result.Receipt.Operation != "" || readErr != nil || string(after) != string(raw) {
+					t.Fatalf("claim invented effects %+v %v", result, err)
+				}
+				conn, e := net.Dial("unix", externalStopSocket(path))
+				if e != nil {
+					t.Fatal(e)
+				}
+				cleanup := map[string]any{"Foreground": map[string]any{"Action": "stop", "Authority": map[string]any{"Binding": map[string]string{"Agent": "agent", "Pane": "pane", "Generation": "generation"}}}}
+				if e = json.NewEncoder(conn).Encode(cleanup); e != nil {
+					t.Fatal(e)
+				}
+				var reply map[string]bool
+				if e = json.NewDecoder(conn).Decode(&reply); e != nil {
+					t.Fatal(e)
+				}
+				_ = conn.Close()
+				if e = <-done; e != nil {
+					t.Fatal(e)
+				}
+				reaped = true
+
+			} else {
+				if result.Stopped != (mode == "born") || result.Receipt.Operation != core.OperationStopProject || len(result.Receipt.AffectedUIDs) != 2 || result.Receipt.AffectedUIDs[1].UID != "agent" {
+					t.Fatalf("stop %+v %v", result, err)
+				}
+				if mode == "born" && err != nil {
+					t.Fatal(err)
+				}
+				if mode == "partial" {
+					var refusal *projmux.Refusal
+					if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || !strings.Contains(err.Error(), "uid:failed") {
+						t.Fatal(err)
+					}
+				}
+				select {
+				case err := <-done:
+					reaped = true
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("fixture owner remains")
+				}
+				for _, id := range identities {
+					if _, e := os.Stat(fmt.Sprintf("/proc/%d", id.PID)); !errors.Is(e, os.ErrNotExist) {
+						t.Fatalf("fixture kernel process remains: %d", id.PID)
+					}
+				}
+				retained, e := c.GetResource(context.Background(), core.Ref{Kind: core.KindAgent, Value: "uid:agent"})
+				if e != nil || retained.(core.Agent).Status.Phase != core.PhaseOffline {
+					t.Fatalf("retained Agent %+v %v", retained, e)
+				}
+				retained, e = c.GetResource(context.Background(), core.Ref{Kind: core.KindPane, Value: "uid:pane"})
+				if e != nil || retained.(core.Pane).Status.ProcessSession.ThreadID != "conversation" || retained.(core.Pane).Status.LastTermination == nil {
+					t.Fatalf("retained Pane %+v %v", retained, e)
+				}
+			}
+			entries, e := os.ReadDir(poison)
+			if e != nil || len(entries) != 0 {
+				t.Fatal("ambient root written")
+			}
+		})
 	}
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -22,19 +23,17 @@ const (
 	CodeProjectNotLive             Code = "project-not-live"
 	CodeProjectStopRouteRefused    Code = "project-stop-route-refused"
 	CodeProjectStopExecutionFailed Code = "project-stop-execution-failed"
-	// CodeProjectHasRunningProcessAgents refuses StopProject before any writes
-	// when its Registry snapshot contains Running process Agents in the Project.
-	// The Refusal message identifies each Agent by name and UID.
+	// CodeProjectHasRunningProcessAgents remains exported for source compatibility.
 	CodeProjectHasRunningProcessAgents Code = "project-has-running-process-agents"
 )
 
-// StopProject ends one Project's persistent tmux session while retaining its
-// Registry identity, desired topology, root and external assets. If its Registry
-// snapshot contains Running process Agents in the Project, it returns a Refusal
-// with CodeProjectHasRunningProcessAgents and their names and UIDs before any
-// Registry or tmux writes. Use CLI stop project to stop those Agents. Otherwise
-// it ends only tmux and does not move clients. Cancellation is effective before
-// admission only; admitted execution and compensation finish independently.
+// StopProject stops Running process Agents and the exact persistent tmux
+// session through the CLI's shared executor, retaining Project identity,
+// desired topology, Agent/Pane identities and conversations. Partial failures
+// include confirmed Agent stops in Receipt. Child-free claims remain refused.
+// Cancellation prevents admission; admitted Stop and compensation finish
+// independently, with process retirement bounded by the earlier caller deadline
+// or ten seconds. A process-only Project needs no live tmux server.
 func (c *Client) StopProject(ctx context.Context, req core.StopProjectRequest) (core.StopProjectResult, error) {
 	return c.stopProjectWithRunner(ctx, req, tmux.ExecRunner{})
 }
@@ -69,27 +68,7 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 	if err != nil {
 		return result, resourceRefusal(err)
 	}
-	windowUIDs := make(map[string]bool)
-	for _, window := range reg.WindowsOf(project.Metadata.UID) {
-		windowUIDs[window.Metadata.UID] = true
-	}
-	var runningProcessAgents []string
-	for _, agent := range reg.Agents {
-		if agent.Status.Phase != metadata.PhaseRunning || agent.Metadata.OwnerRef == nil ||
-			agent.Metadata.OwnerRef.Kind != metadata.KindWindow || !windowUIDs[agent.Metadata.OwnerRef.UID] {
-			continue
-		}
-		pane, ok := reg.Pane(agent.Status.PaneRef)
-		if ok && mutationruntime.IsNonTmuxRuntimePane(*pane) {
-			runningProcessAgents = append(runningProcessAgents, fmt.Sprintf("%s (uid:%s)", agent.Metadata.Name, agent.Metadata.UID))
-		}
-	}
-	if len(runningProcessAgents) != 0 {
-		sort.Strings(runningProcessAgents)
-		return result, &Refusal{Code: CodeProjectHasRunningProcessAgents, message: fmt.Sprintf(
-			"stop project: project/%s has Running process Agents: %s; use CLI stop project to stop them",
-			project.Metadata.Name, strings.Join(runningProcessAgents, ", "))}
-	}
+	hasProcess := len(mutationruntime.RunningProjectProcessAgents(reg, project.Metadata.UID)) != 0
 	root := strings.TrimSpace(project.Spec.Root)
 	if root == "" {
 		return result, &Refusal{Code: CodeProjectStopRouteRefused, message: fmt.Sprintf("stop project: project/%s has no spec.root to route a runtime through", project.Metadata.Name)}
@@ -98,27 +77,54 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 	if socket == "" {
 		socket = c.runtimeSocketPath
 	}
+	var target mutationruntime.ManagedRuntimeStopTarget
+	var live bool
 	route, err := mutationruntime.ResolveProjectStopRoute(ctx, runner, socket)
 	if err != nil {
-		if tmux.IsNoServerFailure(err) {
+		// Process-only Project stop does not depend on tmux being installed or
+		// running. Other route failures still refuse mixed runtime authority.
+		if !tmux.IsNoServerFailure(err) && !errors.Is(err, exec.ErrNotFound) {
+			return result, deleteRefusal(CodeProjectStopRouteRefused, err)
+		}
+		if !hasProcess {
 			return result, &Refusal{Code: CodeProjectNotLive, message: mutationruntime.ProjectNotLive(project).Error(), cause: err}
 		}
-		code := CodeProjectStopRouteRefused
-		if socket != "" && !filepath.IsAbs(socket) {
-			return result, &Refusal{Code: CodeRuntimeRequestInvalid, message: "StopProjectRequest.SocketPath must be absolute", cause: err}
+	} else {
+		target, live, err = mutationruntime.FindProjectStopTarget(ctx, runner, route, project, c.projectSessionName(root))
+		if err != nil {
+			return result, deleteRefusal(CodeProjectStopRouteRefused, err)
 		}
-		return result, deleteRefusal(code, err)
 	}
-	target, live, err := mutationruntime.FindProjectStopTarget(ctx, runner, route, project, c.projectSessionName(root))
-	if err != nil {
-		return result, deleteRefusal(CodeProjectStopRouteRefused, err)
-	}
-	if !live {
+	if !live && !hasProcess {
 		return result, &Refusal{Code: CodeProjectNotLive, message: mutationruntime.ProjectNotLive(project).Error()}
 	}
 	storage := store.NewStore(store.PathFor(c.paths.StateDir))
 	s := &mutationruntime.StopStore{Load: storage.LoadReadOnly, Update: storage.Update, Mutator: store.DefaultMutator}
-	internal, err := mutationruntime.StopProject(ctx, runner, target, s, project)
+	internal := mutationruntime.StopProjectResult{}
+	var stopTmux func(context.Context) error
+	if live {
+		stopTmux = func(execution context.Context) error {
+			var stopErr error
+			internal, stopErr = mutationruntime.StopProject(execution, runner, target, s, project)
+			return stopErr
+		}
+	}
+	executor := mutationruntime.ProjectProcessStopExecutor{RegistryPath: store.PathFor(c.paths.StateDir), Load: storage.LoadReadOnly}
+	stopped, tmuxStopped, err := mutationruntime.ExecuteProjectStop(ctx, func(execution context.Context) ([]receipt.ReceiptResource, error) {
+		return executor.Stop(execution, project.Metadata.UID)
+	}, stopTmux)
+	internal.Stopped = err == nil && (tmuxStopped || len(stopped) != 0)
+	if tmuxStopped || len(stopped) != 0 {
+		internal.Receipt = receipt.NewReceipt(receipt.OperationStopProject, receipt.ReceiptTarget{Kind: "Project", UID: project.Metadata.UID, Name: project.Metadata.Name}, receipt.ReceiptEffects{Identity: receipt.IdentityUnchanged, Address: receipt.AddressUnchanged, Topology: receipt.TopologyUnchanged, DesiredState: receipt.DesiredStateUnchanged, Runtime: receipt.RuntimeStopped, Focus: receipt.FocusUnchanged})
+		action := receipt.ActionStopped
+		if live && !tmuxStopped {
+			action = receipt.ActionUnchanged
+		}
+		internal.Receipt.Add("Project", project.Metadata.UID, project.Metadata.Name, action)
+		for _, agent := range stopped {
+			internal.Receipt.Add(agent.Kind, agent.UID, agent.Name, agent.Action)
+		}
+	}
 	if copyErr := unregisterCopy(internal, &result); copyErr != nil {
 		return result, errors.Join(err, copyErr)
 	}
