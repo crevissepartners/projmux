@@ -22,6 +22,10 @@ import (
 // ConfigDir is the projmux directory itself, not its XDG parent. Profiles used
 // to guard Delete live in ConfigDir too. No method changes global environment.
 type Options struct {
+	// CreateRecorder optionally records each finished Window, Pane, Agent or
+	// Resume transaction. Nil disables recording; no journal path is inferred.
+	CreateRecorder CreateRecorder
+
 	// ProjmuxExecutable is the absolute executable of this same projmux build.
 	// CreateWindow and CreatePane require it for supervised shell children.
 	ProjmuxExecutable string
@@ -60,6 +64,7 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
+	createRecorder    CreateRecorder
 	projmuxExecutable string
 	agentEnvironment  map[string]string
 
@@ -109,7 +114,7 @@ func NewClient(options Options) (*Client, error) {
 	defaults := mutations.CaptureProjectDefaults(options.DefaultShell, options.HomeDir)
 	namer := sessions.NewNamer(defaults.HomeDir)
 	discoveryEnv := projectcandidates.CaptureEnvironment()
-	return &Client{agentEnvironment: mutations.CaptureAgentEnvironment(), projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	return &Client{createRecorder: options.CreateRecorder, agentEnvironment: mutations.CaptureAgentEnvironment(), projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}
