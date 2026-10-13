@@ -136,10 +136,6 @@ func (c *createCommand) resolveCreateProfile(spelling, provider string, flags *r
 	return err
 }
 
-func codexThreadPolicy(perms profile.Permissions) (codexappserver.ThreadPolicy, error) {
-	return mutationruntime.CodexThreadPolicy(perms)
-}
-
 func (c *createCommand) prepareProfileSettings(spelling, provider string, flags *resourceCreateFlags) error {
 	shared := flags.sharedAgentSettingsFlags()
 	err := c.sharedAgentSettings(*flags).PrepareProfileSettings(spelling, provider, &shared)
@@ -206,19 +202,8 @@ func (c *aiCommand) resumeProfileSettings(m string, a map[string]string, u ...st
 // invalid refuses with profile-resume-unavailable; there is no resume that
 // drops its permissions.
 func (c *createCommand) codexResumeProfile(annotations map[string]string, projectUID ...string) (agentResumeLaunch, codexappserver.ThreadPolicy, error) {
-	name := annotations[coremetadata.AnnotationAgentProfile]
-	if name == "" {
-		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, nil
-	}
-	_, loaded, spec, err := resolveRecordedProfile(c.homeDir, c.lookupEnv, name, projectUID...)
-	if err != nil {
-		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, err
-	}
-	policy, err := codexThreadPolicy(spec.Permissions)
-	if err != nil {
-		return agentResumeLaunch{}, codexappserver.ThreadPolicy{}, &profileResumeError{name: name, reason: profile.ReasonValueInvalid, detail: err.Error()}
-	}
-	return agentResumeLaunch{profileName: loaded.Name, profileDigest: loaded.Digest}, policy, nil
+	launch, policy, err := mutationruntime.NativeCodexResumeProfile(func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }, annotations, projectUID...)
+	return localAgentResumeLaunch(launch), policy, localResumeError(err)
 }
 
 // withResumedProfileDigest returns annotations with the profile digest the

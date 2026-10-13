@@ -2,14 +2,10 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -135,37 +131,8 @@ const (
 	codexNativeReasonRetiredRunning = "retired-generation-running"
 )
 
-// codexNativeResumeAgentPlaceholder stands for the Agent reference in retired
-// generation guidance until a caller that knows the Agent binds it.
-const codexNativeResumeAgentPlaceholder = "<agent>"
-
-const codexRetiredGenerationProbeTimeout = 250 * time.Millisecond
-
 func codexRetiredGenerationRefusal(reason, socketPath, agentRef string) *codexNativeRouteError {
-	resume := "`projmux agent resume " + agentRef + "`"
-	if strings.TrimSpace(agentRef) == "" {
-		// No Agent exists yet (a resume-picker row): name both retries.
-		resume = "the resume-picker row, or `projmux agent resume " + codexNativeResumeAgentPlaceholder + "` for an existing Agent"
-	}
-	switch reason {
-	case codexNativeReasonRetiredRunning:
-		return &codexNativeRouteError{Reason: reason, SocketPath: socketPath, OperatorAction: fmt.Sprintf(
-			"a retired private Codex app-server generation is still listening on %s and may hold this thread; stop that Codex app-server process, then retry %s", socketPath, resume)}
-	default:
-		return &codexNativeRouteError{Reason: codexNativeReasonRetiredStateDomain, OperatorAction: "this Codex thread is stored under a different CODEX_HOME than the shared Codex app server serves; " +
-			"set CODEX_HOME to that Codex home and run `codex app-server daemon restart`, then retry " + resume +
-			", or start a new conversation with `projmux create agent --provider codex`"}
-	}
-}
-
-// bindCodexResumeAgentRef names the exact Agent in retired generation
-// guidance. Other errors pass through unchanged.
-func bindCodexResumeAgentRef(err error, agentRef string) error {
-	var routeErr *codexNativeRouteError
-	if !errors.As(err, &routeErr) || (routeErr.Reason != codexNativeReasonRetiredStateDomain && routeErr.Reason != codexNativeReasonRetiredRunning) {
-		return err
-	}
-	return codexRetiredGenerationRefusal(routeErr.Reason, routeErr.SocketPath, agentRef)
+	return mutationruntime.NativeCodexRetiredGenerationRefusal(reason, socketPath, agentRef)
 }
 
 func (controller defaultCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
@@ -206,88 +173,17 @@ func (controller defaultCodexNativeThreadController) CatalogRoutes(ctx context.C
 }
 
 func (controller defaultCodexNativeThreadController) Resolve(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error) {
-	if !endpoint.Valid() {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
-	}
-	route, err := controller.Current(ctx)
-	if err != nil {
-		return codexNativeEndpointRoute{}, err
-	}
-	// Retired private generations ran with CODEX_HOME set to the same
-	// canonical root the default daemon uses (codex_managed_generation.go
-	// defaultCodexStateDomain; the generation host exported
-	// CODEX_HOME=StateDomainPath) and minted the same StateDomainID. The same
-	// StateDomainID therefore means the rollout is already in the daemon's
-	// CODEX_HOME, and resuming on the default endpoint is safe even when the
-	// generation id differs (a private generation, or a plain daemon upgrade).
-	if route.Endpoint.StateDomainID != endpoint.StateDomainID {
-		return codexNativeEndpointRoute{}, codexRetiredGenerationRefusal(codexNativeReasonRetiredStateDomain, "", "")
-	}
-	if socketPath, running := controller.retiredGenerationRunning(ctx, endpoint); running {
-		return codexNativeEndpointRoute{}, codexRetiredGenerationRefusal(codexNativeReasonRetiredRunning, socketPath, "")
-	}
-	return route, nil
-}
-
-// retiredGenerationRunning dials, without speaking any protocol, the
-// deterministic socket a private generation of endpoint would have used. A
-// retired host was started in its own session and may outlive projmux, still
-// holding the thread. It never reads the rolling-upgrade journal.
-func (controller defaultCodexNativeThreadController) retiredGenerationRunning(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (string, bool) {
-	if strings.TrimSpace(controller.stateDir) == "" {
-		return "", false
-	}
-	version, ok := strings.CutPrefix(endpoint.EndpointGenerationID, "codex-")
-	if !ok || !codexappserver.IsSafeDiagnosticVersion(version) {
-		return "", false
-	}
-	_, socketPath, err := managedCodexRuntimeLocation(controller.stateDir, endpoint.StateDomainID, version)
-	if err != nil {
-		return "", false
-	}
-	listen := controller.retiredListen
-	if listen == nil {
-		listen = dialCodexRetiredGenerationSocket
-	}
-	return socketPath, listen(ctx, socketPath)
+	route, err := mutationruntime.ResolveNativeCodexEndpoint(ctx, endpoint, controller.stateDir, func(ctx context.Context) (mutationruntime.NativeCodexRoute, error) {
+		r, err := controller.Current(ctx)
+		return r.shared(), err
+	}, controller.retiredListen)
+	return localNativeCodexRoute(route), err
 }
 
 const (
 	managedCodexRuntimeKeyBytes    int = 16
 	managedCodexSocketPathMaxBytes int = 100
 )
-
-// managedCodexRuntimeLocation is the deterministic private root and socket a
-// retired private generation of one state domain and version was started on.
-// It only locates that socket for the retired-generation check; nothing here
-// creates or launches a generation.
-func managedCodexRuntimeLocation(stateDir, stateDomainID, targetVersion string) (string, string, error) {
-	stateDir = filepath.Clean(strings.TrimSpace(stateDir))
-	if !filepath.IsAbs(stateDir) || strings.TrimSpace(stateDomainID) == "" || !codexappserver.IsSafeDiagnosticVersion(targetVersion) {
-		return "", "", errors.New("managed Codex runtime identity is invalid")
-	}
-	sum := sha256.Sum256([]byte(stateDomainID + "\x00" + targetVersion))
-	privateRoot := filepath.Join(stateDir, "g", hex.EncodeToString(sum[:managedCodexRuntimeKeyBytes]))
-	socketPath := filepath.Join(privateRoot, "s")
-	if len([]byte(socketPath)) > managedCodexSocketPathMaxBytes {
-		return privateRoot, socketPath, errors.New("managed Codex runtime socket exceeds the platform-safe bound")
-	}
-	return privateRoot, socketPath, nil
-}
-
-func dialCodexRetiredGenerationSocket(ctx context.Context, socketPath string) bool {
-	if _, err := os.Lstat(socketPath); err != nil {
-		return false
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, codexRetiredGenerationProbeTimeout)
-	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", socketPath)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
-}
 
 func (controller defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, input codexNativeCreateInput) (codexappserver.ThreadBinding, error) {
 	if !route.valid() || route.State != codexgeneration.StateCurrent {
@@ -391,24 +287,18 @@ func planNativeCodexResumeOptions(launcher codexNativeAgentLauncher, route codex
 }
 
 func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeThreadController, ref *coremetadata.AgentSessionRef, agentRef string) (codexNativeEndpointRoute, error) {
-	if err := validateStoredCodexNativeResumeRoute(ref); err != nil {
-		return codexNativeEndpointRoute{}, err
+	var resolve func(context.Context, coremetadata.CodexEndpointRef) (mutationruntime.NativeCodexRoute, error)
+	if controller != nil {
+		resolve = func(ctx context.Context, e coremetadata.CodexEndpointRef) (mutationruntime.NativeCodexRoute, error) {
+			r, err := controller.Resolve(ctx, e)
+			return r.shared(), err
+		}
 	}
-	endpoint := *ref.Codex.Endpoint
-	if controller == nil {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	route, err := controller.Resolve(ctx, endpoint)
-	if err != nil {
-		return codexNativeEndpointRoute{}, bindCodexResumeAgentRef(err, agentRef)
-	}
-	if !route.valid() {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	if err := validateCodexNativeResumeRoute(ref, route); err != nil {
-		return codexNativeEndpointRoute{}, bindCodexResumeAgentRef(err, agentRef)
-	}
-	return route, nil
+	route, err := mutationruntime.ResolveNativeCodexResumeRoute(ctx, ref, agentRef, resolve)
+	return localNativeCodexRoute(route), err
+}
+func localNativeCodexRoute(r mutationruntime.NativeCodexRoute) codexNativeEndpointRoute {
+	return codexNativeEndpointRoute{Endpoint: r.Endpoint, State: r.State, SocketPath: r.SocketPath, TUIExecutable: r.TUIExecutable, Default: r.Default}
 }
 
 // validateStoredCodexNativeResumeRoute is the part of
@@ -416,42 +306,7 @@ func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeTh
 // no durable endpoint, or one whose recorded lifecycle does not admit it, is
 // refused without asking any daemon.
 func validateStoredCodexNativeResumeRoute(ref *coremetadata.AgentSessionRef) error {
-	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
-		return &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
-	}
-	return validateCodexNativeResumeRoute(ref, codexNativeEndpointRoute{Endpoint: *ref.Codex.Endpoint, State: coremetadata.CodexGenerationCurrent})
-}
-
-// validateCodexNativeResumeRoute admits a stored Codex thread onto route when
-// the route is its exact endpoint, or the current default daemon endpoint of
-// the same Codex state domain (a switch; see Resolve). Draining and
-// handover-pending markers are leftovers of the retired private generation
-// pool and resume like current: the switch rebinds them on the default
-// endpoint and records a current lifecycle.
-func validateCodexNativeResumeRoute(ref *coremetadata.AgentSessionRef, route codexNativeEndpointRoute) error {
-	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
-		return &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
-	}
-	endpoint := *ref.Codex.Endpoint
-	lifecycle := ref.Codex.Lifecycle
-	if lifecycle == nil || !lifecycle.ValidFor(&endpoint) || !route.Endpoint.Valid() {
-		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	if route.Endpoint.StateDomainID != endpoint.StateDomainID {
-		return codexRetiredGenerationRefusal(codexNativeReasonRetiredStateDomain, "", "")
-	}
-	if !route.Endpoint.Same(endpoint) && !route.Default {
-		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	switch lifecycle.State {
-	case coremetadata.CodexGenerationCurrent, coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
-	default:
-		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	if route.State != codexgeneration.StateCurrent {
-		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	return nil
+	return mutationruntime.ValidateStoredCodexNativeResumeRoute(ref)
 }
 
 func bindNativeCodexPaneOnRoute(
@@ -516,14 +371,6 @@ func nativeLaunchError(spelling string, err error) error {
 // has an explicit escape hatch, and in none that does not.
 const interactiveOnlyFlag = "--interactive-only"
 
-// nativeThreadReason renders the typed classification of a native preparation
-// failure. A refusal has to say why native authority could not be proven, not
-// only that it could not, or the operator cannot tell an unreachable endpoint
-// from an endpoint that is missing a capability.
-func nativeThreadReason(err error) string {
-	return mutationruntime.NativeThreadReason(err)
-}
-
 // nativeRootsUnsupported reports whether a native failure is the fail-closed
 // additional-writable-roots classification.
 //
@@ -557,11 +404,7 @@ func nativeCreatePreparationRefusalForCapability(spelling string, err error, cap
 // `--interactive-only` escape hatch to offer: the only honest answer is that
 // the stored thread cannot be resumed natively right now.
 func nativeResumePreparationRefusal(spelling string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return errors.New(spelling + ": the stored Codex thread cannot be resumed natively right now (" + nativeThreadReason(err) +
-		"); refusing to rebind it onto a lane with no native turn control: " + err.Error())
+	return mutationruntime.NativeResumePreparationRefusal(spelling, err)
 }
 
 // nativeFanOutRefusal answers a default native Codex create whose selector

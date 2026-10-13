@@ -6,11 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
-
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
@@ -19,8 +20,10 @@ import (
 )
 
 const (
-	CodeResumeProcessUnsupported     Code = "resume-process-unsupported"
+	CodeResumeProcessUnsupported Code = "resume-process-unsupported"
+	// CodeResumeNativeCodexUnsupported remains available for source compatibility.
 	CodeResumeNativeCodexUnsupported Code = "resume-native-codex-unsupported"
+	CodeResumeNativeCodexUnavailable Code = "resume-native-codex-unavailable"
 	CodeResumePhaseNotResumable      Code = "resume-phase-not-resumable"
 	CodeResumePlanInvalid            Code = "resume-plan-invalid"
 	CodeResumeRequestInvalid         Code = "resume-request-invalid"
@@ -74,16 +77,14 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 	if err := mutationruntime.ValidateResumeAgent("agent resume", agent, req.Model, req.Effort, req.DialogueReplyOnly, fields); err != nil {
 		return result, resumeRefusal(err)
 	}
-	provider := metadata.NormalizeProvider(agent.Spec.Provider)
-	if provider == "" && agent.Status.SessionRef != nil {
-		provider = metadata.NormalizeProvider(agent.Status.SessionRef.Provider)
-	}
-	if provider == "codex" || agent.Status.SessionRef != nil && agent.Status.SessionRef.Provider == "codex" {
-		return result, &Refusal{Code: CodeResumeNativeCodexUnsupported, message: "Codex ResumeAgent requires native observation which is not yet available in the SDK; use projmux agent resume"}
-	}
 	plan, err := mutationruntime.BuildAgentResumePlan("agent resume", reg, agent)
 	if err != nil {
 		return result, &Refusal{Code: CodeResumePlanInvalid, message: err.Error(), cause: err}
+	}
+	if plan.Provider == "codex" {
+		if routeErr := mutationruntime.ValidateStoredCodexNativeResumeRoute(plan.Ref); routeErr != nil {
+			return result, resumeRefusal(mutationruntime.NativeResumePreparationRefusal("agent resume", routeErr))
+		}
 	}
 	project, _ := reg.Project(plan.ProjectUID)
 	plan.Workspace, err = mutationruntime.ResolveAgentWorkspaceFor("agent resume", reg, *project, plan.Provider, plan.Workspace.CWD, plan.Workspace.AdditionalWritableRoots)
@@ -122,18 +123,52 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	prepared, err := prep.Prepare("agent resume", plan)
+	var prepared mutationruntime.PreparedAgentResume
+	var native *mutationruntime.SDKNativeSession
+	var nativeExecution *mutationruntime.NativeCodexResumeExecution
+	if plan.Provider == "codex" {
+
+		native, err = planner.NativeSession()
+		if err != nil {
+			return result, &Refusal{Code: CodeResumeNativeCodexUnavailable, message: err.Error(), cause: err}
+		}
+		var route mutationruntime.NativeCodexRoute
+		var settings codexappserver.ThreadSettings
+		nativeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		prepared, route, settings, err = mutationruntime.PrepareNativeCodexResume(nativeCtx, "agent resume", plan, paths, func(ctx context.Context, ref *metadata.AgentSessionRef, agentRef string) (mutationruntime.NativeCodexRoute, error) {
+			return mutationruntime.ResolveNativeCodexResumeRoute(ctx, ref, agentRef, native.Resolve)
+		}, native.Plan)
+		cancel()
+		native.Route = route
+		nativeExecution = &mutationruntime.NativeCodexResumeExecution{Spelling: "agent resume", AgentUID: plan.AgentUID, ConversationID: plan.ConversationID, Route: route, Settings: settings, Resume: native.Resume, Plan: native.Plan}
+	} else {
+		prepared, err = prep.Prepare("agent resume", plan)
+	}
 	if err != nil {
 		return result, resumeRefusal(err)
 	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	machine := &mutationruntime.AgentResumeExecution{Execution: execution, ResolveWorkspace: mutationruntime.ResolveAgentWorkspaceFor, Record: prepared.Record, Layered: prepared.Settings.Layered}
 	machine.Handoff = machine.HandOffResumedPaneName
+	if nativeExecution != nil {
+		machine.PrepareLaunch = nativeExecution.PrepareLaunch
+	}
 	machine.Bind = func(ctx context.Context, _ *metadata.Registry, _ metadata.Pane, _ mutationruntime.SuperviseSpec, id, cwd, title string) error {
-		return planner.Launch.BindAgentPaneOnRoute(ctx, execution.Runtime.Runner, mutationruntime.AgentPaneBinding{PaneID: id, Provider: plan.Provider, ContextDir: cwd, Title: title, Topic: plan.Topic, TopicManual: strings.TrimSpace(plan.Topic) != "", ConversationID: plan.ConversationID})
+		binding := mutationruntime.AgentPaneBinding{PaneID: id, Provider: plan.Provider, ContextDir: cwd, Title: title, Topic: plan.Topic, TopicManual: strings.TrimSpace(plan.Topic) != "", ConversationID: plan.ConversationID}
+		if nativeExecution != nil {
+			binding.ThreadID = nativeExecution.ThreadID
+			binding.NativeCodex = true
+		}
+		return planner.Launch.BindAgentPaneOnRoute(ctx, execution.Runtime.Runner, binding)
 	}
 	var out mutationruntime.AgentResumeResult
 	if err := transaction.Transact(mutationruntime.CreateKindResume, machine.Operation("agent resume", plan, prepared.Title, prepared.Argv, &out), execution.ExactProjectOwnershipGuard(plan.ProjectUID)); err != nil {
 		return result, resumeRefusal(err)
+	}
+	if native != nil {
+		native.ObserveResume(plan.AgentUID, out, nativeExecution.ThreadID)
 	}
 	projection, err := c.createProjection(socket, core.KindAgent, mutationruntime.ShellCreateResource{UID: plan.AgentUID})
 	if err != nil {
@@ -167,6 +202,10 @@ func resumeRefusal(err error) error {
 	var failure *mutations.Failure
 	if errors.As(err, &failure) {
 		return &Refusal{Code: Code(failure.Code), message: err.Error(), cause: err}
+	}
+	var route *mutationruntime.NativeCodexRouteError
+	if errors.As(err, &route) {
+		return &Refusal{Code: CodeResumeNativeCodexUnavailable, message: err.Error(), cause: err}
 	}
 	var profile *mutationruntime.ProfileResumeError
 	if errors.As(err, &profile) {

@@ -50,7 +50,7 @@ observer child. Config, State and Registry routing is explicit throughout;
 provider state is a separate domain. This does not start or restart a daemon.
 An unavailable endpoint refuses with `CodeCreateNativeCodexUnavailable` before
 resources are committed. An indeterminate provider RPC is never retried or
-silently switched to another launch lane. SDK Codex resume remains deferred.
+silently switched to another launch lane. SDK Codex resume uses the same native endpoint.
 
 An activation timeout or failure after commit preserves the Agent and Pane.
 `CreateAgent` returns their projection, receipt and PaneID **together with**
@@ -59,16 +59,21 @@ Context cancellation prevents admission only. The tmux server owns an admitted
 provider's lifetime, and cancelling the caller does not stop it.
 
 `Client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:..."})` rebinds an
-Offline or Failed Claude or Antigravity tmux Agent to a new Pane, preserving its
+Offline or Failed Claude, Antigravity or native Codex tmux Agent to a new Pane, preserving its
 Agent UID and provider conversation. Project and Window optionally scope Ref;
 Model, Effort, DialogueReplyOnly and SocketPath use the CLI's resume rules.
 The result includes Agent, Projection, Receipt, PaneID and notices. It returns
 immediately after commit, without waiting for activation acknowledgement,
 like CLI `agent resume`; transaction failures roll back. Cancellation prevents
 admission only. Process targets, including retired process candidates, return
-`CodeResumeProcessUnsupported`. Codex resume returns
-`CodeResumeNativeCodexUnsupported` before effects because its native observation
-is not yet available in the SDK; use `projmux agent resume`. Prompt input is not
+`CodeResumeProcessUnsupported`. Native Codex resumes the exact stored thread with current profile policy, model
+and effort settings on its stored state domain or the current default endpoint
+of that same domain. Missing native lifecycle, a different provider state domain
+or a still-listening retired endpoint refuses with `CodeResumeNativeCodexUnavailable`.
+No new thread or turn is submitted, and an uncertain resume RPC is never retried.
+`CodeResumeNativeCodexUnsupported` remains exported for source compatibility.
+The captured HOME, CODEX_HOME and PATH also reach resume proxies, attachment and
+observer recovery; Config, State, Registry, executable and tmux socket stay explicit. Prompt input is not
 exposed. The same `Options.ProjmuxExecutable` contract applies. The tmux CLI
 rejects `-o`; the SDK receipt uses its shared operation receipt model.
 

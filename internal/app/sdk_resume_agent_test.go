@@ -266,7 +266,7 @@ func TestResumeAgentSDKRefusalsBeforeTransport(t *testing.T) {
 	for _, tc := range []struct {
 		req  core.ResumeAgentRequest
 		code projmux.Code
-	}{{core.ResumeAgentRequest{Ref: "absent"}, projmux.CodeResourceNotFound}, {core.ResumeAgentRequest{Ref: "uid:" + uids["codex"]}, projmux.CodeResumeNativeCodexUnsupported}, {core.ResumeAgentRequest{Ref: "uid:"}, projmux.CodeSelectorInvalid}, {core.ResumeAgentRequest{Ref: "uid:" + uids["claude"], Model: "bad\nmodel"}, projmux.CodeResumeRequestInvalid}} {
+	}{{core.ResumeAgentRequest{Ref: "absent"}, projmux.CodeResourceNotFound}, {core.ResumeAgentRequest{Ref: "uid:" + uids["codex"]}, projmux.CodeResumeNativeCodexUnavailable}, {core.ResumeAgentRequest{Ref: "uid:"}, projmux.CodeSelectorInvalid}, {core.ResumeAgentRequest{Ref: "uid:" + uids["claude"], Model: "bad\nmodel"}, projmux.CodeResumeRequestInvalid}} {
 		_, err := client.ResumeAgent(context.Background(), tc.req)
 		var refusal *projmux.Refusal
 		if !errors.As(err, &refusal) || refusal.Code != tc.code {
