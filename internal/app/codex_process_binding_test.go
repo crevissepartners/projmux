@@ -83,8 +83,7 @@ func newProcessCodexFixture(t *testing.T, command func(string, string, []string)
 func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int, lifetime ...processOwnerLifetime) *processCodexFixture {
 	t.Helper()
 	// Keep copied supervisor/provider paths short on both supported platforms.
-	t.Setenv("TMPDIR", "/tmp")
-	root := t.TempDir()
+	root := codexHostMoveFixtureShortState(t, shortTempDomain(t))
 	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
@@ -96,7 +95,7 @@ func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string,
 	}
 	h := newSessionRefHarness(t, "codex")
 	encoded, _ := json.Marshal(h.registry)
-	suffix := filepath.Base(root)
+	suffix := filepath.Base(filepath.Dir(root)) + "-" + filepath.Base(root)
 	agentUID, paneUID := h.agentUID+"-"+suffix, h.paneUID+"-"+suffix
 	encoded = bytes.ReplaceAll(encoded, []byte(h.agentUID), []byte(agentUID))
 	encoded = bytes.ReplaceAll(encoded, []byte(h.paneUID), []byte(paneUID))

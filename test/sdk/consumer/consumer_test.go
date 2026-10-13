@@ -574,3 +574,18 @@ func TestExternalDeleteProcessAgentConsumer(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalTurnConsumer(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: t.TempDir(), StateDir: t.TempDir(), HomeDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := []func(context.Context, core.TurnRequest) (core.TurnResult, error){c.StartTurn, c.SteerTurn, c.DeliverTurn, c.InterruptTurn}
+	for _, call := range methods {
+		_, err := call(context.Background(), core.TurnRequest{})
+		var refusal *projmux.Refusal
+		if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid {
+			t.Fatalf("explicit ref: %v", err)
+		}
+	}
+}

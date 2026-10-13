@@ -210,3 +210,43 @@ release. Inspect those resources and their termination evidence before using
 exact public stop/resume/delete recovery commands. Do not automatically replay
 an uncertain deletion. Successful results carry the deletion receipt,
 OperationID and any best-effort deletion-record warning in Notice.
+
+## Exact Agent turn control
+
+`StartTurn`, `SteerTurn`, `DeliverTurn` and `InterruptTurn` accept
+`core.TurnRequest{Ref: "uid:..."}` and return `core.TurnResult`.
+Project and Window optionally scope the explicit reference. Text is required for
+input; Generation and process Binding optionally pin an observed activation.
+Use the client's explicit ConfigDir, StateDir, HomeDir and SocketPath. No active
+Pane or ambient operator identity is inferred.
+
+Native Codex supports all four actions. Existing process Codex owners support
+start, steer, deliver and interrupt; Claude process owners support start and
+interrupt. Claude tmux supports interrupt with explicit caller-reported `Via`,
+validated using the CLI's client-name rule. The durable audit precedes one Esc;
+`Delivery="sent"` means tmux accepted the key, with cancellation unconfirmed.
+Claude tmux input and Claude steer/deliver remain unsupported. SDK input refuses
+child-free deferred claims with `CodeTurnDeferredUnsupported`; use the existing
+CLI deferred start workflow separately.
+
+Deliver asks the native epoch or process owner to select idle start or busy
+steer once. Only an explicit native `invalid-operation` refusal permits the
+legacy start, then `turn-in-progress`, then steer path. Transport loss, timeout,
+stale bindings and uncertain receipts never replay input. Steer preserves
+`Acceptance="provider"` and `Delivery="unconfirmed"`.
+
+Cancellation reaches admission, native authority fencing, Registry rechecks and
+bounded transport. Inspect the result even when an error is returned: exact
+refs, turn IDs and observed acceptance survive a later recording failure.
+`OutcomeUnknown` identifies an indeterminate transport or malformed acceptance;
+`Accepted` does not mean provider completion. Control replies may collapse lost
+steer receipts into `stale-turn` or an incomplete process refusal. These ambiguous
+responses conservatively report `OutcomeUnknown`; explicit pre-write binding
+and socket refusals remain known. For explicit process start or
+interrupt, `Operation` and the legacy CLI-compatible `TurnID` identify the host
+request. Deliver/steer typed receipts instead identify the provider turn; a
+public session read observes that provider turn separately. Inspect current identity before
+recovery rather than automatically resubmitting. `*projmux.Refusal` exposes
+provider/control/transport reason codes; context errors remain ordinary errors.
+These methods invoke shared execution directly, without a CLI subprocess,
+provider creation, Stop, resume or daemon changes.
