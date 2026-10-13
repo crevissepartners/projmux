@@ -499,3 +499,42 @@ func TestReadArchiveReadsALineWithoutAPayloadDigest(t *testing.T) {
 		t.Fatalf("old operator entry = %+v", operator)
 	}
 }
+
+func TestArchiveFilesNamesWhatReadArchiveReads(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "missing")
+	dir := filepath.Join(stateDir, storeDirName)
+	want := []string{filepath.Join(dir, storeFileName)}
+	for _, name := range historyReadOrder {
+		want = append(want, filepath.Join(dir, name))
+	}
+	files := ArchiveFiles(stateDir)
+	if !slices.Equal(files, want) {
+		t.Fatalf("ArchiveFiles = %v, want %v", files, want)
+	}
+	files[0] = "caller change"
+	if !slices.Equal(ArchiveFiles(stateDir), want) {
+		t.Fatal("caller mutation changed later result")
+	}
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing directory changed: %v", err)
+	}
+	if archive, err := ReadArchive(stateDir); err != nil || len(archive.Records) != 0 || len(archive.History) != 0 {
+		t.Fatalf("missing archive = %+v (%v)", archive, err)
+	}
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reader created directory: %v", err)
+	}
+	// An unreadable file at each position must be the first error, before later files.
+	for i, path := range want {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := ReadArchive(stateDir)
+		if err == nil || !strings.Contains(err.Error(), path) {
+			t.Fatalf("read position %d: %v, want error for %s", i, err, path)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

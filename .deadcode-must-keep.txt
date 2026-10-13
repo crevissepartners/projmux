@@ -19,6 +19,7 @@ AggregateTeardownEvents	Pure multi-event teardown authority is called by the pro
 All	Closed provider-registry projection retained as the test seam that pins the live aiprovider registry create-shortcut and picker-order contract.
 AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ApprovalRequest.OfferedDecisions	Public v0 approval SDK accessor for the native provider decision list; external consumers use it to supply ReviewApproval without parsing opaque request identities.
+ArchiveFiles	Read-only archive path projection retained for callers that observe every archive generation.
 AuditGoStringLiteralsInDir	Directory walker of the hardcoded-string governance audit; its subject is the live repository source, so the guard is test-entered by design rather than a retired product path.
 AuditGoStrings	In-memory entry point of the hardcoded-string governance audit retained with AuditGoStringLiteralsInDir as the guard that keeps catalog-bypassing literals out of shipped code.
 Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the in-process mutation gate; the local IPC path fences inside Submit instead.
@@ -123,6 +124,7 @@ Dispositions	Closed CLI route disposition catalog retained as the test seam that
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+FallbackProvenance	Read-only HUD provenance projection retained for callers of the usage snapshot seam.
 FindProjectStopTarget	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
 Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
@@ -144,6 +146,7 @@ Fixture.retireAfterFailure	Test-only installed qualification helper retained for
 FooterBlockLines	Default-theme entry point of FooterBlockLinesWithTheme retained as the picker footer geometry seam.
 FormatList	Locale-resolving list formatter retained as the test seam that pins payload-item preservation over the live formatter locale resolution.
 FoundationKeys	Foundation key set retained as the test seam that pins the shipped default catalog coverage of it.
+HUDSnapshotsWithVisibility	Read-only HUD projection retained for caller-supplied provider and window visibility.
 Handle.BindClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 Handle.CheckClaudeHook	Internal Claude process binding/control fixture seam; remove the retention row when the Task 5 public consumer wires it.
 Handle.Events	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.

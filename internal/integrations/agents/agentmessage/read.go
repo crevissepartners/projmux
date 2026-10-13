@@ -60,6 +60,19 @@ type readHooks struct {
 	betweenHistories func()
 }
 
+// ArchiveFiles is every file ReadArchive reads under stateDir, in its read
+// order: the store, then each log generation. A caller can stat these to learn
+// whether the next ReadArchive may differ. It opens nothing and returns a
+// caller-owned slice.
+func ArchiveFiles(stateDir string) []string {
+	dir := filepath.Join(stateDir, storeDirName)
+	files := []string{filepath.Join(dir, storeFileName)}
+	for _, name := range historyReadOrder {
+		files = append(files, filepath.Join(dir, name))
+	}
+	return files
+}
+
 // ReadArchive reads the store under stateDir, then the reclaim log. It takes no
 // lock and creates nothing: every file is only opened for reading, and a
 // missing store or log generation reads as empty. The store is replaced by
