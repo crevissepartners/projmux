@@ -31,17 +31,52 @@ import (
 // Run the real observer entry in a subprocess, with exactly the argv produced
 // by the production launcher. An optional built/installed binary also exercises
 // the full executable dispatcher, without a provider or a live socket.
+const nativeObserverFixtureChildEnv = "PMX_TEST_NATIVE_OBSERVER_CHILD"
+
 func init() {
-	if len(os.Args) > 3 && os.Args[1] == "internal" && os.Args[2] == "codex-broker" {
-		os.Exit(1)
-	}
-	if len(os.Args) > 4 && strings.Join(os.Args[1:5], " ") == "internal agent-hook ingest codex-broker-watch" {
-		err := newAICommand().Run(os.Args[3:], os.Stdout, os.Stderr)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+	if os.Getenv(nativeObserverFixtureChildEnv) == "1" {
+		if len(os.Args) > 3 && os.Args[1] == "internal" && os.Args[2] == "codex-broker" {
 			os.Exit(1)
 		}
+		if len(os.Args) > 4 && strings.Join(os.Args[1:5], " ") == "internal agent-hook ingest codex-broker-watch" {
+			err := newAICommand().Run(os.Args[3:], os.Stdout, os.Stderr)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+	// A subprocess sentinel proves that unrelated argv reaches later dispatch.
+	if os.Getenv("PMX_TEST_NATIVE_OBSERVER_DISPATCH_PROBE") == "1" {
+		fmt.Fprintln(os.Stdout, "native observer fixture dispatch preserved")
 		os.Exit(0)
+	}
+}
+
+func TestNativeObserverFixtureDispatchBoundary(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range [][]string{
+		{"internal", "codex-broker", "serve"},
+		{"internal", "agent-hook", "ingest", "codex-broker-watch"},
+	} {
+		for _, marker := range []string{"", "unrelated", "1"} {
+			t.Run(route[2]+"/"+marker, func(t *testing.T) {
+				cmd := exec.CommandContext(t.Context(), executable, route...)
+				cmd.Env = append(cleanObserverEnv(), nativeObserverFixtureChildEnv+"="+marker, "PMX_TEST_NATIVE_OBSERVER_DISPATCH_PROBE=1")
+				output, err := cmd.CombinedOutput()
+				if marker == "1" {
+					if err == nil || strings.Contains(string(output), "dispatch preserved") {
+						t.Fatalf("owned child escaped dispatch: %v %s", err, output)
+					}
+				} else if err != nil || strings.TrimSpace(string(output)) != "native observer fixture dispatch preserved" {
+					t.Fatalf("shared child intercepted: %v %s", err, output)
+				}
+			})
+		}
 	}
 }
 
@@ -98,6 +133,15 @@ func TestNativeObserverExplicitPathsActualChildren(t *testing.T) {
 		if copyErr != nil || closeErr != nil {
 			t.Fatalf("copy fixture executable: %v %v", copyErr, closeErr)
 		}
+		// Only this copied app.test and its recovery children own the init routes.
+		// Keep the parent and other shared fixture dispatchers unmarked.
+		wrapper := filepath.Join(root, "native-observer-fixture")
+		quoted := "'" + strings.ReplaceAll(executable, "'", `'\''`) + "'"
+		script := "#!/bin/sh\nexport " + nativeObserverFixtureChildEnv + "=1\nexec " + quoted + " \"$@\"\n"
+		if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		executable = wrapper
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
