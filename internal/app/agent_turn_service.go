@@ -26,6 +26,10 @@ func (a turnControlAdapter) Call(_ context.Context, b agentcontrol.Binding, r ag
 }
 func (c *agentCommand) turnService() runtime.TurnService {
 	return runtime.TurnService{
+		ProcessDeclared: func(reg coremetadata.Registry, a coremetadata.Agent) bool {
+			p, ok := reg.Pane(a.Status.PaneRef)
+			return ok && c.processRuntime.inventory().Declares(*p)
+		},
 		Control: turnControlAdapter{c},
 		RecordStart: func(_ context.Context, b agentcontrol.Binding, r agentcontrol.Response) error {
 			return runtime.RecordStartedTurn(b, r, func(apply func(*coremetadata.Registry, coremetadata.Mutator) error) error {

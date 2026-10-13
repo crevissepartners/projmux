@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,7 +253,7 @@ func TestClaudePaneFrameRejectsAmbiguousOutput(t *testing.T) {
 		"%7" + tmuxRowSep + "pane" + tmuxRowSepFormat + "0\n",
 		"%7 pane 0\n",
 	} {
-		if _, err := parseClaudePaneFrame([]byte(raw)); err == nil {
+		if _, err := mutationruntime.ParseClaudePaneFrame([]byte(raw)); err == nil {
 			t.Fatalf("accepted malformed frame %q", raw)
 		}
 	}

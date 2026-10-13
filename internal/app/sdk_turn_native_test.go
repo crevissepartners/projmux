@@ -112,3 +112,59 @@ func TestSDKNativeTurnDefaultTransportExactSocketAndNoReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestSDKClaudeInterruptExplicitCallerAndAudit(t *testing.T) {
+	root := shortTempDomain(t)
+	socket := filepath.Join(root, "tmux.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "tmux", append([]string{"-S", socket}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("tmux %s %v", out, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	runtimeID := run("new-session", "-d", "-P", "-F", "#{pane_id}", "-s", "sdk-claude", "sleep 30")
+	t.Cleanup(func() { _ = exec.Command("tmux", "-S", socket, "kill-server").Run() })
+	_, fixture, _, _ := claudeTurnFixture(t)
+	reg := fixture.registry.Clone()
+	raw, _ := json.Marshal(reg)
+	raw = []byte(strings.ReplaceAll(string(raw), "%7", runtimeID))
+	if err := json.Unmarshal(raw, &reg); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := reg.Agent("agt-alpha-codex")
+	a.Status.Interaction.ObservedAt = time.Now()
+	run("set-option", "-p", "-t", runtimeID, "@projmux_pane_uid", "pan-alpha-codex")
+	state := filepath.Join(root, "state")
+	storage := store.NewStore(store.PathFor(state))
+	if _, err := storage.Update(func(r *coremetadata.Registry) error { *r = reg; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	sdk, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: state, HomeDir: root, SocketPath: socket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := core.TurnRequest{Ref: "uid:agt-alpha-codex"}
+	_, err = sdk.InterruptTurn(ctx, req)
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeOperatorClientInvalid {
+		t.Fatalf("implicit caller %v", err)
+	}
+	audit := filepath.Join(state, claudeTurnInterruptAuditName)
+	if _, err = os.Stat(audit); !os.IsNotExist(err) {
+		t.Fatal("missing Via wrote audit", err)
+	}
+	req.Via = "sdk-t5-fixture"
+	out, err := sdk.InterruptTurn(ctx, req)
+	if err != nil || !out.Accepted || out.Delivery != "sent" || out.Generation != "generation-1" {
+		t.Fatalf("interrupt %+v %v", out, err)
+	}
+	entries := claudeTurnAudit(t, audit)
+	if len(entries) != 2 || entries[0].Result != "requested" || entries[1].Result != "delivered" || entries[1].Via != req.Via {
+		t.Fatalf("audit %+v", entries)
+	}
+}

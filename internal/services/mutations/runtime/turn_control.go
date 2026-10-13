@@ -36,6 +36,9 @@ type TurnControl interface {
 // TurnService shares execution, receipt validation and the legacy fallback.
 // The native epoch or process owner selects deliver's mode, exactly once.
 type TurnService struct {
+	// ProcessDeclared preserves invocation-local typed process authority even
+	// when a legacy Registry projection does not declare its runtime kind.
+	ProcessDeclared func(metadata.Registry, metadata.Agent) bool
 	Control         TurnControl
 	RecordStart     func(context.Context, agentcontrol.Binding, agentcontrol.Response) error
 	Process         func(context.Context, metadata.Registry, metadata.Agent, TurnRequest) (TurnResult, error)
@@ -61,7 +64,11 @@ func (s TurnService) Execute(ctx context.Context, reg metadata.Registry, a metad
 		return out, turnFailure("turn-invalid-input", errors.New("Via is available only for Claude turn interrupt"))
 	}
 	pane, found := reg.Pane(a.Status.PaneRef)
-	if found && pane.Metadata.OwnerUID() == a.Metadata.UID && pane.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
+	declared := found && pane.Metadata.OwnerUID() == a.Metadata.UID && pane.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess
+	if s.ProcessDeclared != nil {
+		declared = declared || s.ProcessDeclared(reg, a)
+	}
+	if declared {
 		if (a.Spec.Provider != "codex" && a.Spec.Provider != "claude") || (a.Spec.Provider == "claude" && req.Action != "start" && req.Action != "interrupt") {
 			return out, turnFailure("turn-provider-unsupported", errors.New("Agent provider does not support this process turn action"))
 		}

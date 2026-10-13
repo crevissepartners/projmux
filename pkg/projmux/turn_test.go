@@ -8,6 +8,7 @@ import (
 	runtime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -20,6 +21,9 @@ func TestSDKTurnDeferredClaimRefusesBeforeEffects(t *testing.T) {
 	p, _ := reg.Pane(puid)
 	claim := runtime.DeferredClaimRecord{Version: 1, Agent: uid, Binding: p.Status.ProcessSession.Binding, Provider: "codex", Process: identity, Nonce: "isolated-fixture"}
 	path := runtime.DeferredClaimPath(store.PathFor(c.paths.StateDir), uid)
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err = runtime.WriteDeferredClaim(path, claim); err != nil {
 		t.Fatal(err)
 	}

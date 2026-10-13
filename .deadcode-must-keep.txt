@@ -338,9 +338,6 @@ WithSocketName	The injected tmux socket option is retained as an exact routing c
 agentCommand.callProcessForegroundAction	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
 agentCommand.callProcessUserDelivery	Planned private web_process_user_input.go:deliverProcessUserInput foreign-owned Codex user-input consumer retains this typed caller to obtain actual Mode/Operation/TurnID once, without replay or fallback; explicit public Turn intent stays unchanged.
 agentCommand.callProcessUserInput	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
-agentCommand.interruptClaudeTurn	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
-agentCommand.interruptProcessClaudeTurn	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
-agentCommand.interruptTmuxClaudeTurn	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
 agentCommand.prepareOwnedClaudeResume	Private S568 no-first-input Claude Resume producer retained for Prepared-to-actual-first-input ownership proofs and the planned web consumer; frozen recipe validation and CLI peer Wait remain unchanged.
 agentCommand.runOwnedProcessRelaunch	Private S568 typed samehost settings producer retained for Preview/Unchanged/Owned/Prepared ownership proofs and the planned web consumer; independent Cancel and exact Wait preserve CLI foreground lifetime.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
@@ -389,7 +386,6 @@ deleteQuery	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exac
 deleteRefusal	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 deleteTmuxOnly	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
-exactClaudePane	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
 executeWindowRenameSteps	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 exitOf	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 finishOwnedChild	Owned-child signals precede actual Wait only after successful exit observation; retained for processhost lifecycle proof.
@@ -440,7 +436,6 @@ ownedStream.Close	Owned processhost Codex preparation retained for dedicated std
 ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 ownedStream.Write	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 paneTarget.shared	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
-parseClaudePaneFrame	Existing Claude interrupt adapter retained for process inventory admission and exact frame/audit-before-Esc proof tests after shared execution extraction.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.

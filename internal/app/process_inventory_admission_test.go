@@ -19,6 +19,7 @@ import (
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 func processInventoryFixture(t *testing.T) (coremetadata.Registry, *processPaneRuntime, string) {
@@ -150,8 +151,8 @@ func TestProcessSupportedControlUsesExactOwnedHost(t *testing.T) {
 	agent, _ := reg.Agent(f.binding.Agent)
 	agent.Status.Progress.TurnRef = "typed-turn"
 	runtime.controlOverride = runtime.control
-	command := &agentCommand{processRuntime: runtime}
-	if err := command.interruptClaudeTurn(reg, *agent, "fixture", io.Discard); err != nil {
+	command := &agentCommand{processRuntime: runtime, loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }}
+	if err := command.runTurnInterrupt([]string{"interrupt", "uid:" + agent.Metadata.UID, "--via", "fixture"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
@@ -293,7 +294,7 @@ func TestProcessAdmissionTerminalConsumersRefuseBeforeSideEffects(t *testing.T) 
 	}
 	attach := &attachCommand{processTarget: target}
 	assertRefusal(resourcegraph.ProcessAttach, attach.Run([]string{"project", "uid:unused"}, io.Discard, io.Discard))
-	_, err := exactClaudePane(context.Background(), runner, paneUID, "", target)
+	_, err := mutationruntime.ExactClaudePane(context.Background(), runner, paneUID, "", func() error { return target.admit(resourcegraph.ProcessKeys) })
 	assertRefusal(resourcegraph.ProcessKeys, err)
 	ai := (&aiCommand{runCommand: func(ctx context.Context, name string, args ...string) error {
 		writes++
@@ -313,8 +314,8 @@ func TestProcessAdmissionTerminalConsumersRefuseBeforeSideEffects(t *testing.T) 
 	pane, _ := reg.Pane(paneUID)
 	agent, _ := reg.Agent(pane.Metadata.OwnerUID())
 	runtime.controlOverride = runtime.control
-	command := &agentCommand{processRuntime: runtime, controlPaths: func() (config.Paths, error) { writes++; return config.Paths{}, nil }}
-	if err := command.interruptClaudeTurn(reg, *agent, "fixture", io.Discard); err == nil || !strings.Contains(err.Error(), "process-host-unavailable") {
+	command := &agentCommand{processRuntime: runtime, loadRegistry: func() (coremetadata.Registry, error) { return reg, nil }, controlPaths: func() (config.Paths, error) { writes++; return config.Paths{}, nil }}
+	if err := command.runTurnInterrupt([]string{"interrupt", "uid:" + agent.Metadata.UID, "--via", "fixture"}, io.Discard); err == nil || !strings.Contains(err.Error(), "process-host-unavailable") {
 		t.Fatalf("process interrupt fell back to terminal: %v", err)
 	}
 	after, _ := json.Marshal(reg)
