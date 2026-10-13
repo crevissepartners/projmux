@@ -116,16 +116,6 @@ func (route codexNativeEndpointRoute) brokerRoute() codexBrokerEndpointRoute {
 
 type codexNativeRouteError = mutationruntime.NativeCodexRouteError
 
-// codexDaemonStartGuidance is the operator step for a default endpoint whose
-// readiness decision names no more exact recovery: the endpoint is absent,
-// unreachable, or speaks another protocol.
-const codexDaemonStartGuidance = mutationruntime.NativeCodexDaemonStartGuidance
-
-// codexDaemonOwnerAgreedGuidance follows the ownership-inspection recovery. It
-// names the daemon step only as the operator's own choice once the owner is
-// known, and never the unmanaged bootstrap prescription.
-const codexDaemonOwnerAgreedGuidance = mutationruntime.NativeCodexDaemonOwnerAgreedGuidance
-
 // codexDaemonGuidance names the `codex app-server daemon` step that makes the
 // default endpoint attachable, or nothing for a ready endpoint whose readiness
 // decision needs no recovery. It is guidance only: Projmux never runs it from a
