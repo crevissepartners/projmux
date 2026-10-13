@@ -30,8 +30,13 @@ claim: the first coordination message starts the same conversation and remaining
 messages follow in acceptance order. `agent stop` releases this claim by exact
 claimant identity without writing provider Wait; after child birth it waits for
 actual provider Wait. Foreground resume remains the default, including its
-stdin EOF and provider exit contract. Detached relaunch and direct
-`create window --detach` are unsupported.
+stdin EOF and provider exit contract. `agent relaunch <agent-ref> --detach`
+restarts an existing process Agent under a new independent owner, even with
+unchanged settings or an already detached owner. It also supports an existing
+`--host process` destination. Success follows exact startup or child-free claim
+handshake; unsupported tmux destinations and self-target/busy refusals occur
+before Stop, and dry-run changes nothing. Direct `create window --detach` is
+unsupported.
 Detachment does not promise survival across reboot, logout, or termination of
 a whole service/cgroup or PID namespace. An orphaned owner can reparent to
 the nearest subreaper; `setsid` does not move it out of that cgroup or namespace.
@@ -206,7 +211,8 @@ signal lifetime), and
 answer without these fields comes from an owner that predates them and is read
 as protocol 0; an answer without `Coordination` alone leaves that version
 unknown. Public creation with `--detach` reports `OwnerMode=detached`; ordinary
-create, resume, deferred claim, and relaunch retain foreground lifetimes.
+create, resume, deferred claim, and relaunch retain foreground lifetimes unless
+explicit `--detach` is selected.
 
 `Status` in `describe` and `get` is `live` while the owner answers and
 `offline` after the owner recorded the provider's exit. When the owner cannot
@@ -299,12 +305,17 @@ rm "${XDG_STATE_HOME:-$HOME/.local/state}"/projmux/process-attention.json.damage
 Use [`agent relaunch`](cli.md#projmux-agent-relaunch) from an external terminal
 to change a process Claude or Codex Agent's model, effort or profile. It keeps
 the Agent, Pane and conversation, stops the old owned provider, verifies its
-actual supervisor Wait and owner retirement, then starts a new foreground
-owner. Keep stdin open for that owner's lifetime. Codex can reattach without
+actual supervisor Wait and owner retirement, then starts a new owner. Add
+`--detach` to return after exact startup while the new owner runs independently.
+Without it, keep stdin open for that foreground owner's lifetime. Codex can reattach without
 one. On the same process host, an omitted or whitespace-only Claude prompt
 instead stops the old provider and waits without a child, even with unchanged
-settings. It prints `foreground=claimed`, then the usual relaunch result after
-first input. JSON puts ownership lines on stderr. The new resolved arguments,
+settings. With `--detach` it returns the relaunch result and
+`foreground=detached claim=waiting` after exact claim handshake, with no new
+provider generation or invented Wait. The first peer starts the frozen recipe
+on the same conversation. `agent stop` releases a child-free claim by exact
+identity; after birth it waits for the provider's actual Wait. Without `--detach`
+it prints `foreground=claimed`, then the usual relaunch result after first input. JSON puts ownership lines on stderr. The new resolved arguments,
 workspace and referenced configuration snapshots are durably frozen in private
 state; the environment and first input are not part of that launch record.
 
@@ -324,8 +335,9 @@ plan without replacing it; when absent, it prepares the recorded configuration
 through the samehost planner and refuses implicit recipe drift. `Prepared` has no
 live lifetime to register. The first actual user input acquires the existing
 claim and uses the frozen resume engine. These are CORE producer contracts for
-a future consumer; they do not establish web UI support. Public relaunch retains foreground ownership, stdin/signal cancellation and
-deferred peer waiting. Public resume additionally supports `--detach`.
+a future consumer; they do not establish web UI support. Public relaunch defaults to foreground ownership, stdin/signal cancellation and
+deferred peer waiting. Create, resume and process-destination relaunch support
+explicit `--detach` with verified startup and the same lifetime limits.
 
 The first peer message starts that configuration with its existing untrusted
 coordination envelope. An operator can instead submit `agent turn start` from
@@ -404,7 +416,8 @@ binary does not replace those running helpers.
 ## Moving an Agent between hosts
 
 `agent relaunch --host process -- <first-prompt>` moves an interactive Claude
-Agent to a foreground process owner. `agent relaunch --host tmux` moves it back
+Agent to a foreground process owner by default. Add `--detach` for a new
+independent owner after exact startup. `agent relaunch --host tmux` moves it back
 to an interactive Pane after the process owner records the old child's actual
 Wait. Both directions preserve the Agent UID and provider session, create a new
 Pane, and remove the old Pane. Omitting `--host` keeps the current host.

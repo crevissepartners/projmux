@@ -29,7 +29,8 @@ const processDetachedLogLimit = 64 << 10
 // task) is an unlinked private file; the handshake is a private duplex fd.
 // The intermediate launcher never owns a provider and exits before success.
 type processDetachedRequest struct {
-	Resume       *processDetachedResumeRequest `json:",omitempty"`
+	Relaunch     *processDetachedRelaunchRequest `json:",omitempty"`
+	Resume       *processDetachedResumeRequest   `json:",omitempty"`
 	Options      processAgentCreateOptions
 	Output       cli.OutputMode
 	Caller       coremetadata.ProcessIdentity
@@ -164,7 +165,7 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 	if ready.Error != "" {
 		return errors.New(ready.Error)
 	}
-	if ready.Owner != identity.Owner || ready.Binding.Agent == "" {
+	if ready.Owner != identity.Owner || ready.Binding.Agent == "" || (request.Relaunch != nil && ready.Binding.Agent != request.Relaunch.Source.Metadata.UID) {
 		return errors.New("process-detached-binding-invalid")
 	}
 	reg, err := command.store.snapshot()
@@ -173,7 +174,8 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 	}
 	activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(ready.Binding))
 	if ready.Claim != nil {
-		if request.Resume == nil || !request.Resume.WaitForPeer || !detachedClaimCurrent(command, reg, *ready.Claim, identity.Owner) {
+		claimAllowed := request.Relaunch != nil || (request.Resume != nil && request.Resume.WaitForPeer)
+		if !claimAllowed || !detachedClaimCurrent(command, reg, *ready.Claim, identity.Owner) {
 			return processhost.ErrStale
 		}
 	} else if !current || activation.HostProcess != identity.Owner {
@@ -269,6 +271,12 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	}
 	if req.RegistryPath != intmetadata.PathFor(stateDir) {
 		return errors.New("process-detached-registry-mismatch")
+	}
+	if req.Relaunch != nil {
+		if resume == nil || req.Resume != nil {
+			return errors.New("process-detached-relaunch-unavailable")
+		}
+		return runProcessDetachedRelaunchOwner(conn, encoder, decoder, req, identity, command, resume)
 	}
 	if req.Resume != nil {
 		if resume == nil {

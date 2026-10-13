@@ -1302,6 +1302,16 @@ By default, the command stays in the foreground until provider exit or owner EOF
 initial input admission, and the exact owner identity/binding handshake.
 Hook and handshake failures remain nonzero and stop only the new owned
 provider, with actual Wait and rollback evidence or exact remaining refs.
+`agent relaunch --detach` explicitly restarts a process Agent, or an existing
+`--host process` destination, under a new independent owner even with unchanged
+settings. Success requires exact startup or a child-free frozen-recipe claim
+handshake for same-host promptless Claude. The first peer starts that claim's
+same conversation; `agent stop` releases it without fake Wait before provider
+birth and waits for actual Wait afterward. Existing writer, settings, busy/yes,
+self-target, and retirement fences remain in effect. Unsupported tmux
+destinations and dry-run are handled before Stop. Foreground relaunch without
+`--detach` keeps its existing unchanged, output, and provider exit behavior.
+
 Detached ownership prints `foreground=detached`; other `-o` projections retain
 their existing format, and `-o none` suppresses displays. The owner continues
 with closed caller stdin, stdout, and stderr; later provider exit is recorded

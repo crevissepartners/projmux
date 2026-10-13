@@ -2041,20 +2041,36 @@ again.
 
 `projmux agent relaunch <agent-ref> [--profile <name>|none] [--instructions
 <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all]
-[--project <ref>] [--window <ref>] [--yes] [--dry-run] [--socket <name> |
---socket-path <absolute>] [-o json]` restarts one existing Claude or Codex
-Agent on the same UID and the same provider conversation with other settings,
-all in one restart. Process Claude and Codex keep their Pane UID as well and
-use a fresh foreground-owned generation. Claude requires `-- <prompt>` for
-the first new user turn;
-Codex can reattach without a prompt and sends no synthetic turn.
-`--dry-run` needs no prompt. Giving a prompt explicitly restarts a Running
-process Agent even when its launch settings are unchanged; use
+[--project <ref>] [--window <ref>] [--host tmux|process] [--detach] [--yes]
+[--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]` restarts one
+existing Claude or Codex Agent on the same UID and the same provider conversation
+with other settings, all in one restart. Same-host process Claude and Codex keep
+their Pane UID as well and use a fresh generation, foreground-owned by default.
+`--detach` applies to process destinations, including `--host process`, and
+explicitly restarts even with unchanged settings or an already detached owner.
+It returns exit 0 after exact startup or a child-free claim handshake under an
+independent new owner; later provider exit is read from termination records.
+
+On the same process host, Claude without `-- <prompt>` freezes the resolved
+recipe and waits without a child. Foreground mode waits for first input;
+`--detach` returns `foreground=detached claim=waiting`. First peer input starts
+that frozen recipe on the same conversation. `agent stop` releases the exact
+claim without fake Wait before birth, or waits for actual provider Wait after
+birth. A Claude host transfer to process requires a nonempty prompt, including
+dry-run. Codex can reattach without a prompt and sends no synthetic turn.
+Same-host `--dry-run` needs no prompt. Giving a prompt explicitly restarts a
+Running process Agent even when its launch settings are unchanged; use
 `agent turn start` to send a turn while keeping the current provider.
-The caller keeps stdin open for the Agent's lifetime.
-EOF, INT, or TERM stops only the new owned provider. The old child must have an
-actual durable supervisor Wait and its foreground owner must retire before the
-new child starts. Self-target and reply-only launches are refused before Stop.
+
+Without `--detach`, the caller keeps stdin open for the Agent's lifetime;
+EOF, INT, or TERM stops only the new owned provider. Detached ownership survives
+caller EOF, HUP, and exit, within the existing cgroup and PID namespace lifetime.
+Reboot, logout, or termination of the whole service/cgroup or PID namespace,
+including temporary Codex sandbox native tool namespaces, are not guaranteed.
+The old child must have an actual durable supervisor Wait and its owner must
+retire before the new child starts. Self-target, reply-only, unconfirmed busy
+restarts, and unsupported tmux destinations with `--detach` are refused before
+Stop; dry-run changes nothing.
 Process Codex resumes the recorded thread through a new dedicated app server.
 It sends no settings probe to the old writer. The existing resume barrier checks
 the new writer's model, effort, approval and sandbox, using
@@ -2092,7 +2108,8 @@ It is the one way to change an Agent's
   Giving an item a value and resetting it in the same command is a usage
   error.
 
-Without any of them it restarts the Agent with the settings its layers resolve
+Without `--detach` or any of these settings flags, it restarts the Agent with
+the settings its layers resolve
 to now -- after a profile edit, for example -- and reports `unchanged` when
 they are what the Agent runs already. A Running Agent's managed
 Pane is closed through `delete pane`, and the Agent is brought back through the
@@ -2154,7 +2171,8 @@ changes nothing, and refuses when the Codex app server does not take it
 (`relaunch-codex-settings-unsupported`): the resume after the stop could not
 apply the new settings.
 Outside tmux the stop needs `--socket <name>` or `--socket-path <absolute>`,
-exactly as `delete pane` does. A Running Agent without `--model` whose
+exactly as `delete pane` does. Without `--detach`, a Running Agent without
+`--model` whose
 settings, `--effort` included, resolve to exactly what it was launched with,
 whose agent guidance and Project label link rules are the ones it recorded,
 and whose `--profile`, `--instructions`, or `--reset` changes no recorded value,

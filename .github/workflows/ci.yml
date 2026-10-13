@@ -365,6 +365,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+            brew install tmux
+          fi
+          tmux -V
+
       - name: Compile and test native key adapter
         env:
           CGO_ENABLED: "1"

@@ -86,6 +86,7 @@ type agentRelaunchRequest struct {
 	instructions *string
 	reset        []string
 	flags        resourceQueryFlags
+	detach       bool
 	yes          bool
 	dryRun       bool
 	json         bool
@@ -162,10 +163,16 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
 	}
 	target := agent.Clone()
+	if request.detach && !request.dryRun {
+		return c.runDetachedProcessRelaunch(registry, target, request, stdout, stderr)
+	}
 	return c.dispatchRelaunch(registry, target, request, stdout, stderr)
 }
 
 func (c *agentCommand) dispatchRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	if request.detach && cmp.Or(request.host, relaunchCurrentHost(registry, target)) != "process" {
+		return usageError("agent relaunch: --detach requires a process destination; nothing was changed")
+	}
 	// An offline source still has a tmux recipe. Its pending host-transfer
 	// journal must take precedence over the ordinary same-host relaunch route.
 	if target.Spec.Provider == aiModeCodex && c.store != nil && c.store.stateDir != nil {
@@ -371,6 +378,7 @@ func parseAgentRelaunchArgs(args []string, stderr io.Writer) (agentRelaunchReque
 		request.reset = items
 		return err
 	})
+	fs.BoolVar(&request.detach, "detach", false, "process destination: restart under an independent owner, returning after exact startup or child-free claim handshake")
 	fs.BoolVar(&request.yes, "yes", false, "restart the Agent even when its interaction shows a turn in progress or unknown")
 	fs.BoolVar(&request.dryRun, "dry-run", false, "report the target, its interaction, and the model and effort change without changing anything")
 	fs.StringVar(&request.socket.socket, "socket", "", "exact tmux socket name (tmux -L) the managed Pane of a Running Agent is closed on")
@@ -446,6 +454,9 @@ func parseRelaunchReset(value string) ([]string, error) {
 // order the usage line declares them.
 func relaunchOverrideFlags(request agentRelaunchRequest) string {
 	var flags string
+	if request.detach {
+		flags += " --detach"
+	}
 	if request.host != "" {
 		flags += " --host " + request.host
 	}
@@ -472,7 +483,7 @@ func relaunchOverrideFlags(request agentRelaunchRequest) string {
 // effort, and the same `agent relaunch` for a change `agent resume` cannot
 // carry (the Agent is Offline, so it only resumes).
 func relaunchRecoveryCommand(registry coremetadata.Registry, agent coremetadata.Agent, request agentRelaunchRequest) string {
-	if request.changesLayers() {
+	if request.detach || request.changesLayers() {
 		return "projmux " + agentRelaunchSpelling + " " + personaAgentRef(registry, agent) + relaunchOverrideFlags(request)
 	}
 	return personaRecoveryCommand(registry, agent) + relaunchOverrideFlags(request)

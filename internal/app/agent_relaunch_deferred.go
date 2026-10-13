@@ -23,8 +23,21 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 		return err
 	}
 	defer func() { _ = claim.Close() }()
+	var previous *deferredLaunchRecord
+	if detachedRelaunchSession(ctx) != nil {
+		previous, err = c.readDeferredLaunch(record.Agent)
+		if err != nil {
+			return err
+		}
+	}
 	if err = c.commitDeferredRelaunch(ctx, claim, candidate, record); err != nil {
+		if detachedRelaunchSession(ctx) != nil {
+			return errors.Join(err, claim.Close(), c.rollbackDetachedRelaunchClaim(record, previous))
+		}
 		return err
+	}
+	if session := detachedRelaunchSession(ctx); session != nil {
+		return session.finishClaim(ctx, cancel, c, claim, record, previous, result, request)
 	}
 	if c.hostTransferResult != nil {
 		// Prepared has no child, waiter or standby claimant. A Close failure

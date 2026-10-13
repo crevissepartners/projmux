@@ -276,6 +276,9 @@ func writeResumePrevious(w io.Writer, mode cli.OutputMode, previous processResum
 }
 
 func awaitDetachedRequestCleanup(command *createCommand, req processDetachedRequest, owner coremetadata.ProcessIdentity, ready processDetachedReply) error {
+	if req.Relaunch != nil {
+		return awaitDetachedRelaunchCleanup(command, req, owner, ready)
+	}
 	if req.Resume == nil {
 		return awaitDetachedStartupCleanup(command, owner, ready.Binding)
 	}

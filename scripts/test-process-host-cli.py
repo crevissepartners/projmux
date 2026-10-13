@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     "process_detached_create_cli_test.go",
     "process_detached_resume_cli_test.go",
+    "process_detached_relaunch_cli_test.go",
     "project_stop_process_cli_test.go",
     "virtual_window_lifecycle_cli_test.go",
     "process_agent_question_cli_test.go",
