@@ -215,7 +215,12 @@ func TestStopProjectSDKCLIServiceProcessAgentSelectionParity(t *testing.T) {
 			}
 			state, _, client := renameState(t, fixture.registry)
 			before := projectRegistryBytes(t, state)
-			result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: filepath.Join(t.TempDir(), "missing")})
+			socketRoot, err := os.MkdirTemp("/tmp", "ps-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(socketRoot)
+			result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha", SocketPath: filepath.Join(socketRoot, "missing")})
 			var refusal *projmux.Refusal
 			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || result.Stopped || result.Receipt.Operation != "" {
 				t.Fatalf("no confirmed stop %+v %v", result, err)

@@ -728,7 +728,10 @@ func TestExternalHeadlessProjectStopConsumer(t *testing.T) {
 	}
 	for _, mode := range []string{"born", "partial", "claim"} {
 		t.Run(mode, func(t *testing.T) {
-			root := t.TempDir()
+			root := filepath.Join(t.TempDir(), strings.Repeat("long-root-", 16))
+			if err := os.MkdirAll(root, 0700); err != nil {
+				t.Fatal(err)
+			}
 			state := filepath.Join(root, "state")
 			path := filepath.Join(state, "metadata", "registry.json")
 			fixture := exec.Command(os.Args[0], "-test.run=^TestExternalProjectStopOwnerFixture$")
@@ -811,7 +814,7 @@ func TestExternalHeadlessProjectStopConsumer(t *testing.T) {
 			for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PROJMUX_CONFIG_DIR", "PROJMUX_STATE_DIR", "PROJMUX_REGISTRY_PATH", "TMUX", "TMUX_PANE"} {
 				t.Setenv(key, poison)
 			}
-			result, err := c.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:project", SocketPath: filepath.Join(root, "missing-socket")})
+			result, err := c.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:project", SocketPath: filepath.Join(filepath.Dir(externalStopSocket(path)), "missing-tmux.sock")})
 			if mode == "claim" {
 				var refusal *projmux.Refusal
 				after, readErr := os.ReadFile(path)
