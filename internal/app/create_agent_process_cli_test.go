@@ -142,7 +142,13 @@ func newProcessCreateCLI(t *testing.T) processCreateCLI {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Cleanup(func() {
+		if _, err := os.Stat(filepath.Join(root, firstInputCleanupPending)); !os.IsNotExist(err) {
+			t.Logf("preserving unresolved first-input fixture root=%s", root)
+			return
+		}
+		_ = os.RemoveAll(root)
+	})
 	for _, key := range []string{"TMUX", "TMUX_PANE"} {
 		t.Setenv(key, "")
 	}
@@ -1557,6 +1563,59 @@ func TestDefaultHostForegroundOverridesActualCLI(t *testing.T) {
 	}
 }
 
+const firstInputCleanupPending = ".first-input-cleanup-pending"
+
+// Freeze this fixture's exact generation before the test can fail or cancel.
+func (f processCreateCLI) detachedFirstInputCleanup(t *testing.T, mainCtx context.Context, cancel context.CancelFunc, ref string) func() {
+	t.Helper()
+	var owned coremetadata.ProcessActivation
+	reg, err := f.store.LoadReadOnly()
+	if err == nil {
+		agent, ok := reg.Agent(strings.TrimPrefix(ref, "uid:"))
+		if ok {
+			pane, found := reg.Pane(agent.Status.PaneRef)
+			if found && pane.Status.Activation.Process != nil {
+				owned = *pane.Status.Activation.Process
+			}
+		}
+	}
+	return func() {
+		cancel()
+		if mainCtx.Err() == nil {
+			t.Error("caller context was not canceled before cleanup")
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cleanupCancel()
+		out, stopErr := exec.CommandContext(cleanupCtx, f.binary, "agent", "stop", ref).CombinedOutput()
+		if stopErr != nil {
+			t.Errorf("owned fixture Stop ref=%s root=%s: %v %s", ref, f.root, stopErr, out)
+			return
+		}
+		if err != nil || owned.Binding.AgentUID == "" {
+			t.Errorf("fixture activation not captured ref=%s root=%s: %v", ref, f.root, err)
+			return
+		}
+		retired, readErr := f.store.LoadReadOnly()
+		if readErr != nil {
+			t.Errorf("fixture retirement ref=%s root=%s: %v", ref, f.root, readErr)
+			return
+		}
+		agent, agentOK := retired.Agent(owned.Binding.AgentUID)
+		pane, paneOK := retired.Pane(owned.Binding.PaneUID)
+		if !agentOK || !paneOK || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() ||
+			!coremetadata.MatchesProcessWait(owned.Binding, pane.Status.LastTermination) ||
+			!coremetadata.MatchesProcessWait(owned.Binding, agent.Status.LastTermination) || !processActivationAbsent(owned, localipc.Process) {
+			t.Errorf("fixture exact Wait/owner-child retirement not confirmed ref=%s root=%s", ref, f.root)
+			return
+		}
+		if err := os.Remove(filepath.Join(f.root, firstInputCleanupPending)); err != nil {
+			t.Errorf("fixture cleanup marker ref=%s root=%s: %v", ref, f.root, err)
+			return
+		}
+		t.Log("canceled caller; exact fixture Wait and owner-child retirement confirmed")
+	}
+}
+
 // The FIFO acknowledges SessionStart before any user input; creation alone is
 // deliberately not a stream-readiness barrier for a promptless Claude.
 func TestProcessCreateDetachedClaudeHookFirstInput(t *testing.T) {
@@ -1593,6 +1652,9 @@ func testProcessCreateDetachedClaudeHookFirstInput(t *testing.T, sdkInput bool) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	if err := os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("creation pending\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	out, err := exec.CommandContext(ctx, f.binary, f.args("--detach")...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("create: %v %s", err, out)
@@ -1602,12 +1664,7 @@ func testProcessCreateDetachedClaudeHookFirstInput(t *testing.T, sdkInput bool) 
 		t.Fatalf("create receipt %s", out)
 	}
 	ref := fields[1]
-	defer func() {
-		stopped, stopErr := exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
-		if stopErr != nil {
-			t.Errorf("owned fixture Stop: %v %s", stopErr, stopped)
-		}
-	}()
+	defer f.detachedFirstInputCleanup(t, ctx, cancel, ref)()
 	observed := make(chan error, 1)
 	go func() {
 		line, err := bufio.NewReader(barrier).ReadString('\n')
@@ -1669,6 +1726,9 @@ func TestProcessCreateDetachedClaudeLargeInitialFrame(t *testing.T) {
 			f := newProcessCreateCLI(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
+			if err := os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("creation pending\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			out, err := exec.CommandContext(ctx, f.binary, f.args("--detach", "--", text)...).CombinedOutput()
 			if err != nil {
 				t.Fatalf("large initial frame create %v %s", err, out)
@@ -1678,12 +1738,7 @@ func TestProcessCreateDetachedClaudeLargeInitialFrame(t *testing.T) {
 				t.Fatalf("create receipt %s", out)
 			}
 			ref := fields[1]
-			defer func() {
-				out, err := exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
-				if err != nil {
-					t.Errorf("owned fixture Stop %v %s", err, out)
-				}
-			}()
+			defer f.detachedFirstInputCleanup(t, ctx, cancel, ref)()
 			var wire []byte
 			for {
 				wire, _ = os.ReadFile(f.trace)

@@ -910,7 +910,14 @@ func TestExternalClaudeDetachedFirstInput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer os.RemoveAll(root)
+			cleanupConfirmed := true // No detached creation has been attempted yet.
+			defer func() {
+				if cleanupConfirmed {
+					_ = os.RemoveAll(root)
+				} else {
+					t.Logf("preserving unresolved first-input fixture root=%s", root)
+				}
+			}()
 			script := `import os,sys,json,socket,subprocess
 root=os.path.dirname(__file__)
 s=socket.socket(socket.AF_UNIX);s.bind(root+'/provider.sock');os.chmod(root+'/provider.sock',0o600);s.listen()
@@ -960,6 +967,11 @@ s.close()
 				t.Fatalf("project %v %s", err, out)
 			}
 			project := strings.TrimPrefix(strings.TrimSpace(string(out)), "uid:")
+			c, err := projmux.NewClient(projmux.Options{ConfigDir: root + "/config/projmux", StateDir: root + "/state/projmux", HomeDir: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleanupConfirmed = false
 			out, err = cli("create", "agent", "--host", "process", "--detach", "--provider", "claude", "--project", "uid:"+project, "--create-window", "--window", "first-window", "--name", "probe-first-input")
 			if err != nil {
 				t.Fatalf("create %v %s", err, out)
@@ -969,12 +981,44 @@ s.close()
 				t.Fatalf("receipt %s", out)
 			}
 			ref := fields[1]
+			var owned core.ProcessActivation
 			defer func() {
-				out, err := cli("agent", "stop", ref)
-				if err != nil {
-					t.Errorf("fixture Stop %v %s", err, out)
+				cancel()
+				if ctx.Err() == nil {
+					t.Error("caller context was not canceled before cleanup")
 				}
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cleanupCancel()
+				stopped, err := c.StopAgent(cleanupCtx, core.StopAgentRequest{Ref: ref, Binding: owned.Binding})
+				if err != nil {
+					t.Errorf("fixture Stop ref=%s root=%s: %v", ref, root, err)
+					return
+				}
+				wait := stopped.Termination
+				if owned.Binding.AgentUID == "" || stopped.Binding != owned.Binding || !stopped.Stopped || stopped.ClaimReleased ||
+					wait == nil || wait.Source != core.TerminationSourceSupervisor || wait.ObservedAt.IsZero() ||
+					wait.AgentUID != owned.Binding.AgentUID || wait.PaneUID != owned.Binding.PaneUID ||
+					wait.Generation != owned.Binding.Generation || wait.OperationID != owned.Binding.OperationID || (wait.ExitCode == nil && wait.Signal == "") {
+					t.Errorf("fixture exact Wait/Stop retirement not confirmed ref=%s root=%s", ref, root)
+					return
+				}
+				resource, err := c.GetResource(cleanupCtx, core.Ref{Kind: core.KindPane, Value: "uid:" + owned.Binding.PaneUID})
+				if err != nil || !resource.(core.Pane).Status.Activation.IsZero() {
+					t.Errorf("fixture activation not retired ref=%s root=%s: %v", ref, root, err)
+					return
+				}
+				cleanupConfirmed = true
+				t.Log("canceled caller; exact supervisor Wait and public Stop retirement confirmed")
 			}()
+			resource, err := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: ref})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource, err = c.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + resource.(core.Agent).Status.PaneRef})
+			if err != nil || resource.(core.Pane).Status.Activation.Process == nil {
+				t.Fatalf("fixture activation: %v", err)
+			}
+			owned = *resource.(core.Pane).Status.Activation.Process
 			for {
 				if _, err = os.Stat(filepath.Join(root, "hook-done")); err == nil {
 					break
@@ -984,10 +1028,6 @@ s.close()
 					t.Fatal("SessionStart barrier", ctx.Err())
 				case <-time.After(time.Millisecond):
 				}
-			}
-			c, err := projmux.NewClient(projmux.Options{ConfigDir: root + "/config/projmux", StateDir: root + "/state/projmux", HomeDir: root})
-			if err != nil {
-				t.Fatal(err)
 			}
 			refused, err := c.DeliverTurn(ctx, core.TurnRequest{Ref: ref, Text: "unsupported"})
 			var refusal *projmux.Refusal
