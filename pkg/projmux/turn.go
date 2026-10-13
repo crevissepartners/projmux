@@ -135,7 +135,7 @@ func (c *Client) turn(ctx context.Context, req core.TurnRequest, action string) 
 type turnRunner struct{ c *Client }
 
 func (r turnRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return (frozenTurnRunner{r.c}).Run(ctx, name, append(r.c.transport.Args(), args...)...)
+	return frozenTurnRunner(r).Run(ctx, name, append(r.c.transport.Args(), args...)...)
 }
 
 type frozenTurnRunner struct{ c *Client }

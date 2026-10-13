@@ -58,10 +58,10 @@ func (s TurnService) Execute(ctx context.Context, reg metadata.Registry, a metad
 	}
 	if req.Action == "interrupt" && a.Spec.Provider == "claude" {
 		if err := operatorclient.Validate(req.Via); err != nil {
-			return out, turnFailure("operator-client-invalid", fmt.Errorf("Claude turn interrupt requires explicit caller-reported Via: %w", err))
+			return out, turnFailure("operator-client-invalid", fmt.Errorf("claude turn interrupt requires explicit caller-reported Via: %w", err))
 		}
 	} else if req.Via != "" {
-		return out, turnFailure("turn-invalid-input", errors.New("Via is available only for Claude turn interrupt"))
+		return out, turnFailure("turn-invalid-input", errors.New("via is available only for Claude turn interrupt"))
 	}
 	pane, found := reg.Pane(a.Status.PaneRef)
 	declared := found && pane.Metadata.OwnerUID() == a.Metadata.UID && pane.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess
@@ -80,7 +80,7 @@ func (s TurnService) Execute(ctx context.Context, reg metadata.Registry, a metad
 	}
 	if a.Spec.Provider == "claude" && req.Action == "interrupt" {
 		if s.ClaudeInterrupt == nil {
-			return out, turnFailure("turn-control-unavailable", errors.New("Claude interrupt transport unavailable"))
+			return out, turnFailure("turn-control-unavailable", errors.New("claude interrupt transport unavailable"))
 		}
 		return s.ClaudeInterrupt(ctx, reg, a, req.Via)
 	}
