@@ -110,6 +110,7 @@ CodexHandle.ValidateAuthority	Internal dedicated Codex process binding/control/r
 CodexHandle.Wait	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 CodexProcessRouteEvidence.Provider	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 CodexProcessRouteEvidence.sameAuthority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+CommandOutcomeReasons.Register	Internal caller-owned closed outcome reason registration seam; verified by class isolation, concurrent lookup/registration, copied inventories, failure atomicity and Store reader roundtrip tests.
 CoordinationEligible	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
