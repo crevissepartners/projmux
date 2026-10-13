@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -81,15 +82,7 @@ func newCodexNativeThreadController(stateDir string) defaultCodexNativeThreadCon
 // every create without a profile or with a profile that sets neither. Unlike
 // the persona it is not start-only: every native resume re-sends the policy
 // the profile holds then, and the answer is checked each time.
-type codexNativeCreateInput struct {
-	Workspace             coremetadata.AgentWorkspace
-	DeveloperInstructions string
-	Policy                codexappserver.ThreadPolicy
-	Model                 string
-	Effort                string
-	Prompt                string
-	RequestKey            string
-}
+type codexNativeCreateInput = mutationruntime.NativeCodexCreateInput
 
 type codexNativeThreadClient interface {
 	StartThreadWithModel(context.Context, string, []string, string, codexappserver.ThreadPolicy, string) (codexappserver.ThreadBinding, error)
@@ -109,11 +102,10 @@ type codexNativeEndpointRoute struct {
 	Default       bool
 }
 
-func (route codexNativeEndpointRoute) valid() bool {
-	socketPath := strings.TrimSpace(route.SocketPath)
-	transportValid := (route.Default && socketPath == "") || (!route.Default && filepath.IsAbs(socketPath))
-	return route.Endpoint.Valid() && route.State != "" && filepath.IsAbs(strings.TrimSpace(route.TUIExecutable)) && transportValid
+func (route codexNativeEndpointRoute) shared() mutationruntime.NativeCodexRoute {
+	return mutationruntime.NativeCodexRoute{Endpoint: route.Endpoint, State: route.State, SocketPath: route.SocketPath, TUIExecutable: route.TUIExecutable, Default: route.Default}
 }
+func (route codexNativeEndpointRoute) valid() bool { return route.shared().Valid() }
 
 func (route codexNativeEndpointRoute) brokerRoute() codexBrokerEndpointRoute {
 	return codexBrokerEndpointRoute{
@@ -122,57 +114,14 @@ func (route codexNativeEndpointRoute) brokerRoute() codexBrokerEndpointRoute {
 	}
 }
 
-type codexNativeRouteError struct {
-	Reason         string
-	OperatorAction string
-	SocketPath     string
-	err            error
-}
-
-func (e *codexNativeRouteError) Error() string {
-	message := "Codex generation route: " + e.Reason
-	if strings.TrimSpace(e.OperatorAction) != "" {
-		message += "; operator action: " + e.OperatorAction
-	}
-	return message
-}
-
-func (e *codexNativeRouteError) Unwrap() error { return e.err }
-
-// codexDaemonStartGuidance is the operator step for a default endpoint whose
-// readiness decision names no more exact recovery: the endpoint is absent,
-// unreachable, or speaks another protocol.
-const codexDaemonStartGuidance = "Start the shared Codex app server with `codex app-server daemon start`, or run `codex app-server daemon restart` after upgrading Codex, then retry."
-
-// codexDaemonOwnerAgreedGuidance follows the ownership-inspection recovery. It
-// names the daemon step only as the operator's own choice once the owner is
-// known, and never the unmanaged bootstrap prescription.
-const codexDaemonOwnerAgreedGuidance = "Once the owner agrees, `codex app-server daemon restart` replaces an app server the official daemon manages."
+type codexNativeRouteError = mutationruntime.NativeCodexRouteError
 
 // codexDaemonGuidance names the `codex app-server daemon` step that makes the
 // default endpoint attachable, or nothing for a ready endpoint whose readiness
 // decision needs no recovery. It is guidance only: Projmux never runs it from a
 // create, and it never launches a private app-server in its place.
 func codexDaemonGuidance(health codexappserver.Health) string {
-	if guidance := health.OperatorRecovery.Guidance(); guidance != "" {
-		if health.OperatorRecovery == codexappserver.OperatorRecoveryInspectProcessOwnership {
-			return guidance + " " + codexDaemonOwnerAgreedGuidance
-		}
-		return guidance
-	}
-	if health.EndpointReadiness != codexappserver.EndpointReady {
-		return codexDaemonStartGuidance
-	}
-	return ""
-}
-
-// codexDaemonOperatorAction is the refusal's action for a default endpoint
-// that was not attachable. A refusal always names a daemon step.
-func codexDaemonOperatorAction(health codexappserver.Health) string {
-	if guidance := codexDaemonGuidance(health); guidance != "" {
-		return guidance
-	}
-	return codexDaemonStartGuidance
+	return mutationruntime.NativeCodexDaemonGuidance(health)
 }
 
 const (
@@ -229,39 +178,11 @@ func (controller defaultCodexNativeThreadController) Current(ctx context.Context
 			return codexappserver.ProbeDefaultProxy(ctx, codexNativeThreadTimeout, version.String(), true)
 		}
 	}
-	health := probe(ctx)
-	if codexappserver.AuthorityFor(health).Attach != codexappserver.EndpointAttachAllowed {
-		return codexNativeEndpointRoute{}, codexappserver.WithHealthDiagnostic(&codexNativeRouteError{
-			Reason: codexNativeReasonGenerationUnavailable, OperatorAction: codexDaemonOperatorAction(health),
-		}, health)
-	}
-	runningVersion := strings.TrimSpace(health.RunningVersion)
-	if !codexappserver.IsSafeDiagnosticVersion(runningVersion) {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	executable, err := exec.LookPath("codex")
+	route, err := mutationruntime.CurrentNativeCodexRoute(ctx, probe, exec.LookPath, os.Getenv, os.UserHomeDir)
 	if err != nil {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+		return codexNativeEndpointRoute{}, err
 	}
-	executable, err = filepath.Abs(executable)
-	if err != nil {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil || !filepath.IsAbs(executable) {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	stateDomainID, err := defaultCodexStateDomainID(os.Getenv, os.UserHomeDir)
-	if err != nil {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-	}
-	return codexNativeEndpointRoute{
-		Endpoint: coremetadata.CodexEndpointRef{
-			StateDomainID:        stateDomainID,
-			EndpointGenerationID: "codex-" + runningVersion,
-		},
-		State: coremetadata.CodexGenerationCurrent, TUIExecutable: executable, Default: true,
-	}, nil
+	return codexNativeEndpointRoute{Endpoint: route.Endpoint, State: route.State, SocketPath: route.SocketPath, TUIExecutable: route.TUIExecutable, Default: route.Default}, nil
 }
 
 // defaultCodexStateDomainID derives a content-free durable identity from the
@@ -269,32 +190,7 @@ func (controller defaultCodexNativeThreadController) Current(ctx context.Context
 // because they run the same Codex version, while symlink spellings of one
 // physical root converge to one identity.
 func defaultCodexStateDomainID(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
-	_, id, err := defaultCodexStateDomain(lookupEnv, homeDir)
-	return id, err
-}
-
-func defaultCodexStateDomain(lookupEnv func(string) string, homeDir func() (string, error)) (string, string, error) {
-	root := strings.TrimSpace(lookupEnv("CODEX_HOME"))
-	if root == "" {
-		home, err := homeDir()
-		if err != nil {
-			return "", "", err
-		}
-		root = filepath.Join(home, ".codex")
-	}
-	if !filepath.IsAbs(root) {
-		return "", "", errors.New("codex state domain must be absolute")
-	}
-	canonical, err := filepath.EvalSymlinks(filepath.Clean(root))
-	if err != nil {
-		return "", "", err
-	}
-	info, err := os.Stat(canonical)
-	if err != nil || !info.IsDir() {
-		return "", "", errors.New("codex state domain must be an existing directory")
-	}
-	sum := sha256.Sum256([]byte(canonical))
-	return canonical, "codex-state-" + hex.EncodeToString(sum[:16]), nil
+	return mutationruntime.NativeCodexStateDomainID(lookupEnv, homeDir)
 }
 
 // CatalogRoutes is a read-only inventory projection. The bootstrap/default
@@ -397,32 +293,11 @@ func (controller defaultCodexNativeThreadController) Create(ctx context.Context,
 	if !route.valid() || route.State != codexgeneration.StateCurrent {
 		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
-	workspace := input.Workspace
-	client, err := controller.openRoute(ctx, route, len(workspace.AdditionalWritableRoots) > 0)
-	if err != nil {
-		return codexappserver.ThreadBinding{}, err
-	}
-	closed := false
-	defer func() {
-		if !closed {
-			_ = client.Close()
-		}
-	}()
-	binding, err := client.StartThreadWithModel(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions, input.Policy, input.Model)
-	if err != nil {
-		return binding, err
-	}
-	if input.Prompt == "" {
-		// Closing a default-route client also reaps its owned stdio proxy and may
-		// report that local child exit. That cleanup result says nothing about
-		// whether the shared endpoint persisted the exact thread. The fresh
-		// independent resume/read below is the only semantic readiness verdict.
-		_ = client.Close()
-		closed = true
-		return binding, controller.awaitDurableResume(ctx, route, workspace, binding.ThreadID)
-	}
-	binding.TurnID, err = client.StartTurnWithOptions(ctx, binding.ThreadID, input.Prompt, input.RequestKey, input.Model, input.Effort)
-	return binding, err
+	return mutationruntime.CreateNativeCodexThread(ctx, input, func(ctx context.Context, experimental bool) (mutationruntime.NativeCodexThreadClient, error) {
+		return controller.openRoute(ctx, route, experimental)
+	}, func(ctx context.Context, w coremetadata.AgentWorkspace, id string) error {
+		return controller.awaitDurableResume(ctx, route, w, id)
+	})
 }
 
 func (controller defaultCodexNativeThreadController) awaitDurableResume(
@@ -621,17 +496,7 @@ var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 }
 
 func nativePrompt(payload []string) (string, bool) {
-	switch len(payload) {
-	case 0:
-		return "", true
-	case 1:
-		return payload[0], true
-	default:
-		// The legacy CLI owns provider parsing for a multi-operand payload. Native
-		// turn/start accepts one text item, so joining operands here would silently
-		// invent prompt semantics.
-		return "", false
-	}
+	return mutationruntime.NativePrompt(payload)
 }
 
 func prepareNativeContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -643,13 +508,7 @@ func nativeFallbackAllowed(controller codexNativeThreadController, err error) bo
 }
 
 func nativeLaunchError(spelling string, err error) error {
-	if err == nil {
-		return nil
-	}
-	// Provider identity is already indeterminate here, so this refusal must not
-	// offer any second lane -- `--interactive-only` included. Starting another
-	// Codex process now could submit the same prompt twice.
-	return fmt.Errorf("%s: native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: %w", spelling, err)
+	return mutationruntime.NativeLaunchError(spelling, err)
 }
 
 // interactiveOnlyFlag is the one public spelling that asks for a plain-CLI
@@ -662,17 +521,7 @@ const interactiveOnlyFlag = "--interactive-only"
 // only that it could not, or the operator cannot tell an unreachable endpoint
 // from an endpoint that is missing a capability.
 func nativeThreadReason(err error) string {
-	var route *codexNativeRouteError
-	if errors.As(err, &route) && strings.TrimSpace(route.Reason) != "" {
-		return route.Reason
-	}
-	var action *codexappserver.ThreadActionError
-	if errors.As(err, &action) {
-		if reason := strings.TrimSpace(action.Reason); reason != "" {
-			return reason
-		}
-	}
-	return "unclassified"
+	return mutationruntime.NativeThreadReason(err)
 }
 
 // nativeRootsUnsupported reports whether a native failure is the fail-closed
@@ -683,7 +532,7 @@ func nativeThreadReason(err error) string {
 // conversation exists, so it belongs with the pre-mutation refusals and not
 // with the indeterminate one.
 func nativeRootsUnsupported(err error) bool {
-	return nativeThreadReason(err) == codexappserver.ReasonAdditionalRootsUnsupported
+	return mutationruntime.NativeRootsUnsupported(err)
 }
 
 // nativeCreatePreparationRefusal answers a prompted native Codex create whose
@@ -699,15 +548,7 @@ func nativeCreatePreparationRefusal(spelling string, err error) error {
 }
 
 func nativeCreatePreparationRefusalForCapability(spelling string, err error, capability codexappserver.InstallCapability) error {
-	if err == nil {
-		return nil
-	}
-	guidance := codexInstallCapabilityGuidance(capability)
-	return errors.New(spelling + ": native Codex thread preparation is unavailable (" + nativeThreadReason(err) +
-		") and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. " +
-		"Re-run with " + interactiveOnlyFlag + " for a plain interactive Codex Agent with no native turn control, " +
-		"or make the shared Codex app server attachable through `codex app-server daemon` as the operator action below describes. Install capability " + string(guidance.Capability) + ": " +
-		guidance.Text() + ". Native error: " + err.Error())
+	return mutationruntime.NativeCreatePreparationRefusal(spelling, err, capability)
 }
 
 // nativeResumePreparationRefusal answers a stored-thread resume whose native
@@ -731,10 +572,7 @@ func nativeResumePreparationRefusal(spelling string, err error) error {
 // usage error because the selector is what is wrong: narrowing it, or asking
 // for the plain-CLI fan-out on purpose, both fix it.
 func nativeFanOutRefusal(spelling string, targets int) error {
-	return usageError(fmt.Sprintf(
-		"%s creates exactly one native Codex thread, but this selector resolved %d Windows; "+
-			"narrow the selector to one Window, or pass %s to keep the plain-CLI fan-out of one Agent per resolved Window",
-		spelling, targets, interactiveOnlyFlag))
+	return MapMetadataError(mutationruntime.NativeFanOutRefusal(spelling, targets))
 }
 
 // requireInteractiveOnlyProvider refuses `--interactive-only` on a provider

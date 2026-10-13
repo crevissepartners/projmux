@@ -145,12 +145,18 @@ func (e *AttachError) Unwrap() error { return e.err }
 // An exact-current endpoint the official manager does not own is therefore
 // attachable with a daemon lifecycle argv count of zero.
 func AttachDefaultEndpoint(ctx context.Context, projmuxVersion string, opts AttachOptions) (*Client, Health, error) {
+	return AttachDefaultEndpointWithEnvironment(ctx, projmuxVersion, opts, nil)
+}
+
+// AttachDefaultEndpointWithEnvironment supplies process execution inputs separately
+// from the content-free broker-facing attach contract. It owns no daemon lifecycle.
+func AttachDefaultEndpointWithEnvironment(ctx context.Context, projmuxVersion string, opts AttachOptions, environment *ProxyEnvironment) (*Client, Health, error) {
 	policy := attachPolicy{
 		probe: func(probeCtx context.Context) Health {
-			return ProbeDefaultProxy(probeCtx, attachTimeout(opts.Timeout), projmuxVersion, true)
+			return ProbeDefaultProxyWithEnvironment(probeCtx, attachTimeout(opts.Timeout), projmuxVersion, true, environment)
 		},
 		open: func(openCtx context.Context, experimental bool) (*Client, error) {
-			return openDefaultProxy(openCtx, attachTimeout(opts.Timeout), projmuxVersion, experimental)
+			return openDefaultProxyWithEnvironment(openCtx, attachTimeout(opts.Timeout), projmuxVersion, experimental, environment)
 		},
 	}
 	return policy.attach(ctx, opts)
@@ -163,7 +169,7 @@ func AttachDefaultEndpoint(ctx context.Context, projmuxVersion string, opts Atta
 func AttachDefaultUnixAt(ctx context.Context, socketPath, projmuxVersion string, opts AttachOptions) (*Client, Health, error) {
 	policy := attachPolicy{
 		probe: func(probeCtx context.Context) Health {
-			return ProbeDefaultProxy(probeCtx, attachTimeout(opts.Timeout), projmuxVersion, true)
+			return ProbeDefaultProxyWithEnvironment(probeCtx, attachTimeout(opts.Timeout), projmuxVersion, true, nil)
 		},
 		open: func(openCtx context.Context, experimental bool) (*Client, error) {
 			return OpenPrivateUnix(openCtx, socketPath, attachTimeout(opts.Timeout), projmuxVersion, experimental)

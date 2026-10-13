@@ -35,17 +35,22 @@ proof. The empty route uses the app server and can start it. SDK calls can recor
 `Client.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:...", Window:
 "uid:...", Provider: "claude", Name: "worker"})` creates one tmux Agent through
 the same transaction, provider launch plan, hooks and rollback as the CLI.
-It supports Claude, Antigravity, payload-free Codex and `InteractiveOnly` Codex.
+It supports Claude, Antigravity, native prompted Codex, payload-free Codex and
+`InteractiveOnly` Codex.
 `Pane` selects an optional anchor; `Creator` accepts only an explicit `uid:`
 Agent declaration and records `creator-basis=explicit` without inferring a caller.
 Profiles, instructions, model, effort, workspace roots and placement use the
 CLI's existing validation. Set `Options.ProjmuxExecutable` from the same build.
 
-Native-observed Codex creation (prompted default Codex and Codex instructions)
-is not yet available in the SDK: `CodeCreateNativeCodexUnsupported` refuses it
-before effects. Use `projmux create agent` for these combinations. The follow-up
-is **SDK prompted Codex create (including explicit observer child state routing)**
-in the conversation milestone (613-B).
+Prompted Codex uses the existing official app-server endpoint and the CLI's native
+thread/start and initial turn path. Instructions and profile settings are applied
+when the thread starts. The captured provider PATH, CODEX_HOME and HomeDir reach
+read-only readiness probes, proxy connections, the tmux attachment and the
+observer child. Config, State and Registry routing is explicit throughout;
+provider state is a separate domain. This does not start or restart a daemon.
+An unavailable endpoint refuses with `CodeCreateNativeCodexUnavailable` before
+resources are committed. An indeterminate provider RPC is never retried or
+silently switched to another launch lane. SDK Codex resume remains deferred.
 
 An activation timeout or failure after commit preserves the Agent and Pane.
 `CreateAgent` returns their projection, receipt and PaneID **together with**

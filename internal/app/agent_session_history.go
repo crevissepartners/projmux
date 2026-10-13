@@ -26,7 +26,9 @@ import (
 //     (managed-Agent interaction commit);
 //   - create_intent.go openIntentAgent (resume-picker create, and native
 //     Codex create through the intent path);
-//   - create_agent_execution.go createAgent (native Codex fresh create).
+//   - services/mutations/runtime/create_native_agent.go NativeCreationEngine.Create
+//     (native Codex fresh create for both CLI and SDK); its row carrier is
+//     appended after commit by createAgent or SDKNativeCreation.Observe.
 //
 //   - process_agent_session.go updateProcessAgentSession (process owner
 //     initialization and writer backfill).

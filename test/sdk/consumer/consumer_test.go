@@ -435,6 +435,15 @@ func TestExternalAgentCreateConsumer(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || out.Agent.Metadata.UID != "" {
 		t.Fatalf("%+v %v", out, err)
 	}
+	// Native create uses only public request/result/error types from an external module.
+	_, nativeErr := c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:project", Window: "uid:window", Provider: "codex", Profile: "native", Instructions: "reviewer", Payload: []string{"hello"}})
+	if !errors.Is(nativeErr, context.Canceled) {
+		t.Fatalf("native cancelled create: %v", nativeErr)
+	}
+	var nativeCode projmux.Code = projmux.CodeCreateNativeCodexUnavailable
+	if nativeCode == "" {
+		t.Fatal("native refusal code missing")
+	}
 	_, err = c.CreateAgent(context.Background(), core.CreateAgentRequest{Project: "named", Window: "window", Provider: "codex"})
 	var refusal *projmux.Refusal
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateExecutableInvalid {

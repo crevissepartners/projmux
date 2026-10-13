@@ -2,12 +2,9 @@ package app
 
 import (
 	"context"
-	"fmt"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-	"strings"
 )
 
 type nativeCreationEngine struct {
@@ -17,57 +14,47 @@ type nativeCreationEngine struct {
 	Route      codexNativeEndpointRoute
 	Prompt     string
 	Runner     func() tmuxCommandRunner
-	History    func(*coremetadata.Registry, string) []sessionhistory.Record
 }
 
+func (n *nativeCreationEngine) engine() *mutationruntime.NativeCreationEngine {
+	return &mutationruntime.NativeCreationEngine{
+		Spelling: n.Spelling, Endpoint: n.Route.Endpoint, Prompt: n.Prompt,
+		AdmitEndpoint: func(ctx context.Context) (coremetadata.CodexEndpointRef, error) {
+			ctx, cancel := prepareNativeContext(ctx)
+			defer cancel()
+			route, err := n.Controller.Resolve(ctx, n.Route.Endpoint)
+			if err == nil && (!route.valid() || !route.Endpoint.Same(n.Route.Endpoint) || route.State != coremetadata.CodexGenerationCurrent) {
+				err = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+			}
+			if err == nil {
+				n.Route = route
+			}
+			return route.Endpoint, err
+		},
+		CreateThread: func(ctx context.Context, input mutationruntime.NativeCodexCreateInput) (codexappserver.ThreadBinding, error) {
+			ctx, cancel := prepareNativeContext(ctx)
+			defer cancel()
+			return n.Controller.Create(ctx, n.Route, input)
+		},
+		Plan: func(w coremetadata.AgentWorkspace, id, model, effort string) (string, []string, error) {
+			return planNativeCodexResumeOptions(n.Launcher, n.Route, w, id, model, effort)
+		},
+		BindPane: func(ctx context.Context, pane string, w coremetadata.AgentWorkspace, b mutationruntime.NativeAgentBinding) error {
+			return bindNativeCodexPaneOnRoute(ctx, n.Launcher, n.Runner(), pane, w.CWD, b.Title, "", b.ThreadID)
+		},
+		PreparationRefusal: func(err error) error { return nativeCreatePreparationRefusal(n.Spelling, err) },
+		LaunchError:        func(err error) error { return nativeLaunchError(n.Spelling, err) },
+		FanOutRefusal:      func(count int) error { return nativeFanOutRefusal(n.Spelling, count) },
+		SafeFallback:       func(err error) bool { return nativeFallbackAllowed(n.Controller, err) },
+	}
+}
 func (n *nativeCreationEngine) Admit(ctx context.Context, count int) error {
-	if count > 1 {
-		return nativeFanOutRefusal(n.Spelling, count)
-	}
-	admissionCtx, cancel := prepareNativeContext(ctx)
-	defer cancel()
-	admitted, err := n.Controller.Resolve(admissionCtx, n.Route.Endpoint)
-	if err != nil || !admitted.valid() || !admitted.Endpoint.Same(n.Route.Endpoint) || admitted.State != coremetadata.CodexGenerationCurrent {
-		if err == nil {
-			err = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-		}
-		return nativeCreatePreparationRefusal(n.Spelling, err)
-	}
-	n.Route = admitted
-	return nil
+	return n.engine().Admit(ctx, count)
 }
-func (n *nativeCreationEngine) Create(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, work mutationruntime.AgentWork, workspace coremetadata.AgentWorkspace, preparation mutationruntime.AgentPreparation) (mutationruntime.NativeAgentBinding, error) {
-	var out mutationruntime.NativeAgentBinding
-	if err := mutator.StageCodexEndpoint(working, work.Agent.Metadata.UID, n.Route.Endpoint); err != nil {
-		return out, MapMetadataError(err)
-	}
-
-	nativeCtx, cancel := prepareNativeContext(ctx)
-	prepared, nativeErr := n.Controller.Create(nativeCtx, n.Route, codexNativeCreateInput{Workspace: workspace, DeveloperInstructions: preparation.DeveloperInstructions(work.Agent.Metadata.UID), Policy: preparation.Policy, Model: preparation.Model, Effort: preparation.Effort, Prompt: n.Prompt, RequestKey: work.Activation.Generation})
-	cancel()
-	switch {
-	case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
-		title, argv, err := planNativeCodexResumeOptions(n.Launcher, n.Route, workspace, prepared.ThreadID, preparation.Model, preparation.Effort)
-		if err != nil {
-			return out, nativeLaunchError(n.Spelling, err)
-		}
-		if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{AgentUID: work.Agent.Metadata.UID, PaneUID: work.Pane.Metadata.UID, Generation: work.Activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID, Endpoint: n.Route.Endpoint}); err != nil {
-			return out, MapMetadataError(err)
-		}
-		out = mutationruntime.NativeAgentBinding{Title: title, Argv: argv, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID}
-		out.History = n.History(working, work.Agent.Metadata.UID)
-		return out, nil
-	case nativeErr == nil:
-		return out, nativeLaunchError(n.Spelling, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
-	case nativeFallbackAllowed(n.Controller, nativeErr), nativeRootsUnsupported(nativeErr):
-		return out, nativeCreatePreparationRefusal(n.Spelling, nativeErr)
-	default:
-		return out, nativeLaunchError(n.Spelling, nativeErr)
-	}
+func (n *nativeCreationEngine) Create(ctx context.Context, r *coremetadata.Registry, m coremetadata.Mutator, w mutationruntime.AgentWork, workspace coremetadata.AgentWorkspace, p mutationruntime.AgentPreparation) (mutationruntime.NativeAgentBinding, error) {
+	out, err := n.engine().Create(ctx, r, m, w, workspace, p)
+	return out, MapMetadataError(err)
 }
-func (n *nativeCreationEngine) Bind(ctx context.Context, _ mutationruntime.AgentWork, workspace coremetadata.AgentWorkspace, paneID string, binding mutationruntime.NativeAgentBinding) error {
-	if err := bindNativeCodexPaneOnRoute(ctx, n.Launcher, n.Runner(), paneID, workspace.CWD, binding.Title, "", binding.ThreadID); err != nil {
-		return fmt.Errorf("%s: bind native Codex Pane %s presentation metadata: %w", n.Spelling, paneID, err)
-	}
-	return nil
+func (n *nativeCreationEngine) Bind(ctx context.Context, w mutationruntime.AgentWork, workspace coremetadata.AgentWorkspace, pane string, b mutationruntime.NativeAgentBinding) error {
+	return n.engine().Bind(ctx, w, workspace, pane, b)
 }

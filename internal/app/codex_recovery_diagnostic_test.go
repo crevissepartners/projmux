@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"net"
 	"os"
 	"reflect"
@@ -88,7 +89,7 @@ func TestObserverRetryingJournalPreservesSafeFailureAndOpenStartup(t *testing.T)
 				t.Fatalf("startup reason changed: %+v", startup)
 			}
 			wire := fmt.Sprintf("%s retrying %s\n", codexObserverStartupPrefix, startup.Reason)
-			if _, ok := parseCodexObserverStartupLine(wire); !ok {
+			if _, ok := mutationruntime.ParseNativeObserverStartupLine(wire); !ok {
 				t.Fatal("startup parser rejected retrying")
 			}
 			body, _ := json.Marshal(entries[0])

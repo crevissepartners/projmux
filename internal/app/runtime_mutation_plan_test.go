@@ -624,8 +624,9 @@ func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
 		"ai_ingest_codex.go": {
 			"applyCodexHookSemanticDelivery": {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
 		},
+		"../services/mutations/runtime/native_observer_authority.go": {"Set": {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption}},
 		"ai_ingest_codex_native.go": {
-			"SetAuthority":  {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
+
 			"Apply":         {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
 			"ApplyProgress": {aiPaneCodexDroppedOption, aiPaneCodexUnknownOption, aiPaneCodexOverflowOption},
 		},
@@ -3532,7 +3533,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"ai_ingest_codex.go:applyCodexHookSemanticDelivery:variable-argv":                        "agent.presentation",
 		"ai_ingest_codex_native.go:Apply:variable-argv":                                          "agent.presentation",
 		"ai_ingest_codex_native.go:ApplyProgress:variable-argv":                                  "agent.presentation",
-		"ai_ingest_codex_native.go:SetAuthority:variable-argv":                                   "codex.native-lifecycle-authority",
+		"../services/mutations/runtime/native_observer_authority.go:Set:variable-argv":           "codex.native-lifecycle-authority",
 		"ai_ingest_codex_native.go:recordAINotification:set-option":                              "agent.presentation",
 		"attention.go:run:variable-argv":                                                         "agent.presentation",
 		"../services/mutations/runtime/binding_convergence.go:Run:variable-argv":                 "binding.convergence",
@@ -3568,7 +3569,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../services/mutations/runtime/create_shared_create_agent.go:Operation:helper:MirrorPane": "agent.presentation",
 		"../services/mutations/runtime/resume_execution.go:Operation:helper:MirrorPane":           "agent.presentation",
 		"../services/mutations/runtime/create_agent_launch.go:BindAgentPaneOnRoute:variable-argv": "agent.presentation",
-		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                                         "codex.native-lifecycle-authority",
 		"../integrations/metadata/tmuxmirror.go:RenameProject:set-option":                         "resource.rename-project",
 		"../integrations/metadata/tmuxmirror.go:RebindProject:set-option":                         "resource.rebind-project",
 		"../integrations/metadata/tmuxmirror.go:writePaneName:set-option":                         "resource.rename-pane",

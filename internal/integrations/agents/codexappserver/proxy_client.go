@@ -23,7 +23,11 @@ func openDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path, err := exec.LookPath("codex")
+	return openDefaultProxyWithEnvironment(ctx, timeout, projmuxVersion, experimental, nil)
+}
+
+func openDefaultProxyWithEnvironment(ctx context.Context, timeout time.Duration, projmuxVersion string, experimental bool, environment *ProxyEnvironment) (*Client, error) {
+	path, err := environment.lookPath("codex")
 	if err != nil {
 		return nil, ErrDisconnected
 	}
@@ -36,8 +40,9 @@ func openDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion
 	// Do not bind the process to setupCtx: cancelling the setup deadline after
 	// a successful initialize would kill a client before its capability request.
 	// The returned Client owns and closes commandStream immediately after use.
-	// #nosec G204 -- path comes only from exec.LookPath("codex") above and the argv is the fixed app-server proxy command.
+	// #nosec G204 -- path is resolved from PATH or an explicit validated regular executable; argv is the fixed app-server proxy command.
 	cmd := exec.Command(path, "app-server", "proxy")
+	cmd.Env = environment.environ()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, ErrDisconnected

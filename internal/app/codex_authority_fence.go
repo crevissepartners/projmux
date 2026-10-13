@@ -3,12 +3,9 @@ package app
 import (
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
-	"os"
 	"strings"
-	"sync"
-	"syscall"
 
-	localstate "github.com/crevissepartners/projmux/internal/state"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const codexAuthorityFenceDir = agentcontrol.FenceDir
@@ -29,24 +26,7 @@ func (c *aiCommand) acquireCodexAuthorityFence(paneUID string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	// #nosec G304 -- codexAuthorityFencePath returns the private state
-	// directory plus a digest of the Registry-authenticated Pane uid.
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, localstate.PrivateFileMode)
-	if err != nil {
-		return nil, fmt.Errorf("open Codex authority fence: %w", err)
-	}
-	localstate.RepairPrivateFile(path)
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock Codex authority fence: %w", err)
-	}
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-			_ = file.Close()
-		})
-	}, nil
+	return mutationruntime.AcquireNativeAuthorityFenceAt(path)
 }
 
 func (c *aiCommand) codexAuthorityFencePath(paneUID string) (string, error) {

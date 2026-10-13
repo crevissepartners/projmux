@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1565,50 +1563,15 @@ func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, sour
 	if s.command == nil {
 		return errors.New("codex lifecycle authority requires command")
 	}
-	release, err := s.command.acquireCodexAuthorityFence(identity.PaneUID)
-	if err != nil {
-		return err
-	}
-	defer release()
-	if !s.BindingCurrent(identity) {
-		return errManagedAgentObservationIgnored
-	}
-	fields := []struct{ option, value string }{
-		{aiPaneCodexAuthorityOption, source}, {aiPaneCodexEpochOption, epoch}, {aiPaneCodexReasonOption, reason},
-	}
-	before := make(map[string]string, len(fields))
-	for _, field := range fields {
-		value, err := readAgentPaneOptionOnRoute(context.Background(), s.runner, identity.RuntimeID, field.option)
-		if err != nil {
-			return err
-		}
-		before[field.option] = value
-	}
-	if s.onlyFrom != "" && strings.TrimSpace(before[aiPaneCodexAuthorityOption]) != s.onlyFrom {
+	authority := mutationruntime.NativeObserverAuthority{Identity: mutationruntime.NativeObserverIdentity{AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, RuntimeID: identity.RuntimeID, Generation: identity.Generation, ThreadID: identity.ThreadID}, Runner: s.runner, Load: s.command.loadRegistry, Acquire: func() (func(), error) { return s.command.acquireCodexAuthorityFence(identity.PaneUID) }}
+	err := authority.Set(s.onlyFrom, source, epoch, reason)
+	if errors.Is(err, mutationruntime.ErrNativeAuthorityNotFrom) {
 		return errCodexAuthorityNotFrom
 	}
-	applied := make([]string, 0, len(fields))
-	for _, field := range fields {
-		args := []string{"set-option", "-p", "-t", identity.RuntimeID, field.option, field.value}
-		if field.value == "" {
-			args = []string{"set-option", "-p", "-u", "-t", identity.RuntimeID, field.option}
-		}
-		if _, err := s.runner.Run(context.Background(), "tmux", args...); err != nil {
-			var compensation []error
-			for i := len(applied) - 1; i >= 0; i-- {
-				prior := before[applied[i]]
-				if restoreErr := writeAgentPaneOptionOnRoute(context.Background(), s.runner, identity.RuntimeID, agentPaneOptionWrite{option: applied[i], value: prior, unset: prior == ""}); restoreErr != nil {
-					compensation = append(compensation, restoreErr)
-				}
-			}
-			if joined := errors.Join(compensation...); joined != nil {
-				return errors.Join(err, fmt.Errorf("restore Codex authority: %w", joined))
-			}
-			return err
-		}
-		applied = append(applied, field.option)
+	if errors.Is(err, mutationruntime.ErrNativeObservationIgnored) {
+		return errManagedAgentObservationIgnored
 	}
-	return nil
+	return err
 }
 
 // errCodexAuthorityNotFrom is a compare-and-set authority write that found a
@@ -2256,102 +2219,8 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 		})
 	}
 	cmd.Env = append(env, codexObserverStartupEnvironment+"=1")
-	configureCodexObserverProcess(cmd)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
-	}
-	if err := cmd.Start(); err != nil {
-		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
-	}
-	if timeout <= 0 {
-		timeout = codexObserverStartupTimeout
-	}
-	line := make(chan string, 2)
-	go func() {
-		reader := bufio.NewReader(io.LimitReader(stdout, 512))
-		value, _ := reader.ReadString('\n')
-		line <- value
-		value, _ = reader.ReadString('\n')
-		line <- value
-	}()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case value := <-line:
-		result, ok := parseCodexObserverStartupLine(value)
-		if !ok {
-			terminateCodexObserverProcess(cmd)
-			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverExited)}
-		}
-		if result.Status == codexObserverStartupReady || result.Status == codexObserverStartupRetrying {
-			settled := time.NewTimer(codexObserverStartupSettle)
-			defer settled.Stop()
-			select {
-			case <-line:
-				terminateCodexObserverProcess(cmd)
-				return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverExited)}
-			case <-settled.C:
-				_ = stdout.Close()
-				if err := cmd.Process.Release(); err != nil {
-					terminateCodexObserverProcess(cmd)
-					return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
-				}
-				return result
-			}
-		}
-		terminateCodexObserverProcess(cmd)
-		return result
-	case <-timer.C:
-		if target.TransferGrant != nil {
-			// A transfer completes only against a ready observer, and the grant
-			// must not outlive the creator that holds it.
-			terminateCodexObserverProcess(cmd)
-			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverTimeout)}
-		}
-		// A slow start is not a failed one. Under a loaded tmux server every
-		// query the observer makes before its first report can take most of a
-		// second, so killing it here left the Agent with no observer at all and
-		// nothing that would ever start one. The observer owns every later
-		// transition itself; the creator only stops waiting for it.
-		_ = stdout.Close()
-		if err := cmd.Process.Release(); err != nil {
-			terminateCodexObserverProcess(cmd)
-			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(codexObserverReasonObserverStartFailed)}
-		}
-		return codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: string(codexObserverReasonObserverTimeout)}
-	}
-}
-
-func parseCodexObserverStartupLine(line string) (codexObserverStartupResult, bool) {
-	fields := strings.Fields(strings.TrimSpace(line))
-	if len(fields) < 2 || fields[0] != codexObserverStartupPrefix {
-		return codexObserverStartupResult{}, false
-	}
-	switch codexObserverStartupStatus(fields[1]) {
-	case codexObserverStartupReady:
-		if len(fields) != 3 || fields[2] == "" {
-			return codexObserverStartupResult{}, false
-		}
-		return codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: fields[2], committed: true}, true
-	case codexObserverStartupFallback:
-		if len(fields) != 3 || fields[2] == "" {
-			return codexObserverStartupResult{}, false
-		}
-		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: fields[2], committed: true}, true
-	case codexObserverStartupRetrying:
-		if len(fields) != 3 || fields[2] == "" {
-			return codexObserverStartupResult{}, false
-		}
-		return codexObserverStartupResult{Status: codexObserverStartupRetrying, Reason: fields[2], committed: true}, true
-	case codexObserverStartupStale:
-		if len(fields) != 2 {
-			return codexObserverStartupResult{}, false
-		}
-		return codexObserverStartupResult{Status: codexObserverStartupStale, committed: true}, true
-	default:
-		return codexObserverStartupResult{}, false
-	}
+	result := mutationruntime.LaunchNativeObserverProcess(cmd, timeout, target.TransferGrant != nil)
+	return codexObserverStartupResult{Status: codexObserverStartupStatus(result.Status), Epoch: result.Epoch, Reason: result.Reason, committed: result.Committed}
 }
 
 func codexObserverStartupReporter() func(codexObserverStartupResult) {
@@ -2378,23 +2247,7 @@ func codexObserverStartupReporter() func(codexObserverStartupResult) {
 }
 
 func validateCodexLifecycleObserverExecutable(executable string) (string, error) {
-	executable = strings.TrimSpace(executable)
-	name := strings.TrimSuffix(strings.ToLower(filepath.Base(executable)), ".exe")
-	if executable == "" || strings.HasSuffix(name, ".test") {
-		return "", errors.New("codex native lifecycle observer executable is unavailable")
-	}
-	if !filepath.IsAbs(executable) {
-		return "", errors.New("codex native lifecycle observer executable must be absolute")
-	}
-	executable = filepath.Clean(executable)
-	info, err := os.Stat(executable)
-	if err != nil {
-		return "", fmt.Errorf("stat Codex native lifecycle observer executable: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return "", errors.New("codex native lifecycle observer executable must be a regular executable file")
-	}
-	return executable, nil
+	return mutationruntime.ValidateNativeObserverExecutable(executable)
 }
 
 func withoutInheritedTmuxEnvironment(env []string) []string {

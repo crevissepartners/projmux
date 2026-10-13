@@ -67,11 +67,30 @@ func (s *commandStream) Close() error {
 // readinessProxyProbeTimeout and the manager probe that follows never gets
 // less than daemonVersionProbeTimeout.
 func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool) Health {
-	health := probeProxy(ctx, proxyProbeTimeout(timeout), projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
-		return exec.CommandContext(ctx, "codex", "app-server", "proxy")
-	}, defaultDaemonNotRunning)
-	health = withManagerObservation(health, observeDefaultManager(ctx, timeout))
-	return withLifecycle(withInstallCapability(health, ObserveDefaultInstallCapability()), LifecycleNotAttempted, LifecycleReasonReadOnly)
+	return ProbeDefaultProxyWithEnvironment(ctx, timeout, projmuxVersion, hookAvailable, nil)
+}
+
+// ProbeDefaultProxyWithEnvironment observes only the existing official endpoint.
+// An explicit environment never falls back to the calling process's paths.
+func ProbeDefaultProxyWithEnvironment(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, environment *ProxyEnvironment) Health {
+	health := probeProxy(ctx, proxyProbeTimeout(timeout), projmuxVersion, hookAvailable, environment.lookPath, func(ctx context.Context) *exec.Cmd {
+		path, _ := environment.lookPath("codex")
+		// #nosec G204 -- environment.lookPath resolves PATH or an explicit regular executable; argv is the fixed read-only proxy route.
+		cmd := exec.CommandContext(ctx, path, "app-server", "proxy")
+		cmd.Env = environment.environ()
+		return cmd
+	}, environment.daemonNotRunning)
+	if environment == nil {
+		health = withManagerObservation(health, observeDefaultManager(ctx, timeout))
+	} else {
+		health = withManagerObservation(health, observeManager(ctx, managerProbeTimeout(timeout), environment.lookPath, func(ctx context.Context, path string, args ...string) *exec.Cmd {
+			// #nosec G204 -- observeManager supplies only the fixed read-only daemon version argv and the validated executable.
+			cmd := exec.CommandContext(ctx, path, args...)
+			cmd.Env = environment.environ()
+			return cmd
+		}))
+	}
+	return withLifecycle(withInstallCapability(health, environment.InstallCapability()), LifecycleNotAttempted, LifecycleReasonReadOnly)
 }
 
 func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, lookPath func(string) (string, error), command func(context.Context) *exec.Cmd, daemonNotRunning func() bool) (health Health) {

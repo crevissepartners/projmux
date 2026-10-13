@@ -143,7 +143,7 @@ func TestCodexInstallCapabilityConsumersCarryNoSurfaceLocalCopyOrURL(t *testing.
 		"codex cli capability guidance",
 		"learn.chatgpt.com",
 	}
-	for _, name := range []string{"doctor.go", "settings_ai.go", "codex_native_thread.go"} {
+	for _, name := range []string{"doctor.go", "settings_ai.go", "../services/mutations/runtime/native_codex_errors.go"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
@@ -155,7 +155,7 @@ func TestCodexInstallCapabilityConsumersCarryNoSurfaceLocalCopyOrURL(t *testing.
 				t.Fatalf("%s carries surface-local capability observation/action copy %q", name, copy)
 			}
 		}
-		if !strings.Contains(text, "codexInstallCapabilityGuidance(") {
+		if !strings.Contains(text, "codexInstallCapabilityGuidance(") && !strings.Contains(text, "CodexInstallCapabilityGuidance(") {
 			t.Fatalf("%s does not consume the shared typed guidance authority", name)
 		}
 	}

@@ -552,7 +552,7 @@ func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*co
 	fence, err := s.binding.ControlAuthority()
 	if err != nil || fence != record.fence {
 		s.mu.Unlock()
-		return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, err: err}
+		return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, Cause: err}
 	}
 	runtimeID := s.conn.Runtime()
 	epoch := &codexBrokerLifecycleEpoch{

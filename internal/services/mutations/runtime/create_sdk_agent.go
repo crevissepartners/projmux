@@ -93,14 +93,19 @@ func (p *SDKAgentPlanner) Prepare(_ coremetadata.Registry, project coremetadata.
 	provider := p.Provider
 	var links ProjectLinksLaunch
 	var guidance AgentGuidanceLaunch
-	if provider == "claude" && !p.Settings.DialogueReplyOnly {
+	if !p.Settings.DialogueReplyOnly {
 		service := &GuidanceService{Paths: func() (config.Paths, error) { return p.Paths, nil }}
-		links = service.PlanProjectLinks(provider, project, nil).WithCreateFile(p.Persona)
-		base := links.SystemPromptFile
-		if base == "" && p.Persona.Name != "" {
-			base = p.Persona.Snapshot.Path
+		if provider == "claude" {
+			links = service.PlanProjectLinks(provider, project, nil).WithCreateFile(p.Persona)
+			base := links.SystemPromptFile
+			if base == "" && p.Persona.Name != "" {
+				base = p.Persona.Snapshot.Path
+			}
+			guidance = service.PlanAgentGuidance(provider, nil).WithCreateFile(base)
+		} else if NativeCodexFreshCreateRequired(provider, p.Settings.InteractiveOnly, p.Settings.Payload, "", "") {
+			links = service.PlanCodexProjectLinks(project)
+			guidance = service.PlanCodexAgentGuidance()
 		}
-		guidance = service.PlanAgentGuidance(provider, nil).WithCreateFile(base)
 	}
 	f := p.Settings
 	plan := func(workspace coremetadata.AgentWorkspace) (string, []string, error) {
@@ -138,7 +143,9 @@ func (p *SDKAgentPlanner) Prepare(_ coremetadata.Registry, project coremetadata.
 		base = f.ProfileLaunch.WithAnnotations(base)
 		base = WithCreateSettingSources(f, base)
 		return guidance.WithCreateAnnotation(links.WithCreateAnnotation(base))
-	}, Notices: func(name string) []string {
+	}, DeveloperInstructions: func(uid string) string {
+		return guidance.CodexDeveloperInstructions(uid, links.DeveloperInstructions(p.Persona.Content))
+	}, Policy: f.ProfileLaunch.CodexPolicy, Model: f.Model, Effort: f.Effort, Notices: func(name string) []string {
 		var out []string
 		for _, v := range []string{links.Notice(name), guidance.Notice(name)} {
 			if v != "" {
