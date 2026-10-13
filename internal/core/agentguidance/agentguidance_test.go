@@ -53,7 +53,7 @@ func TestProcessGuidancePreservesTmuxCustomAndOff(t *testing.T) {
 func TestDefaultGuidanceNamesTheProjmuxCommandsAndNothingMachineLocal(t *testing.T) {
 	t.Parallel()
 	text := string(Default())
-	for _, want := range []string{"projmux create agent", "projmux agent message send"} {
+	for _, want := range []string{"projmux create agent", "projmux agent message send", "projmux config agent-host", "--host tmux|process", "--detach=false", "detached process startup"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("default guidance does not name %q:\n%s", want, text)
 		}

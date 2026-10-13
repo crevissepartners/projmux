@@ -819,9 +819,21 @@ Default agent host and the SDK's `ConfigAgentHost` read and write this same
 central file. Missing, empty, or invalid stored content reads as `tmux`;
 invalid command or SDK input is refused before writing.
 
-This release stores the preference only. Agent creation retains its existing
-host behavior; consuming the preference is a separate change. Saving it does
-not move existing Agents or change question and permission settings.
+Public CLI `create agent` (including `--create-window`), provider shortcuts,
+and `create window --provider <Agent provider>` follow this setting when
+`--host` is omitted. Unset or `tmux` preserves tmux behavior. Inferred `process`
+returns after verified detached startup and survives caller exit or stdin EOF.
+Explicit `--host tmux|process` overrides the setting; explicit process retains
+foreground ownership. On Agent routes and shortcuts, explicit `--detach=true`
+or `--detach=false` overrides the process lifetime. Direct Window creation does
+not accept `--detach`. Shell-only Windows/Panes, internal TUI topology, SDK
+creation, and existing Agent resume/relaunch keep their existing contracts.
+
+Process creation requires Claude or Codex and an exact Project or Window.
+Promptless Claude keeps the existing explicit process/detached behavior.
+Unsupported providers, fan-out, Pane anchors, placement, interactive modes, and `-o pane-id` fail before creation, with no tmux
+fallback. Use `--host tmux` for tmux topology. Saving the preference does not
+move existing Agents or change question and permission settings.
 
 ## Agent Question Answering
 

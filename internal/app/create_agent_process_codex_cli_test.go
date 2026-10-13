@@ -44,6 +44,10 @@ func newProcessCodexCreateCLI(t *testing.T) processCodexCreateCLI {
 	// Install the handler after importing sys. No provider/API credentials or
 	// ambient daemon are used by this exact executable protocol fixture.
 	script = strings.Replace(processCodexProviderFixture, "import os,sys,json", "import os,sys,json\n"+script, 1)
+	// Direct Window creation has no model/effort flags. The protocol permits
+	// omitted settings and returns the provider's selected defaults.
+	script = strings.Replace(script, "'model':p['model']", "'model':p.get('model','stub-model')", 1)
+	script = strings.Replace(script, "'reasoningEffort':p['config']['model_reasoning_effort']", "'reasoningEffort':p.get('config',{}).get('model_reasoning_effort','low')", 1)
 	script = strings.Replace(script, "def complete():notify", "def complete():open(os.path.join(os.environ['HOME'],'completed'),'w').write(current);notify", 1)
 	if err := os.WriteFile(filepath.Join(f.root, "codex-provider.py"), []byte(script), 0600); err != nil {
 		t.Fatal(err)

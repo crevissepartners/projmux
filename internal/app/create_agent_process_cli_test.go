@@ -1447,3 +1447,109 @@ func TestAutomaticProtectedProcessHookRollbackActualCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultHostForegroundOverridesActualCLI(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		for _, route := range []string{"agent-explicit-host", "shortcut-explicit-host", "agent-detach-false", "shortcut-detach-false", "window-explicit-host"} {
+			t.Run(provider+"/"+route, func(t *testing.T) {
+				var f processCreateCLI
+				var args []string
+				if provider == "codex" {
+					codex := newProcessCodexCreateCLI(t)
+					f = codex.processCreateCLI
+					args = codex.args()
+				} else {
+					f = newProcessCreateCLI(t)
+					args = f.args()
+				}
+				path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("process"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasSuffix(route, "detach-false") {
+					args = append(args[:2], args[4:]...)
+					args = append(args, "--detach=false")
+				}
+				if strings.HasPrefix(route, "shortcut") {
+					args[1] = provider
+					for i := 2; i < len(args); i++ {
+						if args[i] == "--provider" {
+							args = append(args[:i], args[i+2:]...)
+							break
+						}
+					}
+				}
+				if strings.HasPrefix(route, "window") {
+					args[1] = "window"
+					for i := 2; i < len(args); {
+						if args[i] == "--window" || args[i] == "--model" || args[i] == "--effort" {
+							args = append(args[:i], args[i+2:]...)
+						} else {
+							i++
+						}
+					}
+				}
+				args = append(args, "--", "initial task")
+				ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, f.binary, args...)
+				input, err := cmd.StdinPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				output, err := cmd.StdoutPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				waited := false
+				defer func() {
+					_ = input.Close()
+					if !waited {
+						_ = cmd.Process.Kill()
+						_ = cmd.Wait()
+					}
+				}()
+				line, err := bufio.NewReader(output).ReadString('\n')
+				if err != nil {
+					t.Fatalf("ownership: %v %s", err, stderr.String())
+				}
+				if !strings.Contains(line, "runtime=process foreground=owned") {
+					t.Fatalf("foreground override lost: %s", line)
+				}
+				ref := strings.Fields(line)[1]
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, ok := reg.Agent(strings.TrimPrefix(ref, "uid:"))
+				if !ok {
+					t.Fatal("missing agent")
+				}
+				p, _ := reg.Pane(a.Status.PaneRef)
+				binding := p.Status.ProcessSession.Binding
+				_ = input.Close()
+				err = cmd.Wait()
+				waited = true
+				if err != nil {
+					t.Fatalf("actual Wait: %v %s", err, stderr.String())
+				}
+				reg, err = f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				p, _ = reg.Pane(a.Status.PaneRef)
+				if !coremetadata.MatchesProcessWait(binding, p.Status.LastTermination) {
+					t.Fatal("foreground caller returned without actual provider Wait")
+				}
+			})
+		}
+	}
+}

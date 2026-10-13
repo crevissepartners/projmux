@@ -18,7 +18,10 @@ import (
 func TestDetachedCreateRefusesUnsupportedHostBeforeWrites(t *testing.T) {
 	for _, args := range [][]string{{"--detach"}, {"--detach", "--host", "tmux"}} {
 		var stderr bytes.Buffer
-		_, err := parseResourceCreateFlags("create agent", args, &stderr, resourceCreateShape{split: true, provider: true, host: true})
+		flags, err := parseResourceCreateFlags("create agent", args, &stderr, resourceCreateShape{split: true, provider: true, host: true})
+		if err == nil {
+			err = (&createCommand{}).resolveNewAgentHost("create agent", &flags)
+		}
 		if err == nil {
 			t.Fatalf("unsupported flags accepted: %v", args)
 		}

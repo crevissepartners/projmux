@@ -1428,7 +1428,7 @@ Allowed effects:
 projmux config agent-host [--default <tmux|process>]
 ```
 
-Reads and writes agent-default-host in the central config directory. Unset or invalid stored values read as tmux. Prints `default <host>` after a read or save. This setting currently stores the preference only; Agent creation retains its existing host behavior.
+Reads and writes agent-default-host in the central config directory. Unset or invalid stored values read as tmux. Prints `default <host>` after a read or save. Public CLI new Agents follow this value when --host is omitted; process selects detached startup. Explicit --host wins, and explicit process retains foreground ownership.
 
 ### `projmux config render`
 
@@ -1548,9 +1548,9 @@ projmux create project --root <absolute-path> [--name <name>] [--label key=value
 projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--provider shell|<provider>] [--creator uid:<agent>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create agent [--host tmux|process] [--detach] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
-projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create codex [--host tmux|process] [--detach] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create claude [--host tmux|process] [--detach] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create antigravity [--host tmux|process] [--detach] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>] [--severity info|warn|critical] [--source <source>] [--ttl <seconds>] [--id <id>] [--json]
 ```
 
@@ -1624,7 +1624,7 @@ projmux create window [--host tmux|process] [--project <ref> | -p <ref>] [--prov
 
 `--creator uid:<agent>` declares the Agent that created this one. It is recorded as `projmux.io/creator-basis=explicit` with `projmux.io/creator-agent` only when no pane or process chain is observed; a valid pane chain wins over process-chain, which wins over a declaration, and a different declaration is reported on stderr. A value that names no Agent refuses the create before anything changes. The record is provenance, never authentication.
 
---host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task.
+With an Agent --provider, omitted --host follows config agent-host; process selects detached startup. Shell-only Windows remain tmux. Explicit --host overrides the setting. --host process creates a virtual Window with one foreground-owned Claude or Codex Agent, no shell, and no tmux calls. It requires an explicit Project and --provider claude|codex; missing providers fail with process-window-provider-required and other providers (including shell) with process-window-provider-unsupported before any write. Keep stdin open; EOF stops the owned provider. The payload is the Agent initial task.
 
 A virtual Window materializes when it needs tmux. create agent, create pane, and agent relaunch --host tmux use the requested Pane as its first tmux Pane without adding a shell. focus window uid:<ref> opens one shell. open and attach use an existing terminal Window, or materialize the primary Window with one shell when all Windows are virtual. Project picker and sidebar selection retain the virtual-primary-window refusal until virtual navigation is supported. Process Pane actions retain their process capability refusals.
 
@@ -1674,9 +1674,9 @@ Allowed effects:
 projmux create agent [--host tmux|process] [--detach] [--provider <provider>] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
 
---host defaults to tmux and keeps existing behavior. --host process owns one foreground Claude or Codex Agent without tmux; Antigravity is refused as process-provider-unsupported. It requires an exact Project or Window, and accepts --create-window --window <exact name> to ensure a virtual Window when absent (an existing name is reused). It refuses fan-out, Pane anchors, placement, interactive modes, and -o pane-id before creation.
+Omitted --host follows config agent-host --default tmux|process (unset: tmux). Inferred process returns after detached startup, regardless of tty or stdin; explicit --host overrides the setting, and explicit --host process owns one foreground Claude or Codex Agent without tmux; Antigravity is refused as process-provider-unsupported. It requires an exact Project or Window, and accepts --create-window --window <exact name> to ensure a virtual Window when absent (an existing name is reused). It refuses fan-out, Pane anchors, placement, interactive modes, and -o pane-id before creation.
 
-create agent --host process --detach returns exit 0 after verified startup and ownership; its Agent stays alive after stdin EOF, caller exit, terminal HUP, or caller provider group termination. Ownership reports foreground=detached; provider exit is read through existing termination records. agent stop stops one exact process generation after actual Wait and preserves its conversation. Direct create window --detach and tmux detach are unsupported. Reboot, logout, and whole service/cgroup or PID namespace termination survival are not guaranteed. An owner may reparent to the nearest subreaper; detachment does not escape its cgroup or PID namespace. Codex sandbox native tools may use a temporary PID namespace that ends with the tool, so detached Agents launched there may die after success.
+Agent provider shortcuts accept the same host/detach policy. Explicit --detach=true or --detach=false overrides inferred lifetime; detach requires selected process. create agent --host process --detach returns exit 0 after verified startup and ownership; its Agent stays alive after stdin EOF, caller exit, terminal HUP, or caller provider group termination. Ownership reports foreground=detached; provider exit is read through existing termination records. agent stop stops one exact process generation after actual Wait and preserves its conversation. Direct create window --detach and tmux detach are unsupported. Reboot, logout, and whole service/cgroup or PID namespace termination survival are not guaranteed. An owner may reparent to the nearest subreaper; detachment does not escape its cgroup or PID namespace. Codex sandbox native tools may use a temporary PID namespace that ends with the tool, so detached Agents launched there may die after success.
 
 Foreground process creation exits with the provider's actual Wait exit code (signals: 128 + signal number). EOF, INT, and TERM stop the owned provider. Provider content never appears on stdout. Default output starts with Agent/Pane UID ownership; other projections keep their existing stdout and put ownership on stderr; -o none suppresses both displays.
 
@@ -1741,8 +1741,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create codex [--host tmux|process] [--detach] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
+
+Omitted --host follows config agent-host (unset: tmux; process: detached startup). Explicit --host wins; explicit process is foreground. --detach=true|false overrides process lifetime; tmux detach is unsupported. The process restrictions of create agent also apply.
 
 Profile sandbox and approval apply on native and plain CLI creates. A plain CLI create with approval=untrusted is refused before creating an Agent.
 
@@ -1768,8 +1770,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create claude [--host tmux|process] [--detach] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--model <model>] [--effort <level>] [--instructions <name>] [--profile <name>] [--dialogue-reply-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
+
+Omitted --host follows config agent-host (unset: tmux; process: detached startup). Explicit --host wins; explicit process is foreground. --detach=true|false overrides process lifetime; tmux detach is unsupported. The process restrictions of create agent also apply.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
@@ -1791,8 +1795,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
+projmux create antigravity [--host tmux|process] [--detach] [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--profile <name>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--all-windows | --primary-window] [--creator uid:<agent>] [--name <name>] [--label key=value]... [--placement right|down] [--cwd-from project|pane] [-o <mode>] [-- <payload>]
 ```
+
+Omitted --host follows config agent-host (unset: tmux; process: detached startup). Explicit --host wins; explicit process is foreground. --detach=true|false overrides process lifetime; tmux detach is unsupported. The process restrictions of create agent also apply.
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 

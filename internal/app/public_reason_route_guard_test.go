@@ -75,6 +75,7 @@ const (
 // already a flagSetNameExceptions row reuses that row's routes. It is closed:
 // a row no site uses is stale.
 var publicReasonExceptions = map[string]publicReasonException{
+	`internal/app/create_agent_host.go (*createCommand).resolveNewAgentHost spelling`:                                                   {routes: append(slices.Clone(publicReasonCreateAgentRoutes), "create window"), reason: publicReasonDynamicReason},
 	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequirePersonaLane spelling`:                         {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
 	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireCanonicalProvider c.Option("provider")`:       {routes: publicReasonCreateResourceRoutes, reason: publicReasonDynamicReason},
 	`internal/services/mutations/runtime/create_agent_guards.go (AgentInputFields).RequireProfileLane spelling`:                         {routes: publicReasonCreateAgentRoutes, reason: publicReasonDynamicReason},
