@@ -897,3 +897,126 @@ func TestExternalResumeRecipeDetail(t *testing.T) {
 		t.Fatalf("public JSON %s: %v", raw, err)
 	}
 }
+
+// The public CLI creates this detached fixture; SDK CreateAgent remains tmux-only.
+func TestExternalClaudeDetachedFirstInput(t *testing.T) {
+	binary := os.Getenv("PMX_TEST_CLI")
+	if binary == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, text := range []string{"first input"} {
+		t.Run(fmt.Sprintf("payload=%d", len(text)), func(t *testing.T) {
+			root, err := os.MkdirTemp(os.TempDir(), "pc-sdk-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(root)
+			script := `import os,sys,json,socket,subprocess
+root=os.path.dirname(__file__)
+s=socket.socket(socket.AF_UNIX);s.bind(root+'/provider.sock');os.chmod(root+'/provider.sock',0o600);s.listen()
+os.environ['CLAUDE_CODE_MESSAGING_SOCKET']=root+'/provider.sock'
+os.environ['CLAUDE_CODE_MESSAGING_TOKEN']='isolated-fixture-token'
+p=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'internal','claude-endpoint-register'],input=json.dumps({'hook_event_name':'SessionStart','session_id':'first-session'}).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+if p.returncode or p.stdout or p.stderr: raise Exception((p.returncode,p.stdout,p.stderr))
+open(root+'/hook-done','w').write('observed')
+for line in sys.stdin:
+ f=json.loads(line);assert f['type']=='user'
+ with open(root+'/wire.jsonl','a') as out: out.write(line)
+ print(json.dumps({'type':'system','subtype':'init','session_id':'first-session'}),flush=True)
+ print(json.dumps({'type':'result','subtype':'success','session_id':'first-session'}),flush=True)
+s.close()
+`
+			provider := filepath.Join(root, "provider.py")
+			if err = os.WriteFile(provider, []byte(script), 0600); err != nil {
+				t.Fatal(err)
+			}
+			wrapper := fmt.Sprintf("#!/bin/sh\nexport PMX_TEST_PROCESS_BINARY='%s'\nexec python3 -u '%s'\n", binary, provider)
+			if err = os.WriteFile(filepath.Join(root, "claude"), []byte(wrapper), 0700); err != nil {
+				t.Fatal(err)
+			}
+			env := []string{}
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if key == "HOME" || key == "PATH" || key == "TMUX" || key == "TMUX_PANE" || key == "TMUX_TMPDIR" || key == "CLAUDE_CONFIG_DIR" || key == "CODEX_HOME" || key == "CODEX_API_KEY" || strings.HasPrefix(key, "XDG_") || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_") || strings.HasPrefix(key, "PMX_") || strings.HasPrefix(key, "ANTHROPIC_") || strings.HasPrefix(key, "OPENAI_") {
+					continue
+				}
+				env = append(env, entry)
+			}
+			tmuxDir := filepath.Join(root, "tmux")
+			if err = os.MkdirAll(tmuxDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			env = append(env, "TMUX_TMPDIR="+tmuxDir)
+			env = append(env, "HOME="+root, "PATH="+root+":"+os.Getenv("PATH"), "XDG_CONFIG_HOME="+root+"/config", "XDG_STATE_HOME="+root+"/state", "XDG_CACHE_HOME="+root+"/cache", "CLAUDE_CONFIG_DIR="+root+"/.claude", "CODEX_HOME="+root+"/.codex")
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cli := func(args ...string) ([]byte, error) {
+				cmd := exec.CommandContext(ctx, binary, args...)
+				cmd.Env = env
+				return cmd.CombinedOutput()
+			}
+			out, err := cli("create", "project", "--root", root, "--name", "first-input", "-o", "uid")
+			if err != nil {
+				t.Fatalf("project %v %s", err, out)
+			}
+			project := strings.TrimPrefix(strings.TrimSpace(string(out)), "uid:")
+			out, err = cli("create", "agent", "--host", "process", "--detach", "--provider", "claude", "--project", "uid:"+project, "--create-window", "--window", "first-window", "--name", "probe-first-input")
+			if err != nil {
+				t.Fatalf("create %v %s", err, out)
+			}
+			fields := strings.Fields(string(out))
+			if len(fields) < 2 || fields[0] != "agent" {
+				t.Fatalf("receipt %s", out)
+			}
+			ref := fields[1]
+			defer func() {
+				out, err := cli("agent", "stop", ref)
+				if err != nil {
+					t.Errorf("fixture Stop %v %s", err, out)
+				}
+			}()
+			for {
+				if _, err = os.Stat(filepath.Join(root, "hook-done")); err == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("SessionStart barrier", ctx.Err())
+				case <-time.After(time.Millisecond):
+				}
+			}
+			c, err := projmux.NewClient(projmux.Options{ConfigDir: root + "/config/projmux", StateDir: root + "/state/projmux", HomeDir: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			refused, err := c.DeliverTurn(ctx, core.TurnRequest{Ref: ref, Text: "unsupported"})
+			var refusal *projmux.Refusal
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeTurnProviderUnsupported || refused.Accepted || refused.OutcomeUnknown {
+				t.Fatalf("DeliverTurn %+v %v", refused, err)
+			}
+			if raw, _ := os.ReadFile(filepath.Join(root, "wire.jsonl")); len(raw) != 0 {
+				t.Fatal("unsupported call wrote input")
+			}
+			accepted, err := c.StartTurn(ctx, core.TurnRequest{Ref: ref, Text: text})
+			if err != nil || !accepted.Accepted || accepted.OutcomeUnknown || accepted.Operation == "" {
+				t.Fatalf("StartTurn %+v %v", accepted, err)
+			}
+			for {
+				raw, _ := os.ReadFile(filepath.Join(root, "wire.jsonl"))
+				if len(raw) > 0 {
+					var f struct{ Message struct{ Content string } }
+					if err = json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &f); err != nil || f.Message.Content != text {
+						t.Fatalf("one exact frame bytes=%d err=%v", len(raw), err)
+					}
+					t.Logf("public first input payload=%d actual frame=%d", len(text), len(raw))
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("frame consumption", ctx.Err())
+				case <-time.After(time.Millisecond):
+				}
+			}
+		})
+	}
+}

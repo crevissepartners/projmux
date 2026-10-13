@@ -1152,3 +1152,67 @@ func TestClaudeProcessConsumptionRestartsAnEndedHeldRelease(t *testing.T) {
 		t.Fatalf("woken release submits %v, want exactly %s", got, ref)
 	}
 }
+
+// This uses the actual registration hook peer and its kernel parent proof. The
+// provider waits on a FIFO before SessionStart and reads no stdin until it ends.
+func TestClaudeProcessFirstLargeWriteAllowsActualSessionStart(t *testing.T) {
+	for _, text := range []string{strings.Repeat("a", 128<<10), strings.Repeat("<", 22<<10)} {
+		t.Run(fmt.Sprintf("payload=%d", len(text)), func(t *testing.T) {
+			var gate *os.File
+			f := newProcessClaudeFixture(t, func(root, binary string) processhost.Command {
+				path := filepath.Join(root, "before-hook.fifo")
+				if err := syscall.Mkfifo(path, 0600); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				gate, err = os.OpenFile(path, os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				needle := "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})"
+				fixture := strings.Replace(processClaudeProviderFixture, needle, "with open("+fmt.Sprintf("%q", path)+",'rb',buffering=0) as gate: gate.read(1)\n"+needle, 1)
+				return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Env: os.Environ(), Dir: root}
+			})
+			defer gate.Close()
+			snap, _ := f.handle.Observe(f.binding)
+			done := make(chan error, 1)
+			go func() {
+				done <- f.handle.Turn(context.Background(), processhost.Authority{Binding: f.binding, Connection: snap.Connection}, "large-first", text)
+			}()
+			deadline := time.After(3 * time.Second)
+			for {
+				snap, _ = f.handle.Observe(f.binding)
+				if snap.Turn == "large-first" {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("write ended before hook %v", err)
+				case <-deadline:
+					t.Fatal("first write not admitted")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			if _, err := gate.Write([]byte{1}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal("write/hook deadlock", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("write did not finish")
+			}
+			f.wait(t, func(s processhost.Snapshot) bool { return s.State == "ready" && s.Turn == "" })
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ := reg.Pane(f.binding.Pane)
+			if pane.Status.ProcessSession.SessionID != "process-session" {
+				t.Fatal("actual SessionStart did not bind")
+			}
+		})
+	}
+}

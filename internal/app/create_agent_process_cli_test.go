@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/pkg/projmux"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1551,5 +1554,156 @@ func TestDefaultHostForegroundOverridesActualCLI(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The FIFO acknowledges SessionStart before any user input; creation alone is
+// deliberately not a stream-readiness barrier for a promptless Claude.
+func TestProcessCreateDetachedClaudeHookFirstInput(t *testing.T) {
+	testProcessCreateDetachedClaudeHookFirstInput(t, false)
+}
+
+func TestProcessCreateDetachedClaudeSDKFirstInput(t *testing.T) {
+	testProcessCreateDetachedClaudeHookFirstInput(t, true)
+}
+
+func testProcessCreateDetachedClaudeHookFirstInput(t *testing.T, sdkInput bool) {
+	f := newProcessCreateCLI(t)
+	fifo := filepath.Join(f.root, "hook.fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	barrier, err := os.OpenFile(fifo, os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer barrier.Close()
+	script := filepath.Join(f.root, "provider.py")
+	raw, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	needle := "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})"
+	replacement := needle + "\nwith open(" + fmt.Sprintf("%q", fifo) + ",'w') as barrier: barrier.write('hook\\n')"
+	if !bytes.Contains(raw, []byte(needle)) {
+		t.Fatal("missing SessionStart fixture anchor")
+	}
+	if err = os.WriteFile(script, bytes.Replace(raw, []byte(needle), []byte(replacement), 1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, f.binary, f.args("--detach")...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("create: %v %s", err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 || fields[0] != "agent" {
+		t.Fatalf("create receipt %s", out)
+	}
+	ref := fields[1]
+	defer func() {
+		stopped, stopErr := exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
+		if stopErr != nil {
+			t.Errorf("owned fixture Stop: %v %s", stopErr, stopped)
+		}
+	}()
+	observed := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(barrier).ReadString('\n')
+		if err == nil && line != "hook\n" {
+			err = fmt.Errorf("unexpected barrier %q", line)
+		}
+		observed <- err
+	}()
+	select {
+	case err = <-observed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("SessionStart FIFO", ctx.Err())
+	}
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := reg.Agent(strings.TrimPrefix(ref, "uid:"))
+	if !ok {
+		t.Fatal("missing Agent")
+	}
+	pane, _ := reg.Pane(agent.Status.PaneRef)
+	if pane.Status.ProcessSession == nil || pane.Status.ProcessSession.SessionID != "process-session" {
+		t.Fatal("FIFO did not bind SessionStart")
+	}
+	if sdkInput {
+		client, e := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(f.root, "config", "projmux"), StateDir: filepath.Join(f.root, "state", "projmux"), HomeDir: f.root})
+		if e != nil {
+			t.Fatal(e)
+		}
+		refused, e := client.DeliverTurn(ctx, core.TurnRequest{Ref: ref, Text: "must not write"})
+		var refusal *projmux.Refusal
+		if !errors.As(e, &refusal) || refusal.Code != projmux.CodeTurnProviderUnsupported || refused.Accepted || refused.OutcomeUnknown {
+			t.Fatalf("DeliverTurn contract %+v %v", refused, e)
+		}
+		if raw, _ := os.ReadFile(f.trace); len(raw) != 0 {
+			t.Fatalf("unsupported DeliverTurn wrote %d bytes", len(raw))
+		}
+		accepted, e := client.StartTurn(ctx, core.TurnRequest{Ref: ref, Text: "first input"})
+		if e != nil || !accepted.Accepted || accepted.OutcomeUnknown || accepted.Operation == "" {
+			t.Fatalf("SDK first input %+v %v", accepted, e)
+		}
+		t.Logf("SDK first input accepted after FIFO SessionStart operation=%s", accepted.Operation)
+		return
+	}
+	out, err = exec.CommandContext(ctx, f.binary, "agent", "turn", "start", ref, "--", "first input").CombinedOutput()
+	if err != nil {
+		t.Fatalf("first input after FIFO SessionStart: %v %s", err, out)
+	}
+	t.Logf("first input accepted after FIFO SessionStart: %s", out)
+}
+
+func TestProcessCreateDetachedClaudeLargeInitialFrame(t *testing.T) {
+	for _, text := range []string{strings.Repeat("a", 70<<10), strings.Repeat("<", 12<<10)} {
+		t.Run(fmt.Sprintf("payload=%d", len(text)), func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, f.binary, f.args("--detach", "--", text)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("large initial frame create %v %s", err, out)
+			}
+			fields := strings.Fields(string(out))
+			if len(fields) < 2 || fields[0] != "agent" {
+				t.Fatalf("create receipt %s", out)
+			}
+			ref := fields[1]
+			defer func() {
+				out, err := exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
+				if err != nil {
+					t.Errorf("owned fixture Stop %v %s", err, out)
+				}
+			}()
+			var wire []byte
+			for {
+				wire, _ = os.ReadFile(f.trace)
+				if len(wire) > 0 {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("frame consumption", ctx.Err())
+				case <-time.After(time.Millisecond):
+				}
+			}
+			var frame struct {
+				Type, SessionID string
+				Message         struct{ Content string }
+			}
+			if err = json.Unmarshal(bytes.TrimSpace(wire), &frame); err != nil || frame.Type != "user" || frame.Message.Content != text || len(wire) <= 65536 {
+				t.Fatalf("one large frame bytes=%d err=%v", len(wire), err)
+			}
+			t.Logf("CLI initial input payload=%d actual frame=%d", len(text), len(wire))
+		})
 	}
 }

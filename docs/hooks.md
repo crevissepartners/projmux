@@ -1317,6 +1317,16 @@ their existing format, and `-o none` suppresses displays. The owner continues
 with closed caller stdin, stdout, and stderr; later provider exit is recorded
 in termination evidence. Stop it explicitly with `agent stop <agent-ref>`.
 See [Operating Process-Hosted Agents](process-host-operations.md) for its limits.
+
+A promptless Claude can finish its owned-child `SessionStart` hook before its
+first user input. That exact hook session is accepted as first-input authority;
+it does not make the stream ready or commit its session. The subsequent
+`system/init` must independently match the hook session and current generation.
+The first frame can wait on a full stdin pipe while hook observations and Stop
+continue. Existing frame and write budgets still apply. Cancellation, timeout
+or a partial write can leave input delivery uncertain; never replay that input
+automatically.
+
 The foreground owner stops its provider at stdin EOF. `</dev/null` or closed stdin (CI
 steps, cron, `nohup`, or a noninteractive shell's `&`) can end it immediately.
 Keep stdin open, for example:

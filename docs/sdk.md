@@ -229,6 +229,16 @@ Claude tmux input and Claude steer/deliver remain unsupported. SDK input refuses
 child-free deferred claims with `CodeTurnDeferredUnsupported`; use the existing
 CLI deferred start workflow separately.
 
+For a promptless Claude created through the process CLI, `StartTurn` accepts the
+first input even when its verified `SessionStart` precedes the call. Stream
+readiness still requires matching `system/init`; the hook alone is insufficient.
+`DeliverTurn` retains its existing Claude unsupported refusal with no input
+write. Remote process control has an existing 64 KiB JSON envelope limit,
+including escaped text and routing fields. This fix does not expand that limit;
+larger first frames can use the CLI's initial prompt creation path, subject to
+the existing provider frame and write budgets. SDK Agent creation remains tmux-only.
+
+
 Deliver asks the native epoch or process owner to select idle start or busy
 steer once. Only an explicit native `invalid-operation` refusal permits the
 legacy start, then `turn-in-progress`, then steer path. Transport loss, timeout,

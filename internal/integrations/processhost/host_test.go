@@ -247,6 +247,16 @@ func fixtureProvider() {
 	case "stdout-eof":
 		_ = os.Stdout.Close()
 		time.Sleep(time.Hour)
+	case "first-input-barrier":
+		gate, err := os.Open(os.Getenv("PROCESSHOST_FIRST_INPUT_GATE"))
+		if err != nil {
+			panic(err)
+		}
+		var release [1]byte
+		if _, err = io.ReadFull(gate, release[:]); err != nil {
+			panic(err)
+		}
+		_ = gate.Close()
 	case "blocked":
 		time.Sleep(time.Hour)
 	case "group", "exit-with-leaf":
