@@ -42,7 +42,7 @@ func (c *aiCommand) withNativeObserverPaths(paths mutationruntime.NativeObserver
 	recorder := diagnostics.NewLifecycleRecorder(diagnostics.NewStore(filepath.Join(paths.Paths.StateDir, diagnostics.LogDirName, diagnostics.LogFileName)), diagnostics.NewRunID(), version.String(), "tmux")
 	child.operationalDiagnostics = recorder.AI()
 	child.notifyDiagnostics = recorder.NotifyFocus()
-	runner := &hooks.Runner{GlobalConfigPath: filepath.Join(paths.Paths.ConfigDir, "config.toml"), DiscoverProjectHooks: true, ProjectHookPrompt: hooks.ProjectHookPrompt(nil), Logger: os.Stderr, Timeout: hooks.DefaultPostCreateTimeout, Version: version.String()}
+	runner := &hooks.Runner{GlobalConfigPath: paths.Paths.GlobalConfigFile(), DiscoverProjectHooks: true, ProjectHookPrompt: hooks.ProjectHookPrompt(nil), Logger: os.Stderr, Timeout: hooks.DefaultPostCreateTimeout, Version: version.String()}
 	child.producer = &storeAttentionNotifyProducer{store: child.notifyStore, ttl: attentionNotifyTTL,
 		events: child.events, diagnostics: child.notifyDiagnostics,
 		hooks: &sendNotiHookDispatcher{runner: runner, lookupEnv: child.lookupEnv, getwd: os.Getwd},
@@ -56,7 +56,7 @@ func (c *aiCommand) observerGlobalConfig() (hooks.ProjectConfig, error) {
 	if err != nil {
 		return hooks.ProjectConfig{}, err
 	}
-	return hooks.LoadGlobalConfig(filepath.Join(paths.ConfigDir, "config.toml"))
+	return hooks.LoadGlobalConfig(paths.GlobalConfigFile())
 }
 
 // NativeObservationStateDir routes the executable's outer diagnostics and

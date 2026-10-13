@@ -2164,6 +2164,10 @@ func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObser
 	if target.Paths == nil {
 		target.Paths = c.nativeObserverPaths
 	}
+	if target.Paths != nil {
+		captured := *target.Paths
+		target.Paths = &captured
+	}
 	if target.Paths != nil && target.Paths.Validate() != nil {
 		return codexObserverStartupResult{Status: codexObserverStartupStale}
 	}
@@ -2435,7 +2439,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	signal.Ignore(syscall.SIGPIPE)
 	runner := explicitTmuxRunner{Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, Target: target.Route}
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
-	if !sink.BindingCurrent(target.Identity) {
+	if target.Paths != nil && !sink.BindingCurrent(target.Identity) {
 		if report := codexObserverStartupReporter(); report != nil {
 			report(codexObserverStartupResult{Status: codexObserverStartupStale})
 		}

@@ -560,7 +560,7 @@ func parseClaudeQuestionPickerInput(args []string, stderr io.Writer) (claudeQues
 		return input, flagParseReported(err)
 	}
 	if fs.NArg() != 0 {
-		return input, usageError("internal " + claudeQuestionPickerRoute + " does not accept positional arguments")
+		return input, usageError("internal " + claudeQuestionPickerRoute + " requires --question <id> --agent <uid> --store <path>")
 	}
 	return input, nil
 }
