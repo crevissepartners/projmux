@@ -484,3 +484,26 @@ func TestExternalCreateRecorderConsumer(t *testing.T) {
 	_ = []projmux.CreatePhase{projmux.CreatePhaseGuard, projmux.CreatePhaseFirstReconcile, projmux.CreatePhaseOperation, projmux.CreatePhaseSecondReconcile, projmux.CreatePhaseReprove, projmux.CreatePhaseStoreWrite}
 	_ = projmux.CreateSuccess
 }
+
+func TestExternalStopAgentConsumer(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(t.TempDir(), "config"), StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var result core.StopAgentResult
+	result, err = c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:agent", Binding: core.ProcessBinding{Generation: "generation"}})
+	if !errors.Is(err, context.Canceled) || result.Stopped {
+		t.Fatalf("cancelled Stop %+v %v", result, err)
+	}
+	_, err = c.StopAgent(context.Background(), core.StopAgentRequest{})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("typed Stop refusal: %v", err)
+	}
+	if _, err = os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("preflight created state: %v", err)
+	}
+}

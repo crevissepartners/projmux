@@ -124,3 +124,43 @@ preserves the saved value. Invalid input returns `CodeConfigValueInvalid`
 and cancellation before admission writes nothing. This API uses the client's
 explicit ConfigDir and the same `agent-default-host` file as the CLI and Settings.
 It stores the preference only; SDK creation keeps its existing tmux contract.
+
+## Process Agent stop
+
+`Client.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:..."})` stops one process
+Agent through the same executor as CLI `agent stop`. `Project` and `Window`
+optionally scope the explicit reference. Set `Binding` from the observed Pane
+when the caller needs to require that exact generation; a replacement is refused
+before effects. Tmux Agents and ambiguous process Pane ownership are unsupported.
+
+The call returns only after the exact generation's actual termination evidence
+and owner retirement are observed. Agent, Pane and provider conversation remain
+available for public CLI resume. An already retired generation with matching
+Wait evidence succeeds without another control request. A child-free detached
+claim is released under the same guard as provider birth, without fabricating
+termination evidence; `ClaimReleased` distinguishes this result.
+
+Use explicit `Options.ConfigDir` and `Options.StateDir` for isolated callers.
+Stop uses the owned host's exact socket and kernel identity directly; it neither
+starts an executable nor invokes the CLI, and needs no `ProjmuxExecutable`.
+Cancellation prevents admission. After admission, retirement finishes separately
+from caller cancellation, bounded by the earlier caller deadline or ten seconds.
+
+`StopAgentResult` includes `AgentUID`, `PaneUID`, `Binding`, and any observed
+`Termination` on failure as well as success. `Stopped=false` does not imply the
+provider survived. Typed `Refusal.Code` distinguishes stale/busy targets,
+unsupported process targets, unconfirmed Wait or claim release, and execution
+failure. Inspect the returned exact refs and generation before using public
+stop/resume/delete recovery; do not automatically replay an uncertain Stop.
+
+Retired generations must retain private evidence of the exact owner and child
+birth identities as well as their actual Wait receipt. The Wait writer preserves
+that evidence before clearing Registry activation; an admitted Stop can also
+preserve its original exact activation when stopping an older running owner.
+CLI and SDK now refuse an already retired legacy generation without this evidence
+with `agent-stop-wait-unconfirmed`, rather than treating Offline plus Wait as
+proof of owner retirement. This refusal sends no control or signal and leaves
+Registry resources unchanged. Inspect the exact Agent/generation before using
+public resume or delete recovery; uncertain retirement is not automatically
+retried. Claim lock admission honors caller cancellation and deadlines, including
+when another birth or claim release holds the guard.

@@ -8,13 +8,11 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
-	"net"
 	"os"
 	"regexp"
 	"runtime/debug"
 	"slices"
 	"sync"
-	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
@@ -222,36 +220,11 @@ func applyCodexForeground(ctx context.Context, handle *processhost.CodexHandle, 
 // Both sides verify exact kernel birth identity. Socket inode replacement and
 // PID reuse are refusal, never a reason to rediscover another host or replay.
 func callProcessForeground(ctx context.Context, socket string, socketIdentity localipc.SocketIdentity, host coremetadata.ProcessIdentity, request any) (processForegroundResult, error) {
-	identity, err := localipc.InspectOwnedSocket(socket)
-	if err != nil || identity != socketIdentity {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	deadline := time.Now().Add(localipc.Deadline)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	bounded, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	var dialer net.Dialer
-	raw, err := dialer.DialContext(bounded, "unix", socket)
-	if err != nil {
-		return processForegroundResult{}, err
-	}
-	conn := raw.(*net.UnixConn)
-	defer conn.Close()
-	_ = conn.SetDeadline(deadline)
-	peer, _, err := localipc.PeerProcess(conn)
-	if err != nil || peer != host || ctx.Err() != nil {
-		return processForegroundResult{}, processhost.ErrStale
-	}
-	if err = localipc.WriteJSON(conn, request); err != nil {
-		return processForegroundResult{}, err
-	}
-	if err = conn.CloseWrite(); err != nil {
-		return processForegroundResult{}, err
-	}
 	var result processForegroundResult
-	err = localipc.ReadJSON(conn, &result)
+	err := localipc.ExchangeOwnedJSON(ctx, socket, socketIdentity, host, request, &result)
+	if errors.Is(err, localipc.ErrSocketReplaced) {
+		err = processhost.ErrStale
+	}
 	return result, err
 }
 

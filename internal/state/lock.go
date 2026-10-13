@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -87,6 +88,16 @@ func (f LinesFile) acquireLock() (*os.File, error) {
 // it. afterContended is an optional observation hook, called once after the
 // initial non-blocking attempt encounters another writer.
 func AcquireFileLock(lockPath string, limit time.Duration, afterContended func()) (*os.File, error) {
+	return AcquireFileLockContext(context.Background(), lockPath, limit, afterContended)
+}
+
+// AcquireFileLockContext retains the kernel queue and timeout discipline while
+// allowing admission cancellation. A late grant is always unlocked and closed.
+func AcquireFileLockContext(ctx context.Context, lockPath string, limit time.Duration, afterContended func()) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	held, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, PrivateFileMode) // #nosec G304 -- explicit private store lock sibling, never provider input.
 	if err != nil {
 		return nil, fmt.Errorf("state: open lock %s: %w", lockPath, err)
@@ -96,6 +107,10 @@ func AcquireFileLock(lockPath string, limit time.Duration, afterContended func()
 	fd := int(held.Fd())
 	switch err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); {
 	case err == nil:
+		if err := ctx.Err(); err != nil {
+			_ = held.Close()
+			return nil, err
+		}
 		return held, nil
 	case !errors.Is(err, unix.EWOULDBLOCK):
 		_ = held.Close()
@@ -114,11 +129,26 @@ func AcquireFileLock(lockPath string, limit time.Duration, afterContended func()
 	granted := make(chan error, 1)
 	go func() { granted <- unix.Flock(fd, unix.LOCK_EX) }()
 
+	releaseLate := func() {
+		go func() {
+			if err := <-granted; err == nil {
+				_ = unix.Flock(fd, unix.LOCK_UN)
+			}
+			_ = held.Close()
+		}()
+	}
 	select {
+	case <-ctx.Done():
+		releaseLate()
+		return nil, ctx.Err()
 	case err := <-granted:
 		if err != nil {
 			_ = held.Close()
 			return nil, fmt.Errorf("state: acquire lock %s: %w", lockPath, err)
+		}
+		if err := ctx.Err(); err != nil {
+			_ = held.Close()
+			return nil, err
 		}
 		return held, nil
 	case <-timer.C:
@@ -127,12 +157,10 @@ func AcquireFileLock(lockPath string, limit time.Duration, afterContended func()
 		// gave up must not leave the file locked by an Update that is no
 		// longer running. The close happens only after the blocking call
 		// returned.
-		go func() {
-			if err := <-granted; err == nil {
-				_ = unix.Flock(fd, unix.LOCK_UN)
-			}
-			_ = held.Close()
-		}()
+		releaseLate()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %s after %s", ErrLockTimeout, lockPath, limit)
 	}
 }

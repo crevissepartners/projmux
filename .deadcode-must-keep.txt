@@ -8,6 +8,7 @@
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
 
+
 Agent.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentInputFields.RequireInteractiveOnlyProvider	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
@@ -70,6 +71,7 @@ Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained 
 Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.StopAgent	Public v0 process Stop API; exercised by exact-generation retirement, cancellation, explicit roots and external consumer tests.
 Client.StopProject	Public v0 Project stop SDK entrypoint; SDK/CLI parity, exact socket/PID/UID guards and external consumer tests.
 Client.UnregisterProject	Public v0 Project unregister entrypoint; verified by external consumer and CLI parity tests.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -475,6 +477,7 @@ settingsRefusal	Public v0 settings, stored usage or notification SDK entrypoint 
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
+stopAgentRefusal	Typed SDK Stop failure adapter preserves causes and exact recovery evidence without changing CLI refusal text.
 stopGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.

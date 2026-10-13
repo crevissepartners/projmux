@@ -2,15 +2,14 @@ package app
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // Stop targets one existing process generation. Only its owner writes Wait;
@@ -58,39 +57,7 @@ func (c *agentCommand) runStop(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *agentCommand) stopExactProcessAgent(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane) error {
-	if handled, err := c.stopDetachedClaim(ctx, agent, pane); handled || err != nil {
-		return err
-	}
-	if pane.Status.Activation.IsZero() && agent.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
-		return nil
-	}
-	if pane.Status.Activation.Process == nil {
-		return errors.New("agent-stop-wait-unconfirmed: exact process owner unavailable")
-	}
-	if agent.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
-		if _, err := c.callProcessTurnContext(ctx, reg, agent, pane.Status.ProcessSession.Provider, "stop", ""); err != nil {
-			return err
-		}
-	}
-	ticker := time.NewTicker(processRelaunchRetirementPoll)
-	defer ticker.Stop()
-	for {
-		latest, err := c.loadRegistry()
-		if err != nil {
-			return err
-		}
-		current, ok := latest.Pane(pane.Metadata.UID)
-		target, found := latest.Agent(agent.Metadata.UID)
-		if !ok || !found || current.Metadata.OwnerUID() != agent.Metadata.UID || current.Status.ProcessSession == nil || current.Status.ProcessSession.Binding != pane.Status.ProcessSession.Binding {
-			return processhost.ErrStale
-		}
-		if target.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(current.Status.ProcessSession.Binding, current.Status.LastTermination) && coremetadata.SameProcessWait(current.Status.LastTermination, target.Status.LastTermination) && processActivationAbsent(*pane.Status.Activation.Process, c.readProcessIdentity()) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("agent-stop-wait-unconfirmed: agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s: %w", agent.Metadata.UID, pane.Metadata.UID, agent.Metadata.UID, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	stopper := mutationruntime.ProcessAgentStopper{RegistryPath: c.messagePaths.registryPath, Load: c.loadRegistry, ReadIdentity: mutationruntime.ProcessIdentityReader(c.readProcessIdentity())}
+
+	return stopper.StopExact(ctx, reg, agent, pane)
 }
