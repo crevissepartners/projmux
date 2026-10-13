@@ -286,6 +286,7 @@ RunTests	Test-only guard API retained: every test package that links the Registr
 Runner.ListWindows	Structured window inventory read retained as the test seam that pins the live format join and pane target argument builders.
 RuntimeKoreanStringAuditOptions	Runtime Korean profile of the governance string audit; it scopes the live guard over shipped Go sources.
 SDKAgentPlanner.Initialize	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
+SDKAgentPlanner.NativeSession	Captured native endpoint adapter shared by external SDK create/resume; actual child frozen-environment and CLI/SDK parity tests cover explicit paths.
 SDKAgentPlanner.Prepare	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 SDKAgentPlanner.PrepareNative	Native Codex creation adapter for external v0 SDK consumers; covered by prompted SDK/CLI parity, captured provider environment and external consumer tests.
 SDKAgentPlanner.PrepareSnapshots	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
@@ -293,6 +294,12 @@ SDKAgentPlanner.ProfileReceipt	Public v0 tmux Agent creation closure or preserve
 SDKAgentPlanner.RequireEnabled	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 SDKAgentPlanner.SettingsService	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 SDKNativeCreation.Observe	Post-commit native SDK observer and session history adapter; covered by actual child SDK tests on two explicit state/provider roots.
+SDKNativeSession.Observe	Post-commit observer/history adapter used by external SDK native creation; actual child two-root fixture validates authority and routing.
+SDKNativeSession.ObserveResume	External SDK cold-resume post-commit observer adapter; same Agent/thread/new Pane and frozen child environment fixture covers this path.
+SDKNativeSession.Plan	Native attachment command renderer used by external SDK create/resume; frozen HOME/CODEX_HOME/PATH and same-thread fixture covers launch.
+SDKNativeSession.Resolve	External SDK native resume endpoint resolver; shared retired domain/socket barrier tests and same-thread child fixture cover admission.
+SDKNativeSession.Resume	External SDK thread/resume client adapter; actual child settings/profile parity and refusal rollback fixture cover this path.
+SDKNativeSession.observeIdentity	Exact-binding observer child starter shared by external SDK create/resume; real fixture authority and explicit routing audit cover this closure.
 SaveAINewWindowModeFile	Central new-AI-window-mode writer retained for front ends outside this tree (the web client) that write the central default; no in-tree command writes it yet.
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 ServeSupervisor	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.

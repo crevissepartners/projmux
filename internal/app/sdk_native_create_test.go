@@ -205,12 +205,204 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 			if start != 1 || turn != 1 {
 				t.Fatalf("thread/turn cardinality %d/%d", start, turn)
 			}
-			// SDK resume stays deferred, including for an Agent this SDK created.
+			// A legacy seeded ref still refuses before native preparation.
 			_, err = client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:" + parent})
 			var refusal *projmux.Refusal
-			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResumeNativeCodexUnsupported {
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResumeNativeCodexUnavailable {
 				t.Fatalf("resume guard changed: %v", err)
 			}
+			updatedProfile, err := client.WriteProfile(ctx, "native", []byte("provider = \"codex\"\ninstructions = \"reviewer\"\nmodel = \"stub-model\"\neffort = \"low\"\n[permissions]\nsandbox = \"workspace-write\"\napproval = \"never\"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = client.WriteInstructions(ctx, "reviewer", []byte("Revised instructions remain immutable on resume.")); err != nil {
+				t.Fatal(err)
+			}
+
+			resumeCall := func() (string, error) {
+				if sdk {
+					out, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:" + created.Metadata.UID, Model: "resumed-model", Effort: "high"})
+					return strings.Join(out.Notices, "\n"), err
+				}
+				c := sdkResumeCLI(t, state, config, socket, binary, home)
+				c.rebind.create.codexNative = newCodexNativeThreadController(state)
+				c.rebind.create.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: binary}
+				var output, stderr bytes.Buffer
+				err := c.runResume([]string{"uid:" + created.Metadata.UID, "--model", "resumed-model", "--effort", "high"}, &output, &stderr)
+				return stderr.String(), err
+			}
+
+			// Cold resume keeps the thread and Agent, with a new Pane/generation.
+			// Both Offline and Failed traverse the same CLI/SDK native execution seam.
+			for _, phase := range []metadata.AgentPhase{metadata.PhaseOffline, metadata.PhaseFailed} {
+				beforeReg := projectRegistry(t, state)
+				beforeAgent, _ := beforeReg.Agent(created.Metadata.UID)
+				beforePane, _ := beforeReg.Pane(beforeAgent.Status.PaneRef)
+				_, err = client.Delete(ctx, core.DeleteRequest{Kind: core.KindPane, Ref: "uid:" + beforePane.Metadata.UID, Confirm: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if phase == metadata.PhaseFailed {
+					_, err = storepkg.NewStore(storepkg.PathFor(state)).Update(func(reg *metadata.Registry) error {
+						_, err := storepkg.DefaultMutator().TransitionAgent(reg, created.Metadata.UID, phase, "fixture failure")
+						return err
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				cancelled, cancel := context.WithCancel(ctx)
+				cancel()
+				snapshot := projectRegistryBytes(t, state)
+				if _, err = client.ResumeAgent(cancelled, core.ResumeAgentRequest{Ref: "uid:" + created.Metadata.UID}); !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+				if projectRegistryBytes(t, state) != snapshot {
+					t.Fatal("cancelled resume mutated Registry")
+				}
+				if phase == metadata.PhaseOffline {
+					profilePath := filepath.Join(config, "profiles", "native.toml")
+					profileBytes, err := os.ReadFile(profilePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, bad := range []string{"", "unknown_key = true"} {
+						if bad == "" {
+							err = os.Remove(profilePath)
+						} else {
+							err = os.WriteFile(profilePath, []byte(bad), 0600)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						beforeWire, _ := os.ReadFile(filepath.Join(home, "shared-wire.jsonl"))
+						_, err = resumeCall()
+						if err == nil || !strings.Contains(err.Error(), "profile-resume-unavailable") {
+							t.Fatalf("missing/invalid profile was resumed: %v", err)
+						}
+						if sdk {
+							var refusal *projmux.Refusal
+							if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProfileResumeUnavailable {
+								t.Fatal(err)
+							}
+						}
+						afterWire, _ := os.ReadFile(filepath.Join(home, "shared-wire.jsonl"))
+						if bytes.Count(afterWire, []byte(`"method": "thread/resume"`)) != bytes.Count(beforeWire, []byte(`"method": "thread/resume"`)) || projectRegistryBytes(t, state) != snapshot {
+							t.Fatal("profile refusal mutated provider/Registry")
+						}
+					}
+					if err = os.WriteFile(profilePath, profileBytes, 0600); err != nil {
+						t.Fatal(err)
+					}
+					failPath := filepath.Join(home, "fail-shared-init")
+					if err = os.WriteFile(failPath, []byte("fail once"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					panesBefore := run("list-panes", "-a", "-F", "#{pane_id}")
+					beforeWire, _ := os.ReadFile(filepath.Join(home, "shared-wire.jsonl"))
+					_, err = resumeCall()
+					if err == nil {
+						t.Fatal("native RPC refusal succeeded")
+					}
+					afterWire, _ := os.ReadFile(filepath.Join(home, "shared-wire.jsonl"))
+					if bytes.Count(afterWire, []byte(`"method": "thread/resume"`))-bytes.Count(beforeWire, []byte(`"method": "thread/resume"`)) != 1 || projectRegistryBytes(t, state) != snapshot || run("list-panes", "-a", "-F", "#{pane_id}") != panesBefore {
+						t.Fatal("native refusal retried or rollback lost Registry/runtime")
+					}
+					if err = os.Remove(failPath); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				var notices string
+				if sdk {
+					resumed, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:" + created.Metadata.UID, Model: "resumed-model", Effort: "high"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if resumed.Agent.Metadata.UID != created.Metadata.UID || resumed.Agent.Status.SessionRef.Codex.ThreadID != "process-thread" || resumed.Receipt.Effects.Identity != core.IdentityReused {
+						t.Fatalf("resume receipt: %+v", resumed)
+					}
+					notices = strings.Join(resumed.Notices, "\n")
+				} else {
+					c := sdkResumeCLI(t, state, config, socket, binary, home)
+					c.rebind.create.codexNative = newCodexNativeThreadController(state)
+					c.rebind.create.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: binary}
+					var output, stderr bytes.Buffer
+					err = c.runResume([]string{"uid:" + created.Metadata.UID, "--model", "resumed-model", "--effort", "high"}, &output, &stderr)
+					if err != nil {
+						t.Fatalf("CLI native resume: %v %s", err, stderr.String())
+					}
+					if output.String() != "agent/native-worker resumed\n" {
+						t.Fatal(output.String())
+					}
+					notices = stderr.String()
+				}
+				if !strings.Contains(notices, "instructions") {
+					t.Fatal("immutable instruction change was not disclosed", notices)
+				}
+				waitSDKResumeBirth(t, state, created.Metadata.UID)
+				afterReg := projectRegistry(t, state)
+				after, _ := afterReg.Agent(created.Metadata.UID)
+				pane, _ := afterReg.Pane(after.Status.PaneRef)
+				if after.Metadata.Annotations[metadata.AnnotationAgentProfileDigest] != updatedProfile.Digest {
+					t.Fatal("resume lost current profile digest")
+				}
+				if pane.Metadata.UID == beforePane.Metadata.UID || pane.Status.Activation.Generation == beforePane.Status.Activation.Generation || after.Status.SessionRef.Codex.ThreadID != "process-thread" || after.Metadata.Name != created.Metadata.Name || pane.Metadata.Name != beforePane.Metadata.Name {
+					t.Fatalf("resume identity/names changed: %+v %+v", after, pane)
+				}
+				waitCodexCreate(t, ctx, func() bool {
+					return run("show-options", "-pqv", "-t", pane.Status.Activation.RuntimeID, aiPaneCodexAuthorityOption) == codexAuthorityControlPlane
+				})
+			}
+			wire, err = os.ReadFile(filepath.Join(home, "shared-wire.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			starts, turns, resumes, settingsApplied := 0, 0, 0, false
+			for line := range bytes.SplitSeq(wire, []byte("\n")) {
+				var frame struct {
+					Method string         `json:"method"`
+					Params map[string]any `json:"params"`
+				}
+				if json.Unmarshal(line, &frame) != nil {
+					continue
+				}
+				switch frame.Method {
+				case "thread/start":
+					starts++
+				case "turn/start":
+					turns++
+				case "thread/settings/update":
+					if frame.Params["model"] == "resumed-model" && frame.Params["effort"] == "high" && frame.Params["approvalPolicy"] == "never" {
+						settingsApplied = true
+					}
+				case "thread/resume":
+					resumes++
+					if _, present := frame.Params["developerInstructions"]; present {
+						t.Fatal("resume tried to replace start-only instructions")
+					}
+					if frame.Params["threadId"] != "process-thread" {
+						t.Fatalf("different resumed thread: %+v", frame)
+					}
+				}
+			}
+			if starts != 1 || turns != 1 || resumes < 2 {
+				t.Fatalf("resume created another conversation/turn: %d/%d/%d", starts, turns, resumes)
+			}
+			if !settingsApplied {
+				t.Fatal("resume settings update missing from wire")
+			}
+			envlog, err = os.ReadFile(filepath.Join(root, "provider-environment.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for line := range strings.SplitSeq(strings.TrimSpace(string(envlog)), "\n") {
+				fields := strings.SplitN(line, "|", 4)
+				if len(fields) != 4 || fields[1] != home || fields[2] != providerRoot || !strings.HasPrefix(fields[3], bin+":") {
+					t.Fatalf("resume child left frozen environment: %s", line)
+				}
+			}
+
 		})
 	}
 }

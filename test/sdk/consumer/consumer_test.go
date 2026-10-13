@@ -463,6 +463,13 @@ func TestExternalResumeAgent(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || result.PaneID != "" {
 		t.Fatalf("cancelled external resume: %+v %v", result, err)
 	}
+	// The old exported token remains source-compatible; native refusal uses the new token.
+	var oldCode projmux.Code = projmux.CodeResumeNativeCodexUnsupported
+	var nativeCode projmux.Code = projmux.CodeResumeNativeCodexUnavailable
+	if oldCode != "resume-native-codex-unsupported" || nativeCode != "resume-native-codex-unavailable" {
+		t.Fatal(oldCode, nativeCode)
+	}
+
 }
 
 // This module deliberately imports only public packages, including the recorder.

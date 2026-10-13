@@ -18,6 +18,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // retiredRefsDefaultGeneration is the default daemon endpoint generation the
@@ -81,7 +82,7 @@ func shortRetiredStateDir(t *testing.T) string {
 func listenRetiredGeneration(t *testing.T, stateDir string, endpoint coremetadata.CodexEndpointRef) string {
 	t.Helper()
 	version := strings.TrimPrefix(endpoint.EndpointGenerationID, "codex-")
-	root, socketPath, err := managedCodexRuntimeLocation(stateDir, endpoint.StateDomainID, version)
+	root, socketPath, err := mutationruntime.ManagedCodexRuntimeLocation(stateDir, endpoint.StateDomainID, version)
 	if err != nil {
 		t.Fatalf("retired socket location: %v", err)
 	}

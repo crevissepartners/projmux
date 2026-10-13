@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // codexProfileHome gives create an isolated HOME and returns the profile
@@ -84,14 +85,14 @@ func TestCodexThreadPolicyMapsTheProfileVocabularyOntoTheWire(t *testing.T) {
 			codexappserver.ThreadPolicy{Sandbox: codexappserver.SandboxDangerFullAccess, ApprovalPolicy: codexappserver.ApprovalOnRequest}},
 		{profile.Permissions{Approval: "untrusted"}, codexappserver.ThreadPolicy{ApprovalPolicy: codexappserver.ApprovalUntrusted}},
 	} {
-		got, err := codexThreadPolicy(test.perms)
+		got, err := mutationruntime.CodexThreadPolicy(test.perms)
 		if err != nil || got != test.want {
-			t.Fatalf("codexThreadPolicy(%+v) = %+v, %v; want %+v", test.perms, got, err, test.want)
+			t.Fatalf("mutationruntime.CodexThreadPolicy(%+v) = %+v, %v; want %+v", test.perms, got, err, test.want)
 		}
 	}
 	for _, perms := range []profile.Permissions{{Sandbox: "danger-full-access"}, {Approval: "on-failure"}} {
-		if _, err := codexThreadPolicy(perms); err == nil {
-			t.Fatalf("codexThreadPolicy(%+v) accepted a value outside the profile vocabulary", perms)
+		if _, err := mutationruntime.CodexThreadPolicy(perms); err == nil {
+			t.Fatalf("mutationruntime.CodexThreadPolicy(%+v) accepted a value outside the profile vocabulary", perms)
 		}
 	}
 }

@@ -212,9 +212,10 @@
 // acknowledgement, like CLI agent resume. Transaction failures roll back.
 // Caller Context cancellation prevents admission only; admitted work completes.
 // Process Agents (including retired process Pane candidates) return
-// CodeResumeProcessUnsupported before effects. Codex resume requires native
-// observation and is deferred; CodeResumeNativeCodexUnsupported advises using
-// projmux agent resume. No Prompt input is exposed because the tmux CLI rejects
+// CodeResumeProcessUnsupported before effects. Native Codex resumes the stored
+// thread with current settings; CodeResumeNativeCodexUnavailable refuses missing
+// or unavailable native routing. CodeResumeNativeCodexUnsupported remains
+// exported for source compatibility. No Prompt input is exposed because the tmux CLI rejects
 // prompts. SocketPath overrides Options.SocketPath, or uses the proved app
 // route when empty. Options.ProjmuxExecutable has the create supervisor contract.
 //
@@ -224,7 +225,7 @@
 // proxy and observer children use captured provider environment and explicit
 // Projmux paths; no daemon lifecycle is acquired. Creator is a uid: declaration
 // only; no Pane or process-chain caller is inferred. Plain and InteractiveOnly
-// Codex retain their existing launch lanes. SDK Codex resume remains deferred.
+// Codex retain their existing launch lanes. Native resume reuses its stored thread.
 // After commit, failed activation confirmation preserves the Agent and Pane.
 // CreateAgent returns the committed result and CodeCreateActivationUnconfirmed
 // together. Callers must inspect both the result and error before retrying.

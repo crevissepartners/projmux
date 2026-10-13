@@ -9,12 +9,12 @@ import (
 	"reflect"
 	"strings"
 
-	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // agentResumeLauncher is the provider-launch seam of `agent resume`.
@@ -109,10 +109,6 @@ type agentResumePlan struct {
 	virtualWindow  bool
 }
 
-func (p agentResumePlan) settingsRequest() agentSettingsRequest {
-	return localAgentSettingsRequest(p.sharedPlan().SettingsRequest())
-}
-
 func (p agentResumePlan) launchAnnotations() map[string]string {
 	return p.sharedPlan().LaunchAnnotations()
 }
@@ -194,32 +190,31 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativePolicy codexappserver.ThreadPolicy
 	var err error
 	if plan.provider == aiModeCodex {
-		// The profile the Agent records is re-read by name before anything
-		// else, so a profile that is gone or invalid refuses with zero writes
-		// and zero provider calls. Its current sandbox and approval ride the
-		// thread/resume below, and resumed carries the digest the transaction
-		// records -- the same record a Claude resume makes.
-		settings, err = r.resolveSettings(plan.provider, plan.annotations, plan.settingsRequest())
-		if err == nil {
-			// A relaunch that switches the profile resumes with the new one.
-			resumed, nativePolicy, err = r.create.codexResumeProfile(settings.launchAnnotations(plan.annotations), plan.projectUID)
-		}
-		if err == nil {
-			nativeCtx, cancel := prepareNativeContext(context.Background())
-			nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref, "uid:"+plan.agentUID)
-			cancel()
-			if err != nil {
-				return nativeResumePreparationRefusal(spelling, err)
+		prepared, route, nativeSettings, prepareErr := mutationruntime.PrepareNativeCodexResume(context.Background(), spelling, plan.sharedPlan(), func() (config.Paths, error) { return configPaths(r.create.homeDir, r.create.lookupEnv) }, func(ctx context.Context, ref *coremetadata.AgentSessionRef, agentRef string) (mutationruntime.NativeCodexRoute, error) {
+			ctx, cancel := prepareNativeContext(ctx)
+			defer cancel()
+			route, err := resolveCodexNativeResumeRoute(ctx, r.create.codexNative, ref, agentRef)
+			if err == nil && !nativeLaunchCapable {
+				err = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 			}
-			if !nativeLaunchCapable {
-				return nativeResumePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+			return route.shared(), err
+		}, func(route mutationruntime.NativeCodexRoute, w coremetadata.AgentWorkspace, id, model, effort string) (string, []string, error) {
+			return planNativeCodexResumeOptions(nativeLauncher, localNativeCodexRoute(route), w, id, model, effort)
+		})
+		if prepareErr != nil {
+			var profileErr *mutationruntime.ProfileResumeError
+			if errors.As(prepareErr, &profileErr) {
+				return fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w", spelling, plan.agentName, plan.provider, plan.conversationID, localResumeError(profileErr))
 			}
-			effort, invalid, skipped := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
-			resumed.effortInvalid, resumed.effortSkipped = invalid, skipped
-			title, launchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, plan.conversationID, settings.model(plan.modelOverride), effort)
-			effortNotice = resumed.effortNotice(plan.agentName)
-			settingsNotice = settings.notice(plan.agentName)
+			return prepareErr
 		}
+		nativeRoute = localNativeCodexRoute(route)
+		title, launchArgv = prepared.Title, prepared.Argv
+		resumed = localAgentResumeLaunch(prepared.Resumed)
+		settings = localAgentSettingsLaunch(prepared.Settings)
+		nativePolicy = nativeSettings.Policy
+		effortNotice = resumed.effortNotice(plan.agentName)
+		settingsNotice = settings.notice(plan.agentName)
 	} else {
 		prepared, prepareErr := r.sharedResumePreparation().Prepare(spelling, plan.sharedPlan())
 		if prepareErr != nil {
@@ -316,62 +311,23 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	}
 	usedNative := false
 	nativeThreadID := ""
-	machine.PrepareLaunch = func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, pane coremetadata.Pane, activation superviseSpec, workspace coremetadata.AgentWorkspace, workTitle string, workLaunchArgv []string) (string, []string, error) {
-		if plan.provider == aiModeCodex {
-			agent, _ := working.Agent(plan.agentUID)
-			if routeErr := validateCodexNativeResumeRoute(agent.Status.SessionRef, nativeRoute); routeErr != nil {
-				return "", nil, nativeResumePreparationRefusal(spelling, bindCodexResumeAgentRef(routeErr, "uid:"+plan.agentUID))
-			}
-			nativeCtx, cancel := prepareNativeContext(ctx)
-			// The thread runs its later turns with what the launch argv
-			// carries, the model and the effort, and with the profile's
-			// policy: a thread another client still holds keeps its own
-			// settings on resume, so they are applied to it as well. A thread
-			// that still answers with others is a *PolicyMismatchError or a
-			// *SettingsMismatchError, never a safe fallback: it lands in the
-			// default arm and the whole transaction rolls back.
-			model := settings.model(plan.modelOverride)
-			effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
-			var prepared codexappserver.ThreadBinding
-			var nativeErr error
-			nativeSettings := codexappserver.ThreadSettings{Model: model, Effort: effort, Policy: nativePolicy}
-			if plan.codexTransfer != nil {
-				prepared = reservedNative.Binding
-				nativeErr = plan.codexTransfer.check(nativeCtx)
-			} else {
-				prepared, nativeErr = r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID, nativeSettings)
-			}
-			cancel()
-			switch {
-			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):
-				workTitle, workLaunchArgv, err = planNativeCodexResumeOptions(nativeLauncher, nativeRoute, workspace, prepared.ThreadID, model, effort)
-				if err != nil {
-					return "", nil, nativeLaunchError(spelling, err)
+	if plan.provider == aiModeCodex {
+		effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
+		native := &mutationruntime.NativeCodexResumeExecution{Spelling: spelling, AgentUID: plan.agentUID, ConversationID: plan.conversationID, Route: nativeRoute.shared(), SafeFallback: func(err error) bool { return nativeFallbackAllowed(r.create.codexNative, err) }, Settings: codexappserver.ThreadSettings{Model: settings.model(plan.modelOverride), Effort: effort, Policy: nativePolicy},
+			Resume: func(ctx context.Context, route mutationruntime.NativeCodexRoute, w coremetadata.AgentWorkspace, id string, settings codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
+				if plan.codexTransfer != nil {
+					return reservedNative.Binding, plan.codexTransfer.check(ctx)
 				}
-				// A stored ref from a retired generation (or a draining /
-				// handover-pending marker) is moved onto the endpoint that just
-				// resumed the thread, inside this transaction, so the committed
-				// Agent names the default endpoint with a current lifecycle.
-				if _, err := mutator.AdoptCodexResumeEndpoint(working, plan.agentUID, nativeRoute.Endpoint); err != nil {
-					return "", nil, MapMetadataError(err)
-				}
-				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
-					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, Generation: activation.Generation,
-					ThreadID: prepared.ThreadID, TurnID: prepared.TurnID, Endpoint: nativeRoute.Endpoint,
-				}); err != nil {
-					return "", nil, MapMetadataError(err)
-				}
-				nativeThreadID = prepared.ThreadID
-				usedNative = true
-			case nativeErr == nil:
-				return "", nil, nativeLaunchError(spelling, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
-			case nativeFallbackAllowed(r.create.codexNative, nativeErr):
-				return "", nil, nativeResumePreparationRefusal(spelling, nativeErr)
-			default:
-				return "", nil, nativeLaunchError(spelling, nativeErr)
-			}
+				return r.create.codexNative.Resume(ctx, localNativeCodexRoute(route), w, id, settings)
+			}, Plan: func(route mutationruntime.NativeCodexRoute, w coremetadata.AgentWorkspace, id, model, effort string) (string, []string, error) {
+				return planNativeCodexResumeOptions(nativeLauncher, localNativeCodexRoute(route), w, id, model, effort)
+			}}
+		machine.PrepareLaunch = func(ctx context.Context, working *coremetadata.Registry, mut coremetadata.Mutator, pane coremetadata.Pane, activation superviseSpec, w coremetadata.AgentWorkspace, title string, argv []string) (string, []string, error) {
+			title, argv, err := native.PrepareLaunch(ctx, working, mut, pane, activation, w, title, argv)
+			nativeThreadID = native.ThreadID
+			usedNative = nativeThreadID != ""
+			return title, argv, err
 		}
-		return workTitle, workLaunchArgv, nil
 	}
 	machine.Bind = func(ctx context.Context, working *coremetadata.Registry, pane coremetadata.Pane, activation superviseSpec, paneID, contextDir, workTitle string) error {
 		if usedNative {
