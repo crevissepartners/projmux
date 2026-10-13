@@ -540,14 +540,7 @@ func (p *registryTopologyPlan) hasRefusal() bool {
 // state of an offline Project rather than a planning failure. The typed
 // CommandFailure seam is authoritative; the narrow text fallback only covers
 // runners that lose the typed carrier while wrapping.
-func isMissingTmuxServer(err error) bool {
-	if inttmux.IsNoServerFailure(err) {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no server running on ") ||
-		strings.Contains(message, "failed to connect to server: connection refused")
-}
+func isMissingTmuxServer(err error) bool { return mutationruntime.IsMissingTmuxServer(err) }
 
 // topologyMaterializeRun is one exact-socket Project materialization
 // transaction, deliberately separate from any reporting surface.
@@ -928,77 +921,6 @@ type topologyOwnerGuard struct {
 	paneUIDs    map[string][]string
 }
 
-func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topologyOwnerGuard, error) {
-	windowsOut, err := runtime.ReadTmux(ctx, "list-windows", "-a", "-F",
-		tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
-	if err != nil {
-		// No server is the ordinary state of an offline Project on a fresh
-		// socket, and it is also the strongest possible answer to "is this uid
-		// claimed anywhere": nothing is live, so the inventory is empty.
-		if isMissingTmuxServer(err) {
-			return emptyTopologyOwnerGuard(), nil
-		}
-		return nil, fmt.Errorf("inventory tmux Window owners: %w", err)
-	}
-	panesOut, err := runtime.ReadTmux(ctx, "list-panes", "-a", "-F",
-		tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
-	if err != nil {
-		if isMissingTmuxServer(err) {
-			return emptyTopologyOwnerGuard(), nil
-		}
-		return nil, fmt.Errorf("inventory tmux Pane owners: %w", err)
-	}
-	guard := &topologyOwnerGuard{
-		windowOwner: map[string]string{},
-		paneOwner:   map[string]RuntimeOwner{},
-		windowUIDs:  map[string][]string{},
-		paneUIDs:    map[string][]string{},
-	}
-	windowRows, err := strictTmuxRows(windowsOut, 3)
-	if err != nil {
-		return nil, fmt.Errorf("malformed tmux Window owner inventory: %w", err)
-	}
-	for _, row := range windowRows {
-		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" {
-			return nil, fmt.Errorf("malformed tmux Window owner inventory")
-		}
-		if existing, seen := guard.windowOwner[row[1]]; seen && existing != row[0] {
-			return nil, fmt.Errorf("tmux window %s reports two owning sessions", row[1])
-		}
-		guard.windowOwner[row[1]] = row[0]
-		if uid := strings.TrimSpace(row[2]); uid != "" && !slices.Contains(guard.windowUIDs[uid], row[1]) {
-			guard.windowUIDs[uid] = append(guard.windowUIDs[uid], row[1])
-		}
-	}
-	paneRows, err := strictTmuxRows(panesOut, 4)
-	if err != nil {
-		return nil, fmt.Errorf("malformed tmux Pane owner inventory: %w", err)
-	}
-	for _, row := range paneRows {
-		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" || exactTmuxHandle(row[2], "%") == "" {
-			return nil, fmt.Errorf("malformed tmux Pane owner inventory")
-		}
-		owner := RuntimeOwner{SessionID: row[0], WindowID: row[1]}
-		if existing, seen := guard.paneOwner[row[2]]; seen && existing != owner {
-			return nil, fmt.Errorf("tmux pane %s reports two owning windows", row[2])
-		}
-		guard.paneOwner[row[2]] = owner
-		if uid := strings.TrimSpace(row[3]); uid != "" && !slices.Contains(guard.paneUIDs[uid], row[2]) {
-			guard.paneUIDs[uid] = append(guard.paneUIDs[uid], row[2])
-		}
-	}
-	return guard, nil
-}
-
-func emptyTopologyOwnerGuard() *topologyOwnerGuard {
-	return &topologyOwnerGuard{
-		windowOwner: map[string]string{},
-		paneOwner:   map[string]RuntimeOwner{},
-		windowUIDs:  map[string][]string{},
-		paneUIDs:    map[string][]string{},
-	}
-}
-
 // requireSoleUIDClaims proves every planned Window and Pane uid is live on
 // exactly its planned handle, or nowhere at all when this pass intends to create
 // it. It needs no session id, so it runs as a preflight before the selected
@@ -1109,19 +1031,6 @@ func (g *topologyOwnerGuard) requireSoleWindowUID(uid, handle, label string) err
 // requireSolePaneUID is requireSoleWindowUID for a Pane uid.
 func (g *topologyOwnerGuard) requireSolePaneUID(uid, handle, label string) error {
 	return requireSoleUIDClaim("pane", label, uid, handle, g.paneUIDs[uid])
-}
-
-func requireSoleUIDClaim(kind, label, uid, handle string, claims []string) error {
-	if handle == "" {
-		if len(claims) != 0 {
-			return fmt.Errorf("%s %s uid %s is already live on %v elsewhere on this socket", kind, label, uid, claims)
-		}
-		return nil
-	}
-	if len(claims) != 1 || claims[0] != handle {
-		return fmt.Errorf("%s %s uid %s is claimed by %v, want exactly %s", kind, label, uid, claims, handle)
-	}
-	return nil
 }
 
 func executeRegistryTopology(
@@ -1402,4 +1311,16 @@ func describeRefusedItems(items []resourceReconcileItem) string {
 		parts = append(parts, fmt.Sprintf("%s %s (%s)", strings.ToLower(item.Kind), item.Target, item.Reason))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func newTopologyOwnerGuard(ctx context.Context, r *materializer) (*topologyOwnerGuard, error) {
+	g, e := mutationruntime.NewTopologyOwnerGuard(ctx, r)
+	if e != nil {
+		return nil, e
+	}
+	return &topologyOwnerGuard{windowOwner: g.WindowOwner, paneOwner: g.PaneOwner, windowUIDs: g.WindowUIDs, paneUIDs: g.PaneUIDs}, nil
+}
+
+func requireSoleUIDClaim(k, l, u, h string, c []string) error {
+	return mutationruntime.RequireSoleUIDClaim(k, l, u, h, c)
 }

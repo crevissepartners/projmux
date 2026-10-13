@@ -131,10 +131,6 @@ func (l projectLinksLaunch) record(registry *coremetadata.Registry, mutator core
 // persona notice does.
 func (l projectLinksLaunch) notice(label string) string { return l.shared().Notice(label) }
 
-func projectLinksNotice(label string, err error) string {
-	return mutationruntime.ProjectLinksNotice(label, err)
-}
-
 // planProjectLinksWith asks launcher for project's rules when it has the
 // seam, and returns the zero launch otherwise.
 func planProjectLinksWith(launcher any, provider string, project coremetadata.Project, recorded map[string]string) projectLinksLaunch {
@@ -184,43 +180,6 @@ func (c *createCommand) prepareProjectLinks(provider string, project coremetadat
 		links = links.withCreateFile(flags.personaLaunch)
 	}
 	flags.projectLinks = links
-}
-
-// resumeSystemPromptFile is the one --append-system-prompt-file a Claude
-// resume passes, given the persona snapshot personaFile ("" for none): the
-// persona alone, the rules snapshot the digest annotation names, or the
-// composite of both. Rules that cannot be found are dropped and disclosed;
-// the persona is kept.
-func (c *aiCommand) resumeSystemPromptFile(mode string, annotations map[string]string, personaFile string) (string, error) {
-	digest := annotations[coremetadata.AnnotationAgentProjectLinkRulesDigest]
-	if mode != aiModeClaude || digest == "" {
-		return personaFile, nil
-	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return personaFile, err
-	}
-	store := projectlinks.NewDefaultSnapshotStore(paths)
-	rulesPath, err := store.RecordedSnapshotPath(digest)
-	if err != nil {
-		return personaFile, err
-	}
-	if personaFile == "" {
-		return rulesPath, nil
-	}
-	readPart := readPersonaSnapshot
-	if annotations[coremetadata.AnnotationAgentProjectGuidanceDigest] != "" {
-		readPart = readSystemPromptPart
-	}
-	content, err := readPart(personaFile)
-	if err != nil {
-		return personaFile, err
-	}
-	composite, err := store.WriteComposite(content, digest)
-	if err != nil {
-		return personaFile, err
-	}
-	return composite.Path, nil
 }
 
 // readPersonaSnapshot reads the persona snapshot at path, bounded like every

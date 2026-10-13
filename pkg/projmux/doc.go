@@ -203,6 +203,19 @@
 // when the plan removes a protected Agent. PreflightDelete checks the same graph,
 // including process Agents and Projects, without runtime access. Frontends call
 // it before provider Stop, then recheck under effect admission at execution.
+// ResumeAgent rebinds an explicitly selected Offline or Failed tmux Agent to
+// a new Pane through the CLI's shared transaction, preserving Agent UID and
+// provider conversation. It returns Projection, Receipt, PaneID and notices
+// immediately after commit. ResumeAgent does not wait for activation
+// acknowledgement, like CLI agent resume. Transaction failures roll back.
+// Caller Context cancellation prevents admission only; admitted work completes.
+// Process Agents (including retired process Pane candidates) return
+// CodeResumeProcessUnsupported before effects. Codex resume requires native
+// observation and is deferred; CodeResumeNativeCodexUnsupported advises using
+// projmux agent resume. No Prompt input is exposed because the tmux CLI rejects
+// prompts. SocketPath overrides Options.SocketPath, or uses the proved app
+// route when empty. Options.ProjmuxExecutable has the create supervisor contract.
+//
 // CreateAgent creates one tmux Claude, Antigravity, payload-free Codex or
 // InteractiveOnly Codex Agent in explicit Project/Window scope. Creator is a
 // uid: declaration only; no Pane or process-chain caller is inferred. Native

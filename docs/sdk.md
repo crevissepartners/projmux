@@ -52,3 +52,17 @@ An activation timeout or failure after commit preserves the Agent and Pane.
 `CodeCreateActivationUnconfirmed`; inspect the returned Agent before retrying.
 Context cancellation prevents admission only. The tmux server owns an admitted
 provider's lifetime, and cancelling the caller does not stop it.
+
+`Client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:..."})` rebinds an
+Offline or Failed Claude or Antigravity tmux Agent to a new Pane, preserving its
+Agent UID and provider conversation. Project and Window optionally scope Ref;
+Model, Effort, DialogueReplyOnly and SocketPath use the CLI's resume rules.
+The result includes Agent, Projection, Receipt, PaneID and notices. It returns
+immediately after commit, without waiting for activation acknowledgement,
+like CLI `agent resume`; transaction failures roll back. Cancellation prevents
+admission only. Process targets, including retired process candidates, return
+`CodeResumeProcessUnsupported`. Codex resume returns
+`CodeResumeNativeCodexUnsupported` before effects because its native observation
+is not yet available in the SDK; use `projmux agent resume`. Prompt input is not
+exposed. The same `Options.ProjmuxExecutable` contract applies. The tmux CLI
+rejects `-o`; the SDK receipt uses its shared operation receipt model.

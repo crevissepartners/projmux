@@ -3,11 +3,8 @@ package app
 import (
 	"github.com/crevissepartners/projmux/internal/config"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
-	"slices"
 
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 var claudeEffortLevels = mutationruntime.ClaudeEffortLevels
@@ -31,34 +28,11 @@ func codexLaunchOptionArgs(model, effort string) []string {
 	return mutationruntime.CodexLaunchOptionArgs(model, effort)
 }
 
-// codexCLIProfileArgs carries a validated profile policy on Codex's plain
-// create and CLI resume lanes. The profile's full-access value was already
-// translated to danger-full-access by codexThreadPolicy.
-func codexCLIProfileArgs(policy codexappserver.ThreadPolicy) []string {
-	return mutationruntime.CodexCLIProfileArgs(policy)
-}
-
 // claudeLaunchOptionArgs spells the Claude launch options. personaFile is the
 // persona snapshot path: only the path reaches argv, never the content, so the
 // persona does not show in `ps`.
 func claudeLaunchOptionArgs(model, effort, personaFile string) []string {
 	return mutationruntime.ClaudeLaunchOptionArgs(model, effort, personaFile)
-}
-
-// claudeSystemPromptSnapshotFlag is Claude's switch for the system prompt it
-// records on a conversation's first request and replays on every resume.
-const claudeSystemPromptSnapshotFlag = "--system-prompt-snapshot"
-
-// claudeResumeSnapshotArgs spells the system prompt snapshot mode a resumed
-// Agent records. Only a Claude Agent annotated with
-// coremetadata.SystemPromptSnapshotOff gets an argument; any other Agent, and
-// any other provider carrying the annotation, gets none, so its resume argv
-// stays byte-identical to the one it had before the annotation existed.
-func claudeResumeSnapshotArgs(mode string, annotations map[string]string) []string {
-	if mode != aiModeClaude || annotations[coremetadata.AnnotationAgentSystemPromptSnapshot] != coremetadata.SystemPromptSnapshotOff {
-		return nil
-	}
-	return []string{claudeSystemPromptSnapshotFlag, coremetadata.SystemPromptSnapshotOff}
 }
 
 // personaLaunch is the persona one Agent create starts with: the stored name,
@@ -100,27 +74,11 @@ func withModelAnnotation(model string, base map[string]string) map[string]string
 
 // claudeEffortReasonInvalid is the reason token of a recorded effort a resume
 // does not re-pass because it is not one of claudeEffortLevels.
-const claudeEffortReasonInvalid = "effort-invalid"
-
-// claudeResumeEffort returns the recorded effort a Claude or Codex Agent
-// re-passes. Unsupported values are skipped and disclosed by the caller.
-func claudeResumeEffort(mode string, annotations map[string]string) (effort, invalid string, skipped bool) {
-	if mode != aiModeClaude && mode != aiModeCodex {
-		return "", "", false
-	}
-	value, ok := annotations[coremetadata.AnnotationAgentEffort]
-	if !ok {
-		return "", "", false
-	}
-	if !slices.Contains(claudeEffortLevels, value) {
-		return "", value, true
-	}
-	return value, "", false
-}
+const claudeEffortReasonInvalid = mutationruntime.ClaudeEffortReasonInvalid
 
 // personaReasonCodexInstructionsImmutable is the public refusal for trying to
 // change the developer instructions of an existing Codex conversation.
-const personaReasonCodexInstructionsImmutable = "codex-instructions-immutable"
+const personaReasonCodexInstructionsImmutable = mutationruntime.PersonaReasonCodexInstructionsImmutable
 
 func requirePersonaLane(spelling, provider string, flags resourceCreateFlags) error {
 	return (mutationruntime.AgentInputFields{}).RequirePersonaLane(spelling, provider, flags.sharedAgentSettingsFlags())

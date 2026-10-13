@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
@@ -30,10 +32,7 @@ import (
 var agentSubcommands = append(aiprovider.AgentGroups(), "capabilities", "models")
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
-var resumableAgentPhases = []coremetadata.AgentPhase{
-	coremetadata.PhaseOffline,
-	coremetadata.PhaseFailed,
-}
+var resumableAgentPhases = mutationruntime.ResumableAgentPhases
 
 // agentCommand owns the Agent domain namespace.
 //
@@ -382,23 +381,8 @@ func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQuery
 	if len(prompt) > 0 {
 		return usageError(fmt.Sprintf("%s accepts at most one Agent reference; got %q", spelling, prompt[0]))
 	}
-	if err := requireResumablePhase(spelling, agent); err != nil {
+	if err := mutationruntime.ValidateResumeAgent(spelling, agent, model, effort, dialogueReplyOnly, mutationruntime.AgentInputFields{}); err != nil {
 		return err
-	}
-	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
-	if provider == "" && agent.Status.SessionRef != nil {
-		provider = coremetadata.NormalizeProvider(agent.Status.SessionRef.Provider)
-	}
-	if err := requireLaunchOptions(spelling, provider, model, effort, dialogueReplyOnly, "nothing was changed"); err != nil {
-		return err
-	}
-	if err := requireClaudeDialogueMode(agent.Spec.Provider, dialogueReplyOnly, nil); err != nil {
-		return err
-	}
-	if model != "" || effort != "" {
-		if refusal := replyOnlyRefusalOf(agent.Metadata.Annotations, agentSettingsRequest{model: model, effort: effort}); refusal.reason != "" {
-			return usageError(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", spelling, agent.Metadata.Name, refusal.detail(), refusal.reason))
-		}
 	}
 	plan, err := c.prepareResume(spelling, registry, agent)
 	if err != nil {
@@ -434,20 +418,6 @@ func (c *agentCommand) prepareResume(spelling string, registry coremetadata.Regi
 	// again, whichever command resumes it and whether or not it has a Pane.
 	plan.dialogueReplyOnly = coremetadata.RecordsDialogueReplyOnly(agent.Metadata.Annotations)
 	return plan, nil
-}
-
-// requireResumablePhase enforces the Agent lifecycle gate of resume.
-func requireResumablePhase(spelling string, agent *coremetadata.Agent) error {
-	if slices.Contains(resumableAgentPhases, agent.Status.Phase) {
-		return nil
-	}
-	if agent.Status.Phase == coremetadata.PhaseRunning {
-		return usageError(fmt.Sprintf(
-			"%s: agent/%s is %s and already owns a managed Pane; resume only rebinds an %s or %s Agent. To look at it, run `projmux focus pane`",
-			spelling, agent.Metadata.Name, agent.Status.Phase, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
-	}
-	return usageError(fmt.Sprintf("%s: agent/%s is %s; resume only rebinds an %s or %s Agent",
-		spelling, agent.Metadata.Name, agent.Status.Phase, coremetadata.PhaseOffline, coremetadata.PhaseFailed))
 }
 
 // A process Agent has no provider TUI; its existing answer stores remain the
