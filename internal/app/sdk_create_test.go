@@ -51,7 +51,9 @@ func sdkCreateSocket(t *testing.T) (string, func(...string) string) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	run("-f", "/dev/null", "new-session", "-d", "-s", "control", "/bin/sh")
+	// The unmanaged control Window is part of the runtime snapshot too.
+	// Give it a fixed name so shell startup cannot race tmux automatic naming.
+	run("-f", "/dev/null", "new-session", "-d", "-s", "control", "-n", "control", "/bin/sh")
 	run("set-option", "-g", tmuxopts.AppGlobal, "1")
 	run("set-option", "-g", runtimeMutationSocketNameOption, "projmux")
 	t.Cleanup(func() {
