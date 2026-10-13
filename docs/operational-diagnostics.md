@@ -29,7 +29,8 @@ characters removed, whitespace normalized, the current home path abbreviated
 to `~`, and length capped at 512 Unicode code points. Top-level outcomes never
 copy `error.Error()` into the journal: their message is one of three stable,
 lossy phrases (`command failed`, `invalid command usage`, or a classified
-non-success status). Error `kind` is stored separately from that phrase.
+non-success status), with an optional registered content-free reason token on
+runtime failures (see Closed command outcome reasons below). Error `kind` is stored separately from that phrase.
 
 The journal must never contain raw argv, stdin, prompts, notification bodies,
 pane captures/output/title/topic/content, transcripts, raw hook payloads,
@@ -941,3 +942,31 @@ write does not block provider Stop or actual Wait. Control response writes,
 Registry writes, generation abandonment, and attention stale/closed authority
 errors retain their failure behavior. The final projection after provider exit
 retains its existing error handling.
+
+### Closed command outcome reasons
+
+Internal callers may pass a `CommandOutcomeReasons` registry as the optional
+last argument to `RecordOutcome`. Its zero value contains no registrations;
+existing calls retain the plain `command failed` runtime message. `Register`
+copies a complete closed set for a command/subcommand pair and supports
+concurrent registration and lookup. `StateChanging` is not part of that key.
+Empty inventories, duplicate tokens, invalid tokens, and repeated class
+registrations fail without changing the registry. Command, subcommand (when
+present), and reason tokens must be lowercase ASCII identifiers separated by
+periods, underscores, or hyphens, beginning with a letter, at most 96 bytes.
+Callers own the declaration and must supply content-free constants.
+
+For runtime failures only, `errors.As` finds an error implementing
+`OutcomeReason() OutcomeReason`. A token in that class's registered set produces
+`command failed: <token>`; unknown tokens and tokens registered for another class
+are dropped. The error text is never read. Usage and classified exit phrases,
+read-only successes, lifecycle suppression, forbidden journal invocations, and
+best-effort append behavior retain their existing policy. No command class or
+reason is registered by default. This registry does not extend CLI classification
+or change the command's output or exit status.
+
+The reason stays in the existing sanitized message field, bounded well below
+its 512-rune limit. Both Store readers preserve it with the existing message
+sanitizer; they do not need a registry to read a previously written record.
+This is an outcome producer filter, not an authorization rule for arbitrary
+`Store.Append` messages.
