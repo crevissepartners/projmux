@@ -110,27 +110,18 @@ while True:
 func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, string, string) {
 	t.Helper()
 	f := processCodexRelaunchFixture(t)
-	// Keep the native control socket within its public 100-byte bound while
-	// all files remain under the caller-owned TMPDIR. No product limit changes.
-	if len(filepath.Join(f.root, "state/projmux/agent-control/control-"+strings.Repeat("a", 24)+".sock")) > localipc.MaxSocketPath {
-		short := ""
-		letters := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-		for index := 0; index < len(letters)*len(letters); index++ {
-			candidate := filepath.Join(os.TempDir(), string([]byte{letters[index/len(letters)], letters[index%len(letters)]}))
-			if err := os.Mkdir(candidate, 0700); err == nil {
-				short = candidate
-				break
-			} else if !os.IsExist(err) {
-				t.Fatal(err)
-			}
-		}
-		if short == "" {
-			t.Fatal("no private short fixture state available")
-		}
+	// Keep physical native control paths within their public 100-byte bound.
+	// A long platform TMPDIR may require private state in this checkout instead;
+	// TMPDIR itself and product limits remain unchanged.
+	physicalState, err := filepath.EvalSymlinks(filepath.Join(f.root, "state", "projmux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filepath.Join(physicalState, agentControlDirName, "control-"+strings.Repeat("a", 24)+".sock")) > localipc.MaxSocketPath {
+		short := codexHostMoveFixtureShortState(t, os.TempDir(), repoRootForGate(t))
 		if err := os.Rename(filepath.Join(f.root, "state", "projmux"), filepath.Join(short, "projmux")); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(short) })
 		t.Setenv("XDG_STATE_HOME", short)
 		paths, err := config.DefaultPathsFromEnv()
 		if err != nil {
@@ -147,10 +138,7 @@ func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent
 	if err := os.Remove(filepath.Join(f.root, "tmux")); err != nil {
 		t.Fatal(err)
 	}
-	tmuxDir := filepath.Join(f.root, "tmux-private")
-	if err := os.MkdirAll(tmuxDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	tmuxDir := hostMoveFixturePhysicalDir(t, filepath.Join(f.root, "tmux-private"))
 	t.Setenv("TMUX_TMPDIR", tmuxDir)
 	serverScript := filepath.Join(f.root, "shared.py")
 	if err := os.WriteFile(serverScript, []byte(codexHostMoveServerFixture), 0600); err != nil {
@@ -287,6 +275,32 @@ func codexHostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent
 		}
 	})
 	return f, source, source.Status.PaneRef, socket
+}
+
+func codexHostMoveFixtureShortState(t *testing.T, roots ...string) string {
+	t.Helper()
+	letters := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	for _, root := range roots {
+		physical, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index := 0; index < len(letters)*len(letters); index++ {
+			candidate := filepath.Join(physical, string([]byte{letters[index/len(letters)], letters[index%len(letters)]}))
+			control := filepath.Join(candidate, "projmux", agentControlDirName, "control-"+strings.Repeat("a", 24)+".sock")
+			if len(control) > localipc.MaxSocketPath {
+				break
+			}
+			if err := os.Mkdir(candidate, 0700); err == nil {
+				t.Cleanup(func() { _ = os.RemoveAll(candidate) })
+				return candidate
+			} else if !os.IsExist(err) {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Fatal("no private short fixture state available")
+	return ""
 }
 
 func TestCodexHostMoveActualCLI(t *testing.T) {

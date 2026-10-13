@@ -165,10 +165,7 @@ func TestClaudeHostMoveActualCLI(t *testing.T) {
 func hostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, string, string) {
 	t.Helper()
 	f := processResumeCLIFixture(t, aiModeClaude)
-	tmuxDir := filepath.Join(f.root, "tmux")
-	if err := os.MkdirAll(tmuxDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	tmuxDir := hostMoveFixturePhysicalDir(t, filepath.Join(f.root, "tmux"))
 	t.Setenv("TMUX_TMPDIR", tmuxDir)
 	socket := filepath.Join(tmuxDir, fmt.Sprintf("tmux-%d", os.Getuid()), "projmux")
 	t.Cleanup(func() {
@@ -239,6 +236,18 @@ func hostMoveCLIFixture(t *testing.T) (processCreateCLI, coremetadata.Agent, str
 	reg, _ = f.store.LoadReadOnly()
 	currentAgent, _ := reg.Agent(agent.Metadata.UID)
 	return f, currentAgent.Clone(), oldUID, socket
+}
+
+func hostMoveFixturePhysicalDir(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.MkdirAll(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	physical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return physical
 }
 
 func TestVirtualWindowClaudeHostMoveActualCLI(t *testing.T) {
