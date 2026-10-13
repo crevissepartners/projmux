@@ -37,11 +37,8 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 	for _, lane := range []string{"cli", "sdk-a", "sdk-b"} {
 		sdk := lane != "cli"
 		t.Run(lane, func(t *testing.T) {
-			root, err := os.MkdirTemp(os.TempDir(), "t3n-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.RemoveAll(root) })
+			// Provider and broker Unix sockets must fit even under a long CI TMPDIR.
+			root := shortTempDomain(t)
 			home, state, config := filepath.Join(root, "home"), filepath.Join(root, "state", "projmux"), filepath.Join(root, "config", "projmux")
 			providerRoot := filepath.Join(root, "codex")
 			bin := filepath.Join(home, ".local", "bin")
