@@ -72,6 +72,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 		return result, resourceRefusal(err)
 	}
 	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
+	transaction.Outcomes = c.createOutcomes()
 	project, err := execution.ResolveProject(reg, scope)
 	if err != nil {
 		return result, createRefusal(err, "CreateAgentRequest")

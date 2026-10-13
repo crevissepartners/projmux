@@ -80,6 +80,7 @@ Client.approvalService	Public v0 approval SDK entrypoint or native transport ada
 Client.createAgent	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 Client.createDiscoveryRoots	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createInputs	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
+Client.createOutcomes	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
 Client.createPane	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createProjection	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createWindow	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
@@ -344,6 +345,7 @@ codexProcessMessages.send	Internal dedicated Codex process binding/control/recei
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
+copyCreateDuration	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
 copyUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 createCommand.ensureAnchorPane	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
 createCommand.recordOperatorCreator	In-process operator creator seam for an operator client layered on projmux that runs creates on the operator's behalf; argv has no spelling of it by design (TestNoArgvPathBuildsAnOperatorCreator), so main reaches it only from tests.
@@ -419,6 +421,7 @@ projectRefusal	Public v0 Project registration refusal adapter; verified by typed
 publicApprovalControl.Bind	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 publicApprovalControl.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 publicConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+publicCreateRecorder.Record	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
 publicLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 publicQuestionDispatcher.AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 publicQuestionDispatcher.ReadExactProcessQuestions	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.

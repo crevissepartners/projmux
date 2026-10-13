@@ -104,6 +104,7 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 		return result, &Refusal{Code: CodeCreateExecutableInvalid, message: "Options.ProjmuxExecutable must name an existing executable file", cause: err}
 	}
 	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
+	transaction.Outcomes = c.createOutcomes()
 	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime}
 	if err := planner.RequireEnabled(plan.Provider); err != nil {
 		return result, resumeRefusal(err)

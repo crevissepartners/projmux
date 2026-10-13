@@ -49,7 +49,9 @@
 // transaction, hooks, exact socket/PID/UID guards and rollback. Requests require
 // an explicit Project; CreatePane also requires an explicit Window. Request
 // SocketPath overrides Options.SocketPath; empty uses the proved app socket.
-// SDK calls do not record create.outcome journal events (Backlog 622).
+// Options.CreateRecorder optionally receives each finished Window, Pane, Agent
+// or Resume transaction with CLI create.outcome timings, after unlock and
+// rollback/cleanup. Nil records nothing; no journal path is inferred.
 // Options.ProjmuxExecutable must name an absolute executable from the same
 // projmux build (same module version and commit) as this SDK. Other builds are
 // unsupported and their results are undefined; no version probe is performed.

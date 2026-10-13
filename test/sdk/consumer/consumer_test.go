@@ -446,3 +446,32 @@ func TestExternalResumeAgent(t *testing.T) {
 		t.Fatalf("cancelled external resume: %+v %v", result, err)
 	}
 }
+
+// This module deliberately imports only public packages, including the recorder.
+func TestExternalCreateRecorderConsumer(t *testing.T) {
+	calls := 0
+	var recorder projmux.CreateRecorder = func(outcome projmux.CreateOutcome) error {
+		calls++
+		if outcome.Kind != projmux.CreateKindWindow || outcome.Result != projmux.CreateError || outcome.LockHeld != nil || outcome.SpawnToRelease != nil || outcome.Phases != (projmux.CreatePhases{}) {
+			t.Fatalf("unexpected outcome: %+v", outcome)
+		}
+		return errors.New("journal is unavailable")
+	}
+	root := t.TempDir()
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state"), SocketPath: filepath.Join(root, "absent.sock"), ProjmuxExecutable: "/bin/sh", CreateRecorder: recorder})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.CreateWindow(context.Background(), core.CreateWindowRequest{})
+	if err == nil || calls != 0 {
+		t.Fatal("validation recorded")
+	}
+	_, err = c.CreateWindow(context.Background(), core.CreateWindowRequest{Project: "missing"})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateRouteRefused || calls != 1 {
+		t.Fatalf("outcome changed refusal: calls=%d err=%v", calls, err)
+	}
+	_ = []projmux.CreateKind{projmux.CreateKindPane, projmux.CreateKindAgent, projmux.CreateKindResume}
+	_ = []projmux.CreatePhase{projmux.CreatePhaseGuard, projmux.CreatePhaseFirstReconcile, projmux.CreatePhaseOperation, projmux.CreatePhaseSecondReconcile, projmux.CreatePhaseReprove, projmux.CreatePhaseStoreWrite}
+	_ = projmux.CreateSuccess
+}

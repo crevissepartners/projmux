@@ -42,6 +42,7 @@ func (c *Client) createWindow(ctx context.Context, req core.CreateWindowRequest,
 		return result, err
 	}
 	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
+	transaction.Outcomes = c.createOutcomes()
 
 	var out mutationruntime.ShellCreateResult
 	err = transaction.Transact(mutationruntime.CreateKindWindow, execution.WindowOperation(scope, mutationruntime.WindowRequest{Name: req.Name, Labels: labels}, &out), func(ctx context.Context, reg metadata.Registry, mut metadata.Mutator, op string) (mutationruntime.LiveSessionIdentity, error) {
@@ -112,6 +113,7 @@ func (c *Client) createPane(ctx context.Context, req core.CreatePaneRequest, run
 		placement = "right"
 	}
 	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
+	transaction.Outcomes = c.createOutcomes()
 	admission := execution.ProcessAnchorAdmission(scope, selection, "create pane")
 	var out mutationruntime.ShellCreateResult
 	err = transaction.TransactAdmitted(mutationruntime.CreateKindPane, admission, execution.PaneOperation(scope, mutationruntime.ShellPaneRequest{CreateSelection: selection, Placement: placement, CwdFrom: req.CwdFrom}, labels, &out), func(ctx context.Context, reg metadata.Registry, mut metadata.Mutator, op string) (mutationruntime.LiveSessionIdentity, error) {

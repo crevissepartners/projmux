@@ -26,8 +26,8 @@ Set `Options.ProjmuxExecutable` to an absolute executable from the same projmux
 build as the SDK for supervised shell children. No PATH search or implicit
 executable fallback is performed. Request `SocketPath` overrides the Option;
 explicit sockets require a live server with exact PID, resource UID and root
-proof. The empty route uses the app server and can start it. SDK calls do not
-record `create.outcome` diagnostics yet (Backlog 622).
+proof. The empty route uses the app server and can start it. SDK calls can record `create.outcome` measurements through the optional
+`Options.CreateRecorder` described below.
 
 
 ## tmux Agent creation
@@ -66,3 +66,50 @@ admission only. Process targets, including retired process candidates, return
 is not yet available in the SDK; use `projmux agent resume`. Prompt input is not
 exposed. The same `Options.ProjmuxExecutable` contract applies. The tmux CLI
 rejects `-o`; the SDK receipt uses its shared operation receipt model.
+
+
+## Optional create outcome recording
+
+Set `Options.CreateRecorder` to a `func(projmux.CreateOutcome) error` to receive
+one measurement per Window, Pane, Agent or Resume transaction. All types are
+public; an embedding application needs no `internal` imports. Nil disables
+recording. The SDK neither chooses a journal path nor reads environment variables
+for recording. The caller owns the sink, its run ID and journal formatting.
+
+```go
+client, err := projmux.NewClient(projmux.Options{
+    ConfigDir: "/absolute/config/projmux",
+    StateDir: "/absolute/state/projmux",
+    ProjmuxExecutable: "/absolute/bin/projmux",
+    CreateRecorder: func(outcome projmux.CreateOutcome) error {
+        // Append to your explicitly configured sink here.
+        // Kind: window/pane/agent/resume; Result: success/error.
+        return recordCreateOutcome(outcome)
+    },
+})
+```
+
+The callback runs synchronously after the Registry lock is released and all
+transaction rollback and lease cleanup finish. Input validation and cancellation
+before transaction admission produce no callback. A route refusal after admission
+produces an error outcome with no lock timing. Each admitted transaction records
+separately, including multiple calls on one Client. A successful commit records
+success even if later projection or Agent activation acknowledgement fails;
+inspect the method's result and error for that later failure.
+
+`Duration` includes transaction execution and cleanup, excluding recording.
+`LockHeld` starts at mutation entry and ends when Store update returns, excluding
+lock wait. `Phases` tiles that hold with guard, first reconcile, operation, second
+reconcile, reproof and store write/unlock; nil marks a phase never entered.
+`SpawnToRelease`, for Agent/Resume only, measures the first supervised child spawn
+through Store update return. These are the CLI's raw measurements, before journal
+rounding/clamping. To preserve its event shape, write `create.outcome`, component
+`create`, operation `Kind`, result `Result`, and duration/lock/phase/spawn fields in
+milliseconds. Omit nil fields; the CLI clamps lock to duration and spawn to lock,
+and drops phase fields if their rounded sum exceeds lock.
+
+All duration pointers belong to the callback and can be retained or changed.
+Errors and panics from the callback are ignored; they cannot alter the creation
+result. Keep the callback short: its execution delays the method's return.
+Concurrent Client methods may invoke it concurrently, so synchronize shared sinks.
+The SDK starts no recording goroutine and does not retry failed records.
