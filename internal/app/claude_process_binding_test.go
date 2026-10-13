@@ -1170,14 +1170,46 @@ func TestClaudeProcessFirstLargeWriteAllowsActualSessionStart(t *testing.T) {
 					t.Fatal(err)
 				}
 				needle := "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})"
-				fixture := strings.Replace(processClaudeProviderFixture, needle, "with open("+fmt.Sprintf("%q", path)+",'rb',buffering=0) as gate: gate.read(1)\n"+needle, 1)
-				return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Env: os.Environ(), Dir: root}
+				fixture := strings.Replace(processClaudeProviderFixture, needle,
+					"import time\nopen(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'fixture-ready'),'w').write('ready')\n"+
+						"with open("+fmt.Sprintf("%q", path)+",'rb',buffering=0) as gate: gate.read(1)\n"+
+						"hook_started=time.monotonic()\nopen(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'hook-begin'),'w').write(str(hook_started))\n"+
+						needle+"\nopen(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'hook-duration'),'w').write(str(time.monotonic()-hook_started))", 1)
+				// Only this fixture's provider/hook children skip the race
+				// runtime's exit sleep; all detection/exit options remain.
+				env := os.Environ()
+				found := false
+				for i, value := range env {
+					if strings.HasPrefix(value, "GORACE=") {
+						env[i] = value + " atexit_sleep_ms=0"
+						found = true
+						break
+					}
+				}
+				if !found {
+					env = append(env, "GORACE=atexit_sleep_ms=0")
+				}
+				return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Env: env, Dir: root}
 			})
 			defer gate.Close()
+			// Provider fixture preparation is separate from stream readiness.
+			// Start the actual write budget only after Python is at the FIFO.
+			prepared := time.After(3 * time.Second)
+			for {
+				if _, err := os.Stat(filepath.Join(f.root, "fixture-ready")); err == nil {
+					break
+				}
+				select {
+				case <-prepared:
+					t.Fatal("provider fixture did not reach FIFO")
+				case <-time.After(time.Millisecond):
+				}
+			}
 			snap, _ := f.handle.Observe(f.binding)
+			authority := processhost.Authority{Binding: f.binding, Connection: snap.Connection}
 			done := make(chan error, 1)
 			go func() {
-				done <- f.handle.Turn(context.Background(), processhost.Authority{Binding: f.binding, Connection: snap.Connection}, "large-first", text)
+				done <- f.handle.Turn(context.Background(), authority, "large-first", text)
 			}()
 			deadline := time.After(3 * time.Second)
 			for {
@@ -1199,12 +1231,21 @@ func TestClaudeProcessFirstLargeWriteAllowsActualSessionStart(t *testing.T) {
 			select {
 			case err := <-done:
 				if err != nil {
-					t.Fatal("write/hook deadlock", err)
+					reg, _ := f.store.LoadReadOnly()
+					pane, _ := reg.Pane(f.binding.Pane)
+					began, _ := os.ReadFile(filepath.Join(f.root, "hook-begin"))
+					duration, _ := os.ReadFile(filepath.Join(f.root, "hook-duration"))
+					t.Fatalf("first write failed: %v; observedSession=%q hookBegin=%s hookDuration=%s", err, pane.Status.ProcessSession.SessionID, began, duration)
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("write did not finish")
 			}
 			f.wait(t, func(s processhost.Snapshot) bool { return s.State == "ready" && s.Turn == "" })
+			duration, err := os.ReadFile(filepath.Join(f.root, "hook-duration"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("provider prepared before write; actual hook duration seconds=%s", duration)
 			reg, err := f.store.LoadReadOnly()
 			if err != nil {
 				t.Fatal(err)
