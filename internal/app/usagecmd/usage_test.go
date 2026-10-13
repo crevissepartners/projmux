@@ -206,6 +206,9 @@ func TestCodexCompactIdentityLabelGolden(t *testing.T) {
 			if want := "X" + strings.TrimPrefix(test.want, "Codex"); shortLabel != want {
 				t.Fatalf("compact short label = %q, want %q", shortLabel, want)
 			}
+			if got := FallbackProvenance(snapshot); got != test.fallback {
+				t.Fatalf("FallbackProvenance = %v, want %v", got, test.fallback)
+			}
 			if got := compactModelFallbackProvenance(snapshot); got != test.fallback {
 				t.Fatalf("fallback provenance = %v, want %v", got, test.fallback)
 			}
