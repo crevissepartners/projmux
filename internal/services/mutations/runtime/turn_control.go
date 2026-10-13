@@ -114,7 +114,9 @@ func (s TurnService) Execute(ctx context.Context, reg metadata.Registry, a metad
 		return out, err
 	}
 	if err = response.Error(); err != nil {
-		out.OutcomeUnknown = response.Code == "timeout" || response.Code == "protocol-error" || strings.HasSuffix(response.Code, "-failed")
+		// Epochs can also collapse a lost steer receipt into stale-turn.
+		// That response is ambiguous; exact pre-write binding refusals stay known.
+		out.OutcomeUnknown = response.Code == "stale-turn" || response.Code == "timeout" || response.Code == "protocol-error" || strings.HasSuffix(response.Code, "-failed")
 		return out, agentcontrol.Recovery(err, b)
 	}
 	out.Accepted = true

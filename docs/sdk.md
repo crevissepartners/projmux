@@ -239,7 +239,10 @@ Cancellation reaches admission, native authority fencing, Registry rechecks and
 bounded transport. Inspect the result even when an error is returned: exact
 refs, turn IDs and observed acceptance survive a later recording failure.
 `OutcomeUnknown` identifies an indeterminate transport or malformed acceptance;
-`Accepted` does not mean provider completion. For explicit process start or
+`Accepted` does not mean provider completion. Control replies may collapse lost
+steer receipts into `stale-turn` or an incomplete process refusal. These ambiguous
+responses conservatively report `OutcomeUnknown`; explicit pre-write binding
+and socket refusals remain known. For explicit process start or
 interrupt, `Operation` and the legacy CLI-compatible `TurnID` identify the host
 request. Deliver/steer typed receipts instead identify the provider turn; a
 public session read observes that provider turn separately. Inspect current identity before

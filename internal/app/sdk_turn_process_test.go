@@ -185,8 +185,12 @@ func TestSDKProcessTurnLostReceiptNoReplay(t *testing.T) {
 	}
 	f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == first.TurnID })
 	lost, err := sdk.DeliverTurn(context.Background(), core.TurnRequest{Ref: ref, Text: "lost"})
-	if err == nil || lost.Accepted {
+	if err == nil || lost.Accepted || !lost.OutcomeUnknown {
 		t.Fatalf("lost %+v %v", lost, err)
+	}
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeTurnStale || !errors.Is(err, processhost.ErrStale) || lost.ThreadID != first.ThreadID || lost.Generation != first.Generation || lost.Operation == "" {
+		t.Fatalf("lost receipt/cause changed %+v %v", lost, err)
 	}
 	starts, steers := 0, 0
 	for _, n := range f.pollWire(t) {

@@ -103,6 +103,10 @@ func CallProcessTurn(ctx context.Context, registryPath string, load func() (meta
 }
 func ProjectProcessTurn(out TurnResult, req TurnRequest, response ProcessTurnResponse) (TurnResult, error) {
 	if err := ProcessTurnAcceptance(response); err != nil {
+		// An all-false response can follow a provider write whose reply was lost.
+		// Closed also does not witness whether admission preceded provider exit.
+		// Only explicit protected/stale/busy/unsupported refusals prove effect0.
+		out.OutcomeUnknown = response.DeleteRefusal == "" && !response.Stale && !response.Busy && !response.Unsupported
 		return out, err
 	}
 	out.Accepted = true

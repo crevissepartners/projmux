@@ -67,6 +67,8 @@ func (c *agentCommand) claudeTurnInterrupter(ctx context.Context, reg coremetada
 	if c.controlRoute == nil || c.controlRunner == nil || c.controlPaths == nil {
 		return runtime.TurnResult{}, fmt.Errorf("claude turn interrupt unavailable: exact tmux route or private state path is not configured")
 	}
+	ctx, cancel := context.WithTimeout(ctx, c.controlTimeoutValue())
+	defer cancel()
 	route, err := c.controlRoute(ctx)
 	if err != nil {
 		return runtime.TurnResult{}, fmt.Errorf("claude turn interrupt unavailable: resolve exact tmux socket: %w", err)
