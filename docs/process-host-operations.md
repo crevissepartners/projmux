@@ -4,6 +4,13 @@
 tmux, for scripts and CI. The creating command is the Agent's **owner**: it
 stays in the foreground by default, and the Agent lives exactly as long as that command.
 Add `--detach` to create an independent owner and return after verified startup.
+Alternatively, save `projmux config agent-host --default process` and omit
+`--host` on new CLI Agent creation, provider shortcuts, or
+`create window --provider claude|codex`. These inferred process creates use
+independent owners by default. Explicit `--host` overrides the preference;
+Agent routes and shortcuts also accept `--detach=false` for foreground lifetime.
+Unsupported tmux topology is refused before creation. Shell-only Windows and
+Panes retain tmux behavior, and direct Window creation has no `--detach` flag.
 For example:
 
 ```sh

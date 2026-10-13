@@ -67,7 +67,9 @@ type resourceCreateFlags struct {
 	labels            repeatedFlag
 	name              string
 	host              string
+	hostSet           bool
 	detach            bool
+	detachSet         bool
 	processWindow     bool
 	placementSet      bool
 	provider          string
@@ -155,7 +157,7 @@ type resourceCreateFlags struct {
 // route that creates an Agent needs the provider. Keeping them grouped is what
 // stops `create window` from silently accepting `--placement`.
 type resourceCreateShape struct {
-	// host is registered by canonical Agent and Window creation.
+	// host is registered by public Agent (including shortcuts) and Window creation.
 	host bool
 	// split registers the Window fan-out and split-anchor surface:
 	// --window, --pane, --selector, --create-window, --placement.
@@ -437,8 +439,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			"surface the Window's first Pane opens with: shell|"+strings.Join(cli.AgentProviders(), "|")+"; omitted means shell")
 	}
 	if shape.host {
-		fs.StringVar(&out.host, "host", "tmux", "tmux (unchanged default) or process (owned foreground; hooks require runtime opt-in)")
-		if spelling == canonicalCreateAgent {
+		fs.StringVar(&out.host, "host", "tmux", "override the central default: tmux or process (explicit process is foreground)")
+		if shape.provider {
 			fs.BoolVar(&out.detach, "detach", false, "process only: return after startup; keep the Agent alive until agent stop or provider exit")
 		}
 	}
@@ -507,6 +509,10 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	profileSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "host":
+			out.hostSet = true
+		case "detach":
+			out.detachSet = true
 		case "profile":
 			profileSet = true
 		case "placement":
@@ -561,7 +567,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 				" --create-window requires at least one exact-name --window <name>; a uid: reference never names a Window to create")
 		}
 	}
-	if out.detach && out.host != "process" {
+	if out.detach && out.hostSet && out.host != "process" {
 		return resourceCreateFlags{}, usageError("create agent: --detach requires --host process; nothing was created")
 	}
 	return out, nil
@@ -719,8 +725,20 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err != nil {
 		return err
 	}
-	if flags.host != "tmux" && flags.host != "process" {
-		return usageError(fmt.Sprintf("create window --host %q requires tmux or process", flags.host))
+	// Shell-only Windows keep their tmux topology regardless of the Agent default.
+	if !flags.hostSet {
+		// Classify the surface before enforcing the tmux-only native Codex
+		// payload restriction below. Process Windows already have that lane.
+		if flags.providerSet && strings.ToLower(strings.TrimSpace(flags.provider)) != aiModeShell {
+			if _, err := requireCanonicalProvider(spelling, flags.provider); err != nil {
+				return err
+			}
+			if err := c.resolveNewAgentHost(spelling, &flags); err != nil {
+				return err
+			}
+		}
+	} else if err := c.resolveNewAgentHost(spelling, &flags); err != nil {
+		return err
 	}
 	if flags.host == "process" {
 		if flags.provider == "" {

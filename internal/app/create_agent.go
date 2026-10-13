@@ -98,19 +98,21 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		spelling = "create " + shortcutProvider
 	}
 
-	shape := resourceCreateShape{split: true, provider: true}
-	var flags resourceCreateFlags
-	var err error
-	if shortcutProvider == "" {
-		flags, err = parseResourceCreateFlags("create agent", args, stderr, resourceCreateShape{split: true, provider: true, host: true})
-	} else {
-		flags, err = parseResourceCreateFlags(spelling, args, stderr, shape)
-	}
+	shape := resourceCreateShape{split: true, provider: true, host: true}
+	flags, err := parseResourceCreateFlags(spelling, args, stderr, shape)
 	if err != nil {
 		return err
 	}
-	if flags.host != "" && flags.host != "tmux" && flags.host != "process" {
-		return usageError(fmt.Sprintf("create agent --host %q requires tmux or process", flags.host))
+	// Validate the shortcut's provider override before selecting any runtime.
+	if shortcutProvider != "" {
+		provider, err := c.resolveCreateProvider(spelling, shortcutProvider, flags)
+		if err != nil {
+			return err
+		}
+		flags.provider = provider
+	}
+	if err := c.resolveNewAgentHost(spelling, &flags); err != nil {
+		return err
 	}
 	if flags.host == "process" {
 		return c.runProcessAgentCLI(flags, stdout, stderr)

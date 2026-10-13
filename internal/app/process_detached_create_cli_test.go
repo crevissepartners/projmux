@@ -26,6 +26,16 @@ import (
 // CombinedOutput must finish without waiting for detached owner stdio. Each
 // provider is a protocol fixture in the existing private, liveguard domain.
 func TestDetachedProcessCreateCLIAndExactStop(t *testing.T) {
+	testDetachedProcessCreateCLIAndExactStop(t, "explicit")
+}
+
+func TestDefaultHostDetachedCreateCLIAndExactStop(t *testing.T) {
+	for _, route := range []string{"agent", "shortcut", "agent-detach", "shortcut-detach", "agent-window", "window"} {
+		t.Run(route, func(t *testing.T) { testDetachedProcessCreateCLIAndExactStop(t, route) })
+	}
+}
+
+func testDetachedProcessCreateCLIAndExactStop(t *testing.T, route string) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
 	}
@@ -41,7 +51,52 @@ func TestDetachedProcessCreateCLIAndExactStop(t *testing.T) {
 				f = newProcessCreateCLI(t)
 				args = f.args()
 			}
-			args = append(args, "--detach", "--", "initial task")
+			if route == "explicit" {
+				args = append(args, "--detach")
+			} else {
+				path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("process\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				// Remove the explicit host, then select every supported public adapter.
+				args = append(args[:2], args[4:]...)
+				if strings.HasPrefix(route, "shortcut") {
+					args[1] = provider
+					for i := 2; i < len(args); i++ {
+						if args[i] == "--provider" {
+							args = append(args[:i], args[i+2:]...)
+							break
+						}
+					}
+				}
+				if route == "agent-window" || route == "window" {
+					for i := 2; i < len(args); i++ {
+						if args[i] == "--window" {
+							args = append(args[:i], args[i+2:]...)
+							break
+						}
+					}
+					if route == "agent-window" {
+						args = append(args, "--create-window", "--window", "new-virtual")
+					} else {
+						args[1] = "window"
+						for i := 2; i < len(args); {
+							if args[i] == "--model" || args[i] == "--effort" {
+								args = append(args[:i], args[i+2:]...)
+							} else {
+								i++
+							}
+						}
+					}
+				}
+			}
+			if strings.HasSuffix(route, "-detach") {
+				args = append(args, "--detach=true")
+			}
+			args = append(args, "--", "initial task")
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 			output, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
@@ -124,6 +179,14 @@ func TestDetachedProcessCreateCLIAndExactStop(t *testing.T) {
 // The parent is a real process-hosted provider fixture, not just a shell whose
 // PID changed. Its whole provider process group exits before we use the child.
 func TestDetachedProcessChildSurvivesParentProviderGroupCLI(t *testing.T) {
+	testProcessChildSurvivesParentProviderGroupCLI(t, false)
+}
+
+func TestDefaultHostProcessChildSurvivesParentProviderGroupCLI(t *testing.T) {
+	testProcessChildSurvivesParentProviderGroupCLI(t, true)
+}
+
+func testProcessChildSurvivesParentProviderGroupCLI(t *testing.T, inferred bool) {
 	for _, scenario := range []struct {
 		provider string
 		signal   syscall.Signal
@@ -143,6 +206,16 @@ func TestDetachedProcessChildSurvivesParentProviderGroupCLI(t *testing.T) {
 			}
 			text := strings.Replace(string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'", 1)
 			branch := "elif prompt=='nested-detached':\n   result=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'create','agent','--host','process','--detach','--project','uid:" + f.project + "','--window','uid:" + f.window + "','--provider','" + provider + "','--profile','none','--name','detached-child','--model','stub-model','--effort','low','--','child initial task'],input='',text=True,capture_output=True)\n   result_path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'detached-result')\n   with open(result_path+'.tmp','w') as result_file:result_file.write(str(result.returncode)+'\\n'+result.stdout+result.stderr)\n   os.replace(result_path+'.tmp',result_path)\n  elif prompt=='register-again':"
+			if inferred {
+				path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("process"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				branch = strings.Replace(branch, "'--host','process','--detach',", "", 1)
+			}
 			if err = os.WriteFile(script, []byte(strings.Replace(text, "elif prompt=='register-again':", branch, 1)), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -603,6 +676,156 @@ func TestDetachedProcessConversationResumeAndTranscriptCLI(t *testing.T) {
 			out, err = exec.CommandContext(ctx, f.binary, "delete", "agent", ref, "--yes").CombinedOutput()
 			if err != nil {
 				t.Fatalf("dialogue delete: %v %s", err, out)
+			}
+		})
+	}
+}
+
+func TestDefaultHostProcessRefusalsBeforeEffectsCLI(t *testing.T) {
+	cases := []struct {
+		name   string
+		route  []string
+		flags  []string
+		prompt bool
+	}{
+		{"unsupported-shortcut", []string{"antigravity"}, nil, true},
+		{"unsupported-agent", []string{"agent", "--provider", "antigravity"}, nil, true},
+		{"unsupported-window", []string{"window", "--provider", "antigravity"}, nil, true},
+		{"pane-anchor", []string{"claude"}, []string{"--pane", "uid:pane-anchor"}, true},
+		{"placement", []string{"claude"}, []string{"--placement", "right"}, true},
+		{"fanout", []string{"claude"}, []string{"--all-windows"}, true},
+		{"pane-id", []string{"claude"}, []string{"-o", "pane-id"}, true},
+		{"interactive", []string{"codex"}, []string{"--interactive-only"}, true},
+		{"window-detach", []string{"window", "--provider", "claude"}, []string{"--detach"}, true},
+		{"shortcut-provider-override", []string{"claude"}, []string{"--provider", "codex"}, true},
+		{"invalid-host", []string{"claude"}, []string{"--host", "invalid"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProcessCreateCLI(t)
+			path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("process"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A tmux spy proves refusal cannot silently materialize a fallback.
+			marker := filepath.Join(f.root, "tmux-called")
+			if err := os.WriteFile(filepath.Join(f.root, "tmux"), []byte("#!/bin/sh\ntouch "+marker+"\nexit 99\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"create"}, tc.route...)
+			args = append(args, "--project", "uid:"+f.project)
+			args = append(args, tc.flags...)
+			if tc.prompt {
+				args = append(args, "--", "initial task")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.binary, args...)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err == nil || ctx.Err() != nil {
+				t.Fatalf("expected bounded refusal: %v %s", err, stderr.String())
+			}
+			after, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stdout.Len() != 0 || stderr.Len() == 0 || !reflect.DeepEqual(before, after) {
+				t.Fatalf("refusal effects stdout=%q stderr=%q registryEqual=%v", stdout.String(), stderr.String(), reflect.DeepEqual(before, after))
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("tmux fallback: %v", err)
+			}
+		})
+	}
+}
+
+// The source correction in the public contract preserves promptless behavior:
+// inferred lifetime must expose exactly the same result as explicit detachment.
+func TestPromptlessClaudeDefaultHostMatchesExplicitDetachedCLI(t *testing.T) {
+	for _, mode := range []string{"", "receipt"} {
+		t.Run(mode, func(t *testing.T) {
+			var baseline string
+			for _, inferred := range []bool{false, true} {
+				t.Run(fmt.Sprint(inferred), func(t *testing.T) {
+					f := newProcessCreateCLI(t)
+					args := f.args()
+					if inferred {
+						path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
+						if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(path, []byte("process"), 0600); err != nil {
+							t.Fatal(err)
+						}
+						args = append(args[:2], args[4:]...)
+					} else {
+						args = append(args, "--detach")
+					}
+					if mode != "" {
+						args = append(args, "-o", mode)
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+					defer cancel()
+					cmd := exec.CommandContext(ctx, f.binary, args...)
+					var stdout, stderr bytes.Buffer
+					cmd.Stdout = &stdout
+					cmd.Stderr = &stderr
+					if err := cmd.Run(); err != nil {
+						t.Fatalf("promptless create: %v %s", err, stderr.String())
+					}
+					reg, err := f.store.LoadReadOnly()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(reg.Agents) != 1 {
+						t.Fatalf("resource result: %+v", reg.Agents)
+					}
+					agent := reg.Agents[0]
+					pane, ok := reg.Pane(agent.Status.PaneRef)
+					if !ok {
+						t.Fatal("missing pane")
+					}
+					ref := "uid:" + agent.Metadata.UID
+					t.Cleanup(func() {
+						cleanup, stop := context.WithTimeout(context.Background(), 12*time.Second)
+						defer stop()
+						_, _ = exec.CommandContext(cleanup, f.binary, "agent", "stop", ref).CombinedOutput()
+					})
+					// IDs and timestamps vary between independent creations; the observable
+					// stdout grammar, receipt fields, owner links and resource specs do not.
+					normalized := strings.NewReplacer(agent.Metadata.UID, "AGENT", pane.Metadata.UID, "PANE", f.project, "PROJECT", f.window, "WINDOW").Replace(stdout.String())
+					if mode == "receipt" {
+						var receipt map[string]any
+						if err := json.Unmarshal([]byte(normalized), &receipt); err != nil {
+							t.Fatal(err)
+						}
+						raw, _ := json.Marshal(receipt)
+						normalized = string(raw)
+					}
+					shape := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", agent.Metadata.Name, agent.Metadata.OwnerRef.Kind, pane.Metadata.Name, pane.Metadata.OwnerRef.Kind, pane.Spec.Runtime.Kind, pane.Spec.Role, agent.Spec.Provider)
+					got := normalized + "\n" + shape
+					if !inferred {
+						baseline = got
+					} else if got != baseline {
+						t.Fatalf("promptless parity\ngot %s\nwant %s", got, baseline)
+					}
+					if pane.Metadata.OwnerUID() != agent.Metadata.UID || pane.Status.ProcessSession.Binding.AgentUID != agent.Metadata.UID {
+						t.Fatal("resource binding diverged")
+					}
+					out, err := exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
+					if err != nil {
+						t.Fatalf("stop: %v %s", err, out)
+					}
+				})
 			}
 		})
 	}
