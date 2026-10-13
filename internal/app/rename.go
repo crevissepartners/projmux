@@ -50,6 +50,14 @@ func newRenameCommand() *renameCommand {
 	}
 }
 
+// withoutActiveTarget disables contextual fallback and managed-root narrowing
+// for callers whose ambient target does not identify the requester's scope.
+func (c *renameCommand) withoutActiveTarget() {
+	if c != nil {
+		c.activeTarget = nil
+	}
+}
+
 // Run dispatches one `rename <kind>` invocation.
 func (c *renameCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {

@@ -106,6 +106,15 @@ func (p creatorProvenance) reportSkip(stderr io.Writer) {
 	_, _ = fmt.Fprintf(stderr, creatorNotRecordedDiagnosticFmt, p.skip)
 }
 
+// withoutCreatorProvenance disables ambient creator observation for a caller
+// whose inherited environment and process ancestry do not identify its requester.
+// Explicit creator declarations retain their existing validation and precedence.
+func (c *createCommand) withoutCreatorProvenance() {
+	if c != nil {
+		c.processAncestors = nil
+	}
+}
+
 // observeCreator runs the pane-chain checks against the transaction's working
 // Registry, which reconcile has already refreshed. It never fails the create.
 func (c *createCommand) observeCreator(ctx context.Context, working *coremetadata.Registry) creatorProvenance {
@@ -429,10 +438,20 @@ const (
 func (c *createCommand) observeProcessCreator(working *coremetadata.Registry) creatorProvenance {
 	// The existing ancestry seam is also the in-process opt-out from ambient
 	// provenance. Honor it for both pane and process observations.
-	if c == nil || working == nil || c.processAncestors == nil || c.processCreatorAncestors == nil {
+	if c == nil || c.processAncestors == nil {
 		return creatorProvenance{}
 	}
-	chain, err := c.processCreatorAncestors()
+	return observeProcessChainActor(working, c.processCreatorAncestors)
+}
+
+// observeProcessChainActor identifies the nearest live provider child in the
+// caller's process ancestry, bound to exactly one current Agent and Pane.
+// A skip token describes refused evidence; a partial walk never proves an actor.
+func observeProcessChainActor(working *coremetadata.Registry, ancestors func() ([]coremetadata.ProcessIdentity, error)) creatorProvenance {
+	if working == nil || ancestors == nil {
+		return creatorProvenance{}
+	}
+	chain, err := ancestors()
 	// A partial walk is not evidence: no guessed ancestry on read failure.
 	if err != nil || len(chain) == 0 || len(chain) > creatorProcessChainMaxSteps {
 		// A partially observed provider candidate deserves a stable diagnostic;

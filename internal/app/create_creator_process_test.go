@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"reflect"
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -33,7 +34,11 @@ func processCreatorFixture(t *testing.T) (*createCommand, coremetadata.Registry,
 func TestProcessCreatorRespectsProvenanceOptOut(t *testing.T) {
 	c, reg, _ := processCreatorFixture(t)
 	owner := reg.Panes[len(reg.Panes)-1].Metadata.OwnerUID()
-	c.processAncestors = nil
+	c.lookupEnv = func(string) string {
+		t.Fatal("opted-out caller observed ambient environment")
+		return ""
+	}
+	c.withoutCreatorProvenance()
 	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
 		t.Fatal("opted-out caller observed ambient processes")
 		return nil, nil
@@ -49,6 +54,13 @@ func TestProcessCreatorRespectsProvenanceOptOut(t *testing.T) {
 		if declared != "" && (record.basis != coremetadata.CreatorBasisExplicit || record.agentUID != owner) {
 			t.Fatalf("explicit creator lost: %+v", record)
 		}
+	}
+	before := reg.Clone()
+	if _, err := c.decideCreator(context.Background(), canonicalCreateAgent, &reg, "missing"); err == nil || !IsUsageError(err) {
+		t.Fatalf("missing explicit creator = %v, want usage refusal", err)
+	}
+	if !reflect.DeepEqual(reg, before) {
+		t.Fatal("creator observation changed the Registry")
 	}
 }
 
@@ -164,6 +176,13 @@ func TestProcessCreatorRejectsStaleAndUnrelatedEvidence(t *testing.T) {
 			c, r, id := processCreatorFixture(t)
 			test.mutate(c, &r, id)
 			got := c.observeCreator(context.Background(), &r)
+			before := r.Clone()
+			if actor := observeProcessChainActor(&r, c.processCreatorAncestors); actor != got {
+				t.Fatalf("shared actor %+v differs from creator %+v", actor, got)
+			}
+			if !reflect.DeepEqual(r, before) {
+				t.Fatal("actor observation changed the Registry")
+			}
 			if got.recorded() || got.skip != test.skip {
 				t.Fatalf("got %+v want skip %q", got, test.skip)
 			}
@@ -202,14 +221,17 @@ func TestProcessCreatorSelectsNearestValidProviderChild(t *testing.T) {
 	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
 		return []coremetadata.ProcessIdentity{nearer, child}, nil
 	}
-	got := c.observeCreator(context.Background(), &reg)
+	got := observeProcessChainActor(&reg, c.processCreatorAncestors)
+	if control := c.observeCreator(context.Background(), &reg); control != got {
+		t.Fatalf("shared actor %+v differs from creator %+v", got, control)
+	}
 	if got.paneUID != pane.Metadata.UID {
 		t.Fatalf("nearest child lost to Registry ordering: %+v", got)
 	}
 	c.processCreatorAncestors = func() ([]coremetadata.ProcessIdentity, error) {
 		return []coremetadata.ProcessIdentity{child, nearer}, nil
 	}
-	got = c.observeCreator(context.Background(), &reg)
+	got = observeProcessChainActor(&reg, c.processCreatorAncestors)
 	if got.paneUID != original.Metadata.UID {
 		t.Fatalf("reversed ancestry: %+v", got)
 	}
@@ -217,8 +239,39 @@ func TestProcessCreatorSelectsNearestValidProviderChild(t *testing.T) {
 		return []coremetadata.ProcessIdentity{nearer, child}, nil
 	}
 	reg.Panes[len(reg.Panes)-1].Status.Activation.Generation = "stale"
-	got = c.observeCreator(context.Background(), &reg)
+	got = observeProcessChainActor(&reg, c.processCreatorAncestors)
 	if got.paneUID != original.Metadata.UID {
 		t.Fatalf("stale nearest child hid valid farther child: %+v", got)
+	}
+}
+
+func TestProcessChainActorRequiresCompleteObservationInputs(t *testing.T) {
+	_, reg, child := processCreatorFixture(t)
+	for _, tc := range []struct {
+		name      string
+		registry  *coremetadata.Registry
+		ancestors func() ([]coremetadata.ProcessIdentity, error)
+	}{
+		{"nil registry", nil, func() ([]coremetadata.ProcessIdentity, error) {
+			t.Fatal("nil Registry observed ancestry")
+			return nil, nil
+		}},
+		{"nil ancestry", &reg, nil},
+		{"empty walk", &reg, func() ([]coremetadata.ProcessIdentity, error) { return nil, nil }},
+		{"unrelated partial walk", &reg, func() ([]coremetadata.ProcessIdentity, error) {
+			return []coremetadata.ProcessIdentity{{PID: 999, OwnerUID: child.OwnerUID, Start: "other"}}, errors.New("partial")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := observeProcessChainActor(tc.registry, tc.ancestors); got != (creatorProvenance{}) {
+				t.Fatalf("actor = %+v", got)
+			}
+		})
+	}
+	chain := make([]coremetadata.ProcessIdentity, creatorProcessChainMaxSteps+1)
+	chain[0] = child
+	got := observeProcessChainActor(&reg, func() ([]coremetadata.ProcessIdentity, error) { return chain, nil })
+	if got.recorded() || got.skip != creatorSkipProcessUnobservable {
+		t.Fatalf("overlong walk actor = %+v", got)
 	}
 }
