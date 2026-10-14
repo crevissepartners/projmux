@@ -155,6 +155,9 @@ type Handle struct {
 	interruptAck           bool
 	usedTurns              map[string]bool
 	usedTurnOrder          []string
+	asyncQuestions         []AsyncQuestion
+	asyncQuestionTimer     *time.Timer
+	asyncTimerGeneration   uint64
 	requests               map[string]Request
 	usedRequests           map[string]bool
 	seq                    uint64
@@ -193,6 +196,7 @@ type Snapshot struct {
 	MessageReservation, Provider              string
 	PID, SupervisorPID                        int
 	Sequence                                  uint64
+	AsyncQuestions                            []AsyncQuestion
 	Pending                                   []Request
 	Diagnostic                                string
 	Exit                                      *Exit
@@ -546,6 +550,10 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	_ = stderr.Close()
 	p.mu.Lock()
 	p.expireLocked()
+	p.stopAsyncQuestionTimerLocked()
+	for i := range p.asyncQuestions {
+		p.asyncQuestions[i].Closed = true
+	}
 	if actual != nil && waitErr == nil {
 		p.exit, p.state = actual, "exited"
 		p.clearMessageReservationLocked()
@@ -640,6 +648,10 @@ func (p *Handle) stopWithIntent(ownerInitiated bool) {
 			p.state = "stopping"
 		}
 		p.expireLocked()
+		p.stopAsyncQuestionTimerLocked()
+		for i := range p.asyncQuestions {
+			p.asyncQuestions[i].Closed = true
+		}
 		p.changedLocked()
 		// Deliver provider EOF before asking the supervisor to start its bounded
 		// shutdown. Admission and pending control are already closed above.
@@ -733,6 +745,7 @@ func (p *Handle) snapshotLocked() Snapshot {
 	for _, req := range p.requests {
 		s.Pending = append(s.Pending, cloneRequest(req))
 	}
+	s.AsyncQuestions = p.asyncSnapshotLocked()
 	return s
 }
 

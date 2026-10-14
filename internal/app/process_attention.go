@@ -173,6 +173,8 @@ func (r *processAttentionRecord) applyEvent(event processhost.Event) (string, er
 			kind = aibadge.InputRequired
 		}
 		r.Pending[event.Request.ID] = processAttentionPending{Kind: kind, Sequence: event.Sequence}
+	case "async-question":
+		kind = aibadge.InputRequired
 	case "turn-result":
 		r.PendingEnded = false
 		r.Badge, kind = aibadge.ResponseComplete, aibadge.ResponseComplete
@@ -198,12 +200,29 @@ func (r *processAttentionRecord) applyEvent(event processhost.Event) (string, er
 }
 
 func (r *processAttentionRecord) reconcilePending(snap processhost.Snapshot, push func(notify.PushInput) error) error {
+	if len(snap.AsyncQuestions) > 0 && snap.Binding != r.Binding {
+		return processhost.ErrStale
+	}
 	previous := r.Pending
 	r.Pending = map[string]processAttentionPending{}
 	if snap.Exit != nil || snap.State == "unknown" || snap.State == "failed" {
 		r.Terminal = true
 	}
 	if !r.Terminal {
+		for _, q := range snap.AsyncQuestions {
+			if q.Closed {
+				continue
+			}
+			id := "async:" + codexAsyncQuestionID(snap.Binding, q.Request)
+			pending, exists := previous[id]
+			if !exists {
+				pending = processAttentionPending{Kind: aibadge.InputRequired, Sequence: q.Sequence}
+				if err := push(processAttentionInput(*r, pending.Sequence, pending.Kind)); err != nil {
+					return err
+				}
+			}
+			r.Pending[id] = pending
+		}
 		for _, request := range snap.Pending {
 			kind := aibadge.ApprovalRequired
 			if request.Kind == "question" {

@@ -154,6 +154,7 @@ func ValidID(id string) bool { return idPattern.MatchString(id) }
 type Record struct {
 	ID          string            `json:"id"`
 	Provider    string            `json:"provider,omitempty"`
+	Delivery    string            `json:"delivery,omitempty"`
 	AgentUID    string            `json:"agentUID"`
 	PaneUID     string            `json:"paneUID,omitempty"`
 	SessionID   string            `json:"sessionID,omitempty"`
@@ -451,6 +452,9 @@ func refusalFor(record Record) error {
 	}
 	switch record.State {
 	case StateWaiting:
+		if record.Delivery == "async" {
+			return ErrNotPending
+		}
 		return nil
 	case StateAnswered:
 		return ErrNotPending
@@ -644,6 +648,9 @@ func pruneRecords(records []Record, now time.Time, incoming int) ([]Record, erro
 }
 
 func validRecord(record Record) bool {
+	if record.Delivery != "" && (record.Delivery != "async" || record.Provider != "codex" || record.State == StateAnswered || len(record.Answers) != 0) {
+		return false
+	}
 	if !ValidID(record.ID) || strings.TrimSpace(record.AgentUID) == "" || record.CreatedAt.IsZero() ||
 		record.Deadline.IsZero() || record.UpdatedAt.IsZero() {
 		return false

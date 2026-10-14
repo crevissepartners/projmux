@@ -763,6 +763,11 @@ func (c *codexAdapter) consumeLocked(n codexappserver.Notification) error {
 		p.emitLocked("control-pending", nil, &copy)
 		return nil
 	}
+	if n.Method == "item/started" || n.Method == "item/completed" {
+		if collected, err := c.collectAsyncQuestionLocked(n); collected || err != nil {
+			return err
+		}
+	}
 	switch n.Method {
 	case "thread/tokenUsage/updated", "thread/goal/updated":
 		// Session telemetry may refer to the completed root turn, including

@@ -72,6 +72,14 @@ func processQuestionPrompts(provider string, request processhost.Request) ([]age
 func exactQuestionViews(provider string, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store) ([]ExactProcessQuestion, error) {
 	views := []ExactProcessQuestion{}
 	for id, r := range records {
+		if provider == aiModeCodex && r.Kind == "async-question" {
+			view, err := asyncQuestionView(id, r, store)
+			if err != nil {
+				return nil, err
+			}
+			views = append(views, view)
+			continue
+		}
 		if r.Kind != "question" {
 			continue
 		}
@@ -248,6 +256,11 @@ func applyExactProcessQuestions(ctx context.Context, peer coremetadata.ProcessId
 
 // Query admission is question-only: it never consumes an approval or message.
 func captureExactQuestions(provider string, b processhost.Binding, snap processhost.Snapshot, records *map[string]processhost.Request, native *map[string]bool, resolver func() config.AgentQuestionAnswering, store *agentquestion.Store, window time.Duration, now func() time.Time) error {
+	if provider == aiModeCodex {
+		if err := captureAsyncQuestions(b, snap, records, store, window); err != nil {
+			return err
+		}
+	}
 	if snap.State != "ready" || now == nil || store == nil {
 		return processhost.ErrStale
 	}
