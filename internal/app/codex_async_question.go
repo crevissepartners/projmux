@@ -83,6 +83,11 @@ func captureAsyncQuestions(b processhost.Binding, snap processhost.Snapshot, rec
 		return err
 	}
 	for _, record := range all {
+		// A retiring controller owns only its generation and endpoint. A new
+		// controller may already have registered questions for the same Agent.
+		if record.Generation != b.Generation || record.PaneUID != b.Pane || record.SessionID != snap.Session {
+			continue
+		}
 		if record.Delivery == "async" && (!retained[record.ID] || snap.State != "ready" || snap.Exit != nil) {
 			if _, err = store.Close(record.ID, agentquestion.CloseReason("process-stale")); err != nil {
 				return err

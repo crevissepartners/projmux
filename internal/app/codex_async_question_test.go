@@ -172,14 +172,64 @@ func TestCodexAsyncProjectionCapacityFailureAndGenerationFence(t *testing.T) {
 	id := codexAsyncQuestionID(b, snap.AsyncQuestions[0].Request)
 	replacement := b
 	replacement.Generation = "new-generation"
-	snap.Binding = replacement
+	// The old controller fences its own records when Registry routing is lost.
+	snap.State = "unknown"
 	snap.AsyncQuestions = nil
-	if err = captureAsyncQuestions(replacement, snap, &records, fresh, time.Minute); err != nil {
+	if err = captureAsyncQuestions(b, snap, &records, fresh, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	closed, _, err := fresh.Get(id)
 	if err != nil || closed.State != agentquestion.StateClosed || len(records) != 0 {
 		t.Fatal("replacement retained old question", err)
+	}
+	snap.Binding, snap.State = replacement, "ready"
+	if err = captureAsyncQuestions(replacement, snap, &records, fresh, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodexAsyncRetiringControllerPreservesOtherEndpoint(t *testing.T) {
+	for _, difference := range []string{"generation", "pane", "session"} {
+		t.Run(difference, func(t *testing.T) {
+			b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "old-generation", Operation: "operation"}
+			now := time.Now().UTC()
+			store := agentquestion.NewStore(t.TempDir()).WithClock(func() time.Time { return now })
+			q := processhost.AsyncQuestion{CreatedAt: now, Request: processhost.Request{ID: "call_old", Session: "thread", Connection: "connection", Turn: "turn", Kind: "async-question", Input: json.RawMessage(`[{"id":"q1","question":"Choose","isOther":true,"options":[]}]`)}}
+			snap := processhost.Snapshot{Binding: b, State: "ready", Session: q.Request.Session, Connection: q.Request.Connection, AsyncQuestions: []processhost.AsyncQuestion{q}}
+			var records map[string]processhost.Request
+			if err := captureAsyncQuestions(b, snap, &records, store, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			otherBinding, otherRequest := b, q.Request
+			otherRequest.ID = "call_new"
+			switch difference {
+			case "generation":
+				otherBinding.Generation = "new-generation"
+			case "pane":
+				otherBinding.Pane = "other-pane"
+			case "session":
+				otherRequest.Session = "other-thread"
+			}
+			otherID := codexAsyncQuestionID(otherBinding, otherRequest)
+			other, err := store.Create(agentquestion.Record{ID: otherID, Provider: aiModeCodex, Delivery: "async", AgentUID: b.Agent, PaneUID: otherBinding.Pane, Generation: otherBinding.Generation, SessionID: otherRequest.Session, RequestID: otherRequest.ID, ToolUseID: otherRequest.Turn, Questions: otherRequest.Input, CreatedAt: now, Deadline: now.Add(time.Minute)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _ := json.Marshal(other)
+			snap.State = "unknown"
+			if err = captureAsyncQuestions(b, snap, &records, store, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			old, _, err := store.Get(codexAsyncQuestionID(b, q.Request))
+			if err != nil || old.State != agentquestion.StateClosed || len(records) != 0 {
+				t.Fatal("old endpoint was not fenced", old, err)
+			}
+			after, found, err := store.Get(otherID)
+			afterJSON, _ := json.Marshal(after)
+			if err != nil || !found || after.State != agentquestion.StateWaiting || string(before) != string(afterJSON) {
+				t.Fatal("retiring controller changed another endpoint", after, err)
+			}
+		})
 	}
 }
 
