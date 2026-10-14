@@ -82,6 +82,7 @@ func (r *processAgentResumeResult) fail(cause error) error {
 		cancel()
 		_, err := r.owner.waitProcessAgent(ctx, nil)
 		cause = errors.Join(cause, err)
+		cause = errors.Join(cause, r.restoreFailedStartSettings())
 	}
 	if r.Binding.Agent == "" {
 		return cause
