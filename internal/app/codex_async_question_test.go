@@ -26,7 +26,7 @@ func TestCodexAsyncStableExactKeyAndDeadline(t *testing.T) {
 	b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "generation", Operation: "operation"}
 	now := time.Now().UTC()
 	clock := now
-	store := agentquestion.NewStore(filepath.Join(t.TempDir(), "store")).WithClock(func() time.Time { return clock })
+	store := agentquestion.NewStore(filepath.Join(t.TempDir(), "store")).AsyncStore().WithClock(func() time.Time { return clock })
 	q := processhost.AsyncQuestion{CreatedAt: now, Request: processhost.Request{ID: "call_item", Session: "thread", Connection: "connection", Turn: "turn", Kind: "async-question", Input: json.RawMessage(`[{"id":"q1","question":"Text only","options":[],"isOther":true}]`)}}
 	snap := processhost.Snapshot{Binding: b, State: "ready", Session: "thread", Connection: "connection", Turn: "turn", AsyncQuestions: []processhost.AsyncQuestion{q}}
 	var records map[string]processhost.Request
@@ -139,12 +139,12 @@ for line in sys.stdin:
 
 func TestCodexAsyncProjectionCapacityFailureAndGenerationFence(t *testing.T) {
 	b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "generation", Operation: "operation"}
-	store := agentquestion.NewStore(t.TempDir())
+	store := agentquestion.NewStore(t.TempDir()).AsyncStore()
 	now := time.Now().UTC()
 	input := json.RawMessage(`[{"id":"q1","question":"Choose","isOther":true,"options":[]}]`)
 	for i := range 64 {
 		id := fmt.Sprintf("question-%016x", i)
-		if _, err := store.Create(agentquestion.Record{ID: id, Provider: "codex", AgentUID: "other", Questions: input, CreatedAt: now, Deadline: now.Add(time.Hour)}); err != nil {
+		if _, err := store.Create(agentquestion.Record{ID: id, Provider: "codex", Delivery: "async", AgentUID: "other", Questions: input, CreatedAt: now, Deadline: now.Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -158,14 +158,17 @@ func TestCodexAsyncProjectionCapacityFailureAndGenerationFence(t *testing.T) {
 		t.Fatal("failed capture persisted", err)
 	}
 	// Store read errors are surfaced and cannot produce success metadata.
-	bad := agentquestion.NewStoreAt(filepath.Join(t.TempDir(), "malformed.json"))
+	bad := agentquestion.NewStoreAt(filepath.Join(t.TempDir(), "malformed.json")).AsyncStore()
+	if err = os.MkdirAll(filepath.Dir(bad.Path()), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err = os.WriteFile(bad.Path(), []byte("not-json"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err = captureAsyncQuestions(b, snap, &records, bad, time.Minute); !errors.Is(err, agentquestion.ErrMalformedStore) {
 		t.Fatal(err)
 	}
-	fresh := agentquestion.NewStore(t.TempDir())
+	fresh := agentquestion.NewStore(t.TempDir()).AsyncStore()
 	if err = captureAsyncQuestions(b, snap, &records, fresh, time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +196,7 @@ func TestCodexAsyncRetiringControllerPreservesOtherEndpoint(t *testing.T) {
 		t.Run(difference, func(t *testing.T) {
 			b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "old-generation", Operation: "operation"}
 			now := time.Now().UTC()
-			store := agentquestion.NewStore(t.TempDir()).WithClock(func() time.Time { return now })
+			store := agentquestion.NewStore(t.TempDir()).AsyncStore().WithClock(func() time.Time { return now })
 			q := processhost.AsyncQuestion{CreatedAt: now, Request: processhost.Request{ID: "call_old", Session: "thread", Connection: "connection", Turn: "turn", Kind: "async-question", Input: json.RawMessage(`[{"id":"q1","question":"Choose","isOther":true,"options":[]}]`)}}
 			snap := processhost.Snapshot{Binding: b, State: "ready", Session: q.Request.Session, Connection: q.Request.Connection, AsyncQuestions: []processhost.AsyncQuestion{q}}
 			var records map[string]processhost.Request
@@ -236,7 +239,7 @@ func TestCodexAsyncRetiringControllerPreservesOtherEndpoint(t *testing.T) {
 func TestCodexAsyncAbsentDoesNotReadBlockingStoreClock(t *testing.T) {
 	b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "generation", Operation: "operation"}
 	calls := 0
-	store := agentquestion.NewStore(t.TempDir()).WithClock(func() time.Time { calls++; return time.Now() })
+	store := agentquestion.NewStore(t.TempDir()).AsyncStore().WithClock(func() time.Time { calls++; return time.Now() })
 	var records map[string]processhost.Request
 	snap := processhost.Snapshot{Binding: b, State: "ready", Session: "thread", Connection: "connection"}
 	if err := captureAsyncQuestions(b, snap, &records, store, time.Minute); err != nil {

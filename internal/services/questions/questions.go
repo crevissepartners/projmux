@@ -128,7 +128,18 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 	if err != nil {
 		return List{}, fmt.Errorf("%s: %w", request.Spelling, err)
 	}
-	records, err := store.List(agent.Metadata.UID)
+	readRecords := func() ([]agentquestion.Record, error) {
+		legacy, err := store.List(agent.Metadata.UID)
+		if err != nil {
+			return nil, err
+		}
+		async, err := store.AsyncStore().List(agent.Metadata.UID)
+		if err != nil {
+			return nil, err
+		}
+		return append(legacy, async...), nil
+	}
+	records, err := readRecords()
 	if err != nil {
 		return List{}, fmt.Errorf("%s: %w", request.Spelling, err)
 	}
@@ -151,7 +162,7 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 		if err != nil {
 			return List{}, err
 		}
-		records, err = store.List(agent.Metadata.UID)
+		records, err = readRecords()
 		if err != nil {
 			return List{}, err
 		}
@@ -251,6 +262,13 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 	record, found, err := store.Get(request.QuestionID)
 	if err != nil {
 		return AnswerResult{}, fmt.Errorf("%s: %w", request.Spelling, err)
+	}
+	asyncRecord, asyncFound, err := store.AsyncStore().Get(request.QuestionID)
+	if err != nil {
+		return AnswerResult{}, fmt.Errorf("%s: %w", request.Spelling, err)
+	}
+	if asyncFound {
+		record, found = asyncRecord, true
 	}
 	if !found || record.AgentUID != agent.Metadata.UID {
 		return AnswerResult{}, refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.QuestionID))

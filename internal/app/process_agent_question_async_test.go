@@ -59,7 +59,7 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 			t.Fatal("SDK parity", err)
 		}
 		beforeWire, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-		beforeStore, _ := os.ReadFile(f.control.questions.Path())
+		beforeStore, _ := os.ReadFile(f.control.questions.AsyncStore().Path())
 		err = command.answerQuestion(agentQuestionRequest{spelling: "agent question answer", questionID: q.ID, texts: []string{"1=explicit answer"}}, *agent, nil, &out)
 		if err == nil {
 			t.Fatal("CLI async answer accepted")
@@ -72,7 +72,7 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 			t.Fatal("direct callback", err)
 		}
 		afterWire, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-		afterStore, _ := os.ReadFile(f.control.questions.Path())
+		afterStore, _ := os.ReadFile(f.control.questions.AsyncStore().Path())
 		if !bytes.Equal(beforeWire, afterWire) || !bytes.Equal(beforeStore, afterStore) {
 			t.Fatal("answer refusal had effects")
 		}
@@ -102,7 +102,7 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = f.control.syncControls(context.Background())
-		closed, _, err := f.control.questions.Get(q.ID)
+		closed, _, err := f.control.questions.AsyncStore().Get(q.ID)
 		if err != nil || closed.State != agentquestion.StateClosed {
 			t.Fatal("exit did not fence", err)
 		}

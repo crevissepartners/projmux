@@ -41,6 +41,7 @@ func captureAsyncQuestions(b processhost.Binding, snap processhost.Snapshot, rec
 			return nil
 		}
 	}
+	store = store.AsyncStore()
 	retained := map[string]bool{}
 	for _, q := range snap.AsyncQuestions {
 		r := q.Request
@@ -99,7 +100,7 @@ func captureAsyncQuestions(b processhost.Binding, snap processhost.Snapshot, rec
 }
 
 func asyncQuestionView(id string, r processhost.Request, store *agentquestion.Store) (ExactProcessQuestion, error) {
-	record, found, err := store.Get(id)
+	record, found, err := store.AsyncStore().Get(id)
 	if err != nil {
 		return ExactProcessQuestion{}, err
 	}
@@ -119,7 +120,7 @@ func (c *codexProcessControl) captureAsyncSnapshot(snap processhost.Snapshot) er
 		return err
 	}
 	for _, q := range snap.AsyncQuestions {
-		record, found, err := c.questions.Get(codexAsyncQuestionID(c.endpoint.binding, q.Request))
+		record, found, err := c.questions.AsyncStore().Get(codexAsyncQuestionID(c.endpoint.binding, q.Request))
 		if err != nil {
 			return err
 		}

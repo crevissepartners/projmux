@@ -32,7 +32,7 @@ func (d *asyncSDKDispatcher) AnswerExactProcessQuestion(context.Context, string,
 func TestSDKAsyncQuestionsReadAndAnswerRefusal(t *testing.T) {
 	c, reg, uid, puid := sdkStopFixture(t)
 	p, _ := reg.Pane(puid)
-	st := agentquestion.NewStore(c.paths.StateDir)
+	st := agentquestion.NewStore(c.paths.StateDir).AsyncStore()
 	r, err := st.Create(agentquestion.Record{ID: "question-0000000000000001", AgentUID: uid, PaneUID: puid, Provider: "codex", Delivery: "async", SessionID: p.Status.ProcessSession.ThreadID, Generation: p.Status.ProcessSession.Binding.Generation, Questions: json.RawMessage(`[{"id":"q1","question":"Choose a color","isOther":true,"options":[{"label":"cobalt"},{"label":"amber"}]}]`), Deadline: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)

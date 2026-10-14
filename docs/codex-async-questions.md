@@ -37,3 +37,21 @@ and send it through Codex's ordinary user input (`turn/steer` while active,
 or acknowledgement in this contract. Native input acceptance confirms receipt
 of input, not model consumption or a completed question answer. Peer messages
 are coordination and do not submit operator answers.
+
+Async records use `<state>/agent-questions/.async/questions.json`, with their
+own directory, flock, and atomic temporary files. The legacy
+`agent-questions/questions.json` retains its existing format and bytes when
+async metadata is written. Older running controllers can continue to read
+that legacy file; upgrading does not require resuming or retiring all Agents.
+Each namespace rejects records belonging to the other namespace, and read
+errors from either file are surfaced.
+
+The legacy persistent budget remains 64 records / 2 MiB. The async namespace
+adds a separate 64 records / 2 MiB budget, for a combined 128 records / 4 MiB,
+excluding atomic temporary-file peaks. Host request, turn, and queue limits
+remain unchanged. Both stores retain terminal history for 24 hours and prune
+it on subsequent writes or to make room at capacity. Process exit and lost
+ownership fence async questions; Agent deletion and Project stop use those
+existing process barriers. Canonical history files and reusable flock files
+remain in the state directory, following the legacy retention policy. No new
+Agent-delete or Project-stop file-deletion path is added.

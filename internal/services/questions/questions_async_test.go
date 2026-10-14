@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,7 +30,7 @@ func (d *asyncReadDispatcher) AnswerExactProcessQuestion(context.Context, string
 
 func TestAsyncServiceListAndAnswerOfflineAndExact(t *testing.T) {
 	st := agentquestion.NewStore(t.TempDir())
-	r, err := st.Create(agentquestion.Record{ID: "question-0000000000000001", Provider: "codex", Delivery: "async", AgentUID: "agent", PaneUID: "pane", SessionID: "thread", Generation: "generation", Questions: json.RawMessage(`[{"id":"q1","question":"Choose","isOther":true,"options":[{"label":"cobalt"},{"label":"amber"}]}]`), Deadline: time.Now().Add(time.Minute)})
+	r, err := st.AsyncStore().Create(agentquestion.Record{ID: "question-0000000000000001", Provider: "codex", Delivery: "async", AgentUID: "agent", PaneUID: "pane", SessionID: "thread", Generation: "generation", Questions: json.RawMessage(`[{"id":"q1","question":"Choose","isOther":true,"options":[{"label":"cobalt"},{"label":"amber"}]}]`), Deadline: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,13 +50,67 @@ func TestAsyncServiceListAndAnswerOfflineAndExact(t *testing.T) {
 		if err != nil || len(list.Questions) != 1 || list.Questions[0].CanAnswer || list.Questions[0].Delivery != "async" || !list.Questions[0].Prompts[0].IsOther {
 			t.Fatal(list, err)
 		}
-		before, _ := os.ReadFile(st.Path())
+		before, _ := os.ReadFile(st.AsyncStore().Path())
 		if _, err = service.Answer(context.Background(), Request{Spelling: "agent question answer", QuestionID: r.ID, Texts: []string{"1=answer"}}, a); err == nil {
 			t.Fatal("answer accepted")
 		}
-		after, _ := os.ReadFile(st.Path())
+		after, _ := os.ReadFile(st.AsyncStore().Path())
 		if !bytes.Equal(before, after) || dispatcher.answers != 0 {
 			t.Fatal("answer effects")
 		}
+	}
+}
+
+func TestAsyncServiceMergedNamespacesAndReadFailures(t *testing.T) {
+	st := agentquestion.NewStore(t.TempDir())
+	now := time.Now().UTC()
+	legacy, err := st.Create(agentquestion.Record{ID: "question-0000000000000001", Provider: "codex", AgentUID: "agent", Questions: json.RawMessage(`[{"id":"q1","question":"Legacy","options":[]}]`), Deadline: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	async, err := st.AsyncStore().Create(agentquestion.Record{ID: "question-0000000000000002", Provider: "codex", Delivery: "async", AgentUID: "agent", Questions: json.RawMessage(`[{"id":"q1","question":"Async","isOther":true,"options":[]}]`), Deadline: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := m.Agent{Metadata: m.ObjectMeta{UID: "agent"}, Status: m.AgentStatus{Phase: m.PhaseOffline}}
+	service := Service{OpenStore: func() (*agentquestion.Store, error) { return st, nil }, LoadRegistry: func() (m.Registry, error) { return m.Registry{Agents: []m.Agent{a}}, nil }}
+	list, err := service.List(context.Background(), a)
+	if err != nil || len(list.Questions) != 2 || list.Questions[0].ID != legacy.ID || list.Questions[1].ID != async.ID || list.Questions[1].CanAnswer {
+		t.Fatal("namespace merge", list, err)
+	}
+	after, _ := os.ReadFile(st.Path())
+	if !bytes.Equal(before, after) {
+		t.Fatal("async touched legacy")
+	}
+	for _, bad := range []*agentquestion.Store{st, st.AsyncStore()} {
+		original, err := os.ReadFile(bad.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(bad.Path(), []byte("malformed"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = service.List(context.Background(), a); !errors.Is(err, agentquestion.ErrMalformedStore) {
+			t.Fatal("malformed namespace hidden", err)
+		}
+		if _, err = service.Answer(context.Background(), Request{Spelling: "agent question answer", QuestionID: async.ID, Texts: []string{"1=answer"}}, a); !errors.Is(err, agentquestion.ErrMalformedStore) {
+			t.Fatal("answer ignored namespace error", err)
+		}
+		if err = os.WriteFile(bad.Path(), original, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Reading a missing async namespace must not create its directory or lock.
+	empty := agentquestion.NewStore(t.TempDir())
+	service.OpenStore = func() (*agentquestion.Store, error) { return empty, nil }
+	if _, err = service.List(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(filepath.Dir(empty.AsyncStore().Path())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("read created async namespace", err)
 	}
 }
