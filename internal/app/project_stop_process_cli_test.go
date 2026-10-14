@@ -22,6 +22,23 @@ func TestProjectStopHeadlessActualCLI(t *testing.T) {
 	defer cancel()
 	run := startResumeCLIInvocation(t, ctx, f, f.args("--", "initial task"))
 	record := awaitProcessResumeRecord(t, ctx, f, run.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" })
+	// SessionStart reserves an id before stream init. Observe the established
+	// session on this binding before asking Stop to preserve its conversation.
+	awaitProcessResumeRecord(t, ctx, f, run.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+		if r.Binding != record.Binding || r.SessionID != record.SessionID {
+			return false
+		}
+		reg, err := f.store.LoadReadOnly()
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent, ok := reg.Agent(record.Binding.AgentUID)
+		pane, paneOK := reg.Pane(record.Binding.PaneUID)
+		return ok && paneOK && agent.Status.PaneRef == record.Binding.PaneUID &&
+			pane.Status.ProcessSession != nil && pane.Status.ProcessSession.Binding == record.Binding &&
+			agent.Status.SessionRef != nil && agent.Status.SessionRef.Claude != nil &&
+			agent.Status.SessionRef.Claude.SessionID == record.SessionID
+	})
 	reg, err := f.store.LoadReadOnly()
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +73,7 @@ func TestProjectStopHeadlessActualCLI(t *testing.T) {
 	}
 	agent, _ = reg.Agent(agent.Metadata.UID)
 	pane, _ = reg.Pane(pane.Metadata.UID)
-	if agent.Status.Phase != coremetadata.PhaseOffline || pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable || !coremetadata.MatchesProcessWait(record.Binding, pane.Status.LastTermination) {
+	if agent.Status.Phase != coremetadata.PhaseOffline || pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable || pane.Status.ProcessSession.SessionID != record.SessionID || agent.Status.SessionRef == nil || agent.Status.SessionRef.Claude == nil || agent.Status.SessionRef.Claude.SessionID != record.SessionID || !coremetadata.MatchesProcessWait(record.Binding, pane.Status.LastTermination) {
 		t.Fatalf("phase=%s record=%+v evidence=%+v", agent.Status.Phase, pane.Status.ProcessSession, pane.Status.LastTermination)
 	}
 	actual, _, identityErr := newAgentCommand().readProcessIdentity()(birth.PID)
