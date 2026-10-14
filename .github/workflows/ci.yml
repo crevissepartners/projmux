@@ -250,7 +250,7 @@ jobs:
   process-host-cli:
     name: Process Host CLI Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout

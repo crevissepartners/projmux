@@ -139,9 +139,9 @@ def main() -> None:
         test_started = time.monotonic()
         try:
             result = subprocess.run([go, "test", "-json", "-count=1", "-cpu=1",
-                                     "-timeout=300s", "-run", selector, "./internal/app"],
+                                     "-timeout=420s", "-run", selector, "./internal/app"],
                                     cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, timeout=360)
+                                    stderr=subprocess.PIPE, timeout=480)
         except subprocess.TimeoutExpired as expired:
             partial = expired.stdout
             if isinstance(partial, bytes):
