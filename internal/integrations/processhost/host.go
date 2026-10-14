@@ -135,6 +135,7 @@ type Handle struct {
 	mu                     sync.Mutex
 	state                  string
 	session                string
+	firstInputWriting      bool // Claude first frame owns stdin while mu is released.
 	hookSession            string
 	connection             string
 	turn                   string

@@ -27,7 +27,8 @@ func ClaudeCommand(path, dir string, env, resolvedArgs []string) (Command, error
 }
 
 // Authority includes the connection/session as observed from this exact handle.
-// A first Turn uses the empty session; subsequent operations use the bound one.
+// Before stream init, a first Turn can use the empty session or the exact
+// owned-child SessionStart observation. Neither makes the stream ready.
 type Authority struct {
 	Binding             Binding
 	Connection, Session string
@@ -113,7 +114,8 @@ type Response struct {
 }
 
 func (p *Handle) admitLocked(ctx context.Context, a Authority) error {
-	if a.Binding != p.launch.Binding || a.Connection != p.connection || a.Session != p.session {
+	sessionMatches := a.Session == p.session || (p.adapter == nil && p.state == "starting" && p.session == "" && p.hookSession != "" && a.Session == p.hookSession)
+	if a.Binding != p.launch.Binding || a.Connection != p.connection || !sessionMatches {
 		return ErrStale
 	}
 	return p.admitOwnershipLocked(ctx, a.Binding)
@@ -149,7 +151,25 @@ func (p *Handle) ValidateAuthority(ctx context.Context, a Authority) error {
 	return p.admitLocked(ctx, a)
 }
 
+// Preserve the existing wire-write diagnostic while retaining cancellation as
+// a typed cause for callers. A context deadline is not proof of zero bytes.
+type claudeFirstWriteError struct {
+	error
+	cause error
+}
+
+func (e claudeFirstWriteError) Unwrap() []error { return []error{e.error, e.cause} }
+
+// Only the initial Claude user frame releases mu. Its reservation fences all
+// other stdin writers while owned-child hooks, stream observations and Stop run.
 func (p *Handle) writeLocked(ctx context.Context, frame any) error {
+	return p.writeControlLocked(ctx, frame, false)
+}
+
+func (p *Handle) writeControlLocked(ctx context.Context, frame any, first bool) error {
+	if p.firstInputWriting {
+		return ErrBusy
+	}
 	raw, err := json.Marshal(frame)
 	if err != nil {
 		return err
@@ -168,17 +188,53 @@ func (p *Handle) writeLocked(ctx context.Context, frame any) error {
 		return err
 	}
 	raw = append(raw, '\n')
+	var stopCancel func() bool
+	var cancelled chan struct{}
+	if first {
+		p.firstInputWriting = true
+		p.mu.Unlock()
+		cancelled = make(chan struct{})
+		stopCancel = context.AfterFunc(ctx, func() {
+			_ = p.stdin.SetWriteDeadline(time.Now())
+			close(cancelled)
+		})
+	}
 	n, err := p.stdin.Write(raw)
-	if err != nil || n != len(raw) {
-		// A partial write is an uncertain protocol operation. Never retry it.
-		p.failure = "control write failed; outcome unknown"
-		p.state = "stopping"
-		p.expireLocked()
+	if first {
+		// Finish the callback before another writer can set its own deadline.
+		if !stopCancel() {
+			<-cancelled
+		}
+		p.mu.Lock()
+		p.firstInputWriting = false
 		p.changedLocked()
-		_ = p.lifetime.Close()
+		if err != nil {
+			if cause := ctx.Err(); cause != nil {
+				err = claudeFirstWriteError{err, cause}
+			} else if d, ok := ctx.Deadline(); ok && !time.Now().Before(d) {
+				// The file deadline can fire just before the context timer.
+				err = claudeFirstWriteError{err, context.DeadlineExceeded}
+			}
+		}
+	}
+	if err != nil || n != len(raw) {
+		// A partial write is uncertain and is never retried. An already admitted
+		// Stop retains its shutdown intent and actual Wait classification.
+		if p.state == "starting" || p.state == "ready" {
+			p.failure = "control write failed; outcome unknown"
+			p.state = "stopping"
+			p.expireLocked()
+			p.changedLocked()
+			_ = p.lifetime.Close()
+		}
 		if err == nil {
 			err = errors.New("short control write")
 		}
+	}
+	if first && err == nil && p.state != "starting" && p.state != "ready" {
+		// Stop or protocol failure won outside mu: no late acceptance can
+		// reopen that lifetime, even if the bytes reached the provider.
+		return ErrClosed
 	}
 	return err
 }
@@ -325,6 +381,9 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 	if err := p.admitLocked(ctx, a); err != nil {
 		return TurnAdmission{}, err
 	}
+	if p.firstInputWriting {
+		return TurnAdmission{}, ErrBusy
+	}
 	_, peerReserved := p.joinedMessages[operation]
 	if operation == "" || len(operation) > 256 || p.usedTurns[operation] || peerReserved {
 		return TurnAdmission{}, ErrStale
@@ -357,8 +416,8 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 	}
 	carried := p.carriedJoined
 	p.beginTurnLocked(operation, TurnOriginHost)
-	if err := p.writeLocked(ctx, frame); err != nil {
-		if p.state != "stopping" {
+	if err := p.writeControlLocked(ctx, frame, p.session == ""); err != nil {
+		if (p.state == "starting" || p.state == "ready") && p.turn == operation {
 			p.endTurnLocked()
 			p.carriedJoined = carried
 			p.forgetUnwrittenTurnLocked(operation)
@@ -371,7 +430,7 @@ func (p *Handle) submitUserInput(ctx context.Context, a Authority, operation, pr
 	if p.session == "" {
 		go p.awaitInitialization()
 	}
-	p.emitLocked("turn-submitted", nil, nil)
+	p.emitTurnLocked("turn-submitted", nil, nil, operation)
 	return TurnAdmission{Turn: operation, Origin: TurnOriginHost}, nil
 }
 
@@ -481,6 +540,9 @@ func (p *Handle) reserveClaudeMessage(ctx context.Context, a Authority, turn str
 	defer p.mu.Unlock()
 	if err := p.admitLocked(ctx, a); err != nil {
 		return TurnAdmission{}, err
+	}
+	if p.firstInputWriting {
+		return TurnAdmission{}, ErrBusy
 	}
 	_, reserved := p.joinedMessages[turn]
 	if p.adapter != nil || turn == "" || len(turn) > 256 || p.usedTurns[turn] || reserved {
@@ -636,6 +698,9 @@ func (p *Handle) Respond(ctx context.Context, a Authority, token Request, respon
 	if err := p.admitLocked(ctx, a); err != nil {
 		return err
 	}
+	if p.firstInputWriting {
+		return ErrBusy
+	}
 	pending, ok := p.requests[token.ID]
 	if !ok || token.Connection != pending.Connection || token.Session != pending.Session || token.Turn != pending.Turn || token.Kind != pending.Kind || token.Tool != pending.Tool || !bytes.Equal(token.Input, pending.Input) || p.turn != pending.Turn {
 		return ErrStale
@@ -700,6 +765,9 @@ func (p *Handle) Interrupt(ctx context.Context, a Authority, turn string) error 
 	defer p.mu.Unlock()
 	if err := p.admitLocked(ctx, a); err != nil {
 		return err
+	}
+	if p.firstInputWriting {
+		return ErrBusy
 	}
 	if turn == "" || turn != p.turn || p.interrupt != "" {
 		return ErrStale

@@ -1152,3 +1152,108 @@ func TestClaudeProcessConsumptionRestartsAnEndedHeldRelease(t *testing.T) {
 		t.Fatalf("woken release submits %v, want exactly %s", got, ref)
 	}
 }
+
+// This uses the actual registration hook peer and its kernel parent proof. The
+// provider waits on a FIFO before SessionStart and reads no stdin until it ends.
+func TestClaudeProcessFirstLargeWriteAllowsActualSessionStart(t *testing.T) {
+	for _, text := range []string{strings.Repeat("a", 128<<10), strings.Repeat("<", 22<<10)} {
+		t.Run(fmt.Sprintf("payload=%d", len(text)), func(t *testing.T) {
+			var gate *os.File
+			f := newProcessClaudeFixture(t, func(root, binary string) processhost.Command {
+				path := filepath.Join(root, "before-hook.fifo")
+				if err := syscall.Mkfifo(path, 0600); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				gate, err = os.OpenFile(path, os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				needle := "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})"
+				fixture := strings.Replace(processClaudeProviderFixture, needle,
+					"import time\nopen(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'fixture-ready'),'w').write('ready')\n"+
+						"with open("+fmt.Sprintf("%q", path)+",'rb',buffering=0) as gate: gate.read(1)\n"+
+						"hook_started=time.monotonic()\nopen(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'hook-begin'),'w').write(str(hook_started))\n"+
+						needle+"\nopen(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'hook-duration'),'w').write(str(time.monotonic()-hook_started))", 1)
+				// Only this fixture's provider/hook children skip the race
+				// runtime's exit sleep; all detection/exit options remain.
+				env := os.Environ()
+				found := false
+				for i, value := range env {
+					if strings.HasPrefix(value, "GORACE=") {
+						env[i] = value + " atexit_sleep_ms=0"
+						found = true
+						break
+					}
+				}
+				if !found {
+					env = append(env, "GORACE=atexit_sleep_ms=0")
+				}
+				return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Env: env, Dir: root}
+			})
+			defer gate.Close()
+			// Provider fixture preparation is separate from stream readiness.
+			// Start the actual write budget only after Python is at the FIFO.
+			prepared := time.After(3 * time.Second)
+			for {
+				if _, err := os.Stat(filepath.Join(f.root, "fixture-ready")); err == nil {
+					break
+				}
+				select {
+				case <-prepared:
+					t.Fatal("provider fixture did not reach FIFO")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			snap, _ := f.handle.Observe(f.binding)
+			authority := processhost.Authority{Binding: f.binding, Connection: snap.Connection}
+			done := make(chan error, 1)
+			go func() {
+				done <- f.handle.Turn(context.Background(), authority, "large-first", text)
+			}()
+			deadline := time.After(3 * time.Second)
+			for {
+				snap, _ = f.handle.Observe(f.binding)
+				if snap.Turn == "large-first" {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("write ended before hook %v", err)
+				case <-deadline:
+					t.Fatal("first write not admitted")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			if _, err := gate.Write([]byte{1}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					reg, _ := f.store.LoadReadOnly()
+					pane, _ := reg.Pane(f.binding.Pane)
+					began, _ := os.ReadFile(filepath.Join(f.root, "hook-begin"))
+					duration, _ := os.ReadFile(filepath.Join(f.root, "hook-duration"))
+					t.Fatalf("first write failed: %v; observedSession=%q hookBegin=%s hookDuration=%s", err, pane.Status.ProcessSession.SessionID, began, duration)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("write did not finish")
+			}
+			f.wait(t, func(s processhost.Snapshot) bool { return s.State == "ready" && s.Turn == "" })
+			duration, err := os.ReadFile(filepath.Join(f.root, "hook-duration"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("provider prepared before write; actual hook duration seconds=%s", duration)
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, _ := reg.Pane(f.binding.Pane)
+			if pane.Status.ProcessSession.SessionID != "process-session" {
+				t.Fatal("actual SessionStart did not bind")
+			}
+		})
+	}
+}

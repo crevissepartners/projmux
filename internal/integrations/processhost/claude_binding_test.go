@@ -3,6 +3,8 @@ package processhost
 import (
 	"bytes"
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -214,4 +216,148 @@ func TestClaudeBusyPeerPreservesActiveOwnershipAndResultWake(t *testing.T) {
 	if err = p.ReserveClaudeMessage(context.Background(), a, "peer"); err != nil {
 		t.Fatal("busy consumed peer ID", err)
 	}
+}
+
+func TestClaudeHookSessionAllowsFirstAuthorityWithoutStreamCommit(t *testing.T) {
+	commits := 0
+	p := start(t, testHost(t, func(tx *Transactions, _ *Limits) {
+		tx.Commit = func(context.Context, Binding, string) error { commits++; return nil }
+	}), "normal")
+	s, _ := p.Observe(binding())
+	if err := p.BindClaudeHook(context.Background(), binding(), s.PID, "session"); err != nil {
+		t.Fatal(err)
+	}
+	a := Authority{Binding: binding(), Connection: s.Connection, Session: "session"}
+	for _, mutate := range []func(*Authority){func(a *Authority) { a.Binding.Generation = "old" }, func(a *Authority) { a.Connection = "old" }, func(a *Authority) { a.Session = "other" }} {
+		wrong := a
+		mutate(&wrong)
+		if err := p.Turn(context.Background(), wrong, "wrong", "ordinary"); err != ErrStale {
+			t.Fatalf("authority admitted %v", err)
+		}
+	}
+	if err := p.ValidateAuthority(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = p.Observe(binding())
+	if s.Session != "" || s.State != "starting" || commits != 0 {
+		t.Fatalf("hook committed stream: %+v commits=%d", s, commits)
+	}
+	if err := p.Turn(context.Background(), a, "first", "ordinary"); err != nil {
+		t.Fatal(err)
+	}
+	observeUntil(t, p, func(s Snapshot) bool { return s.State == "ready" && s.Turn == "" })
+	if err := p.Turn(context.Background(), a, "first", "ordinary"); err != ErrStale {
+		t.Fatal("replayed operation", err)
+	}
+}
+
+// The unread real pipe makes the write partial. Observations and owned Stop
+// must remain reachable; cancellation cannot wait out the ordinary write budget.
+func TestClaudeFirstWriteObservesHookAndFencesConcurrentOperations(t *testing.T) {
+	for _, ending := range []string{"cancel", "deadline", "stop", "write-timeout"} {
+		t.Run(ending, func(t *testing.T) {
+			p := start(t, testHost(t, func(_ *Transactions, l *Limits) { l.Write = 500 * time.Millisecond }), "blocked")
+			a := authority(p)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if ending == "deadline" {
+				ctx, cancel = context.WithTimeout(context.Background(), 150*time.Millisecond)
+				defer cancel()
+			}
+			done := make(chan error, 1)
+			go func() { done <- p.Turn(ctx, a, "first", strings.Repeat("x", 512<<10)) }()
+			limit := time.After(2 * time.Second)
+			for {
+				p.mu.Lock()
+				writing := p.firstInputWriting
+				p.mu.Unlock()
+				if writing {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("write ended early %v", err)
+				case <-limit:
+					t.Fatal("write did not reserve")
+				case <-time.After(time.Millisecond):
+				}
+			}
+			s, err := p.Observe(binding())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = p.BindClaudeHook(context.Background(), binding(), s.PID, "session"); err != nil {
+				t.Fatal("hook blocked by first write", err)
+			}
+			if err = p.Turn(context.Background(), a, "second", "ordinary"); err != ErrBusy {
+				t.Fatal("second stdin writer", err)
+			}
+			if _, err = p.UserInput(context.Background(), a, "joined", "ordinary"); err != ErrBusy {
+				t.Fatal("joined stdin writer", err)
+			}
+			if err = p.ReserveClaudeMessage(context.Background(), a, "peer"); err != ErrBusy {
+				t.Fatal("peer reservation", err)
+			}
+			if err = p.Interrupt(context.Background(), a, "first"); err != ErrBusy {
+				t.Fatal("interrupt writer", err)
+			}
+			if err = p.Respond(context.Background(), a, Request{}, Response{Deny: "no"}); err != ErrBusy {
+				t.Fatal("response writer", err)
+			}
+			if ending == "cancel" {
+				cancel()
+			}
+			if ending == "stop" {
+				if err = p.Stop(binding()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case err = <-done:
+				if err == nil {
+					t.Fatal("partial write succeeded")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("write did not retire")
+			}
+			if ending == "cancel" && !errors.Is(err, context.Canceled) {
+				t.Fatal("lost cancellation cause", err)
+			}
+			if ending == "deadline" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal("lost deadline cause", err)
+			}
+			s, _ = p.Observe(binding())
+			if ending != "stop" && s.Failure != "control write failed; outcome unknown" {
+				t.Fatalf("lost uncertainty %+v", s)
+			}
+			if ending == "stop" && s.Failure != "" {
+				t.Fatalf("normal Stop reclassified %+v", s)
+			}
+			if err = p.Turn(context.Background(), a, "first", "ordinary"); err != ErrClosed {
+				t.Fatal("uncertain write replayed", err)
+			}
+			wait, c := context.WithTimeout(context.Background(), 3*time.Second)
+			defer c()
+			s, err = p.Wait(wait, binding())
+			if err != nil || s.Exit == nil {
+				t.Fatal("actual provider Wait", s, err)
+			}
+		})
+	}
+}
+
+func TestClaudeFirstFrameLimitRefusesBeforePipeWrite(t *testing.T) {
+	p := start(t, testHost(t, nil), "normal")
+	a := authority(p)
+	if err := p.Turn(context.Background(), a, "oversize", strings.Repeat("<", p.host.limits.FrameBytes/6)); err == nil || err.Error() != "control frame exceeds limit" {
+		t.Fatal(err)
+	}
+	s, _ := p.Observe(binding())
+	if s.Turn != "" || s.State != "starting" || s.Failure != "" {
+		t.Fatalf("prewrite refusal changed lifetime %+v", s)
+	}
+	if err := p.Turn(context.Background(), a, "oversize", "ordinary"); err != nil {
+		t.Fatal("prewrite refusal consumed operation", err)
+	}
+	observeUntil(t, p, func(s Snapshot) bool { return s.State == "ready" && s.Turn == "" })
 }
