@@ -87,8 +87,8 @@ func ValidateRegister(r RegisterAccountRequest) error {
 
 // ValidateRef accepts only exact active names or opaque UID references.
 func ValidateRef(ref string) error {
-	if strings.HasPrefix(ref, "uid:") {
-		if !ValidUID(strings.TrimPrefix(ref, "uid:")) {
+	if after, ok := strings.CutPrefix(ref, "uid:"); ok {
+		if !ValidUID(after) {
 			return Refuse(NotFound, "ref")
 		}
 		return nil

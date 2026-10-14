@@ -238,7 +238,7 @@ func TestCatalogConcurrentDuplicateNameHasOneWinner(t *testing.T) {
 	const n = 8
 	start := make(chan struct{})
 	results := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		root := t.TempDir()
 		go func() {
 			<-start
@@ -248,7 +248,7 @@ func TestCatalogConcurrentDuplicateNameHasOneWinner(t *testing.T) {
 	}
 	close(start)
 	wins := 0
-	for i := 0; i < n; i++ {
+	for range n {
 		if err := <-results; err == nil {
 			wins++
 		} else {
