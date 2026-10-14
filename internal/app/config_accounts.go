@@ -14,68 +14,91 @@ import (
 
 func (c *configCommand) runAccounts(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("config accounts requires add, list, or remove")
+		return usageRefusal(stderr, "config accounts", "config accounts requires add, list, or remove")
 	}
-	verb := args[0]
-	rest := args[1:]
-	if verb != "add" && verb != "list" && verb != "remove" {
-		return usageError("config accounts requires add, list, or remove")
+	switch args[0] {
+	case "add":
+		return c.runAccountAdd(args[1:], stdout, stderr)
+	case "list":
+		return c.runAccountList(args[1:], stdout, stderr)
+	case "remove":
+		return c.runAccountRemove(args[1:], stdout, stderr)
+	default:
+		return usageRefusal(stderr, "config accounts", "config accounts requires add, list, or remove")
 	}
-	var ref string
-	// The documented positional name/ref precedes leaf flags.
-	if verb != "list" {
-		if len(rest) == 0 || rest[0] == "" || rest[0][0] == '-' {
-			return usageError("config accounts " + verb + " requires a name or ref")
-		}
-		ref = rest[0]
-		rest = rest[1:]
+}
+
+func (c *configCommand) accountService() provideraccounts.Service {
+	return provideraccounts.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}
+}
+
+func (c *configCommand) runAccountAdd(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
+		return usageRefusal(stderr, "config accounts add", "config accounts add requires a name")
 	}
-	fs := flag.NewFlagSet("config accounts "+verb, flag.ContinueOnError)
+	name := args[0]
+	fs := flag.NewFlagSet("config accounts add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	output := fs.String("o", "", "output: json")
-	var provider, root string
-	if verb == "add" {
-		fs.StringVar(&provider, "provider", "", "codex or claude")
-		fs.StringVar(&root, "root", "", "absolute existing directory")
-	}
-	if err := fs.Parse(rest); err != nil {
-		return usageRefusal(stderr, "config accounts "+verb, "config accounts: "+err.Error())
+	provider := fs.String("provider", "", "codex or claude")
+	root := fs.String("root", "", "absolute existing directory")
+	if err := fs.Parse(args[1:]); err != nil {
+		return usageRefusal(stderr, "config accounts add", "config accounts add: "+err.Error())
 	}
 	if fs.NArg() != 0 || (*output != "" && *output != "json") {
-		return usageError("config accounts accepts documented arguments and -o json")
+		return usageRefusal(stderr, "config accounts add", "config accounts add accepts documented arguments and -o json")
 	}
-	s := provideraccounts.Service{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}
-	ctx := context.Background()
-	var value any
-	var rows []account.ProviderAccount
-	switch verb {
-	case "add":
-		v, err := s.Register(ctx, account.RegisterAccountRequest{Name: ref, Provider: provider, Root: root})
-		if err != nil {
-			return err
-		}
-		value = v
-		rows = []account.ProviderAccount{v}
-	case "list":
-		v, err := s.List(ctx)
-		if err != nil {
-			return err
-		}
-		value = v
-		rows = v
-	case "remove":
-		v, err := s.Remove(ctx, account.RemoveAccountRequest{Ref: ref})
-		if err != nil {
-			return err
-		}
-		value = v
-		rows = []account.ProviderAccount{v}
+	value, err := c.accountService().Register(context.Background(), account.RegisterAccountRequest{Name: name, Provider: *provider, Root: *root})
+	if err != nil {
+		return err
 	}
-	if *output == "json" {
+	return writeAccountOutput("add", *output, value, []account.ProviderAccount{value}, stdout)
+}
+
+func (c *configCommand) runAccountList(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("config accounts list", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	output := fs.String("o", "", "output: json")
+	if err := fs.Parse(args); err != nil {
+		return usageRefusal(stderr, "config accounts list", "config accounts list: "+err.Error())
+	}
+	if fs.NArg() != 0 || (*output != "" && *output != "json") {
+		return usageRefusal(stderr, "config accounts list", "config accounts list accepts -o json and no operands")
+	}
+	rows, err := c.accountService().List(context.Background())
+	if err != nil {
+		return err
+	}
+	return writeAccountOutput("list", *output, rows, rows, stdout)
+}
+
+func (c *configCommand) runAccountRemove(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
+		return usageRefusal(stderr, "config accounts remove", "config accounts remove requires a name or ref")
+	}
+	ref := args[0]
+	fs := flag.NewFlagSet("config accounts remove", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	output := fs.String("o", "", "output: json")
+	if err := fs.Parse(args[1:]); err != nil {
+		return usageRefusal(stderr, "config accounts remove", "config accounts remove: "+err.Error())
+	}
+	if fs.NArg() != 0 || (*output != "" && *output != "json") {
+		return usageRefusal(stderr, "config accounts remove", "config accounts remove accepts documented arguments and -o json")
+	}
+	value, err := c.accountService().Remove(context.Background(), account.RemoveAccountRequest{Ref: ref})
+	if err != nil {
+		return err
+	}
+	return writeAccountOutput("remove", *output, value, []account.ProviderAccount{value}, stdout)
+}
+
+func writeAccountOutput(verb, output string, value any, rows []account.ProviderAccount, stdout io.Writer) error {
+	if output == "json" {
 		return accountOutputError(verb, json.NewEncoder(stdout).Encode(value))
 	}
-	for _, v := range rows {
-		if _, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", v.Name, v.UID, v.Provider, v.Root, v.Version, v.State, v.AuthenticationStatus); err != nil {
+	for _, value := range rows {
+		if _, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n", value.Name, value.UID, value.Provider, value.Root, value.Version, value.State, value.AuthenticationStatus); err != nil {
 			return accountOutputError(verb, err)
 		}
 	}
