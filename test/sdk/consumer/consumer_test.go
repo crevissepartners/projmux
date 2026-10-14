@@ -881,3 +881,19 @@ func TestExternalHeadlessProjectStopConsumer(t *testing.T) {
 		})
 	}
 }
+
+func TestExternalResumeRecipeDetail(t *testing.T) {
+	original := &core.ResumeRecipeChangedError{Code: "process-resume-refused", Reason: "relaunch-no-conversation", AgentUID: "agent-example", Changes: []core.ResumeRecipeChange{{Field: "model", Reason: "model-changed", Recorded: []string{"old"}, Current: []string{"new"}}}, RelaunchCommand: "projmux agent relaunch uid:agent-example --detach", Guidance: "preserves Agent UID, Pane UID, and the recorded conversation"}
+	var detail *projmux.ResumeRecipeChangedError
+	if !errors.As(fmt.Errorf("wrapped: %w", original), &detail) || detail != original {
+		t.Fatal("public aliases lost errors.As identity")
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded projmux.ResumeRecipeChangedError
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Code != original.Code || decoded.Reason != original.Reason || len(decoded.Changes) != 1 || decoded.Changes[0].Current[0] != "new" || decoded.RelaunchCommand != original.RelaunchCommand {
+		t.Fatalf("public JSON %s: %v", raw, err)
+	}
+}
