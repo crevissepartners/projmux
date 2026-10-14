@@ -1483,7 +1483,89 @@ func TestCodexResumeRetiredAttentionAndInitFailureActualCLI(t *testing.T) {
 	}
 }
 
+// hostLostFixtureSIGSTOP uses the native wait ABI rather than Go's BSD
+// Stopped/StopSignal wrappers, which misclassify Darwin's SIGSTOP value.
+// Exact equality also rejects continued events and unexpected upper bits.
+func hostLostFixtureSIGSTOP(status syscall.WaitStatus, stop syscall.Signal) bool {
+	return uint32(status) == uint32(stop)<<8|0x7f
+}
+
+// Only the foreground host is our direct child. No Cmd.Wait competes with
+// this observer; a stopped event leaves the terminal Wait for Cmd.Wait.
+func awaitHostLostFixtureStop(ctx context.Context, pid int) (syscall.WaitStatus, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		var status syscall.WaitStatus
+		observed, err := syscall.Wait4(pid, &status, syscall.WNOHANG|syscall.WUNTRACED, nil)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return status, fmt.Errorf("host stop Wait4 pid=%d raw=%#x: %w", pid, uint32(status), err)
+		}
+		if observed != 0 {
+			if observed == pid && hostLostFixtureSIGSTOP(status, syscall.SIGSTOP) {
+				return status, nil
+			}
+			// A terminal event has already been reaped here. Keep its original
+			// status in the failure even if subsequent Cmd.Wait reports ECHILD.
+			return status, fmt.Errorf("unexpected host Wait4 pid=%d want=%d raw=%#x exited=%t exit=%d signaled=%t signal=%d", observed, pid, uint32(status), status.Exited(), status.ExitStatus(), status.Signaled(), status.Signal())
+		}
+		select {
+		case <-ctx.Done():
+			return status, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func checkHostLostFixtureIdentity(a coremetadata.ProcessActivation, supervisor coremetadata.ProcessIdentity, hostPID int) error {
+	if a.HostProcess.PID != hostPID || a.HostProcess.PID == a.Child.PID || supervisor.PID == a.HostProcess.PID || supervisor.PID == a.Child.PID {
+		return errors.New("fixture host is not the exact invocation child")
+	}
+	for _, target := range []struct {
+		identity coremetadata.ProcessIdentity
+		parent   int
+	}{{a.HostProcess, os.Getpid()}, {supervisor, hostPID}, {a.Child, supervisor.PID}} {
+		identity, parent, err := localipc.Process(target.identity.PID)
+		if err != nil || !identity.Valid() || identity != target.identity || identity.OwnerUID != uint32(os.Getuid()) || parent != target.parent {
+			return fmt.Errorf("fixture birth/UID/parent mismatch: want=%+v parent=%d got=%+v parent=%d err=%v", target.identity, target.parent, identity, parent, err)
+		}
+	}
+	return nil
+}
+
 func TestProcessHostLostResumeActualCLI(t *testing.T) {
+	// Pure ABI cases run in this test, without adding another execution route.
+	for _, platform := range []struct {
+		name string
+		stop syscall.Signal
+	}{{"linux", 19}, {"darwin", 17}} {
+		for _, event := range []struct {
+			name   string
+			raw    uint32
+			accept bool
+		}{
+			{"SIGSTOP", uint32(platform.stop)<<8 | 0x7f, true},
+			{"linux-continued", 0xffff, false},
+			{"exit-zero", 0, false},
+			{"exit-nonzero", 7 << 8, false},
+			{"signal-exit", 9, false},
+			{"other-stop", 15<<8 | 0x7f, false},
+			{"wrong-low-byte", uint32(platform.stop)<<8 | 0x7e, false},
+			{"upper-bits", 1<<24 | uint32(platform.stop)<<8 | 0x7f, false},
+		} {
+			if got := hostLostFixtureSIGSTOP(syscall.WaitStatus(event.raw), platform.stop); got != event.accept {
+				t.Fatalf("%s/%s raw=%#x accepted=%t want=%t", platform.name, event.name, event.raw, got, event.accept)
+			}
+		}
+	}
+	if hostLostFixtureSIGSTOP(syscall.WaitStatus(19<<8|0x7f), 17) {
+		t.Fatal("Darwin continued event accepted as SIGSTOP")
+	}
+
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := processResumeCLIFixture(t, provider)
@@ -1501,17 +1583,132 @@ func TestProcessHostLostResumeActualCLI(t *testing.T) {
 			}
 			pane, _ := reg.Pane(old.Binding.PaneUID)
 			a := *pane.Status.Activation.Process
+			var stopStatus syscall.WaitStatus
+			var supervisor coremetadata.ProcessIdentity
+			fixtureOwned := false
+			retired := func() bool {
+				if !processActivationAbsent(a, localipc.Process) {
+					return false
+				}
+				if !supervisor.Valid() {
+					// Preparation failed before a supervisor could be recorded;
+					// that is not evidence of supervisor retirement.
+					return true
+				}
+				current, parent, err := localipc.Process(supervisor.PID)
+				if errors.Is(err, localipc.ErrProcessAbsent) {
+					return true
+				}
+				if err == nil && current.Valid() && current != supervisor {
+					t.Logf("fixture supervisor birth retired, replacement untouched: recorded=%+v replacement=%+v parent=%d", supervisor, current, parent)
+					return true
+				}
+				return false
+			}
+			reportResidual := func(where string) {
+				host, hostParent, hostErr := localipc.Process(a.HostProcess.PID)
+				child, childParent, childErr := localipc.Process(a.Child.PID)
+				current, parent, supervisorErr := localipc.Process(supervisor.PID)
+				t.Errorf("fixture %s residual: host=%+v parent=%d err=%v child=%+v parent=%d err=%v recorded-supervisor=%+v current-supervisor=%+v parent=%d err=%v", where, host, hostParent, hostErr, child, childParent, childErr, supervisor, current, parent, supervisorErr)
+				if err := os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("host-lost fixture host/child/supervisor unresolved\n"), 0600); err != nil {
+					t.Error(err)
+				}
+			}
+			// Run before the shared invocation cleanup. Even a reaped unexpected
+			// exit still needs Cmd.Wait to release its context watcher and pipes.
+			defer func() {
+				if first.done {
+					if !retired() {
+						reportResidual("after Cmd.Wait")
+					}
+					return
+				}
+				if !fixtureOwned {
+					t.Log("fixture cleanup cannot signal unverified activation identities")
+				}
+				if !supervisor.Valid() {
+					reportResidual("supervisor preparation unconfirmed")
+				}
+				for _, identity := range []coremetadata.ProcessIdentity{a.Child, a.HostProcess} {
+					if !fixtureOwned {
+						continue
+					}
+					current, _, err := localipc.Process(identity.PID)
+					if transition, ok := localipc.ProcessParentTransition(err); ok {
+						current, err = transition.Process, nil
+					}
+					if err == nil && current == identity && current.OwnerUID == uint32(os.Getuid()) {
+						if identity == a.HostProcess {
+							if err := syscall.Kill(identity.PID, syscall.SIGCONT); err != nil && !errors.Is(err, syscall.ESRCH) {
+								t.Errorf("fixture cleanup SIGCONT: %v", err)
+							}
+						}
+						if err := syscall.Kill(identity.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+							t.Errorf("fixture cleanup kill: %v", err)
+						}
+					} else if !errors.Is(err, localipc.ErrProcessAbsent) {
+						t.Errorf("fixture cleanup refused different/unavailable birth: recorded=%+v current=%+v err=%v", identity, current, err)
+					}
+				}
+				_ = first.input.Close()
+				// Cmd.Wait also drains/closes exec's pipes when Wait4 has already
+				// consumed an unexpected terminal event. Do not replace that
+				// original raw exit/signal with its subsequent ECHILD result.
+				waitErr := first.cmd.Wait()
+				first.done = true
+				t.Logf("fixture failure cleanup raw-stop=%#x Cmd.Wait=%v process-state=%v stderr=%s", uint32(stopStatus), waitErr, first.cmd.ProcessState, first.stderr.String())
+				for !retired() {
+					select {
+					case <-ctx.Done():
+						reportResidual("failure cleanup")
+						return
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
+				t.Logf("fixture failure cleanup observed host/child retirement; recorded-supervisor=%+v", supervisor)
+			}()
+			if a.Binding != old.Binding || pane.Status.Activation.Generation != old.Binding.Generation || pane.Metadata.OwnerUID() != old.Binding.AgentUID || first.ref != "uid:"+old.Binding.AgentUID {
+				t.Fatal("fixture activation does not match the exact Agent/Pane generation")
+			}
+			// Capture this supervisor once. Later observations must match this
+			// birth and the same child -> supervisor -> host -> test chain.
+			initialChild, supervisorPID, identityErr := localipc.Process(a.Child.PID)
+			if identityErr != nil || initialChild != a.Child || initialChild.OwnerUID != uint32(os.Getuid()) {
+				t.Fatalf("fixture provider birth unavailable: recorded=%+v current=%+v err=%v", a.Child, initialChild, identityErr)
+			}
+			supervisor, _, identityErr = localipc.Process(supervisorPID)
+			if identityErr != nil || !supervisor.Valid() {
+				t.Fatalf("fixture supervisor birth unavailable: pid=%d current=%+v err=%v", supervisorPID, supervisor, identityErr)
+			}
+			if err := checkHostLostFixtureIdentity(a, supervisor, first.cmd.Process.Pid); err != nil {
+				t.Fatal(err)
+			}
+			fixtureOwned = true
+			t.Logf("fixture ownership chain: host=%+v supervisor=%+v child=%+v binding=%+v", a.HostProcess, supervisor, a.Child, a.Binding)
 			// Kill only fixture-owned processes, retaining the exact kernel identities.
 			// Stop at a point outside the unrelated notification lock: SIGKILL
 			// while holding that file lock would exercise stale-notify recovery,
 			// rather than the process conversation ownership boundary.
 			notifyLock := filepath.Join(filepath.Dir(filepath.Dir(f.store.Path())), "notify.json.lock")
 			for {
+				if err := checkHostLostFixtureIdentity(a, supervisor, first.cmd.Process.Pid); err != nil {
+					t.Fatal(err)
+				}
 				if err := syscall.Kill(a.HostProcess.PID, syscall.SIGSTOP); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := os.Lstat(notifyLock); os.IsNotExist(err) {
+				stopStatus, err = awaitHostLostFixtureStop(ctx, a.HostProcess.PID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("fixture host stop observed: pid=%d generation=%s raw=%#x", a.HostProcess.PID, a.Binding.Generation, uint32(stopStatus))
+				if err := checkHostLostFixtureIdentity(a, supervisor, first.cmd.Process.Pid); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Lstat(notifyLock); errors.Is(err, os.ErrNotExist) {
 					break
+				} else if err != nil {
+					t.Fatalf("notification lock observation: %v", err)
 				}
 				if err := syscall.Kill(a.HostProcess.PID, syscall.SIGCONT); err != nil {
 					t.Fatal(err)
@@ -1522,22 +1719,45 @@ func TestProcessHostLostResumeActualCLI(t *testing.T) {
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
+			if err := ctx.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkHostLostFixtureIdentity(a, supervisor, first.cmd.Process.Pid); err != nil {
+				t.Fatal(err)
+			}
 			if err := syscall.Kill(a.HostProcess.PID, syscall.SIGKILL); err != nil {
 				t.Fatal(err)
 			}
-			if err := syscall.Kill(a.Child.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				t.Fatal(err)
+			child, _, childErr := localipc.Process(a.Child.PID)
+			if transition, ok := localipc.ProcessParentTransition(childErr); ok {
+				child, childErr = transition.Process, nil
+			}
+			if childErr == nil && child == a.Child && child.OwnerUID == uint32(os.Getuid()) {
+				if err := syscall.Kill(a.Child.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(childErr, localipc.ErrProcessAbsent) {
+				t.Fatalf("fixture child birth changed before kill: got=%+v err=%v", child, childErr)
 			}
 			_ = first.input.Close()
-			_ = first.cmd.Wait()
+			waitErr := first.cmd.Wait()
 			first.done = true
-			for !processActivationAbsent(a, localipc.Process) {
+			t.Logf("fixture fault terminal Wait: raw-stop=%#x Cmd.Wait=%v process-state=%v", uint32(stopStatus), waitErr, first.cmd.ProcessState)
+			if first.cmd.ProcessState == nil {
+				t.Fatal("fixture host terminal Wait was not recorded", waitErr)
+			}
+			terminal, ok := first.cmd.ProcessState.Sys().(syscall.WaitStatus)
+			if !ok || !terminal.Signaled() || terminal.Signal() != syscall.SIGKILL {
+				t.Fatalf("fixture fault lost terminal SIGKILL status: raw=%#x err=%v", uint32(terminal), waitErr)
+			}
+			for !retired() {
 				select {
 				case <-ctx.Done():
-					t.Fatal("fixture processes did not disappear")
+					t.Fatal("fixture host/child/supervisor births did not disappear")
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
+			t.Logf("fixture host/child/supervisor retirement confirmed after actual Wait: host=%+v child=%+v supervisor=%+v", a.HostProcess, a.Child, supervisor)
 			before, err := os.ReadFile(f.store.Path())
 			if err != nil {
 				t.Fatal(err)

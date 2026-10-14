@@ -64,6 +64,7 @@ func addSecondProjectStopProcessFixture(t *testing.T, backing *fakeResourceStore
 }
 
 func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
+	t.Helper()
 	return func(ctx context.Context, store *resourceStore, uid string) ([]cli.ReceiptResource, error) {
 		var mutation sync.Mutex
 		copied := *store
@@ -72,23 +73,108 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 		originalLoad := store.load
 		copied.load = func() (coremetadata.Registry, error) { mutation.Lock(); defer mutation.Unlock(); return originalLoad() }
 		store = &copied
-		return stopProjectProcessAgentsWith(ctx, store, uid, func(_ context.Context, _ coremetadata.Registry, agent coremetadata.Agent, _, action, _ string) (string, error) {
+		reg, err := store.load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		type retirement struct {
+			activation              coremetadata.ProcessActivation
+			agent                   coremetadata.Agent
+			pane                    coremetadata.Pane
+			published               bool
+			hostAbsent, childAbsent bool
+		}
+		prepared := map[string]*retirement{}
+		path := intmetadata.PathFor(root)
+		for _, target := range runningProjectProcessAgents(reg, uid) {
+			if target.pane.Status.Activation.Process == nil {
+				t.Fatal("fixture lacks exact process activation")
+			}
+			activation := *target.pane.Status.Activation.Process
+			private := reg.Clone()
+			recordFixtureWait(t, &private, target.pane.Metadata.UID)
+			agent, _ := private.Agent(target.agent.Metadata.UID)
+			pane, _ := private.Pane(target.pane.Metadata.UID)
+			// Disk preparation is not part of the Stop deadline. Registry Wait
+			// publication still belongs exclusively to the admitted callback.
+			if err := mutationruntime.WriteProcessRetirement(path, activation, pane.Status.LastTermination); err != nil {
+				t.Fatal(err)
+			}
+			prepared[target.agent.Metadata.UID] = &retirement{activation: activation, agent: agent.Clone(), pane: pane.Clone()}
+		}
+		// Successful receipts use a hang watchdog. Only the missing-Wait
+		// injection has the short shared deadline; dedicated deadline tests
+		// below continue to check admission and batch timing independently.
+		budget := 5 * time.Second
+		if failure == "timeout" {
+			budget = 50 * time.Millisecond
+		}
+		stopped, err := stopProjectProcessAgentsWith(ctx, store, uid, func(_ context.Context, current coremetadata.Registry, agent coremetadata.Agent, _, action, _ string) (string, error) {
 			mutation.Lock()
 			defer mutation.Unlock()
-			if action != "stop" {
-				t.Fatalf("action=%s", action)
+			r := prepared[agent.Metadata.UID]
+			pane, ok := current.Pane(agent.Status.PaneRef)
+			if action != "stop" || r == nil || !ok || pane.Status.ProcessSession.Binding != r.activation.Binding || pane.Status.LastTermination != nil || r.published {
+				return "", errors.New("fixture Stop admission binding or Wait order mismatch")
 			}
 			if failure == "reject" && agent.Metadata.UID == "agt-alpha-review" {
 				return "", errors.New("injected stop rejection")
 			}
 			if failure != "timeout" || agent.Metadata.UID != "agt-alpha-review" {
-				_, err := store.update(func(reg *coremetadata.Registry) error { recordFixtureWait(t, reg, agent.Status.PaneRef); return nil })
+				_, err := store.update(func(reg *coremetadata.Registry) error {
+					return (coremetadata.Mutator{}).RecordProcessWait(reg, r.activation, *r.pane.Status.LastTermination)
+				})
+				r.published = err == nil
 				return "op-stop", err
 			}
 			return "op-stop", nil
-		}, func(int) (coremetadata.ProcessIdentity, int, error) {
+		}, func(pid int) (coremetadata.ProcessIdentity, int, error) {
+			mutation.Lock()
+			defer mutation.Unlock()
+			current, err := originalLoad()
+			if err != nil {
+				return coremetadata.ProcessIdentity{}, 0, err
+			}
+			matched := false
+			for _, r := range prepared {
+				if !r.published || (pid != r.activation.HostProcess.PID && pid != r.activation.Child.PID) {
+					continue
+				}
+				agent, hasAgent := current.Agent(r.activation.Binding.AgentUID)
+				pane, hasPane := current.Pane(r.activation.Binding.PaneUID)
+				if !hasAgent || !hasPane || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != r.activation.Binding || !coremetadata.SameProcessWait(r.agent.Status.LastTermination, agent.Status.LastTermination) || !coremetadata.SameProcessWait(r.pane.Status.LastTermination, pane.Status.LastTermination) {
+					return coremetadata.ProcessIdentity{}, 0, errors.New("fixture identity checked without published exact Wait")
+				}
+				witness, err := mutationruntime.ReadProcessRetirement(path, r.activation.Binding, r.pane.Status.LastTermination)
+				if err != nil || !reflect.DeepEqual(witness, r.activation) {
+					return coremetadata.ProcessIdentity{}, 0, errors.New("fixture identity checked without exact durable witness")
+				}
+				matched = true
+				if pid == r.activation.HostProcess.PID {
+					r.hostAbsent = true
+				} else {
+					r.childAbsent = true
+				}
+			}
+			if !matched {
+				return coremetadata.ProcessIdentity{}, 0, errors.New("fixture identity checked before admitted Wait publication")
+			}
 			return coremetadata.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
-		}, 50*time.Millisecond)
+		}, budget)
+		if failure == "timeout" {
+			var targetFailure *mutationruntime.ProjectProcessStopFailure
+			var waitFailure *mutationruntime.ProcessStopFailure
+			if !errors.As(err, &targetFailure) || targetFailure.AgentUID != "agt-alpha-review" || !errors.As(targetFailure, &waitFailure) || waitFailure.Code != "agent-stop-wait-unconfirmed" || !errors.Is(waitFailure, context.DeadlineExceeded) {
+				t.Fatalf("missing Wait did not produce the exact typed deadline failure: %v", err)
+			}
+		}
+		for _, receipt := range stopped {
+			r := prepared[receipt.UID]
+			if r == nil || !r.published || !r.hostAbsent || !r.childAbsent {
+				t.Fatalf("receipt precedes exact Wait, witness, or host/child absence: %+v", receipt)
+			}
+		}
+		return stopped, err
 	}
 }
 
@@ -124,6 +210,8 @@ func TestProjectStopHeadlessOnlyAndReceipt(t *testing.T) {
 	cmd, backing, _ := lifecycleVerbFixture(t, projectLifecycleStop, false, nil)
 	activateRuntimeStopAgent(t, backing, "gen-tmux")
 	agentUID, paneUID := addProjectStopProcessFixture(t, backing)
+	before, _ := backing.registry.Pane(paneUID)
+	binding := before.Status.ProcessSession.Binding
 	cmd.switcher.stopProcessAgents = stopProcessFixture(t, "")
 	out, _, err := runRoute(t, cmd, "project", "uid:prj-alpha", "-o", "receipt")
 	if err != nil || !strings.Contains(out, agentUID) || !strings.Contains(out, "stopped") {
@@ -131,7 +219,7 @@ func TestProjectStopHeadlessOnlyAndReceipt(t *testing.T) {
 	}
 	pane, _ := backing.registry.Pane(paneUID)
 	agent, _ := backing.registry.Agent(agentUID)
-	if agent.Status.Phase != coremetadata.PhaseOffline || pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
+	if pane.Status.ProcessSession.Binding != binding || !coremetadata.SameProcessWait(agent.Status.LastTermination, pane.Status.LastTermination) || agent.Status.Phase != coremetadata.PhaseOffline || pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
 		t.Fatalf("agent=%+v pane=%+v", agent.Status, pane.Status)
 	}
 }
