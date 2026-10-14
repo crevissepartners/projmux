@@ -144,6 +144,96 @@ func (c *createCommand) processCreateCommitted(result processAgentCreateResult) 
 	return mutationruntime.ProcessCreateCommitted{Agent: *agent, Pane: *pane, Receipt: receiptcore.OperationReceipt(receipt), Notices: slices.Clone(result.Notices)}, nil
 }
 
+// Only the SDK supervisor receives these existing activation-routing fields.
+// Its provider specification and the legacy CLI supervisor environment stay intact.
+func (c *createCommand) processCreateSupervisorEnvironment(base []string, binding processhost.Binding, path string) ([]string, error) {
+	if c.processCreateContext == nil {
+		return base, nil
+	}
+	if err := mutationruntime.ValidateProcessCreateContext(*c.processCreateContext); err != nil {
+		return nil, err
+	}
+	if path != intmetadata.PathFor(c.processCreateContext.Paths.StateDir) || binding.Pane == "" || binding.Generation == "" {
+		return nil, errors.New("process-supervisor-domain-mismatch")
+	}
+	env := make([]string, 0, len(base)+3)
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, "PMX_INTERNAL_") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, internalClaudeRegistryPathEnv+"="+path, internalActivationPaneUIDEnv+"="+binding.Pane, internalActivationGenerationEnv+"="+binding.Generation), nil
+}
+
+// The supervisor needs no Config domain. Before constructing App, admit only
+// its exact private pipes and reciprocal reservation, and select that State
+// domain for diagnostics. No pipe content or offset is consumed here.
+func processCreateSupervisorDomain(args []string, lookup func(string) (string, bool), pipe func(int) error) (string, bool, error) {
+	if len(args) < 2 || args[0] != "internal" || args[1] != "process-host-supervisor" {
+		return "", false, nil
+	}
+	path, hasPath := lookup(internalClaudeRegistryPathEnv)
+	paneUID, hasPane := lookup(internalActivationPaneUIDEnv)
+	generation, hasGeneration := lookup(internalActivationGenerationEnv)
+	if !hasPath && !hasPane && !hasGeneration {
+		return "", false, nil
+	}
+	if len(args) != 2 || !hasPath || !hasPane || !hasGeneration || path == "" || paneUID == "" || generation == "" {
+		return "", true, errors.New("process-supervisor-domain-incomplete")
+	}
+	for fd := 3; fd <= 5; fd++ {
+		if err := pipe(fd); err != nil {
+			return "", true, err
+		}
+	}
+	if err := exactActivationRegistryPath(path); err != nil {
+		return "", true, err
+	}
+	reg, err := intmetadata.NewStore(path).LoadDegradedReadOnly()
+	if err != nil {
+		return "", true, err
+	}
+	pane, ok := reg.Pane(paneUID)
+	if !ok || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Status.ProcessSession == nil {
+		return "", true, errors.New("process-supervisor-pane-mismatch")
+	}
+	binding := pane.Status.ProcessSession.Binding
+	if binding.PaneUID != paneUID || binding.Generation != generation || binding.HostInstanceID == "" || binding.OperationID == "" || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerRef.UID != binding.AgentUID {
+		return "", true, errors.New("process-supervisor-binding-mismatch")
+	}
+	agent, ok := reg.Agent(binding.AgentUID)
+	if !ok || agent.Status.PaneRef != paneUID || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow || agent.Metadata.OwnerRef.UID != binding.WindowUID || (agent.Status.Phase != coremetadata.PhasePending && agent.Status.Phase != coremetadata.PhaseRunning) || pane.Status.ProcessSession.Provider != agent.Spec.Provider || (agent.Spec.Provider != "claude" && agent.Spec.Provider != "codex") {
+		return "", true, errors.New("process-supervisor-agent-mismatch")
+	}
+	window, ok := reg.Window(binding.WindowUID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject || window.Metadata.OwnerRef.UID != binding.ProjectUID {
+		return "", true, errors.New("process-supervisor-window-mismatch")
+	}
+	if _, ok := reg.Project(binding.ProjectUID); !ok {
+		return "", true, errors.New("process-supervisor-project-mismatch")
+	}
+	for _, other := range reg.Panes {
+		if other.Metadata.UID != paneUID && other.Metadata.OwnerRef != nil && other.Metadata.OwnerRef.Kind == coremetadata.KindAgent && other.Metadata.OwnerRef.UID == binding.AgentUID {
+			return "", true, errors.New("process-supervisor-pane-ambiguous")
+		}
+	}
+	for _, other := range reg.Agents {
+		if other.Metadata.UID != binding.AgentUID && other.Status.PaneRef == paneUID {
+			return "", true, errors.New("process-supervisor-agent-ambiguous")
+		}
+	}
+	return filepath.Dir(filepath.Dir(path)), true, nil
+}
+
+func processCreateSupervisorPipe(fd int) error {
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fd, &stat); err != nil || stat.Mode&syscall.S_IFMT != syscall.S_IFIFO {
+		return fmt.Errorf("process supervisor requires inherited pipe descriptor %d", fd)
+	}
+	return nil
+}
+
 // Select diagnostics only for exact owned internal entrypoints. Neither an
 // inherited private variable on an ordinary CLI command nor a malformed
 // explicit request may redirect or fall back to an ambient journal.
@@ -152,6 +242,8 @@ func processCreateObservationStateDir(args []string) (string, bool, error) {
 		return "", false, nil
 	}
 	switch args[1] {
+	case "process-host-supervisor":
+		return processCreateSupervisorDomain(args, os.LookupEnv, processCreateSupervisorPipe)
 	case "process-agent-launch", "process-agent-owner":
 		if len(args) != 2 {
 			return "", true, errors.New("process-detached-entry-arguments-invalid")

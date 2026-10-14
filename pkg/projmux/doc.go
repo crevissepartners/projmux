@@ -57,8 +57,9 @@
 // projmux build (same module version and commit) as this SDK. Other builds are
 // unsupported and their results are undefined; no version probe is performed.
 // An embedding projmux executable can explicitly pass its own os.Executable()
-// path. The SDK uses this binary only for supervised shell children, and never
-// delegates mutations to CLI commands. Missing, relative or invalid executables
+// path. The SDK uses this binary for supervised shell children and owned
+// internal process launchers, owners and supervisors. It never delegates
+// mutations to public CLI commands. Missing, relative or invalid executables
 // return CodeCreateExecutableInvalid before effects. Delete replacement shells
 // do not use this supervisor and do not require ProjmuxExecutable.
 // Clients own no processes or goroutines. Concurrent calls are supported, but

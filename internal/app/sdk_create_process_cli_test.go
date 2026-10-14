@@ -3,14 +3,17 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -66,6 +70,8 @@ func TestSDKDetachedProcessCreateFrozenExplicitDomains(t *testing.T) {
 				if err = os.WriteFile(filepath.Join(paths.ConfigDir, "config.toml"), []byte(hook), 0600); err != nil {
 					t.Fatal(err)
 				}
+				sibling := filepath.Join(filepath.Dir(paths.StateDir), "projmux")
+				siblingBefore := sdkCreateSeedSibling(t, sibling)
 				for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "PATH"} {
 					t.Setenv(key, filepath.Join(f.root, "poison"))
 				}
@@ -144,8 +150,8 @@ func TestSDKDetachedProcessCreateFrozenExplicitDomains(t *testing.T) {
 				if agent.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
 					t.Fatal("Wait/UID/Pane evidence lost")
 				}
-				if _, err := os.Stat(filepath.Join(f.root, domain, "deep", "projmux")); !os.IsNotExist(err) {
-					t.Fatalf("explicit paths wrote a sibling default root: %v", err)
+				if after := sdkCreateDirectorySnapshot(t, sibling); !reflect.DeepEqual(siblingBefore, after) {
+					t.Fatalf("SDK startup/Stop changed sibling Config/State: before=%v after=%v", siblingBefore, after)
 				}
 				deleted, err := c.Delete(clean, core.DeleteRequest{Kind: core.KindAgent, Ref: ref, Confirm: true})
 				if err != nil {
@@ -157,6 +163,7 @@ func TestSDKDetachedProcessCreateFrozenExplicitDomains(t *testing.T) {
 }
 
 func TestSDKDetachedProcessCreateHookRollback(t *testing.T) {
+	t.Run("missing-interpreter", sdkCreateMissingInterpreter)
 	f := newProcessCreateCLI(t)
 	c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
 	if err != nil {
@@ -249,6 +256,7 @@ func TestSDKDetachedProcessCreateCancellationRollsBackBirth(t *testing.T) {
 }
 
 func TestSDKProcessCreateObservationContextBoundedAndOffsetUnchanged(t *testing.T) {
+	t.Run("supervisor-domain", sdkCreateSupervisorDomainCases)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -314,4 +322,287 @@ func TestSDKProcessCreateObservationContextBoundedAndOffsetUnchanged(t *testing.
 			}
 		})
 	}
+}
+
+// Snapshot names, modes and content, including empty lock files and directories.
+func sdkCreateDirectorySnapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		name, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		value := info.Mode().String()
+		if entry.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			value += " " + target
+		} else if !entry.IsDir() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			value += fmt.Sprintf(" %x", sha256.Sum256(data))
+		}
+		result[name] = value
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+func sdkCreateSeedSibling(t *testing.T, root string) map[string]string {
+	t.Helper()
+	for _, dir := range []string{"hooks", "logs"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, data := range map[string]string{"config.toml": "# sibling configuration sentinel\n", "hooks/post-create": "#!/bin/sh\nexit 0\n", "logs/operations.jsonl": "{\"event\":\"sibling-sentinel\"}\n", "logs/operations.jsonl.lock": ""} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return sdkCreateDirectorySnapshot(t, root)
+}
+func sdkCreateMissingInterpreter(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			var f processCreateCLI
+			if provider == "codex" {
+				f = newProcessCodexCreateCLI(t).processCreateCLI
+			} else {
+				f = newProcessCreateCLI(t)
+			}
+			paths := config.Paths{ConfigDir: filepath.Join(f.root, "deep", "sdk-custom"), StateDir: filepath.Join(f.root, "deep", "sdk-records")}
+			original, err := os.ReadFile(f.store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg, err := f.store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
+			if _, err = store.Update(func(target *coremetadata.Registry) error { *target = reg.Clone(); return nil }); err != nil {
+				t.Fatal(err)
+			}
+			sibling := filepath.Join(filepath.Dir(paths.StateDir), "projmux")
+			before := sdkCreateSeedSibling(t, sibling)
+			// Lookup admits this executable file; the actual supervisor Start must fail
+			// on its missing interpreter, before creating any provider process.
+			if err = os.WriteFile(filepath.Join(f.root, provider), []byte("#!"+filepath.Join(f.root, "missing-interpreter")+"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, err = c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:" + f.project, Window: "uid:" + f.window, Provider: provider, Profile: "none", Host: "process", Detach: true})
+			var detail *projmux.CreateProcessError
+			if !errors.As(err, &detail) || detail.Owner.PID == 0 || errors.Unwrap(detail) == nil {
+				t.Fatalf("missing interpreter lost typed owner/cause: %v", err)
+			}
+			after, loadErr := store.LoadReadOnly()
+			if loadErr != nil || len(after.Agents) != 0 {
+				t.Fatal("failed birth was not rolled back", loadErr)
+			}
+			if current, _, e := localipc.Process(detail.Owner.PID); !errors.Is(e, localipc.ErrProcessAbsent) && !(e == nil && current != detail.Owner) {
+				t.Fatal("owner actual retirement unconfirmed", e)
+			}
+			if after := sdkCreateDirectorySnapshot(t, sibling); !reflect.DeepEqual(before, after) {
+				t.Fatalf("failed SDK startup changed sibling: before=%v after=%v", before, after)
+			}
+			if data, e := os.ReadFile(f.store.Path()); e != nil || !bytes.Equal(original, data) {
+				t.Fatal("default Registry changed", e)
+			}
+			journal := filepath.Join(paths.StateDir, "logs", "operations.jsonl")
+			data, e := os.ReadFile(journal)
+			if e != nil || !bytes.Contains(data, []byte("process-host-supervisor")) {
+				t.Fatalf("supervisor failure journal escaped explicit State: %v %s", e, data)
+			}
+			if _, e = os.Stat(f.trace); !os.IsNotExist(e) {
+				t.Fatal("missing interpreter produced provider input", e)
+			}
+		})
+	}
+}
+func sdkCreateSupervisorDomainCases(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "deep", "sdk-records")
+	path := intmetadata.PathFor(state)
+	reg, _, paneUID := processDeleteFixture(t, "claude")
+	pane, _ := reg.Pane(paneUID)
+	binding := pane.Status.ProcessSession.Binding
+	store := intmetadata.NewStore(path)
+	if _, err := store.Update(func(target *coremetadata.Registry) error { *target = reg.Clone(); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	before := sdkCreateDirectorySnapshot(t, state)
+	valid := map[string]string{internalClaudeRegistryPathEnv: path, internalActivationPaneUIDEnv: paneUID, internalActivationGenerationEnv: binding.Generation}
+	cases := []struct {
+		name          string
+		values        map[string]string
+		args          []string
+		badPipe       int
+		explicit, bad bool
+	}{
+		{"valid", valid, []string{"internal", "process-host-supervisor"}, 0, true, false},
+		{"nil-cli", map[string]string{}, []string{"internal", "process-host-supervisor"}, 0, false, false},
+		{"explicit-empty", map[string]string{internalClaudeRegistryPathEnv: "", internalActivationPaneUIDEnv: "", internalActivationGenerationEnv: ""}, []string{"internal", "process-host-supervisor"}, 0, true, true},
+		{"partial", map[string]string{internalClaudeRegistryPathEnv: path}, []string{"internal", "process-host-supervisor"}, 0, true, true},
+		{"wrong-pane", map[string]string{internalClaudeRegistryPathEnv: path, internalActivationPaneUIDEnv: "wrong", internalActivationGenerationEnv: binding.Generation}, []string{"internal", "process-host-supervisor"}, 0, true, true},
+		{"stale-generation", map[string]string{internalClaudeRegistryPathEnv: path, internalActivationPaneUIDEnv: paneUID, internalActivationGenerationEnv: "replacement"}, []string{"internal", "process-host-supervisor"}, 0, true, true},
+		{"noncanonical", map[string]string{internalClaudeRegistryPathEnv: state + "/../sdk-records/metadata/registry.json", internalActivationPaneUIDEnv: paneUID, internalActivationGenerationEnv: binding.Generation}, []string{"internal", "process-host-supervisor"}, 0, true, true},
+		{"missing-registry", map[string]string{internalClaudeRegistryPathEnv: intmetadata.PathFor(root + "/missing"), internalActivationPaneUIDEnv: paneUID, internalActivationGenerationEnv: binding.Generation}, []string{"internal", "process-host-supervisor"}, 0, true, true},
+		{"bad-fd3", valid, []string{"internal", "process-host-supervisor"}, 3, true, true},
+		{"bad-fd4", valid, []string{"internal", "process-host-supervisor"}, 4, true, true},
+		{"bad-fd5", valid, []string{"internal", "process-host-supervisor"}, 5, true, true},
+		{"extra-argv", valid, []string{"internal", "process-host-supervisor", "unexpected"}, 0, true, true},
+		{"ordinary-cli-marker-ignored", valid, []string{"get", "projects"}, 0, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := []int{}
+			got, explicit, err := processCreateSupervisorDomain(tc.args, func(key string) (string, bool) { value, ok := tc.values[key]; return value, ok }, func(fd int) error {
+				called = append(called, fd)
+				if fd == tc.badPipe {
+					return syscall.EBADF
+				}
+				return nil
+			})
+			if explicit != tc.explicit || (err != nil) != tc.bad || (tc.bad && got != "") || (!tc.bad && explicit && got != state) {
+				t.Fatalf("state=%q explicit=%v err=%v", got, explicit, err)
+			}
+			if !tc.explicit && len(called) != 0 {
+				t.Fatal("legacy/ordinary CLI consumed descriptors")
+			}
+			if tc.name == "valid" && !reflect.DeepEqual(called, []int{3, 4, 5}) {
+				t.Fatal("descriptor fence missing", called)
+			}
+		})
+	}
+	if after := sdkCreateDirectorySnapshot(t, state); !reflect.DeepEqual(before, after) {
+		t.Fatal("domain admission wrote Registry/State")
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*coremetadata.Registry)
+	}{
+		{"agent-pane", func(r *coremetadata.Registry) { a, _ := r.Agent(binding.AgentUID); a.Status.PaneRef = "wrong" }},
+		{"pane-owner", func(r *coremetadata.Registry) { p, _ := r.Pane(binding.PaneUID); p.Metadata.OwnerRef.UID = "wrong" }},
+		{"window-owner", func(r *coremetadata.Registry) { w, _ := r.Window(binding.WindowUID); w.Metadata.OwnerRef.UID = "wrong" }},
+		{"session-binding", func(r *coremetadata.Registry) {
+			p, _ := r.Pane(binding.PaneUID)
+			p.Status.ProcessSession.Binding.WindowUID = "wrong"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := reg.Clone()
+			tc.change(&bad)
+			raw, err := json.Marshal(bad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, explicit, err := processCreateSupervisorDomain([]string{"internal", "process-host-supervisor"}, func(key string) (string, bool) { v, ok := valid[key]; return v, ok }, func(int) error { return nil })
+			if got != "" || !explicit || err == nil {
+				t.Fatal("inconsistent reciprocal graph admitted", got, explicit, err)
+			}
+			after, e := os.ReadFile(path)
+			if e != nil || !bytes.Equal(raw, after) {
+				t.Fatal("invalid graph admission wrote Registry", e)
+			}
+		})
+	}
+	t.Run("pipe-content-unconsumed", func(t *testing.T) {
+		read, write, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer read.Close()
+		defer write.Close()
+		if _, err = write.Write([]byte("spec")); err != nil {
+			t.Fatal(err)
+		}
+		if err = processCreateSupervisorPipe(int(read.Fd())); err != nil {
+			t.Fatal(err)
+		}
+		data := make([]byte, 4)
+		if _, err = io.ReadFull(read, data); err != nil || string(data) != "spec" {
+			t.Fatal("pipe consumed", err)
+		}
+	})
+	t.Run("regular-file-offset-unchanged", func(t *testing.T) {
+		file, err := os.CreateTemp(root, "regular-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if _, err = file.Write([]byte("payload")); err != nil {
+			t.Fatal(err)
+		}
+		offset, _ := file.Seek(2, io.SeekStart)
+		if err = processCreateSupervisorPipe(int(file.Fd())); err == nil {
+			t.Fatal("regular fd admitted")
+		}
+		after, _ := file.Seek(0, io.SeekCurrent)
+		if after != offset {
+			t.Fatal("regular descriptor offset changed")
+		}
+	})
+	t.Run("command-local-env-and-nil-parity", func(t *testing.T) {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		frozen := mutationruntime.CaptureProcessCreateContext(config.Paths{ConfigDir: root + "/deep/sdk-config", StateDir: state}, root, executable, "/bin/sh")
+		base := []string{"HOME=" + root, internalClaudeRegistryPathEnv + "=poison", internalActivationPaneUIDEnv + "=old", internalActivationGenerationEnv + "=old", internalClaudeRegistryPathEnv + "=duplicate"}
+		saved := append([]string(nil), base...)
+		c := &createCommand{processCreateContext: &frozen}
+		env, err := c.processCreateSupervisorEnvironment(base, processSchemaBinding(binding), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(base, saved) {
+			t.Fatal("provider env mutated")
+		}
+		values := map[string]string{}
+		for _, entry := range env {
+			k, v, _ := strings.Cut(entry, "=")
+			if _, ok := values[k]; ok {
+				t.Fatal("duplicate key", k)
+			}
+			values[k] = v
+		}
+		for k, v := range valid {
+			if values[k] != v {
+				t.Fatal("frozen domain not delivered", k)
+			}
+		}
+		c.processCreateContext = nil
+		legacy, err := c.processCreateSupervisorEnvironment(base, processhost.Binding{}, "")
+		if err != nil || !reflect.DeepEqual(legacy, base) {
+			t.Fatal("nil CLI environment changed", err)
+		}
+		legacy, err = c.processCreateSupervisorEnvironment(nil, processhost.Binding{}, "")
+		if err != nil || legacy != nil {
+			t.Fatal("nil slice broadened", err)
+		}
+	})
 }

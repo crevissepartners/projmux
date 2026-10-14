@@ -146,8 +146,12 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	if err != nil {
 		return result, err
 	}
+	supervisorEnv, err := c.processCreateSupervisorEnvironment(plan.command.Env, result.Binding, path)
+	if err != nil {
+		return result, err
+	}
 	transactions := c.processCreateTransactions(path)
-	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.command.Env}, transactions, processhost.DefaultLimits())
+	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: supervisorEnv}, transactions, processhost.DefaultLimits())
 	if err != nil {
 		return result, err
 	}

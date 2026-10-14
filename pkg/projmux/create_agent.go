@@ -43,8 +43,10 @@ func (e *CreateProcessError) Unwrap() error { return e.cause }
 
 // CreateAgent uses the shared tmux transaction or explicit detached process
 // startup/commit executor. Successful detached owners outlive this request.
-// An activation-unconfirmed error returns the committed resources with the
-// error. Context cancellation only prevents admission; admitted work completes.
+// For tmux, cancellation prevents admission; admitted work completes. A tmux
+// activation-unconfirmed error returns the committed resources with the error.
+// Process startup observes cancellation and rolls back its owned birth. After
+// a successful detached return, cancellation does not stop the independent owner.
 func (c *Client) CreateAgent(ctx context.Context, req core.CreateAgentRequest) (core.CreateAgentResult, error) {
 	if req.Host == "process" {
 		return c.createProcessAgent(ctx, req)
