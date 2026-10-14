@@ -111,7 +111,7 @@ func (c *createCommand) processCreateHookRunner() *hooks.Runner {
 		return defaultLifecycleHookRunner()
 	}
 	paths := c.processCreateContext.Paths
-	return &hooks.Runner{GlobalConfigPath: filepath.Join(paths.ConfigDir, "config.toml"), DiscoverProjectHooks: true, TrustStorePath: filepath.Join(paths.StateDir, "trusted-projects.json"), Timeout: hooks.DefaultPostCreateTimeout, Version: version.String()}
+	return &hooks.Runner{GlobalConfigPath: paths.GlobalConfigFile(), DiscoverProjectHooks: true, TrustStorePath: filepath.Join(paths.StateDir, "trusted-projects.json"), Timeout: hooks.DefaultPostCreateTimeout, Version: version.String()}
 }
 func (c *createCommand) processCreateQuestionWindow(paths config.Paths) time.Duration {
 	if c.processCreateContext == nil {
