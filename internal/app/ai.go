@@ -74,6 +74,7 @@ const (
 )
 
 type aiCommand struct {
+	processCreateContext          *mutationruntime.ProcessCreateContext
 	nativeObserverPaths           *mutationruntime.NativeObserverPaths
 	nativePicker                  intpicker.Runner
 	executable                    func() (string, error)
@@ -180,6 +181,7 @@ func newAICommand() *aiCommand {
 func (c *aiCommand) cloneSeams() *aiCommand {
 	return &aiCommand{
 		nativeObserverPaths:           c.nativeObserverPaths,
+		processCreateContext:          c.processCreateContext,
 		nativePicker:                  c.nativePicker,
 		executable:                    c.executable,
 		lookupEnv:                     c.lookupEnv,
@@ -2072,6 +2074,13 @@ func aiEnabledAgents(homeDir func() (string, error), lookupEnv func(string) stri
 }
 
 func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
+	if c.processCreateContext != nil {
+		agents, err := config.LoadAIEnabledAgentsFile(c.processCreateContext.Paths.AIEnabledAgentsFile())
+		if err != nil {
+			return config.DefaultAIEnabledAgents
+		}
+		return agents
+	}
 	return aiEnabledAgents(c.homeDir, c.lookupEnv)
 }
 
@@ -3959,5 +3968,17 @@ func (c *aiCommand) sharedAgentLaunch() *mutationruntime.AgentLaunchService {
 }
 
 func (c *aiCommand) sharedAgentCommand() *mutationruntime.AgentCommandPlanner {
+	if c.processCreateContext != nil {
+		return &mutationruntime.AgentCommandPlanner{ExecArgv: c.agentExecArgv, LookupEnv: c.env, HomeDir: c.homeOrEmpty(), CommandShell: posixCommandShell(c.lookupEnv), LookupBinary: func(bin string) string {
+			for _, dir := range filepath.SplitList(c.env("PATH")) {
+				candidate := filepath.Join(dir, bin)
+				if filepath.IsAbs(candidate) && mutationruntime.IsExecutable(candidate) {
+					return candidate
+				}
+			}
+			return ""
+		}}
+	}
+
 	return &mutationruntime.AgentCommandPlanner{ExecArgv: c.agentExecArgv, LookupEnv: c.env, HomeDir: c.homeOrEmpty(), CommandShell: posixCommandShell(c.lookupEnv), LookupBinary: func(bin string) string { return c.readTrimmed("command", "-v", bin) }}
 }

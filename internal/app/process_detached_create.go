@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const processDetachedStartupTimeout = 30 * time.Second
@@ -35,13 +36,16 @@ type processDetachedRequest struct {
 	Output       cli.OutputMode
 	Caller       coremetadata.ProcessIdentity
 	RegistryPath string
+	Context      *mutationruntime.ProcessCreateContext `json:",omitempty"`
 }
 type processDetachedReply struct {
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string
 	Phase                 string
-	Claim                 *deferredClaimRecord `json:",omitempty"`
+	Claim                 *deferredClaimRecord                    `json:",omitempty"`
+	Result                *mutationruntime.ProcessCreateCommitted `json:",omitempty"`
+	ErrorCode             string                                  `json:",omitempty"`
 }
 
 func (c *createCommand) runDetachedProcessCreate(request processAgentCreateRequest, mode cli.OutputMode, stdout, stderr io.Writer) error {
@@ -65,142 +69,45 @@ func (c *createCommand) runDetachedProcessCreate(request processAgentCreateReque
 	return launchProcessDetached(ctx, executable, wire, c, stdout, stderr)
 }
 
-func launchProcessDetached(ctx context.Context, executable string, request processDetachedRequest, command *createCommand, stdout, stderr io.Writer) (returnErr error) {
-	encoded, err := json.Marshal(request)
-	if err != nil {
-		return err
+func launchProcessDetached(ctx context.Context, executable string, request processDetachedRequest, command *createCommand, stdout, stderr io.Writer) error {
+	convert := func(reply mutationruntime.ProcessDetachedReply) processDetachedReply {
+		var out processDetachedReply
+		raw, _ := json.Marshal(reply)
+		_ = json.Unmarshal(raw, &out)
+		return out
 	}
-	if len(encoded) > processDetachedWireLimit {
-		return usageError("process-detached-request-too-large: nothing was created")
-	}
-	payload, err := os.CreateTemp("", "pmx-detach-*")
-	if err != nil {
-		return err
-	}
-	defer payload.Close()
-	if err = os.Remove(payload.Name()); err != nil {
-		return err
-	}
-	if _, err = payload.Write(encoded); err != nil {
-		return err
-	}
-	if _, err = payload.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-	if err != nil {
-		return err
-	}
-	syscall.CloseOnExec(pair[0])
-	syscall.CloseOnExec(pair[1])
-	own := os.NewFile(uintptr(pair[0]), "detach-caller")
-	child := os.NewFile(uintptr(pair[1]), "detach-owner")
-	defer child.Close()
-	conn, err := net.FileConn(own)
-	_ = own.Close()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	deadline, _ := ctx.Deadline()
-	if err = conn.SetDeadline(deadline); err != nil {
-		return err
-	}
-	interrupt := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer interrupt()
-	// #nosec G204 -- this is the caller's own executable with fixed internal argv; private request data travels only through fd 4.
-	launcher := exec.Command(executable, "internal", "process-agent-launch")
-	launcher.ExtraFiles = []*os.File{child, payload}
-	if err = launcher.Start(); err != nil {
-		return err
-	}
-	_ = child.Close()
-	done := make(chan error, 1)
-	go func() { done <- launcher.Wait() }()
-	decoder := json.NewDecoder(io.LimitReader(conn, processDetachedWireLimit))
-	encoder := json.NewEncoder(conn)
-	var identity, ready processDetachedReply
-	if err = decoder.Decode(&identity); err != nil {
-		_ = launcher.Process.Kill()
-		<-done
-		return fmt.Errorf("process-detached-identity-handshake-failed: %w", errors.Join(err, ctx.Err()))
-	}
-	if !identity.Owner.Valid() || int64(identity.Owner.OwnerUID) != int64(os.Getuid()) {
-		_ = launcher.Process.Kill()
-		<-done
-		return errors.New("process-detached-owner-identity-invalid")
-	}
-	// Once an exact owner is known, every failed startup asks only that kernel
-	// identity to stop. A failed/closed handshake also makes the owner roll back.
-	failed := true
-	defer func() {
-		if failed {
-			_ = conn.Close()
-			signalDetachedProcessOwner(identity.Owner)
-			returnErr = errors.Join(returnErr, awaitDetachedRequestCleanup(command, request, identity.Owner, ready))
+	launcher := mutationruntime.ProcessDetachedLauncher{Executable: executable, Verify: func(reply mutationruntime.ProcessDetachedReply, owner coremetadata.ProcessIdentity) error {
+		ready := convert(reply)
+		identity := processDetachedReply{Owner: owner}
+		if request.Relaunch != nil && ready.Binding.Agent != request.Relaunch.Source.Metadata.UID {
+			return errors.New("process-detached-binding-invalid")
 		}
-	}()
-	kernelOwner, _, identityErr := localipc.Process(identity.Owner.PID)
-	if identityErr != nil || kernelOwner != identity.Owner {
-		_ = launcher.Process.Kill()
-		<-done
-		return errors.New("process-detached-owner-identity-unconfirmed")
-	}
-	if err = decoder.Decode(&ready); err != nil {
-		return fmt.Errorf("process-detached-startup-handshake-failed: owner pid %d: %w", identity.Owner.PID, errors.Join(err, ctx.Err()))
-	}
-	if ready.Phase == "starting" && ready.Error == "" {
-		started := ready
-		if err = decoder.Decode(&ready); err != nil {
-			ready = started
-			return fmt.Errorf("process-detached-startup-handshake-failed: %w", errors.Join(err, ctx.Err()))
+		reg, err := command.store.snapshot()
+		if err != nil {
+			return err
 		}
-		if ready.Binding != started.Binding || ready.Owner != started.Owner {
-			return errors.New("process-detached-startup-binding-changed")
+		if request.Relaunch == nil && request.Resume == nil {
+			return mutationruntime.VerifyDetachedProcessCreateBinding(reg, ready.Binding, identity.Owner)
 		}
-	}
-	if err = <-done; err != nil {
-		return err
-	}
-	if ready.Error != "" {
-		return errors.New(ready.Error)
-	}
-	if ready.Owner != identity.Owner || ready.Binding.Agent == "" || (request.Relaunch != nil && ready.Binding.Agent != request.Relaunch.Source.Metadata.UID) {
-		return errors.New("process-detached-binding-invalid")
-	}
-	reg, err := command.store.snapshot()
-	if err != nil {
-		return err
-	}
-	activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(ready.Binding))
-	if ready.Claim != nil {
-		claimAllowed := request.Relaunch != nil || (request.Resume != nil && request.Resume.WaitForPeer)
-		if !claimAllowed || !detachedClaimCurrent(command, reg, *ready.Claim, identity.Owner) {
+		activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(ready.Binding))
+		if ready.Claim != nil {
+			claimAllowed := request.Relaunch != nil || (request.Resume != nil && request.Resume.WaitForPeer)
+			if !claimAllowed || !detachedClaimCurrent(command, reg, *ready.Claim, identity.Owner) {
+				return processhost.ErrStale
+			}
+		} else if !current || activation.HostProcess != identity.Owner {
 			return processhost.ErrStale
 		}
-	} else if !current || activation.HostProcess != identity.Owner {
-		return processhost.ErrStale
+
+		return nil
+	}, Cleanup: func(owner coremetadata.ProcessIdentity, ready mutationruntime.ProcessDetachedReply) error {
+		return awaitDetachedRequestCleanup(command, request, owner, convert(ready))
+	}}
+	if request.Context != nil {
+		launcher.Environment = request.Context.Environment
 	}
-	if _, err = io.WriteString(stderr, ready.Stderr); err != nil {
-		return err
-	}
-	if _, err = io.WriteString(stdout, ready.Stdout); err != nil {
-		return err
-	}
-	// Output failure and caller cancellation precede commit. The owner never
-	// treats EOF as success and retains the deadline until this acknowledgment.
-	if err = encoder.Encode("commit"); err != nil {
-		return err
-	}
-	var acknowledged string
-	if err = decoder.Decode(&acknowledged); err != nil {
-		return err
-	}
-	if acknowledged != "owned" {
-		return errors.New("process-detached-commit-refused")
-	}
-	failed = false
-	return nil
+	_, err := launcher.Launch(ctx, request, stdout, stderr)
+	return err
 }
 
 func signalDetachedProcessOwner(identity coremetadata.ProcessIdentity) {
@@ -261,8 +168,20 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 		return err
 	}
 	_ = payload.Close()
+	if req.Context != nil {
+		if req.Resume != nil || req.Relaunch != nil {
+			return errors.New("process-detached-context-create-only")
+		}
+		if err = command.bindProcessCreateContext(*req.Context); err != nil {
+			return err
+		}
+	}
 	if err = bindDetachedCaller(command, req.Caller); err != nil {
 		return err
+	}
+	if req.Context != nil {
+		command.processAncestors = nil
+		command.processCreatorAncestors = nil
 	}
 	// Detached creation cannot redirect the Registry to another domain.
 	stateDir, pathErr := command.store.stateDir()
@@ -299,7 +218,7 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	result, err := command.startProcessAgent(startup, request)
 	fail := func(cause error) error {
 		cleanup := command.failProcessCreate(&result, cause)
-		_ = encoder.Encode(processDetachedReply{Owner: identity, Binding: result.Binding, Error: cleanup.Error()})
+		_ = encoder.Encode(processDetachedReply{Owner: identity, Binding: result.Binding, Error: cleanup.Error(), ErrorCode: mutationruntime.ProcessCreateErrorCode(cause)})
 		return cleanup
 	}
 	if err != nil {
@@ -326,6 +245,13 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	output := display.Bytes()
 	errorsOutput := notices.Bytes()
 	reply := processDetachedReply{Owner: identity, Binding: result.Binding, Stdout: string(output), Stderr: string(errorsOutput)}
+	if req.Context != nil {
+		committed, err := command.processCreateCommitted(result)
+		if err != nil {
+			return fail(err)
+		}
+		reply.Result = &committed
+	}
 	if err = encoder.Encode(reply); err != nil {
 		return fail(err)
 	}
@@ -458,44 +384,5 @@ func (l *processDetachedLog) Write(p []byte) (int, error) {
 // Observe exact owner retirement and, when known, the reserved generation's
 // rollback or durable Wait before returning; retain exact recovery references.
 func awaitDetachedStartupCleanup(command *createCommand, owner coremetadata.ProcessIdentity, binding processhost.Binding) error {
-	ctx, cancel := context.WithTimeout(context.Background(), processRelaunchRetirementTimeout)
-	defer cancel()
-	ticker := time.NewTicker(processRelaunchRetirementPoll)
-	defer ticker.Stop()
-	for {
-		if binding.Agent == "" {
-			if reg, err := command.store.snapshot(); err == nil {
-				for _, pane := range reg.Panes {
-					if activation := pane.Status.Activation.Process; activation != nil && activation.HostProcess == owner && pane.Status.ProcessSession != nil && pane.Status.ProcessSession.Binding == activation.Binding {
-						binding = processSchemaBinding(activation.Binding)
-						break
-					}
-				}
-			}
-		}
-		gone := processIdentityAbsent(owner, localipc.Process)
-		settled := binding.Agent == ""
-		if !settled {
-			reg, err := command.store.snapshot()
-			if err == nil {
-				agent, exists := reg.Agent(binding.Agent)
-				pane, present := reg.Pane(binding.Pane)
-				settled = !exists && !present
-				if exists && present && pane.Status.ProcessSession != nil && pane.Status.ProcessSession.Binding == metadataProcessBinding(binding) {
-					settled = agent.Status.Phase == coremetadata.PhaseOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)
-				}
-			}
-		}
-		if gone && settled {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			if binding.Agent != "" {
-				return fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", binding.Agent, binding.Pane, binding.Agent, binding.Agent, ctx.Err())
-			}
-			return fmt.Errorf("process-detached-cleanup-unconfirmed: inspect exact owner pid %d start %s: %w", owner.PID, owner.Start, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return mutationruntime.AwaitDetachedProcessCreateCleanup(command.store.snapshot, owner, binding)
 }

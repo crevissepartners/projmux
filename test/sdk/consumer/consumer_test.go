@@ -1060,3 +1060,227 @@ s.close()
 		})
 	}
 }
+
+// A separate public-only caller exits after CreateAgent. The parent retains
+// only public resources and proves the independent owner's lifetime and Wait.
+func TestExternalSDKDetachedProcessCreateCallerExit(t *testing.T) {
+	if root := os.Getenv("PMX_SDK_CREATE_CHILD"); root != "" {
+		provider := os.Getenv("PMX_SDK_CREATE_PROVIDER")
+		c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: root + "/deep/custom-settings", StateDir: root + "/deep/custom-records", ProjmuxExecutable: os.Getenv("PMX_SDK_CREATE_BINARY")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		project, err := c.CreateProject(context.Background(), core.CreateProjectRequest{Root: root, Name: "sdk-process"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Change only this fixture caller's ambient inputs after construction.
+		for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", "CODEX_HOME"} {
+			if err = os.Setenv(key, root+"/poison"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result, err := c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:" + project.Project.Metadata.UID, Window: "uid:" + project.Windows[0].Metadata.UID, Provider: provider, Profile: "none", Model: "stub-model", Effort: "low", Host: "process", Detach: true, Name: "public-only", Payload: []string{"first input"}})
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		result.Projection = core.ResourceList{}
+		raw, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(root+"/result.json", raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	binary := os.Getenv("PMX_TEST_CLI")
+	if binary == "" {
+		t.Skip("copied product binary required")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("caller-exit birth observation uses procfs")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			// Own a short hash lease even under the CI runner's long TMPDIR.
+			lease := filepath.Dir(externalStopSocket(filepath.Join(t.TempDir(), "sdk-create")))
+			if err := os.Mkdir(lease, 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("owned fixture root=%s", lease)
+			for _, dir := range []string{lease + "/.codex", lease + "/.claude"} {
+				if err := os.Mkdir(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c, err := projmux.NewClient(projmux.Options{HomeDir: lease, ConfigDir: lease + "/deep/custom-settings", StateDir: lease + "/deep/custom-records"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result core.CreateAgentResult
+			cleaned := false
+			stopAttempted := false
+			defer func() {
+				if result.Agent.Metadata.UID != "" && !cleaned && !stopAttempted {
+					stopAttempted = true
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					if _, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + result.Agent.Metadata.UID, Binding: result.Binding}); err != nil {
+						t.Errorf("cleanup: %v; preserving %s", err, lease)
+						return
+					}
+				}
+				if cleaned {
+					_ = os.RemoveAll(lease)
+				}
+			}()
+			script := `import os,sys,json,socket,subprocess
+root=os.environ['HOME']
+s=socket.socket(socket.AF_UNIX);s.bind(root+'/provider.sock');os.chmod(root+'/provider.sock',0o600);s.listen()
+os.environ['CLAUDE_CODE_MESSAGING_SOCKET']=root+'/provider.sock'
+os.environ['CLAUDE_CODE_MESSAGING_TOKEN']='sdk-create-fixture-token'
+p=subprocess.Popen([os.environ['PMX_SDK_CREATE_BINARY'],'internal','claude-endpoint-register'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+open(root+'/hook-pid','w').write(str(p.pid))
+out,err=p.communicate(json.dumps({'hook_event_name':'SessionStart','session_id':'sdk-create-session'}).encode())
+open(root+'/hook-status','w').write(str((p.returncode,len(out),len(err))))
+if p.returncode or out or err: raise Exception('fixture registration failed')
+for line in sys.stdin:
+ f=json.loads(line);assert f['type']=='user'
+ open(root+'/input-observed','w').write(f['message']['content'])
+ print(json.dumps({'type':'system','subtype':'init','session_id':'sdk-create-session'}),flush=True)
+ print(json.dumps({'type':'result','subtype':'success','session_id':'sdk-create-session'}),flush=True)
+s.close()
+`
+			if provider == "codex" {
+				script = `import os,sys,json
+root=os.environ['HOME']
+def emit(n):print(json.dumps(n),flush=True)
+for line in sys.stdin:
+ n=json.loads(line);m=n.get('method','')
+ if m=='initialize':emit({'id':n['id'],'result':{'userAgent':'projmux/0.160.0'}})
+ elif m=='thread/start':emit({'id':n['id'],'result':{'thread':{'id':'sdk-create-thread'},'model':'stub-model','reasoningEffort':'low','sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'}})
+ elif m=='turn/start':
+  open(root+'/input-observed','w').write(n['params']['input'][0]['text'])
+  emit({'method':'turn/started','params':{'threadId':'sdk-create-thread','turn':{'id':'turn-1'}}})
+  emit({'id':n['id'],'result':{'turn':{'id':'turn-1'}}})
+  emit({'method':'turn/completed','params':{'threadId':'sdk-create-thread','turn':{'id':'turn-1','status':'completed'}}})
+`
+			}
+			script = strings.ReplaceAll(script, "os.environ['PMX_SDK_CREATE_BINARY']", fmt.Sprintf("%q", binary))
+			if err = os.WriteFile(lease+"/provider.py", []byte(script), 0600); err != nil {
+				t.Fatal(err)
+			}
+			wrapper := fmt.Sprintf("#!/bin/sh\nexec %q -u %q\n", python, lease+"/provider.py")
+			if err = os.WriteFile(lease+"/"+provider, []byte(wrapper), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Mkdir(lease+"/tmux", 0700); err != nil {
+				t.Fatal(err)
+			}
+			env := []string{}
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if key == "HOME" || key == "PATH" || key == "TMUX" || key == "TMUX_PANE" || key == "TMUX_TMPDIR" || key == "CODEX_HOME" || key == "CLAUDE_CONFIG_DIR" || strings.HasPrefix(key, "XDG_") || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_") || strings.HasPrefix(key, "PMX_") || strings.HasPrefix(key, "OPENAI_") || strings.HasPrefix(key, "ANTHROPIC_") {
+					continue
+				}
+				env = append(env, entry)
+			}
+			env = append(env, "HOME="+lease, "PATH="+lease+":"+os.Getenv("PATH"), "CODEX_HOME="+lease+"/.codex", "CLAUDE_CONFIG_DIR="+lease+"/.claude", "TMUX_TMPDIR="+lease+"/tmux", "XDG_CONFIG_HOME="+lease+"/ambient-config", "XDG_STATE_HOME="+lease+"/ambient-state", "PMX_SDK_CREATE_CHILD="+lease, "PMX_SDK_CREATE_PROVIDER="+provider, "PMX_SDK_CREATE_BINARY="+binary)
+			caller := exec.Command(os.Args[0], "-test.run=^TestExternalSDKDetachedProcessCreateCallerExit$")
+			caller.Env = env
+			if out, err := caller.CombinedOutput(); err != nil {
+				t.Fatalf("caller: %v %s", err, out)
+			}
+			raw, err := os.ReadFile(lease + "/result.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(raw, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Binding.AgentUID != result.Agent.Metadata.UID || result.Binding.PaneUID != result.Agent.Status.PaneRef {
+				t.Fatal("binding lost")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			paneResource, err := c.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + result.Binding.PaneUID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane := paneResource.(core.Pane)
+			if pane.Status.Activation.Process == nil {
+				t.Fatal("missing born owner")
+			}
+			activation := *pane.Status.Activation.Process
+			if externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
+				t.Fatal("caller exit retired owner/provider")
+			}
+			for {
+				data, e := os.ReadFile(lease + "/input-observed")
+				if e == nil && string(data) == "first input" {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					status, _ := os.ReadFile(lease + "/hook-status")
+					pid, _ := os.ReadFile(lease + "/hook-pid")
+					wchan, _ := os.ReadFile("/proc/" + string(pid) + "/wchan")
+					t.Fatalf("initial input not observed; registration rc/stdout-bytes/stderr-bytes=%s pid=%s wait=%s", status, pid, wchan)
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			sessionID := func(agent core.Agent) string {
+				if agent.Status.SessionRef == nil {
+					return ""
+				}
+				if provider == "claude" && agent.Status.SessionRef.Claude != nil {
+					return agent.Status.SessionRef.Claude.SessionID
+				}
+				if provider == "codex" && agent.Status.SessionRef.Codex != nil {
+					return agent.Status.SessionRef.Codex.ThreadID
+				}
+				return ""
+			}
+			var beforeCID string
+			for beforeCID == "" {
+				resource, err := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: "uid:" + result.Agent.Metadata.UID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				beforeCID = sessionID(resource.(core.Agent))
+				if beforeCID != "" {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("initial session identity not confirmed")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			stopAttempted = true
+			stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + result.Agent.Metadata.UID, Binding: result.Binding})
+			if err != nil || !stopped.Stopped || stopped.Termination == nil || stopped.Binding != result.Binding {
+				t.Fatalf("actual Wait: %+v %v", stopped, err)
+			}
+			preserved, err := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: "uid:" + result.Agent.Metadata.UID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent := preserved.(core.Agent)
+			if agent.Metadata.UID != result.Agent.Metadata.UID || agent.Status.PaneRef != result.Binding.PaneUID || sessionID(agent) != beforeCID {
+				t.Fatal("UID/Pane/conversation lost")
+			}
+			if _, err = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:" + agent.Metadata.UID, Confirm: true}); err != nil {
+				t.Fatal(err)
+			}
+			cleaned = true
+		})
+	}
+}

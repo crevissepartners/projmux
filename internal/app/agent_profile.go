@@ -305,7 +305,7 @@ func (f resourceCreateFlags) sharedAgentSettingsFlags() mutationruntime.AgentSet
 	return mutationruntime.AgentSettingsFlags{Profile: f.profile, ProfileProjectUID: f.profileProjectUID, Instructions: f.persona, InstructionsOption: f.personaOption, Model: f.model, Effort: f.effort, Host: f.host, ResumeConversation: f.resumeConversation, Labels: f.labels, Payload: f.payload, DialogueReplyOnly: f.dialogueReplyOnly, InteractiveOnly: f.interactiveOnly, PersonaLaunch: f.personaLaunch.shared(), ProfileLaunch: f.profileLaunch.shared()}
 }
 func (c *createCommand) sharedAgentSettings(f resourceCreateFlags) *mutationruntime.AgentSettings {
-	return &mutationruntime.AgentSettings{Paths: func() (config.Paths, error) { return savedSettingsPaths(c.homeDir, c.lookupEnv) }, ProfileProject: func(spelling string, _ mutationruntime.AgentSettingsFlags) (string, error) {
+	return &mutationruntime.AgentSettings{Paths: func() (config.Paths, error) { return c.processCreateSettingsPaths() }, ProfileProject: func(spelling string, _ mutationruntime.AgentSettingsFlags) (string, error) {
 		return c.profileCreateProject(spelling, f)
 	}}
 }

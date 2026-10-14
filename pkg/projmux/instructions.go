@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/services/instructions"
 	"github.com/crevissepartners/projmux/internal/services/mutations"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/services/projectcandidates"
 	"github.com/crevissepartners/projmux/internal/services/questions"
 )
@@ -27,7 +28,7 @@ type Options struct {
 	CreateRecorder CreateRecorder
 
 	// ProjmuxExecutable is the absolute executable of this same projmux build.
-	// CreateWindow and CreatePane require it for supervised shell children.
+	// Child creation requires it for supervised shells and detached process owners.
 	ProjmuxExecutable string
 
 	// ApprovalControl overrides the exact existing Codex approval transport.
@@ -64,9 +65,10 @@ type Options struct {
 // are atomic, but multi-call transactions and concurrent profile edits are not
 // serialized (the same limits apply to separate CLI processes).
 type Client struct {
-	createRecorder    CreateRecorder
-	projmuxExecutable string
-	agentEnvironment  map[string]string
+	processCreateContext mutationruntime.ProcessCreateContext
+	createRecorder       CreateRecorder
+	projmuxExecutable    string
+	agentEnvironment     map[string]string
 
 	discoveryHome      string
 	discoveryEnv       map[string]string
@@ -114,7 +116,7 @@ func NewClient(options Options) (*Client, error) {
 	defaults := mutations.CaptureProjectDefaults(options.DefaultShell, options.HomeDir)
 	namer := sessions.NewNamer(defaults.HomeDir)
 	discoveryEnv := projectcandidates.CaptureEnvironment()
-	return &Client{createRecorder: options.CreateRecorder, agentEnvironment: mutations.CaptureAgentEnvironment(), projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
+	return &Client{processCreateContext: mutationruntime.CaptureProcessCreateContext(paths, defaults.HomeDir, options.ProjmuxExecutable, defaults.Shell), createRecorder: options.CreateRecorder, agentEnvironment: mutations.CaptureAgentEnvironment(), projmuxExecutable: options.ProjmuxExecutable, discoveryHome: defaults.HomeDir, discoveryEnv: discoveryEnv, projectShell: defaults.Shell, projectSessionName: namer.SessionName, approvalControl: options.ApprovalControl, questionDispatcher: dispatcher, usageDir: defaultUsageDir(paths.StateDir, options.UsageStateDir), instructions: instructions.Service{Paths: func() (config.Paths, error) {
 		if paths.ConfigDir == "" {
 			return config.Paths{}, err
 		}

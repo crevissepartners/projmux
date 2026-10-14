@@ -41,10 +41,14 @@ type CreatePaneResult struct {
 	Receipt    OperationReceipt
 }
 
-// CreateAgentRequest creates one tmux Agent in an explicitly named Project and
+// CreateAgentRequest creates one Agent in an explicitly named Project and
 // Window. Creator is an optional uid: Agent declaration; no caller is inferred.
 // Instructions names stored instructions, while Payload contains provider argv.
 type CreateAgentRequest struct {
+	// Host defaults to tmux. Process requires Detach; foreground SDK ownership
+	// and config-based host inference are unsupported.
+	Host                                           string
+	Detach                                         bool
 	Project, Window, Pane                          string
 	Provider, Profile, Instructions, Model, Effort string
 	Cwd                                            string
@@ -60,6 +64,8 @@ type CreateAgentRequest struct {
 // CreateAgentResult also accompanies an activation-unconfirmed error: its
 // Projection, Receipt and PaneID identify the committed resources to preserve.
 type CreateAgentResult struct {
+	// Binding identifies a detached process generation; zero for tmux.
+	Binding    ProcessBinding
 	Agent      Agent
 	PaneID     string
 	Notices    []string

@@ -6,7 +6,7 @@ import (
 )
 
 func (c *aiCommand) sharedGuidance() *mutationruntime.GuidanceService {
-	return &mutationruntime.GuidanceService{Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }}
+	return &mutationruntime.GuidanceService{Paths: func() (config.Paths, error) { return c.processCreatePaths() }}
 }
 
 func (l agentGuidanceLaunch) shared() mutationruntime.AgentGuidanceLaunch {
