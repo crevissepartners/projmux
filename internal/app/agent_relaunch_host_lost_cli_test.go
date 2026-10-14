@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,13 +109,44 @@ func TestHostLostExplicitRelaunchFailureActualCLI(t *testing.T) {
 	}
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		for _, mode := range []string{"foreground", "detach"} {
-			for _, changed := range []bool{false, true} {
-				t.Run(provider+"/"+mode+"/"+map[bool]string{true: "changed", false: "unchanged"}[changed], func(t *testing.T) {
+			cases := []struct {
+				name                string
+				changed, afterBirth bool
+			}{{name: "unchanged"}, {name: "changed", changed: true}}
+			if provider == aiModeClaude && mode == "detach" {
+				cases = append(cases, struct {
+					name                string
+					changed, afterBirth bool
+				}{name: "changed-after-birth", changed: true, afterBirth: true})
+			}
+			for _, scenario := range cases {
+				t.Run(provider+"/"+mode+"/"+scenario.name, func(t *testing.T) {
+					changed := scenario.changed
 					f := hostLostCLIProviderFixture(t, provider)
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
-					if err := os.WriteFile(filepath.Join(f.root, provider), []byte("#!/bin/sh\nexit 7\n"), 0700); err != nil {
+					marker := filepath.Join(f.root, "failure-birth.json")
+					stub := "#!/bin/sh\nexit 7\n"
+					if scenario.afterBirth {
+						stub = fmt.Sprintf(`#!/usr/bin/env python3
+import json, os, sys, time
+registry, marker, pane_uid, old_generation = %q, %q, %q, %q
+deadline = time.monotonic() + 5
+while time.monotonic() < deadline:
+    with open(registry) as source:
+        reg = json.load(source)
+    pane = next(p for p in reg["panes"] if p["metadata"]["uid"] == pane_uid)
+    activation = pane["status"].get("activation", {}).get("process", {})
+    if activation.get("child", {}).get("pid") == os.getpid() and activation.get("binding", {}).get("generation") != old_generation:
+        with open(marker, "w") as evidence:
+            json.dump(activation, evidence)
+        sys.exit(7)
+    time.sleep(0.001)
+sys.exit(99)
+`, f.store.Path(), marker, old.Binding.PaneUID, old.Binding.Generation)
+					}
+					if err := os.WriteFile(filepath.Join(f.root, provider), []byte(stub), 0700); err != nil {
 						t.Fatal(err)
 					}
 					args := []string{"agent", "relaunch", ref}
@@ -137,12 +170,33 @@ func TestHostLostExplicitRelaunchFailureActualCLI(t *testing.T) {
 					if !bytes.Contains(out, []byte(recovery)) || provider == aiModeClaude && !bytes.Contains(out, []byte("--")) {
 						t.Fatal(string(out))
 					}
+					var birth coremetadata.ProcessActivation
+					if scenario.afterBirth {
+						evidence, readErr := os.ReadFile(marker)
+						if readErr != nil || json.Unmarshal(evidence, &birth) != nil || birth.Child.PID <= 0 || birth.Binding.Generation == old.Binding.Generation || birth.Binding.AgentUID != old.Binding.AgentUID {
+							t.Fatalf("controlled birth not observed: %v %s; output=%s", readErr, evidence, out)
+						}
+					}
 					after := mustRegistry(t, f)
 					a, _ := after.Agent(old.Binding.AgentUID)
 					previous, _ := before.Agent(old.Binding.AgentUID)
 					p, _ := after.Pane(old.Binding.PaneUID)
 					if !reflect.DeepEqual(a.Metadata.Annotations, previous.Metadata.Annotations) || !reflect.DeepEqual(a.Spec, previous.Spec) || processRelaunchConversation(p.Status.ProcessSession) != processRelaunchConversation(&old) {
-						t.Fatal("recipe/conversation not restored")
+						beforeJSON, beforeErr := json.Marshal(before)
+						afterJSON, afterErr := json.Marshal(after)
+						t.Fatalf("recipe/conversation not restored; error=%v output=%s\nbefore=%s (marshal=%v)\nafter=%s (marshal=%v)", err, out, beforeJSON, beforeErr, afterJSON, afterErr)
+					}
+					if scenario.afterBirth {
+						if !coremetadata.MatchesProcessWait(birth.Binding, p.Status.LastTermination) || p.Status.LastTermination.ExitCode == nil || *p.Status.LastTermination.ExitCode != 7 || !processActivationAbsent(birth, localipc.Process) {
+							snapshot, _ := json.Marshal(p)
+							t.Fatalf("controlled birth/exit retirement not confirmed: %s; output=%s", snapshot, out)
+						}
+						observed, _ := json.Marshal(struct {
+							Birth coremetadata.ProcessActivation
+							Pane  *coremetadata.Pane
+							Agent *coremetadata.Agent
+						}{birth, p, a})
+						t.Logf("controlled birth -> exit7 -> exact Wait/identity absence -> recipe restored: %s", observed)
 					}
 					original, _ := before.Pane(old.Binding.PaneUID)
 					if p.Status.Activation.Process != nil && !reflect.DeepEqual(p.Status.Activation.Process, original.Status.Activation.Process) && !processActivationAbsent(*p.Status.Activation.Process, localipc.Process) {
@@ -188,8 +242,36 @@ func TestHostLostExplicitRelaunchClaudeRequiresPromptCLI(t *testing.T) {
 				if prompt != "" {
 					args = append(args, "--", prompt)
 				}
-				out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
 				recovery := "projmux agent relaunch uid:" + old.Binding.AgentUID + " --detach --yes -- <prompt>"
+				for _, output := range []string{"text", "json"} {
+					previewArgs := []string{"agent", "relaunch", ref, "--model", "new-model", "--dry-run"}
+					if output == "json" {
+						previewArgs = append(previewArgs, "-o", "json")
+					}
+					if mode == "detach" {
+						previewArgs = append(previewArgs, "--detach")
+					}
+					if prompt != "" {
+						previewArgs = append(previewArgs, "--", prompt)
+					}
+					out, err := exec.CommandContext(ctx, f.binary, previewArgs...).CombinedOutput()
+					if err != nil {
+						t.Fatalf("preview %s: %v %s", output, err, out)
+					}
+					if output == "json" {
+						var result agentRelaunchResult
+						if json.Unmarshal(out, &result) != nil || !result.DryRun || !result.PromptRequired || result.RelaunchCommand != recovery || result.AgentUID != old.Binding.AgentUID || result.NewModel != "new-model" || result.ConfirmationRequired {
+							t.Fatalf("preview JSON %s", out)
+						}
+					} else if !bytes.Contains(out, []byte(recovery)) || !bytes.Contains(out, []byte("execution requires a nonempty first prompt")) || !bytes.Contains(out, []byte("nothing was changed")) {
+						t.Fatalf("preview text %s", out)
+					}
+					traceAfter, readErr := os.ReadFile(f.trace)
+					if readErr != nil || !reflect.DeepEqual(before, mustRegistry(t, f)) || !bytes.Equal(traceBefore, traceAfter) || len(deferredArgv(t, f)) != calls {
+						t.Fatal("preview produced effects", readErr)
+					}
+				}
+				out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
 				if err == nil || !bytes.Contains(out, []byte(recovery)) || !bytes.Contains(out, []byte("nothing was changed")) {
 					t.Fatalf("prompt refusal %v %s", err, out)
 				}

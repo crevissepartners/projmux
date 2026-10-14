@@ -55,6 +55,9 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	if err := planner.dispatchRelaunch(reg, target, preview, io.Discard, io.Discard); err != nil {
 		return err
 	}
+	if planned.Result.PromptRequired {
+		return usageError(fmt.Sprintf("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: %s", planned.Result.RelaunchCommand))
+	}
 	if planned.Result.ConfirmationRequired && !request.yes {
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s is %s with interaction %s; restarting would cut that turn; re-run with --yes (%s); nothing was changed", target.Metadata.Name, target.Status.Phase, planned.Result.Interaction, relaunchReasonAgentBusy))
 	}

@@ -63,7 +63,8 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 	if err := c.validateProcessRelaunch(reg, target, pane, request, refuse); err != nil {
 		return err
 	}
-	if request.allowHostLost && c.processResumeHostLost && coremetadata.NormalizeProvider(target.Spec.Provider) == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == "" {
+	promptRequired := request.allowHostLost && c.processResumeHostLost && coremetadata.NormalizeProvider(target.Spec.Provider) == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
+	if promptRequired && !request.dryRun {
 		return usageError(fmt.Sprintf("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: projmux agent relaunch uid:%s --detach --yes -- <prompt>", target.Metadata.UID))
 	}
 	recipe, err := c.planProcessRelaunchRecipe(reg, target, pane, request, refuse)
@@ -88,6 +89,10 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 		return c.publishHostTransferResult(stdout, request, result)
 	}
 	if request.dryRun {
+		if promptRequired {
+			result.PromptRequired = true
+			result.RelaunchCommand = fmt.Sprintf("projmux agent relaunch uid:%s --detach --yes -- <prompt>", target.Metadata.UID)
+		}
 		result.Outcome = personaOutcomeWouldResume
 		if recipe.restart.running {
 			result.Outcome = personaOutcomeWouldRestart

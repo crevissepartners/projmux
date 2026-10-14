@@ -193,8 +193,15 @@ func TestHostLostRelaunchRequiresCallerOptIn(t *testing.T) {
 		t.Fatal("default refusal changed source", err)
 	}
 	preview, err := c.runOwnedProcessRelaunch(context.Background(), reg, agent.Clone(), agentRelaunchRequest{allowHostLost: true, dryRun: true, prompt: []string{"recover"}})
-	if err != nil || preview.State != agentProcessPreview || preview.Result.Restart || preview.Owned != nil || preview.Prepared != nil {
+	if err != nil || preview.State != agentProcessPreview || preview.Result.Restart || preview.Result.PromptRequired || preview.Result.RelaunchCommand != "" || preview.Owned != nil || preview.Prepared != nil {
 		t.Fatalf("explicit caller proof %+v: %v", preview, err)
+	}
+	for _, prompt := range [][]string{nil, {"   "}} {
+		preview, err = c.runOwnedProcessRelaunch(context.Background(), reg, agent.Clone(), agentRelaunchRequest{allowHostLost: true, dryRun: true, prompt: prompt})
+		command := "projmux agent relaunch uid:" + agent.Metadata.UID + " --detach --yes -- <prompt>"
+		if err != nil || !preview.Result.PromptRequired || preview.Result.RelaunchCommand != command || preview.Result.ConfirmationRequired || preview.Owned != nil || preview.Prepared != nil {
+			t.Fatalf("promptless preview %+v: %v", preview, err)
+		}
 	}
 	after, err = store.LoadReadOnly()
 	if err != nil || !reflect.DeepEqual(reg, after) {
