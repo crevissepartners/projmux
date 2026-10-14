@@ -20,9 +20,10 @@ import (
 
 // Carry public argv and the exact read-only source proof, never planner pointers.
 type processDetachedRelaunchRequest struct {
-	Args   []string
-	Source coremetadata.Agent
-	Pane   *coremetadata.Pane
+	Args          []string
+	Source        coremetadata.Agent
+	Pane          *coremetadata.Pane
+	AllowHostLost bool
 }
 
 type detachedRelaunchSessionKey struct{}
@@ -63,7 +64,7 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	args := []string{"uid:" + target.Metadata.UID, "--detach"}
 	// Reparse the public request in the owner; no payload travels through argv.
 	args = append(args, detachedRelaunchArgs(request)...)
-	wire := processDetachedRelaunchRequest{Args: args, Source: target.Clone()}
+	wire := processDetachedRelaunchRequest{Args: args, Source: target.Clone(), AllowHostLost: request.allowHostLost}
 	if pane, found := reg.Pane(target.Status.PaneRef); found {
 		clone := pane.Clone()
 		wire.Pane = &clone
@@ -147,6 +148,7 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 	if !request.detach || request.dryRun || request.agentRef != "uid:"+wire.Source.Metadata.UID {
 		return errors.New("process-detached-relaunch-request-invalid")
 	}
+	request.allowHostLost = wire.AllowHostLost
 	reg, err := command.loadRegistry()
 	if err != nil {
 		return err
@@ -197,6 +199,9 @@ func (s *processDetachedRelaunchSession) finishOwned(ctx context.Context, cancel
 		return rollback(err)
 	}
 	reply := processDetachedReply{Owner: s.identity, Binding: owned.Binding, Stdout: output.String(), Stderr: fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=detached\n", owned.Binding.Agent, owned.Binding.Pane)}
+	if owned.Previous.MayBeTruncated {
+		reply.Stderr += processRelaunchHostLostNotice + "\n"
+	}
 	if err := s.encoder.Encode(reply); err != nil {
 		return rollback(err)
 	}

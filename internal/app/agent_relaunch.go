@@ -82,15 +82,16 @@ type agentRelaunchRequest struct {
 	effort   string
 	// profile and instructions are nil when not given; a pointer to "" is
 	// `none`.
-	profile      *string
-	instructions *string
-	reset        []string
-	flags        resourceQueryFlags
-	detach       bool
-	yes          bool
-	dryRun       bool
-	json         bool
-	socket       deleteSocketFlags
+	profile       *string
+	instructions  *string
+	reset         []string
+	flags         resourceQueryFlags
+	detach        bool
+	yes           bool
+	dryRun        bool
+	json          bool
+	socket        deleteSocketFlags
+	allowHostLost bool // Only the public CLI opts into explicit lost-host recovery.
 }
 
 // settings is what the relaunch asks of the Agent's layers.
@@ -150,6 +151,7 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	request.allowHostLost = true
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
