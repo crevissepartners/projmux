@@ -285,3 +285,35 @@ stop/resume/delete recovery; do not automatically replay an uncertain Stop.
 Failures use `CodeProjectStopExecutionFailed` with the original causes.
 `CodeProjectHasRunningProcessAgents` remains exported for source compatibility;
 Running process Agents no longer cause a batch preflight refusal.
+
+### Recorded process resume recipe refusals
+
+CLI and private process resume consumers can use `errors.As` to read
+`*projmux.ResumeRecipeChangedError` (also `*core.ResumeRecipeChangedError`)
+through usage and host-lost wrappers. This additive error does not enable process
+`Client.ResumeAgent`: its `resume-process-unsupported` refusal is unchanged.
+
+The JSON fields are `Code` (`process-resume-refused`), `Reason`
+(`relaunch-no-conversation`), `agentUID`, `changes`, `relaunchCommand`, and
+`guidance`. Each change has `field`, `reason`, `recorded`, and `current`.
+Values are string arrays: scalars have one element, including `""` for an empty
+value; writable roots retain their order and use `[]` for no roots. Unknown
+reasons have field `unknown` and values `["<unknown>"]`.
+
+Fields appear in stable order: `profile`, `profileDigest`, `instructions`,
+`instructionsDigest`, `model`, `effort`, `guidanceDigest`,
+`projectGuidanceDigest`, `linkRulesDigest`, unknown reasons sorted by token,
+`workspace.cwd`, and `workspace.additionalWritableRoots`. Only differences
+reported by the existing resume guard are included. Profile changes include
+name and digest; content changes expose digests, never instructions/profile
+bodies, environment, credentials, or link URLs. Existing reason tokens and CLI
+exit behavior remain unchanged; the human refusal adds these differences and
+recovery guidance.
+
+`relaunchCommand` names the exact Agent UID:
+`projmux agent relaunch uid:<agent> --detach`; Claude adds `-- <prompt>`
+(replace the placeholder with your next message). Explicit process relaunch
+uses current settings and preserves the Agent UID, Pane UID, and recorded
+conversation. `relaunch-no-conversation` still identifies the resume refusal;
+it does not report conversation loss. Present the structured guidance directly
+instead of parsing the error string. Relaunch remains an explicit user action.
