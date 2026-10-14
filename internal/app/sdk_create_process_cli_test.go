@@ -419,6 +419,7 @@ func sdkCreateMissingInterpreter(t *testing.T) {
 			if !errors.As(err, &detail) || detail.Owner.PID == 0 || errors.Unwrap(detail) == nil {
 				t.Fatalf("missing interpreter lost typed owner/cause: %v", err)
 			}
+			t.Logf("missing-interpreter outcome: error=%v owner=%+v binding=%+v registry=%s", err, detail.Owner, detail.Binding, store.Path())
 			after, loadErr := store.LoadReadOnly()
 			if loadErr != nil || len(after.Agents) != 0 {
 				t.Fatal("failed birth was not rolled back", loadErr)
