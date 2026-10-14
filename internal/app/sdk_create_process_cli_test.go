@@ -108,12 +108,6 @@ func TestSDKDetachedProcessCreateFrozenExplicitDomains(t *testing.T) {
 				if err != nil || owner != activation.HostProcess {
 					t.Fatal("caller cancellation lost exact owner", err)
 				}
-				if runtime.GOOS == "linux" {
-					payload, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/4", owner.PID))
-					if err != nil || !strings.HasPrefix(payload, filepath.Join(paths.StateDir, "pmx-detach-")) || !strings.HasSuffix(payload, " (deleted)") {
-						t.Fatalf("private payload escaped frozen StateDir: %q %v", payload, err)
-					}
-				}
 				data, err := os.ReadFile(hookPath)
 				if err != nil || string(data) != f.root {
 					t.Fatalf("hook domain %q %v", data, err)
@@ -215,6 +209,29 @@ func TestSDKDetachedProcessCreateCancellationRollsBackBirth(t *testing.T) {
 	}
 	pane, _ := reg.Pane(reg.Agents[0].Status.PaneRef)
 	activation := *pane.Status.Activation.Process
+	owner, _, err := localipc.Process(activation.HostProcess.PID)
+	if err != nil || owner != activation.HostProcess || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != activation.Binding {
+		t.Fatal("startup barrier lost exact owner/binding", err)
+	}
+	if child, _, err := localipc.Process(activation.Child.PID); err != nil || child != activation.Child {
+		t.Fatal("startup barrier lost exact child", err)
+	}
+	if runtime.GOOS == "linux" {
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, entry := range entries {
+			target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+			if err == nil && strings.HasPrefix(target, filepath.Join(f.root, "state/projmux", "pmx-detach-")) && strings.HasSuffix(target, " (deleted)") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("caller startup payload escaped frozen StateDir")
+		}
+	}
 	cancel()
 	var out outcome
 	select {
