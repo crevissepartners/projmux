@@ -162,10 +162,41 @@ func TestProcessCodexRelaunchUnretiredWriterActualCLI(t *testing.T) {
 	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.TurnID != "" })
 	before, _ := f.store.LoadReadOnly()
 	wireBefore, _ := os.ReadFile(f.trace)
-	// A missing owner is not an actual child Wait. No second writer is allowed.
+	pane, _ := before.Pane(old.Binding.PaneUID)
+	child := pane.Status.Activation.Process.Child
+	// Keep this an owner-only loss fixture. Freeze our exact child and its
+	// supervisor until release, so EOF or forced retirement cannot turn the
+	// negative into the both-absent recovery case under a slow runner.
+	current, supervisorPID, err := localipc.Process(child.PID)
+	if err != nil || current != child {
+		t.Fatal("fixture child missing before freeze", err)
+	}
+	supervisor, parent, err := localipc.Process(supervisorPID)
+	if err != nil || parent != first.cmd.Process.Pid {
+		t.Fatal("fixture supervisor is not owned by this invocation", err)
+	}
+	if err = syscall.Kill(child.PID, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Kill(supervisorPID, syscall.SIGSTOP); err != nil {
+		_ = syscall.Kill(child.PID, syscall.SIGCONT)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if current, _, err := localipc.Process(child.PID); err == nil && current == child {
+			_ = syscall.Kill(child.PID, syscall.SIGKILL)
+		}
+		if current, _, err := localipc.Process(supervisorPID); err == nil && current == supervisor {
+			_ = syscall.Kill(supervisorPID, syscall.SIGCONT)
+		}
+	})
+	// A missing owner with a live child still has no authority for a new writer.
 	_ = first.cmd.Process.Signal(syscall.SIGKILL)
 	_ = first.cmd.Wait()
 	first.done = true
+	if current, _, err := localipc.Process(child.PID); err != nil || current != child {
+		t.Fatal("fixture child must remain alive before relaunch", err)
+	}
 	out, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", first.ref, "--model", "new-model", "--yes").CombinedOutput()
 	if err == nil {
 		t.Fatalf("unretired owner accepted: %s", out)
@@ -178,8 +209,12 @@ func TestProcessCodexRelaunchUnretiredWriterActualCLI(t *testing.T) {
 	if strings.Count(string(wire), "initialize") != 2 || bytes.Contains(wire, []byte("thread/resume")) {
 		t.Fatalf("new writer started: %s", wire)
 	}
-	pane, _ := before.Pane(old.Binding.PaneUID)
-	child := pane.Status.Activation.Process.Child
+	if err = syscall.Kill(child.PID, syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Kill(supervisorPID, syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
 	waitCodexCreate(t, ctx, func() bool { identity, _, err := localipc.Process(child.PID); return err != nil || identity != child })
 }
 

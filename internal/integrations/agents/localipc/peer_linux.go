@@ -2,6 +2,7 @@ package localipc
 
 import (
 	"errors"
+	"fmt"
 	"net"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -20,6 +21,9 @@ func PeerProcess(conn *net.UnixConn) (coremetadata.ProcessIdentity, int, error) 
 		return coremetadata.ProcessIdentity{}, 0, errors.New("peer unavailable")
 	}
 	identity, parent, err := Process(int(peer.Pid))
+	if witness, ok := ProcessParentTransition(err); ok && witness.Process.PID == int(peer.Pid) && witness.Process.OwnerUID == peer.Uid {
+		return coremetadata.ProcessIdentity{}, 0, fmt.Errorf("peer unavailable: %w", err)
+	}
 	if err != nil || identity.OwnerUID != peer.Uid {
 		return coremetadata.ProcessIdentity{}, 0, errors.New("peer unavailable")
 	}

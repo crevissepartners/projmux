@@ -96,6 +96,7 @@ type claudeProcessService struct {
 	closeErr               error
 	registration           *coremetadata.ClaudeRegistration
 	registrationGeneration string
+	registeredHelper       *claudeRegisteredHelper
 	// hookRegistry gates the Registry part of the helper's read-only check and
 	// lookup. Only the serial exchange loop touches it.
 	hookRegistry *claudeEndpointIdleRegistryGate
@@ -184,6 +185,9 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		return
 	}
 	peer, parent, err := localipc.PeerProcess(conn)
+	if err != nil {
+		peer, parent, err = s.recheckRegisteredHelper(request, err, func() (coremetadata.ProcessIdentity, int, error) { return localipc.PeerProcess(conn) }, localipc.Process)
+	}
 	if err != nil || int64(peer.OwnerUID) != int64(os.Getuid()) {
 		return
 	}
@@ -307,6 +311,9 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 		proof := claudeProcessProof{Binding: binding, Process: process, HostProcess: s.ownedHostProcess, Session: request.Session}
 		next, generation, err := admitClaudeProcessRegistration(s.registryPath, proof, *request.Helper, peer, parent, s.registration, s.registrationGeneration)
 		if err != nil {
+			return refused
+		}
+		if !s.commitRegisteredHelper(*request.Helper, next, generation) {
 			return refused
 		}
 		s.registration, s.registrationGeneration = next, generation
@@ -549,12 +556,30 @@ func (s *claudeProcessService) publishChild(handle *processhost.Handle) {
 }
 
 func (s *claudeProcessService) recordChild() error {
-	child, parent, err := localipc.Process(s.ownedProcess.PID)
-	if err != nil || child != s.ownedProcess {
+	return s.recordChildIdentity(localipc.Process)
+}
+
+func (s *claudeProcessService) recordChildIdentity(read func(int) (coremetadata.ProcessIdentity, int, error)) error {
+	child, parent, err := read(s.ownedProcess.PID)
+	if err != nil || !child.Valid() || !s.ownedHostProcess.Valid() || child != s.ownedProcess || child.OwnerUID != s.ownedHostProcess.OwnerUID {
 		return processhost.ErrStale
 	}
-	_, hostPID, err := localipc.Process(parent)
-	if err != nil || hostPID != s.ownedHostProcess.PID {
+	supervisor, hostPID, err := read(parent)
+	if err != nil || !supervisor.Valid() || hostPID != s.ownedHostProcess.PID || supervisor.OwnerUID != child.OwnerUID {
+		return processhost.ErrStale
+	}
+	host, _, err := read(s.ownedHostProcess.PID)
+	if err != nil || host != s.ownedHostProcess {
+		return processhost.ErrStale
+	}
+	// Bracket the ownership chain as well as each individual kernel snapshot.
+	// Reparenting or supervisor PID reuse cannot publish the earlier chain.
+	currentChild, currentParent, err := read(child.PID)
+	if err != nil || currentChild != child || currentParent != parent {
+		return processhost.ErrStale
+	}
+	currentSupervisor, currentHost, err := read(parent)
+	if err != nil || currentSupervisor != supervisor || currentHost != host.PID {
 		return processhost.ErrStale
 	}
 	b := s.binding
@@ -934,4 +959,76 @@ func processClaudeRouteResolver(registryPath string, proof claudeProcessProof) f
 		})
 
 	}
+}
+
+// This history belongs to one admitted registration, never to a durable record.
+type claudeRegisteredHelper struct {
+	Hook, Lease coremetadata.ProcessIdentity
+	Generation  string
+	Binding     processhost.Binding
+}
+
+func (s *claudeProcessService) commitRegisteredHelper(claim claudeProcessRegistration, next *coremetadata.ClaudeRegistration, generation string) bool {
+	if next == nil {
+		s.registeredHelper = nil
+		return true
+	}
+	history := claudeRegisteredHelper{Hook: claim.Hook, Lease: next.Authority.LeaseProcess, Generation: generation, Binding: s.binding}
+	if s.registration != nil && s.registrationGeneration == generation {
+		return s.registeredHelper != nil && *s.registeredHelper == history
+	}
+	s.registeredHelper = &history
+	return true
+}
+
+// A rejected parent transition is not authority. Only an already registered
+// read-only helper can request one independent, fully verified kernel snapshot.
+func (s *claudeProcessService) recheckRegisteredHelper(request claudeProcessCheck, failure error, peer func() (coremetadata.ProcessIdentity, int, error), read func(int) (coremetadata.ProcessIdentity, int, error)) (coremetadata.ProcessIdentity, int, error) {
+	refused := func() (coremetadata.ProcessIdentity, int, error) { return coremetadata.ProcessIdentity{}, 0, failure }
+	witness, ok := localipc.ProcessParentTransition(failure)
+	operation, valid := claudeProcessOperation(request)
+	history, registration := s.registeredHelper, s.registration
+	if !ok || !valid || (operation != "check" && operation != "lookup") || history == nil || registration == nil || !registration.Ready || !registration.Authority.Valid() || registration.Authority.Process != s.ownedProcess || request.Binding != s.binding || request.Session != registration.Authority.SessionID || history.Binding != s.binding || history.Generation != s.registrationGeneration || history.Generation != registration.Authority.RegistrationGeneration || history.Lease != registration.Authority.LeaseProcess || witness.Process != history.Lease || witness.OldParent != history.Hook.PID || !history.Hook.Valid() {
+		return refused()
+	}
+	if _, _, err := read(history.Hook.PID); !errors.Is(err, localipc.ErrProcessAbsent) {
+		return refused()
+	}
+	actual, parent, err := peer()
+	if err != nil || actual != history.Lease || parent != witness.NewParent {
+		return refused()
+	}
+	if !s.registeredHelperChain(parent, read) {
+		return refused()
+	}
+	proof := claudeProcessProof{Binding: s.binding, Process: s.ownedProcess, HostProcess: s.ownedHostProcess}
+	if !currentClaudeProcessRegistrationOwner(s.registryPath, proof) {
+		return refused()
+	}
+	return actual, parent, nil
+}
+
+func (s *claudeProcessService) registeredHelperChain(parent int, read func(int) (coremetadata.ProcessIdentity, int, error)) bool {
+	child, supervisorPID, err := read(s.ownedProcess.PID)
+	if err != nil || child != s.ownedProcess || supervisorPID != parent {
+		return false
+	}
+	supervisor, hostPID, err := read(parent)
+	if err != nil || !supervisor.Valid() || supervisor.OwnerUID != child.OwnerUID || hostPID != s.ownedHostProcess.PID {
+		return false
+	}
+	host, _, err := read(hostPID)
+	if err != nil || host != s.ownedHostProcess || host.OwnerUID != child.OwnerUID {
+		return false
+	}
+	currentChild, currentParent, err := read(child.PID)
+	if err != nil || currentChild != child || currentParent != parent {
+		return false
+	}
+	currentSupervisor, currentHost, err := read(parent)
+	if err != nil || currentSupervisor != supervisor || currentHost != hostPID {
+		return false
+	}
+	currentOwner, _, err := read(hostPID)
+	return err == nil && currentOwner == host
 }

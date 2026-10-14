@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -315,6 +316,36 @@ func TestProcessClaudeRelaunchUnknownOwnerDoesNotStartChildActualCLI(t *testing.
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
 	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.SessionID != "" && r.TurnID == "" })
+	initial, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := processResumePane(initial, strings.TrimPrefix(first.ref, "uid:"))
+	child := pane.Status.Activation.Process.Child
+	// Keep the exact old writer alive until release, even after owner EOF.
+	current, supervisorPID, err := localipc.Process(child.PID)
+	if err != nil || current != child {
+		t.Fatal("fixture child missing before freeze", err)
+	}
+	supervisor, parent, err := localipc.Process(supervisorPID)
+	if err != nil || parent != first.cmd.Process.Pid {
+		t.Fatal("fixture supervisor is not owned by this invocation", err)
+	}
+	if err = syscall.Kill(child.PID, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Kill(supervisorPID, syscall.SIGSTOP); err != nil {
+		_ = syscall.Kill(child.PID, syscall.SIGCONT)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if current, _, err := localipc.Process(child.PID); err == nil && current == child {
+			_ = syscall.Kill(child.PID, syscall.SIGKILL)
+		}
+		if current, _, err := localipc.Process(supervisorPID); err == nil && current == supervisor {
+			_ = syscall.Kill(supervisorPID, syscall.SIGCONT)
+		}
+	})
 	if err := first.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -324,6 +355,9 @@ func TestProcessClaudeRelaunchUnknownOwnerDoesNotStartChildActualCLI(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if current, _, err := localipc.Process(child.PID); err != nil || current != child {
+		t.Fatal("fixture child must remain alive before relaunch", err)
+	}
 	out, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", first.ref, "--model", "new-model", "--yes", "--", "unsafe").CombinedOutput()
 	if err == nil {
 		t.Fatalf("unreaped old owner accepted: %s", out)
@@ -332,8 +366,12 @@ func TestProcessClaudeRelaunchUnknownOwnerDoesNotStartChildActualCLI(t *testing.
 	if readErr != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("unknown owner mutated Registry: %v", readErr)
 	}
-	pane, _ := processResumePane(before, strings.TrimPrefix(first.ref, "uid:"))
-	child := pane.Status.Activation.Process.Child
+	if err = syscall.Kill(child.PID, syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Kill(supervisorPID, syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
 	for {
 		identity, _, e := localipc.Process(child.PID)
 		if e != nil || identity != child {

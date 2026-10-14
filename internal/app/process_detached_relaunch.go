@@ -20,9 +20,10 @@ import (
 
 // Carry public argv and the exact read-only source proof, never planner pointers.
 type processDetachedRelaunchRequest struct {
-	Args   []string
-	Source coremetadata.Agent
-	Pane   *coremetadata.Pane
+	Args          []string
+	Source        coremetadata.Agent
+	Pane          *coremetadata.Pane
+	AllowHostLost bool
 }
 
 type detachedRelaunchSessionKey struct{}
@@ -54,6 +55,9 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	if err := planner.dispatchRelaunch(reg, target, preview, io.Discard, io.Discard); err != nil {
 		return err
 	}
+	if planned.Result.PromptRequired {
+		return usageError(fmt.Sprintf("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: %s", planned.Result.RelaunchCommand))
+	}
 	if planned.Result.ConfirmationRequired && !request.yes {
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s is %s with interaction %s; restarting would cut that turn; re-run with --yes (%s); nothing was changed", target.Metadata.Name, target.Status.Phase, planned.Result.Interaction, relaunchReasonAgentBusy))
 	}
@@ -63,7 +67,7 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	args := []string{"uid:" + target.Metadata.UID, "--detach"}
 	// Reparse the public request in the owner; no payload travels through argv.
 	args = append(args, detachedRelaunchArgs(request)...)
-	wire := processDetachedRelaunchRequest{Args: args, Source: target.Clone()}
+	wire := processDetachedRelaunchRequest{Args: args, Source: target.Clone(), AllowHostLost: request.allowHostLost}
 	if pane, found := reg.Pane(target.Status.PaneRef); found {
 		clone := pane.Clone()
 		wire.Pane = &clone
@@ -80,7 +84,8 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	if err != nil {
 		return err
 	}
-	return launchProcessDetached(ctx, executable, processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.rebind.create, stdout, stderr)
+	err = launchProcessDetached(ctx, executable, processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.rebind.create, stdout, stderr)
+	return c.detachedRelaunchFailure(reg, target, request, planned.processRecovery, err)
 }
 
 func detachedRelaunchArgs(r agentRelaunchRequest) []string {
@@ -147,6 +152,7 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 	if !request.detach || request.dryRun || request.agentRef != "uid:"+wire.Source.Metadata.UID {
 		return errors.New("process-detached-relaunch-request-invalid")
 	}
+	request.allowHostLost = wire.AllowHostLost
 	reg, err := command.loadRegistry()
 	if err != nil {
 		return err
@@ -197,6 +203,9 @@ func (s *processDetachedRelaunchSession) finishOwned(ctx context.Context, cancel
 		return rollback(err)
 	}
 	reply := processDetachedReply{Owner: s.identity, Binding: owned.Binding, Stdout: output.String(), Stderr: fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=detached\n", owned.Binding.Agent, owned.Binding.Pane)}
+	if owned.Previous.MayBeTruncated {
+		reply.Stderr += processRelaunchHostLostNotice + "\n"
+	}
 	if err := s.encoder.Encode(reply); err != nil {
 		return rollback(err)
 	}
@@ -367,4 +376,15 @@ func awaitDetachedRelaunchCleanup(command *createCommand, req processDetachedReq
 		case <-ticker.C:
 		}
 	}
+}
+
+// The preview carries the exact recipe's command, never permission to recover.
+// Recheck current ownership after failure using the existing recovery barrier.
+func (c *agentCommand) detachedRelaunchFailure(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, recovery string, cause error) error {
+	if cause == nil || !request.allowHostLost || recovery == "" || strings.Contains(cause.Error(), "recover with:") {
+		return cause
+	}
+	call := *c
+	call.processResumeHostLost = true
+	return fmt.Errorf("agent relaunch: recorded conversation retained; %s: %w", call.processRelaunchFailureRecovery(reg, target, request, recovery), cause)
 }

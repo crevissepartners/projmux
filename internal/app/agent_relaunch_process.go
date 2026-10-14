@@ -21,6 +21,7 @@ import (
 const (
 	processRelaunchRetirementTimeout = 10 * time.Second
 	processRelaunchRetirementPoll    = 20 * time.Millisecond
+	processRelaunchHostLostNotice    = "previous generation: reconcile/unknown; last turn may have been truncated"
 )
 
 type processRelaunchRecipe struct {
@@ -46,20 +47,41 @@ type processRelaunchSynchronization struct {
 
 // Same-location process relaunch validates the recipe before retiring the old
 // writer, then starts a new foreground generation through the resume engine.
-func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, stdout, stderr io.Writer) (returnErr error) {
+	// Explicit same-host relaunch can recover a lost owner, but preparation
+	// retains its own opt-in. Keep this proof confined to this invocation.
+	if request.allowHostLost && !c.processResumePreparation && !c.processResumeHostLost {
+		if _, ok := hostLostResumeCandidate(reg, target.Metadata.UID, c.readProcessIdentity()); ok {
+			call := *c
+			call.processResumeHostLost = true
+			return call.runProcessRelaunch(reg, target, pane, request, stdout, stderr)
+		}
+	}
 	refuse := func(reason, detail string) error {
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason))
 	}
 	if err := c.validateProcessRelaunch(reg, target, pane, request, refuse); err != nil {
 		return err
 	}
+	promptRequired := request.allowHostLost && c.processResumeHostLost && coremetadata.NormalizeProvider(target.Spec.Provider) == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
+	if promptRequired && !request.dryRun {
+		return usageError(fmt.Sprintf("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: projmux agent relaunch uid:%s --detach --yes -- <prompt>", target.Metadata.UID))
+	}
 	recipe, err := c.planProcessRelaunchRecipe(reg, target, pane, request, refuse)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if returnErr != nil && c.processResumeHostLost && !c.processResumePreparation && !strings.Contains(returnErr.Error(), "recover with:") {
+			returnErr = fmt.Errorf("agent relaunch: recorded conversation retained; %s: %w", c.processRelaunchFailureRecovery(reg, target, request, hostLostRelaunchRecovery(reg, target, request, recipe)), returnErr)
+		}
+	}()
 	if c.processResumePreparation && (len(recipe.restart.settings.resolution.Reasons) > 0 || recipe.restart.settings.resolution.ProfileSwitched || recipe.workspace.CWD != target.Spec.Workspace.CWD || !slices.Equal(recipe.workspace.AdditionalWritableRoots, target.Spec.Workspace.AdditionalWritableRoots)) {
 		detail := recordedResumeRecipeError(target, recipe)
 		return usageErrorFor(detail.Error(), detail)
+	}
+	if request.dryRun && request.allowHostLost && c.processResumeHostLost && !c.processResumePreparation && c.hostTransferResult != nil {
+		c.hostTransferResult.processRecovery = hostLostRelaunchRecovery(reg, target, request, recipe)
 	}
 	result := recipe.result(target, pane, request)
 	deferred := recipe.restart.provider == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
@@ -70,6 +92,10 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 		return c.publishHostTransferResult(stdout, request, result)
 	}
 	if request.dryRun {
+		if promptRequired {
+			result.PromptRequired = true
+			result.RelaunchCommand = fmt.Sprintf("projmux agent relaunch uid:%s --detach --yes -- <prompt>", target.Metadata.UID)
+		}
 		result.Outcome = personaOutcomeWouldResume
 		if recipe.restart.running {
 			result.Outcome = personaOutcomeWouldRestart
@@ -313,7 +339,7 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 			return readErr
 		}
 		if previous != nil {
-			fresh, prior, prepareErr := c.prepareDeferredLaunchMode(ctx, candidate, processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: binding.Agent}}, true)
+			fresh, prior, prepareErr := c.prepareDeferredLaunchMode(ctx, candidate, c.processRelaunchResumeOptions(binding.Agent), true)
 			if prepareErr != nil {
 				return prepareErr
 			}
@@ -329,6 +355,9 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	}
 	if err = c.reserveProcessRelaunch(ctx, candidate, launch.settings, recipe.guidance, recipe.links, binding, prepared); err != nil {
 		return err
+	}
+	if candidate.HostLost != nil {
+		removeHostLostLease(intmetadata.PathFor(state), *candidate.HostLost)
 	}
 	owned := c.processResumeResult(candidate, binding, intmetadata.PathFor(state))
 	fail := func(cause error) error {
@@ -348,7 +377,11 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		if request.detach {
 			ownerHint = "retry the detached relaunch explicitly"
 		}
-		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (%s): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request), ownerHint, cause)
+		recovery := processRelaunchRecovery(reg, candidate.Agent, request)
+		if candidate.HostLost != nil {
+			recovery = hostLostRelaunchRecovery(reg, candidate.Agent, request, recipe)
+		}
+		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (%s): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request, recovery), ownerHint, cause)
 	}
 	if err = owned.startProcessResume(ctx, creator, launch.command, launch.config, processRelaunchFirstFrame(launch.prompt)); err != nil {
 		return fail(err)
@@ -364,6 +397,11 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		result.Outcome = personaOutcomeRestarted
 	}
 	result.NewPaneUID = binding.Pane
+	if candidate.HostLost != nil {
+		if _, err = fmt.Fprintln(stderr, processRelaunchHostLostNotice); err != nil {
+			return fail(err)
+		}
+	}
 	if c.hostTransferResult != nil {
 		return c.finishOwnedHostTransfer(ctx, cancel, &owned, sync, result, request, stdout, stderr, fail, func() error {
 			if prepared != nil {
@@ -411,15 +449,35 @@ func processRelaunchRecovery(reg coremetadata.Registry, target coremetadata.Agen
 	return command
 }
 
+func hostLostRelaunchRecovery(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, recipe processRelaunchRecipe) string {
+	if len(recipe.restart.settings.resolution.Reasons) > 0 || recipe.restart.settings.resolution.ProfileSwitched || recipe.workspace.CWD != target.Spec.Workspace.CWD || !slices.Equal(recipe.workspace.AdditionalWritableRoots, target.Spec.Workspace.AdditionalWritableRoots) {
+		request.detach = true
+		return processRelaunchRecovery(reg, target, request)
+	}
+	command := "projmux agent resume uid:" + target.Metadata.UID + " --detach"
+	if target.Spec.Provider == aiModeClaude {
+		command += " -- <prompt>"
+	}
+	return command
+}
+
 // A failed retirement may leave Pending ownership. Do not present relaunch as
 // immediately executable in that state, or loosen resume's ownership fence.
-func (c *agentCommand) processRelaunchFailureRecovery(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest) string {
+func (c *agentCommand) processRelaunchFailureRecovery(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, recovery ...string) string {
 	command := processRelaunchRecovery(reg, target, request)
+	if len(recovery) > 0 {
+		command = recovery[0]
+	}
 	latest, err := c.loadRegistry()
 	if err == nil {
 		current, found := latest.Agent(target.Metadata.UID)
 		if found && current.Status.Phase == coremetadata.PhaseOffline {
 			return "recover with: " + command
+		}
+		if c.processResumeHostLost {
+			if _, proven := hostLostResumeCandidate(latest, target.Metadata.UID, c.readProcessIdentity()); proven {
+				return "recover with: " + command
+			}
 		}
 	}
 	return fmt.Sprintf("inspect with: projmux describe agent uid:%s; relaunch remains refused until the owned child has an exact Wait and the Agent is Offline; only then recover with: %s", target.Metadata.UID, command)
@@ -459,7 +517,8 @@ func (c *agentCommand) restoreProcessRelaunchSettings(previous processResumeCand
 	_, err := c.rebind.create.store.update(func(reg *coremetadata.Registry) error {
 		pane, ok := reg.Pane(binding.Pane)
 		agent, found := reg.Agent(binding.Agent)
-		if !ok || !found || pane.Status.ProcessSession == nil || agent.Status.Phase != coremetadata.PhaseOffline {
+		restoredHostLost := previous.HostLost != nil && ok && found && agent.Status.Phase == coremetadata.PhaseRunning && reflect.DeepEqual(pane.Status.Activation.Process, previous.HostLost) && processResumeRecordEqual(pane.Status.ProcessSession, &previous.Record)
+		if !ok || !found || pane.Status.ProcessSession == nil || (agent.Status.Phase != coremetadata.PhaseOffline && !restoredHostLost) {
 			return errors.New("cannot restore previous launch recipe before exact retirement")
 		}
 		if pane.Status.ProcessSession.Binding != metadataProcessBinding(binding) && pane.Status.ProcessSession.Binding != previous.Record.Binding {
@@ -520,16 +579,22 @@ func (c *agentCommand) reserveProcessRelaunch(ctx context.Context, candidate pro
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := processResumeRefusal(*reg, binding.Agent, false); err != nil {
-			return err
+		if candidate.HostLost == nil {
+			if err := processResumeRefusal(*reg, binding.Agent, false); err != nil {
+				return err
+			}
 		}
 		pane, _ := processResumePane(*reg, binding.Agent)
 		agent, _ := reg.Agent(binding.Agent)
-		if !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, candidate.Agent.Metadata.Annotations) {
+		if pane == nil || agent == nil || !processResumeRecordEqual(pane.Status.ProcessSession, &candidate.Record) || !reflect.DeepEqual(agent.Spec, candidate.Agent.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, candidate.Agent.Metadata.Annotations) {
 			return processhost.ErrStale
 		}
 		mutator := c.rebind.create.store.mutator()
-		if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(binding)); err != nil {
+		if candidate.HostLost != nil {
+			if err := reserveHostLostResume(reg, candidate, metadataProcessBinding(binding), c.readProcessIdentity(), mutator); err != nil {
+				return err
+			}
+		} else if err := mutator.ReserveProcessResume(reg, candidate.Record.Binding, metadataProcessBinding(binding)); err != nil {
 			return err
 		}
 		if err := settings.record(reg, mutator, binding.Agent); err != nil {

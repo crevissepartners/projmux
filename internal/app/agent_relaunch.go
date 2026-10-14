@@ -65,6 +65,8 @@ type agentRelaunchResult struct {
 	NewModel             string                            `json:"newModel,omitempty"`
 	Restart              bool                              `json:"restart"`
 	ConfirmationRequired bool                              `json:"confirmationRequired"`
+	PromptRequired       bool                              `json:"promptRequired,omitempty"`
+	RelaunchCommand      string                            `json:"relaunchCommand,omitempty"`
 	Unchanged            bool                              `json:"unchanged"`
 	CurrentSettings      agentsettings.Settings            `json:"currentSettings"`
 	NewSettings          agentsettings.Settings            `json:"newSettings"`
@@ -82,15 +84,16 @@ type agentRelaunchRequest struct {
 	effort   string
 	// profile and instructions are nil when not given; a pointer to "" is
 	// `none`.
-	profile      *string
-	instructions *string
-	reset        []string
-	flags        resourceQueryFlags
-	detach       bool
-	yes          bool
-	dryRun       bool
-	json         bool
-	socket       deleteSocketFlags
+	profile       *string
+	instructions  *string
+	reset         []string
+	flags         resourceQueryFlags
+	detach        bool
+	yes           bool
+	dryRun        bool
+	json          bool
+	socket        deleteSocketFlags
+	allowHostLost bool // Only the public CLI opts into explicit lost-host recovery.
 }
 
 // settings is what the relaunch asks of the Agent's layers.
@@ -150,6 +153,7 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	request.allowHostLost = true
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -558,6 +562,9 @@ func writeAgentRelaunchResult(stdout io.Writer, request agentRelaunchRequest, re
 			"%s: agent/%s uid=%s phase=%s interaction=%s from %s to %s; would %s it on the same conversation; confirmation-required=%t\ndry-run: nothing was changed\n",
 			agentRelaunchSpelling, result.AgentName, result.AgentUID, result.Phase, result.Interaction, current, describeRelaunchTarget(result),
 			strings.TrimPrefix(result.Outcome, "would-"), result.ConfirmationRequired)
+		if err == nil && result.PromptRequired {
+			_, err = fmt.Fprintf(stdout, "execution requires a nonempty first prompt; relaunch with: %s\n", result.RelaunchCommand)
+		}
 		return err
 	default:
 		_, err := fmt.Fprintf(stdout, "agent/%s relaunched from %s to %s; %s on the same conversation\n",
