@@ -110,15 +110,6 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 	return err
 }
 
-func signalDetachedProcessOwner(identity coremetadata.ProcessIdentity) {
-	current, _, err := localipc.Process(identity.PID)
-	if err == nil && current == identity {
-		if process, err := os.FindProcess(identity.PID); err == nil {
-			_ = process.Signal(syscall.SIGTERM)
-		}
-	}
-}
-
 func runProcessDetachedEntry(route string, command *createCommand, resume *agentCommand) error {
 	handshake := os.NewFile(3, "detach-handshake")
 	payload := os.NewFile(4, "detach-request")

@@ -28,6 +28,7 @@ BuildSwitchPickerItems	Backend-neutral switch picker row builder retained as the
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
 CaptureAgentEnvironment	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 CaptureEnvironment	Captured project discovery environment retained for public SDK client construction and covered by captured-input parity.
+CaptureProcessCreateContext	Public detached SDK NewClient captures the frozen launch context once; exercised by explicit-domain and ambient-poison consumer fixtures.
 CaptureProjectDefaults	Captured defaults for the external v0 SDK NewClient; verified by explicit overrides, construction-time environment isolation and the SDK environment-reference guard.
 Catalog.Keys	Whole-catalog key enumeration retained as the test seam that pins the shipped default catalog key coverage.
 Catalog.LocaleKeys	Per-locale key enumeration retained as the test seam that pins the shipped catalog per-locale coverage.
@@ -90,6 +91,7 @@ Client.createDiscoveryRoots	Public v0 shell Window/Pane creation SDK entrypoint 
 Client.createInputs	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createOutcomes	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
 Client.createPane	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
+Client.createProcessAgent	Public Client.CreateAgent process-detached branch closure; exercised by public-only caller-exit, cancellation and rollback fixtures.
 Client.createProjection	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createWindow	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.deleteProcess	SDK process Agent Delete adapter retained for external consumer and shared CLI/SDK admission parity.
@@ -119,6 +121,8 @@ CodexProcessRouteEvidence.Provider	Internal dedicated Codex process binding/cont
 CodexProcessRouteEvidence.sameAuthority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 CommandOutcomeReasons.Register	Internal caller-owned closed outcome reason registration seam; verified by class isolation, concurrent lookup/registration, copied inventories, failure atomicity and Store reader roundtrip tests.
 CoordinationEligible	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
+CreateProcessError.Error	Public detached CreateAgent refusal cause exposes startup failure text with exact binding and owner; exercised by typed rollback fixtures.
+CreateProcessError.Unwrap	Public detached CreateAgent refusal cause preserves errors.Is/errors.As recovery through the startup cause; exercised by cancellation and typed rollback fixtures.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
 DecideTeardownEvent	The pure teardown decision API is called by the product path and retained for lifecycle authority proofs.
@@ -133,6 +137,7 @@ Discover	The background-context discovery wrapper is retained as a test and comp
 Dispositions	Closed CLI route disposition catalog retained as the test seam that pins exactly one disposition per canonical route.
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
+ExecuteDetachedProcessCreate	Public Client.CreateAgent detached execution closure shares the owned launcher and app callbacks; exercised by public-only consumer and CLI parity fixtures.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 FallbackProvenance	Read-only HUD provenance projection retained for callers of the usage snapshot seam.
 FindProjectStopTarget	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
@@ -249,6 +254,8 @@ PreviewDelete	Public v0 Project unregister plan projection; verified by CLI dry-
 PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
 ProcessAlive	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
+ProcessCreateFailure.Error	Public detached SDK execution cause adapter retains exact owner/binding startup evidence; exercised by typed rollback fixtures.
+ProcessCreateFailure.Unwrap	Public detached SDK execution cause adapter preserves cancellation and cleanup causes; exercised by typed cancellation and rollback fixtures.
 ProcessQuestionDispatcher.AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ProcessQuestionDispatcher.ReadExactProcessQuestions	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Project.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -332,6 +339,7 @@ TeardownObservations	The closed teardown-observation catalog is called by the pr
 TerminationEvidence.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
+VerifyDetachedProcessCreate	Public detached SDK startup verifier closure binds typed committed resources to the exact owner and generation; exercised by stale/ambiguous/wrong-owner guards.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 Window.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 WindowForPane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
