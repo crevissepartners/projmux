@@ -411,6 +411,9 @@ func sdkCreateMissingInterpreter(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			if err := os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("SDK missing-interpreter startup pending\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			_, err = c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:" + f.project, Window: "uid:" + f.window, Provider: provider, Profile: "none", Host: "process", Detach: true})
 			var detail *projmux.CreateProcessError
 			if !errors.As(err, &detail) || detail.Owner.PID == 0 || errors.Unwrap(detail) == nil {
@@ -436,6 +439,9 @@ func sdkCreateMissingInterpreter(t *testing.T) {
 			}
 			if _, e = os.Stat(f.trace); !os.IsNotExist(e) {
 				t.Fatal("missing interpreter produced provider input", e)
+			}
+			if err := os.Remove(filepath.Join(f.root, firstInputCleanupPending)); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
