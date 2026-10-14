@@ -161,7 +161,10 @@ sys.exit(99)
 					}
 					out, err := exec.CommandContext(ctx, f.binary, args...).CombinedOutput()
 					if err == nil || !bytes.Contains(out, []byte("recover with:")) {
-						t.Fatalf("failure %v %s", err, out)
+						diagnostic, loadErr := f.store.LoadReadOnly()
+						beforeJSON, beforeErr := json.Marshal(before)
+						afterJSON, afterErr := json.Marshal(diagnostic)
+						t.Fatalf("failure %v output=%s\nbefore=%s (marshal=%v)\nafter=%s (load=%v marshal=%v)", err, out, beforeJSON, beforeErr, afterJSON, loadErr, afterErr)
 					}
 					recovery := "agent resume uid:"
 					if changed {

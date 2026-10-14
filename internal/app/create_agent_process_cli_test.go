@@ -594,12 +594,25 @@ const processGuidanceLocation = "This agent runs in a foreground process host wi
 func TestProcessCreateGuidanceActualCLI(t *testing.T) {
 	f := newProcessCreateCLI(t)
 	argv := filepath.Join(f.root, "argv")
-	wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "printf '%s\\n' \"$@\" >" + fmt.Sprintf("%q", argv) + "\nexec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + "\n"
+	readyPath := filepath.Join(f.root, "argv-ready")
+	if err := syscall.Mkfifo(readyPath, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := os.OpenFile(readyPath, os.O_RDWR|syscall.O_NONBLOCK, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ready.Close()
+	wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "printf '%s\\n' \"$@\" >" + fmt.Sprintf("%q", argv) + "\nprintf 'ready\\n' >" + fmt.Sprintf("%q", readyPath) + "\nexec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + "\n"
 	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(wrapper), 0700); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	deadline, _ := ctx.Deadline()
+	if err := ready.SetReadDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.CommandContext(ctx, f.binary, f.args()...)
 	input, _ := cmd.StdinPipe()
 	output, _ := cmd.StdoutPipe()
@@ -618,6 +631,9 @@ func TestProcessCreateGuidanceActualCLI(t *testing.T) {
 	}()
 	if _, err := bufio.NewReader(output).ReadString('\n'); err != nil {
 		t.Fatalf("ownership: %v %s", err, stderr.String())
+	}
+	if signal, err := bufio.NewReader(ready).ReadString('\n'); err != nil || signal != "ready\n" {
+		t.Fatalf("argv producer completion: %q %v", signal, err)
 	}
 	raw, err := os.ReadFile(argv)
 	if err != nil {
@@ -638,6 +654,153 @@ func TestProcessCreateGuidanceActualCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v %s", err, stderr.String())
 	}
+}
+
+// Ownership proves kernel birth; it does not promise that the provider has
+// executed its argv recorder. Hold that recorder until after the receipt.
+func TestProcessCreateGuidanceReceiptBeforeArgvActualCLI(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	argv := filepath.Join(f.root, "argv")
+	releasePath, readyPath := filepath.Join(f.root, "argv-release"), filepath.Join(f.root, "argv-ready")
+	for _, path := range []string{releasePath, readyPath} {
+		if err := syscall.Mkfifo(path, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release, err := os.OpenFile(releasePath, os.O_RDWR|syscall.O_NONBLOCK, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release.Close()
+	ready, err := os.OpenFile(readyPath, os.O_RDWR|syscall.O_NONBLOCK, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ready.Close()
+	deadline, _ := ctx.Deadline()
+	if err := ready.SetReadDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	unblock := func() error {
+		if released {
+			return nil
+		}
+		released = true
+		_, err := release.Write([]byte("release\n"))
+		return err
+	}
+	wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "read -r release <" + fmt.Sprintf("%q", releasePath) + "\nprintf '%s\\n' \"$@\" >" + fmt.Sprintf("%q", argv) + "\nprintf 'ready\\n' >" + fmt.Sprintf("%q", readyPath) + "\nexec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + "\n"
+	if err := os.WriteFile(filepath.Join(f.root, "claude"), []byte(wrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, f.binary, f.args()...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	var ownedChild, ownedSupervisor coremetadata.ProcessIdentity
+	defer func() {
+		_ = unblock()
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+		cleanup, stopCleanup := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stopCleanup()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		signaled := map[int]bool{}
+		for {
+			remaining := false
+			for _, identity := range []coremetadata.ProcessIdentity{ownedChild, ownedSupervisor} {
+				if !identity.Valid() {
+					continue
+				}
+				current, _, err := localipc.Process(identity.PID)
+				if errors.Is(err, localipc.ErrProcessAbsent) || (err == nil && current != identity) {
+					continue
+				}
+				remaining = true
+				if current == identity && identity.OwnerUID == uint32(os.Getuid()) && !signaled[identity.PID] {
+					if syscall.Kill(identity.PID, syscall.SIGTERM) == nil {
+						signaled[identity.PID] = true
+					}
+				}
+			}
+			if !remaining {
+				break
+			}
+			select {
+			case <-cleanup.Done():
+				_ = os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("guidance fixture cleanup unresolved\n"), 0600)
+				t.Errorf("exact guidance fixture descendants did not retire: child=%+v supervisor=%+v", ownedChild, ownedSupervisor)
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil || !strings.Contains(line, "runtime=process foreground=owned") {
+		t.Fatalf("ownership: %q %v %s", line, err, stderr.String())
+	}
+	if _, err := os.Stat(argv); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("argv published before release: %v", err)
+	}
+	reg := mustRegistry(t, f)
+	fields := strings.Fields(line)
+	pane, found := reg.Pane(strings.TrimPrefix(fields[3], "uid:"))
+	if !found || pane.Status.Activation.Process == nil {
+		t.Fatal("receipt lacks exact owned birth")
+	}
+	birth := pane.Status.Activation.Process.Child
+	ownedChild = birth
+	actual, supervisorPID, identityErr := localipc.Process(birth.PID)
+	if identityErr != nil || actual != birth {
+		t.Fatalf("blocked provider birth unavailable: %+v %v", actual, identityErr)
+	}
+	supervisor, hostPID, supervisorErr := localipc.Process(supervisorPID)
+	if supervisorErr != nil || hostPID != cmd.Process.Pid || supervisor.OwnerUID != birth.OwnerUID {
+		t.Fatalf("fixture supervisor chain changed: %+v parent=%d err=%v", supervisor, hostPID, supervisorErr)
+	}
+	ownedSupervisor = supervisor
+	if err := unblock(); err != nil {
+		t.Fatal(err)
+	}
+	signal, err := bufio.NewReader(ready).ReadString('\n')
+	if err != nil || signal != "ready\n" {
+		t.Fatalf("argv producer completion: %q %v", signal, err)
+	}
+	raw, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundGuidance := false
+	for arg := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+		if text, readErr := os.ReadFile(arg); readErr == nil && bytes.Contains(text, []byte(processGuidanceLocation)) {
+			foundGuidance = true
+		}
+	}
+	if !foundGuidance {
+		t.Fatalf("process guidance absent from launched instructions; argv:\n%s", raw)
+	}
+	_ = input.Close()
+	err = cmd.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("Wait: %v %s", err, stderr.String())
+	}
+	if _, _, err := localipc.Process(birth.PID); !errors.Is(err, localipc.ErrProcessAbsent) {
+		t.Fatalf("fixture child survived actual Wait: %v", err)
+	}
+	t.Log("ownership and exact live birth before argv; release then producer completion, guidance and actual Wait")
 }
 
 func TestProcessCreatorActualCLI(t *testing.T) {

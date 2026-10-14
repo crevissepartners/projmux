@@ -30,11 +30,12 @@ type agentProcessPreparedResult struct {
 // The receiver registers Wait before ACK; registration failure cancels and
 // waits for this exact target. Prepared has no lifetime to register.
 type agentHostTransferResult struct {
-	State         agentProcessRelaunchState
-	Prepared      *agentProcessPreparedResult
-	Result        agentRelaunchResult
-	Owned         *agentHostTransferLifetime
-	stopAdmission func() bool
+	State           agentProcessRelaunchState
+	Prepared        *agentProcessPreparedResult
+	Result          agentRelaunchResult
+	Owned           *agentHostTransferLifetime
+	stopAdmission   func() bool
+	processRecovery string
 }
 
 type agentHostTransferLifetime struct {

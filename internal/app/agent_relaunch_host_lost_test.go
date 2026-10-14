@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -338,5 +339,80 @@ func TestHostLostUnpublishedBirthActualWaitRestoresRecipe(t *testing.T) {
 	p, _ := reg.Pane(candidate.Record.Binding.PaneUID)
 	if !reflect.DeepEqual(a.Metadata.Annotations, candidate.Agent.Metadata.Annotations) || !reflect.DeepEqual(p.Status.Activation.Process, candidate.HostLost) || !processResumeRecordEqual(p.Status.ProcessSession, &candidate.Record) || coremetadata.MatchesProcessWait(candidate.Record.Binding, p.Status.LastTermination) {
 		t.Fatal("unpublished actual Wait failed restoration or invented old Wait")
+	}
+}
+
+func TestHostLostDetachedEarlyFailureUsesPreviewRecipeAndCurrentState(t *testing.T) {
+	for _, tc := range []struct {
+		name, recovery, state string
+		optIn                 bool
+	}{
+		{"unchanged", "projmux agent resume uid:fixture --detach -- <prompt>", "absent", true},
+		{"changed", "projmux agent relaunch uid:fixture --detach --yes --model next -- <prompt>", "absent", true},
+		{"pending", "projmux agent resume uid:fixture --detach -- <prompt>", "pending", true},
+		{"live", "projmux agent resume uid:fixture --detach -- <prompt>", "live", true},
+		{"unreadable", "projmux agent resume uid:fixture --detach -- <prompt>", "unreadable", true},
+		{"ordinary", "projmux agent resume uid:fixture --detach -- <prompt>", "absent", false},
+		{"no-preview", "", "absent", true},
+		{"already-guided", "projmux agent resume uid:fixture --detach -- <prompt>", "guided", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, candidate, store := hostLostRelaunchCommand(t)
+			reg, err := store.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			recovery := strings.ReplaceAll(tc.recovery, "uid:fixture", "uid:"+candidate.Agent.Metadata.UID)
+			cause := errors.New("process-detached-identity-handshake-failed: EOF")
+			switch tc.state {
+			case "pending":
+				binding := processSchemaBinding(candidate.Record.Binding)
+				binding.Host, binding.Generation, binding.Operation = "pending", "pending", "pending"
+				if err := c.reserveProcessRelaunch(context.Background(), candidate, agentSettingsLaunch{}, agentGuidanceLaunch{}, projectLinksLaunch{}, binding); err != nil {
+					t.Fatal(err)
+				}
+			case "live":
+				c.processIdentity = func(int) (coremetadata.ProcessIdentity, int, error) {
+					return candidate.HostLost.HostProcess, 1, nil
+				}
+			case "unreadable":
+				c.loadRegistry = func() (coremetadata.Registry, error) { return coremetadata.Registry{}, errors.New("unreadable") }
+			case "guided":
+				cause = errors.New("original recover with: existing")
+			}
+			request := agentRelaunchRequest{allowHostLost: tc.optIn, detach: true}
+			before, beforeErr := store.LoadReadOnly()
+			if beforeErr != nil {
+				t.Fatal(beforeErr)
+			}
+			got := c.detachedRelaunchFailure(reg, candidate.Agent, request, recovery, cause)
+			unchanged := !tc.optIn || tc.recovery == "" || tc.state == "guided"
+			if !errors.Is(got, cause) {
+				t.Fatal("lost original cause", got)
+			}
+			if unchanged {
+				if got != cause {
+					t.Fatal("ordinary/already guided error changed", got)
+				}
+			} else {
+				if !strings.Contains(got.Error(), recovery) || !strings.Contains(got.Error(), cause.Error()) {
+					t.Fatal("recipe/token lost", got)
+				}
+				inspect := tc.state == "pending" || tc.state == "live" || tc.state == "unreadable"
+				if strings.Contains(got.Error(), "inspect with:") != inspect {
+					t.Fatal("unsafe recovery classification", got)
+				}
+			}
+			if c.processResumeHostLost {
+				t.Fatal("call-scoped proof escaped")
+			}
+			after, _ := store.LoadReadOnly()
+			if !reflect.DeepEqual(before, after) {
+				t.Fatal("failure advice mutated records")
+			}
+			if c.detachedRelaunchFailure(reg, candidate.Agent, request, recovery, nil) != nil {
+				t.Fatal("success acquired failure advice")
+			}
+		})
 	}
 }

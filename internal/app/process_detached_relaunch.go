@@ -84,7 +84,8 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	if err != nil {
 		return err
 	}
-	return launchProcessDetached(ctx, executable, processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.rebind.create, stdout, stderr)
+	err = launchProcessDetached(ctx, executable, processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.rebind.create, stdout, stderr)
+	return c.detachedRelaunchFailure(reg, target, request, planned.processRecovery, err)
 }
 
 func detachedRelaunchArgs(r agentRelaunchRequest) []string {
@@ -375,4 +376,15 @@ func awaitDetachedRelaunchCleanup(command *createCommand, req processDetachedReq
 		case <-ticker.C:
 		}
 	}
+}
+
+// The preview carries the exact recipe's command, never permission to recover.
+// Recheck current ownership after failure using the existing recovery barrier.
+func (c *agentCommand) detachedRelaunchFailure(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, recovery string, cause error) error {
+	if cause == nil || !request.allowHostLost || recovery == "" || strings.Contains(cause.Error(), "recover with:") {
+		return cause
+	}
+	call := *c
+	call.processResumeHostLost = true
+	return fmt.Errorf("agent relaunch: recorded conversation retained; %s: %w", call.processRelaunchFailureRecovery(reg, target, request, recovery), cause)
 }

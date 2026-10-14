@@ -80,6 +80,9 @@ func (c *agentCommand) runProcessRelaunch(reg coremetadata.Registry, target core
 		detail := recordedResumeRecipeError(target, recipe)
 		return usageErrorFor(detail.Error(), detail)
 	}
+	if request.dryRun && request.allowHostLost && c.processResumeHostLost && !c.processResumePreparation && c.hostTransferResult != nil {
+		c.hostTransferResult.processRecovery = hostLostRelaunchRecovery(reg, target, request, recipe)
+	}
 	result := recipe.result(target, pane, request)
 	deferred := recipe.restart.provider == aiModeClaude && strings.TrimSpace(strings.Join(request.prompt, " ")) == ""
 	changesLayers := recipe.restart.settings.resolution.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
