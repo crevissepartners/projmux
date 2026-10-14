@@ -105,6 +105,7 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 	}}
 	if request.Context != nil {
 		launcher.Environment = request.Context.Environment
+		launcher.PayloadDir = request.Context.Paths.StateDir
 	}
 	_, err := launcher.Launch(ctx, request, stdout, stderr)
 	return err

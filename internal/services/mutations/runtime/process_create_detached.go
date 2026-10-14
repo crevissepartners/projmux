@@ -52,8 +52,10 @@ type ProcessDetachedReply struct {
 type ProcessDetachedLauncher struct {
 	Executable  string
 	Environment []string
-	Verify      func(ProcessDetachedReply, coremetadata.ProcessIdentity) error
-	Cleanup     func(coremetadata.ProcessIdentity, ProcessDetachedReply) error
+	// PayloadDir is frozen for SDK calls; empty preserves the CLI temp domain.
+	PayloadDir string
+	Verify     func(ProcessDetachedReply, coremetadata.ProcessIdentity) error
+	Cleanup    func(coremetadata.ProcessIdentity, ProcessDetachedReply) error
 }
 
 func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout, stderr io.Writer) (ready ProcessDetachedReply, returnErr error) {
@@ -64,7 +66,7 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	if len(encoded) > ProcessDetachedWireLimit {
 		return ready, processCreateUsage("process-detached-request-too-large: nothing was created")
 	}
-	payload, err := os.CreateTemp("", "pmx-detach-*")
+	payload, err := os.CreateTemp(l.PayloadDir, "pmx-detach-*")
 	if err != nil {
 		return ready, err
 	}
@@ -247,7 +249,7 @@ func ExecuteDetachedProcessCreate(ctx context.Context, frozen ProcessCreateConte
 	ctx, cancel := context.WithTimeout(ctx, ProcessDetachedStartupTimeout)
 	defer cancel()
 	wire := ProcessDetachedCreateRequest{Options: request.Options, Output: "none", Caller: caller, RegistryPath: storage.Path(), Context: &frozen}
-	launcher := ProcessDetachedLauncher{Executable: frozen.Executable, Environment: frozen.Environment, Verify: func(ready ProcessDetachedReply, owner coremetadata.ProcessIdentity) error {
+	launcher := ProcessDetachedLauncher{Executable: frozen.Executable, Environment: frozen.Environment, PayloadDir: frozen.Paths.StateDir, Verify: func(ready ProcessDetachedReply, owner coremetadata.ProcessIdentity) error {
 		return VerifyDetachedProcessCreate(storage.LoadReadOnly, ready, owner)
 	}, Cleanup: func(owner coremetadata.ProcessIdentity, ready ProcessDetachedReply) error {
 		return AwaitDetachedProcessCreateCleanup(storage.LoadReadOnly, owner, ready.Binding)

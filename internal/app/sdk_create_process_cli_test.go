@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -103,8 +104,15 @@ func TestSDKDetachedProcessCreateFrozenExplicitDomains(t *testing.T) {
 					t.Fatal("no exact process activation")
 				}
 				activation := *pane.Status.Activation.Process
-				if _, _, err = localipc.Process(activation.HostProcess.PID); err != nil {
-					t.Fatal("caller cancellation stopped owner", err)
+				owner, _, err := localipc.Process(activation.HostProcess.PID)
+				if err != nil || owner != activation.HostProcess {
+					t.Fatal("caller cancellation lost exact owner", err)
+				}
+				if runtime.GOOS == "linux" {
+					payload, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/4", owner.PID))
+					if err != nil || !strings.HasPrefix(payload, filepath.Join(paths.StateDir, "pmx-detach-")) || !strings.HasSuffix(payload, " (deleted)") {
+						t.Fatalf("private payload escaped frozen StateDir: %q %v", payload, err)
+					}
 				}
 				data, err := os.ReadFile(hookPath)
 				if err != nil || string(data) != f.root {
