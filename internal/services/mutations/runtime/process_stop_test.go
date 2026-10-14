@@ -42,25 +42,73 @@ func TestProcessAgentStopWaitRetirementCancellationAndGeneration(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			reg, a, p := stopFixture()
 			before := reg.Clone()
+			path := filepath.Join(t.TempDir(), "metadata", "registry.json")
+			activation := *p.Status.Activation.Process
+			prepared := reg.Clone()
+			writeStopWait(&prepared)
+			wait := prepared.Panes[0].Status.LastTermination
+			// Prepare disk evidence outside the Stop budget, but keep Wait private
+			// until CallStop admits this exact binding.
+			if mode == "retire" || mode == "cancel-after" || mode == "timeout" {
+				if err := WriteProcessRetirement(path, activation, wait); err != nil {
+					t.Fatal(err)
+				}
+			}
 			calls, reads := 0, 0
-			ctx, cancel := context.WithTimeout(context.Background(), 65*time.Millisecond)
+			var order []string
+			var admittedContext context.Context
+			hostAliveObserved := false
+			// Success has a hang watchdog, not a scheduler/fsync speed contract.
+			budget := 5 * time.Second
+			if mode == "timeout" || mode == "no-wait" {
+				budget = 65 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), budget)
 			defer cancel()
 			if mode == "cancel-before" {
 				cancel()
 			}
-			stopper := ProcessAgentStopper{RegistryPath: filepath.Join(t.TempDir(), "metadata", "registry.json"), Load: func() (m.Registry, error) {
+			stopper := ProcessAgentStopper{RegistryPath: path, Load: func() (m.Registry, error) {
 				reads++
 				if mode == "cancel-at-admission" {
 					cancel()
 				}
 				return reg.Clone(), nil
-			}, ReadIdentity: func(int) (m.ProcessIdentity, int, error) {
-				if reads < 4 {
-					return p.Status.Activation.Process.HostProcess, 0, nil
+			}, ReadIdentity: func(pid int) (m.ProcessIdentity, int, error) {
+				if admittedContext == nil || (mode == "cancel-after" && admittedContext.Err() != nil) || calls != 1 || !m.MatchesProcessWait(activation.Binding, reg.Panes[0].Status.LastTermination) || !m.SameProcessWait(wait, reg.Agents[0].Status.LastTermination) {
+					t.Fatal("identity checked before admitted exact Wait publication")
+				}
+				witness, err := ReadProcessRetirement(path, activation.Binding, wait)
+				if err != nil || !reflect.DeepEqual(witness, activation) {
+					t.Fatalf("identity checked without exact durable witness: %+v %v", witness, err)
+				}
+				identity := activation.HostProcess
+				if pid == activation.Child.PID {
+					identity = activation.Child
+				} else if pid != activation.HostProcess.PID {
+					t.Fatalf("unexpected identity pid %d", pid)
+				}
+				if mode == "timeout" {
+					return identity, 0, nil
+				}
+				if !hostAliveObserved {
+					hostAliveObserved = true
+					order = append(order, "witness", "host-alive")
+					return identity, 0, nil
+				}
+				if pid == activation.HostProcess.PID {
+					order = append(order, "host-absent")
+				} else {
+					order = append(order, "child-absent")
 				}
 				return m.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
-			}, CallStop: func(admitted context.Context, _ m.Registry, _ m.Agent) error {
+			}, CallStop: func(admitted context.Context, current m.Registry, target m.Agent) error {
 				calls++
+				admittedContext = admitted
+				if target.Metadata.UID != a.Metadata.UID || target.Status.PaneRef != p.Metadata.UID || current.Panes[0].Status.ProcessSession.Binding != activation.Binding || current.Panes[0].Status.LastTermination != nil {
+					t.Fatal("Stop admitted a different binding or prepublished Wait")
+				}
+				order = append(order, "admitted")
 				if mode == "cancel-after" {
 					cancel()
 					if admitted.Err() != nil {
@@ -70,21 +118,19 @@ func TestProcessAgentStopWaitRetirementCancellationAndGeneration(t *testing.T) {
 				if mode == "stale" {
 					reg.Panes[0].Status.ProcessSession.Binding.Generation = "replacement"
 				} else if mode != "no-wait" {
-					writeStopWait(&reg)
+					reg = prepared.Clone()
+					order = append(order, "wait-published")
 				}
 				return nil
 			}}
-			if mode == "timeout" {
-				stopper.ReadIdentity = func(int) (m.ProcessIdentity, int, error) { return p.Status.Activation.Process.HostProcess, 0, nil }
-			}
 			err := stopper.StopExact(ctx, before, a, p)
 			switch mode {
 			case "retire", "cancel-after":
-				if err != nil || calls != 1 || reads < 4 {
-					t.Fatalf("calls%d reads%d err%v", calls, reads, err)
+				if err != nil || calls != 1 || !reflect.DeepEqual(order, []string{"admitted", "wait-published", "witness", "host-alive", "host-absent", "child-absent"}) || !m.SameProcessWait(wait, stopper.Termination) {
+					t.Fatalf("calls%d reads%d order%v err%v", calls, reads, order, err)
 				}
 			case "cancel-before", "cancel-at-admission":
-				if !errors.Is(err, context.Canceled) || calls != 0 || !reflect.DeepEqual(before, reg) {
+				if !errors.Is(err, context.Canceled) || calls != 0 || len(order) != 0 || !reflect.DeepEqual(before, reg) {
 					t.Fatalf("pre-admission effect: %v", err)
 				}
 			case "stale":
