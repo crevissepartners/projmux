@@ -420,7 +420,7 @@ func sdkCreateMissingInterpreter(t *testing.T) {
 			if loadErr != nil || len(after.Agents) != 0 {
 				t.Fatal("failed birth was not rolled back", loadErr)
 			}
-			if current, _, e := localipc.Process(detail.Owner.PID); !errors.Is(e, localipc.ErrProcessAbsent) && !(e == nil && current != detail.Owner) {
+			if current, _, e := localipc.Process(detail.Owner.PID); !errors.Is(e, localipc.ErrProcessAbsent) && !(e == nil && current != coremetadata.ProcessIdentity(detail.Owner)) {
 				t.Fatal("owner actual retirement unconfirmed", e)
 			}
 			if after := sdkCreateDirectorySnapshot(t, sibling); !reflect.DeepEqual(before, after) {
