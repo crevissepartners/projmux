@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 247 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 251 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -1268,6 +1268,9 @@ Allowed effects:
 ```
 projmux config edit [--get|--set <mode>]
 projmux config providers [--enable <id>|--disable <id>]
+projmux config accounts add <name> --provider <codex|claude> --root <absolute-directory> [-o json]
+projmux config accounts list [-o json]
+projmux config accounts remove <name|uid:account-…> [-o json]
 projmux config locale [--set <value>]
 projmux config agent-host [--default <tmux|process>]
 projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]
@@ -1282,6 +1285,7 @@ Subcommands:
 | --- | --- |
 | [`projmux config edit`](#projmux-config-edit) | Edit the AI split-mode configuration |
 | [`projmux config providers`](#projmux-config-providers) | List AI providers as enabled or disabled; --enable or --disable changes one |
+| [`projmux config accounts`](#projmux-config-accounts) | Register, list, or retire non-sensitive provider account references |
 | [`projmux config locale`](#projmux-config-locale) | Show the [ui] locale setting and its config.toml; --set stores a new one |
 | [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them |
 | [`projmux config agent-approvals`](#projmux-config-agent-approvals) | Show how agent permission requests are answered and how long a captured one waits; --answering or --window changes them |
@@ -1289,7 +1293,7 @@ Subcommands:
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
-Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config locale`, `projmux config agent-questions`, `projmux config agent-approvals`, `projmux config agent-host`, `projmux config render`, `projmux config apply`
+Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config accounts add`, `projmux config accounts list`, `projmux config accounts remove`, `projmux config locale`, `projmux config agent-questions`, `projmux config agent-approvals`, `projmux config agent-host`, `projmux config render`, `projmux config apply`
 
 ### `projmux config edit`
 
@@ -1336,6 +1340,110 @@ projmux config providers
 projmux config providers --enable <id>
 projmux config providers --disable <id>
 ```
+
+### `projmux config accounts`
+
+Register, list, or retire non-sensitive provider account references
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config accounts add <name> --provider <codex|claude> --root <absolute-directory> [-o json]
+projmux config accounts list [-o json]
+projmux config accounts remove <name|uid:account-…> [-o json]
+```
+
+Registration only canonicalizes and stats an existing directory. Authentication remains unverified; no credentials, provider execution, or Agent lifecycle changes. Removal retains a tombstone; same-name re-registration creates a fresh UID. Unknown write outcomes must not be automatically retried.
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux config accounts add`](#projmux-config-accounts-add) | Register a non-sensitive provider directory reference |
+| [`projmux config accounts list`](#projmux-config-accounts-list) | List active provider account references |
+| [`projmux config accounts remove`](#projmux-config-accounts-remove) | Retire an exact account name or UID reference |
+
+Canonical spelling: `projmux config accounts add`, `projmux config accounts list`, `projmux config accounts remove`
+
+#### `projmux config accounts add`
+
+Register a non-sensitive provider directory reference
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config accounts add <name> --provider <codex|claude> --root <absolute-directory> [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux config accounts list`
+
+List active provider account references
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config accounts list [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux config accounts remove`
+
+Retire an exact account name or UID reference
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config accounts remove <name|uid:account-…> [-o json]
+```
+
+Output modes (`-o`): `json`
 
 ### `projmux config locale`
 

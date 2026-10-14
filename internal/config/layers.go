@@ -126,6 +126,7 @@ var settingItems = []SettingItem{
 	declareFile(AgentApprovalWindowSecondsFileName, LayerCentral, ""),
 	declareFile(AgentApprovalAnsweringFileName, LayerCentral, ""),
 	declareFile(AgentDefaultHostFileName, LayerCentral, ""),
+	declareFile(ProviderAccountsFileName, LayerCentral, ""),
 	declareFile(AIHookActionsFileName, LayerCentral, ""),
 	declareFile(AISemanticPoliciesFileName, LayerCentral, ""),
 	declareFile(LiveResourcesFileName, LayerCentral, ""),

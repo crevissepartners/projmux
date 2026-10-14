@@ -1255,6 +1255,9 @@ var routes = []Route{
 		Usage: []string{
 			"projmux config edit [--get|--set <mode>]",
 			"projmux config providers [--enable <id>|--disable <id>]",
+			"projmux config accounts add <name> --provider <codex|claude> --root <absolute-directory> [-o json]",
+			"projmux config accounts list [-o json]",
+			"projmux config accounts remove <name|uid:account-…> [-o json]",
 			"projmux config locale [--set <value>]",
 			"projmux config agent-host [--default <tmux|process>]",
 			"projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]",
@@ -1262,7 +1265,7 @@ var routes = []Route{
 			"projmux config render standalone|app [--bin <path>]",
 			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>] [--no-reload]",
 		},
-		Canonical: []string{"config edit", "config providers", "config locale", "config agent-questions", "config agent-approvals", "config agent-host", "config render", "config apply"},
+		Canonical: []string{"config edit", "config providers", "config accounts add", "config accounts list", "config accounts remove", "config locale", "config agent-questions", "config agent-approvals", "config agent-host", "config render", "config apply"},
 		Children: []Route{
 			{
 				Effects:    unchangedEffects(CardinalityUnchanged),
@@ -1287,6 +1290,20 @@ var routes = []Route{
 					"projmux config providers --disable <id>",
 				},
 				Canonical: []string{"config providers"},
+			},
+			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
+				Name:       "accounts",
+				Invocation: InvocationRefusal,
+				Summary:    "Register, list, or retire non-sensitive provider account references",
+				Usage:      []string{"projmux config accounts add <name> --provider <codex|claude> --root <absolute-directory> [-o json]", "projmux config accounts list [-o json]", "projmux config accounts remove <name|uid:account-…> [-o json]"},
+				Canonical:  []string{"config accounts add", "config accounts list", "config accounts remove"},
+				Notes:      []string{"Registration only canonicalizes and stats an existing directory. Authentication remains unverified; no credentials, provider execution, or Agent lifecycle changes. Removal retains a tombstone; same-name re-registration creates a fresh UID. Unknown write outcomes must not be automatically retried."},
+				Children: []Route{
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "add", Invocation: InvocationExplicit, Summary: "Register a non-sensitive provider directory reference", Usage: []string{"projmux config accounts add <name> --provider <codex|claude> --root <absolute-directory> [-o json]"}, Canonical: []string{"config accounts add"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationNatural, Summary: "List active provider account references", Usage: []string{"projmux config accounts list [-o json]"}, Canonical: []string{"config accounts list"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "remove", Invocation: InvocationExplicit, Summary: "Retire an exact account name or UID reference", Usage: []string{"projmux config accounts remove <name|uid:account-…> [-o json]"}, Canonical: []string{"config accounts remove"}, Outputs: []OutputMode{OutputModeJSON}},
+				},
 			},
 			{
 				Effects:          unchangedEffects(CardinalityUnchanged),
