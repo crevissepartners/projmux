@@ -165,6 +165,8 @@ var publicRouteArgvOperandRoutes = []string{
 	"attention arm",
 	"attention window",
 	"attach project",
+	"config accounts add",
+	"config accounts remove",
 	"delete project",
 	"delete window",
 	"delete pane",

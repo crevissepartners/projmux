@@ -92,6 +92,7 @@ var settingsLayerGuardArgv = [][]string{
 
 	{"attach", "project", "alpha"},
 
+	{"config", "accounts", "list"},
 	{"config", "providers"},
 	{"config", "providers", "--enable", "codex"},
 	{"config", "agent-host"},
