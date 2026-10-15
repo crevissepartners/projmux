@@ -374,7 +374,11 @@ func TestProcessRelaunchApplicationRetainsActualPreparedSource(t *testing.T) {
 			}
 			profiles := profile.NewDefaultStore(paths)
 			digest := writeCodexProfile(t, profiles, "changing", "model = \"preview-model\"\neffort = \"low\"\n")
-			annotations := map[string]string{coremetadata.AnnotationAgentProfile: "changing", coremetadata.AnnotationAgentProfileDigest: digest, coremetadata.AnnotationAgentProfileSource: coremetadata.SettingSourceRelaunch}
+			annotations := map[string]string{
+				coremetadata.AnnotationAgentProfile: "changing", coremetadata.AnnotationAgentProfileDigest: digest, coremetadata.AnnotationAgentProfileSource: coremetadata.SettingSourceRelaunch,
+				coremetadata.AnnotationAgentModel: "preview-model", coremetadata.AnnotationAgentModelSource: coremetadata.SettingSourceProfile,
+				coremetadata.AnnotationAgentEffort: "low", coremetadata.AnnotationAgentEffortSource: coremetadata.SettingSourceProfile,
+			}
 			outer, err := f.planner.ResolveAgentSettingsRequest(provider, annotations, agentSettingsRequest{projectUID: "prj-alpha", source: "relaunch"})
 			if err != nil {
 				t.Fatal(err)
@@ -388,12 +392,14 @@ func TestProcessRelaunchApplicationRetainsActualPreparedSource(t *testing.T) {
 			existingPane, _ := f.store.registry.Pane(personaAttachPane)
 			pane := existingPane.Clone()
 			pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: provider, Binding: coremetadata.ProcessBinding{ProjectUID: "prj-alpha"}}
-			launch, err := f.command.planProcessRelaunchLaunch(f.agent(t), pane, agentRelaunchRequest{}, recipe)
+			target := f.agent(t)
+			target.Spec.Provider = provider
+			launch, err := f.command.planProcessRelaunchLaunch(target, pane, agentRelaunchRequest{}, recipe)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if launch.settings.resolution.New.Model.Value != "preview-model" || launch.applicationSettings.resolution.New.Model.Value != "actual-model" || launch.applicationSettings.resolution.New.Effort.Value != "high" || launch.command.Dir != actualDir || recipe.workspace.CWD != "/preview-only" {
-				t.Fatalf("runtime preview or disclosure source lost: %+v", launch)
+				t.Fatalf("preview=%q actual=%q effort=%q commandDir=%q recipeDir=%q", launch.settings.resolution.New.Model.Value, launch.applicationSettings.resolution.New.Model.Value, launch.applicationSettings.resolution.New.Effort.Value, launch.command.Dir, recipe.workspace.CWD)
 			}
 			if provider == aiModeClaude {
 				if argvValue(launch.command.Args, "--model") != "actual-model" || argvValue(launch.command.Args, "--effort") != "high" {
