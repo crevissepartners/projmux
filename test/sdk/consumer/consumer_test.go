@@ -1383,6 +1383,10 @@ func TestExternalAgentSessionsConsumer(t *testing.T) {
 	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {
 		t.Fatalf("explicit Agent refusal: %v", err)
 	}
+	_, err = client.ListProjectSessions(ctx, projmux.ListProjectSessionsRequest{})
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("explicit Project refusal: %v", err)
+	}
 	_, err = client.ListProjectSessions(ctx, projmux.ListProjectSessionsRequest{Project: "missing"})
 	if !errors.As(err, &refused) || refused.Code != projmux.CodeResourceNotFound {
 		t.Fatalf("Project refusal: %v", err)
@@ -1418,6 +1422,32 @@ func TestExternalAgentSessionsConsumer(t *testing.T) {
 	unchanged, err := os.ReadFile(registryPath)
 	if err != nil || sha256.Sum256(unchanged) != sha256.Sum256(unsupported) {
 		t.Fatalf("refused read changed Registry: %v", err)
+	}
+
+	// This frozen StateDir cannot be read as a Registry directory. Missing
+	// target admission must still refuse before trying that read.
+	badState := filepath.Join(root, "state-file")
+	if err = os.WriteFile(badState, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	badClient, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: filepath.Join(root, "config"), StateDir: badState})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = badClient.ListProjectSessions(ctx, projmux.ListProjectSessionsRequest{})
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("missing Project read frozen invalid state: %v", err)
+	}
+	_, err = badClient.ListProjectSessions(ctx, projectRequest)
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeRegistryUnavailable {
+		t.Fatalf("invalid frozen state did not fail a real read: %v", err)
+	}
+	if _, err = badClient.ListProjectSessions(canceled, projmux.ListProjectSessionsRequest{}); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	badAfter, err := os.ReadFile(badState)
+	if err != nil || string(badAfter) != "not a directory" {
+		t.Fatalf("invalid frozen state changed: %v", err)
 	}
 
 	if _, err = os.Stat(filepath.Join(root, "config")); !os.IsNotExist(err) {

@@ -89,3 +89,26 @@ func TestMissingHistoryEmptyAndProjectUIDBoundary(t *testing.T) {
 		t.Fatalf("created missing state: %v", err)
 	}
 }
+
+func TestProjectEmptyRefPreservesCLIAdmission(t *testing.T) {
+	loads, states := 0, 0
+	loadErr := errors.New("Registry read failed")
+	service := Service{
+		LoadRegistry: func() (metadata.Registry, error) { loads++; return metadata.Registry{}, loadErr },
+		StateDir: func() (string, error) { states++; return t.TempDir(), nil },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.ListProject(ctx, ""); !errors.Is(err, context.Canceled) || loads != 0 || states != 0 {
+		t.Fatalf("canceled admission: %v loads=%d states=%d", err, loads, states)
+	}
+	if _, err := service.ListProject(context.Background(), ""); !errors.Is(err, loadErr) || loads != 1 || states != 0 {
+		t.Fatalf("Registry error precedence: %v loads=%d states=%d", err, loads, states)
+	}
+	service.LoadRegistry = func() (metadata.Registry, error) { loads++; return metadata.NewRegistry(), nil }
+	_, err := service.ListProject(context.Background(), "")
+	_, want := selector.ParseRef(metadata.KindProject, "")
+	if err == nil || err.Error() != want.Error() || !metadata.IsUsageError(err) || loads != 2 || states != 0 {
+		t.Fatalf("CLI empty ref: %v want=%v loads=%d states=%d", err, want, loads, states)
+	}
+}

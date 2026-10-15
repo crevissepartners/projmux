@@ -78,6 +78,12 @@ func (c *Client) ListAgentSessions(ctx context.Context, input ListAgentSessionsR
 // Missing history is empty; unreadable lines are counted. No affiliation is
 // inferred from transcripts, cwd, or deletion records. Results are caller-owned.
 func (c *Client) ListProjectSessions(ctx context.Context, input ListProjectSessionsRequest) (core.ProjectSessionsList, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ProjectSessionsList{}, err
+	}
+	if input.Project == "" {
+		return core.ProjectSessionsList{}, &Refusal{Code: CodeSelectorInvalid, message: "agent sessions project requires exactly one <project-ref>"}
+	}
 	listed, err := c.agentSessionsService().ListProject(ctx, input.Project)
 	if err != nil {
 		return core.ProjectSessionsList{}, sessionReadRefusal(err)

@@ -95,9 +95,6 @@ func (s Service) ListProject(ctx context.Context, raw string) (ProjectResult, er
 	if err := ctx.Err(); err != nil {
 		return ProjectResult{}, err
 	}
-	if raw == "" {
-		return ProjectResult{}, &Failure{Code: "selector-invalid", Message: spelling + " requires exactly one <project-ref>"}
-	}
 	registry, err := s.LoadRegistry()
 	if err != nil {
 		return ProjectResult{}, err
