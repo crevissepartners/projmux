@@ -13,15 +13,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // processDeleteCLI is a copied product binary with an isolated HOME, no TMUX,
@@ -574,6 +578,111 @@ func TestProcessDeleteClaimBaselineActualCLI(t *testing.T) {
 			if !mutationruntime.ProcessIdentityAbsent(next.Process, localipc.Process) {
 				t.Fatal("new delete returned with claimant live")
 			}
+		})
+	}
+}
+
+// A leaf process Pane stops its exact owner and preserves the protected Agent,
+// conversation, and sibling. A protected Agent delete still refuses before Stop.
+func TestProcessDeleteLeafPaneActualCLI(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := newProcessDeleteCLI(t, provider)
+			f.ownerArgs = append(f.ownerArgs, "--", "initial task")
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			owner := f.startOwner(t, ctx)
+			// Wait for the actual conversation, so equality after deletion
+			// cannot pass merely because both references are empty.
+			processCLIUntil(t, ctx, func() bool {
+				reg := f.registry(t)
+				p, _ := reg.Pane(owner.pane)
+				a, _ := reg.Agent(owner.agent)
+				return p.Status.ProcessSession != nil &&
+					(p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") &&
+					p.Status.ProcessSession.TurnID == "" && a.Status.SessionRef != nil
+			})
+			siblingUID := ""
+			_, err := f.store.Update(func(reg *coremetadata.Registry) error {
+				a, _ := reg.Agent(owner.agent)
+				if a.Metadata.Labels == nil {
+					a.Metadata.Labels = map[string]string{}
+				}
+				a.Metadata.Labels[coremetadata.LabelProtected] = "true"
+				sibling, err := intmetadata.DefaultMutator().AddPane(reg, f.window, coremetadata.BootstrapPane{Name: "retained-shell"}, "", "retain-sibling")
+				if err == nil {
+					siblingUID = sibling.Metadata.UID
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := f.registry(t)
+			agent, _ := before.Agent(owner.agent)
+			pane, _ := before.Pane(owner.pane)
+			sibling, _ := before.Pane(siblingUID)
+			activation := *pane.Status.Activation.Process
+			plan := mutations.BuildDeletePlan(before, coremetadata.KindPane, selector.Resolution{
+				Kind: coremetadata.KindPane, Matches: []selector.Match{{Kind: coremetadata.KindPane, UID: owner.pane}},
+			})
+			if len(plan.Targets) != 1 || len(plan.Targets[0].Descendants) != 0 || mutations.ValidateDeleteProtection(before, plan) != nil {
+				t.Fatalf("expected one unprotected leaf Pane plan: %+v", plan)
+			}
+
+			_, stderr, code := f.run(t, ctx, "delete", "agent", "uid:"+owner.agent, "--yes")
+			if code != 1 || !strings.Contains(stderr, "agent-protected") {
+				t.Fatalf("protected Agent delete: exit=%d stderr=%q", code, stderr)
+			}
+			if after := f.registry(t); !reflect.DeepEqual(before, after) || !processBirthAlive(activation.Child) {
+				t.Fatal("protected Agent refusal changed records or stopped provider")
+			}
+			stdout, stderr, code := f.run(t, ctx, "delete", "pane", "uid:"+owner.pane, "--dry-run")
+			if code != 0 || !strings.Contains(stdout, "dry-run: nothing was deleted") || !strings.Contains(stdout, "runtime=running") {
+				t.Fatalf("Pane dry-run: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+			}
+			if after := f.registry(t); !reflect.DeepEqual(before, after) || !processBirthAlive(activation.Child) {
+				t.Fatal("Pane dry-run changed records or stopped provider")
+			}
+
+			stdout, stderr, code = f.run(t, ctx, "delete", "pane", "uid:"+owner.pane, "--yes")
+			if code != 0 || !strings.Contains(stdout, "runtime=stopped evidence=wait:") {
+				t.Fatalf("Pane delete: exit=%d stdout=%q stderr=%q owner=%s", code, stdout, stderr, owner.stderr.String())
+			}
+			// These are checked at command return, before reaping the owner:
+			// durable actual Wait plus retirement, and kernel absence of both.
+			after := f.registry(t)
+			kept, ok := after.Agent(owner.agent)
+			if !ok || kept.Status.Phase != coremetadata.PhaseOffline ||
+				!reflect.DeepEqual(kept.Status.SessionRef, agent.Status.SessionRef) ||
+				!reflect.DeepEqual(kept.Metadata.Labels, agent.Metadata.Labels) {
+				t.Fatalf("Agent identity, conversation or protection not retained: %+v", kept)
+			}
+			wait := kept.Status.LastTermination
+			if wait == nil || wait.AgentUID != owner.agent || wait.PaneUID != owner.pane ||
+				wait.Generation != activation.Binding.Generation || wait.ExitCode == nil || *wait.ExitCode != 0 {
+				t.Fatalf("missing actual successful Wait: %+v", wait)
+			}
+			if _, err := mutationruntime.ReadProcessRetirement(f.store.Path(), activation.Binding, wait); err != nil {
+				t.Fatalf("missing retirement witness: %v", err)
+			}
+			if !mutationruntime.ProcessActivationAbsent(activation, localipc.Process) {
+				t.Fatal("Pane delete returned before owner/provider retirement")
+			}
+			if _, ok := after.Pane(owner.pane); ok {
+				t.Fatal("deleted Pane survived")
+			}
+			retained, ok := after.Pane(siblingUID)
+			if !ok || !reflect.DeepEqual(retained, sibling) {
+				t.Fatal("sibling Pane changed")
+			}
+			if _, ok := after.Window(f.window); !ok {
+				t.Fatal("leaf Pane delete removed Window")
+			}
+			if err := owner.wait(); err != nil {
+				t.Fatalf("owner after Stop: %v %s", err, owner.stderr.String())
+			}
+			assertProcessOwnerStop(t, f.store.Path(), owner.stderr.String(), diagnostics.OwnerStopControl, owner.cmd.Process.Pid)
 		})
 	}
 }
