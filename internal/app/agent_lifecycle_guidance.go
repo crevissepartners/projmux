@@ -30,6 +30,8 @@ type agentSettingApplication struct {
 }
 
 type agentApplicationSource struct {
+	replyOnly      bool
+	nativeReady    bool
 	provider, host string
 	settings       agentSettingsLaunch
 	resumed        agentResumeLaunch
@@ -49,6 +51,13 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 	}
 	value := func(s string) *string { return &s }
 	r := s.settings.resolution
+	if s.replyOnly {
+		for _, setting := range []string{"profile", "model", "effort", "instructions", "agent-guidance", "project-guidance", "link-rules"} {
+			add(setting, "unobserved", "application-unobserved", nil)
+		}
+		add("workspace", "delivered", "workspace-resolved", value(s.workspace.CWD))
+		return a
+	}
 	if s.settings.layered {
 		add("profile", "recorded", "profile-recipe-recorded", value(r.New.Profile.Name))
 	} else if s.resumed.profileName != "" {
@@ -57,11 +66,13 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 		add("profile", "unobserved", "application-unobserved", nil)
 	}
 	reason := "launch-arguments"
-	if s.provider == aiModeCodex {
+	if s.provider == aiModeCodex && (s.host == "process" || s.nativeReady) {
 		reason = "thread-settings-ready"
 	}
 	if s.settings.layered && r.New.Model.Value != "" && (s.host == "process" || r.PassModel) {
 		add("model", "delivered", reason, value(r.New.Model.Value))
+	} else if s.host == "process" {
+		add("model", "unobserved", "application-unobserved", nil)
 	} else {
 		add("model", "preserved", "conversation-model-preserved", nil)
 	}
@@ -192,7 +203,7 @@ func trailingAgentPromptFlag(fs *flag.FlagSet, prompt []string) string {
 		return ""
 	}
 	token := prompt[len(prompt)-1]
-	if !strings.HasPrefix(token, "-") || token == "-" || token == "--" {
+	if !strings.HasPrefix(token, "-") || strings.HasPrefix(token, "---") || token == "-" || token == "--" {
 		return ""
 	}
 	name, _, _ := strings.Cut(strings.TrimLeft(token, "-"), "=")

@@ -71,6 +71,36 @@ func TestAgentSettingsApplicationProjection(t *testing.T) {
 			}
 		}
 	}
+	t.Run("fixed reply-only and unspecified process values stay unobserved", func(t *testing.T) {
+		s := lifecycleSource(aiModeClaude, "process")
+		s.settings.resolution.New.Model.Value = ""
+		e := lifecycleEntry(t, preparedAgentSettingsApplication(s), "model")
+		if e.Status != "unobserved" || e.Value != nil {
+			t.Fatal(e)
+		}
+		s.replyOnly = true
+		for _, e := range preparedAgentSettingsApplication(s).Entries {
+			if e.Setting != "workspace" && e.Status != "unobserved" {
+				t.Fatal(e)
+			}
+		}
+	})
+	t.Run("Codex native readiness differs from CLI argv", func(t *testing.T) {
+		s := lifecycleSource(aiModeCodex, "tmux")
+		for _, ready := range []bool{false, true} {
+			s.nativeReady = ready
+			a := preparedAgentSettingsApplication(s)
+			want := "launch-arguments"
+			if ready {
+				want = "thread-settings-ready"
+			}
+			for _, setting := range []string{"model", "effort"} {
+				if e := lifecycleEntry(t, a, setting); e.Reason != want {
+					t.Fatal(e)
+				}
+			}
+		}
+	})
 	t.Run("preserved model has no invented value", func(t *testing.T) {
 		s := lifecycleSource(aiModeClaude, "tmux")
 		s.settings.resolution.PassModel = false
@@ -183,11 +213,12 @@ func TestRelaunchApplicationUsesPreparedSettings(t *testing.T) {
 		t.Fatal("invocation receiver escaped command copy")
 	}
 	// A failed preparation never publishes its candidate values.
-	stopFixtureAgent(t, f.personaAttachFixture)
-	f.command.rebind.launcher = &failingRelaunchResumeLauncher{f.launcher}
+	failed := newRelaunchFixture(t)
+	stopFixtureAgent(t, failed)
+	failed.command.rebind.launcher = &failingRelaunchResumeLauncher{failed.launcher}
 	received := 0
-	f.command.rebind.settingsApplication = func(*agentSettingsApplication) { received++ }
-	_, _, err = runRoute(t, f.command, "resume", "uid:"+personaAttachAgent)
+	failed.command.rebind.settingsApplication = func(*agentSettingsApplication) { received++ }
+	_, _, err = runRoute(t, failed.command, "resume", "uid:"+personaAttachAgent)
 	if err == nil || received != 0 {
 		t.Fatalf("failure=%v disclosures=%d", err, received)
 	}
@@ -198,7 +229,7 @@ func TestAgentPromptTrailingFlagNoticePreservesInput(t *testing.T) {
 		prompt []string
 		want   string
 	}{
-		{[]string{"keep  spaces", "--effort"}, "--effort"}, {[]string{"--effort=high"}, "--effort=high"}, {[]string{"--unknown"}, ""}, {[]string{"--effort", "later"}, ""}, {[]string{"--"}, ""}, {nil, ""},
+		{[]string{"keep  spaces", "--effort"}, "--effort"}, {[]string{"--effort=high"}, "--effort=high"}, {[]string{"--unknown"}, ""}, {[]string{"---effort"}, ""}, {[]string{"--effort", "later"}, ""}, {[]string{"--"}, ""}, {nil, ""},
 	} {
 		fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
 		fs.String("effort", "", "")
