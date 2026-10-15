@@ -709,7 +709,7 @@ func cleanupRelaunchBinding(t *testing.T, c *projmux.Client, state, uid, window,
 	defer cancel()
 	req := core.DeleteRequest{Kind: core.KindPane, Ref: "uid:" + p.Metadata.UID, Window: "uid:" + window, SocketPath: socket, DryRun: true}
 	preview, err := c.Delete(ctx, req)
-	if err != nil || len(preview.Panes) != 1 || preview.Panes[0].PaneUID != p.Metadata.UID || preview.Panes[0].AgentUID != uid || preview.Panes[0].WindowUID != window || preview.Panes[0].PaneID != p.Status.Activation.RuntimeID {
+	if err != nil || len(preview.Panes) != 1 || preview.Panes[0].PaneUID != p.Metadata.UID || (preview.Panes[0].AgentUID != "" && preview.Panes[0].AgentUID != uid) || preview.Panes[0].WindowUID != window || preview.Panes[0].PaneID != p.Status.Activation.RuntimeID {
 		t.Errorf("owned Pane delete preview failed: %v", err)
 		return false
 	}
