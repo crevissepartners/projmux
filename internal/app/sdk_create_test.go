@@ -554,9 +554,9 @@ func TestCreateShellSDKCLIRefusalCodes(t *testing.T) {
 		{name: "missing Project", window: core.CreateWindowRequest{Project: "missing"}, args: []string{"window", "--project", "missing"}, code: projmux.CodeResourceNotFound},
 		{name: "missing Window", pane: &core.CreatePaneRequest{Project: "sample", Window: "missing"}, args: []string{"pane", "--project", "sample", "--window", "missing"}, code: projmux.CodeResourceNotFound},
 		{name: "missing Pane", pane: &core.CreatePaneRequest{Project: "sample", Window: "existing", Pane: "missing"}, args: []string{"pane", "--project", "sample", "--window", "existing", "--pane", "missing"}, code: projmux.CodeResourceNotFound},
-		{name: "invalid Name", window: core.CreateWindowRequest{Project: "sample", Name: "bad/name"}, args: []string{"window", "--project", "sample", "--name", "bad/name"}, code: projmux.CodeResourceNameInvalid, field: "CreateWindowRequest.Name"},
+		{name: "invalid Name", window: core.CreateWindowRequest{Project: "sample", Name: "bad/name"}, args: []string{"window", "--project", "sample", "--name", "bad/name"}, code: projmux.CodeResourceNameInvalid},
 		{name: "invalid Labels", window: core.CreateWindowRequest{Project: "sample", Labels: []string{"bad"}}, args: []string{"window", "--project", "sample", "--label", "bad"}, code: projmux.CodeResourceLabelInvalid, field: "CreateWindowRequest.Labels"},
-		{name: "duplicate Name", window: core.CreateWindowRequest{Project: "sample", Name: "existing"}, args: []string{"window", "--project", "sample", "--name", "existing"}, code: projmux.CodeResourceNameConflict, field: "CreateWindowRequest.Name"},
+		{name: "duplicate Name", window: core.CreateWindowRequest{Project: "sample", Name: "existing"}, args: []string{"window", "--project", "sample", "--name", "existing"}, code: projmux.CodeResourceNameConflict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -576,6 +576,7 @@ func TestCreateShellSDKCLIRefusalCodes(t *testing.T) {
 			if cliErr == nil {
 				t.Fatal("CLI accepted refusal case")
 			}
+			t.Logf("CLI: %v\nSDK: %v", cliErr, sdkErr)
 			if tc.field == "" && sdkErr.Error() != cliErr.Error() {
 				t.Fatalf("selection text CLI %v SDK %v", cliErr, sdkErr)
 			}

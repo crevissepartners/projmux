@@ -87,8 +87,6 @@ func projectRefusal(err error) error {
 			message = strings.Replace(message, "create project: --root ", "create project: Root ", 1)
 		}
 		message = "CreateProjectRequest.Root: " + message
-	case CodeResourceNameInvalid, CodeResourceNameConflict, CodeResourceNameExhausted:
-		message = "CreateProjectRequest.Name: " + message
 	case CodeResourceLabelInvalid:
 		message = "CreateProjectRequest.Labels: " + message
 	}

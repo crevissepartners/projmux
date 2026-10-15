@@ -184,7 +184,7 @@ func TestCreateProjectSDKRefusalParity(t *testing.T) {
 		if ce == nil || errors.As(ce, &usage) != tc.usage {
 			t.Fatalf("CLI failure %T %v", ce, ce)
 		}
-		if !strings.Contains(se.Error(), tc.field) || strings.Contains(se.Error(), "--") {
+		if (tc.field == "Name" && se.Error() != ce.Error()) || (tc.field != "Name" && (!strings.Contains(se.Error(), tc.field) || strings.Contains(se.Error(), "--"))) {
 			t.Fatalf("SDK syntax %v", se)
 		}
 		after, _ := os.ReadFile(store.PathFor(state))

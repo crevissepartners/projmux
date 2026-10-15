@@ -103,7 +103,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if err != nil {
 		return result, createRefusal(err, "CreateAgentRequest")
 	}
-	fields := mutationruntime.AgentInputFields{Prefix: "CreateAgentRequest"}
+	fields := mutationruntime.AgentInputFields{}
 	settings := mutationruntime.AgentSettingsFlags{Profile: req.Profile, ProfileProjectUID: project.Metadata.UID, Instructions: req.Instructions, InstructionsOption: "instructions", Model: req.Model, Effort: req.Effort, Labels: req.Labels, Payload: req.Payload, InteractiveOnly: req.InteractiveOnly, DialogueReplyOnly: req.DialogueReplyOnly}
 	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime, Settings: settings, Fields: fields}
 	provider := req.Provider
@@ -119,7 +119,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 		return result, createRefusal(err, "CreateAgentRequest")
 	}
 	planner.Provider = provider
-	for _, err := range []error{fields.RequireInteractiveOnlyProvider("create agent", provider, settings.InteractiveOnly), fields.RequireLaunchOptions("create agent", provider, settings.Model, settings.Effort, settings.DialogueReplyOnly, "nothing was created"), fields.RequirePersonaLane("create agent", provider, settings), fields.RequireProfileLane("create agent", settings.Profile, settings.DialogueReplyOnly), fields.RequireDialogueMode(provider, settings.DialogueReplyOnly, settings.Payload), mutationruntime.RefuseStatelessAgentWorkspaceWithFields(provider, req.Cwd, req.AddDirs, "CreateAgentRequest.Cwd", "CreateAgentRequest.AddDirs")} {
+	for _, err := range []error{fields.RequireInteractiveOnlyProvider("create agent", provider, settings.InteractiveOnly), fields.RequireLaunchOptions("create agent", provider, settings.Model, settings.Effort, settings.DialogueReplyOnly, "nothing was created"), fields.RequirePersonaLane("create agent", provider, settings), fields.RequireProfileLane("create agent", settings.Profile, settings.DialogueReplyOnly), fields.RequireDialogueMode(provider, settings.DialogueReplyOnly, settings.Payload), mutationruntime.RefuseStatelessAgentWorkspace(provider, req.Cwd, req.AddDirs)} {
 		if err != nil {
 			return result, createRefusal(err, "CreateAgentRequest")
 		}
@@ -166,7 +166,7 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 		placement = "right"
 	}
 	machine := &mutationruntime.AgentCreation{Execution: execution, Prepare: planner.Prepare, ResolveWorkspace: func(reg metadata.Registry, p metadata.Project, provider, cwd string, dirs []string) (metadata.AgentWorkspace, error) {
-		return mutationruntime.ResolveAgentWorkspaceWithFields("create agent", reg, p, provider, cwd, dirs, "CreateAgentRequest.Cwd", "CreateAgentRequest.AddDirs")
+		return mutationruntime.ResolveAgentWorkspaceFor("create agent", reg, p, provider, cwd, dirs)
 	}, Creator: func(_ context.Context, reg *metadata.Registry) (mutationruntime.AgentCreatorRecord, error) {
 		return mutationruntime.DeclaredAgentCreator(reg, creator, "create agent", fields.Option("creator"))
 	}}

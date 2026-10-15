@@ -524,3 +524,16 @@ cancellation remain ordinary errors.
 empty remain empty. These methods never read transcript contents, discover
 provider accounts or transcript locations, backfill history, or infer new
 Project affiliations. They do not start or contact a provider.
+
+## Refusal text shared with the CLI
+
+Creation name validation, Agent launch settings (including profiles,
+instructions, model and effort), approval provider refusals, notification store
+failures, and Project name exhaustion preserve the public CLI error text.
+These messages can contain CLI flags such as `--effort`; callers should inspect
+`Refusal.Code` for classification instead of parsing messages. Existing Code
+values are unchanged.
+
+`Rename` accepts exact Window, Pane and Agent references under a ControlSession
+root as well as under a Project. It uses the same Registry transaction and
+runtime mirror checks as CLI rename, without deriving an active target.

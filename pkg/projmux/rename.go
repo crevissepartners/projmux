@@ -197,7 +197,9 @@ func renameTargetAllowed(r metadata.Registry, kind metadata.Kind, uid string) er
 		return metadata.ErrNotFound
 	}
 	if _, ok := r.Project(w.Metadata.OwnerUID()); !ok {
-		return &Refusal{Code: CodeSelectorInvalid, message: "RenameRequest.Ref requires a Project scope"}
+		if _, ok := r.ControlSession(w.Metadata.OwnerUID()); !ok {
+			return &Refusal{Code: CodeSelectorInvalid, message: "RenameRequest.Ref requires a Project scope"}
+		}
 	}
 	return nil
 }
