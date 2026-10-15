@@ -344,7 +344,7 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 					t.Fatalf("phase refusal advertised an immediate recovery: recoveryEmpty=%t errorType=%T", out.Recovery == "", err)
 				}
 				for _, text := range []string{err.Error(), out.Notices[1]} {
-					for _, want := range []string{"uid:" + plan.Target.Metadata.UID, "uid:" + plan.PaneUID, runner.socket, "Registry phase is Running", "Registry and runtime state", "additional action is required", "No immediate recovery command is available"} {
+					for _, want := range []string{"uid:" + plan.Target.Metadata.UID, "after Stop of Pane uid:" + plan.PaneUID, runner.socket, "Registry phase is Running", "Registry and runtime state", "additional action is required", "No immediate recovery command is available"} {
 						if !strings.Contains(text, want) {
 							t.Fatalf("phase refusal lost exact inspection guidance: requiredPart=%q", want)
 						}
@@ -367,6 +367,95 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 			after.UpdatedAt = before.UpdatedAt
 			if !reflect.DeepEqual(before, after) {
 				t.Fatalf("failed Stop changed Registry field paths (values omitted): %v", relaunchRegistryDifferencePaths(before, after))
+			}
+		})
+	}
+}
+
+// The second Err check is the caller gate after planning. The result's initial
+// phase and the fresh typed cause independently prove which snapshots were read.
+type relaunchAdmissionContext struct {
+	context.Context
+	checks    int
+	afterPlan func()
+}
+
+func (c *relaunchAdmissionContext) Err() error {
+	c.checks++
+	if c.checks == 2 {
+		c.afterPlan()
+	}
+	return c.Context.Err()
+}
+
+func TestRelaunchAgentSDKNoStopFreshPhaseRefusal(t *testing.T) {
+	for _, exit := range []metadata.AgentExit{metadata.AgentExitNormal, metadata.AgentExitAbnormal} {
+		t.Run(string(exit), func(t *testing.T) {
+			client, _, plan, runner := relaunchFailureFixture(t)
+			s := store.NewStore(store.PathFor(client.paths.StateDir))
+			mut := store.DefaultMutator()
+			_, err := s.Update(func(reg *metadata.Registry) error {
+				_, err := mut.ReleaseAgentPane(reg, plan.Target.Metadata.UID, exit, "fixture stopped")
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial, err := s.LoadReadOnly()
+			if err != nil {
+				t.Fatal(err)
+			}
+			initialAgent, _ := initial.Agent(plan.Target.Metadata.UID)
+			wantPhase, _ := exit.Phase()
+			var injected metadata.Registry
+			var replacement metadata.Pane
+			var injectionErr error
+			injections := 0
+			ctx := &relaunchAdmissionContext{Context: context.Background(), afterPlan: func() {
+				injections++
+				_, injectionErr = s.Update(func(reg *metadata.Registry) error {
+					var err error
+					replacement, err = mut.AttachAgentPane(reg, plan.Target.Metadata.UID, metadata.BootstrapPane{Name: "concurrent-pane", CWD: reg.Projects[0].Spec.Root}, "concurrent-binding")
+					return err
+				})
+				if injectionErr == nil {
+					injected, injectionErr = s.LoadReadOnly()
+				}
+			}}
+			out, err := client.relaunchAgent(ctx, core.RelaunchAgentRequest{Ref: "uid:" + plan.Target.Metadata.UID, Model: "opus", Confirm: true}, runner)
+			if injectionErr != nil || injections != 1 {
+				t.Fatalf("competition injection failed: count=%d err=%v", injections, injectionErr)
+			}
+			var refusal *Refusal
+			var phase interface{ MetadataUsageError() bool }
+			if !errors.As(err, &refusal) || refusal.Code != CodeRelaunchExecutionFailed || !errors.As(err, &phase) || !phase.MetadataUsageError() || refusal.Unwrap() == nil || !strings.Contains(refusal.Unwrap().Error(), "is Running and already owns a managed Pane") {
+				t.Fatalf("fresh phase refusal lost: errorType=%T", err)
+			}
+			if out.Phase != core.AgentPhase(wantPhase) || initialAgent.Status.Phase != wantPhase || out.Restart || out.PaneUID != "" || out.AgentUID != plan.Target.Metadata.UID || out.ConversationID != initialAgent.Status.SessionRef.ConversationID() || out.Outcome != "resume-failed" || out.NewPaneUID != "" || out.Recovery != "" || len(out.Notices) != 1 || !reflect.DeepEqual(out.Stop, core.DeleteResult{}) || !reflect.DeepEqual(out.Resume, core.ResumeAgentResult{}) {
+				t.Fatal("no-Stop plan or partial receipt changed")
+			}
+			for _, text := range []string{err.Error(), out.Notices[0]} {
+				for _, want := range []string{"uid:" + plan.Target.Metadata.UID, runner.socket, "Registry phase is Running", "Registry and runtime state", "additional action is required", "No immediate recovery command is available"} {
+					if !strings.Contains(text, want) {
+						t.Fatalf("no-Stop guidance lost required part %q", want)
+					}
+				}
+				for _, absent := range []string{"Stop", "Pane uid:", "recover with", "projmux agent resume", "projmux agent relaunch"} {
+					if strings.Contains(text, absent) {
+						t.Fatalf("no-Stop guidance invented action or target: %q", absent)
+					}
+				}
+			}
+			if runner.calls != 0 || runner.stops != 0 || runner.resumes != 0 {
+				t.Fatalf("fresh refusal performed runtime effects: calls=%d Stop=%d physicalResume=%d", runner.calls, runner.stops, runner.resumes)
+			}
+			after, loadErr := s.LoadReadOnly()
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			current, ok := after.Agent(plan.Target.Metadata.UID)
+			if !ok || current.Status.Phase != metadata.PhaseRunning || current.Status.PaneRef != replacement.Metadata.UID || !reflect.DeepEqual(injected, after) {
+				t.Fatalf("fresh refusal changed competing Registry field paths (values omitted): %v", relaunchRegistryDifferencePaths(injected, after))
 			}
 		})
 	}

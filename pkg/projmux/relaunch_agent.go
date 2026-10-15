@@ -223,7 +223,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			}
 			a, ok := fresh.Agent(target.Metadata.UID)
 			if !ok {
-				return errors.New("target Agent disappeared after Stop")
+				return errors.New("target Agent disappeared before resume")
 			}
 			if err := runtime.RequireResumablePhase("agent resume", a); err != nil {
 				freshPhaseRefused, freshPhase = true, a.Status.Phase
@@ -248,7 +248,11 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			out.Outcome = "resume-failed"
 			if freshPhaseRefused {
 				out.Recovery = ""
-				detail := fmt.Sprintf("Agent uid:%s cannot resume after Stop of Pane uid:%s: Registry phase is %s (selected socket %q). Inspect the exact Registry and runtime state; additional action is required before another operation. No immediate recovery command is available.", target.Metadata.UID, p.PaneUID, freshPhase, socket)
+				stage := ""
+				if p.Running {
+					stage = " after Stop of Pane uid:" + p.PaneUID
+				}
+				detail := fmt.Sprintf("Agent uid:%s cannot resume%s: Registry phase is %s (selected socket %q). Inspect the exact Registry and runtime state; additional action is required before another operation. No immediate recovery command is available.", target.Metadata.UID, stage, freshPhase, socket)
 				out.Notices = append(out.Notices, detail)
 				return &Refusal{Code: CodeRelaunchExecutionFailed, message: detail, cause: err}
 			}

@@ -407,7 +407,8 @@ receipts, `Outcome` distinguishes a failed Stop from failed resume, and `Recover
 names the exact target. A failed Stop is observed as alive, closed or unknown;
 closed can continue with a notice, while alive and unknown refuse success.
 If the fresh Registry phase then refuses resume, `Recovery` is empty.
-The error and notice identify the Agent, old Pane and selected socket.
+The error and notice identify the Agent and selected socket; when Stop was
+attempted, they also identify the old Pane.
 Inspect Registry and runtime state before further action; no immediate recovery
 command is available. Other resumable failures retain their recovery guidance.
 Typed `*projmux.Refusal` codes and wrapped causes distinguish those results.
