@@ -1792,7 +1792,7 @@ Settings live in two layers:
 
 | Layer | Where | What |
 | --- | --- | --- |
-| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `agent-default-host`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/`, `project-guidance/` | product behavior every surface shares |
+| central | `config.toml` central keys (`[ui] locale`, `[update]`, `[startup]`, `[hooks.*]`, `[env]`, `[ai] split_cwd_from`), `ai-enabled-agents`, `ai-new-window-mode`, `live-resources`, `statusbar-defaults.json`, `projdir`, `workdirs`, `pins`, `tags`, `project-hooks`, `desktop-notify-mode`, `ai-notify-dedupe-seconds`, `agent-question-window-seconds`, `agent-question-answering`, `agent-approval-window-seconds`, `agent-approval-answering`, `agent-default-host`, `provider-accounts.json`, `ai-hook-actions.json`, `ai-semantic-policies.json`, `ai-hooks.d/`, `hooks/`, `personas/`, `profiles/`, `project-links/`, `project-guidance/` | product behavior every surface shares |
 | TUI | `statusbar-visibility-*`, `statusbar-decoration*`, `ai-badge-style`, `runtime-diagnostics-visibility`, `keymap.toml`, `tmux-ai-split-mode`, `config.toml` `[theme]`, `[ui] native_keys`, `[ai] resume_*` | how the terminal looks and launches |
 
 Central files live under `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/`, except
