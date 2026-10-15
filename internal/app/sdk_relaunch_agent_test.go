@@ -307,6 +307,7 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 			}
 			script := filepath.Join(root, "shared.py")
 			fixture := strings.Replace(relaunchNativeLedgerFixture(t), "if (method=='thread/resume' and", "if (method=='thread/settings/update' and os.path.exists(os.path.join(os.environ['HOME'],'fail-settings'))) or (method=='thread/resume' and", 1)
+			fixture = strings.Replace(fixture, "    if method=='thread/resume' and", "    if method=='thread/settings/update' and os.path.exists(os.path.join(os.environ['HOME'],'hold-settings')):\n     open(os.path.join(os.environ['HOME'],'settings-entered'),'w').write('entered')\n     while os.path.exists(os.path.join(os.environ['HOME'],'hold-settings')):time.sleep(.01)\n    if method=='thread/resume' and", 1)
 			if err := os.WriteFile(script, []byte(fixture), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -342,6 +343,7 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 			defer cancel()
 			waitCodexCreate(t, ctx, func() bool { _, e := os.Stat(control); return e == nil })
 			socket, _ := sdkCreateSocket(t)
+			t.Logf("native fixture socket=%s", socket)
 			client, err := projmux.NewClient(projmux.Options{StateDir: state, ConfigDir: config, HomeDir: home, DefaultShell: "/bin/sh", SocketPath: socket, ProjmuxExecutable: executable})
 			if err != nil {
 				t.Fatal(err)
@@ -407,6 +409,38 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 			if err := os.Remove(filepath.Join(home, "fail-settings")); err != nil {
 				t.Fatal(err)
 			}
+			if lane == "sdk" {
+				t.Run("preStop-cancel", func(t *testing.T) {
+					hold := filepath.Join(home, "hold-settings")
+					entered := filepath.Join(home, "settings-entered")
+					if err := os.WriteFile(hold, nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+					defer os.Remove(hold)
+					before := projectRegistryBytes(t, state)
+					callCtx, cancelCall := context.WithCancel(ctx)
+					defer cancelCall()
+					type response struct {
+						out core.RelaunchAgentResult
+						err error
+					}
+					done := make(chan response, 1)
+					go func() { out, err := call(callCtx); done <- response{out, err} }()
+					waitCodexCreate(t, ctx, func() bool { _, e := os.Stat(entered); return e == nil })
+					cancelCall()
+					select {
+					case r := <-done:
+						if !errors.Is(r.err, context.Canceled) || r.out.Stop.Committed || projectRegistryBytes(t, state) != before {
+							t.Errorf("preStop cancellation lost cause or changed state: %+v %v", r.out, r.err)
+						}
+					case <-ctx.Done():
+						t.Fatal("preStop cancellation did not return")
+					}
+					if err := os.Remove(hold); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
 			reg := projectRegistry(t, state)
 			old, _ := reg.Agent(uid)
 			oldPane, _ := reg.Pane(old.Status.PaneRef)
@@ -467,7 +501,7 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 			}
 			if lane == "sdk-cancel-failure" {
 				var refused *projmux.Refusal
-				if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchExecutionFailed || !result.Stop.Committed || result.Recovery == "" || a.Status.Phase != metadata.PhaseOffline || result.Outcome != "resume-failed" {
+				if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchExecutionFailed || !result.Stop.Committed || (result.Recovery == "" || !strings.Contains(result.Recovery, socket)) || a.Status.Phase != metadata.PhaseOffline || result.Outcome != "resume-failed" {
 					t.Fatalf("lost partial failure %+v %v", result, err)
 				}
 				return
@@ -882,4 +916,111 @@ func observeRelaunchObserverReceipts(t *testing.T, record, binary, state string,
 		time.Sleep(10 * time.Millisecond)
 	}
 	return true
+}
+
+func TestRelaunchAgentSDKCLISettingsParity(t *testing.T) {
+	relaunchProviderFence(t)
+	for _, name := range []string{"plain", "switch-profile", "same-profile-reset", "no-profile", "attach-instructions", "no-instructions"} {
+		t.Run(name, func(t *testing.T) {
+			home, root := sdkAgentHome(t), t.TempDir()
+			state, config := filepath.Join(t.TempDir(), "projmux"), filepath.Join(t.TempDir(), "projmux")
+			t.Setenv("XDG_STATE_HOME", filepath.Dir(state))
+			t.Setenv("XDG_CONFIG_HOME", filepath.Dir(config))
+			client, err := projmux.NewClient(projmux.Options{StateDir: state, ConfigDir: config, HomeDir: home})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.CreateProject(context.Background(), core.CreateProjectRequest{Root: root, Name: "sample"}); err != nil {
+				t.Fatal(err)
+			}
+			instructions, err := client.WriteInstructions(context.Background(), "base", []byte("base instructions"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.WriteInstructions(context.Background(), "other", []byte("other instructions")); err != nil {
+				t.Fatal(err)
+			}
+			profile, err := client.WriteProfile(context.Background(), "base", []byte("provider = \"claude\"\ninstructions = \"base\"\nmodel = \"sonnet\"\neffort = \"high\"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.WriteProfile(context.Background(), "other", []byte("provider = \"claude\"\ninstructions = \"other\"\nmodel = \"opus\"\neffort = \"low\"\n")); err != nil {
+				t.Fatal(err)
+			}
+			reg := projectRegistry(t, state)
+			uid := seedSDKResumeAgent(t, state, reg.Windows[0].Metadata.UID, "claude", root, metadata.PhaseOffline)
+			_, err = store.NewStore(store.PathFor(state)).Update(func(r *metadata.Registry) error {
+				m := store.DefaultMutator()
+				if _, err := m.SetAgentProfile(r, uid, "base", profile.Digest, metadata.SettingSourceRelaunch); err != nil {
+					return err
+				}
+				if _, err := m.SetAgentModel(r, uid, "haiku", metadata.SettingSourceRelaunch); err != nil {
+					return err
+				}
+				if _, err := m.SetAgentEffort(r, uid, "max", metadata.SettingSourceRelaunch); err != nil {
+					return err
+				}
+				_, err := m.SetAgentPersona(r, uid, metadata.AgentPersonaAnnotations{Persona: "base", PersonaDigest: instructions.Digest, InstructionsSource: metadata.SettingSourceProfile})
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			none, base, other := "", "base", "other"
+			q := core.RelaunchAgentRequest{Ref: "uid:" + uid, DryRun: true}
+			switch name {
+			case "switch-profile":
+				q.Profile = &other
+				q.Model = "sonnet"
+			case "same-profile-reset":
+				q.Profile = &base
+				q.Reset = []string{"model", "effort"}
+			case "no-profile":
+				q.Profile = &none
+			case "attach-instructions":
+				q.Instructions = &other
+			case "no-instructions":
+				q.Instructions = &none
+			}
+			before := projectRegistryBytes(t, state)
+			got, err := client.RelaunchAgent(context.Background(), q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := sdkResumeCLI(t, state, config, "", "", home)
+			reg = projectRegistry(t, state)
+			a, _ := reg.Agent(uid)
+			var output, stderr bytes.Buffer
+			err = c.runTmuxRelaunch(reg, *a, agentRelaunchRequest{profile: q.Profile, instructions: q.Instructions, model: q.Model, reset: q.Reset, dryRun: true, json: true}, &output, &stderr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cli agentRelaunchResult
+			if err := json.Unmarshal(output.Bytes(), &cli); err != nil {
+				t.Fatal(err)
+			}
+			var current, next core.RelaunchAgentSettings
+			raw, _ := json.Marshal(cli.CurrentSettings)
+			if err := json.Unmarshal(raw, &current); err != nil {
+				t.Fatal(err)
+			}
+			raw, _ = json.Marshal(cli.NewSettings)
+			if err := json.Unmarshal(raw, &next); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got.CurrentSettings, current) || !reflect.DeepEqual(got.NewSettings, next) || !reflect.DeepEqual(got.RelaunchReasons, cli.RelaunchReasons) || got.Outcome != cli.Outcome {
+				t.Fatalf("layer plan differs SDK %+v CLI %+v", got, cli)
+			}
+			if before != projectRegistryBytes(t, state) {
+				t.Fatal("dry-run changed Registry")
+			}
+			snapshots, err := filepath.Glob(filepath.Join(state, "personas", "*"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshots) > 0 {
+				t.Fatal("dry-run materialized an instructions snapshot")
+			}
+		})
+	}
 }

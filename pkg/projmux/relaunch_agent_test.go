@@ -22,6 +22,7 @@ func TestRelaunchAgentAdmissionAndProcessRefusal(t *testing.T) {
 		code Code
 	}{
 		{core.RelaunchAgentRequest{}, CodeSelectorInvalid},
+		{core.RelaunchAgentRequest{Ref: "uid:missing", Reset: []string{"invalid"}}, CodeRelaunchRequestInvalid},
 		{core.RelaunchAgentRequest{Ref: "uid:" + uid, SocketPath: "relative"}, CodeRuntimeRequestInvalid},
 		{core.RelaunchAgentRequest{Ref: "uid:" + uid, DryRun: true}, CodeRelaunchProcessUnsupported},
 	} {
@@ -54,5 +55,13 @@ func TestRelaunchLayerConflictAndExactRecovery(t *testing.T) {
 	got := relaunchRecovery(core.RelaunchAgentRequest{Reset: []string{"model", "effort"}}, "exact-agent", runtime.AgentResumePlan{ProjectUID: "exact-project", WindowUID: "exact-window"}, false)
 	if strings.Count(got, "--reset") != 1 || !strings.Contains(got, "model,effort") || !strings.Contains(got, "agent relaunch uid:exact-agent") {
 		t.Fatal(got)
+	}
+}
+
+func TestRelaunchNativeProbeCancellationRetainsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := relaunchCodexProbe(ctx, nil, runtime.AgentRestartPlan{}, func(string, string) error { t.Fatal("canceled admission reached refusal callback"); return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
 	}
 }

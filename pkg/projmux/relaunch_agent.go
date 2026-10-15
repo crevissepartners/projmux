@@ -50,6 +50,9 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	if strings.TrimSpace(q.Ref) == "" {
 		return out, &Refusal{Code: CodeSelectorInvalid, message: "RelaunchAgentRequest.Ref must name one Agent"}
 	}
+	if err := validateRelaunchLayers(q); err != nil {
+		return out, err
+	}
 	query, err := mutationQuery(core.KindAgent, q.Ref, q.Project, q.Window, "RelaunchAgentRequest")
 	if err != nil {
 		return out, resourceRefusal(err)
@@ -58,6 +61,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	if socket == "" {
 		socket = c.runtimeSocketPath
 	}
+	q.SocketPath = socket // Recovery carries the same frozen explicit transport.
 	if socket != "" && !filepath.IsAbs(socket) {
 		return out, &Refusal{Code: CodeRuntimeRequestInvalid, message: "RelaunchAgentRequest.SocketPath must be absolute"}
 	}
@@ -102,9 +106,6 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		return out, err
 	}
 	settings := runtime.AgentSettingsRequest{Model: q.Model, Effort: q.Effort, Profile: q.Profile, Instructions: q.Instructions, Reset: q.Reset, Source: metadata.SettingSourceRelaunch}
-	if err := validateRelaunchLayers(q); err != nil {
-		return out, err
-	}
 	paths := func() (config.Paths, error) { return c.paths, nil }
 	guidance := &runtime.GuidanceService{Paths: paths}
 	err = p.Plan(settings, runtime.AgentRestartPlanning{
@@ -402,25 +403,31 @@ func relaunchCodexPolicy(p runtime.AgentResumePlan, s runtime.AgentSettingsLaunc
 	return nil
 }
 func relaunchCodexProbe(ctx context.Context, planner *runtime.SDKAgentPlanner, p runtime.AgentRestartPlan, refuse func(string, string) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	fail := func(err error) error {
+		if canceled := ctx.Err(); canceled != nil {
+			return canceled
+		}
 		return refuse("relaunch-codex-settings-unsupported", "cannot have its Codex thread's model, effort, sandbox and approval changed: the Codex app server did not take thread/settings/update: "+err.Error())
 	}
 	native, err := planner.NativeSession()
 	if err != nil {
 		return fail(err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	_, err = runtime.ResolveNativeCodexResumeRoute(ctx, p.Resume.Ref, "uid:"+p.Target.Metadata.UID, native.Resolve)
+	_, err = runtime.ResolveNativeCodexResumeRoute(probeCtx, p.Resume.Ref, "uid:"+p.Target.Metadata.UID, native.Resolve)
 	if err != nil {
 		return fail(err)
 	}
-	client, err := native.Open(ctx, true)
+	client, err := native.Open(probeCtx, true)
 	if err != nil {
 		return fail(err)
 	}
 	defer client.Close()
-	if err := client.UpdateThreadSettings(ctx, p.Resume.ConversationID, codexappserver.ThreadSettings{}); err != nil {
+	if err := client.UpdateThreadSettings(probeCtx, p.Resume.ConversationID, codexappserver.ThreadSettings{}); err != nil {
 		return fail(err)
 	}
 	return nil
