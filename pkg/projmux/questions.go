@@ -158,7 +158,7 @@ func questionRefusal(err error) error {
 	// The host can reject a validated choice when its live question changes.
 	// Preserve the CLI transport error text while exposing its refusal code.
 	if errors.Is(err, agentquestion.ErrInvalidAnswer) {
-		return &Refusal{Code: CodeQuestionInvalidAnswer, message: err.Error()}
+		return &Refusal{Code: CodeQuestionInvalidAnswer, message: err.Error(), cause: err}
 	}
 	var failure *questions.Failure
 	if errors.As(err, &failure) {
@@ -167,7 +167,7 @@ func questionRefusal(err error) error {
 		if errors.As(failure, &selection) {
 			message = "AnswerQuestionRequest.Selections: " + selection.InputMessage
 		}
-		return &Refusal{Code: Code(failure.Code), message: message}
+		return &Refusal{Code: Code(failure.Code), message: message, cause: err}
 	}
 	return err
 }

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -179,9 +181,43 @@ func TestSDKOptionalPublicQuestionReceiptDispatcher(t *testing.T) {
 		t.Fatal("normalization changed explicit answers", receipt.selections)
 	}
 	receipt.result.Outcome = "unknown"
-	receipt.err = &Refusal{Code: CodeQuestionDeliveryUnknown, message: "uncertain delivery; do not resend"}
+	receipt.err = &Refusal{Code: CodeQuestionDeliveryUnknown, message: "uncertain delivery; do not resend", cause: io.EOF}
 	result, err = c.AnswerQuestion(context.Background(), request)
-	if !errors.As(err, &refusal) || refusal.Code != CodeQuestionDeliveryUnknown || result.QuestionID != id || result.Delivery != "async" || result.Outcome != "unknown" {
+	if !errors.As(err, &refusal) || refusal.Code != CodeQuestionDeliveryUnknown || result.QuestionID != id || result.Delivery != "async" || result.Outcome != "unknown" || !errors.Is(err, io.EOF) {
 		t.Fatal(result, err)
+	}
+	ioCause := &os.PathError{Op: "read", Path: "fixture", Err: io.ErrUnexpectedEOF}
+	for _, tt := range []struct {
+		name  string
+		cause error
+	}{
+		{"canceled", context.Canceled},
+		{"deadline", context.DeadlineExceeded},
+		{"eof", io.EOF},
+		{"io-typed", ioCause},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := legacy.calls
+			receipt.err = fmt.Errorf("fixture transport: %w", tt.cause)
+			result, err := c.AnswerQuestion(context.Background(), request)
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Code != CodeQuestionDeliveryUnknown || !errors.Is(err, tt.cause) || result.QuestionID != id || result.Delivery != "async" || result.Outcome != "unknown" || legacy.calls != before+1 {
+				t.Fatal(result, err, legacy.calls)
+			}
+			if tt.name == "io-typed" {
+				var pathError *os.PathError
+				if !errors.As(err, &pathError) || pathError != ioCause || !errors.Is(err, io.ErrUnexpectedEOF) {
+					t.Fatal("typed I/O cause lost", err)
+				}
+			}
+		})
+	}
+	before := legacy.calls
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err = c.AnswerQuestion(ctx, request)
+	var earlyRefusal *Refusal
+	if err != context.Canceled || errors.As(err, &earlyRefusal) || result != (core.QuestionAnswerResult{}) || legacy.calls != before {
+		t.Fatal("already canceled admission changed", result, err, legacy.calls)
 	}
 }
