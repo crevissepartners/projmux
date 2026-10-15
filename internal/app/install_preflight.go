@@ -143,12 +143,28 @@ const installProcessObservationLimit = 5 * time.Second
 type installHostRead func(context.Context, coremetadata.Registry, string, coremetadata.Pane) (processHostObservation, bool)
 type installSourceRead func(context.Context, string, coremetadata.Registry, coremetadata.Pane) installPeerSupport
 
-// Host observation, source proof, cancellation and connection close share one
-// row deadline, capped by the census deadline. Expired rows remain in the list.
+// Codex host/source reads and cleanup share one row deadline within its
+// warning window. Legacy host reads retain their independent 250ms allowance,
+// even after that window expires; total preflight time can exceed five seconds.
 func newInstallProcessOwnerObserver(ctx context.Context, path string, host installHostRead, source installSourceRead) installProcessOwnerObserver {
 	return func(registry coremetadata.Registry, pane coremetadata.Pane) installProcessOwnerRead {
 		unknown := installPeerSupport{State: "unknown", Reason: "observation-unavailable"}
 		read := installProcessOwnerRead{Source: unknown, Target: unknown}
+		// Classify by the same binding Agent the existing census/observer use.
+		// Incomplete provider evidence still reaches the original host reader;
+		// its existing authority checks decide whether the proof is available.
+		activation := pane.Status.Activation.Process
+		codex := false
+		if activation != nil {
+			agent, found := registry.Agent(activation.Binding.AgentUID)
+			codex = found && agent.Spec.Provider == aiModeCodex
+		}
+		if !codex {
+			legacy, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
+			defer cancel()
+			read.View, read.Observed = host(legacy, registry, path, pane)
+			return read
+		}
 		if ctx.Err() != nil {
 			read.Source.Reason, read.Target.Reason = "census-budget-exhausted", "census-budget-exhausted"
 			return read
@@ -156,10 +172,6 @@ func newInstallProcessOwnerObserver(ctx context.Context, path string, host insta
 		row, cancel := context.WithTimeout(ctx, processObservationReadLimit)
 		defer cancel()
 		read.View, read.Observed = host(row, registry, path, pane)
-		agent, found := registry.Agent(pane.Status.Activation.AgentUID)
-		if !found || agent.Spec.Provider != aiModeCodex {
-			return read
-		}
 		read.Target = classifyInstallCodexTarget(read.View, read.Observed && row.Err() == nil)
 		// A failed target observation does not decide the source verdict.
 		if row.Err() == nil {

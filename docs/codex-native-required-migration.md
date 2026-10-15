@@ -35,10 +35,17 @@ Source compatibility requires successful validation through the existing peer
 source resolver and unchanged exact ownership. That resolver folds refusals
 and transport failures together, so failed source validation is conservatively
 `unknown`, including an absent source endpoint; the census does not infer
-unsupported from a revision or a socket path. A single five-second census
-budget includes each owner's host/source reads and cleanup, together capped at
-250ms or the remaining census budget. Unobserved remaining owners still appear
-as `unknown`.
+unsupported from a revision or a socket path. Codex warning observations share
+one five-second deadline. Each Codex owner's host/source reads and cleanup
+share at most 250ms or the remaining warning budget. Unobserved remaining
+Codex owners still appear as `unknown`; this deadline is never reset.
+
+Existing non-Codex host observations, including the Claude coordination check,
+retain their independent 250ms per owner even when the Codex warning budget
+has expired or has little time left. An unanswered Claude owner remains
+unknown under the existing install policy. These legacy reads can make the
+overall preflight take longer than five seconds; the warning deadline must not
+skip a previously observable Claude coordination mismatch.
 
 Both-compatible rows indicate no host control/proof upgrade is needed by this
 snapshot and omit recovery commands. These verdicts do not validate the Codex

@@ -506,3 +506,124 @@ func TestInstallCodexTargetExactObservationNegative(t *testing.T) {
 		})
 	}
 }
+
+// Warning work must not consume the safety read that an existing non-Codex
+// owner received before Codex census diagnostics were added.
+func TestInstallCodexBudgetDoesNotSkipClaudeCoordination(t *testing.T) {
+	for _, budget := range []string{"expired-before", "expires-in-source", "expires-during-legacy"} {
+		for _, response := range []string{"mismatch", "unanswered", "incomplete-projection"} {
+			t.Run(budget+"/"+response, func(t *testing.T) {
+				reg := installCodexRegistry(t)
+				basePane, baseAgent := reg.Panes[1], reg.Agents[0]
+				owner := func(suffix, provider string) (coremetadata.Pane, coremetadata.Agent) {
+					p, a := basePane, baseAgent
+					p.Metadata.UID, a.Metadata.UID = "pane-"+suffix, "agent-"+suffix
+					p.Metadata.OwnerRef = &coremetadata.OwnerRef{Kind: coremetadata.KindAgent, UID: a.Metadata.UID}
+					a.Status.PaneRef, a.Spec.Provider = p.Metadata.UID, provider
+					activation := *basePane.Status.Activation.Process
+					activation.Binding.AgentUID, activation.Binding.PaneUID = a.Metadata.UID, p.Metadata.UID
+					p.Status.Activation.Process, p.Status.Activation.AgentUID = &activation, a.Metadata.UID
+					return p, a
+				}
+				first, firstAgent := owner("a-codex", aiModeCodex)
+				legacy, legacyAgent := owner("b-claude", aiModeClaude)
+				last, lastAgent := owner("c-codex", aiModeCodex)
+				if response == "incomplete-projection" {
+					legacy.Status.Activation.AgentUID = ""
+				}
+				reg.Panes = []coremetadata.Pane{first, legacy, last}
+				reg.Agents = []coremetadata.Agent{firstAgent, legacyAgent, lastAgent}
+				before, err := json.Marshal(reg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				duration := 60 * time.Millisecond
+				if budget == "expired-before" {
+					duration = -time.Second
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), duration)
+				defer cancel()
+				parentDeadline, _ := ctx.Deadline()
+				codexCalls, legacyCalls, lastCalls, sourceCalls := 0, 0, 0, 0
+				host := func(readCtx context.Context, _ coremetadata.Registry, _ string, p coremetadata.Pane) (processHostObservation, bool) {
+					switch p.Metadata.UID {
+					case first.Metadata.UID:
+						codexCalls++
+						return processHostObservation{Protocol: 1, Actions: []string{"peer-message"}}, true
+					case legacy.Metadata.UID:
+						legacyCalls++
+						deadline, ok := readCtx.Deadline()
+						if !ok || !deadline.After(parentDeadline) || time.Until(deadline) < 150*time.Millisecond || time.Until(deadline) > processObservationReadLimit {
+							t.Errorf("legacy lost its independent 250ms: deadline=%v, parent=%v", deadline, parentDeadline)
+						}
+						if readCtx.Err() != nil {
+							t.Error("warning cancellation reached legacy read")
+						}
+						if budget == "expires-during-legacy" {
+							<-ctx.Done()
+						}
+						if readCtx.Err() != nil {
+							t.Error("remaining warning time shortened legacy read")
+						}
+						switch response {
+						case "unanswered":
+							<-readCtx.Done()
+							return processHostObservation{}, false
+						case "incomplete-projection":
+							// Reaching the original reader is required; it still decides whether
+							// the incomplete activation has valid authority. No proof is invented.
+							return processHostObservation{}, false
+						default:
+							return processHostObservation{Protocol: 1, Coordination: 4}, true
+						}
+					default:
+						lastCalls++
+						return processHostObservation{}, false
+					}
+				}
+				source := func(readCtx context.Context, _ string, _ coremetadata.Registry, p coremetadata.Pane) installPeerSupport {
+					sourceCalls++
+					if p.Metadata.UID != first.Metadata.UID {
+						t.Error("unexpected source read")
+					}
+					deadline, _ := readCtx.Deadline()
+					if deadline != parentDeadline {
+						t.Error("Codex warning deadline reset")
+					}
+					if budget == "expires-in-source" {
+						<-readCtx.Done()
+					}
+					return installPeerSupport{State: "unknown", Reason: "fixture-source-proof"}
+				}
+				owners := liveInstallProcessOwners(reg, func(coremetadata.ProcessIdentity) bool { return true }, newInstallProcessOwnerObserver(ctx, "unused", host, source))
+				wantCodex := 1
+				if budget == "expired-before" {
+					wantCodex = 0
+				}
+				if len(owners) != 3 || legacyCalls != 1 || codexCalls != wantCodex || sourceCalls != wantCodex || lastCalls != 0 {
+					t.Fatalf("owners=%d legacy=%d first=%d source=%d last=%d", len(owners), legacyCalls, codexCalls, sourceCalls, lastCalls)
+				}
+				if owners[2].Source.State != "unknown" || owners[2].Target.State != "unknown" || owners[2].Source.Reason != "census-budget-exhausted" {
+					t.Fatalf("lost Codex remainder: %+v", owners[2])
+				}
+				after, err := json.Marshal(reg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(before, after) {
+					t.Fatal("census changed Registry")
+				}
+				var out bytes.Buffer
+				err = installPreflightFixture(5, true, owners).Run(&out)
+				if response == "mismatch" {
+					refusal, ok := err.(installPreflightExitError)
+					if !ok || refusal.ExitCode() != 1 || !strings.Contains(out.String(), "Claude coordination version to 5") {
+						t.Fatalf("known mismatch no longer refused: %v\n%s", err, out.String())
+					}
+				} else if err != nil {
+					t.Fatalf("legacy unknown became a new refusal: %v\n%s", err, out.String())
+				}
+			})
+		}
+	}
+}
