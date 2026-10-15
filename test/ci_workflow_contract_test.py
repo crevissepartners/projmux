@@ -292,9 +292,107 @@ DARWIN_TEST_COMPILE_STEP = "Compile every test package without running it"
 DARWIN_TEST_COMPILE_COMMAND = "go test -exec /usr/bin/true -count=1 -run '^$' ./..."
 
 
+# Original Darwin commands: selectors, package order and flags are a coverage contract.
+DARWIN_COMMANDS = {
+    "darwin-build": {
+        "Compile and test native key adapter": (
+            'go test ./internal/platformkeys\ngo build ./cmd/projmux'
+        ),
+        "Exercise owned process lifetime and Claude streams": (
+            'go test -race -v -count=1 -timeout=300s ./internal/integrations/processhost'
+        ),
+        "Compile every test package without running it": (
+            "go test -exec /usr/bin/true -count=1 -run '^$' ./..."
+        ),
+    },
+    "darwin-claude": {
+        "Exercise process Claude binding and endpoint receipts": (
+            'go test -race -v -count=1 -timeout=120s -run '
+            '"^TestClaudeProcess|^TestProcessClaudeRoute" ./internal/app '
+            './internal/core/metadata'
+        ),
+    },
+    "darwin-codex": {
+        "Verify process Codex binding and receipt fixtures": (
+            'go test -race -v -count=1 -timeout=120s -run '
+            '"^TestCodexProcess|^TestProcessCodexRoute" ./internal/app '
+            './internal/core/metadata'
+        ),
+        "Verify process attention store and consumer fixtures": (
+            "go test -race -v -count=1 -timeout=120s -run '^TestProcessAttention' "
+            './internal/app'
+        ),
+        "Verify typed process inventory, convergence, and admission": (
+            'go test -race -v -count=1 -timeout=120s -run '
+            "'^TestProcessInventory|^TestProcessAdmission|^TestProcessPane|^TestProcessInvocation|^TestProcessConvergence|^TestProcessSupported' "
+            './internal/core/resourcegraph ./internal/core/controller '
+            './internal/core/registryview ./internal/core/selector ./internal/core/metadata '
+            './internal/app ./internal/integrations/processhost'
+        ),
+    },
+    "darwin-cli": {
+        "Exercise detached process CLI lifetime boundaries": (
+            'PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '
+            "'^TestDetached(Process|Create|OwnerLog|Identity|Stop)' ./internal/app"
+        ),
+    },
+}
+
+
+def assert_darwin_children(workflow: str) -> None:
+    for child, commands in DARWIN_COMMANDS.items():
+        job = workflow_job(workflow, child)
+        for required in ("    runs-on: macos-15", "    timeout-minutes: 30",
+                         "uses: actions/checkout@v6", "uses: actions/setup-go@v6",
+                         "go-version-file: go.mod", "tmux -V"):
+            if required not in job:
+                raise AssertionError(f"{child} missing {required}")
+        if re.search(r"(?m)^    (?:if|needs|env|strategy):", job):
+            raise AssertionError(f"{child} must run independently without overrides")
+        if "continue-on-error:" in job or re.search(r"(?m)^        if:", job):
+            raise AssertionError(f"{child} must not skip or soften failures")
+        for name, command in commands.items():
+            step = workflow_step(job, name)
+            if step_script(step).strip() != command:
+                raise AssertionError(f"{child}: original command changed: {name}")
+        for name in (["Compile and test native key adapter", DARWIN_TEST_COMPILE_STEP]
+                     if child == "darwin-build" else
+                     ["Build this checkout for detached CLI fixtures",
+                      "Exercise detached process CLI lifetime boundaries"]
+                     if child == "darwin-cli" else []):
+            step = workflow_step(job, name)
+            if '          CGO_ENABLED: "1"' not in step.splitlines():
+                raise AssertionError(f"{child}: CGO must be enabled for {name}")
+        if child == "darwin-cli":
+            build = workflow_step(job, "Build this checkout for detached CLI fixtures")
+            if step_script(build).strip() != "go build ./cmd/projmux":
+                raise AssertionError("detached CLI must build its own checkout")
+            if job.index("Build this checkout") > job.index("Exercise detached process CLI"):
+                raise AssertionError("detached CLI must build before execution")
+    aggregate = workflow_job(workflow, "darwin-native")
+    if "    name: Darwin Native Key Adapter" not in aggregate.splitlines():
+        raise AssertionError("stable Darwin name changed")
+    if "    if: always()" not in aggregate.splitlines() or "continue-on-error:" in aggregate:
+        raise AssertionError("Darwin aggregate must always fail closed")
+    if set(re.findall(r"^      - ([\w-]+)$", aggregate, re.M)) != set(DARWIN_COMMANDS):
+        raise AssertionError("Darwin aggregate must need exactly every child")
+    gate = workflow_step(aggregate, "Require every Darwin child to succeed")
+    if "          REQUIRED_RESULTS: ${{ toJSON(needs) }}" not in gate.splitlines():
+        raise AssertionError("Darwin aggregate must use actual needs results")
+    expected = ["python3", "scripts/required-gate.py", "--results-json",
+                '"$REQUIRED_RESULTS"']
+    for child in DARWIN_COMMANDS:
+        expected += ["--required", child]
+    if step_script(gate).replace("\\\n", " ").split() != expected:
+        raise AssertionError("Darwin aggregate must require exactly every child")
+    if step_field(gate, "if") is not None or "continue-on-error:" in gate:
+        raise AssertionError("Darwin aggregate gate must not skip or soften failures")
+    assert_darwin_native_compiles_every_test_package(workflow)
+
+
 def assert_darwin_processhost_race_budget(workflow: str) -> None:
     """Keep the complete race suite bounded with room above its 121s observation."""
-    darwin = workflow_job(workflow, "darwin-native")
+    darwin = workflow_job(workflow, "darwin-build")
     if not re.search(r"(?m)^    timeout-minutes: 30$", darwin):
         raise AssertionError("Darwin native job must have an explicit 30-minute bound")
     step = workflow_step(darwin, "Exercise owned process lifetime and Claude streams")
@@ -306,16 +404,16 @@ def assert_darwin_processhost_race_budget(workflow: str) -> None:
         r"\./internal/integrations/processhost",
         command,
     )
-    if match is None or int(match.group(1)) < 300:
+    if match is None or int(match.group(1)) != 300:
         raise AssertionError(
             "Darwin processhost must run the complete race suite once "
-            "with an explicit timeout of at least 300s"
+            "with an explicit timeout of exactly 300s"
         )
 
 
 def assert_darwin_native_compiles_every_test_package(workflow: str) -> None:
     """Fail unless the native macOS job builds every test binary behind `Test`."""
-    darwin = workflow_job(workflow, "darwin-native")
+    darwin = workflow_job(workflow, "darwin-build")
     if "    runs-on: macos-15\n" not in darwin + "\n":
         raise AssertionError("darwin-native must run on macos-15")
     if "continue-on-error:" in darwin or re.search(r"(?m)^    if:", darwin):
@@ -1047,16 +1145,76 @@ class CIWorkflowContractTest(unittest.TestCase):
                     with self.assertRaises(AssertionError):
                         assert_artifact_uploads_run_only_on_github_com(mutated)
 
+    def test_darwin_children_preserve_every_command(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        assert_darwin_children(workflow)
+        for child, commands in DARWIN_COMMANDS.items():
+            job = workflow_job(workflow, child)
+            mutations = [job.replace("macos-15", "ubuntu-latest"),
+                         job.replace("    timeout-minutes: 30", "    timeout-minutes: 60"),
+                         "    if: false\n" + job,
+                         "    continue-on-error: true\n" + job]
+            for name, command in commands.items():
+                step = workflow_step(job, name)
+                mutations += [job.replace(command, "true"),
+                              job.replace(step, "        if: false\n" + step),
+                              job.replace(step, "        continue-on-error: true\n" + step)]
+            mutations += [job.replace('CGO_ENABLED: "1"', 'CGO_ENABLED: "0"')]
+            if child == "darwin-cli":
+                mutations += [job.replace("run: go build ./cmd/projmux", "run: true")]
+            for mutation in mutations:
+                if mutation == job:
+                    continue
+                with self.subTest(child=child, mutation=mutation):
+                    with self.assertRaises(AssertionError):
+                        assert_darwin_children(workflow.replace(job, mutation))
+        for child in DARWIN_COMMANDS:
+            with self.subTest(missing_job=child):
+                with self.assertRaises(AssertionError):
+                    assert_darwin_children(workflow.replace(f"  {child}:\n", f"  absent-{child}:\n"))
+        aggregate = workflow_job(workflow, "darwin-native")
+        mutations = [aggregate.replace("if: always()", "if: success()"),
+                     aggregate.replace("    name: Darwin Native Key Adapter", "    name: Darwin")]
+        for child in DARWIN_COMMANDS:
+            mutations += [aggregate.replace(f"      - {child}\n", ""),
+                          aggregate.replace(f"--required {child}", "--required absent")]
+        for mutation in mutations:
+            with self.subTest(aggregate=mutation):
+                with self.assertRaises(AssertionError):
+                    assert_darwin_children(workflow.replace(aggregate, mutation))
+
+    def test_darwin_aggregate_rejects_every_incomplete_child(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        aggregate = workflow_job(workflow, "darwin-native")
+        script = step_script(workflow_step(aggregate, "Require every Darwin child to succeed"))
+        success = {child: {"result": "success"} for child in DARWIN_COMMANDS}
+        cases = [("all success", success, 0)]
+        for child in DARWIN_COMMANDS:
+            for status in ("failure", "cancelled", "skipped", None):
+                results = {**success, child: {"result": status}}
+                cases.append((f"{child}={status}", results, 1))
+            cases.append((f"missing {child}", {k: v for k, v in success.items() if k != child}, 1))
+        for name, results, expected in cases:
+            with self.subTest(outcome=name):
+                completed = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", script], cwd=ROOT,
+                    capture_output=True, text=True, check=False,
+                    env={**os.environ, "REQUIRED_RESULTS": json.dumps(results)},
+                )
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+
     def test_darwin_processhost_race_budget_preserves_full_coverage(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         assert_darwin_processhost_race_budget(workflow)
         step = workflow_step(
-            workflow_job(workflow, "darwin-native"),
+            workflow_job(workflow, "darwin-build"),
             "Exercise owned process lifetime and Claude streams",
         )
         for mutation in [
-            workflow.replace("    timeout-minutes: 30\n", "", 1),
-            workflow.replace("    timeout-minutes: 30\n", "    timeout-minutes: 60\n", 1),
+            workflow.replace(workflow_job(workflow, "darwin-build"),
+                             workflow_job(workflow, "darwin-build").replace("    timeout-minutes: 30\n", "", 1)),
+            workflow.replace(workflow_job(workflow, "darwin-build"),
+                             workflow_job(workflow, "darwin-build").replace("    timeout-minutes: 30\n", "    timeout-minutes: 60\n", 1)),
         ]:
             with self.assertRaises(AssertionError):
                 assert_darwin_processhost_race_budget(mutation)
@@ -1106,7 +1264,7 @@ class CIWorkflowContractTest(unittest.TestCase):
 
     def test_darwin_native_contract_rejects_a_missing_test_compile_step(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        darwin = workflow_job(workflow, "darwin-native")
+        darwin = workflow_job(workflow, "darwin-build")
         step = workflow_step(darwin, DARWIN_TEST_COMPILE_STEP)
         marker = f"      - name: {DARWIN_TEST_COMPILE_STEP}\n"
         block = marker + step + "\n"

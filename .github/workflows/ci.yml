@@ -350,8 +350,10 @@ jobs:
             --required race-broker \
             --required race-appserver
 
-  darwin-native:
-    name: Darwin Native Key Adapter
+  # Each macOS runner validates this checkout independently. Keep every
+  # original command; the stable context below rejects any incomplete child.
+  darwin-build:
+    name: Darwin / Native and test linking
     runs-on: macos-15
     timeout-minutes: 30
 
@@ -387,21 +389,6 @@ jobs:
         # allow more than twice that duration while retaining a finite bound.
         run: go test -race -v -count=1 -timeout=300s ./internal/integrations/processhost
 
-      - name: Exercise process Claude binding and endpoint receipts
-        run: go test -race -v -count=1 -timeout=120s -run "^TestClaudeProcess|^TestProcessClaudeRoute" ./internal/app ./internal/core/metadata
-      - name: Verify process Codex binding and receipt fixtures
-        run: go test -race -v -count=1 -timeout=120s -run "^TestCodexProcess|^TestProcessCodexRoute" ./internal/app ./internal/core/metadata
-
-      - name: Verify process attention store and consumer fixtures
-        run: go test -race -v -count=1 -timeout=120s -run '^TestProcessAttention' ./internal/app
-
-      - name: Exercise detached process CLI lifetime boundaries
-        env:
-          CGO_ENABLED: "1"
-        run: PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '^TestDetached(Process|Create|OwnerLog|Identity|Stop)' ./internal/app
-
-      - name: Verify typed process inventory, convergence, and admission
-        run: go test -race -v -count=1 -timeout=120s -run '^TestProcessInventory|^TestProcessAdmission|^TestProcessPane|^TestProcessInvocation|^TestProcessConvergence|^TestProcessSupported' ./internal/core/resourcegraph ./internal/core/controller ./internal/core/registryview ./internal/core/selector ./internal/core/metadata ./internal/app ./internal/integrations/processhost
       # Builds and links every test binary, including darwin && cgo files, but
       # runs none of them: this gate is darwin test compilation, not darwin
       # test results.
@@ -409,6 +396,128 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -exec /usr/bin/true -count=1 -run '^$' ./...
+
+  darwin-claude:
+    name: Darwin / Claude process
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+            brew install tmux
+          fi
+          tmux -V
+
+      - name: Exercise process Claude binding and endpoint receipts
+        run: go test -race -v -count=1 -timeout=120s -run "^TestClaudeProcess|^TestProcessClaudeRoute" ./internal/app ./internal/core/metadata
+
+  darwin-codex:
+    name: Darwin / Codex, attention and inventory
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+            brew install tmux
+          fi
+          tmux -V
+
+      - name: Verify process Codex binding and receipt fixtures
+        run: go test -race -v -count=1 -timeout=120s -run "^TestCodexProcess|^TestProcessCodexRoute" ./internal/app ./internal/core/metadata
+
+      - name: Verify process attention store and consumer fixtures
+        run: go test -race -v -count=1 -timeout=120s -run '^TestProcessAttention' ./internal/app
+
+      - name: Verify typed process inventory, convergence, and admission
+        run: go test -race -v -count=1 -timeout=120s -run '^TestProcessInventory|^TestProcessAdmission|^TestProcessPane|^TestProcessInvocation|^TestProcessConvergence|^TestProcessSupported' ./internal/core/resourcegraph ./internal/core/controller ./internal/core/registryview ./internal/core/selector ./internal/core/metadata ./internal/app ./internal/integrations/processhost
+
+  darwin-cli:
+    name: Darwin / Detached CLI
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+            brew install tmux
+          fi
+          tmux -V
+
+      - name: Build this checkout for detached CLI fixtures
+        env:
+          CGO_ENABLED: "1"
+        run: go build ./cmd/projmux
+
+      - name: Exercise detached process CLI lifetime boundaries
+        env:
+          CGO_ENABLED: "1"
+        run: PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '^TestDetached(Process|Create|OwnerLog|Identity|Stop)' ./internal/app
+
+  darwin-native:
+    name: Darwin Native Key Adapter
+    if: always()
+    needs:
+      - darwin-build
+      - darwin-claude
+      - darwin-codex
+      - darwin-cli
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aggregate policy
+        uses: actions/checkout@v6
+
+      - name: Require every Darwin child to succeed
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/required-gate.py \
+            --results-json "$REQUIRED_RESULTS" \
+            --required darwin-build \
+            --required darwin-claude \
+            --required darwin-codex \
+            --required darwin-cli
 
   npm-pack:
     name: NPM Packages
