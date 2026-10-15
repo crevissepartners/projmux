@@ -7,6 +7,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // TestAReplyOnlyAgentRefusesWhatItsFixedLaunchCannotCarry is acceptance 3:
@@ -95,20 +96,35 @@ func TestAgentResumeOfAReplyOnlyAgentRefusesAModelOrAnEffort(t *testing.T) {
 // record needs its exact value.
 func TestAnAgentWithoutTheReplyOnlyRecordIsNeverRefusedForIt(t *testing.T) {
 	t.Parallel()
+	assertPredicted := func(annotations map[string]string, request mutationruntime.AgentSettingsRequest) {
+		t.Helper()
+		plan := mutationruntime.AgentRestartPlan{Provider: "claude"}
+		plan.Target.Metadata.Annotations = annotations
+		predictions := 0
+		err := plan.Plan(request, mutationruntime.AgentRestartPlanning{
+			Refuse: func(reason, detail string) error {
+				t.Fatalf("annotations %v refused %s: %s", annotations, reason, detail)
+				return nil
+			},
+			Predict: func(string) (mutationruntime.AgentResumePlan, error) {
+				predictions++
+				return mutationruntime.AgentResumePlan{ConversationID: "preserved-conversation"}, nil
+			},
+		})
+		if err != nil || predictions != 1 || plan.Resume.ConversationID != "preserved-conversation" {
+			t.Fatalf("annotations %v did not reach the resume plan once: predictions=%d plan=%+v err=%v", annotations, predictions, plan.Resume, err)
+		}
+	}
 	none := ""
-	request := agentSettingsRequest{model: "opus", effort: "max", profile: &none, instructions: &none, reset: []string{"all"}}
+	request := mutationruntime.AgentSettingsRequest{Model: "opus", Effort: "max", Profile: &none, Instructions: &none, Reset: []string{"all"}}
 	for _, annotations := range []map[string]string{
 		nil,
 		{coremetadata.AnnotationAgentEffort: "high"},
 		{coremetadata.AnnotationAgentDialogueReplyOnly: "true"},
 	} {
-		if refusal := replyOnlyRefusalOf(annotations, request); refusal != (replyOnlyRefusal{}) {
-			t.Fatalf("annotations %v refused %+v", annotations, refusal)
-		}
+		assertPredicted(annotations, request)
 	}
-	if refusal := replyOnlyRefusalOf(map[string]string{coremetadata.AnnotationAgentDialogueReplyOnly: coremetadata.DialogueReplyOnlyOn}, agentSettingsRequest{}); refusal != (replyOnlyRefusal{}) {
-		t.Fatalf("a plain request on a reply-only Agent refused %+v", refusal)
-	}
+	assertPredicted(map[string]string{coremetadata.AnnotationAgentDialogueReplyOnly: coremetadata.DialogueReplyOnlyOn}, mutationruntime.AgentSettingsRequest{})
 }
 
 // TestTheRestartOfARunningReplyOnlyAgentResumesItReplyOnly drives the restart
