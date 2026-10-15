@@ -251,7 +251,7 @@ func TestRelaunchAgentSDKPreStopRefusalsLeaveNoTrace(t *testing.T) {
 	before := projectRegistryBytes(t, state)
 	_, err = c.RelaunchAgent(context.Background(), core.RelaunchAgentRequest{Ref: "uid:" + personaAttachAgent, Model: "opus", Confirm: true})
 	var refusal *projmux.Refusal
-	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeCreateExecutableInvalid {
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeExecutableInvalid {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
