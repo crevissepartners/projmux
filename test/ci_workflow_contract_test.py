@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -458,8 +459,10 @@ class UnitShardContractTest(unittest.TestCase):
                                completed=sorted(inventory), status=0))
         return result
 
-    def verify(self, evidence: list[dict]) -> dict:
-        with tempfile.TemporaryDirectory() as temporary:
+    def verify(self, evidence: list[dict], attempt: int = 1) -> dict:
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ, {"GITHUB_RUN_ID": "local", "GITHUB_RUN_ATTEMPT": str(attempt)}
+        ):
             directory = Path(temporary)
             for index, manifest in enumerate(evidence):
                 child = directory / str(index)
@@ -486,12 +489,9 @@ class UnitShardContractTest(unittest.TestCase):
                 self.verify(evidence)
 
     def test_partial_rerun_reuses_successful_same_head_shards_and_keeps_attempts(self) -> None:
-        from unittest.mock import patch
-
         evidence = self.evidence()
         evidence[0]["run_attempt"] = 2
-        with patch.dict(os.environ, {"GITHUB_RUN_ID": "local", "GITHUB_RUN_ATTEMPT": "2"}):
-            summary = self.verify(evidence)
+        summary = self.verify(evidence, attempt=2)
         self.assertEqual(summary["run_attempt"], 2)
         self.assertEqual([m["run_attempt"] for m in summary["shards"]], [2, 1, 1, 1])
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
