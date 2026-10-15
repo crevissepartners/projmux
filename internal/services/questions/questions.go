@@ -13,6 +13,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
 	"github.com/crevissepartners/projmux/internal/services/resources"
 )
@@ -31,7 +32,10 @@ type Request struct {
 	Spelling, QuestionID    string
 	Options, Indexes, Texts []string
 }
-type AnswerResult struct{ QuestionID, AgentUID, AgentName string }
+type AnswerResult struct {
+	QuestionID, AgentUID, AgentName string
+	Delivery, Outcome               string
+}
 type Failure struct {
 	Code, Message string
 	Cause         error
@@ -179,6 +183,8 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 			for _, exact := range result.ExactQuestions {
 				if exact.QuestionID == record.ID && exact.Delivery == "async" {
 					current = true
+					capability, supported := c.Dispatcher.(processquestions.ReceiptDispatcher)
+					view.CanAnswer = supported && capability.SupportsAsyncQuestionAnswers() && exact.CanAnswer && exact.State == agentquestion.StateWaiting && record.State == agentquestion.StateWaiting
 					break
 				}
 			}
@@ -228,11 +234,118 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 				continue
 			}
 			if view.Delivery == "async" {
-				reason, detail := StateRefusal(view.State)
-				if reason == "" {
-					reason, detail = questionReasonNotPending, "async question delivery is read-only"
+				result := AnswerResult{QuestionID: view.QuestionID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Delivery: "async"}
+				// Refuse without the generic no-effects assertion: an earlier attempt
+				// may already have reached the provider, even when this one is rejected.
+				failure := func(code string, cause error) (AnswerResult, error) {
+					message := code
+					if cause != nil {
+						message += ": " + cause.Error()
+					}
+					return result, &Failure{Code: code, Message: message, Cause: cause}
 				}
-				return AnswerResult{}, refuse(reason, detail)
+				capability, supported := dispatcher.(processquestions.ReceiptDispatcher)
+				if !supported || !capability.SupportsAsyncQuestionAnswers() {
+					return failure("question-host-unsupported", nil)
+				}
+				if view.State == agentquestion.StateWaiting {
+					// A pluggable receipt dispatcher is still subject to the service's
+					// current Agent/lifetime fence. Original-turn completion is not a fence.
+					fresh, readErr := c.LoadRegistry()
+					if readErr != nil {
+						return result, readErr
+					}
+					current, found := fresh.Agent(agent.Metadata.UID)
+					if !found {
+						return failure("question-stale", nil)
+					}
+					if agent.Status.Phase != coremetadata.PhaseRunning || current.Status.Phase != coremetadata.PhaseRunning {
+						return failure(questionReasonClosed, nil)
+					}
+					currentPane, present := fresh.Pane(current.Status.PaneRef)
+					original, originalPresent := reg.Agent(agent.Metadata.UID)
+					if !present || !originalPresent || original.Status.PaneRef != agent.Status.PaneRef || current.Status.PaneRef != agent.Status.PaneRef || current.Spec.Provider != agent.Spec.Provider || current.Metadata.OwnerUID() != original.Metadata.OwnerUID() || currentPane.Metadata.UID != pane.Metadata.UID || currentPane.Metadata.OwnerUID() != pane.Metadata.OwnerUID() || currentPane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+						return failure("question-stale", nil)
+					}
+					before, after := pane.Status.ProcessSession, currentPane.Status.ProcessSession
+					if (before == nil) != (after == nil) {
+						return failure("question-stale", nil)
+					}
+					if before != nil && (before.Binding != after.Binding || before.Provider != after.Provider || before.ThreadID != after.ThreadID || before.SessionID != after.SessionID || before.ConnectionID != after.ConnectionID) {
+						return failure("question-stale", nil)
+					}
+					oldActivation, newActivation := pane.Status.Activation.Process, currentPane.Status.Activation.Process
+					if (oldActivation == nil) != (newActivation == nil) {
+						return failure("question-stale", nil)
+					}
+					if oldActivation != nil && *oldActivation != *newActivation {
+						return failure("question-stale", nil)
+					}
+				}
+				if view.State != agentquestion.StateWaiting {
+					reason, _ := StateRefusal(view.State)
+					if view.State == agentquestion.StateClosed {
+						reason = questionReasonClosed
+						st, openErr := c.OpenStore()
+						if openErr != nil {
+							return result, openErr
+						}
+						stored, found, readErr := st.AsyncStore().Get(view.QuestionID)
+						if readErr != nil {
+							return result, readErr
+						}
+						if found && stored.AgentUID == agent.Metadata.UID {
+							switch stored.Disposition {
+							case "async-submitted":
+								reason, result.Outcome = questionReasonNotPending, "submitted"
+							case "async-unknown":
+								reason, result.Outcome = questionReasonNotPending, "unknown"
+							case "async-not-submitted":
+								reason, result.Outcome = questionReasonNotPending, "not-submitted"
+							}
+						}
+					}
+					return failure(reason, nil)
+				}
+				if !view.CanAnswer {
+					return failure("question-host-unsupported", nil)
+				}
+				for _, prompt := range view.Prompts {
+					if prompt.IsSecret {
+						return failure(questionReasonSecretNativeOnly, errors.New("secret question sets require the native surface"))
+					}
+				}
+				selections, selectionErr := Selections(request, view.Prompts)
+				if selectionErr != nil {
+					return failure(questionReasonInvalidAnswer, selectionErr)
+				}
+				if code, validateErr := agentquestion.ValidateAsyncSelections(view.Prompts, selections); validateErr != nil {
+					return failure(code, validateErr)
+				}
+				receipt, deliveryErr := capability.AnswerExactProcessQuestionReceipt(ctx, agent.Metadata.UID, view.QuestionID, selections)
+				result.Outcome = receipt.Outcome
+				if deliveryErr != nil {
+					var typed *processquestions.DeliveryError
+					if errors.As(deliveryErr, &typed) {
+						if typed.Receipt.Code == "question-delivery-unknown" {
+							result.Outcome = "unknown"
+						}
+						return failure(typed.Receipt.Code, deliveryErr)
+					}
+					code := "question-stale"
+					if errors.Is(deliveryErr, processhost.ErrBusy) || errors.Is(deliveryErr, agentquestion.ErrBusy) {
+						code = "question-busy"
+					}
+					if errors.Is(deliveryErr, processhost.ErrClosed) {
+						code = questionReasonClosed
+					}
+					return failure(code, deliveryErr)
+				}
+				if receipt.QuestionID != view.QuestionID || receipt.Delivery != "async" || receipt.Outcome != "submitted" {
+					result.Outcome = "unknown"
+					return failure("question-delivery-unknown", nil)
+				}
+				return result, nil
 			}
 			if !view.CanAnswer {
 				return AnswerResult{}, refuse(questionReasonNotPending, "question is no longer waiting")
@@ -252,6 +365,40 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 				return AnswerResult{}, err
 			}
 			return AnswerResult{QuestionID: view.QuestionID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name}, nil
+		}
+		// A missing live view is not a missing opaque key when this Agent has
+		// retained async history. This is read-only and never dispatches input.
+		if c.OpenStore != nil {
+			st, openErr := c.OpenStore()
+			if openErr != nil {
+				return AnswerResult{}, openErr
+			}
+			history, found, readErr := st.AsyncStore().Get(request.QuestionID)
+			if readErr != nil {
+				return AnswerResult{}, readErr
+			}
+			if found && history.AgentUID == agent.Metadata.UID && history.Delivery == "async" {
+				result := AnswerResult{QuestionID: history.ID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Delivery: "async"}
+				code := "question-stale"
+				switch history.State {
+				case agentquestion.StateExpired:
+					code = questionReasonExpired
+				case agentquestion.StateClosed:
+					code = questionReasonClosed
+				}
+				switch history.Disposition {
+				case "async-submitted":
+					result.Outcome = "submitted"
+				case "async-unknown":
+					result.Outcome = "unknown"
+				case "async-not-submitted":
+					result.Outcome = "not-submitted"
+				}
+				if result.Outcome != "" {
+					code = questionReasonNotPending
+				}
+				return result, &Failure{Code: code, Message: code + ": async form is unavailable; do not resend"}
+			}
 		}
 		return AnswerResult{}, refuse(questionReasonNotFound, "has no current exact question")
 	}
@@ -273,8 +420,22 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 	if !found || record.AgentUID != agent.Metadata.UID {
 		return AnswerResult{}, refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.QuestionID))
 	}
+	if record.Delivery == "async" && record.State == agentquestion.StateClosed {
+		outcome := ""
+		switch record.Disposition {
+		case "async-submitted":
+			outcome = "submitted"
+		case "async-unknown":
+			outcome = "unknown"
+		case "async-not-submitted":
+			outcome = "not-submitted"
+		}
+		if outcome != "" {
+			return AnswerResult{QuestionID: record.ID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Delivery: "async", Outcome: outcome}, &Failure{Code: questionReasonNotPending, Message: "question-not-pending: async form is locked; do not resend"}
+		}
+	}
 	if record.Delivery == "async" && record.State == agentquestion.StateWaiting {
-		return AnswerResult{}, refuse(questionReasonNotPending, "async question delivery is read-only")
+		return AnswerResult{}, refuse("question-host-unsupported", "async question requires a current receipt-capable host")
 	}
 	if reason, detail := RecordRefusal(record); reason != "" {
 		return AnswerResult{}, refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))

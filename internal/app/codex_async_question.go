@@ -87,7 +87,11 @@ func captureAsyncQuestions(b processhost.Binding, snap processhost.Snapshot, rec
 		observedTerminal := existing.State.Terminal()
 		if q.Closed || snap.State != "ready" || snap.Exit != nil {
 			q.Closed = true
-			if _, err = store.Close(id, agentquestion.CloseReason("process-ended")); errors.Is(err, agentquestion.ErrNotFound) {
+			reason := agentquestion.CloseReason("process-ended")
+			if q.Closed && snap.State == "ready" && snap.Exit == nil && time.Now().Before(existing.Deadline) {
+				reason = "async-not-submitted"
+			}
+			if _, err = store.Close(id, reason); errors.Is(err, agentquestion.ErrNotFound) {
 				delete(*records, id)
 				continue
 			} else if err != nil {
@@ -154,7 +158,7 @@ func asyncQuestionView(id string, r processhost.Request, store *agentquestion.St
 	}
 	prompts, err := agentquestion.ParseCodexQuestions(r.Input)
 	deadline := record.Deadline
-	return ExactProcessQuestion{QuestionID: id, Policy: "projmux", Delivery: "async", CanAnswer: false, State: record.State, Deadline: &deadline, Prompts: prompts}, err
+	return ExactProcessQuestion{QuestionID: id, Policy: "projmux", Delivery: "async", CanAnswer: snap != nil && snap.State == "ready" && snap.Exit == nil && proof != nil && !proof.Closed && record.State == agentquestion.StateWaiting, State: record.State, Deadline: &deadline, Prompts: prompts}, err
 }
 
 func (c *codexProcessControl) captureAsyncSnapshot(snap processhost.Snapshot) error {

@@ -261,6 +261,73 @@ provider/control/transport reason codes; context errors remain ordinary errors.
 These methods invoke shared execution directly, without a CLI subprocess,
 provider creation, Stop, resume or daemon changes.
 
+## Agent questions
+
+`Client.ListQuestions(ctx, "uid:agent-…")` reads the CLI's redacted question
+projection. Use its opaque question ID and `CanAnswer`, including the captured
+deadline and exact process generation. A completed original turn does not end a
+still-valid async question. Older hosts and dispatchers remain read-only.
+
+Submit every prompt explicitly in one `AnswerQuestion` call. Question and option
+indexes are 1-based; use exactly one Option, Index, or Text per selection.
+
+```go
+text := "An explicit answer"
+result, err := client.AnswerQuestion(ctx, projmux.AnswerQuestionRequest{
+    Agent: "uid:agent-…", QuestionID: question.ID,
+    Selections: []core.QuestionSelection{{Question: 1, Text: &text}},
+})
+// Inspect result even when err != nil: unknown delivery preserves the ID.
+if result.Delivery == "async" && result.Outcome == "unknown" {
+    // Lock the form. Do not resend this submission.
+    return err
+}
+if err != nil { return err }
+```
+
+An async success returns `Delivery: "async"`, `Outcome: "submitted"` after ordinary
+operator start/steer acceptance and durable app receipt settlement. This does not
+prove model consumption or a completed answer, and adds no native per-question
+RPC or acknowledgement. Readback uses `closed` / `async-submitted` /
+`CanAnswer: false`. `CodeQuestionDeliveryUnknown` preserves the same ID and
+`Outcome: "unknown"` with the error; its retained claim uses `async-unknown`. Never retry an
+unknown submission. A repeated attempt returns `CodeQuestionNotPending` without
+asserting that an earlier attempt had no effect.
+
+The call receipt and a later exact, valid read are separate observations. A
+submitted-row rename followed by a directory fsync error can leave an unknown
+call receipt while a later read shows `async-submitted`. Preserve the original
+receipt and error: the visible row is additional current storage evidence, not
+retroactive call success, proof of crash durability, or model receipt/consumption.
+An `async-unknown` row, read error, or absence does not resolve uncertainty. Keep
+`CanAnswer: false` and never resend. When storage fails, a call's proven absence
+of native input (`not-submitted`) and its visible stored disposition must also
+be kept distinct; a retained unknown claim does not prove native input occurred.
+
+`MaxAsyncQuestionTextBytes` is 4096 UTF-8 bytes per original, untrimmed direct
+text. `MaxAsyncQuestionSelectionsBytes` is 16384 bytes for the normalized zero-based
+`map[int]Selection` encoded by Go's `encoding/json`, including JSON escapes and
+all fields. Private IPC retains its 65536-byte frame bound and native frames keep
+their existing limits. Overflow returns `CodeQuestionAnswerTooLarge`; there is no
+truncation or splitting. A set containing any secret prompt requires the native
+surface (`CodeQuestionSecretNativeOnly`).
+
+`CodeQuestionNotFound`, `CodeQuestionExpired`, `CodeQuestionStale`,
+`CodeQuestionClosed`, `CodeQuestionBusy`, and `CodeQuestionHostUnsupported`
+distinguish admission refusals. After validation the host locks the form before
+claiming durable submission. A storage or proven pre-write admission failure
+keeps it locked without native input; when storage is writable, readback uses
+`closed` / `async-not-submitted`. Preserve storage errors and use the native
+surface. Terminal history can disappear through normal pruning or generation
+replacement without reopening the submission. `UpdatedAt` is a store state-change
+time; no provider-acceptance or model-consumption timestamp is added.
+
+Existing `Options.QuestionDispatcher` implementations retain their interface.
+An implementation can additionally implement `QuestionReceiptDispatcher` to
+return async answer receipts; implementations without it cannot submit async
+answers. Blocking Codex, Claude, and legacy question contracts remain unchanged.
+See [Headless Codex async questions](codex-async-questions.md).
+
 ## Stop a Project including headless Agents
 
 `Client.StopProject(ctx, core.StopProjectRequest{Ref: "uid:..."})` stops the

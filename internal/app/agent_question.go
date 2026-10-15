@@ -321,9 +321,16 @@ func questionRequest(r agentQuestionRequest) questions.Request {
 func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coremetadata.Agent, _ func(string, string) error, stdout io.Writer) error {
 	result, err := c.questionService().Answer(context.Background(), questionRequest(request), agent)
 	if err != nil {
+		if result.Delivery == "async" && result.Outcome != "" {
+			fmt.Fprintf(stdout, "%s %s for agent/%s\n", result.QuestionID, result.Outcome, result.AgentName)
+		}
 		return MapMetadataError(err)
 	}
-	_, err = fmt.Fprintf(stdout, "%s answered for agent/%s\n", result.QuestionID, result.AgentName)
+	verb := "answered"
+	if result.Delivery == "async" {
+		verb = result.Outcome
+	}
+	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s\n", result.QuestionID, verb, result.AgentName)
 	return err
 }
 func questionRecordRefusal(record agentquestion.Record) (string, string) {

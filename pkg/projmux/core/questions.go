@@ -88,4 +88,8 @@ type QuestionSelection struct {
 	Index    *int
 	Text     *string
 }
-type QuestionAnswerResult struct{ QuestionID, AgentUID, AgentName string }
+type QuestionAnswerResult struct {
+	QuestionID, AgentUID, AgentName string
+	Delivery                        string `json:",omitempty"`
+	Outcome                         string `json:",omitempty"`
+}

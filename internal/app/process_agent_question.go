@@ -34,6 +34,11 @@ func (d ProcessQuestionDispatcher) AnswerExactProcessQuestion(ctx context.Contex
 	return (processquestions.Dispatcher{RegistryPath: d.RegistryPath}).AnswerExactProcessQuestion(ctx, uid, id, selections)
 }
 
+func (d ProcessQuestionDispatcher) SupportsAsyncQuestionAnswers() bool { return true }
+func (d ProcessQuestionDispatcher) AnswerExactProcessQuestionReceipt(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) (processquestions.AnswerReceipt, error) {
+	return (processquestions.Dispatcher{RegistryPath: d.RegistryPath}).AnswerExactProcessQuestionReceipt(ctx, uid, id, selections)
+}
+
 // Callbacks are local to the owning host and keyed by the complete immutable
 // binding. They carry no frontend authority and are removed with its socket.
 var processQuestionCallbacks sync.Map // processhost.Binding -> func(context.Context, processQuestionRequest) ([]ExactProcessQuestion,error)
@@ -219,6 +224,9 @@ func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuest
 	if r.QuestionID == "" {
 		return exactQuestionViews(aiModeCodex, c.records, c.nativeQuestions, c.questions, snap)
 	}
+	if request, ok := c.records[r.QuestionID]; ok && request.Kind == "async-question" {
+		return c.answerAsyncQuestion(ctx, r, snap)
+	}
 	request, prompts, held, err := exactQuestionRequest(aiModeCodex, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {
 		return nil, err
@@ -252,15 +260,23 @@ func applyExactProcessQuestions(ctx context.Context, peer coremetadata.ProcessId
 	}
 	var views []ExactProcessQuestion
 	invalidAnswer := false
+	var receipt *processquestions.AnswerReceipt
 	result = controlProcessForeground(ctx, peer, processForegroundRequest{Authority: processhost.Authority{Binding: r.Binding}}, func(ctx context.Context, a processhost.Authority) error { return current(ctx, a.Binding) }, func() error {
 		var err error
 		views, err = callback.(processQuestionCallback)(ctx, r)
+		var async *asyncAnswerError
+		if errors.As(err, &async) {
+			copy := async.receipt
+			receipt = &copy
+			return async.cause
+		}
 		invalidAnswer = errors.Is(err, agentquestion.ErrInvalidAnswer)
 		return err
 	})
 	// Return only redacted question metadata, never selections or provider response.
 	result.InvalidAnswer = invalidAnswer
 	result.Questions = views
+	result.QuestionReceipt = receipt
 	return result
 }
 

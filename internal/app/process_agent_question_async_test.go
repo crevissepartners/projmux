@@ -22,7 +22,21 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 		b := f.endpoint.binding
 		state := filepath.Dir(filepath.Dir(f.path))
 		f.control.questions = agentquestion.NewStore(state)
-		processQuestionCallbacks.Store(b, processQuestionCallback(f.control.exactQuestions))
+		// Frozen T1 host behavior: listings are read-only and direct async
+		// submission is refused. The upgraded client must not infer capability.
+		oldHost := processQuestionCallback(func(ctx context.Context, r processQuestionRequest) ([]ExactProcessQuestion, error) {
+			if r.QuestionID != "" {
+				return nil, processhost.ErrStale
+			}
+			views, err := f.control.exactQuestions(ctx, r)
+			for i := range views {
+				if views[i].Delivery == "async" {
+					views[i].CanAnswer = false
+				}
+			}
+			return views, err
+		})
+		processQuestionCallbacks.Store(b, oldHost)
 		t.Cleanup(func() { processQuestionCallbacks.Delete(b) })
 		f.turn(t, "first", "fixture")
 		snap := f.wait(t, func(s processhost.Snapshot) bool { return len(s.AsyncQuestions) == 1 && s.Turn == "" })
@@ -69,7 +83,7 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 		if err == nil {
 			t.Fatal("SDK async answer accepted")
 		}
-		if _, err = f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b, QuestionID: q.ID, Selections: map[int]agentquestion.Selection{0: {Text: "answer", HasText: true}}}); !errors.Is(err, processhost.ErrStale) {
+		if _, err = oldHost(context.Background(), processQuestionRequest{Binding: b, QuestionID: q.ID, Selections: map[int]agentquestion.Selection{0: {Text: "answer", HasText: true}}}); !errors.Is(err, processhost.ErrStale) {
 			t.Fatal("direct callback", err)
 		}
 		afterWire, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))

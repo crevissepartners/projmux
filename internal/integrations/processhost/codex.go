@@ -53,15 +53,43 @@ const (
 // UserTurnDelivery witnesses provider acceptance, not model consumption.
 // Operation is the caller's deduplication ID; TurnID is the provider's turn ID.
 type UserTurnDelivery struct {
-	Mode      UserTurnMode
-	Operation string
-	TurnID    string
+	WriteAttempted bool `json:",omitempty"`
+	Mode           UserTurnMode
+	Operation      string
+	TurnID         string
 }
 
 // DeliverUserTurn starts while idle or steers the exact admitted active turn.
 // A refused or uncertain steer is never retried as another turn or a start.
 func (c *CodexHandle) DeliverUserTurn(ctx context.Context, a Authority, operation, prompt string) (UserTurnDelivery, error) {
 	return c.handle.adapter.(*codexAdapter).deliver(ctx, a, operation, prompt, true, false)
+}
+
+// ValidateUserTurnFrame checks both operator routes before app claim admission.
+// It never consumes an operation or mutates the question/turn lifecycle. A
+// maximum-width request ID bounds the native client's independently allocated ID.
+func (c *CodexHandle) ValidateUserTurnFrame(ctx context.Context, a Authority, operation, prompt string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p := c.handle
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		return err
+	}
+	settings := p.launch.adapter.(CodexConfig).Settings
+	input := []map[string]string{{"type": "text", "text": prompt}}
+	for method, params := range map[string]map[string]any{
+		"turn/start": {"threadId": a.Session, "input": input, "clientUserMessageId": operation, "model": settings.Model, "effort": settings.Effort},
+		"turn/steer": {"threadId": a.Session, "expectedTurnId": p.turn, "input": input},
+	} {
+		raw, err := json.Marshal(map[string]any{"id": uint64(^uint64(0)), "method": method, "params": params})
+		if err != nil || len(raw)+1 > min(p.host.limits.FrameBytes, 1<<20) {
+			return agentquestion.ErrCapacity
+		}
+	}
+	return nil
 }
 
 // DeliverPeerContext starts while idle or appends untrusted history while active.
@@ -303,6 +331,9 @@ func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prom
 	}
 	defer c.unlock()
 	p := c.p
+	if err := (&CodexHandle{handle: p}).ValidateUserTurnFrame(ctx, a, operation, prompt); err != nil {
+		return UserTurnDelivery{}, err
+	}
 	p.mu.Lock()
 	if err := p.admitLocked(ctx, a); err != nil {
 		p.mu.Unlock()
@@ -367,12 +398,12 @@ func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prom
 		} else {
 			p.protocolFailure(err)
 		}
-		return UserTurnDelivery{}, err
+		return UserTurnDelivery{WriteAttempted: true}, err
 	}
 	p.mu.Lock()
 	if p.state != "ready" {
 		p.mu.Unlock()
-		return UserTurnDelivery{}, ErrClosed
+		return UserTurnDelivery{WriteAttempted: true}, ErrClosed
 	}
 	if mode == UserTurnStart {
 		p.turn = turn
@@ -384,9 +415,9 @@ func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prom
 	p.mu.Unlock()
 	if err != nil {
 		p.protocolFailure(err)
-		return UserTurnDelivery{}, err
+		return UserTurnDelivery{WriteAttempted: true}, err
 	}
-	return UserTurnDelivery{Mode: mode, Operation: operation, TurnID: turn}, nil
+	return UserTurnDelivery{Mode: mode, Operation: operation, TurnID: turn, WriteAttempted: true}, nil
 }
 
 func (c *codexAdapter) peer(ctx context.Context, a Authority, operation, prompt string, validate func(context.Context) error) (UserTurnDelivery, error) {
