@@ -27,6 +27,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 type processResumeCLIInvocation struct {
@@ -935,12 +936,35 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--name", "source", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "source task"))
 			awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
+			// WaitPeer reads the shared inbox outside the claim guard. Exclude
+			// that critical section too: SIGSTOP must not park its flock owner
+			// while the following send needs the same inbox lock.
+			// Both pauses follow completed claim startup, with no pending peer
+			// or user input and no concurrent sender. No claim-to-inbox writer
+			// can overlap this test-only inbox-to-claim acquisition.
+			pauseClaim := func(claim *deferredCLIClaim) {
+				t.Helper()
+				paths, err := config.DefaultPathsFromEnv()
+				if err != nil {
+					t.Fatal(err)
+				}
+				inbox := messagestore.NewStore(paths.StateDir).Path()
+				if err := localstate.EnsurePrivateDir(filepath.Dir(inbox)); err != nil {
+					t.Fatal(err)
+				}
+				guard, err := localstate.AcquireFileLockContext(ctx, inbox+".flock", localstate.LockWaitLimit, nil)
+				if err != nil {
+					t.Fatal("exclude inbox before claimant pause", err)
+				}
+				defer guard.Close()
+				deferredPauseClaimant(t, ctx, f, first.ref, claim)
+			}
 			claim := startDeferredCLIClaim(t, ctx, f, first.ref)
-			deferredPauseClaimant(t, ctx, f, first.ref, claim)
+			pauseClaim(claim)
 			send := func(ref, ttl string) {
 				out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--ttl", ttl, "--", "deferred task").CombinedOutput()
 				if err != nil || !bytes.Contains(out, []byte("held")) {
-					t.Fatalf("send: %v %s", err, out)
+					t.Fatalf("send %s: %v %s", ref, err, out)
 				}
 			}
 			send("deferred-expiry", "50ms")
@@ -978,7 +1002,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			claim = startDeferredCLIClaim(t, ctx, f, first.ref)
-			deferredPauseClaimant(t, ctx, f, first.ref, claim)
+			pauseClaim(claim)
 			replacement := "import sys\nif '--resume' in sys.argv: sys.exit(7)\n" + string(raw)
 			if provider == aiModeCodex {
 				replacement = strings.Replace(string(raw), "elif method in ('thread/start','thread/resume'):", "elif method=='thread/resume':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture resume refusal'}})\n elif method=='thread/start':", 1)
