@@ -20,6 +20,7 @@ import (
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -74,6 +75,43 @@ type processCodexFixture struct {
 	endpoint           *codexProcessEndpoint
 	control            *codexProcessControl
 	store              *intmetadata.Store
+}
+
+// processCodexPeerProviderFixture upgrades only the peer protocol fixture.
+// Ordinary CLI consumers retain their original initialize identity and goldens.
+func processCodexPeerProviderFixture() string {
+	return strings.Replace(processCodexProviderFixture, "'userAgent':'projmux/0.160.0'", "'userAgent':'projmux/0.162.1'", 1)
+}
+
+// prepareProcessCodexPeerCLI opts a disposable peer CLI fixture into the
+// supported protocol identity before any provider is started.
+func prepareProcessCodexPeerCLI(t *testing.T, f processCreateCLI) {
+	t.Helper()
+	path := filepath.Join(f.root, "codex-provider.py")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	const legacy = "'userAgent':'projmux/0.160.0'"
+	if strings.Count(script, legacy) != 1 {
+		t.Fatal("peer fixture initialize identity did not match")
+	}
+	script = strings.Replace(script, legacy, "'userAgent':'projmux/0.162.1'", 1)
+	script = strings.Replace(script, "codex-cli 0.160.0", "codex-cli 0.162.1", 1)
+	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newProcessCodexPeerFixture(t *testing.T, command func(string, string, []string) processhost.Command) *processCodexFixture {
+	t.Helper()
+	if command == nil {
+		command = func(root, _ string, env []string) processhost.Command {
+			return processhost.Command{Path: "python3", Args: []string{"-u", "-c", processCodexPeerProviderFixture()}, Dir: root, Env: env}
+		}
+	}
+	return newProcessCodexFixture(t, command)
 }
 
 func newProcessCodexFixture(t *testing.T, command func(string, string, []string) processhost.Command) *processCodexFixture {
@@ -583,8 +621,8 @@ func TestCodexProcessInterruptDoesNotWriteTermination(t *testing.T) {
 	}
 }
 func TestCodexProcessBidirectionalEndpointReceiptsAndReplayWireZero(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, nil)
+	left := newProcessCodexPeerFixture(t, nil)
+	right := newProcessCodexPeerFixture(t, nil)
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 	left.endpoint.messages.Store(m)
 	right.endpoint.messages.Store(m)
@@ -656,7 +694,7 @@ s=socket.socket(socket.AF_UNIX);s.settimeout(3);s.connect(sys.argv[1]);s.sendall
 // processCodexSteerFixture answers turn/steer with the given Python statement.
 func processCodexSteerFixture(steer string) func(string, string, []string) processhost.Command {
 	return func(root, binary string, env []string) processhost.Command {
-		fixture := strings.Replace(processCodexProviderFixture, " elif method=='turn/interrupt':", " elif method=='turn/steer':"+steer+"\n elif method=='turn/interrupt':", 1)
+		fixture := strings.Replace(processCodexPeerProviderFixture(), " elif method=='turn/interrupt':", " elif method=='thread/inject_items':"+steer+"\n elif method=='turn/interrupt':", 1)
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Dir: root, Env: env}
 	}
 }
@@ -669,23 +707,26 @@ func processCodexTurnWrites(t *testing.T, f *processCodexFixture) (starts int, s
 		switch string(n["method"]) {
 		case `"turn/start"`:
 			starts++
-		case `"turn/steer"`:
+		case `"thread/inject_items"`:
 			var params struct {
-				ExpectedTurnID string `json:"expectedTurnId"`
-				Input          []struct{ Text string }
+				ThreadID string `json:"threadId"`
+				Items    []struct {
+					Type, Role string
+					Content    []struct{ Type, Text string }
+				}
 			}
-			if err := json.Unmarshal(n["params"], &params); err != nil || len(params.Input) != 1 {
-				t.Fatalf("steer params: %s %v", n["params"], err)
+			if err := json.Unmarshal(n["params"], &params); err != nil || len(params.Items) != 1 || params.Items[0].Type != "message" || params.Items[0].Role != "assistant" || len(params.Items[0].Content) != 1 || params.Items[0].Content[0].Type != "output_text" {
+				t.Fatalf("bad injection %s", n["params"])
 			}
-			steers = append(steers, map[string]string{"turn": params.ExpectedTurnID, "text": params.Input[0].Text})
+			steers = append(steers, map[string]string{"turn": params.ThreadID, "text": params.Items[0].Content[0].Text})
 		}
 	}
 	return starts, steers
 }
 
-func TestCodexProcessMessageSteersRunningTurnAndStaleReceiptNeverWrites(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, processCodexSteerFixture("reply({})"))
+func TestCodexProcessMessageInjectsRunningTurnAndStaleReceiptNeverWrites(t *testing.T) {
+	left := newProcessCodexPeerFixture(t, nil)
+	right := newProcessCodexPeerFixture(t, processCodexSteerFixture("reply({})"))
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 	left.endpoint.messages.Store(m)
 	right.endpoint.messages.Store(m)
@@ -698,7 +739,7 @@ func TestCodexProcessMessageSteersRunningTurnAndStaleReceiptNeverWrites(t *testi
 	for i := range steered {
 		ref := fmt.Sprintf("message-steer-%d", i)
 		receipt, err := m.send(ctx, left.endpoint.binding.Agent, right.endpoint.binding.Agent, ref, "conversation-steer", fmt.Sprintf("steer %d", i), now, deadline)
-		if err != nil || receipt.Delivery.State != coremessage.StateDelivered || receipt.Delivery.Reason != "host-turn-steered" || receipt.Delivery.OutcomeUnknown {
+		if err != nil || receipt.Delivery.State != coremessage.StateDelivered || receipt.Delivery.Reason != "host-history-injected" || receipt.Delivery.OutcomeUnknown {
 			t.Fatalf("steer %d: %+v %v", i, receipt, err)
 		}
 	}
@@ -708,11 +749,11 @@ func TestCodexProcessMessageSteersRunningTurnAndStaleReceiptNeverWrites(t *testi
 	}
 	for i, steer := range steers {
 		var frame map[string]any
-		if err := json.Unmarshal([]byte(steer["text"]), &frame); err != nil {
+		if err := json.Unmarshal([]byte(strings.SplitN(steer["text"], "\n", 2)[1]), &frame); err != nil {
 			t.Fatalf("steer %d is not the coordination envelope: %q %v", i, steer["text"], err)
 		}
 		// The envelope stays peer coordination; it never becomes operator input.
-		if steer["turn"] != running || frame["kind"] != "projmux-coordination" || frame["authority"] != "untrusted-coordination-only" ||
+		if steer["turn"] != "process-thread" || frame["kind"] != "projmux-coordination" || frame["authority"] != "untrusted-coordination-only" ||
 			frame["messageRef"] != fmt.Sprintf("message-steer-%d", i) || frame["payload"] != fmt.Sprintf("steer %d", i) {
 			t.Fatalf("steer %d: turn=%s frame=%v", i, steer["turn"], frame)
 		}
@@ -747,8 +788,8 @@ func TestCodexProcessMessageSteersRunningTurnAndStaleReceiptNeverWrites(t *testi
 }
 
 func TestCodexProcessMessageIdleStartsTurn(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, processCodexSteerFixture("reply({})"))
+	left := newProcessCodexPeerFixture(t, nil)
+	right := newProcessCodexPeerFixture(t, processCodexSteerFixture("reply({})"))
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 	right.endpoint.messages.Store(m)
 	now := time.Now().UTC()
@@ -763,7 +804,7 @@ func TestCodexProcessMessageIdleStartsTurn(t *testing.T) {
 
 // A steer the provider refuses or never answers settles with its reason and is
 // never retried as a start or another steer.
-func TestCodexProcessMessageFailedSteerSettlesWithoutStart(t *testing.T) {
+func TestCodexProcessMessageFailedInjectSettlesWithoutStart(t *testing.T) {
 	for _, test := range []struct {
 		name, steer, reason string
 		state               coremessage.State
@@ -773,8 +814,8 @@ func TestCodexProcessMessageFailedSteerSettlesWithoutStart(t *testing.T) {
 		{"lost", "sys.exit(0)", "delivery-outcome-unknown", coremessage.StateFailed, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			left := newProcessCodexFixture(t, nil)
-			right := newProcessCodexFixture(t, processCodexSteerFixture(test.steer))
+			left := newProcessCodexPeerFixture(t, nil)
+			right := newProcessCodexPeerFixture(t, processCodexSteerFixture(test.steer))
 			m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
 			right.endpoint.messages.Store(m)
 			right.turn(t, "hold", "hold")
@@ -797,13 +838,118 @@ func processCodexOutcomeCount(m *codexProcessMessages) int {
 	return len(m.outcomes)
 }
 
+func TestCodexProcessPeerOldHostRefusesNewActionWithoutFallback(t *testing.T) {
+	f := newProcessCodexFixture(t, nil)
+	ctx := context.Background()
+	route, err := f.endpoint.route(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := processCodexMessageRoute(ctx, f.endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := messagestore.NewStore(filepath.Join(f.root, "peer-old-host"))
+	now := time.Now().UTC()
+	env := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-old-host", ConversationRef: "conversation-old-host", Source: from, Target: from, Authority: coremessage.PeerAuthority(), Payload: "peer", AcceptedAt: now, Deadline: now.Add(time.Minute)}
+	record, _, err := store.PutAccepted(env, "codex-inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace only this fixture's endpoint with an old closed-action host.
+	if err := f.endpoint.listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := localipc.Listen(f.endpoint.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	actions := make(chan string, 1)
+	go func() {
+		conn, err := listener.Unix.AcceptUnix()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var request codexProcessExchange
+		if localipc.ReadJSON(conn, &request) != nil {
+			return
+		}
+		if request.Foreground == nil {
+			return
+		}
+		actions <- request.Foreground.Action
+		_ = localipc.WriteJSON(conn, processForegroundResult{Unsupported: true})
+	}()
+	cmd := &agentCommand{messagePaths: agentMessagePaths{registryPath: f.path, loadRegistry: f.store.LoadReadOnly}, messageStore: store, messageNow: func() time.Time { return now }}
+	got, err := cmd.pushProcessCodexCoordination(record, route)
+	if err == nil || got.Delivery.State != coremessage.StateRefused || got.Delivery.Reason != "peer-injection-unsupported" || got.Delivery.OutcomeUnknown {
+		t.Fatalf("receipt=%+v err=%v", got.Delivery, err)
+	}
+	if action := <-actions; action != "peer-message" {
+		t.Fatalf("old action fallback=%s", action)
+	}
+	if starts, injects := processCodexTurnWrites(t, f); starts != 0 || len(injects) != 0 {
+		t.Fatalf("old host wrote %d/%d", starts, len(injects))
+	}
+}
+
+func TestCodexProcessPeerMessageAliasAndExplicitReplyUseStoredContext(t *testing.T) {
+	left := newProcessCodexPeerFixture(t, processCodexSteerFixture("reply({})"))
+	right := newProcessCodexPeerFixture(t, processCodexSteerFixture("reply({})"))
+	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "peer-alias")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
+	left.endpoint.messages.Store(m)
+	right.endpoint.messages.Store(m)
+	left.turn(t, "left-original", "hold")
+	right.turn(t, "right-original", "hold")
+	left.wait(t, func(s processhost.Snapshot) bool { return s.Turn != "" })
+	right.wait(t, func(s processhost.Snapshot) bool { return s.Turn != "" })
+	ctx := context.Background()
+	now := time.Now().UTC()
+	deadline := now.Add(time.Minute)
+	from, _ := processCodexMessageRoute(ctx, left.endpoint)
+	to, _ := processCodexMessageRoute(ctx, right.endpoint)
+	env := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-alias", ConversationRef: "conversation-alias", Source: from, Target: to, Authority: coremessage.PeerAuthority(), Payload: "stored context", AcceptedAt: now, Deadline: deadline}
+	if _, _, err := m.store.PutAccepted(env, "codex-inbox"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := callLiveProcessCodex(ctx, right.path, right.endpoint.evidence, processForegroundRequest{Action: "message", Authority: right.endpoint.authority(), MessageRef: env.MessageRef, Prompt: "forged prompt must not reach provider"})
+	if err != nil || !result.Accepted || result.Receipt == nil || result.Receipt.Delivery.Reason != "host-history-injected" {
+		t.Fatalf("alias=%+v %v", result, err)
+	}
+	reply, err := m.reply(ctx, right.endpoint.binding.Agent, left.endpoint.binding.Agent, env.MessageRef, "message-explicit-active", "reply context", time.Now().UTC(), deadline)
+	if err != nil || reply.Delivery.Reason != "host-history-injected" {
+		t.Fatalf("reply=%+v %v", reply, err)
+	}
+	for _, f := range []*processCodexFixture{left, right} {
+		starts, items := processCodexTurnWrites(t, f)
+		if starts != 1 || len(items) != 1 {
+			t.Fatalf("writes=%d/%d", starts, len(items))
+		}
+		if strings.Contains(items[0]["text"], "forged prompt") {
+			t.Fatal("caller prompt bypassed stored envelope")
+		}
+		for _, n := range f.wire(t) {
+			if string(n["method"]) == `"turn/steer"` {
+				t.Fatal("active peer steered")
+			}
+		}
+	}
+	_, items := processCodexTurnWrites(t, left)
+	var frame map[string]any
+	if json.Unmarshal([]byte(strings.SplitN(items[0]["text"], "\n", 2)[1]), &frame) != nil || frame["replyTo"] != env.MessageRef || frame["authority"] != "untrusted-coordination-only" {
+		t.Fatalf("reply frame=%v", frame)
+	}
+}
+
 func TestCodexProcessReceiptCommitRetryNeverReplaysTurn(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
+	left := newProcessCodexPeerFixture(t, nil)
 	store := messagestore.NewNonblockingStore(filepath.Join(left.root, "messages"))
 	release := filepath.Join(left.root, "release-receipt-lock")
 	released := filepath.Join(left.root, "receipt-lock-released")
-	right := newProcessCodexFixture(t, func(root, binary string, env []string) processhost.Command {
-		script := fmt.Sprintf("import fcntl,time\nreceipt_path=%q\nrelease_path=%q\nreleased_path=%q\n", store.Path()+".flock", release, released) + processCodexProviderFixture
+	right := newProcessCodexPeerFixture(t, func(root, binary string, env []string) processhost.Command {
+		script := fmt.Sprintf("import fcntl,time\nreceipt_path=%q\nrelease_path=%q\nreleased_path=%q\n", store.Path()+".flock", release, released) + processCodexPeerProviderFixture()
 		script = strings.Replace(script, "  reply({'turn':{'id':current}})", "  lock=open(receipt_path,'a')\n  fcntl.flock(lock,fcntl.LOCK_EX)\n  reply({'turn':{'id':current}})", 1)
 		script = strings.Replace(script, " elif method=='turn/interrupt':", "  while not os.path.exists(release_path):time.sleep(0.002)\n  fcntl.flock(lock,fcntl.LOCK_UN);lock.close()\n  open(released_path,'w').close()\n elif method=='turn/interrupt':", 1)
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
@@ -860,9 +1006,9 @@ func TestCodexProcessReceiptCommitRetryNeverReplaysTurn(t *testing.T) {
 }
 
 func TestCodexProcessCommittedReceiptsDoNotExhaustOutcomeCache(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
+	left := newProcessCodexPeerFixture(t, nil)
 	right := newProcessCodexFixtureWithEvents(t, func(root, binary string, env []string) processhost.Command {
-		script := strings.Replace(processCodexProviderFixture, "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':", 1)
+		script := strings.Replace(processCodexPeerProviderFixture(), "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':", 1)
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
 	}, 2048) // Test only: keep the existing host lifetime limit out of this cache test.
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
@@ -940,8 +1086,8 @@ func TestCodexProcessCommittedReceiptsDoNotExhaustOutcomeCache(t *testing.T) {
 }
 
 func TestCodexProcessReceiptDeadlineUsesInjectedClock(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, nil)
+	left := newProcessCodexPeerFixture(t, nil)
+	right := newProcessCodexPeerFixture(t, nil)
 	now := time.Now().UTC()
 	deadline := now.Add(time.Minute)
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}, now: func() time.Time { return deadline }}

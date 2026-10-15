@@ -928,6 +928,49 @@ type fakeControllableCodexLifecycleConnection struct {
 	*fakeExactControlWire
 }
 
+type peerObserverConnection struct {
+	*fakeCodexLifecycleConnection
+	*peerControlWire
+}
+
+func (c *peerObserverConnection) ReadLifecycleSnapshot(ctx context.Context, thread string) (codexappserver.LifecycleSnapshot, error) {
+	return c.peerControlWire.ReadLifecycleSnapshot(ctx, thread)
+}
+
+func TestCodexNativePeerObserverReadyUsesStoredEnvelopeAndStopsReplay(t *testing.T) {
+	f, _, wire := peerEpochFixture(t, true)
+	record := f.accept(t, "message-observer-peer")
+	connection := &peerObserverConnection{
+		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{snapshot: wire.snapshot, events: make(chan codexappserver.Notification)},
+		peerControlWire:              wire,
+	}
+	startup := make(chan codexObserverStartupResult, 4)
+	var epoch *codexControlEpoch
+	observer := codexNativeObserver{
+		identity: phase6CLIIdentity(), sink: newRecordingCodexLifecycleSink(), requireControl: true,
+		open: func(context.Context) (codexLifecycleConnection, error) { return connection, nil },
+		startControl: func(e *codexControlEpoch) (*codexControlServer, error) {
+			configureCodexPeer(e, filepath.Dir(filepath.Dir(f.store.Path())), func() (coremetadata.Registry, error) { return f.registry.Clone(), nil })
+			epoch = e
+			return &codexControlServer{epoch: e}, nil
+		},
+		reportStartup: func(r codexObserverStartupResult) { startup <- r },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	ready := waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
+	request := peerRequest(record.Envelope.MessageRef)
+	request.Epoch = ready.Epoch
+	if result := epoch.Handle(ctx, request); !result.OK || wire.injected != 1 || wire.steer != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	if result := epoch.Handle(ctx, request); result.OK || wire.injected != 1 {
+		t.Fatalf("replay=%+v", result)
+	}
+}
+
 func (c *fakeControllableCodexLifecycleConnection) ReadLifecycleSnapshot(ctx context.Context, threadID string) (codexappserver.LifecycleSnapshot, error) {
 	return c.fakeCodexLifecycleConnection.ReadLifecycleSnapshot(ctx, threadID)
 }

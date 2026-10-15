@@ -2346,6 +2346,11 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	}
 	if pathsErr == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			registryPath := intmetadata.PathFor(paths.StateDir)
+			if target.Paths != nil {
+				registryPath = target.Paths.RegistryPath
+			}
+			configureCodexPeer(epoch, paths.StateDir, c.loadRegistry, registryPath)
 			return startCodexControlServer(paths.StateDir, observer.endpoint, epoch)
 		}
 	}

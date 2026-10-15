@@ -771,6 +771,11 @@ func classifyCodexTurnPush(operation string, response agentControlResponse, call
 				"lifecycle-retry", "lifecycle-busy", "drain-required", "payload-too-large", "invalid-operation":
 				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
 			}
+		case agentControlOpPeer:
+			switch response.Code {
+			case "stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "lifecycle-retry", "lifecycle-busy", "drain-required", "payload-too-large", "invalid-operation", "peer-injection-unsupported", "peer-busy", "peer-invalid", "provider-refused":
+				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
+			}
 		case agentControlOpDeliver, agentControlOpSteer:
 			switch response.Code {
 			case "stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable",
@@ -790,6 +795,9 @@ func classifyCodexTurnPush(operation string, response agentControlResponse, call
 func (c *agentCommand) pushCodexCoordination(record messagestore.Record, target coremetadata.Agent,
 	envelope coremessage.Envelope,
 ) (messagestore.Record, error) {
+	if record.Delivery.State.Terminal() {
+		return record, nil
+	}
 	// Pre-dispatch expiry is decided before the seam check, the render, and the
 	// binding resolution, so an expired envelope reaches no provider call at
 	// all. The token matches the store's own deadline event so `agent message
@@ -804,7 +812,7 @@ func (c *agentCommand) pushCodexCoordination(record messagestore.Record, target 
 		return c.terminalCoordination(record, coremessage.EventFail, "codex-native-control-unconfigured", false,
 			errors.New("exact Agent native control is not configured"))
 	}
-	text, err := c.codexCoordinationText(envelope)
+	_, err := c.codexCoordinationText(envelope)
 	if err != nil {
 		return c.terminalCoordination(record, coremessage.EventFail, "codex-turn-content-build-failed", false,
 			fmt.Errorf("build coordination turn content: %w", err))
@@ -813,23 +821,13 @@ func (c *agentCommand) pushCodexCoordination(record messagestore.Record, target 
 	if bindErr != nil {
 		return c.terminalCoordination(record, coremessage.EventFail, "codex-native-binding-unavailable", false, bindErr)
 	}
-	response, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpDeliver, Text: text})
-	outcome := classifyCodexTurnPush(agentControlOpDeliver, response, callErr)
-	if callErr == nil && !response.OK && response.Code == "invalid-operation" {
-		// An older observer rejects the operation before any provider write.
-		// Try its legacy path once; no other refusal or error permits a retry.
-		response, callErr = c.callControl(binding, agentControlRequest{Operation: agentControlOpStart, Text: text})
-		outcome = classifyCodexTurnPush(agentControlOpStart, response, callErr)
-		if outcome.steer {
-			response, callErr = c.callControl(binding, agentControlRequest{Operation: agentControlOpSteer, Text: text})
-			outcome = classifyCodexTurnPush(agentControlOpSteer, response, callErr)
-		}
-	}
+	response, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpPeer, RequestKey: envelope.MessageRef})
+	outcome := classifyCodexTurnPush(agentControlOpPeer, response, callErr)
 	if !outcome.delivered {
 		return c.terminalCoordination(record, coremessage.EventFail, outcome.reason, outcome.unknown, outcome.err)
 	}
 	updated, _, applyErr := c.messageStore.Apply(record.Envelope.MessageRef,
-		c.publicMessageEvent(record, coremessage.EventDeliver, "provider-turn-push", false))
+		c.publicMessageEvent(record, coremessage.EventDeliver, "provider-peer-context-accepted", false))
 	if applyErr != nil {
 		// The turn was pushed but the record could not be persisted. Resend
 		// stays discouraged, so the projection is the ambiguous persist token

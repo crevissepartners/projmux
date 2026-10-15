@@ -342,6 +342,7 @@ func TestDetachedProcessResumeTranscriptCLI(t *testing.T) {
 			transcript := filepath.Join(f.root, ".claude", "projects", aisessions.EncodeClaudeProjectPath(f.root), conversation+".jsonl")
 			meta := ""
 			if provider == "codex" {
+				prepareProcessCodexPeerCLI(t, f)
 				scriptPath = filepath.Join(f.root, "codex-provider.py")
 				conversation = "process-thread"
 				transcript = filepath.Join(f.root, ".codex", "sessions", "rollout-"+conversation+".jsonl")

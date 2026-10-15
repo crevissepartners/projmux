@@ -66,7 +66,11 @@ func codexFixture(mode string) {
 			if mode == "codex-handshake-stall" {
 				time.Sleep(time.Hour)
 			}
-			reply(map[string]any{"userAgent": "projmux/0.160.0"})
+			version := "projmux/0.160.0"
+			if strings.HasPrefix(mode, "codex-peer-") {
+				version = "projmux/0.162.1"
+			}
+			reply(map[string]any{"userAgent": version})
 		case "initialized":
 		case "thread/resume":
 			var p struct {
@@ -186,6 +190,26 @@ func codexFixture(mode string) {
 			default:
 				complete()
 			}
+		case "thread/inject_items":
+			if mode == "codex-peer-stall" {
+				time.Sleep(time.Hour)
+			}
+			if mode == "codex-peer-lost" {
+				os.Exit(0)
+			}
+			if mode == "codex-peer-queue" {
+				complete()
+			}
+			if mode == "codex-peer-refused" {
+				_ = out.Encode(map[string]any{"id": message.ID, "error": map[string]any{"code": -32601, "message": "unsupported"}})
+				continue
+			}
+			if mode == "codex-peer-malformed" {
+				reply(nil)
+				continue
+			}
+			reply(map[string]any{})
+
 		case "turn/steer":
 			if mode == "codex-steer-overflow" {
 				for range 2048 {

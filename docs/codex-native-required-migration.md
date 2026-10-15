@@ -1,5 +1,24 @@
 # Codex Native-Required Create and Payload-Free Fallback
 
+## Mixed-version peer delivery
+
+Codex peer send and explicit reply require a current peer-capable observer or
+process host and the validated Codex 0.162.1 raw injection contract. An idle
+thread starts normally; an active thread receives external untrusted history
+via `thread/inject_items`, without steering the user's turn. Injection refusal
+or an uncertain response never falls back to start or steer.
+
+Installing a new CLI does not replace an already running observer or process
+host. A new sender therefore refuses an older peer endpoint before provider
+effects. Relaunch the affected Agent with the current build before sending
+again; do not interpret a failed or unknown receipt as permission to resend.
+This also applies to a process Codex source: its exact host generation needs
+the peer source validation endpoint. A missing endpoint refuses delivery before
+target provider effects, without retrying validation through the main socket.
+Operator input and explicit turn start/steer/deliver commands keep their
+existing contracts. [Peer receipt details](agent-message-replies.md#codex-peer-delivery)
+distinguish history acceptance from model consumption and reply completion.
+
 ## Current payload-free behavior (Codex 0.153.0)
 
 `projmux create codex` and `projmux create agent --provider codex` with no

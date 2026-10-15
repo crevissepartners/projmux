@@ -1231,6 +1231,8 @@ func newBoundedProductionWire(t *testing.T, state, failure string) (*boundedProd
 				}
 			case "turn/start":
 				result = `{"turn":{"id":"turn-new"}}`
+			case "thread/inject_items":
+				result = `{}`
 			case "turn/steer":
 				var params struct {
 					ExpectedTurnID string `json:"expectedTurnId"`

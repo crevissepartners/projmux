@@ -209,6 +209,7 @@ func TestProcessCodexCreateInitializationRollbackActualCLI(t *testing.T) {
 
 func TestProcessCodexCreatePeerMessageActualCLI(t *testing.T) {
 	f := newProcessCodexCreateCLI(t)
+	prepareProcessCodexPeerCLI(t, f.processCreateCLI)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	t.Cleanup(cancel)
 	start := func(name string) (string, io.WriteCloser) {
