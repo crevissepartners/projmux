@@ -152,11 +152,11 @@ func TestLiveInstallProcessOwnersFollowsRecordedHostIdentity(t *testing.T) {
 	}
 	host := reg.Panes[1].Status.Activation.Process.HostProcess
 	agent := reg.Agents[0]
-	observed := func(coremetadata.Registry, coremetadata.Pane) (processHostObservation, bool) {
-		return processHostObservation{Protocol: 1, Revision: testInstallOwnerRevision, Coordination: 5}, true
+	observed := func(coremetadata.Registry, coremetadata.Pane) installProcessOwnerRead {
+		return installProcessOwnerRead{View: processHostObservation{Protocol: 1, Revision: testInstallOwnerRevision, Coordination: 5}, Observed: true}
 	}
 	owners := liveInstallProcessOwners(reg, func(p coremetadata.ProcessIdentity) bool { return p == host }, observed)
-	want := []installProcessOwner{{AgentName: agent.Metadata.Name, AgentUID: agent.Metadata.UID, Provider: agent.Spec.Provider, Revision: testInstallOwnerRevision, Coordination: 5}}
+	want := []installProcessOwner{{AgentName: agent.Metadata.Name, AgentUID: agent.Metadata.UID, Provider: agent.Spec.Provider, Revision: testInstallOwnerRevision, Coordination: 5, PaneUID: reg.Panes[1].Metadata.UID, Generation: reg.Panes[1].Status.Activation.Generation}}
 	if len(owners) != 1 || owners[0] != want[0] {
 		t.Fatalf("live owners = %+v, want %+v", owners, want)
 	}
@@ -164,16 +164,16 @@ func TestLiveInstallProcessOwnersFollowsRecordedHostIdentity(t *testing.T) {
 		t.Fatalf("exited owner counted: %+v", got)
 	}
 	unanswered := liveInstallProcessOwners(reg, func(coremetadata.ProcessIdentity) bool { return true },
-		func(coremetadata.Registry, coremetadata.Pane) (processHostObservation, bool) {
-			return processHostObservation{}, false
+		func(coremetadata.Registry, coremetadata.Pane) installProcessOwnerRead {
+			return installProcessOwnerRead{}
 		})
 	if len(unanswered) != 1 || unanswered[0].Revision != "" || unanswered[0].Coordination != 0 {
 		t.Fatalf("unanswered owner = %+v, want unknown revision and coordination", unanswered)
 	}
 	// A protocol-0 answer carries no version even when a field decodes.
 	protocolZero := liveInstallProcessOwners(reg, func(coremetadata.ProcessIdentity) bool { return true },
-		func(coremetadata.Registry, coremetadata.Pane) (processHostObservation, bool) {
-			return processHostObservation{Coordination: 5, Revision: testInstallOwnerRevision}, true
+		func(coremetadata.Registry, coremetadata.Pane) installProcessOwnerRead {
+			return installProcessOwnerRead{View: processHostObservation{Coordination: 5, Revision: testInstallOwnerRevision}, Observed: true}
 		})
 	if len(protocolZero) != 1 || protocolZero[0].Revision != "" || protocolZero[0].Coordination != 0 {
 		t.Fatalf("protocol-0 owner = %+v, want unknown", protocolZero)
@@ -188,8 +188,9 @@ func TestLiveInstallProcessOwnersReadsLiveFixtureOwner(t *testing.T) {
 			stubProcessHostRevision(t, testProcessHostRevision)
 			h := newProcessProtocolHost(t, provider)
 			owners := liveInstallProcessOwners(h.registry, installProcessHostIsAlive,
-				func(registry coremetadata.Registry, pane coremetadata.Pane) (processHostObservation, bool) {
-					return observeProcessHostOwner(registry, h.path, pane)
+				func(registry coremetadata.Registry, pane coremetadata.Pane) installProcessOwnerRead {
+					view, ok := observeProcessHostOwner(registry, h.path, pane)
+					return installProcessOwnerRead{View: view, Observed: ok}
 				})
 			if len(owners) != 1 || owners[0].AgentUID != h.binding.Agent || owners[0].Provider != provider ||
 				owners[0].Revision != testProcessHostRevision || owners[0].Coordination != claudeCoordinationVersion {

@@ -199,6 +199,17 @@ func defaultProcessHostRevisionLookup() processHostRevisionLookup {
 // observeProcessHostOwner reads the observation of the owner hosting an exact
 // process Pane's current activation within the shared read budget.
 func observeProcessHostOwner(registry coremetadata.Registry, registryPath string, pane coremetadata.Pane) (processHostObservation, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
+	defer cancel()
+	return observeProcessHostOwnerContext(ctx, registry, registryPath, pane)
+}
+
+// observeProcessHostOwnerContext consumes its caller's remaining read budget.
+// Existing callers retain the wrapper's independent 250ms bound.
+func observeProcessHostOwnerContext(ctx context.Context, registry coremetadata.Registry, registryPath string, pane coremetadata.Pane) (processHostObservation, bool) {
+	if ctx.Err() != nil {
+		return processHostObservation{}, false
+	}
 	activation := pane.Status.Activation.Process
 	if activation == nil {
 		return processHostObservation{}, false
@@ -208,8 +219,6 @@ func observeProcessHostOwner(registry coremetadata.Registry, registryPath string
 	if !ok {
 		return processHostObservation{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
-	defer cancel()
 	observer := remoteProcessObserver{ctx: ctx, registry: registry, registryPath: registryPath, binding: binding}
 	view, err := observer.observeHostView(binding, *activation, agent.Spec.Provider)
 	if err != nil {
