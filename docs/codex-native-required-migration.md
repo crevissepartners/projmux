@@ -19,6 +19,50 @@ Operator input and explicit turn start/steer/deliver commands keep their
 existing contracts. [Peer receipt details](agent-message-replies.md#codex-peer-delivery)
 distinguish history acceptance from model consumption and reply completion.
 
+Before publication, `internal install-preflight` prints each live Codex process
+owner's exact Agent UID, Pane UID and generation, with independent host control/proof
+`source` and `target` verdicts. This is a warning only: the existing Registry
+schema and Claude coordination install refusals and exit codes still apply.
+Installing the CLI leaves those running host images unchanged. Both ends need
+compatible hosts; an old source can fail against a new target, and a new source
+can fail against an old target, regardless of which CLI sends the request.
+
+`compatible` requires a current exact proof. The target must advertise
+`peer-message` in its validated protocol-1 action array; an explicit array
+without it means `incompatible`. Missing/null actions, protocol 0, unreadable or
+invalid responses, timeout and stale/replaced ownership mean `unknown`.
+Source compatibility requires successful validation through the existing peer
+source resolver and unchanged exact ownership. That resolver folds refusals
+and transport failures together, so failed source validation is conservatively
+`unknown`, including an absent source endpoint; the census does not infer
+unsupported from a revision or a socket path. A single five-second census
+budget includes each owner's host/source reads and cleanup, together capped at
+250ms or the remaining census budget. Unobserved remaining owners still appear
+as `unknown`.
+
+Both-compatible rows indicate no host control/proof upgrade is needed by this
+snapshot and omit recovery commands. These verdicts do not validate the Codex
+provider version or actual injection acceptance.
+
+For each affected Agent, use its full UID from the warning. From another
+controller using the installed build, first inspect the public dry run, then
+explicitly request an individual relaunch on the same conversation:
+
+```sh
+projmux agent relaunch uid:<exact-agent-uid> --detach --dry-run
+projmux agent relaunch uid:<exact-agent-uid> --detach
+```
+
+Review the planned recipe and arrange a maintenance window before proceeding.
+An unknown/busy or not-ready host needs investigation; a census is not proof
+that relaunch is safe or will succeed. Do not force busy admission, change
+settings to bypass a refusal, or relaunch the controller itself. Repeat the
+read-only preflight after individual recovery of both ends. These diagnostics
+do not stop/relaunch an Agent, send provider input, prove model consumption, or
+authorize resending a failed or uncertain message. Protocol fixtures and fake
+version/receipt fields do not establish actual old/new image interoperability
+or model consumption.
+
 ## Current payload-free behavior (Codex 0.153.0)
 
 `projmux create codex` and `projmux create agent --provider codex` with no
