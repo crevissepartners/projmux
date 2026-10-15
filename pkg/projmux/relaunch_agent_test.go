@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -196,6 +197,13 @@ func relaunchFailureFixture(t *testing.T) (*Client, metadata.Registry, runtime.A
 	if err := os.WriteFile(store.PathFor(state), data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	persisted, err := store.NewStore(store.PathFor(state)).LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(reg, persisted) {
+		t.Logf("fixture baseline roundtrip field paths (values omitted): %v", relaunchRegistryDifferencePaths(reg, persisted))
+	}
 	home := t.TempDir()
 	bin := filepath.Join(home, "bin")
 	if err := os.Mkdir(bin, 0700); err != nil {
@@ -213,7 +221,7 @@ func relaunchFailureFixture(t *testing.T) (*Client, metadata.Registry, runtime.A
 	}
 	client.agentEnvironment = map[string]string{"PATH": bin}
 	runner := &relaunchFailureRunner{socket: socket, project: reg.Projects[0].Metadata.UID, window: window, pane: pane.Metadata.UID, shell: reg.Panes[0].Metadata.UID, stopCause: errors.New("injected exact Stop failure"), observeCause: errors.New("injected exact inventory failure")}
-	return client, reg, runtime.AgentRestartPlan{Target: agent, Provider: "claude", Running: true, PaneUID: pane.Metadata.UID}, runner
+	return client, persisted, runtime.AgentRestartPlan{Target: agent, Provider: "claude", Running: true, PaneUID: pane.Metadata.UID}, runner
 }
 
 func TestRelaunchLivenessSelectsExactPane(t *testing.T) {
@@ -306,20 +314,25 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 			}
 			var refusal *Refusal
 			if !errors.As(err, &refusal) || refusal.Code != wantCode {
-				t.Fatalf("typed failure lost: %+v %v", out, err)
+				t.Fatalf("typed failure lost: errorType=%T wantCode=%s err=%v", err, wantCode, err)
 			}
 			if mode == "closed" {
-				if !strings.Contains(err.Error(), "is Running and already owns a managed Pane") || len(out.Notices) != 1 || !strings.Contains(out.Notices[0], runner.stopCause.Error()) {
-					t.Fatalf("closed Stop/resume-phase evidence lost: %+v %v", out, err)
+				var phase interface{ MetadataUsageError() bool }
+				phaseCause := errors.As(err, &phase) && phase.MetadataUsageError()
+				cause := refusal.Unwrap()
+				phaseDiagnostic := cause != nil && strings.Contains(cause.Error(), "is Running and already owns a managed Pane")
+				stopNotice := len(out.Notices) == 1 && strings.Contains(out.Notices[0], runner.stopCause.Error())
+				if !phaseCause || !phaseDiagnostic || !stopNotice {
+					t.Fatalf("closed evidence lost: phaseCause=%t unwrapped=%t phaseDiagnostic=%t noticeCount=%d stopNotice=%t", phaseCause, cause != nil, phaseDiagnostic, len(out.Notices), stopNotice)
 				}
 			} else if !errors.Is(err, runner.stopCause) || len(out.Notices) != 0 {
-				t.Fatalf("Stop cause lost or closed warning invented: %+v %v", out, err)
+				t.Fatalf("Stop cause/warning differs: stopCause=%t noticeCount=%d", errors.Is(err, runner.stopCause), len(out.Notices))
 			}
 			if out.Outcome != wantOutcome || out.AgentUID != plan.Target.Metadata.UID || out.PaneUID != plan.PaneUID || out.NewPaneUID != "" || out.Stop.Committed || out.Resume.PaneID != "" {
-				t.Fatalf("partial result flattened or rebound: %+v", out)
+				t.Fatalf("partial result differs: outcome=%s agentMatch=%t paneMatch=%t newPaneEmpty=%t stopCommitted=%t resumePaneEmpty=%t", out.Outcome, out.AgentUID == plan.Target.Metadata.UID, out.PaneUID == plan.PaneUID, out.NewPaneUID == "", out.Stop.Committed, out.Resume.PaneID == "")
 			}
 			if len(out.Stop.Panes) != 1 || out.Stop.Panes[0].PaneUID != plan.PaneUID || out.Stop.Panes[0].PaneID != "%2" || len(out.Stop.Plan.Targets) != 1 {
-				t.Fatalf("exact uncommitted Stop plan lost: %+v", out.Stop)
+				t.Fatalf("exact uncommitted Stop plan lost: paneCount=%d targetCount=%d", len(out.Stop.Panes), len(out.Stop.Plan.Targets))
 			}
 			recoveryVerb := "agent relaunch uid:"
 			if mode == "closed" {
@@ -341,8 +354,60 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 			// Intent admission/withdrawal changes the store clock only.
 			after.UpdatedAt = before.UpdatedAt
 			if !reflect.DeepEqual(before, after) {
-				t.Fatal("failed Stop changed Agent/settings/binding or left an intent")
+				t.Fatalf("failed Stop changed Registry field paths (values omitted): %v", relaunchRegistryDifferencePaths(before, after))
 			}
 		})
 	}
+}
+
+// Diagnostic paths only: at most 16 fixed field/index paths and no state values.
+// This never normalizes or removes anything from the equality assertion.
+func relaunchRegistryDifferencePaths(before, after metadata.Registry) []string {
+	const limit = 16
+	var paths []string
+	truncated := false
+	var walk func(reflect.Value, reflect.Value, string)
+	walk = func(a, b reflect.Value, path string) {
+		if len(paths) >= limit {
+			truncated = true
+			return
+		}
+		if a.IsValid() && b.IsValid() && a.Type() == b.Type() {
+			if a.CanInterface() && b.CanInterface() && reflect.DeepEqual(a.Interface(), b.Interface()) {
+				return
+			}
+			if a.Comparable() && a.Equal(b) {
+				return
+			}
+			switch a.Kind() {
+			case reflect.Pointer, reflect.Interface:
+				if !a.IsNil() && !b.IsNil() {
+					walk(a.Elem(), b.Elem(), path)
+					return
+				}
+			case reflect.Struct:
+				// Treat time internals as one field; do not inspect location data.
+				if a.Type().PkgPath() != "time" {
+					for i := range a.NumField() {
+						walk(a.Field(i), b.Field(i), path+"."+a.Type().Field(i).Name)
+					}
+					return
+				}
+			case reflect.Slice, reflect.Array:
+				if a.Len() == b.Len() && (a.Kind() != reflect.Slice || a.IsNil() == b.IsNil()) {
+					for i := range a.Len() {
+						walk(a.Index(i), b.Index(i), path+"["+strconv.Itoa(i)+"]")
+					}
+					return
+				}
+			}
+		}
+		// Maps stay at their fixed field path: never print dynamic keys/values.
+		paths = append(paths, path)
+	}
+	walk(reflect.ValueOf(before), reflect.ValueOf(after), "Registry")
+	if truncated {
+		paths = append(paths, "<field-path-limit>")
+	}
+	return paths
 }
