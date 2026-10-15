@@ -190,8 +190,6 @@ func approvalRefusal(err error) error {
 			if detail, ok := strings.CutPrefix(message, "agent approval answer --via: "); ok {
 				message = "AnswerApprovalRequest.Via: " + detail
 			}
-		case CodePermissionProviderUnsupported:
-			message = "Agent provider does not support approval requests; want claude or codex"
 		}
 		return &Refusal{Code: Code(failure.Code), message: message}
 	}

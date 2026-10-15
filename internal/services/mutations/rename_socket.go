@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -140,8 +141,12 @@ func (r *renameSocket) provePane(ctx context.Context, uid string) (string, bool,
 		return "", false, errors.New("pane Window disappeared from Registry")
 	}
 	root := w.Metadata.OwnerUID()
+	projectUID, role := root, ""
 	if _, ok := reg.Project(root); !ok {
-		return "", false, errors.New("pane requires a Project root")
+		if _, ok := reg.ControlSession(root); !ok {
+			return "", false, errors.New("pane requires a Project root")
+		}
+		projectUID, role = "", resourcegraph.ControlSessionRole
 	}
 	out, err := r.Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxRowFormat("#{pane_id}", "#{"+tmuxopts.PaneUID+"}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{session_id}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}"))
 	if err != nil {
@@ -156,7 +161,7 @@ func (r *renameSocket) provePane(ctx context.Context, uid string) (string, bool,
 		if row[1] != uid {
 			continue
 		}
-		if exactTmuxHandle(row[0], "%") == "" || exactTmuxHandle(row[2], "@") == "" || exactTmuxHandle(row[4], "$") == "" || row[3] != w.Metadata.UID || row[5] != root || row[6] != "" {
+		if exactTmuxHandle(row[0], "%") == "" || exactTmuxHandle(row[2], "@") == "" || exactTmuxHandle(row[4], "$") == "" || row[3] != w.Metadata.UID || row[5] != projectUID || row[6] != role {
 			return "", false, errors.New("pane Project containment drifted")
 		}
 		found = append(found, row[0])

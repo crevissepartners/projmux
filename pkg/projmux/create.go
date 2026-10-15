@@ -164,7 +164,7 @@ func (c *Client) createInputs(ctx context.Context, prefix, project, name string,
 	}
 	if name != "" {
 		if err := metadata.ValidateName(name); err != nil {
-			return scope, nil, "", &Refusal{Code: CodeResourceNameInvalid, message: prefix + ".Name: " + err.Error()}
+			return scope, nil, "", &Refusal{Code: CodeResourceNameInvalid, message: err.Error()}
 		}
 	}
 	if socket == "" {
@@ -224,7 +224,7 @@ func createRefusal(err error, prefix string) error {
 		if errors.As(mutations.Classify(err), &f) {
 			switch Code(f.Code) {
 			case CodeResourceNameInvalid, CodeResourceNameConflict, CodeResourceNameExhausted:
-				return &Refusal{Code: Code(f.Code), message: prefix + ".Name: " + err.Error(), cause: err}
+				return &Refusal{Code: Code(f.Code), message: err.Error(), cause: err}
 			}
 		}
 		return &Refusal{Code: CodeCreateRequestInvalid, message: err.Error(), cause: err}

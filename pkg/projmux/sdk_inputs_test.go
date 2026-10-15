@@ -134,9 +134,6 @@ func TestSDKApprovalRefusalCodesDeclared(t *testing.T) {
 		got := approvalRefusal(fmt.Errorf("recovery: %w", tc.err))
 		var r *Refusal
 		wantMessage := fmt.Errorf("recovery: %w", tc.err).Error()
-		if tc.want == CodePermissionProviderUnsupported {
-			wantMessage = "Agent provider does not support approval requests; want claude or codex"
-		}
 		if !errors.As(got, &r) || r.Code != tc.want || !declared[r.Code] || got.Error() != wantMessage {
 			t.Fatalf("%v -> %#v, expected declared %q", tc.err, got, tc.want)
 		}

@@ -257,8 +257,8 @@ func TestCreateAgentSDKRefusalsBeforeTransport(t *testing.T) {
 		if !errors.As(err, &refusal) || refusal.Code != tc.code {
 			t.Fatalf("%+v: %T %v wanted %s", tc.req, err, err, tc.code)
 		}
-		if strings.Contains(err.Error(), "--provider") || strings.Contains(err.Error(), "--profile") || strings.Contains(err.Error(), "--effort") {
-			t.Fatalf("argv leaked: %s", err)
+		if strings.Contains(err.Error(), "CreateAgentRequest.Provider") || strings.Contains(err.Error(), "CreateAgentRequest.Profile") || strings.Contains(err.Error(), "CreateAgentRequest.Effort") {
+			t.Fatalf("CLI refusal was rewritten: %s", err)
 		}
 		if after := projectRegistryBytes(t, state); after != before {
 			t.Fatalf("refusal changed Registry")
@@ -461,7 +461,7 @@ func TestCreateAgentSDKInstructionsRefusalPreservesCause(t *testing.T) {
 	if !errors.As(e, &refusal) || refusal.Code != projmux.CodeInstructionsProviderUnsupported || !errors.As(e, &cause) || cause.Reason != persona.ReasonProviderUnsupported || cause.Name != "reviewer" {
 		t.Fatalf("untyped cause: %T %v", e, e)
 	}
-	if strings.Contains(e.Error(), "--instructions") || !strings.Contains(e.Error(), "CreateAgentRequest.Instructions") {
+	if !strings.Contains(e.Error(), "--instructions") || strings.Contains(e.Error(), "CreateAgentRequest.Instructions") {
 		t.Fatal(e)
 	}
 	if projectRegistryBytes(t, state) != before {
