@@ -64,7 +64,7 @@ func (c *aiCommand) PlanProcessCodexCommand(workspace coremetadata.AgentWorkspac
 	if path == "" {
 		return processhost.Command{}, fmt.Errorf("%s", c.missingAgentRunnerMessage(aiModeCodex))
 	}
-	return processhost.CodexCommand(path, workspace.CWD, os.Environ(), nil)
+	return processhost.CodexCommand(path, workspace.CWD, c.processCreateEnvironment(), nil)
 }
 
 func (c *createCommand) prepareProcessCodexLaunch(plan *processAgentCreatePlan) error {
@@ -100,7 +100,7 @@ func (c *createCommand) newProcessCreateControl(result processAgentCreateResult)
 	if result.codexEndpoint == nil {
 		return processCreateControl{}, errors.New("process Codex endpoint is unavailable")
 	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.processCreatePaths()
 	if err != nil {
 		return processCreateControl{}, err
 	}
@@ -126,8 +126,8 @@ func (c *createCommand) newProcessCreateControl(result processAgentCreateResult)
 		return processCreateControl{}, err
 	}
 	control := &codexProcessControl{questionAnswering: func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }, endpoint: result.codexEndpoint, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
-		questionWindow: time.Duration(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
-		approvalWindow: time.Duration(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
+		questionWindow: c.processCreateQuestionWindow(paths),
+		approvalWindow: c.processCreateApprovalWindow(paths),
 		attention:      &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}
 	processQuestionCallbacks.Store(result.Binding, processQuestionCallback(control.exactQuestions))
 	return processCreateControl{sync: control.sync, syncControls: control.syncControls, attention: control.attention}, nil

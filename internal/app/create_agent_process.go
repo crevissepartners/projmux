@@ -6,11 +6,9 @@ import (
 	"fmt"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -28,20 +26,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-// Typed callers and the CLI share this validated request. It contains no argv
-// parser, output selection, terminal handle, or inferred runtime authority.
-type processAgentCreateOptions struct {
-	Project, Window selector.Ref
-	// NewWindow requests shell-free creation. A matching Window reference ensures
-	// an existing exact name; an absent Window reference always creates a new one.
-	NewWindow                                                          *coremetadata.BootstrapWindow
-	Provider, Name, CWD, Model, Effort, Instructions, Profile, Persona string
-	// Creator is the bare Agent UID validated by parseResourceCreateFlags.
-	Creator          string
-	Payload, AddDirs []string
-	Labels           map[string]string
-}
-
+// The CLI and SDK use the same validated, owned creation request.
+type processAgentCreateOptions = mutationruntime.ProcessAgentCreateOptions
 type processAgentCreateRequest struct{ options processAgentCreateOptions }
 
 // Owner lifetime, actual Wait and plain user turns are shared; answer writers
@@ -75,68 +61,8 @@ type processAgentCreateResult struct {
 }
 
 func newProcessAgentCreateRequest(opts processAgentCreateOptions) (processAgentCreateRequest, error) {
-	if err := validateProcessCreateRef(opts.Project, coremetadata.KindProject); err != nil {
-		return processAgentCreateRequest{}, err
-	}
-	if err := validateProcessCreateRef(opts.Window, coremetadata.KindWindow); err != nil {
-		return processAgentCreateRequest{}, err
-	}
-	if opts.Project == (selector.Ref{}) && opts.Window == (selector.Ref{}) {
-		return processAgentCreateRequest{}, usageError("create agent --host process requires an exact Project or Window scope")
-	}
-	if opts.NewWindow != nil {
-		if opts.Project == (selector.Ref{}) || opts.Window.UID != "" || (opts.Window.Name != "" && opts.Window.Name != opts.NewWindow.Name) {
-			return processAgentCreateRequest{}, usageError("process-create-window-scope-invalid: a new Window requires an exact Project and a matching Window name")
-		}
-		if opts.NewWindow.Name != "" {
-			if err := coremetadata.ValidateName(opts.NewWindow.Name); err != nil {
-				return processAgentCreateRequest{}, MapMetadataError(err)
-			}
-		}
-		window := *opts.NewWindow
-		window.Labels = maps.Clone(window.Labels)
-		window.Panes = nil
-		opts.NewWindow = &window
-	}
-	if opts.Name != "" {
-		if err := coremetadata.ValidateName(opts.Name); err != nil {
-			return processAgentCreateRequest{}, MapMetadataError(err)
-		}
-	}
-	if opts.Instructions != "" && opts.Persona != "" {
-		return processAgentCreateRequest{}, usageError("create agent accepts only one of --instructions and --persona")
-	}
-	if opts.Provider != "" && !slices.Contains([]string{aiModeClaude, aiModeCodex, aiModeAntigravity}, opts.Provider) {
-		return processAgentCreateRequest{}, usageError("create agent: unknown Agent provider")
-	}
-	// This typed seam receives a normalized UID, not argv syntax. Reject an
-	// old in-process caller's uid: prefix without parsing it a second time.
-	if opts.Creator != "" && (strings.TrimSpace(opts.Creator) != opts.Creator || strings.ContainsAny(opts.Creator, ":/ \t\r\n")) {
-		return processAgentCreateRequest{}, usageError("create agent process-creator-uid-invalid: expected a bare Agent UID; nothing was created")
-	}
-	opts.Payload, opts.AddDirs, opts.Labels = slices.Clone(opts.Payload), slices.Clone(opts.AddDirs), maps.Clone(opts.Labels)
-	return processAgentCreateRequest{options: opts}, nil
-}
-
-func validateProcessCreateRef(ref selector.Ref, kind coremetadata.Kind) error {
-	if ref == (selector.Ref{}) {
-		return nil
-	}
-	if ref.Kind != kind || (ref.UID == "") == (ref.Name == "") {
-		return usageError(fmt.Sprintf("create agent: %s requires one typed name or UID reference", kind))
-	}
-	raw := ref.Name
-	if ref.UID != "" {
-		raw = selector.UIDPrefix + ref.UID
-	}
-	parsed, err := selector.ParseRef(kind, raw)
-	if err != nil {
-		return MapMetadataError(err)
-	}
-	if parsed.UID != ref.UID || parsed.Name != ref.Name {
-		return usageError(fmt.Sprintf("create agent: %s typed reference changes meaning when parsed", kind))
-	}
-	return nil
+	req, err := mutationruntime.NewProcessAgentCreateRequest(opts)
+	return processAgentCreateRequest{options: req.Options}, err
 }
 
 type processClaudeLaunchOptions struct{ Model, Effort, InstructionsFile, SettingsFile string }
@@ -160,7 +86,7 @@ func (c *aiCommand) PlanProcessClaudeCommand(workspace coremetadata.AgentWorkspa
 	resolved := append(claudeLaunchOptionArgs(opts.Model, opts.Effort, opts.InstructionsFile), claudeSettingsArgs(opts.SettingsFile)...)
 	resolved = append(resolved, "--permission-mode", processClaudePermissionMode)
 	resolved = append(resolved, args...)
-	env := append([]string{}, os.Environ()...)
+	env := c.processCreateEnvironment()
 	prepend := filepath.Dir(path)
 	hasPath := false
 	for i, value := range env {
@@ -216,12 +142,16 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	if notice := plan.flags.projectLinks.project.notice(result.Created.name); notice != "" {
 		result.Notices = append(result.Notices, notice)
 	}
-	executable, err := os.Executable()
+	executable, err := c.processCreateExecutable()
+	if err != nil {
+		return result, err
+	}
+	supervisorEnv, err := c.processCreateSupervisorEnvironment(plan.command.Env, result.Binding, path)
 	if err != nil {
 		return result, err
 	}
 	transactions := c.processCreateTransactions(path)
-	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.command.Env}, transactions, processhost.DefaultLimits())
+	host, err := processhost.NewHost(result.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: supervisorEnv}, transactions, processhost.DefaultLimits())
 	if err != nil {
 		return result, err
 	}
@@ -307,7 +237,7 @@ func (c *createCommand) prepareProcessCreateLaunch(plan *processAgentCreatePlan,
 		return err
 	}
 	if flags.persona != "" {
-		launch, err := c.preparePersonaLaunch(canonicalCreateAgent, flags.persona, flags.personaOption)
+		launch, err := c.prepareProcessPersona(flags.persona, flags.personaOption)
 		if err != nil {
 			return err
 		}
@@ -341,61 +271,7 @@ func (c *createCommand) prepareProcessCreateLaunch(plan *processAgentCreatePlan,
 }
 
 func resolveProcessCreateScope(reg coremetadata.Registry, opts processAgentCreateOptions) (coremetadata.Project, coremetadata.Window, error) {
-	var project coremetadata.Project
-	query := selector.Query{}
-	if opts.NewWindow != nil {
-		matches, err := selector.New(reg).ResolveProjects(selector.Query{Project: &opts.Project})
-		if err != nil {
-			return project, coremetadata.Window{}, err
-		}
-		if len(matches.Matches) != 1 {
-			return project, coremetadata.Window{}, usageError("process creation requires exactly one Project")
-		}
-		found, _ := reg.Project(matches.Matches[0].UID)
-		project = *found
-		if opts.Window.Name != "" {
-			for _, window := range reg.WindowsOf(project.Metadata.UID) {
-				if window.Metadata.Name == opts.Window.Name {
-					return project, window, nil
-				}
-			}
-		}
-		return project, coremetadata.Window{Metadata: coremetadata.ObjectMeta{Name: opts.NewWindow.Name}}, nil
-	}
-	if opts.Project != (selector.Ref{}) {
-		query.Project = &opts.Project
-	}
-	if opts.Window != (selector.Ref{}) {
-		query.Windows = []selector.Ref{opts.Window}
-	} else {
-		matches, err := selector.New(reg).ResolveProjects(query)
-		if err != nil {
-			return project, coremetadata.Window{}, err
-		}
-		if len(matches.Matches) != 1 {
-			return project, coremetadata.Window{}, usageError("process creation requires exactly one Project")
-		}
-		found, _ := reg.Project(matches.Matches[0].UID)
-		project = *found
-		ref, err := primaryWindowRef(reg, project, "create agent", "--host process")
-		if err != nil {
-			return project, coremetadata.Window{}, err
-		}
-		query.Windows = []selector.Ref{ref}
-	}
-	matches, err := selector.New(reg).ResolveWindows(query)
-	if err != nil {
-		return project, coremetadata.Window{}, err
-	}
-	if len(matches.Matches) != 1 {
-		return project, coremetadata.Window{}, usageError("process creation requires exactly one Window")
-	}
-	window, _ := reg.Window(matches.Matches[0].UID)
-	owner, ok := reg.Project(window.Metadata.OwnerUID())
-	if !ok {
-		return project, coremetadata.Window{}, errors.New("process Window owner is unavailable")
-	}
-	return *owner, *window, nil
+	return mutationruntime.ResolveProcessCreateScope(reg, opts)
 }
 
 func (c *createCommand) reserveProcessAgent(ctx context.Context, plan processAgentCreatePlan, opts processAgentCreateOptions, operation, generation string) (processAgentCreateResult, error) {
@@ -832,7 +708,14 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 }
 
 func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) error {
-	if result.Handle != nil {
+	unstarted := result.Handle == nil
+	switch handle := result.Handle.(type) {
+	case *processhost.Handle:
+		unstarted = handle != nil && handle.ProviderStartRejected(result.Binding)
+	case *processhost.CodexHandle:
+		unstarted = handle.ProviderStartRejected(result.Binding)
+	}
+	if !unstarted {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if _, err := result.waitProcessAgent(ctx, nil); err != nil {
@@ -847,12 +730,32 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 		if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(result.Binding) {
 			return processhost.ErrStale
 		}
-		if result.Handle != nil && (!pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil) {
+		agent, exists := reg.Agent(result.Binding.Agent)
+		if unstarted {
+			// A rejected Start can remove only this untouched reservation. A
+			// concurrent activation, conversation or receipt remains protected.
+			record := pane.Status.ProcessSession
+			window, windowExists := reg.Window(result.Binding.Window)
+			_, projectExists := reg.Project(result.Binding.Project)
+			if !exists || !windowExists || !projectExists || window.Metadata.OwnerUID() != result.Binding.Project || agent.Metadata.OwnerUID() != result.Binding.Window ||
+				agent.Status.PaneRef != result.Binding.Pane || pane.Metadata.OwnerUID() != result.Binding.Agent || len(reg.PanesOf(result.Binding.Agent)) != 1 ||
+				pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || record.Provider != agent.Spec.Provider ||
+				agent.Status.Phase != coremetadata.PhasePending || !agent.Status.Activation.IsZero() || !pane.Status.Activation.IsZero() ||
+				agent.Status.SessionRef != nil || agent.Status.LastTermination != nil || pane.Status.LastTermination != nil ||
+				record.SessionID != "" || record.ThreadID != "" || record.ConnectionID != "" || record.TurnID != "" || record.History != nil || len(record.Pending) != 0 {
+				return processhost.ErrStale
+			}
+			for _, other := range reg.Agents {
+				if other.Metadata.UID != result.Binding.Agent && other.Status.PaneRef == result.Binding.Pane {
+					return processhost.ErrStale
+				}
+			}
+		} else if !pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil {
 			return processhost.ErrStale
 		}
-		if agent, ok := reg.Agent(result.Binding.Agent); ok && coremetadata.AgentProtected(*agent) {
+		if exists && coremetadata.AgentProtected(*agent) {
 			retained = coremetadata.AgentProtectionError(*agent)
-			if result.Handle == nil {
+			if unstarted {
 				// No provider was spawned. Keep the reservation Offline without inventing
 				// a supervisor Wait receipt for a process that never existed.
 				agent.Status.Phase = coremetadata.PhaseOffline
@@ -983,7 +886,7 @@ func (c *createCommand) failProcessCreate(result *processAgentCreateResult, caus
 }
 
 func (c *createCommand) runProcessPostCreate(ctx context.Context, result processAgentCreateResult, stderr io.Writer) error {
-	runner := defaultLifecycleHookRunner()
+	runner := c.processCreateHookRunner()
 	if runner == nil {
 		return nil
 	}
@@ -1006,7 +909,7 @@ func (c *createCommand) newProcessClaudeControl(result processAgentCreateResult)
 	if !ok {
 		return nil, errors.New("process Claude handle is unavailable")
 	}
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	paths, err := c.processCreatePaths()
 	if err != nil {
 		return nil, err
 	}
@@ -1016,7 +919,7 @@ func (c *createCommand) newProcessClaudeControl(result processAgentCreateResult)
 		return nil, err
 	}
 	control := &claudeProcessControl{questionAnswering: func() config.AgentQuestionAnswering { return questionAnsweringFromPaths(paths) }, handle: handle, binding: result.Binding, questions: agentquestion.NewStore(paths.StateDir), approvals: agentapproval.NewStore(paths.StateDir), now: time.Now,
-		questionWindow: time.Duration(loadCentralAgentQuestionWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second, approvalWindow: time.Duration(loadCentralAgentApprovalWindowSeconds(c.homeDir, c.lookupEnv)) * time.Second,
+		questionWindow: c.processCreateQuestionWindow(paths), approvalWindow: c.processCreateApprovalWindow(paths),
 		attention: &processAttentionProjection{store: attention, queue: notify.NewDefaultStore(paths)}}
 	processQuestionCallbacks.Store(result.Binding, processQuestionCallback(control.exactQuestions))
 	return control, nil

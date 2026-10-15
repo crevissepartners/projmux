@@ -131,6 +131,7 @@ type cloneSeamPanes struct{ canonicalPaneCreator }
 func fullyWiredAICommandFixture(t *testing.T) *aiCommand {
 	t.Helper()
 	c := &aiCommand{
+		processCreateContext:   &mutationruntime.ProcessCreateContext{},
 		nativeObserverPaths:    &mutationruntime.NativeObserverPaths{},
 		nativePicker:           &cloneSeamPicker{},
 		executable:             func() (string, error) { return "orig-executable", nil },

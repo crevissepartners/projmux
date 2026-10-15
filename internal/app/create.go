@@ -89,6 +89,7 @@ type quietAgentLaunchPreflight interface {
 //   - The provider shortcuts carry the provider in the command name, so passing
 //     `--provider` as well is a usage error rather than a silent winner.
 type createCommand struct {
+	processCreateContext *mutationruntime.ProcessCreateContext
 	// processRuntime is invocation-scoped; nil preserves the tmux-only routes.
 	processRuntime *processPaneRuntime
 	// notify is a parity-forwarder seam. It keeps the canonical resource

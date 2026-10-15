@@ -2,6 +2,7 @@ package projmux
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -26,10 +27,33 @@ const (
 	CodeProfileRoleProfileInvalid     Code = "profile-role-profile-invalid"
 )
 
-// CreateAgent uses the CLI's shared tmux transaction and activation observer.
-// An activation-unconfirmed error returns the committed resources with the
-// error. Context cancellation only prevents admission; admitted work completes.
+// CreateProcessError is the typed startup/rollback cause of a process Refusal.
+// Binding and Owner retain exact recovery references even when no resource
+// projection was committed. Unwrap preserves cancellation and filesystem causes.
+type CreateProcessError struct {
+	Code    Code
+	Binding core.ProcessBinding
+	Owner   core.ProcessIdentity
+	message string
+	cause   error
+}
+
+func (e *CreateProcessError) Error() string { return e.message }
+func (e *CreateProcessError) Unwrap() error { return e.cause }
+
+// CreateAgent uses the shared tmux transaction or explicit detached process
+// startup/commit executor. Successful detached owners outlive this request.
+// For tmux, cancellation prevents admission; admitted work completes. A tmux
+// activation-unconfirmed error returns the committed resources with the error.
+// Process startup observes cancellation and rolls back its owned birth. After
+// a successful detached return, cancellation does not stop the independent owner.
 func (c *Client) CreateAgent(ctx context.Context, req core.CreateAgentRequest) (core.CreateAgentResult, error) {
+	if req.Host == "process" {
+		return c.createProcessAgent(ctx, req)
+	}
+	if (req.Host != "" && req.Host != "tmux") || req.Detach {
+		return core.CreateAgentResult{}, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest requires tmux or explicit process with Detach"}
+	}
 	return c.createAgent(ctx, req, tmux.ExecRunner{})
 }
 func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, runner mutationruntime.TmuxCommandRunner) (core.CreateAgentResult, error) {
@@ -188,4 +212,63 @@ func createFirstResult(rows []mutationruntime.ShellCreateResource) (mutationrunt
 		return mutationruntime.ShellCreateResource{}, &Refusal{Code: CodeCreateExecutionFailed, message: "shared create execution returned no resource"}
 	}
 	return rows[0], nil
+}
+
+func (c *Client) createProcessAgent(ctx context.Context, req core.CreateAgentRequest) (core.CreateAgentResult, error) {
+	var result core.CreateAgentResult
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if !req.Detach || req.Pane != "" || req.Placement != "" || (req.CwdFrom != "" && req.CwdFrom != "project") || req.InteractiveOnly || req.DialogueReplyOnly {
+		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest process requires Detach and does not support tmux placement, Pane, or alternate launch lanes"}
+	}
+	if req.Provider != "" && req.Provider != "claude" && req.Provider != "codex" {
+		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest process supports Claude or Codex"}
+	}
+	scope, labels, _, err := c.createInputs(ctx, "CreateAgentRequest", req.Project, req.Name, req.Labels, req.SocketPath)
+	if err != nil {
+		return result, err
+	}
+	window, err := selector.ParseRef(metadata.KindWindow, req.Window)
+	if err != nil {
+		return result, resourceRefusal(selectorInputError(err, "CreateAgentRequest.Window"))
+	}
+	creator := ""
+	if req.Creator != "" {
+		var ok bool
+		creator, ok = strings.CutPrefix(req.Creator, "uid:")
+		if !ok || creator == "" || strings.TrimSpace(creator) != creator || strings.ContainsAny(creator, ":/ \t\r\n") {
+			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Creator must be an exact Agent reference uid:<agent>"}
+		}
+	}
+	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, Payload: req.Payload, AddDirs: req.AddDirs, Labels: labels}
+	reply, err := mutationruntime.ExecuteDetachedProcessCreate(ctx, c.processCreateContext, options)
+	if reply.Binding.Agent != "" {
+		_ = unregisterCopy(metadata.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &result.Binding)
+	}
+	if reply.Result != nil {
+		var agent core.Agent
+		if copyErr := unregisterCopy(reply.Result.Agent, &agent); copyErr != nil {
+			return result, copyErr
+		}
+		result.Agent = agent
+		result.Projection = core.ResourceList{APIVersion: metadata.APIVersion, Kind: "AgentList", Items: []core.Resource{agent}}
+		result.Notices = reply.Result.Notices
+		if copyErr := unregisterCopy(reply.Result.Receipt, &result.Receipt); copyErr != nil {
+			return result, copyErr
+		}
+	}
+	if err != nil {
+		var failure *mutationruntime.ProcessCreateFailure
+		if errors.As(err, &failure) {
+			var owner core.ProcessIdentity
+			if copyErr := unregisterCopy(failure.Owner, &owner); copyErr != nil {
+				return result, copyErr
+			}
+			detail := &CreateProcessError{Code: Code(failure.Code), Binding: result.Binding, Owner: owner, message: err.Error(), cause: err}
+			return result, &Refusal{Code: Code(failure.Code), AgentUID: failure.Binding.Agent, message: err.Error(), cause: detail}
+		}
+		return result, createRefusal(err, "CreateAgentRequest")
+	}
+	return result, nil
 }

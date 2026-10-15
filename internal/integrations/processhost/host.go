@@ -172,6 +172,8 @@ type Handle struct {
 	done                   chan struct{}
 	statusDone             chan struct{}
 	spawnErr               error
+	providerStartRejected  bool
+	completionSucceeded    bool
 	stopOnce               sync.Once
 	ownerStopped           bool
 	adapter                providerAdapter
@@ -484,6 +486,8 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	decoder := json.NewDecoder(io.LimitReader(r, 16384))
 	var status processStatus
 	err := decoder.Decode(&status)
+	// Only the owned supervisor's complete Start rejection proves no provider birth.
+	startRejected := err == nil && status.Error != "" && status.PID == 0 && status.Exit == nil && !status.Prepared
 	if err == nil && status.Error != "" {
 		err = errors.New(status.Error)
 	}
@@ -492,6 +496,7 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 	}
 	p.mu.Lock()
 	p.pid = status.PID
+	p.providerStartRejected = startRejected
 	p.changedLocked()
 	p.mu.Unlock()
 	first <- err
@@ -555,16 +560,19 @@ func (p *Handle) readStatus(cmd *exec.Cmd, r, stdout, stderr *os.File, first cha
 }
 
 func (p *Handle) finish() {
+	completionSucceeded := true
 	p.mu.Lock()
 	p.stopMessageReservationTimerLocked()
 	p.mu.Unlock()
 	if completion := p.launch.Completion; completion != nil && completion.Cleanup != nil {
+		completionSucceeded = false
 		ctx, cancel := context.WithTimeout(p.completionContext, p.host.limits.Write)
 		result := make(chan error, 1)
 		go func() { result <- completion.Cleanup(ctx) }()
 		var cleanupErr error
 		select {
 		case cleanupErr = <-result:
+			completionSucceeded = cleanupErr == nil && ctx.Err() == nil
 		case <-ctx.Done():
 			cleanupErr = ctx.Err()
 		}
@@ -580,12 +588,39 @@ func (p *Handle) finish() {
 		}
 	}
 
+	p.mu.Lock()
+	p.completionSucceeded = completionSucceeded
+	p.mu.Unlock()
+
 	p.host.mu.Lock()
 	if p.host.panes[p.launch.Binding.Pane] == p {
 		delete(p.host.panes, p.launch.Binding.Pane)
 	}
 	p.host.mu.Unlock()
 	close(p.done)
+}
+
+// ProviderStartRejected proves a child-free, fully reclaimed launch failure.
+// It never turns missing/partial status or a failed completion into evidence,
+// and it does not manufacture provider Wait or termination records.
+func (p *Handle) ProviderStartRejected(binding Binding) bool {
+	if binding != p.launch.Binding {
+		return false
+	}
+	select {
+	case <-p.done:
+	default:
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.providerStartRejected && p.completionSucceeded && p.pid == 0 && p.exit == nil && p.supervisorPID > 0
+}
+
+// ProviderStartRejected delegates to the same owned Handle proof; the wrapper
+// cannot independently certify provider birth or completion cleanup.
+func (c *CodexHandle) ProviderStartRejected(binding Binding) bool {
+	return c != nil && c.handle != nil && c.handle.ProviderStartRejected(binding)
 }
 
 func (p *Handle) stop() { p.stopWithIntent(false) }

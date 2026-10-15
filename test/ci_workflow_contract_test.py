@@ -346,7 +346,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         job = workflow_job(workflow, "process-host-cli")
         self.assertIn("    name: Process Host CLI Tests", job)
         self.assertIn("    runs-on: ubuntu-latest", job)
-        self.assertIn("    timeout-minutes: 10", job)
+        self.assertIn("    timeout-minutes: 15", job)
         self.assertIn("go-version-file: go.mod", job)
         self.assertNotIn("continue-on-error:", job)
         self.assertNotRegex(job, r"(?m)^\s+if:")

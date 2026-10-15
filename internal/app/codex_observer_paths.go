@@ -64,6 +64,9 @@ func (c *aiCommand) observerGlobalConfig() (hooks.ProjectConfig, error) {
 // explicit inputs are handled too: they must not fall back to a default journal.
 // This is hidden CLI plumbing, not a public SDK operation.
 func NativeObservationStateDir(args []string) (stateDir string, explicit bool, err error) {
+	if state, explicit, err := processCreateObservationStateDir(args); explicit {
+		return state, explicit, err
+	}
 	if len(args) >= 4 && args[0] == "internal" && args[1] == "agent-hook" && args[2] == "ingest" && args[3] == codexNativeLifecycleIngestRoute {
 		explicit = nativeObserverPathFlagsPresent(args[4:])
 		if !explicit {

@@ -92,10 +92,6 @@ func uidRef(kind coremetadata.Kind, uid string) selector.Ref {
 	return mutationruntime.UIDRef(kind, uid)
 }
 
-func primaryWindowRef(registry coremetadata.Registry, project coremetadata.Project, spelling, spelled string) (selector.Ref, error) {
-	return mutationruntime.PrimaryWindowRef(registry, project, spelling, spelled)
-}
-
 func (c *createCommand) resolveProject(registry coremetadata.Registry, scope createScope) (coremetadata.Project, error) {
 	return c.createExecution().ResolveProject(registry, scope.shared())
 }

@@ -66,6 +66,16 @@ func Run(args []string, stdout, stderr io.Writer) error {
 // RunWithLifecycleDiagnostics executes one CLI invocation with the shared
 // process recorder used by runtime lifecycle operations.
 func RunWithLifecycleDiagnostics(args []string, stdout, stderr io.Writer, recorder *diagnostics.LifecycleRecorder) error {
+	if _, handled, err := processCreateSupervisorDomain(args, os.LookupEnv, processCreateSupervisorPipe); handled {
+		finish := recorder.BeginCommand()
+		if err != nil {
+			finish(err)
+			return err
+		}
+		err = (&processHostSupervisorCommand{}).Run(args[2:], stdout, stderr)
+		finish(err)
+		return err
+	}
 	if recorder == nil {
 		return New().Run(args, stdout, stderr)
 	}

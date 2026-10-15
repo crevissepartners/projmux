@@ -26,9 +26,9 @@ and humans run the same entrypoints.
   and any failure fail the target. Verbose PASS lines and a final count summary
   prove execution. The Linux `Process Host CLI Tests` job runs this target
   behind aggregate `Test`, separately from the five required job names.
-  Build has a 180-second bound and Go tests have a 180-second timeout; the
-  test subprocess has 240 seconds to include compilation and preserve Go
-  timeout diagnostics. The job has 10 minutes.
+  Build has a 180-second bound and precompilation has a 120-second bound.
+  Go package tests have a 420-second timeout; the test subprocess has 480
+  seconds to preserve Go timeout diagnostics. The job has 15 minutes.
   To run it manually, use `make test-process-host-cli` (or
   `make test-process-host-cli GO=/path/to/go` for a local toolchain matching
   go.mod). The real-tmux window rename test remains in its existing unit and

@@ -242,6 +242,9 @@ func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {
 // with a fake HOME or XDG_CONFIG_HOME prepared. Without either it returns the
 // missing-HOME reason, never a path relative to the working directory.
 func (c *aiCommand) aiConfigPaths() (config.Paths, error) {
+	if c.processCreateContext != nil {
+		return c.processCreateContext.Paths, nil
+	}
 	configHome, err := config.ResolveConfigHome("", c.env("XDG_CONFIG_HOME"))
 	if err != nil {
 		homeDir := c.homeDir
