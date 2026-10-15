@@ -336,6 +336,11 @@ func TestDetachedProcessResumeTranscriptCLI(t *testing.T) {
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			f := processResumeCLIFixture(t, provider)
+			diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+			if provider == "claude" {
+				diagnostic.paths = []string{f.store.Path()}
+			}
+			defer diagnostic.beforeCleanup()
 			t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(f.root, ".claude"))
 			scriptPath := filepath.Join(f.root, "provider.py")
 			conversation := "process-session"

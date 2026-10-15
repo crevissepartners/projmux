@@ -634,9 +634,15 @@ func TestClaudeProcessTimeoutAndDisconnectNeverAutoAllow(t *testing.T) {
 }
 
 func TestClaudeProcessBidirectionalEndpointReceiptsAndStaleWireZero(t *testing.T) {
+	diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+	defer diagnostic.beforeCleanup()
 	left := newProcessClaudeFixture(t, nil)
+	diagnostic.units = append(diagnostic.units, left)
+	diagnostic.paths = []string{left.path}
 	leftProof := left.proof(t)
 	right := newProcessClaudeFixtureAt(t, nil, left.path)
+	diagnostic.units = append(diagnostic.units, right)
+	diagnostic.paths = []string{left.path}
 	rightProof := right.proof(t)
 	left.turn(t, "first", "ordinary")
 	left.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
@@ -835,9 +841,15 @@ func TestClaudeProcessTurnResultRestartsAnEndedHeldRelease(t *testing.T) {
 }
 
 func TestClaudeProcessEndpointBusyAndForgedHelperWriteZero(t *testing.T) {
+	diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+	defer diagnostic.beforeCleanup()
 	source := newProcessClaudeFixture(t, nil)
+	diagnostic.units = append(diagnostic.units, source)
+	diagnostic.paths = []string{source.path}
 	sourceProof := source.proof(t)
 	target := newProcessClaudeFixtureAt(t, nil, source.path)
+	diagnostic.units = append(diagnostic.units, target)
+	diagnostic.paths = []string{source.path}
 	targetProof := target.proof(t)
 	source.turn(t, "first", "ordinary")
 	source.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" })
