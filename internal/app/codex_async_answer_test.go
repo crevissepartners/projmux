@@ -437,3 +437,30 @@ func TestAsyncAnswerMultiplePromptsStayInOneOperatorInput(t *testing.T) {
 		t.Fatal("multi input count", answers)
 	}
 }
+
+func TestAsyncAnswerAcceptedButLostSettlementStaysUnknown(t *testing.T) {
+	f, client, id := newAsyncAnswerFixture(t, true, "prune")
+	b := f.endpoint.binding
+	result, err := client.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "uid:" + b.Agent, QuestionID: id, Selections: []core.QuestionSelection{{Question: 1, Text: ptr("explicit")}}})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeQuestionDeliveryUnknown || result.QuestionID != id || result.Delivery != "async" || result.Outcome != "unknown" {
+		t.Fatal(result, err)
+	}
+	snap, err := f.endpoint.handle.Observe(b)
+	if err != nil || snap.State != "ready" || !snap.AsyncQuestions[0].Closed {
+		t.Fatal("settle failure reopened or stopped provider", snap, err)
+	}
+	list, err := client.ListQuestions(context.Background(), "uid:"+b.Agent)
+	if err != nil || len(list.Questions) != 0 {
+		t.Fatal("pruned claim recreated", list, err)
+	}
+	before, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	_, err = client.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "uid:" + b.Agent, QuestionID: id, Selections: []core.QuestionSelection{{Question: 1, Text: ptr("retry")}}})
+	if err == nil {
+		t.Fatal("lost settlement resubmitted")
+	}
+	after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("lost settlement wrote twice")
+	}
+}

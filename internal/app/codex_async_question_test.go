@@ -116,6 +116,9 @@ for line in sys.stdin:
  elif method=='turn/steer':
   if BEHAVIOR=='lost': sys.exit(0)
   elif BEHAVIOR=='refused': emit({'id':m['id'],'error':{'code':-32000,'message':'fixture refusal'}})
+  elif BEHAVIOR=='prune':
+   os.unlink(os.path.join(os.getcwd(),'state','projmux','agent-questions','.async','questions.json'))
+   reply({})
   else: reply({})
  elif method=='turn/start':
   count+=1
