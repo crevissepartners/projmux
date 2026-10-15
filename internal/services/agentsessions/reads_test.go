@@ -15,7 +15,9 @@ import (
 func TestReadAdmissionAndProviderRefusal(t *testing.T) {
 	root := t.TempDir()
 	registry := metadata.NewRegistry()
-	registry.Agents = []metadata.Agent{{Metadata: metadata.ObjectMeta{UID: "agent-shell", Name: "shell"}, Spec: metadata.AgentSpec{Provider: "shell"}}}
+	registry.Projects = []metadata.Project{{Metadata: metadata.ObjectMeta{UID: "project-test", Name: "test"}}}
+	registry.Windows = []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "window-test", Name: "test", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindProject, UID: "project-test"}}}}
+	registry.Agents = []metadata.Agent{{Metadata: metadata.ObjectMeta{UID: "agent-shell", Name: "shell", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "window-test"}}, Spec: metadata.AgentSpec{Provider: "shell"}}}
 	loads, states := 0, 0
 	service := Service{LoadRegistry: func() (metadata.Registry, error) { loads++; return registry, nil }, StateDir: func() (string, error) { states++; return filepath.Join(root, "absent"), nil }}
 	ref, err := selector.ParseRef(metadata.KindAgent, "uid:agent-shell")
@@ -42,7 +44,7 @@ func TestReadAdmissionAndProviderRefusal(t *testing.T) {
 	if loads != 1 || states != 0 {
 		t.Fatal("provider refusal opened history")
 	}
-	registry.Agents = append(registry.Agents, metadata.Agent{Metadata: metadata.ObjectMeta{UID: "agent-second", Name: "shell"}, Spec: metadata.AgentSpec{Provider: "codex"}})
+	registry.Agents = append(registry.Agents, metadata.Agent{Metadata: metadata.ObjectMeta{UID: "agent-second", Name: "shell", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "window-test"}}, Spec: metadata.AgentSpec{Provider: "codex"}})
 	named, _ := selector.ParseRef(metadata.KindAgent, "shell")
 	_, err = service.ListAgent(context.Background(), selector.Query{Agents: []selector.Ref{named}})
 	var failed *resources.Failure
@@ -60,11 +62,13 @@ func TestReadAdmissionAndProviderRefusal(t *testing.T) {
 func TestMissingHistoryEmptyAndProjectUIDBoundary(t *testing.T) {
 	root := t.TempDir()
 	registry := metadata.NewRegistry()
+	registry.Projects = []metadata.Project{{Metadata: metadata.ObjectMeta{UID: "project-test", Name: "test"}}}
+	registry.Windows = []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "window-test", Name: "test", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindProject, UID: "project-test"}}}}
 	uid, err := metadata.NewUID(metadata.KindProject)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := metadata.Agent{Metadata: metadata.ObjectMeta{UID: "agent-empty", Name: "empty"}, Spec: metadata.AgentSpec{Provider: "codex"}}
+	agent := metadata.Agent{Metadata: metadata.ObjectMeta{UID: "agent-empty", Name: "empty", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "window-test"}}, Spec: metadata.AgentSpec{Provider: "codex"}}
 	registry.Agents = []metadata.Agent{agent}
 	service := Service{LoadRegistry: func() (metadata.Registry, error) { return registry, nil }, StateDir: func() (string, error) { return filepath.Join(root, "absent"), nil }}
 	ref, _ := selector.ParseRef(metadata.KindAgent, "uid:agent-empty")
