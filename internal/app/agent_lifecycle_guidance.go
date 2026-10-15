@@ -161,7 +161,7 @@ func processAgentSettingsApplication(provider string, settings agentSettingsLaun
 }
 
 func lifecycleFallbackText(key string) string {
- return LocalizeText(i18n.FallbackLocale, i18n.Key("agent.lifecycle."+key), "")
+	return LocalizeText(i18n.FallbackLocale, i18n.Key("agent.lifecycle."+key), "")
 }
 
 func lifecycleText(key string) string {

@@ -31,8 +31,8 @@ func lifecycleSource(provider, host string) agentApplicationSource {
 	return agentApplicationSource{provider: provider, host: host, settings: agentSettingsLaunch{layered: true, resolution: agentsettings.Resolution{PassModel: true, New: agentsettings.Settings{Profile: agentsettings.ProfileLayer{Name: "role"}, Model: agentsettings.Setting{Value: "actual-model"}, Effort: agentsettings.Setting{Value: "high"}, Instructions: agentsettings.Setting{Value: "lead"}}}}, guidance: agentGuidanceLaunch{active: true}, links: projectLinksLaunch{active: true, project: projectGuidanceLaunch{active: true}}, workspace: coremetadata.AgentWorkspace{CWD: "/fixture/work"}}
 }
 func TestAgentSettingsApplicationProjection(t *testing.T) {
- t.Setenv("HOME", t.TempDir())
- t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LC_ALL", "en_US.UTF-8")
 	for _, host := range []string{"tmux", "process"} {
 		for _, provider := range []string{aiModeClaude, aiModeCodex} {
 			for _, verb := range []string{"resume", "relaunch"} {

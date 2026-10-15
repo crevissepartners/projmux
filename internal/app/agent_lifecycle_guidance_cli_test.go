@@ -48,8 +48,13 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var out, stderr bytes.Buffer
-				cmd.Stdout = &out
+				output, err := cmd.StdoutPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoder := json.NewDecoder(output)
+				var rawOutput json.RawMessage
+				var stderr bytes.Buffer
 				cmd.Stderr = &stderr
 				if err = cmd.Start(); err != nil {
 					t.Fatal(err)
@@ -61,10 +66,23 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 						_ = cmd.Wait()
 					}
 				})
+				// Successful result output is committed only after preparation.
+				// A reservation already has the old conversation and a new
+				// connection, so it is deliberately not the EOF barrier.
+				if err = decoder.Decode(&rawOutput); err != nil {
+					_ = input.Close()
+					_ = cmd.Wait()
+					t.Fatalf("%s success output: %v %s", verb, err, &stderr)
+				}
 				current := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
-					return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != "" && (r.SessionID != "" || r.ThreadID != "")
+					return r.Binding.Generation != old.Binding.Generation
 				})
 				_ = input.Close()
+				var extra json.RawMessage
+				if extraErr := decoder.Decode(&extra); extraErr != io.EOF {
+					_ = cmd.Wait()
+					t.Fatalf("extra JSON stdout: %v %s", extraErr, extra)
+				}
 				if err = cmd.Wait(); err != nil {
 					t.Fatalf("%s Wait: %v %s", verb, err, &stderr)
 				}
@@ -75,8 +93,8 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 					Items               []json.RawMessage         `json:"items"`
 					SettingsApplication *agentSettingsApplication `json:"settingsApplication"`
 				}
-				if err = json.Unmarshal(out.Bytes(), &wire); err != nil || wire.SettingsApplication == nil {
-					t.Fatalf("%s JSON: %v %s", verb, err, &out)
+				if err = json.Unmarshal(rawOutput, &wire); err != nil || wire.SettingsApplication == nil {
+					t.Fatalf("%s JSON: %v %s", verb, err, rawOutput)
 				}
 				if verb == "resume" && len(wire.Items) != 1 {
 					t.Fatal("lost AgentList Items")
@@ -112,8 +130,17 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 			if err = cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
-				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
+			processCLIUntil(t, ctx, func() bool {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					return false
+				}
+				pane, ambiguous := processResumePane(reg, strings.TrimPrefix(first.ref, "uid:"))
+				if ambiguous || pane == nil || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding.Generation == old.Binding.Generation {
+					return false
+				}
+				view, ok := observeProcessHostOwner(reg, f.store.Path(), *pane)
+				return ok && view.State == "ready" && view.Binding.Generation == pane.Status.ProcessSession.Binding.Generation && view.Child.Valid()
 			})
 			_ = input.Close()
 			if err = cmd.Wait(); err != nil || output.Len() != 0 {
