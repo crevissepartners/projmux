@@ -60,7 +60,9 @@
 // path. The SDK uses this binary for supervised shell children and owned
 // internal process launchers, owners and supervisors. It never delegates
 // mutations to public CLI commands. Missing, relative or invalid executables
-// return CodeCreateExecutableInvalid before effects. Delete replacement shells
+// return CodeCreateExecutableInvalid before effects for creation; ResumeAgent
+// and RelaunchAgent return CodeExecutableInvalid instead. The older constant
+// remains exported. Delete replacement shells
 // do not use this supervisor and do not require ProjmuxExecutable.
 // Clients own no processes or goroutines. Concurrent calls are supported, but
 // multi-call transactions and concurrent profile edits are not serialized.

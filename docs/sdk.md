@@ -78,6 +78,15 @@ exposed. The same `Options.ProjmuxExecutable` contract applies. The tmux CLI
 rejects `-o`; the SDK receipt uses its shared operation receipt model.
 
 
+Invalid `Options.ProjmuxExecutable` values in `ResumeAgent` and `RelaunchAgent`
+now return `CodeExecutableInvalid` (`executable-invalid`) before effects, replacing
+their previous `CodeCreateExecutableInvalid` result. Consumers matching those
+errors should update their code checks. `CreateAgent`, `CreateWindow`, and
+`CreatePane` retain `CodeCreateExecutableInvalid` (`create-executable-invalid`);
+the existing constant remains exported. Relaunch dry runs and unchanged plans
+retain their existing behavior without requiring an executable.
+
+
 ## Optional create outcome recording
 
 Set `Options.CreateRecorder` to a `func(projmux.CreateOutcome) error` to receive

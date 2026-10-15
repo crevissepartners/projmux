@@ -175,11 +175,11 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			// Executable and launch prerequisites are checked before Stop, without
 			// preparing snapshots or starting/resuming a provider.
 			if c.projmuxExecutable == "" || !filepath.IsAbs(c.projmuxExecutable) {
-				return &Refusal{Code: CodeCreateExecutableInvalid, message: "Options.ProjmuxExecutable must name an absolute projmux executable"}
+				return &Refusal{Code: CodeExecutableInvalid, message: "Options.ProjmuxExecutable must name an absolute projmux executable"}
 			}
 			info, err := os.Stat(c.projmuxExecutable)
 			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-				return &Refusal{Code: CodeCreateExecutableInvalid, message: "Options.ProjmuxExecutable must name an existing executable file", cause: err}
+				return &Refusal{Code: CodeExecutableInvalid, message: "Options.ProjmuxExecutable must name an existing executable file", cause: err}
 			}
 			execution, transaction := runtime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
 			planner := &runtime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime}
