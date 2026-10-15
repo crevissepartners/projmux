@@ -4,26 +4,30 @@ import "time"
 
 // SessionSource records how a history row was obtained.
 type SessionSource string
+
 const (
- SessionSourceObserved SessionSource = "observed"
- SessionSourceCurrent SessionSource = "current"
- SessionSourceEstimated SessionSource = "estimated"
+	SessionSourceObserved  SessionSource = "observed"
+	SessionSourceCurrent   SessionSource = "current"
+	SessionSourceEstimated SessionSource = "estimated"
 )
+
 // SessionAffiliationBasis records whether affiliation was recorded or resolved.
 type SessionAffiliationBasis string
+
 const (
- SessionAffiliationRecorded SessionAffiliationBasis = "recorded"
- SessionAffiliationRegistry SessionAffiliationBasis = "registry"
+	SessionAffiliationRecorded SessionAffiliationBasis = "recorded"
+	SessionAffiliationRegistry SessionAffiliationBasis = "registry"
 )
+
 // AgentSession is one CLI session history row. TranscriptPath is metadata only;
 // the Codex current/history contract may leave it empty.
 type AgentSession struct {
-	AgentUID       string    `json:"agentUID"`
-	Provider       string    `json:"provider"`
-	SessionID      string    `json:"sessionId"`
-	TranscriptPath string    `json:"transcriptPath"`
-	ObservedAt     time.Time `json:"observedAt"`
-	Source         SessionSource    `json:"source"`
+	AgentUID       string        `json:"agentUID"`
+	Provider       string        `json:"provider"`
+	SessionID      string        `json:"sessionId"`
+	TranscriptPath string        `json:"transcriptPath"`
+	ObservedAt     time.Time     `json:"observedAt"`
+	Source         SessionSource `json:"source"`
 	// LastRecordAt is the timestamp of the transcript's last record. Only an
 	// estimated row carries it (its observedAt is the first record's); an
 	// observed or current row omits the key.
@@ -38,21 +42,23 @@ type AgentSession struct {
 
 // AgentSessionsList matches agent sessions list JSON, including empty arrays.
 type AgentSessionsList struct {
- AgentUID string `json:"agentUID"`
- AgentName string `json:"agentName"`
- Sessions []AgentSession `json:"sessions"`
- CorruptLines int `json:"corruptLines"`
+	AgentUID     string         `json:"agentUID"`
+	AgentName    string         `json:"agentName"`
+	Sessions     []AgentSession `json:"sessions"`
+	CorruptLines int            `json:"corruptLines"`
 }
+
 // ProjectSessionsList matches agent sessions project JSON. An empty ProjectName
 // identifies a removed Project read by exact UID.
 type ProjectSessionsList struct {
- ProjectUID string `json:"projectUID"`
- ProjectName string `json:"projectName"`
- Sessions []ProjectSession `json:"sessions"`
- Unattributed int `json:"unattributed"`
- Ambiguous int `json:"ambiguous"`
- CorruptLines int `json:"corruptLines"`
+	ProjectUID   string           `json:"projectUID"`
+	ProjectName  string           `json:"projectName"`
+	Sessions     []ProjectSession `json:"sessions"`
+	Unattributed int              `json:"unattributed"`
+	Ambiguous    int              `json:"ambiguous"`
+	CorruptLines int              `json:"corruptLines"`
 }
+
 // ProjectSession is one attributed conversation and its participating Agents.
 type ProjectSession struct {
 	Provider       string                `json:"provider"`
@@ -60,7 +66,7 @@ type ProjectSession struct {
 	TranscriptPath string                `json:"transcriptPath"`
 	ObservedAt     time.Time             `json:"observedAt"`
 	LastRecordAt   *time.Time            `json:"lastRecordAt,omitempty"`
-	Source         SessionSource                `json:"source"`
+	Source         SessionSource         `json:"source"`
 	Agents         []ProjectSessionAgent `json:"agents"`
 }
 
@@ -71,7 +77,6 @@ type ProjectSessionAgent struct {
 	WindowUID string `json:"windowUID"`
 	// InRegistry reports whether the Agent exists in the current Registry. A
 	// deleted Agent stays listed through the affiliation its rows recorded.
-	InRegistry bool  `json:"inRegistry"`
+	InRegistry bool                    `json:"inRegistry"`
 	Basis      SessionAffiliationBasis `json:"basis"`
 }
-
