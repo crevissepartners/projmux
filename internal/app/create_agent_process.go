@@ -709,7 +709,10 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 
 func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) error {
 	unstarted := result.Handle == nil
-	if handle, ok := result.Handle.(*processhost.Handle); ok {
+	switch handle := result.Handle.(type) {
+	case *processhost.Handle:
+		unstarted = handle != nil && handle.ProviderStartRejected(result.Binding)
+	case *processhost.CodexHandle:
 		unstarted = handle.ProviderStartRejected(result.Binding)
 	}
 	if !unstarted {

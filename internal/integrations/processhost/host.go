@@ -617,6 +617,12 @@ func (p *Handle) ProviderStartRejected(binding Binding) bool {
 	return p.providerStartRejected && p.completionSucceeded && p.pid == 0 && p.exit == nil && p.supervisorPID > 0
 }
 
+// ProviderStartRejected delegates to the same owned Handle proof; the wrapper
+// cannot independently certify provider birth or completion cleanup.
+func (c *CodexHandle) ProviderStartRejected(binding Binding) bool {
+	return c != nil && c.handle != nil && c.handle.ProviderStartRejected(binding)
+}
+
 func (p *Handle) stop() { p.stopWithIntent(false) }
 
 func (p *Handle) stopWithIntent(ownerInitiated bool) {
