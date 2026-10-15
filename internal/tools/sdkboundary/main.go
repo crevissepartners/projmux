@@ -127,6 +127,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/integrations/agents/claude",
 		module + "/internal/integrations/agents",
 		module + "/internal/services/resources",
+		module + "/internal/services/agentsessions",
 		module + "/internal/services/runtime",
 		module + "/internal/core/runtimediag",
 		module + "/internal/version",
