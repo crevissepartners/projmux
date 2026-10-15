@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -25,6 +26,27 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
+			if provider == aiModeCodex {
+				// This scenario changes the thread model. Use the same settings
+				// protocol as processCodexRelaunchFixture in this isolated fixture.
+				path := filepath.Join(f.root, "codex-provider.py")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Count(string(raw), "turn=0") != 1 || strings.Count(string(raw), "elif method in ('thread/start','thread/resume'):") != 1 {
+					t.Fatal("settings protocol fixture anchors changed")
+				}
+				source := strings.Replace(string(raw), "turn=0", "model='stub-model'\neffort='low'\nsandbox={'type':'readOnly'}\napproval='on-request'\nturn=0", 1)
+				source = strings.Replace(source, "elif method in ('thread/start','thread/resume'):", `elif method=='thread/resume':
+  reply({'thread':{'id':'process-thread'},'model':model,'reasoningEffort':effort,'sandbox':sandbox,'approvalPolicy':approval})
+ elif method=='thread/settings/update':
+  p=n['params'];model=p.get('model',model);effort=p.get('effort',effort);sandbox=p.get('sandboxPolicy',sandbox);approval=p.get('approvalPolicy',approval);reply({})
+ elif method=='thread/start':`, 1)
+				if err = os.WriteFile(path, []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first dialogue"))
@@ -124,18 +146,20 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 				}
 				old = awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			}
-			// none keeps both new warnings out of stdout/stderr, including prompt flags.
+			// none adds no lifecycle guidance, including prompt flag warnings.
+			// Existing owner-stop diagnostics retain their original policy.
 			cmd := exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref, "-o", "none", "--", "exact", "--effort")
 			input, err := cmd.StdinPipe()
 			if err != nil {
 				t.Fatal(err)
 			}
-			var output bytes.Buffer
+			var output, diagnostics bytes.Buffer
 			cmd.Stdout = &output
-			cmd.Stderr = &output
+			cmd.Stderr = &diagnostics
 			if err = cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
+			var noneBinding coremetadata.ProcessBinding
 			processCLIUntil(t, ctx, func() bool {
 				reg, err := f.store.LoadReadOnly()
 				if err != nil {
@@ -146,11 +170,19 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 					return false
 				}
 				view, ok := observeProcessHostOwner(reg, f.store.Path(), *pane)
-				return ok && view.State == "ready" && view.Binding.Generation == pane.Status.ProcessSession.Binding.Generation && view.Child.Valid()
+				ready := ok && view.State == "ready" && view.Binding.Generation == pane.Status.ProcessSession.Binding.Generation && view.Child.Valid()
+				if ready {
+					noneBinding = pane.Status.ProcessSession.Binding
+				}
+				return ready
 			})
 			_ = input.Close()
 			if err = cmd.Wait(); err != nil || output.Len() != 0 {
-				t.Fatalf("none: %v %s", err, &output)
+				t.Fatalf("none: %v stdout=%s stderr=%s", err, &output, &diagnostics)
+			}
+			wantDiagnostic := fmt.Sprintf("agent owner stop: reason=stdin-eof agent=%s pane=uid:%s generation=%s owner_pid=%d owner_ppid=%d parent_comm=%s\n", first.ref, noneBinding.PaneUID, noneBinding.Generation, cmd.Process.Pid, os.Getpid(), processOwnerParentComm(os.Getpid()))
+			if text := diagnostics.String(); text != "" && text != wantDiagnostic {
+				t.Fatalf("none added guidance or changed the existing owner diagnostic: %s", text)
 			}
 		})
 	}
