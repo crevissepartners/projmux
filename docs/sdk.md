@@ -378,3 +378,35 @@ and failure settle through the owned rollback path. Failures retain typed codes
 and `CreateProcessError` causes with exact owner and binding references; a nonzero Binding identifies exact recovery resources when cleanup
 cannot be confirmed. Inspect that generation before using `StopAgent` or `Delete`;
 an uncertain startup must not be automatically retried.
+
+### Relaunch a tmux Agent
+
+`Client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: "uid:..."})` uses the
+CLI's shared restart plan and stop/rebind sequence for an exact Claude or Codex
+Agent. Project and Window optionally scope the explicit reference; no current
+Pane or caller Agent is inferred. Process Agents and host moves are unsupported
+and refused before Stop. Configure explicit Home, Config, State and socket paths,
+and an absolute `Options.ProjmuxExecutable` from the same build.
+
+`Profile` and `Instructions` are pointers: nil leaves the selection unchanged;
+a pointer to `""` selects none. `Reset` contains `instructions`, `model` or
+`effort` and cannot reset an item also explicitly set by the request. Profile,
+instructions, model, effort and reset retain the CLI's layered settings rules.
+A Running Agent with unchanged settings is left alone; an explicit Model always
+restarts it. Offline and Failed Agents resume without Stop.
+
+`DryRun` returns the plan without writes. A busy Running Agent requires
+`Confirm`; this can interrupt its current turn. Cancellation prevents admission.
+After Stop is admitted, rebind or failure recovery finishes independently of
+later caller cancellation. The Agent UID and provider conversation are preserved;
+a committed rebind creates a new Pane/generation. Success acknowledges the
+commit, not provider activation, a model response or terminal rendering.
+
+Inspect the result even when the call fails: `Stop` and `Resume` retain their
+receipts, `Outcome` distinguishes a failed Stop from failed resume, and `Recovery`
+names the exact target. A failed Stop is observed as alive, closed or unknown;
+closed can continue with a notice, while alive and unknown refuse success.
+Typed `*projmux.Refusal` codes and wrapped causes distinguish those results.
+Native Codex uses its existing same-thread settings-update/verification protocol;
+it never creates a new thread or turn as fallback. Do not automatically replay
+an uncertain operation or a recovery command.

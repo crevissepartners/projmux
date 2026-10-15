@@ -70,6 +70,7 @@ Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusa
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.RegisterAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
+Client.RelaunchAgent	Public v0 exact tmux Agent relaunch entrypoint; shared CLI/SDK plan, native fixture, failure recovery and external consumer tests cover this path.
 Client.RemoveAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.

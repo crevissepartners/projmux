@@ -3,18 +3,22 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	configpkg "github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -328,7 +332,8 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				_ = server.Process.Kill()
-				_ = server.Wait()
+				waitErr := server.Wait()
+				t.Logf("owned protocol server pid=%d Wait returned: %v", server.Process.Pid, waitErr)
 				if t.Failed() {
 					t.Log(serverErr.String())
 				}
@@ -349,11 +354,12 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var uid string
+			births := map[string]metadata.ProcessIdentity{}
 			t.Cleanup(func() {
 				if uid != "" && !cleanupRelaunchBinding(t, client, state, uid, w.Window.Metadata.UID, socket) {
 					return
 				}
-				if !waitRelaunchObserverReceipts(t, observerLog, binary, state) {
+				if !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, true) {
 					return
 				}
 				cleanupSDKNativePeers(t, state)
@@ -364,11 +370,18 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			uid = created.Agent.Metadata.UID
+			if !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, false) {
+				t.Fatal("initial observer birth capture uncertain")
+			}
 			waitSDKResumeBirth(t, state, uid)
 			req := core.RelaunchAgentRequest{Ref: "uid:" + uid, Window: "uid:" + w.Window.Metadata.UID, Model: "relaunch-model", Effort: "high", Confirm: true}
 			call := func(callCtx context.Context) (core.RelaunchAgentResult, error) {
 				if lane != "cli" {
-					return client.RelaunchAgent(callCtx, req)
+					out, err := client.RelaunchAgent(callCtx, req)
+					if err == nil && !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, false) {
+						return out, errors.New("observer birth capture uncertain")
+					}
+					return out, err
 				}
 				c := sdkRelaunchCLI(t, state, config, socket, executable, home)
 				c.rebind.create.codexNative = newCodexNativeThreadController(state)
@@ -377,6 +390,9 @@ func TestRelaunchAgentSDKNativeCodexAndPostStopCancellation(t *testing.T) {
 				a, _ := reg.Agent(uid)
 				var output, stderr bytes.Buffer
 				err := c.runTmuxRelaunch(reg, *a, agentRelaunchRequest{model: req.Model, effort: req.Effort, yes: true, json: true, socket: deleteSocketFlags{socketPath: socket}}, &output, &stderr)
+				if err == nil && !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, false) {
+					return core.RelaunchAgentResult{}, errors.New("observer birth capture uncertain")
+				}
 				return core.RelaunchAgentResult{}, err
 			}
 			// A settings capability refusal is before Stop, with no record or snapshot.
@@ -652,13 +668,25 @@ if [ "$1 $2 $3 $4" = 'internal agent-hook ingest codex-broker-watch' ]; then
    --agent-uid) pending=agent;; --pane-uid) pending=pane;; --generation) pending=generation;; --state-dir) pending=state;;
   esac
  done
- printf '%%s|%%s|%%s|%%s|%%s\n' "$$" "$agent" "$pane" "$generation" "$state" >> %q
+ created=$(date -u '+%%Y-%%m-%%dT%%H:%%M:%%SZ')
+ printf '%%s|%%s|%%s|%%s|%%s|%%s\n' "$$" "$agent" "$pane" "$generation" "$state" "$created" >> %q
 fi
 exec %q "$@"
 `, record, binary)
 	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("observer wrapper path=%s sha256=%x record=%s; argv forwarded unchanged via exec", path, sha256.Sum256([]byte(body)), record)
+	f, err := os.Open(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("observer actual binary=%s sha256=%x", binary, h.Sum(nil))
 }
 
 func cleanupRelaunchBinding(t *testing.T, c *projmux.Client, state, uid, window, socket string) bool {
@@ -685,6 +713,31 @@ func cleanupRelaunchBinding(t *testing.T, c *projmux.Client, state, uid, window,
 		t.Errorf("owned Pane delete preview failed: %v", err)
 		return false
 	}
+
+	if len(preview.Plan.Targets) != 1 || preview.Plan.Targets[0].UID != p.Metadata.UID || len(preview.Windows) != 0 || len(preview.RegistryOnly) != 0 || preview.Panes[0].EndsWindow || preview.Panes[0].EndsSession {
+		t.Error("delete preview extends beyond owned leaf Pane")
+		return false
+	}
+	owned := map[string]core.Kind{uid: core.KindAgent, p.Metadata.UID: core.KindPane, window: core.KindWindow}
+	for _, target := range preview.Plan.Targets {
+		if owned[target.UID] != target.Kind {
+			t.Error("delete target is not in exact fixture set")
+			return false
+		}
+		for _, descendant := range target.Descendants {
+			if owned[descendant.UID] != descendant.Kind {
+				t.Error("delete descendant escaped fixture set")
+				return false
+			}
+		}
+	}
+	for _, affected := range preview.Plan.Affected {
+		kind, ok := owned[affected.UID]
+		if !ok || !strings.EqualFold(string(kind), affected.Kind) {
+			t.Error("delete affected set escaped fixture set")
+			return false
+		}
+	}
 	req.DryRun = false
 	req.Confirm = true
 	result, err := c.Delete(ctx, req)
@@ -695,8 +748,19 @@ func cleanupRelaunchBinding(t *testing.T, c *projmux.Client, state, uid, window,
 	return true
 }
 
-func waitRelaunchObserverReceipts(t *testing.T, record, binary, state string) bool {
+func observeRelaunchObserverReceipts(t *testing.T, record, binary, state string, births map[string]metadata.ProcessIdentity, wait bool) bool {
 	t.Helper()
+	info, statErr := os.Stat(record)
+	if statErr != nil {
+		t.Errorf("observer receipt file stat unavailable: %v", statErr)
+		return false
+	}
+	owner, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || owner.Uid != uint32(os.Getuid()) {
+		t.Error("observer receipt file owner is uncertain")
+		return false
+	}
+	t.Logf("observer receipt file=%s owner=%d modified=%s", record, owner.Uid, info.ModTime().UTC().Format(time.RFC3339Nano))
 	raw, err := os.ReadFile(record)
 	if err != nil {
 		t.Errorf("observer receipts unavailable: %v", err)
@@ -707,10 +771,9 @@ func waitRelaunchObserverReceipts(t *testing.T, record, binary, state string) bo
 		return false
 	}
 	var witnesses []metadata.ProcessIdentity
-	seen := map[int]bool{}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		fields := strings.Split(line, "|")
-		if len(fields) != 5 || fields[4] != state || fields[1] == "" || fields[2] == "" || fields[3] == "" {
+		if len(fields) != 6 || fields[4] != state || fields[5] == "" || fields[1] == "" || fields[2] == "" || fields[3] == "" {
 			t.Error("observer receipt identity differs from fixture")
 			return false
 		}
@@ -719,14 +782,15 @@ func waitRelaunchObserverReceipts(t *testing.T, record, binary, state string) bo
 			t.Error("invalid observer PID receipt")
 			return false
 		}
-		if seen[pid] {
+		key := line
+		if old, known := births[key]; known {
+			witnesses = append(witnesses, old)
 			continue
 		}
-		seen[pid] = true
 		current, _, err := localipc.Process(pid)
 		if errors.Is(err, localipc.ErrProcessAbsent) {
-			t.Logf("owned observer receipt pid=%d already absent before birth read", pid)
-			continue
+			t.Errorf("owned observer exited before birth observation pid=%d; preserve unresolved receipt", pid)
+			return false
 		}
 		if err != nil || current.OwnerUID != uint32(os.Getuid()) {
 			t.Errorf("observer birth unreadable pid=%d: %v", pid, err)
@@ -744,8 +808,52 @@ func waitRelaunchObserverReceipts(t *testing.T, record, binary, state string) bo
 			t.Errorf("owned observer exe uncertain pid=%d: %v", pid, err)
 			return false
 		}
+
+		var argv []string
+		if goruntime.GOOS == "linux" {
+			raw, readErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+			if readErr != nil {
+				t.Errorf("observer selected tuple unreadable pid=%d", pid)
+				return false
+			}
+			for _, part := range bytes.Split(raw, []byte{0}) {
+				if len(part) > 0 {
+					argv = append(argv, string(part))
+				}
+			}
+		} else {
+			raw, readErr := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+			if readErr != nil {
+				t.Errorf("observer selected tuple unreadable pid=%d", pid)
+				return false
+			}
+			argv = strings.Fields(string(raw))
+		}
+		if len(argv) < 5 || strings.Join(argv[1:5], " ") != "internal agent-hook ingest codex-broker-watch" {
+			t.Errorf("observer role mismatch pid=%d", pid)
+			return false
+		}
+		selected := map[string]string{}
+		for i := 5; i+1 < len(argv); i++ {
+			if slices.Contains([]string{"--state-dir", "--agent-uid", "--pane-uid", "--generation"}, argv[i]) {
+				selected[argv[i]] = argv[i+1]
+			}
+		}
+		if selected["--state-dir"] != state || selected["--agent-uid"] != fields[1] || selected["--pane-uid"] != fields[2] || selected["--generation"] != fields[3] {
+			t.Errorf("observer selected tuple mismatch pid=%d", pid)
+			return false
+		}
+		again, _, err := localipc.Process(pid)
+		if err != nil || again != current {
+			t.Errorf("observer birth changed during selected read pid=%d", pid)
+			return false
+		}
 		t.Logf("owned observer pid=%d birth=%s agent=%s pane=%s generation=%s", pid, current.Start, fields[1], fields[2], fields[3])
+		births[key] = current
 		witnesses = append(witnesses, current)
+	}
+	if !wait {
+		return true
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for len(witnesses) > 0 {
