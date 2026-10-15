@@ -488,6 +488,18 @@ class UnitShardContractTest(unittest.TestCase):
             with self.subTest(mutation=name), self.assertRaises(ValueError):
                 self.verify(evidence)
 
+    def test_compact_selector_preserves_prefix_neighbours_and_procfs_argv_budget(self) -> None:
+        module = self.shards
+        names = sorted(["TestA", "TestAB", "TestABCDEFGHIJ", "TestABCDEFGHIJMore",
+                        "ExampleA", "FuzzA"] + [f"TestFamily{n:04d}Case" for n in range(6000)])
+        for shard in module.SHARDS[:-1]:
+            chosen = [name for name in names if module.selected(shard, module.APP, name)]
+            pattern = module.app_pattern(chosen)
+            self.assertEqual([name for name in names if re.match(pattern, name)], chosen)
+            self.assertLessEqual(len(pattern.encode()), 4096)
+        with patch.object(module, "MAX_SELECTOR_BYTES", 1), self.assertRaises(ValueError):
+            module.app_pattern(names)
+
     def test_partial_rerun_reuses_successful_same_head_shards_and_keeps_attempts(self) -> None:
         evidence = self.evidence()
         evidence[0]["run_attempt"] = 2
@@ -549,6 +561,7 @@ for package in packages:
             self.assertEqual(len(runs), 4)
             self.assertTrue(all("-count=1" in args and "-fuzz" not in args for args in runs))
             self.assertEqual(sum("-run" in args for args in runs), 3)
+            self.assertTrue(all(len(args[args.index("-run") + 1].encode()) <= 4096 for args in runs if "-run" in args))
 
     def test_unit_children_and_inventory_comparison_fail_closed(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()

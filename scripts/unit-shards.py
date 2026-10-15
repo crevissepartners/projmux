@@ -13,12 +13,37 @@ import subprocess
 APP = "github.com/crevissepartners/projmux/internal/app"
 SHARDS = ("app-0", "app-1", "app-2", "rest")
 NAME = re.compile(r"^(?:Test|Example|Fuzz)\w*$")
+PREFIX_WIDTH = 10
+MAX_SELECTOR_BYTES = 4096
 
 
 def selected(shard: str, package: str, name: str) -> bool:
     if package != APP:
         return shard == "rest"
-    return shard == f"app-{int(hashlib.sha256(name.encode()).hexdigest(), 16) % 3}"
+    return shard == f"app-{int(hashlib.sha256(name[:PREFIX_WIDTH].encode()).hexdigest(), 16) % 3}"
+
+
+def app_pattern(names: list[str]) -> str:
+    # A full-name alternation is ~90KB today. Procfs identity tests deliberately
+    # refuse argv over 8KiB, so hash stable prefix cohorts and compress their
+    # selector instead. Short names stay exact to avoid prefix neighbours.
+    tree = {}
+    for name in names:
+        node = tree
+        for character in name[:PREFIX_WIDTH]:
+            node = node.setdefault(character, {})
+        node[None] = "$" if len(name) < PREFIX_WIDTH else ""
+
+    def emit(node: dict) -> str:
+        parts = [node[None]] if None in node else []
+        parts += [re.escape(character) + emit(child)
+                  for character, child in sorted((key, value) for key, value in node.items() if key is not None)]
+        return parts[0] if len(parts) == 1 else "(?:" + "|".join(parts) + ")"
+
+    pattern = "^" + emit(tree)
+    if len(pattern.encode()) > MAX_SELECTOR_BYTES:
+        raise ValueError("app selector exceeds its 4KiB argv budget")
+    return pattern
 
 
 def go(*args: str) -> list[str]:
@@ -46,11 +71,15 @@ def run(shard: str, directory: Path) -> None:
             raise ValueError("duplicate name in unpartitioned inventory")
     expected = {p: [n for n in names if selected(shard, p, n)] for p, names in inventory.items()}
     args = ["test", "-json", "-count=1"]
+    pattern = None
     if shard != "rest":
         names = expected[APP]
         if not names:
             raise ValueError("empty app shard")
-        args += ["-run", "^(?:" + "|".join(map(re.escape, names)) + ")$"]
+        pattern = app_pattern(names)
+        if [name for name in inventory[APP] if re.match(pattern, name)] != names:
+            raise ValueError("compact app selector differs from selected inventory")
+        args += ["-run", pattern]
     args += owned
     seen = {p: [] for p in owned}
     completed = set()
@@ -69,7 +98,7 @@ def run(shard: str, directory: Path) -> None:
         status = process.wait()
     evidence = dict(shard=shard, run_id=os.environ.get("GITHUB_RUN_ID", "local"),
                     run_attempt=int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")), head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                    packages=packages, inventory=inventory, selected=expected,
+                    selector=pattern, packages=packages, inventory=inventory, selected=expected,
                     executed={p: sorted(v) for p, v in seen.items()},
                     completed=sorted(completed), status=status)
     (directory / "manifest.json").write_text(json.dumps(evidence, indent=2) + "\n")

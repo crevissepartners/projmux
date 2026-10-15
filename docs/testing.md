@@ -64,7 +64,11 @@ for a shorter critical path; runner time and wall time must be measured separate
   contracts in `Unit / contracts and static gates`.
 - CI partitions the ordinary Go suite into three `internal/app` shards and
   one shard containing every other package. `scripts/unit-shards.py` assigns
-  each app Test/Example/Fuzz name by SHA-256 modulo three. Each shard lists
+  app Test/Example/Fuzz names by SHA-256 of their first ten characters modulo
+  three, keeping each prefix cohort together. A compressed trie selector has
+  a 4KiB budget: existing process identity tests retain their 8KiB argv limit.
+  Short names match exactly, and the runner checks the compact selector
+  against the selected inventory before execution. Each shard lists
   its unfiltered names on the same checkout, then runs its selection with
   `go test -json -count=1`; ordinary Fuzz seed execution stays enabled,
   without starting fuzzing. Empty packages are retained. The remaining
