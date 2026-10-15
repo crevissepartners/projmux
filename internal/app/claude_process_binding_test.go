@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -326,9 +327,97 @@ func (f *processClaudeFixture) proof(t *testing.T) claudeProcessProof {
 	return claudeProcessProof{Binding: f.binding, Socket: socket, Process: process, HostProcess: hostProcess, HostSocket: identity, Session: pane.Status.ProcessSession.SessionID}
 }
 
-func TestClaudeProcessBindingRegistrationAndSingleControlWriter(t *testing.T) {
+// Only called after the original probe fails, before fixture cleanup. This is
+// a later read-only snapshot, not a retry or proof of which probe branch failed.
+// Never format Registry, proof, authority, events, errors, argv or environment:
+// those can contain credentials, session locators and provider payloads.
+func claudeProcessLeaseFailureDiagnostic(f *processClaudeFixture, proof claudeProcessProof, route coremetadata.AgentRouteRef, proofElapsed, probeElapsed time.Duration) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "lease failure snapshot: proof_elapsed=%s probe_elapsed=%s bounds(dial/read/coord)=%s/%s/%s test_pid=%d registry_checks=%d\n", proofElapsed, probeElapsed, claudeadapter.LeaseDialTimeout, claudeadapter.LeaseReadinessReadTimeout, claudeadapter.LeaseCoordinationProbeTimeout, os.Getpid(), f.registryChecks.Load())
+	snap, observeErr := f.handle.Observe(f.binding)
+	fmt.Fprintf(&out, "host: observed=%t provider_pid=%d supervisor_pid=%d exited=%t session_matches_proof=%t binding_matches=%t pending=%d\n", observeErr == nil, snap.PID, snap.SupervisorPID, snap.Exit != nil, snap.Session == proof.Session, snap.Binding == proof.Binding, len(snap.Pending))
+	reg, loadErr := f.store.LoadDegradedReadOnly()
+	pane, present := reg.Pane(f.binding.Pane)
+	fmt.Fprintf(&out, "registry: loaded=%t pane_present=%t", loadErr == nil, present)
+	if present {
+		fmt.Fprintf(&out, " owner_matches=%t process_session=%t activation_process=%t", pane.Metadata.OwnerUID() == f.binding.Agent, pane.Status.ProcessSession != nil, pane.Status.Activation.Process != nil)
+		if session := pane.Status.ProcessSession; session != nil {
+			fmt.Fprintf(&out, " generation_matches=%t session_matches_proof=%t", session.Binding.Generation == proof.Binding.Generation, session.SessionID == proof.Session)
+		}
+	}
+	out.WriteByte('\n')
+	authority, typed := route.Authority().(coremetadata.ClaudeAuthorityRef)
+	fmt.Fprintf(&out, "registration: typed=%t valid=%t process_matches_proof=%t session_matches_proof=%t generation_present=%t\n", typed, authority.Valid(), authority.Process == proof.Process, authority.SessionID == proof.Session, authority.RegistrationGeneration != "")
+	for _, item := range []struct {
+		role     string
+		expected coremetadata.ProcessIdentity
+	}{
+		{"provider", proof.Process}, {"host", proof.HostProcess}, {"lease", authority.LeaseProcess},
+	} {
+		actual, _, err := localipc.Process(item.expected.PID)
+		fmt.Fprintf(&out, "process %s: pid=%d readable=%t birth_matches=%t\n", item.role, item.expected.PID, err == nil, err == nil && actual == item.expected)
+		// Linux exposes only the direct children of these exact fixture processes.
+		// Parse integers instead of copying raw proc data; on Darwin mark unavailable.
+		children, childErr := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", item.expected.PID, item.expected.PID))
+		var pids []int
+		if err == nil && actual == item.expected {
+			for field := range strings.FieldsSeq(string(children)) {
+				if pid, parseErr := strconv.Atoi(field); parseErr == nil && pid > 0 {
+					pids = append(pids, pid)
+				}
+			}
+		}
+		fmt.Fprintf(&out, "children %s: available=%t pids=%v\n", item.role, childErr == nil && err == nil && actual == item.expected, pids)
+	}
+	sockets := []struct{ role, path string }{{"host", proof.Socket}, {"lease", claudeadapter.LeaseSocket(f.path, route.PaneUID, route.Generation, authority.RegistrationGeneration)}}
+	if target, ok := claudeadapter.TargetForRoute(route); ok {
+		sockets = append(sockets, struct{ role, path string }{"coordination", claudeadapter.CoordinationSocket(f.path, target)})
+	}
+	for _, socket := range sockets {
+		identity, err := localipc.InspectOwnedSocket(socket.path)
+		fmt.Fprintf(&out, "socket %s: inspected=%t device=%d inode=%d", socket.role, err == nil, identity.Device, identity.Inode)
+		if socket.role == "host" {
+			fmt.Fprintf(&out, " proof_matches=%t", err == nil && identity == proof.HostSocket)
+		}
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+func TestClaudeProcessLeaseFailureDiagnostic(t *testing.T) {
 	f := newProcessClaudeFixture(t, nil)
 	proof := f.proof(t)
+	reg, _ := f.store.LoadDegradedReadOnly()
+	route, reason := processClaudeRouteResolver(f.path, proof)(reg, f.binding.Agent)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	// Force a missing lease without touching the live fixture's socket or limits.
+	missing := *f
+	missing.path = filepath.Join(f.root, "missing", "registry.json")
+	if probeClaudeRegistrationLease(missing.path, route) {
+		t.Fatal("missing lease unexpectedly ready")
+	}
+	output := claudeProcessLeaseFailureDiagnostic(&missing, proof, route, time.Second, time.Millisecond)
+	for _, want := range []string{"proof_elapsed=1s probe_elapsed=1ms", "host: observed=true", "registry: loaded=true pane_present=true", "registration: typed=true valid=true", "process provider:", "process lease:", "children host:", "socket host: inspected=true", "proof_matches=true", "socket lease: inspected=false", "socket coordination: inspected=false"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("diagnostic missing %q", want)
+		}
+	}
+	authority := route.Authority().(coremetadata.ClaudeAuthorityRef)
+	for _, secret := range []string{"fixture-token", proof.Session, authority.RegistrationGeneration, proof.Socket, f.root, "message_echo", "wire_echo"} {
+		if secret != "" && strings.Contains(output, secret) {
+			t.Error("diagnostic contains private fixture data")
+		}
+	}
+	t.Log(output)
+}
+
+func TestClaudeProcessBindingRegistrationAndSingleControlWriter(t *testing.T) {
+	started := time.Now()
+	f := newProcessClaudeFixture(t, nil)
+	proof := f.proof(t)
+	proofElapsed := time.Since(started)
 	reg, _ := f.store.LoadDegradedReadOnly()
 	if _, reason := coremetadata.ResolveAgentRoute(reg, f.binding.Agent); reason == "" {
 		t.Fatal("public process route activated")
@@ -337,7 +426,10 @@ func TestClaudeProcessBindingRegistrationAndSingleControlWriter(t *testing.T) {
 	if reason != "" {
 		t.Fatal(reason)
 	}
+	probeStarted := time.Now()
 	if !probeClaudeRegistrationLease(f.path, route) {
+		probeElapsed := time.Since(probeStarted)
+		t.Log(claudeProcessLeaseFailureDiagnostic(f, proof, route, proofElapsed, probeElapsed))
 		t.Fatal("process endpoint lease not ready")
 	}
 	f.turn(t, "question-turn", "question")
