@@ -254,8 +254,7 @@ func (c *agentCommand) runTmuxRelaunch(registry coremetadata.Registry, target co
 	// requested, not necessarily the one the provider runs now (a `/model`
 	// switch inside the session is not observed), so matching the record
 	// cannot prove nothing would change.
-	changesLayers := settings.ProfileSwitched || request.instructions != nil || len(request.reset) > 0
-	if running && request.model == "" && len(settings.Reasons) == 0 && !(changesLayers && settings.LayersChanged()) {
+	if restart.sharedRestart().RelaunchDisposition(request.settings().shared(), request.dryRun) == personaOutcomeUnchanged {
 		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
 		result.NewPaneUID = restart.paneUID
 		return writeAgentRelaunchResult(stdout, request, result)
