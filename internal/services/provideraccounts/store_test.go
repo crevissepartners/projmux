@@ -1,6 +1,7 @@
 package provideraccounts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -143,18 +143,51 @@ func TestCatalogWriterProcess(t *testing.T) {
 	if os.Getenv("PROJMUX_ACCOUNT_TEST_WORKER") != "1" {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
 	p := config.Paths{ConfigDir: os.Getenv("PROJMUX_ACCOUNT_TEST_DIR")}
-	s := Service{Paths: func() (config.Paths, error) { return p, nil }}
-	ctx := context.Background()
 	name := os.Getenv("PROJMUX_ACCOUNT_TEST_NAME")
-	a, err := s.Register(ctx, account.RegisterAccountRequest{Name: name, Provider: "codex", Root: os.Getenv("PROJMUX_ACCOUNT_TEST_ROOT")})
+	root := os.Getenv("PROJMUX_ACCOUNT_TEST_ROOT")
+	proof, err := directoryProof(root)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("root proof: %v", err)
 	}
-	if _, err = s.Remove(ctx, account.RemoveAccountRequest{Ref: "uid:" + a.UID}); err != nil {
-		t.Fatal(err)
+	// This is a Store retention test. Service admission and the default 500ms
+	// lock budget have separate coverage; disk/scheduler speed is not its oracle.
+	store := Store{Path: p.ProviderAccountsFile(), lockLimit: 30 * time.Second}
+	store.afterContended = func() {
+		if err := os.WriteFile(filepath.Join(p.ConfigDir, name+".ready"), nil, 0o600); err != nil {
+			t.Fatalf("contention ready: %v", err)
+		}
+	}
+	uid := "account-" + strings.Repeat("0", 31) + strings.TrimPrefix(name, "worker-")
+	err = store.update(ctx, func(c *catalog) (bool, error) {
+		c.Records = append(c.Records, record{Account: account.ProviderAccount{
+			UID: uid, Name: name, Provider: "codex", Root: root,
+			Version: account.RegistrationVersion, State: account.Registered,
+			AuthenticationStatus: account.Unverified,
+		}, Proof: proof})
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	// Only the first contention needs to signal readiness.
+	store.afterContended = nil
+	err = store.update(ctx, func(c *catalog) (bool, error) {
+		for i := range c.Records {
+			if c.Records[i].Account.UID == uid {
+				c.Records[i].Account.State = account.Removed
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("registered row %s missing", uid)
+	})
+	if err != nil {
+		t.Fatalf("retire: %v", err)
 	}
 }
+
 func TestCatalogMultiProcessWritersLoseNoRows(t *testing.T) {
 	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "config")}
 	exe, err := os.Executable()
@@ -162,45 +195,98 @@ func TestCatalogMultiProcessWritersLoseNoRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	const n = 8
-	var wg sync.WaitGroup
-	// Start independent writers behind one held kernel lock. The separate
-	// cancellation fixture observes exact contention; this fixture checks row retention.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	if err = os.MkdirAll(p.ConfigDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	store := Store{Path: p.ProviderAccountsFile()}
-	held, err := state.AcquireFileLock(store.lockPath(), time.Second, nil)
+	held, err := state.AcquireFileLockContext(ctx, store.lockPath(), time.Second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmds := make([]*exec.Cmd, n)
-	for i := range cmds {
-		root := t.TempDir()
-		cmd := exec.Command(exe, "-test.run=^TestCatalogWriterProcess$")
-		cmd.Env = append(os.Environ(), "PROJMUX_ACCOUNT_TEST_WORKER=1", "PROJMUX_ACCOUNT_TEST_DIR="+p.ConfigDir, "PROJMUX_ACCOUNT_TEST_NAME="+fmt.Sprintf("worker-%d", i), "PROJMUX_ACCOUNT_TEST_ROOT="+root)
-		cmds[i] = cmd
-		if err = cmd.Start(); err != nil {
+	type writer struct {
+		cmd    *exec.Cmd
+		output bytes.Buffer
+		done   chan struct{}
+		err    error
+	}
+	roots := t.TempDir()
+	writers := make([]*writer, 0, n)
+	// Cleanup is installed before the first Start: cancellation kills only our
+	// children, and every successful Start has exactly one actual Wait.
+	t.Cleanup(func() {
+		cancel()
+		_ = held.Close()
+		for i, w := range writers {
+			<-w.done
+			t.Logf("writer %d PID %d Wait=%v\n%s", i, w.cmd.Process.Pid, w.err, w.output.String())
+		}
+	})
+	for i := range n {
+		root := filepath.Join(roots, fmt.Sprintf("worker-%d", i))
+		if err = os.Mkdir(root, 0o700); err != nil {
 			t.Fatal(err)
 		}
+		w := &writer{done: make(chan struct{})}
+		w.cmd = exec.CommandContext(ctx, exe, "-test.run=^TestCatalogWriterProcess$", "-test.v")
+		w.cmd.WaitDelay = time.Second
+		w.cmd.Stdout, w.cmd.Stderr = &w.output, &w.output
+		w.cmd.Env = append(os.Environ(), "PROJMUX_ACCOUNT_TEST_WORKER=1", "PROJMUX_ACCOUNT_TEST_DIR="+p.ConfigDir, "PROJMUX_ACCOUNT_TEST_NAME="+fmt.Sprintf("worker-%d", i), "PROJMUX_ACCOUNT_TEST_ROOT="+root)
+		if err = w.cmd.Start(); err != nil {
+			t.Fatalf("start writer %d: %v\n%s", i, err, w.output.String())
+		}
+		writers = append(writers, w)
+		go func() {
+			w.err = w.cmd.Wait()
+			close(w.done)
+		}()
 	}
-	_ = held.Close()
-	for _, cmd := range cmds {
-		wg.Add(1)
-		go func(cmd *exec.Cmd) {
-			defer wg.Done()
-			if err := cmd.Wait(); err != nil {
-				t.Errorf("writer exit %v", err)
+	// All eight processes must encounter the held kernel lock before release.
+	// This proves real contention rather than relying on process launch timing.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for i, w := range writers {
+		ready := filepath.Join(p.ConfigDir, fmt.Sprintf("worker-%d.ready", i))
+		for {
+			if _, err = os.Stat(ready); err == nil {
+				break
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("writer %d readiness: %v", i, err)
 			}
-		}(cmd)
+			select {
+			case <-w.done:
+				t.Fatalf("writer %d exited before contention: %v\n%s", i, w.err, w.output.String())
+			case <-ctx.Done():
+				t.Fatalf("waiting for writer %d contention: %v", i, ctx.Err())
+			case <-ticker.C:
+				continue
+			}
+		}
 	}
-	wg.Wait()
+	if err = held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for i, w := range writers {
+		<-w.done
+		if w.err != nil {
+			t.Errorf("writer %d PID %d Wait=%v\n%s", i, w.cmd.Process.Pid, w.err, w.output.String())
+		}
+	}
 	c, err := store.read()
 	if err != nil || len(c.Records) != n {
 		t.Fatalf("rows %d %v", len(c.Records), err)
 	}
+	seen := make(map[string]bool, n)
 	for _, r := range c.Records {
 		if r.Account.State != account.Removed {
-			t.Fatal("retirement lost")
+			t.Errorf("retirement lost: %s", r.Account.Name)
+		}
+		seen[r.Account.Name] = true
+	}
+	for i := range n {
+		if name := fmt.Sprintf("worker-%d", i); !seen[name] {
+			t.Errorf("writer row missing: %s", name)
 		}
 	}
 }
