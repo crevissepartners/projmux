@@ -346,10 +346,11 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
 	}
+	notices := c.lifecycleNotices(fs, prompt)
 	if *detach {
 		err := c.runDetachedProcessResume(*agent, flags, *model, *effort, *dialogueReplyOnly, *waitForPeer, prompt, stdout, stderr)
 		if err == nil && flags.output != "none" {
-			writeAgentLifecyclePromptNotice(stderr, trailingAgentPromptFlag(fs, prompt))
+			writeAgentLifecyclePromptNotice(stderr, notices.trailingPromptFlag)
 		}
 		return err
 	}
@@ -360,18 +361,18 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		if pane, ambiguous := processResumePane(registry, agent.Metadata.UID); pane == nil || ambiguous {
 			return usageError("agent resume: --wait-for-peer requires one retired process Agent")
 		}
-		return c.runDeferredResumeCLI(*agent, flags, *model, *effort, stdout, stderr, c.lifecycleNotices(fs, prompt))
+		return c.runDeferredResumeCLI(*agent, flags, *model, *effort, stdout, stderr, notices)
 	}
-	return c.resumeResolvedAgent(fs, flags, registry, agent, *model, *effort, *dialogueReplyOnly, prompt, stdout, stderr)
+	return c.resumeResolvedAgent(fs, flags, registry, agent, *model, *effort, *dialogueReplyOnly, prompt, stdout, stderr, notices)
 }
 
-func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQueryFlags, registry coremetadata.Registry, agent *coremetadata.Agent, model, effort string, dialogueReplyOnly bool, prompt []string, stdout, stderr io.Writer) error {
+func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQueryFlags, registry coremetadata.Registry, agent *coremetadata.Agent, model, effort string, dialogueReplyOnly bool, prompt []string, stdout, stderr io.Writer, notices ...agentLifecycleNotices) error {
 	const spelling = "agent resume"
 	if processPane, ambiguous := processResumePane(registry, agent.Metadata.UID); processPane != nil || ambiguous {
 		if dialogueReplyOnly {
 			return usageError("agent resume: process agents do not support --dialogue-reply-only")
 		}
-		return c.runProcessResumeCLI(*agent, flags, model, effort, prompt, stdout, stderr, c.lifecycleNotices(fs, prompt))
+		return c.runProcessResumeCLI(*agent, flags, model, effort, prompt, stdout, stderr, notices...)
 	}
 	outputFlag := ""
 	fs.Visit(func(value *flag.Flag) {

@@ -533,8 +533,11 @@ func TestUnreadableAgentGuidanceLaunchesWithoutItWithOneNoticeAndRecordsNothing(
 				t.Fatalf("resume exec argv tail = %q, want %q", tail, want)
 			}
 			wantNotice = "projmux: agent/codex launched without the agent guidance (" + agentGuidanceReasonUnavailable + "): "
-			if !strings.HasPrefix(stderr, wantNotice) || strings.Count(stderr, agentGuidanceReasonUnavailable) != 1 || strings.Count(stderr, "\n") != 1 {
-				t.Fatalf("resume stderr = %q, want one line starting %q", stderr, wantNotice)
+			if !strings.HasPrefix(stderr, wantNotice) || strings.Count(stderr, agentGuidanceReasonUnavailable) != 1 || strings.Count(stderr, "\n") != 2 {
+				t.Fatalf("resume stderr = %q, want original notice plus one settings summary starting %q", stderr, wantNotice)
+			}
+			if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 2 || lines[1] != "Settings: delivered=2, not applied=1: agent-guidance (Agent guidance unavailable). Restore Agent guidance, then retry the same resume command." {
+				t.Fatalf("missing nonapplication summary/recovery: %q", stderr)
 			}
 			if got := recordedAgentAnnotations(store, "agt-beta-codex"); !maps.Equal(got, recorded) {
 				t.Fatalf("resume recorded %v, want unchanged %v", got, recorded)

@@ -193,4 +193,47 @@ func TestAgentLifecycleGuidanceFrozenActualCLI(t *testing.T) {
 	if err := stop.Run(); err != nil {
 		t.Fatal(err)
 	}
+	// A committed child-free recipe explains pending application on the same
+	// default result line; no additional notice line or wire field is introduced.
+	out.Reset()
+	stderr.Reset()
+	command := exec.CommandContext(ctx, f.binary, "agent", "relaunch", first.ref, "--detach", "--yes")
+	command.Stdout = &out
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("default claim: %v %s", err, &stderr)
+	}
+	if strings.Count(out.String(), "\n") != 1 || !strings.Contains(out.String(), "waiting for first input; settings are recorded and not yet applied") {
+		t.Fatal(out.String())
+	}
+	stop = exec.CommandContext(ctx, f.binary, "agent", "stop", first.ref)
+	if raw, err := stop.CombinedOutput(); err != nil {
+		t.Fatalf("claim stop: %v %s", err, raw)
+	}
+	// Ordinary resume consumes the frozen recipe. Its successful default output
+	// must no longer claim that provider application is waiting for first input.
+	out.Reset()
+	stderr.Reset()
+	command = exec.CommandContext(ctx, f.binary, "agent", "resume", first.ref, "--detach", "--", "consume frozen")
+	command.Stdout = &out
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("consume frozen: %v %s", err, &stderr)
+	}
+	if strings.Contains(out.String(), "waiting for first input") || strings.Contains(stderr.String(), "settings are recorded and not yet applied") {
+		t.Fatal(out.String(), stderr.String())
+	}
+	awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
+	raw, err := os.ReadFile(filepath.Join(f.root, "argv.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	if !bytes.Contains(rows[len(rows)-1], []byte("frozen-model")) {
+		t.Fatalf("frozen model not delivered: %s", raw)
+	}
+	stop = exec.CommandContext(ctx, f.binary, "agent", "stop", first.ref)
+	if raw, err := stop.CombinedOutput(); err != nil {
+		t.Fatalf("provider stop: %v %s", err, raw)
+	}
 }

@@ -453,8 +453,11 @@ func TestCorruptProjectLinkRulesLaunchWithoutThemWithOneNoticeAndRecordNothing(t
 		t.Fatalf("resume exec argv tail = %q, want %q", got, want)
 	}
 	wantNotice := "projmux: agent/codex launched without its Project's label link rules (" + projectLinksReasonUnavailable + "): "
-	if !strings.HasPrefix(stderr, wantNotice) || strings.Count(stderr, projectLinksReasonUnavailable) != 1 || strings.Count(stderr, "\n") != 1 {
-		t.Fatalf("resume stderr = %q, want one line starting %q", stderr, wantNotice)
+	if !strings.HasPrefix(stderr, wantNotice) || strings.Count(stderr, projectLinksReasonUnavailable) != 1 || strings.Count(stderr, "\n") != 2 {
+		t.Fatalf("resume stderr = %q, want original notice plus one settings summary starting %q", stderr, wantNotice)
+	}
+	if lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n"); len(lines) != 2 || lines[1] != "Settings: delivered=3, not applied=1: link-rules (link rules unavailable). Restore Project link rules, then retry the same resume command." {
+		t.Fatalf("missing nonapplication summary/recovery: %q", stderr)
 	}
 	if recorded := recordedAgentAnnotations(store, "agt-beta-codex"); !maps.Equal(recorded, annotations) {
 		t.Fatalf("recorded %v, want unchanged %v", recorded, annotations)

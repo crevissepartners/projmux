@@ -330,7 +330,15 @@ func TestAgentRelaunchOfAnOfflineAgentWithTheRecordedEffortStillResumes(t *testi
 		t.Fatal("the Offline Agent did not resume")
 	}
 	want := `{"action":"relaunch","dryRun":false,"outcome":"resumed","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Offline","interaction":"unknown","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","newEffort":"high","restart":false,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"relaunch","profileValue":"","override":true}},"currentHost":"tmux","targetHost":"tmux","relaunchReasons":[]}` + "\n"
-	if stdout != want {
+	existing, application, ok := strings.Cut(stdout, `,"settingsApplication":`)
+	if !ok {
+		t.Fatalf("missing application sibling: %s", stdout)
+	}
+	wantApplication := `{"entries":[{"setting":"profile","status":"recorded","reason":"profile-recipe-recorded","value":""},{"setting":"model","status":"preserved","reason":"conversation-model-preserved"},{"setting":"effort","status":"delivered","reason":"launch-arguments","value":"high"},{"setting":"instructions","status":"delivered","reason":"launch-arguments","value":""},{"setting":"agent-guidance","status":"unobserved","reason":"application-unobserved"},{"setting":"project-guidance","status":"unobserved","reason":"application-unobserved"},{"setting":"link-rules","status":"unobserved","reason":"application-unobserved"},{"setting":"workspace","status":"delivered","reason":"workspace-resolved","value":"/srv/alpha"}],"notAppliedCount":0}` + "}\n"
+	if application != wantApplication {
+		t.Fatalf("application = %s, want %s", application, wantApplication)
+	}
+	if existing+"}\n" != want {
 		t.Fatalf("resumed relaunch JSON =\n%s\nwant\n%s", stdout, want)
 	}
 }
@@ -344,7 +352,15 @@ func TestAgentRelaunchExecutedJSONOfARunningAgentReportsTheNewPane(t *testing.T)
 	}
 	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
 	want := `{"action":"relaunch","dryRun":false,"outcome":"restarted","agentUID":"agt-alpha-codex","agentName":"codex","provider":"claude","phase":"Running","interaction":"idle","paneUID":"pan-alpha-codex","newPaneUID":"` + after.Status.PaneRef + `","currentEffort":"high","currentModel":"haiku","newEffort":"max","newModel":"opus","restart":true,"confirmationRequired":false,"unchanged":false,"currentSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"haiku","source":"","profileValue":"","override":true},"effort":{"value":"high","source":"","profileValue":"","override":true}},"newSettings":{"profile":{"name":"","digest":"","source":""},"instructions":{"value":"","source":"","profileValue":"","override":true},"model":{"value":"opus","source":"relaunch","profileValue":"","override":true},"effort":{"value":"max","source":"relaunch","profileValue":"","override":true}},"currentHost":"tmux","targetHost":"tmux","relaunchReasons":["model-changed","effort-changed"]}` + "\n"
-	if stdout != want {
+	existing, application, ok := strings.Cut(stdout, `,"settingsApplication":`)
+	if !ok {
+		t.Fatalf("missing application sibling: %s", stdout)
+	}
+	wantApplication := `{"entries":[{"setting":"profile","status":"recorded","reason":"profile-recipe-recorded","value":""},{"setting":"model","status":"delivered","reason":"launch-arguments","value":"opus"},{"setting":"effort","status":"delivered","reason":"launch-arguments","value":"max"},{"setting":"instructions","status":"delivered","reason":"launch-arguments","value":""},{"setting":"agent-guidance","status":"unobserved","reason":"application-unobserved"},{"setting":"project-guidance","status":"unobserved","reason":"application-unobserved"},{"setting":"link-rules","status":"unobserved","reason":"application-unobserved"},{"setting":"workspace","status":"delivered","reason":"workspace-resolved","value":"/srv/alpha"}],"notAppliedCount":0}` + "}\n"
+	if application != wantApplication {
+		t.Fatalf("application = %s, want %s", application, wantApplication)
+	}
+	if existing+"}\n" != want {
 		t.Fatalf("restarted relaunch JSON =\n%s\nwant\n%s", stdout, want)
 	}
 	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("opus", "max"), modelEffortRelaunch...)) {

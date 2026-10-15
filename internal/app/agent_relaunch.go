@@ -582,8 +582,8 @@ func writeAgentRelaunchResult(stdout io.Writer, request agentRelaunchRequest, re
 		}
 		return err
 	default:
-		_, err := fmt.Fprintf(stdout, "agent/%s relaunched from %s to %s; %s on the same conversation\n",
-			result.AgentName, current, describeRelaunchTarget(result), result.Outcome)
+		_, err := fmt.Fprintf(stdout, "agent/%s relaunched from %s to %s; %s on the same conversation%s\n",
+			result.AgentName, current, describeRelaunchTarget(result), result.Outcome, agentSettingsPendingSuffix(result.SettingsApplication))
 		if err == nil {
 			writeAgentSettingsNotice(stdout, result.SettingsApplication)
 		}

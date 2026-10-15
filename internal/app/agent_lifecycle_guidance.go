@@ -276,3 +276,22 @@ func processResumeSettingsApplication(candidate processResumeCandidate, settings
 func writeRelaunchLifecycleNotices(w io.Writer, request agentRelaunchRequest) {
 	agentLifecycleNotices{trailingPromptFlag: request.trailingPromptFlag, foreground: request.foregroundNotice && !request.detach && request.host == ""}.write(w)
 }
+
+// A suffix belongs to an existing default line, so zero nonapplications never
+// introduce another notice line. Wire and nondefault projections stay intact.
+func agentLifecycleClaimSuffix(defaultOutput bool) string {
+	if !defaultOutput {
+		return ""
+	}
+	return "; " + lifecycleText("pending")
+}
+func agentSettingsPendingSuffix(a *agentSettingsApplication) string {
+	if a != nil {
+		for _, e := range a.Entries {
+			if e.Status == "pending" {
+				return agentLifecycleClaimSuffix(true)
+			}
+		}
+	}
+	return ""
+}

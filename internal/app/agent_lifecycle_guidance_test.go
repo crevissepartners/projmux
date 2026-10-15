@@ -281,6 +281,9 @@ func TestAgentPromptTrailingFlagNoticePreservesInput(t *testing.T) {
 
 func TestExistingProcessForegroundNoticePreservesLifetime(t *testing.T) {
 	f := newRelaunchFixture(t)
+	fixtureHome := t.TempDir()
+	f.command.rebind.create.homeDir = func() (string, error) { return fixtureHome, nil }
+	f.command.rebind.create.lookupEnv = func(string) string { return "" }
 	paths, err := savedSettingsPaths(f.command.rebind.create.homeDir, f.command.rebind.create.lookupEnv)
 	if err != nil {
 		t.Fatal(err)
@@ -367,5 +370,42 @@ func TestAgentLifecycleGuidanceOutputModes(t *testing.T) {
 	var b bytes.Buffer
 	if err := writeAgentRelaunchResult(&b, agentRelaunchRequest{json: true}, result); err != nil || !json.Valid(b.Bytes()) {
 		t.Fatalf("JSON polluted: %v %s", err, &b)
+	}
+}
+
+func TestAgentLifecyclePendingDefaultLine(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	record := &deferredLaunchRecord{Model: "frozen-model", Effort: "medium"}
+	record.Command.Dir = "/fixture/work"
+	for _, pending := range []bool{true, false} {
+		a := frozenAgentSettingsApplication(record, pending)
+		result := agentRelaunchResult{Outcome: personaOutcomeResumed, AgentName: "fixture", SettingsApplication: a}
+		var out bytes.Buffer
+		if err := writeAgentRelaunchResult(&out, agentRelaunchRequest{}, result); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(out.String(), "\n") != 1 || strings.Contains(out.String(), "waiting for first input") != pending {
+			t.Fatalf("pending=%v: %s", pending, &out)
+		}
+		out.Reset()
+		if err := writeAgentRelaunchResult(&out, agentRelaunchRequest{json: true}, result); err != nil || !json.Valid(out.Bytes()) || strings.Contains(out.String(), "waiting for first input") {
+			t.Fatalf("wire changed: %v %s", err, &out)
+		}
+		var notices bytes.Buffer
+		writeAgentSettingsNotice(&notices, a)
+		if notices.Len() != 0 {
+			t.Fatal("zero nonapplications added a notice", notices.String())
+		}
+		if err := writeAgentRelaunchResult(lifecycleBrokenWriter{}, agentRelaunchRequest{}, result); err == nil {
+			t.Fatal("lost stdout failure")
+		}
+	}
+	if suffix := agentLifecycleClaimSuffix(false); suffix != "" {
+		t.Fatal("nondefault claim changed", suffix)
+	}
+	suffix := agentLifecycleClaimSuffix(true)
+	if !strings.Contains(suffix, "waiting for first input") || strings.Contains(suffix, "\n") {
+		t.Fatal(suffix)
 	}
 }

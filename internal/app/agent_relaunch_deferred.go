@@ -59,7 +59,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 	if request.json {
 		output = stderr
 	}
-	if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed\n", record.Agent, record.Retired.Binding.PaneUID); err != nil {
+	if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed%s\n", record.Agent, record.Retired.Binding.PaneUID, agentLifecycleClaimSuffix(!request.json)); err != nil {
 		return err
 	}
 	writeRelaunchLifecycleNotices(stderr, request)
