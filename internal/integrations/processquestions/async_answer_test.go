@@ -15,7 +15,14 @@ import (
 func TestAsyncQuestionIPCReceiptAndLostReply(t *testing.T) {
 	for _, lost := range []bool{false, true} {
 		t.Run(map[bool]string{false: "receipt", true: "reply-lost"}[lost], func(t *testing.T) {
-			socket := filepath.Join(t.TempDir(), "q.sock")
+			// Keep the Unix socket within its platform path bound even when CI
+			// deliberately supplies a long TMPDIR. Do not change that environment.
+			root, err := os.MkdirTemp("/tmp", "pmx-question-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(root) })
+			socket := filepath.Join(root, "q.sock")
 			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
 			if err != nil {
 				t.Fatal(err)
