@@ -257,6 +257,7 @@ func TestSDKDetachedProcessCreateCancellationRollsBackBirth(t *testing.T) {
 
 func TestSDKProcessCreateObservationContextBoundedAndOffsetUnchanged(t *testing.T) {
 	t.Run("supervisor-domain", sdkCreateSupervisorDomainCases)
+	t.Run("unstarted-rollback", sdkCreateUnstartedRollbackGuards)
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -435,8 +436,51 @@ func sdkCreateMissingInterpreter(t *testing.T) {
 			}
 			journal := filepath.Join(paths.StateDir, "logs", "operations.jsonl")
 			data, e := os.ReadFile(journal)
-			if e != nil || !bytes.Contains(data, []byte("process-host-supervisor")) {
-				t.Fatalf("supervisor failure journal escaped explicit State: %v %s", e, data)
+			if e != nil {
+				t.Fatalf("operations journal escaped explicit State: %v", e)
+			}
+			// Diagnostics intentionally omit private argv and binding. Validate
+			// their explicit destination without claiming a supervisor row ID.
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			rows := 0
+			for {
+				var event map[string]json.RawMessage
+				if e := decoder.Decode(&event); e == io.EOF {
+					break
+				} else if e != nil || event == nil {
+					t.Fatalf("invalid explicit operations JSON: %v", e)
+				}
+				rows++
+			}
+			if rows == 0 {
+				t.Fatal("explicit operations journal is empty")
+			}
+			// The committed rollback receipt identifies this failed Create by
+			// its fresh exact AgentUID, not unrelated command/deletion run IDs.
+			data, e = os.ReadFile(filepath.Join(paths.StateDir, intmetadata.DeletionRecordsFile))
+			if e != nil {
+				t.Fatal("explicit rollback journal absent", e)
+			}
+			decoder = json.NewDecoder(bytes.NewReader(data))
+			matched := 0
+			for {
+				var record intmetadata.DeletionRecord
+				if e := decoder.Decode(&record); e == io.EOF {
+					break
+				} else if e != nil {
+					t.Fatal("invalid explicit rollback JSON", e)
+				}
+				if record.SchemaVersion == intmetadata.DeletionRecordSchemaVersion && record.Operation == "process-create-rollback" && record.Via == "automatic" && record.OperationID != "" &&
+					len(record.Targets) == 1 && record.Targets[0].Kind == "Agent" && record.Targets[0].UID == detail.Binding.AgentUID &&
+					len(record.Affected) == 1 && record.Affected[0].Kind == "Agent" && record.Affected[0].UID == detail.Binding.AgentUID && record.Affected[0].Action == "deleted" {
+					matched++
+				}
+			}
+			if detail.Binding.AgentUID == "" || matched != 1 {
+				t.Fatalf("missing exact failed-Create rollback receipt: binding=%+v matches=%d", detail.Binding, matched)
+			}
+			if _, e := os.Stat(filepath.Join(paths.StateDir, terminationJournalFile)); !os.IsNotExist(e) {
+				t.Fatal("unstarted provider acquired a fabricated Wait journal", e)
 			}
 			if _, e = os.Stat(f.trace); !os.IsNotExist(e) {
 				t.Fatal("missing interpreter produced provider input", e)
@@ -612,4 +656,117 @@ func sdkCreateSupervisorDomainCases(t *testing.T) {
 			t.Fatal("nil slice broadened", err)
 		}
 	})
+}
+
+// An unrelated handle with PID0 and no termination cannot authorize deletion.
+// Only the concrete owned host can supply the validated rejection proof.
+type sdkUnprovenCreateHandle struct{ binding processhost.Binding }
+
+func (h sdkUnprovenCreateHandle) Observe(processhost.Binding) (processhost.Snapshot, error) {
+	return processhost.Snapshot{Binding: h.binding, State: "unknown"}, nil
+}
+func (h sdkUnprovenCreateHandle) Events(processhost.Binding, uint64) ([]processhost.Event, processhost.Snapshot, error) {
+	snapshot, _ := h.Observe(h.binding)
+	return nil, snapshot, nil
+}
+func (h sdkUnprovenCreateHandle) Wait(context.Context, processhost.Binding) (processhost.Snapshot, error) {
+	return h.Observe(h.binding)
+}
+func (h sdkUnprovenCreateHandle) Stop(processhost.Binding) error { return nil }
+func (h sdkUnprovenCreateHandle) Turn(context.Context, processhost.Authority, string, string) error {
+	return nil
+}
+
+func sdkCreateUnstartedRollbackGuards(t *testing.T) {
+	for _, mode := range []string{"reservation", "protected", "generation", "agent-pane", "pane-owner", "window-owner", "provider", "runtime", "duplicate-pane", "duplicate-agent", "phase", "activation", "agent-activation", "conversation", "termination", "process-session", "unknown-handle", "commit-error"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := newFakeResourceStore(t)
+			store := fixture.store()
+			deletions := bindDeletionRecords(t, store)
+			m := fixture.mutator()
+			agent, err := m.CreateAgent(&fixture.registry, "win-beta-main", coremetadata.CreateAgentOptions{Provider: "codex", Workspace: coremetadata.AgentWorkspace{CWD: "/srv/beta"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pane, err := m.AttachAgentPane(&fixture.registry, agent.Metadata.UID, coremetadata.BootstrapPane{}, "sdk-rollback")
+			if err != nil {
+				t.Fatal(err)
+			}
+			binding := processhost.Binding{Host: "host", Project: "prj-beta", Window: "win-beta-main", Agent: agent.Metadata.UID, Pane: pane.Metadata.UID, Generation: "generation", Operation: "operation"}
+			if err := m.ReserveProcessBinding(&fixture.registry, metadataProcessBinding(binding)); err != nil {
+				t.Fatal(err)
+			}
+			a, _ := fixture.registry.Agent(binding.Agent)
+			p, _ := fixture.registry.Pane(binding.Pane)
+			result := processAgentCreateResult{Binding: binding, registryPath: intmetadata.PathFor(filepath.Dir(deletions))}
+			switch mode {
+			case "protected":
+				a.Metadata.Labels = map[string]string{coremetadata.LabelProtected: "true"}
+			case "generation":
+				p.Status.ProcessSession.Binding.Generation += "-replaced"
+			case "agent-pane":
+				a.Status.PaneRef = "different-pane"
+			case "pane-owner":
+				p.Metadata.OwnerRef = &coremetadata.OwnerRef{Kind: coremetadata.KindAgent, UID: "different-agent"}
+			case "window-owner":
+				w, _ := fixture.registry.Window(binding.Window)
+				w.Metadata.OwnerRef = &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "different-project"}
+			case "provider":
+				p.Status.ProcessSession.Provider = "claude"
+			case "runtime":
+				p.Spec.Runtime.Kind = coremetadata.RuntimeTmux
+			case "duplicate-pane":
+				duplicate := p.Clone()
+				duplicate.Metadata.UID += "-duplicate"
+				fixture.registry.Panes = append(fixture.registry.Panes, duplicate)
+			case "duplicate-agent":
+				duplicate := a.Clone()
+				duplicate.Metadata.UID += "-duplicate"
+				fixture.registry.Agents = append(fixture.registry.Agents, duplicate)
+			case "phase":
+				a.Status.Phase = coremetadata.PhaseRunning
+			case "activation":
+				p.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, Generation: binding.Generation}
+			case "agent-activation":
+				a.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationAcknowledged}
+			case "conversation":
+				a.Status.SessionRef = &coremetadata.AgentSessionRef{}
+			case "termination":
+				p.Status.LastTermination = &coremetadata.TerminationEvidence{}
+			case "process-session":
+				p.Status.ProcessSession.ThreadID = "unexpected-thread"
+			case "unknown-handle":
+				result.Handle = sdkUnprovenCreateHandle{binding: binding}
+			case "commit-error":
+				store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+					working := fixture.registry.Clone()
+					if err := fn(&working); err != nil {
+						return coremetadata.Registry{}, err
+					}
+					return coremetadata.Registry{}, errors.New("fixture commit rejected")
+				}
+			}
+			before := fixture.registry.Clone()
+			err = (&createCommand{store: store}).rollbackProcessAgent(&result)
+			_, remains := fixture.registry.Agent(binding.Agent)
+			if mode == "reservation" {
+				if err != nil || remains || len(readDeletionRecords(t, deletions)) != 1 {
+					t.Fatalf("unstarted reservation rollback: %v remains=%t", err, remains)
+				}
+			} else if mode == "protected" {
+				if err == nil || !strings.Contains(err.Error(), "agent-protected") || !remains {
+					t.Fatal("protected reservation was not retained", err)
+				}
+				retained, _ := fixture.registry.Agent(binding.Agent)
+				if retained.Status.Phase != coremetadata.PhaseOffline || retained.Status.LastTermination != nil || len(readDeletionRecords(t, deletions)) != 0 {
+					t.Fatal("protected unstarted Agent acquired a fake Wait/removal")
+				}
+			} else if err == nil || !remains || !reflect.DeepEqual(before, fixture.registry) || len(readDeletionRecords(t, deletions)) != 0 {
+				t.Fatalf("%s lost exact reservation on refusal: %v remains=%t", mode, err, remains)
+			}
+			if result.waitRecorded || result.waitReceipt != nil {
+				t.Fatal("child-free/unknown reservation fabricated provider Wait")
+			}
+		})
+	}
 }

@@ -708,7 +708,11 @@ func (r *processAgentCreateResult) recordProcessSnapshot(snapshot processhost.Sn
 }
 
 func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) error {
-	if result.Handle != nil {
+	unstarted := result.Handle == nil
+	if handle, ok := result.Handle.(*processhost.Handle); ok {
+		unstarted = handle.ProviderStartRejected(result.Binding)
+	}
+	if !unstarted {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if _, err := result.waitProcessAgent(ctx, nil); err != nil {
@@ -723,12 +727,32 @@ func (c *createCommand) rollbackProcessAgent(result *processAgentCreateResult) e
 		if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(result.Binding) {
 			return processhost.ErrStale
 		}
-		if result.Handle != nil && (!pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil) {
+		agent, exists := reg.Agent(result.Binding.Agent)
+		if unstarted {
+			// A rejected Start can remove only this untouched reservation. A
+			// concurrent activation, conversation or receipt remains protected.
+			record := pane.Status.ProcessSession
+			window, windowExists := reg.Window(result.Binding.Window)
+			_, projectExists := reg.Project(result.Binding.Project)
+			if !exists || !windowExists || !projectExists || window.Metadata.OwnerUID() != result.Binding.Project || agent.Metadata.OwnerUID() != result.Binding.Window ||
+				agent.Status.PaneRef != result.Binding.Pane || pane.Metadata.OwnerUID() != result.Binding.Agent || len(reg.PanesOf(result.Binding.Agent)) != 1 ||
+				pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || record.Provider != agent.Spec.Provider ||
+				agent.Status.Phase != coremetadata.PhasePending || !agent.Status.Activation.IsZero() || !pane.Status.Activation.IsZero() ||
+				agent.Status.SessionRef != nil || agent.Status.LastTermination != nil || pane.Status.LastTermination != nil ||
+				record.SessionID != "" || record.ThreadID != "" || record.ConnectionID != "" || record.TurnID != "" || record.History != nil || len(record.Pending) != 0 {
+				return processhost.ErrStale
+			}
+			for _, other := range reg.Agents {
+				if other.Metadata.UID != result.Binding.Agent && other.Status.PaneRef == result.Binding.Pane {
+					return processhost.ErrStale
+				}
+			}
+		} else if !pane.Status.Activation.IsZero() || pane.Status.LastTermination == nil {
 			return processhost.ErrStale
 		}
-		if agent, ok := reg.Agent(result.Binding.Agent); ok && coremetadata.AgentProtected(*agent) {
+		if exists && coremetadata.AgentProtected(*agent) {
 			retained = coremetadata.AgentProtectionError(*agent)
-			if result.Handle == nil {
+			if unstarted {
 				// No provider was spawned. Keep the reservation Offline without inventing
 				// a supervisor Wait receipt for a process that never existed.
 				agent.Status.Phase = coremetadata.PhaseOffline
