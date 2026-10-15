@@ -850,7 +850,7 @@ func observeRelaunchObserverReceipts(t *testing.T, record, binary, state string,
 				t.Errorf("observer selected tuple unreadable pid=%d", pid)
 				return false
 			}
-			for _, part := range bytes.Split(raw, []byte{0}) {
+			for part := range bytes.SplitSeq(raw, []byte{0}) {
 				if len(part) > 0 {
 					argv = append(argv, string(part))
 				}
