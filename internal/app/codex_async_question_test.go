@@ -351,7 +351,7 @@ func TestCodexAsyncTerminalPruneKeepsBlockingAndNewQuestions(t *testing.T) {
 					t.Fatal("pruned view reopened")
 				}
 				if v.Delivery == "async" {
-					asyncSeen = !v.CanAnswer && v.State == agentquestion.StateWaiting
+					asyncSeen = v.CanAnswer && v.State == agentquestion.StateWaiting
 				}
 				if v.Delivery == "held-question" {
 					blockingSeen = v.CanAnswer && v.State == agentquestion.StateWaiting

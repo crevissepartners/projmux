@@ -76,8 +76,11 @@ func (d *asyncSDKReceiptDispatcher) AnswerExactProcessQuestionReceipt(context.Co
 }
 
 func TestSDKAsyncReceiptUnknownPreservesOpaqueIDAndConstants(t *testing.T) {
-	if MaxAsyncQuestionTextBytes != 4096 || MaxAsyncQuestionSelectionsBytes != 16384 || MaxAsyncQuestionTextBytes != agentquestion.MaxAsyncQuestionTextBytes || MaxAsyncQuestionSelectionsBytes != agentquestion.MaxAsyncQuestionSelectionsBytes {
-		t.Fatal("SDK bounds drift")
+	if MaxAsyncQuestionTextBytes != 4096 || MaxAsyncQuestionSelectionsBytes != 16384 {
+		t.Fatal("SDK numeric bounds drift")
+	}
+	if MaxAsyncQuestionTextBytes != agentquestion.MaxAsyncQuestionTextBytes || MaxAsyncQuestionSelectionsBytes != agentquestion.MaxAsyncQuestionSelectionsBytes {
+		t.Fatal("SDK internal aliases drift")
 	}
 	c, _, uid, _ := sdkStopFixture(t)
 	if _, err := store.NewStore(store.PathFor(c.paths.StateDir)).Update(func(reg *m.Registry) error {
