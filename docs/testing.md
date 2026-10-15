@@ -60,16 +60,35 @@ for a shorter critical path; runner time and wall time must be measured separate
   `make test-process-host-cli GO=/path/to/go` for a local toolchain matching
   go.mod). The real-tmux window rename test remains in its existing unit and
   integration jobs and is outside this process fixture target.
-- `make vet` runs `go vet ./...`. CI runs it in the Unit Tests job after
-  `make test`.
+- `make vet` runs `go vet ./...`. CI runs it with deadcode and the non-Go
+  contracts in `Unit / contracts and static gates`.
+- CI partitions the ordinary Go suite into three `internal/app` shards and
+  one shard containing every other package. `scripts/unit-shards.py` assigns
+  each app Test/Example/Fuzz name by SHA-256 modulo three. Each shard lists
+  its unfiltered names on the same checkout, then runs its selection with
+  `go test -json -count=1`; ordinary Fuzz seed execution stays enabled,
+  without starting fuzzing. Empty packages are retained. The remaining
+  packages run without a name filter.
+  `make test-unit-shard UNIT_SHARD=app-0 UNIT_EVIDENCE_DIR=.bin/unit/app-0`
+  is the shard entrypoint (`app-1`, `app-2`, and `rest` are the other values).
+  `make test-contracts` shares the complete dependency list with local
+  `make test`, which still runs all contracts followed by `go test ./...`.
+  The stable required `Unit Tests` aggregate requires every child to succeed
+  and compares uploaded package/name inventories against actual top-level
+  execution. Missing, duplicate, failed, skipped, cancelled, or stale shard
+  evidence fails closed. A skipped individual test retains its original
+  semantics; strict tmux still refuses missing tmux.
+  Each workflow attempt preserves `unit-evidence-*` (manifests and Go JSON
+  events) and `unit-inventory-comparison` (complete unpartitioned inventory
+  and Test/Example/Fuzz counts) for comparing repeated runs on one PR head.
 - The real-tmux Go tests in `internal/app` find tmux through one helper,
   `requireRealTmux`. Without tmux they skip; `PROJMUX_REAL_TMUX_STRICT=1`
   turns a missing tmux into a test failure instead, so a run that is meant to
   exercise real tmux cannot pass by skipping. A new real-tmux test must call
   the helper rather than its own `exec.LookPath("tmux")` skip, and the source
   audit `TestRealTmuxSkipIsOwnedByOneHelper` fails on any other skip.
-  The CI Unit Tests job installs tmux and runs
-  `PROJMUX_REAL_TMUX_STRICT=1 make test` with a TMPDIR of at least 100 bytes,
+  Every CI unit execution child installs tmux and runs its target with
+  `PROJMUX_REAL_TMUX_STRICT=1` and a TMPDIR of at least 100 bytes,
   so a missing tmux there fails the job instead of skipping those tests.
   The same switch turns on the isolated real-tmux smokes in
   `internal/integrations/tmux` and `internal/integrations/metadata`, which

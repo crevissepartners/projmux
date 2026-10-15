@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import importlib.util
 import json
 import os
 import re
@@ -176,35 +178,37 @@ def real_tmux_strict_mutations(job: str) -> dict[str, str]:
     }
 
 
-def assert_unit_job_runs_real_tmux_strict(unit: str) -> None:
-    """Fail unless the CI Unit Tests job runs strict unit tests between its gates.
+SHARD_TEST_COMMAND = ('TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test-unit-shard '
+                      'UNIT_SHARD=${{ matrix.shard }} UNIT_EVIDENCE_DIR=.bin/unit-evidence/${{ matrix.shard }}')
 
-    On top of assert_job_runs_real_tmux_strict, the job checks the pinned
-    deadcode baseline before the tests and vets after them.
-    """
-    assert_job_runs_real_tmux_strict(unit)
 
-    deadcode = workflow_step(unit, "Check pinned deadcode baseline")
-    if deadcode.strip() != "run: make deadcode":
-        raise AssertionError(f"unexpected deadcode step: {deadcode.strip()!r}")
-    vet = workflow_step(unit, "Vet")
-    if vet.strip() != "run: make vet":
-        raise AssertionError(f"unexpected vet step: {vet.strip()!r}")
+def assert_shard_runs_real_tmux_strict(job: str) -> None:
+    # Evidence uploads are conditional; the test/install steps must never be.
+    marker = "      - name: Preserve unit inventory and results"
+    body = job.split(marker)[0]
+    if SHARD_TEST_COMMAND not in body:
+        raise AssertionError("unit shard must invoke the canonical shard target")
+    assert_job_runs_real_tmux_strict(body.replace(SHARD_TEST_COMMAND, UNIT_TEST_COMMAND))
 
-    order = [
-        "go-version-file: go.mod",
-        "      - name: Install tmux",
-        "run: make deadcode",
-        UNIT_TEST_COMMAND,
-        "run: make vet",
-    ]
-    positions = [unit.index(needle) for needle in order]
-    if positions != sorted(positions):
-        raise AssertionError(f"unit job steps must run in order: {order}")
+
+def assert_unit_children(workflow: str) -> None:
+    for child in ("unit-app", "unit-rest"):
+        assert_shard_runs_real_tmux_strict(workflow_job(workflow, child))
+    contracts = workflow_job(workflow, "unit-contracts")
+    unit_test_tmpdir(step_script(workflow_step(contracts, "Run non-Go test contracts")).replace("make test-contracts", "make test"))
+    if re.search(r"(?m)^\s+(?:if|continue-on-error|env):", contracts):
+        raise AssertionError("contract/static gates must be unconditional")
+    for name, command in (("Check pinned deadcode baseline", "make deadcode"),
+                          ("Vet", "make vet")):
+        if step_script(workflow_step(contracts, name)) != command:
+            raise AssertionError(f"missing contract/static gate: {command}")
+
 
 
 GITHUB_COM_ONLY = "github.server_url == 'https://github.com'"
 UPLOAD_STEP_STATUS = {
+    "Preserve unit inventory and results": "always()",
+    "Preserve inventory comparison": "success()",
     "Upload scanner evidence": "always()",
     "Upload contract evidence": "always()",
     "Preserve failing attempt evidence": "failure()",
@@ -433,6 +437,145 @@ def assert_darwin_native_compiles_every_test_package(workflow: str) -> None:
         raise AssertionError("aggregate Test must require darwin-native to succeed")
 
 
+class UnitShardContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("unit_shards", ROOT / "scripts/unit-shards.py")
+        cls.shards = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.shards)
+
+    def evidence(self) -> list[dict]:
+        module = self.shards
+        packages = sorted([module.APP, "example/other", "example/no-tests"])
+        names = [f"TestCase{n}" for n in range(30)] + ["ExampleExample", "FuzzSeeds"]
+        baseline = {module.APP: sorted(names), "example/other": ["TestOther"], "example/no-tests": []}
+        result = []
+        for shard in module.SHARDS:
+            inventory = {p: ns for p, ns in baseline.items() if (p == module.APP) == (shard != "rest")}
+            selected = {p: [n for n in ns if module.selected(shard, p, n)] for p, ns in inventory.items()}
+            result.append(dict(shard=shard, head="a" * 40, packages=packages,
+                               inventory=inventory, selected=selected, executed=copy.deepcopy(selected),
+                               completed=sorted(inventory), status=0))
+        return result
+
+    def verify(self, evidence: list[dict]) -> dict:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for index, manifest in enumerate(evidence):
+                child = directory / str(index)
+                child.mkdir()
+                (child / "manifest.json").write_text(json.dumps(manifest))
+            self.shards.verify(directory, "a" * 40)
+            return json.loads((directory / "comparison.json").read_text())
+
+    def test_partition_covers_tests_examples_fuzz_and_empty_packages_once(self) -> None:
+        summary = self.verify(self.evidence())
+        self.assertEqual(summary["packages"], 3)
+        self.assertEqual(summary["kinds"], dict(Test=31, Example=1, Fuzz=1))
+
+    def test_comparison_rejects_missing_duplicate_failed_stale_and_incomplete_execution(self) -> None:
+        original = self.evidence()
+        mutations = {"missing": original[:-1], "duplicate": original + [original[0]]}
+        for field, value in (("head", "b" * 40), ("status", 1), ("completed", []),
+                             ("packages", []), ("executed", {}), ("selected", {}), ("inventory", {})):
+            evidence = copy.deepcopy(original)
+            evidence[0][field] = value
+            mutations[field] = evidence
+        for name, evidence in mutations.items():
+            with self.subTest(mutation=name), self.assertRaises(ValueError):
+                self.verify(evidence)
+
+    def test_runner_records_unfiltered_listing_and_fuzz_seed_execution(self) -> None:
+        # Protocol fixture: validate the real runner without compiling product code.
+        evidence = self.evidence()
+        baseline = {}
+        for manifest in evidence:
+            baseline.update(manifest["inventory"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "fixture.json"
+            fixture.write_text(json.dumps(baseline))
+            fake_go = root / "go"
+            fake_go.write_text("#!" + sys.executable + "\n" + r'''import json, os, re, sys
+from pathlib import Path
+args = sys.argv[1:]
+with open(os.environ["SHARD_CALLS"], "a") as calls:
+    calls.write(json.dumps(args) + "\n")
+baseline = json.loads(Path(os.environ["SHARD_FIXTURE"]).read_text())
+if args[0] == "list":
+    print("\n".join(sorted(baseline)))
+    raise SystemExit(0)
+packages = [arg for arg in args if arg in baseline]
+pattern = args[args.index("-run") + 1] if "-run" in args else "."
+for package in packages:
+    for name in baseline[package]:
+        if "-list" in args:
+            print(json.dumps(dict(Action="output", Package=package, Output=name + "\n")))
+        elif re.search(pattern, name):
+            print(json.dumps(dict(Action="run", Package=package, Test=name)))
+            if name.startswith("Fuzz"):
+                print(json.dumps(dict(Action="run", Package=package, Test=name + "/seed#0")))
+    print(json.dumps(dict(Action="pass", Package=package)))
+''')
+            fake_go.chmod(0o700)
+            env = {**os.environ, "GO": str(fake_go), "SHARD_FIXTURE": str(fixture),
+                   "SHARD_CALLS": str(root / "calls")}
+            for shard in self.shards.SHARDS:
+                result = subprocess.run([sys.executable, str(ROOT / "scripts/unit-shards.py"), shard,
+                                         "--evidence", str(root / shard)], cwd=ROOT, env=env,
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.shards.verify(root, subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())
+            calls = [json.loads(line) for line in (root / "calls").read_text().splitlines()]
+            runs = [args for args in calls if args[0] == "test" and "-list" not in args]
+            self.assertEqual(len(runs), 4)
+            self.assertTrue(all("-count=1" in args and "-fuzz" not in args for args in runs))
+            self.assertEqual(sum("-run" in args for args in runs), 3)
+
+    def test_unit_children_and_inventory_comparison_fail_closed(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        assert_unit_children(workflow)
+        app = workflow_job(workflow, "unit-app")
+        rest = workflow_job(workflow, "unit-rest")
+        self.assertIn("shard: [app-0, app-1, app-2]", app)
+        self.assertIn("shard: [rest]", rest)
+        for child in (app, rest):
+            self.assertIn("fail-fast: false", child)
+        aggregate = workflow_job(workflow, "unit")
+        self.assertIn("    if: always()", aggregate)
+        self.assertNotIn("continue-on-error:", aggregate)
+        self.assertEqual(step_script(workflow_step(aggregate, "Compare unpartitioned and executed inventories")),
+                         'python3 scripts/unit-shards.py verify --evidence .bin/unit-evidence --head "$(git rev-parse HEAD)"')
+        command = step_script(workflow_step(aggregate, "Require every unit child to succeed"))
+        children = re.findall(r"^      - ([\w-]+)$", aggregate, re.MULTILINE)
+        self.assertEqual(set(children), {"unit-app", "unit-rest", "unit-contracts"})
+        self.assertEqual(set(children), set(re.findall(r"--required ([\w-]+)", command)))
+        for child in children:
+            for outcome in ("success", "failure", "cancelled", "skipped", "missing"):
+                results = {name: {"result": "success"} for name in children}
+                if outcome == "missing":
+                    del results[child]
+                else:
+                    results[child]["result"] = outcome
+                completed = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command],
+                                           cwd=ROOT, env={**os.environ, "REQUIRED_RESULTS": json.dumps(results)},
+                                           capture_output=True, text=True)
+                self.assertEqual(completed.returncode, 0 if outcome == "success" else 1,
+                                 (child, outcome, completed.stderr))
+
+    def test_make_test_and_ci_share_the_entire_contract_dependency_list(self) -> None:
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("test: test-contracts\n\t$(GO) test ./...\n", makefile)
+        contracts = re.search(r"(?m)^test-contracts: (.+)$", makefile).group(1).split()
+        self.assertEqual(len(contracts), len(set(contracts)))
+        self.assertEqual(set(contracts), {
+            "test-sdk-boundary", "deadcode-contract", "release-contract", "ci-contract",
+            "security-pin-contract", "smoke-assert-contract", "build-vcs-contract",
+            "docker-workspace-contract", "fmt-contract", "e2e-admission-contract",
+            "e2e-evidence-contract", "e2e-pipe-contract", "e2e-terminal-line-contract",
+            "e2e-traceback-guard-contract", "test-e2e-reliability", "test-e2e-residual-policy", "test-e2e-shards"})
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_process_cli_job_runs_the_make_target_and_gates_test(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -451,7 +594,7 @@ class CIWorkflowContractTest(unittest.TestCase):
 
     def test_required_unit_job_runs_pinned_deadcode_without_bypass(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        assert_unit_job_runs_real_tmux_strict(workflow_job(workflow, "unit"))
+        assert_unit_children(workflow)
 
         # The repository tool directive and module version pin the scanner;
         # a runner must not install a floating tool or substitute a waiver.
@@ -483,21 +626,23 @@ class CIWorkflowContractTest(unittest.TestCase):
         self,
     ) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        unit = workflow_job(workflow, "unit")
-        assert_unit_job_runs_real_tmux_strict(unit)
+        unit = workflow_job(workflow, "unit-app")
+        assert_shard_runs_real_tmux_strict(unit)
+        unit = unit.split("      - name: Preserve unit inventory and results")[0].replace(SHARD_TEST_COMMAND, UNIT_TEST_COMMAND)
 
         mutations = real_tmux_strict_mutations(unit)
         for name, mutated in mutations.items():
             with self.subTest(mutation=name):
                 self.assertNotEqual(mutated, unit)
                 with self.assertRaises(AssertionError):
-                    assert_unit_job_runs_real_tmux_strict(mutated)
+                    assert_job_runs_real_tmux_strict(mutated)
 
     def test_unit_test_step_runs_make_test_under_a_created_long_tmpdir(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         script = step_script(
-            workflow_step(workflow_job(workflow, "unit"), "Run unit tests")
+            workflow_step(workflow_job(workflow, "unit-app"), "Run unit tests")
         )
+        script = script.replace(SHARD_TEST_COMMAND, UNIT_TEST_COMMAND)
         literal = unit_test_tmpdir(script)
         self.assertGreaterEqual(len(literal.encode()), UNIT_TEST_TMPDIR_MIN_BYTES)
 
@@ -550,7 +695,7 @@ class CIWorkflowContractTest(unittest.TestCase):
     def test_deadcode_failure_fails_unit_and_test_aggregate(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         unit_script = step_script(
-            workflow_step(workflow_job(workflow, "unit"), "Check pinned deadcode baseline")
+            workflow_step(workflow_job(workflow, "unit-contracts"), "Check pinned deadcode baseline")
         )
         aggregate = workflow_job(workflow, "test")
         aggregate_script = step_script(
@@ -1114,8 +1259,8 @@ class CIWorkflowContractTest(unittest.TestCase):
 
     def test_artifact_uploads_run_only_on_github_com(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        # The four Security evidence uploads plus the four e2e attempt uploads.
-        self.assertEqual(assert_artifact_uploads_run_only_on_github_com(workflow), 8)
+        # The four Security evidence uploads plus four e2e uploads and three unit evidence uploads.
+        self.assertEqual(assert_artifact_uploads_run_only_on_github_com(workflow), 11)
 
     def test_artifact_upload_contract_rejects_a_missing_condition(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

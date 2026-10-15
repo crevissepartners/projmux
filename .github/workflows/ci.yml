@@ -209,8 +209,96 @@ jobs:
   # of a silent skip that would count as a pass. The tests run under a TMPDIR of
   # at least 100 bytes: a unix socket path has a platform bound, and a long TMPDIR
   # keeps socket tests honest about it on any TMPDIR (macOS's default is ~49 bytes).
-  unit:
-    name: Unit Tests
+  unit-app:
+    name: Unit / ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [app-0, app-1, app-2]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          tmux -V
+
+      - name: Run unit tests
+        run: |
+          tmpdir=/tmp/projmux-unit-tests-long-tmpdir-guard-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"
+          TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test-unit-shard UNIT_SHARD=${{ matrix.shard }} UNIT_EVIDENCE_DIR=.bin/unit-evidence/${{ matrix.shard }}
+
+      - name: Preserve unit inventory and results
+        if: always() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-evidence-${{ matrix.shard }}
+          path: .bin/unit-evidence/${{ matrix.shard }}/
+          if-no-files-found: error
+
+  unit-rest:
+    name: Unit / remaining packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [rest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            echo "tmux before install: $(command -v tmux) $(tmux -V)"
+          else
+            echo "tmux before install: absent"
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+          tmux -V
+
+      - name: Run unit tests
+        run: |
+          tmpdir=/tmp/projmux-unit-tests-long-tmpdir-guard-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          mkdir -p "$tmpdir"
+          echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"
+          TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test-unit-shard UNIT_SHARD=${{ matrix.shard }} UNIT_EVIDENCE_DIR=.bin/unit-evidence/${{ matrix.shard }}
+
+      - name: Preserve unit inventory and results
+        if: always() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-evidence-rest
+          path: .bin/unit-evidence/${{ matrix.shard }}/
+          if-no-files-found: error
+
+  unit-contracts:
+    name: Unit / contracts and static gates
     runs-on: ubuntu-latest
 
     steps:
@@ -237,15 +325,55 @@ jobs:
       - name: Check pinned deadcode baseline
         run: make deadcode
 
-      - name: Run unit tests
+      - name: Run non-Go test contracts
         run: |
           tmpdir=/tmp/projmux-unit-tests-long-tmpdir-guard-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
           mkdir -p "$tmpdir"
           echo "TMPDIR=$tmpdir (${#tmpdir} bytes)"
-          TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test
+          TMPDIR="$tmpdir" PROJMUX_REAL_TMUX_STRICT=1 make test-contracts
 
       - name: Vet
         run: make vet
+
+  unit:
+    name: Unit Tests
+    if: always()
+    needs:
+      - unit-app
+      - unit-rest
+      - unit-contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aggregate policy
+        uses: actions/checkout@v6
+
+      - name: Require every unit child to succeed
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/required-gate.py \
+            --results-json "$REQUIRED_RESULTS" \
+            --required unit-app \
+            --required unit-rest \
+            --required unit-contracts
+
+      - name: Download unit inventories
+        uses: actions/download-artifact@v4
+        with:
+          pattern: unit-evidence-*
+          path: .bin/unit-evidence
+
+      - name: Compare unpartitioned and executed inventories
+        run: python3 scripts/unit-shards.py verify --evidence .bin/unit-evidence --head "$(git rev-parse HEAD)"
+
+      - name: Preserve inventory comparison
+        if: success() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-inventory-comparison
+          path: .bin/unit-evidence/comparison.json
+          if-no-files-found: error
 
   process-host-cli:
     name: Process Host CLI Tests

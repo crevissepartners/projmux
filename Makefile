@@ -148,8 +148,16 @@ deadcode-contract:
 vet:
 	$(GO) vet ./...
 
-test: test-sdk-boundary deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards
+test: test-contracts
 	$(GO) test ./...
+
+# Shared dependency list: CI runs every non-Go contract once, local test keeps
+# the complete original gate. Go tests are partitioned by scripts/unit-shards.py.
+.PHONY: test-contracts test-unit-shard
+test-contracts: test-sdk-boundary deadcode-contract release-contract ci-contract security-pin-contract smoke-assert-contract build-vcs-contract docker-workspace-contract fmt-contract e2e-admission-contract e2e-evidence-contract e2e-pipe-contract e2e-terminal-line-contract e2e-traceback-guard-contract test-e2e-reliability test-e2e-residual-policy test-e2e-shards
+
+test-unit-shard:
+	GO="$(GO)" python3 scripts/unit-shards.py "$(UNIT_SHARD)" --evidence "$(UNIT_EVIDENCE_DIR)"
 
 # Build this checkout and exercise the process fixtures through a copied CLI.
 .PHONY: test-process-host-cli
