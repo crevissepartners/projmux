@@ -102,7 +102,7 @@ Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exerc
 Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.questionService	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.relaunchAgent	Public RelaunchAgent implementation for external SDK consumers; TestExternalRelaunchAgent and TestRelaunchAgentSDKCLIExecutionParity exercise admission and shared execution.
-Client.relaunchLiveness	Public RelaunchAgent failure-observation closure; TestAgentRestartRunFailureEvidenceAndNoReplay pins alive/closed/unknown disposition without replay, and existing CLI stop-failure fixtures protect the source contract.
+Client.relaunchLiveness	Public RelaunchAgent failure-observation closure; TestRelaunchLivenessSelectsExactPane injects exact Registry/socket inventory and TestRelaunchAgentSDKStopFailureEvidence checks typed Stop cause, retained plan/recovery and no replay.
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.resumeAgentPlan	Public ResumeAgent/RelaunchAgent shared transaction closure; TestResumeAgentSDKCLIParity, TestResumeAgentSDKCLIRollback and TestRelaunchAgentSDKNativeCodexAndPostStopCancellation protect commit and recovery.
 Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
