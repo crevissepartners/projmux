@@ -31,10 +31,11 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 		if mode == cli.OutputModeDefault {
 			output = stdout
 		}
-		if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed%s\n", agent.Metadata.UID, claim.record.Binding.PaneUID, agentLifecycleClaimSuffix(mode == cli.OutputModeDefault)); err != nil {
+		if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed\n", agent.Metadata.UID, claim.record.Binding.PaneUID); err != nil {
 			return err
 		}
 	}
+	writeAgentFirstInputNotice(stderr, mode == cli.OutputModeDefault)
 	for _, notice := range notices {
 		notice.writeForMode(stderr, mode)
 	}

@@ -216,7 +216,8 @@ func trailingAgentPromptFlag(fs *flag.FlagSet, prompt []string) string {
 	if fs.Lookup(name) == nil {
 		return ""
 	}
-	return token
+	spelling, _, _ := strings.Cut(token, "=")
+	return spelling
 }
 func writeAgentLifecyclePromptNotice(w io.Writer, token string) {
 	if token != "" {
@@ -277,19 +278,19 @@ func writeRelaunchLifecycleNotices(w io.Writer, request agentRelaunchRequest) {
 	agentLifecycleNotices{trailingPromptFlag: request.trailingPromptFlag, foreground: request.foregroundNotice && !request.detach && request.host == ""}.write(w)
 }
 
-// A suffix belongs to an existing default line, so zero nonapplications never
-// introduce another notice line. Wire and nondefault projections stay intact.
-func agentLifecycleClaimSuffix(defaultOutput bool) string {
-	if !defaultOutput {
-		return ""
+// Only a committed frozen result uses the recorded-settings suffix. Ordinary
+// child-free claims retain the six-field ownership line and get a separate,
+// best-effort lifetime notice in default mode only.
+func writeAgentFirstInputNotice(w io.Writer, defaultOutput bool) {
+	if defaultOutput {
+		fmt.Fprintln(w, lifecycleText("claim-waiting"))
 	}
-	return "; " + lifecycleText("pending")
 }
 func agentSettingsPendingSuffix(a *agentSettingsApplication) string {
 	if a != nil {
 		for _, e := range a.Entries {
 			if e.Status == "pending" {
-				return agentLifecycleClaimSuffix(true)
+				return "; " + lifecycleText("pending")
 			}
 		}
 	}

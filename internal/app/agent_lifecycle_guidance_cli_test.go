@@ -45,7 +45,7 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 				if verb == "relaunch" {
 					args = append(args, "--yes", "--model", "changed-model")
 				}
-				args = append(args, "--", "keep  exact spaces", "--effort")
+				args = append(args, "--", "keep  exact spaces", "--effort=fixture-private-canary")
 				cmd := exec.CommandContext(ctx, f.binary, args...)
 				input, err := cmd.StdinPipe()
 				if err != nil {
@@ -107,6 +107,9 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 						t.Fatalf("%s missing %s: %s", verb, text, &stderr)
 					}
 				}
+				if bytes.Contains(rawOutput, []byte("fixture-private-canary")) || strings.Contains(stderr.String(), "fixture-private-canary") {
+					t.Fatal("prompt value leaked into result/notice")
+				}
 				model := "stub-model"
 				if verb == "relaunch" {
 					model = "changed-model"
@@ -116,7 +119,7 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 					t.Fatal(e)
 				}
 				raw, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-				if !bytes.Contains(raw, []byte("keep  exact spaces --effort")) {
+				if !bytes.Contains(raw, []byte("keep  exact spaces --effort=fixture-private-canary")) {
 					t.Fatal("provider input changed", string(raw))
 				}
 				old = awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
@@ -235,5 +238,77 @@ func TestAgentLifecycleGuidanceFrozenActualCLI(t *testing.T) {
 	stop = exec.CommandContext(ctx, f.binary, "agent", "stop", first.ref)
 	if raw, err := stop.CombinedOutput(); err != nil {
 		t.Fatalf("provider stop: %v %s", err, raw)
+	}
+}
+
+func TestAgentLifecycleGuidanceClaimModesActualCLI(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	f := deferredResumeCLIFixture(t, aiModeClaude)
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+	awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
+	first.shutdown(t)
+	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+	command := &agentCommand{messagePaths: agentMessagePaths{registryPath: f.store.Path()}}
+	for _, mode := range []string{"default", "json", "receipt", "metadata", "uid", "none"} {
+		args := []string{"agent", "resume", first.ref, "--wait-for-peer"}
+		if mode != "default" {
+			args = append(args, "-o", mode)
+		}
+		cmd := exec.CommandContext(ctx, f.binary, args...)
+		input, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err = cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = input.Close()
+			if cmd.ProcessState == nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+		})
+		// A child-free claim is the success fact here, not a reservation mistaken
+		// for provider readiness. EOF is admitted only after the real claim exists.
+		processCLIUntil(t, ctx, func() bool {
+			claim, err := readDeferredClaim(command.deferredClaimPath(old.Binding.AgentUID))
+			return err == nil && claim.Agent == old.Binding.AgentUID && claim.Process.PID == cmd.Process.Pid && deferredClaimLive(claim)
+		})
+		_ = input.Close()
+		if err = cmd.Wait(); err != nil {
+			t.Fatalf("%s: %v %s", mode, err, &stderr)
+		}
+		const waiting = "Waiting for first input; the provider has not started."
+		if mode == "default" {
+			if len(strings.Fields(stdout.String())) != 6 || strings.Count(stdout.String(), "\n") != 1 || !strings.Contains(stdout.String(), "foreground=claimed") {
+				t.Fatal("identity line changed", stdout.String())
+			}
+			if stderr.String() != waiting+"\n" {
+				t.Fatal("default lifetime notice", stderr.String())
+			}
+		} else {
+			if stdout.Len() != 0 || strings.Contains(stderr.String(), waiting) {
+				t.Fatalf("%s gained pre-input result: %s %s", mode, &stdout, &stderr)
+			}
+			if mode == "none" && stderr.Len() != 0 {
+				t.Fatal("none leaked", stderr.String())
+			}
+			if mode != "none" && len(strings.Fields(stderr.String())) != 6 {
+				t.Fatalf("%s ownership changed: %s", mode, &stderr)
+			}
+		}
+		reg := mustRegistry(t, f)
+		pane, _ := processResumePane(reg, old.Binding.AgentUID)
+		if pane == nil || !pane.Status.Activation.IsZero() || pane.Status.ProcessSession.Binding != old.Binding {
+			t.Fatal("claim fabricated provider or generation")
+		}
 	}
 }

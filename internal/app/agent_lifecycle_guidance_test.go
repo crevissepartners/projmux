@@ -31,7 +31,10 @@ func lifecycleSource(provider, host string) agentApplicationSource {
 	return agentApplicationSource{provider: provider, host: host, settings: agentSettingsLaunch{layered: true, resolution: agentsettings.Resolution{PassModel: true, New: agentsettings.Settings{Profile: agentsettings.ProfileLayer{Name: "role"}, Model: agentsettings.Setting{Value: "actual-model"}, Effort: agentsettings.Setting{Value: "high"}, Instructions: agentsettings.Setting{Value: "lead"}}}}, guidance: agentGuidanceLaunch{active: true}, links: projectLinksLaunch{active: true, project: projectGuidanceLaunch{active: true}}, workspace: coremetadata.AgentWorkspace{CWD: "/fixture/work"}}
 }
 func TestAgentSettingsApplicationProjection(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	guidanceHome := t.TempDir()
+	t.Setenv("HOME", guidanceHome)
+	t.Setenv("XDG_CONFIG_HOME", guidanceHome+"/config")
+	t.Setenv("XDG_STATE_HOME", guidanceHome+"/state")
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	for _, host := range []string{"tmux", "process"} {
 		for _, provider := range []string{aiModeClaude, aiModeCodex} {
@@ -214,6 +217,11 @@ func (l *lifecycleChangingLauncher) ResolveAgentSettingsRequest(p string, a map[
 	return v, err
 }
 func TestRelaunchApplicationUsesPreparedSettings(t *testing.T) {
+	guidanceHome := t.TempDir()
+	t.Setenv("HOME", guidanceHome)
+	t.Setenv("XDG_CONFIG_HOME", guidanceHome+"/config")
+	t.Setenv("XDG_STATE_HOME", guidanceHome+"/state")
+	t.Setenv("LC_ALL", "en_US.UTF-8")
 	f := newRelaunchLayersFixture(t)
 	f.onRoleWithOverrides(t)
 	launcher := &lifecycleChangingLauncher{exactArgvResumeLauncher: f.launcher}
@@ -248,11 +256,16 @@ func TestRelaunchApplicationUsesPreparedSettings(t *testing.T) {
 }
 
 func TestAgentPromptTrailingFlagNoticePreservesInput(t *testing.T) {
+	guidanceHome := t.TempDir()
+	t.Setenv("HOME", guidanceHome)
+	t.Setenv("XDG_CONFIG_HOME", guidanceHome+"/config")
+	t.Setenv("XDG_STATE_HOME", guidanceHome+"/state")
+	t.Setenv("LC_ALL", "en_US.UTF-8")
 	for _, tc := range []struct {
 		prompt []string
 		want   string
 	}{
-		{[]string{"keep  spaces", "--effort"}, "--effort"}, {[]string{"--effort=high"}, "--effort=high"}, {[]string{"--unknown"}, ""}, {[]string{"---effort"}, ""}, {[]string{"--effort", "later"}, ""}, {[]string{"--"}, ""}, {nil, ""},
+		{[]string{"keep  spaces", "--effort"}, "--effort"}, {[]string{"--effort=high"}, "--effort"}, {[]string{"--unknown"}, ""}, {[]string{"---effort"}, ""}, {[]string{"--effort", "later"}, ""}, {[]string{"--"}, ""}, {nil, ""},
 	} {
 		fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
 		fs.String("effort", "", "")
@@ -270,6 +283,9 @@ func TestAgentPromptTrailingFlagNoticePreservesInput(t *testing.T) {
 			t.Fatalf("%+v %v", r, err)
 		}
 		want := token
+		if token == "--effort=high" {
+			want = "--effort"
+		}
 		if token == "--unknown" {
 			want = ""
 		}
@@ -277,9 +293,30 @@ func TestAgentPromptTrailingFlagNoticePreservesInput(t *testing.T) {
 			t.Fatalf("got %q", r.trailingPromptFlag)
 		}
 	}
+	const canary = "fixture-private-canary"
+	prompt := []string{"keep  exact spacing", "--effort=" + canary}
+	before := slices.Clone(prompt)
+	r, err := parseAgentRelaunchArgs(append([]string{"uid:fixture", "-o", "json", "--"}, prompt...), io.Discard)
+	if err != nil || !slices.Equal(r.prompt, before) || r.trailingPromptFlag != "--effort" {
+		t.Fatal("option classification changed input", err)
+	}
+	var warnings, wire bytes.Buffer
+	writeAgentLifecyclePromptNotice(&warnings, r.trailingPromptFlag)
+	if !strings.Contains(warnings.String(), "--effort") || strings.Contains(warnings.String(), canary) {
+		t.Fatal("warning disclosed prompt value")
+	}
+	if err = writeAgentRelaunchResult(&wire, r, agentRelaunchResult{}); err != nil || !json.Valid(wire.Bytes()) || bytes.Contains(wire.Bytes(), []byte(canary)) {
+		t.Fatal("result disclosed prompt value", err)
+	}
+
 }
 
 func TestExistingProcessForegroundNoticePreservesLifetime(t *testing.T) {
+	guidanceHome := t.TempDir()
+	t.Setenv("HOME", guidanceHome)
+	t.Setenv("XDG_CONFIG_HOME", guidanceHome+"/config")
+	t.Setenv("XDG_STATE_HOME", guidanceHome+"/state")
+	t.Setenv("LC_ALL", "en_US.UTF-8")
 	f := newRelaunchFixture(t)
 	fixtureHome := t.TempDir()
 	f.command.rebind.create.homeDir = func() (string, error) { return fixtureHome, nil }
@@ -317,6 +354,11 @@ type lifecycleBrokenWriter struct{}
 
 func (lifecycleBrokenWriter) Write([]byte) (int, error) { return 0, errors.New("display failed") }
 func TestAgentLifecycleGuidanceOutputModes(t *testing.T) {
+	guidanceHome := t.TempDir()
+	t.Setenv("HOME", guidanceHome)
+	t.Setenv("XDG_CONFIG_HOME", guidanceHome+"/config")
+	t.Setenv("XDG_STATE_HOME", guidanceHome+"/state")
+	t.Setenv("LC_ALL", "en_US.UTF-8")
 	f := newRelaunchFixture(t)
 	a := preparedAgentSettingsApplication(lifecycleSource(aiModeCodex, "process"))
 	a.Entries[3].Status = "not-applied"
@@ -374,7 +416,10 @@ func TestAgentLifecycleGuidanceOutputModes(t *testing.T) {
 }
 
 func TestAgentLifecyclePendingDefaultLine(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	guidanceHome := t.TempDir()
+	t.Setenv("HOME", guidanceHome)
+	t.Setenv("XDG_CONFIG_HOME", guidanceHome+"/config")
+	t.Setenv("XDG_STATE_HOME", guidanceHome+"/state")
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	record := &deferredLaunchRecord{Model: "frozen-model", Effort: "medium"}
 	record.Command.Dir = "/fixture/work"
@@ -401,11 +446,14 @@ func TestAgentLifecyclePendingDefaultLine(t *testing.T) {
 			t.Fatal("lost stdout failure")
 		}
 	}
-	if suffix := agentLifecycleClaimSuffix(false); suffix != "" {
-		t.Fatal("nondefault claim changed", suffix)
+	var notice bytes.Buffer
+	writeAgentFirstInputNotice(&notice, false)
+	if notice.Len() != 0 {
+		t.Fatal("nondefault claim gained lifetime text")
 	}
-	suffix := agentLifecycleClaimSuffix(true)
-	if !strings.Contains(suffix, "waiting for first input") || strings.Contains(suffix, "\n") {
-		t.Fatal(suffix)
+	writeAgentFirstInputNotice(&notice, true)
+	if notice.String() != "Waiting for first input; the provider has not started.\n" {
+		t.Fatal(notice.String())
 	}
+	writeAgentFirstInputNotice(lifecycleBrokenWriter{}, true)
 }
