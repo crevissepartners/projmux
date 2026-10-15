@@ -104,11 +104,12 @@ func TestSDKAgentSessionsCLIParityAndReadOnly(t *testing.T) {
    if _,err=client.ListProjectSessions(canceled,pr);!errors.Is(err,context.Canceled) {t.Fatal(err)}
    if !reflect.DeepEqual(before,sessionReadTree(t,root)) {t.Fatal("read/cancellation/refusal changed fixture tree")}
    // Removed Project retains only recorded affiliation and its empty name.
-   *h.registry=metadata.NewRegistry()
-   if _,err=store.Update(func(reg *metadata.Registry) error {*reg=h.registry.Clone();return nil});err!=nil {t.Fatal(err)}
+   goneUID,err:=metadata.NewUID(metadata.KindProject);if err!=nil {t.Fatal(err)}
+   if err=sessionhistory.Append(paths.StateDir,sessionhistory.Record{AgentUID:"agent-deleted",Provider:provider,SessionID:"removed-project",ObservedAt:last,Source:sessionhistory.SourceObserved,ProjectUID:goneUID,AgentName:"gone"});err!=nil {t.Fatal(err)}
    removedBefore:=sessionReadTree(t,root)
-   removed,err:=client.ListProjectSessions(ctx,pr);if err!=nil {t.Fatal(err)}
-   compare([]string{"sessions","project",pr.Project,"-o","json"},removed)
+   removedRef:=projmux.ListProjectSessionsRequest{Project:"uid:"+goneUID}
+   removed,err:=client.ListProjectSessions(ctx,removedRef);if err!=nil {t.Fatal(err)}
+   compare([]string{"sessions","project",removedRef.Project,"-o","json"},removed)
    if removed.ProjectName!="" || len(removed.Sessions)==0 {t.Fatalf("removed Project: %+v",removed)}
    if !reflect.DeepEqual(removedBefore,sessionReadTree(t,root)) {t.Fatal("removed Project read wrote state")}
   })
