@@ -328,6 +328,32 @@ conversation. `relaunch-no-conversation` still identifies the resume refusal;
 it does not report conversation loss. Present the structured guidance directly
 instead of parsing the error string. Relaunch remains an explicit user action.
 
+## Provider account references
+
+`Client.RegisterAccount(ctx, core.RegisterAccountRequest)` registers a
+non-sensitive reference to an existing absolute provider directory.
+`Client.ListAccounts(ctx)` returns active references; `Client.RemoveAccount(ctx,
+core.RemoveAccountRequest)` retires an exact active name or `uid:account-…`.
+All three use the Client's captured ConfigDir and the same catalog service as
+`config accounts`. Authentication is always `unverified`; no credentials or
+provider APIs are read and no provider is started.
+
+```go
+account, err := client.RegisterAccount(ctx, core.RegisterAccountRequest{
+    Name: "work", Provider: "codex", Root: "/absolute/existing/root",
+})
+if err != nil { return err }
+_, err = client.RemoveAccount(ctx, core.RemoveAccountRequest{Ref: "uid:" + account.UID})
+```
+
+`core.ProviderAccount` contains UID, Name, Provider, Root, Version, State, and
+AuthenticationStatus only. Active names are globally unique; symlink aliases of
+the same provider/root are duplicates. Removal keeps a tombstone and repeated
+removal by UID returns `removed`. Re-registering the name creates a fresh UID.
+Returned slices and values belong to the caller. `*projmux.Refusal` exposes
+`CodeAccount*` reasons; `CodeAccountWriteUnknown` must not be automatically
+retried. Cancellation retains `errors.Is` context identity. See
+[provider account references](accounts.md) for storage and failure semantics.
 
 ### Detached process Agent creation
 
