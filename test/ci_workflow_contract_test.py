@@ -304,15 +304,17 @@ DARWIN_COMMANDS = {
         "Compile every test package without running it": (
             "go test -exec /usr/bin/true -count=1 -run '^$' ./..."
         ),
+        "Exercise detached process CLI lifetime boundaries": (
+            'PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '
+            "'^TestDetached(Process|Create|OwnerLog|Identity|Stop)' ./internal/app"
+        ),
     },
-    "darwin-claude": {
+    "darwin-process": {
         "Exercise process Claude binding and endpoint receipts": (
             'go test -race -v -count=1 -timeout=120s -run '
             '"^TestClaudeProcess|^TestProcessClaudeRoute" ./internal/app '
             './internal/core/metadata'
         ),
-    },
-    "darwin-codex": {
         "Verify process Codex binding and receipt fixtures": (
             'go test -race -v -count=1 -timeout=120s -run '
             '"^TestCodexProcess|^TestProcessCodexRoute" ./internal/app '
@@ -328,12 +330,6 @@ DARWIN_COMMANDS = {
             './internal/core/resourcegraph ./internal/core/controller '
             './internal/core/registryview ./internal/core/selector ./internal/core/metadata '
             './internal/app ./internal/integrations/processhost'
-        ),
-    },
-    "darwin-cli": {
-        "Exercise detached process CLI lifetime boundaries": (
-            'PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '
-            "'^TestDetached(Process|Create|OwnerLog|Identity|Stop)' ./internal/app"
         ),
     },
 }
@@ -355,20 +351,19 @@ def assert_darwin_children(workflow: str) -> None:
             step = workflow_step(job, name)
             if step_script(step).strip() != command:
                 raise AssertionError(f"{child}: original command changed: {name}")
-        for name in (["Compile and test native key adapter", DARWIN_TEST_COMPILE_STEP]
-                     if child == "darwin-build" else
-                     ["Build this checkout for detached CLI fixtures",
-                      "Exercise detached process CLI lifetime boundaries"]
-                     if child == "darwin-cli" else []):
-            step = workflow_step(job, name)
-            if '          CGO_ENABLED: "1"' not in step.splitlines():
-                raise AssertionError(f"{child}: CGO must be enabled for {name}")
-        if child == "darwin-cli":
-            build = workflow_step(job, "Build this checkout for detached CLI fixtures")
-            if step_script(build).strip() != "go build ./cmd/projmux":
-                raise AssertionError("detached CLI must build its own checkout")
-            if job.index("Build this checkout") > job.index("Exercise detached process CLI"):
-                raise AssertionError("detached CLI must build before execution")
+        for name in (
+            "Compile and test native key adapter", DARWIN_TEST_COMPILE_STEP,
+            "Exercise detached process CLI lifetime boundaries",
+        ):
+            if name in commands:
+                step = workflow_step(job, name)
+                if '          CGO_ENABLED: "1"' not in step.splitlines():
+                    raise AssertionError(f"{child}: CGO must be enabled for {name}")
+        # Cache reuse and the detached CLI's own binary require this order.
+        expected_steps = ["Checkout", "Set up Go", "Install tmux", *commands]
+        actual_steps = [step_field(step, "name") for step in job_steps(job)]
+        if actual_steps != expected_steps:
+            raise AssertionError(f"{child}: steps must run exactly in order: {expected_steps}")
     aggregate = workflow_job(workflow, "darwin-native")
     if "    name: Darwin Native Key Adapter" not in aggregate.splitlines():
         raise AssertionError("stable Darwin name changed")
@@ -1160,8 +1155,9 @@ class CIWorkflowContractTest(unittest.TestCase):
                               job.replace(step, "        if: false\n" + step),
                               job.replace(step, "        continue-on-error: true\n" + step)]
             mutations += [job.replace('CGO_ENABLED: "1"', 'CGO_ENABLED: "0"')]
-            if child == "darwin-cli":
-                mutations += [job.replace("run: go build ./cmd/projmux", "run: true")]
+            first_name = next(iter(commands))
+            first_block = f"      - name: {first_name}\n" + workflow_step(job, first_name)
+            mutations += [job.replace(first_block, "") + "\n" + first_block]
             for mutation in mutations:
                 if mutation == job:
                     continue
