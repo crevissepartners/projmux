@@ -3,14 +3,41 @@
 The local validation contract is exposed through make targets so CI, agents,
 and humans run the same entrypoints.
 
+## Darwin CI
+
+Two independent `macos-15` children retain the original commands, selectors,
+packages, CGO settings, race detector, counts and timeouts. The stable
+`Darwin Native Key Adapter` check requires every child to succeed, including
+when a child fails, is cancelled, skips or has no result. Aggregate `Test`
+continues to require that stable check.
+
+| Original Darwin step | Child job |
+| --- | --- |
+| Native key adapter execution and CGO CLI build | `darwin-build` |
+| Complete processhost race suite | `darwin-build` |
+| Compile/link every test package without executing tests | `darwin-build` |
+| Claude binding and endpoint receipts | `darwin-process` |
+| Codex binding and receipt fixtures | `darwin-process` |
+| Attention store and consumer fixtures | `darwin-process` |
+| Typed inventory, convergence and admission | `darwin-process` |
+| Detached process CLI lifetime boundaries | `darwin-build` |
+
+The native/link child builds its own CGO CLI before setting `PMX_TEST_CLI`.
+It compiles all test packages before the detached CLI tests, reusing non-race app
+compilation. The process child runs Claude before Codex, attention and inventory,
+reusing race app compilation. Neither child consumes another runner's binary. The workflow contract pins the
+original command for each row and exercises incomplete child results against
+the aggregate's actual script. More runners trade repeated setup/compilation
+for a shorter critical path; runner time and wall time must be measured separately.
+
 ## Targets
 
 - `make test` runs the fast Go unit suite. Apart from the real-tmux tests
   below, these tests avoid tmux, TTY, GUI, and host shell dependencies.
 - Detached process creation adds CLI fixtures for caller EOF/exit, parent
   provider-group TERM/HUP, exact stop/Wait and repeated stop, create-window,
-  startup hook failure, and caller cancellation. The existing Darwin native
-  job builds the CLI and executes these detached boundary fixtures as well as
+  startup hook failure, and caller cancellation. The Darwin native/link
+  child builds its own checkout and executes these boundary fixtures as well as
   their unit tests; it does not substitute cross-compilation for execution.
 - `make test-process-host-cli` builds this checkout, copies the binary into a
   temporary root, and runs every top-level test in
