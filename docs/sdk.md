@@ -482,3 +482,36 @@ Typed `*projmux.Refusal` codes and wrapped causes distinguish those results.
 Native Codex uses its existing same-thread settings-update/verification protocol;
 it never creates a new thread or turn as fallback. Do not automatically replay
 an uncertain operation or a recovery command.
+
+## Agent and Project session history
+
+`Client.ListAgentSessions(ctx, projmux.ListAgentSessionsRequest{Agent:
+"uid:...", Project: "uid:...", Windows: []string{"uid:..."}, Labels:
+[]string{"team=review"}})` returns `core.AgentSessionsList`. `Agent` is required;
+Project, Windows and Labels are the explicit scopes and AND label filters from
+`agent sessions list`. No active Pane, current directory or implicit scope is
+used. `Client.ListProjectSessions(ctx, projmux.ListProjectSessionsRequest{
+Project: "uid:..."})` returns `core.ProjectSessionsList`. Its only selector is
+one required Project name or `uid:` reference, as on `agent sessions project`.
+A removed Project can be read only by its exact canonical Project UID; its
+`ProjectName` is empty.
+
+Both methods use the Client's captured HomeDir, ConfigDir and StateDir without
+changing the environment. They share the CLI's read service and preserve its
+current/history join, ordering, recorded affiliations, removed Agent membership,
+corrupt-line counts, unattributed and ambiguous session counts, and JSON keys.
+Missing history produces an empty session array. Returned slices and optional
+time pointers belong to the caller; modifying them cannot affect later reads.
+Cancellation before admission reads nothing, and neither successful nor refused
+reads write Registry or history state.
+
+Selection failures use the existing `CodeSelectorInvalid`,
+`CodeResourceNotFound` and `CodeSelectorAmbiguous` typed refusals. Agent providers
+other than Claude or Codex return `CodeSessionsProviderUnsupported`. Registry read
+failures use `CodeRegistryUnavailable`; history filesystem errors and context
+cancellation remain ordinary errors.
+
+`TranscriptPath` is recorded metadata only. Codex paths that the CLI leaves
+empty remain empty. These methods never read transcript contents, discover
+provider accounts or transcript locations, backfill history, or infer new
+Project affiliations. They do not start or contact a provider.

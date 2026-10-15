@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,13 +13,9 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
+	"github.com/crevissepartners/projmux/internal/services/agentsessions"
 )
-
-// sessionsReasonProviderUnsupported: the Agent's provider has no session
-// history support.
-const sessionsReasonProviderUnsupported = "sessions-provider-unsupported"
 
 // agentSessionsActions are the `agent sessions` subcommands in help order.
 var agentSessionsActions = []string{"list", "backfill", "project", "attribute"}
@@ -77,32 +74,24 @@ func (c *agentCommand) runSessions(args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	resolution, err := flags.resolve(selector.VerbTopic, false, registry)
+	query, err := flags.query()
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	found, ok := registry.Agent(resolution.Matches[0].UID)
-	if !ok {
-		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
+	service := agentsessions.Service{
+		LoadRegistry: func() (coremetadata.Registry, error) { return registry, nil },
+		StateDir: func() (string, error) {
+			if c.store == nil || c.store.stateDir == nil {
+				return "", errors.New("the projmux state directory is not configured")
+			}
+			return c.store.stateDir()
+		},
 	}
-	agent := found.Clone()
-	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
-	if provider != aiModeClaude && provider != aiModeCodex {
-		return usageError(fmt.Sprintf("%s: agent/%s is a %q Agent; session history is recorded only for --provider claude or codex (%s)",
-			spelling, agent.Metadata.Name, agent.Spec.Provider, sessionsReasonProviderUnsupported))
-	}
-	if c.store == nil || c.store.stateDir == nil {
-		return fmt.Errorf("%s: the projmux state directory is not configured", spelling)
-	}
-	stateDir, err := c.store.stateDir()
+	listed, err := service.ListAgent(context.Background(), query)
 	if err != nil {
-		return fmt.Errorf("%s: %w", spelling, err)
+		return MapMetadataError(err)
 	}
-	listed, err := sessionhistory.List(stateDir, agent)
-	if err != nil {
-		return fmt.Errorf("%s: %w", spelling, err)
-	}
-	result := agentSessionsList{AgentUID: listed.AgentUID, AgentName: agent.Metadata.Name, Sessions: listed.Sessions, CorruptLines: listed.CorruptLines}
+	result := agentSessionsList(listed)
 	if output == "json" {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetEscapeHTML(false)
@@ -174,45 +163,24 @@ func (c *agentCommand) runSessionsProject(args []string, stdout, stderr io.Write
 	if output != "" && output != "json" {
 		return usageError(fmt.Sprintf("%s: unsupported output %q; want json", spelling, output))
 	}
-	flags := resourceQueryFlags{kind: coremetadata.KindProject}
-	flags.addPositionalRef(positionals[0])
-
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	var projectUID, projectName string
-	if ref, err := selector.ParseRef(coremetadata.KindProject, positionals[0]); err == nil && ref.IsUID() && coremetadata.IsProjectUIDShaped(ref.UID) {
-		if _, registered := registry.Project(ref.UID); !registered {
-			projectUID = ref.UID
-		}
+	service := agentsessions.Service{
+		LoadRegistry: func() (coremetadata.Registry, error) { return registry, nil },
+		StateDir: func() (string, error) {
+			if c.store == nil || c.store.stateDir == nil {
+				return "", errors.New("the projmux state directory is not configured")
+			}
+			return c.store.stateDir()
+		},
 	}
-	if projectUID == "" {
-		resolution, err := flags.resolve(selector.VerbGet, false, registry)
-		if err != nil {
-			return MapMetadataError(err)
-		}
-		project, ok := registry.Project(resolution.Matches[0].UID)
-		if !ok {
-			return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, resolution.Matches[0].UID)
-		}
-		projectUID, projectName = project.Metadata.UID, project.Metadata.Name
-	}
-	if c.store == nil || c.store.stateDir == nil {
-		return fmt.Errorf("%s: the projmux state directory is not configured", spelling)
-	}
-	stateDir, err := c.store.stateDir()
+	listed, err := service.ListProject(context.Background(), positionals[0])
 	if err != nil {
-		return fmt.Errorf("%s: %w", spelling, err)
+		return MapMetadataError(err)
 	}
-	listed, err := sessionhistory.ListProject(stateDir, &registry, projectUID)
-	if err != nil {
-		return fmt.Errorf("%s: %w", spelling, err)
-	}
-	result := agentSessionsProject{
-		ProjectUID: listed.ProjectUID, ProjectName: projectName, Sessions: listed.Sessions,
-		Unattributed: listed.Unattributed, Ambiguous: listed.Ambiguous, CorruptLines: listed.CorruptLines,
-	}
+	result := agentSessionsProject(listed)
 	if output == "json" {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetEscapeHTML(false)

@@ -1316,3 +1316,111 @@ func TestExternalRelaunchAgent(t *testing.T) {
 		}
 	}
 }
+
+// Session reads consume public types and fixture bytes, with no provider input.
+func TestExternalAgentSessionsConsumer(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	registryPath := filepath.Join(state, "metadata", "registry.json")
+	if err := os.MkdirAll(filepath.Dir(registryPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	const projectUID = "proj-aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	project := core.Project{APIVersion: "projmux.io/v1alpha1", Kind: core.KindProject, Metadata: core.ObjectMeta{UID: projectUID, Name: "sample"}, Spec: core.ProjectSpec{Root: root, PrimaryWindowRef: "window"}}
+	window := core.Window{APIVersion: "projmux.io/v1alpha1", Kind: core.KindWindow, Metadata: core.ObjectMeta{UID: "window", Name: "work", OwnerRef: &core.OwnerRef{Kind: core.KindProject, UID: projectUID}}, Spec: core.WindowSpec{AnchorPaneRef: "pane"}}
+	observed := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	agent := core.Agent{APIVersion: "projmux.io/v1alpha1", Kind: core.KindAgent, Metadata: core.ObjectMeta{UID: "agent", Name: "worker", OwnerRef: &core.OwnerRef{Kind: core.KindWindow, UID: "window"}}, Spec: core.AgentSpec{Provider: "codex"}, Status: core.AgentStatus{Phase: core.PhaseOffline, PaneRef: "pane", SessionRef: &core.AgentSessionRef{Provider: "codex", ObservedAt: observed, Codex: &core.CodexSessionRef{ThreadID: "current"}}}}
+	pane := core.Pane{APIVersion: "projmux.io/v1alpha1", Kind: core.KindPane, Metadata: core.ObjectMeta{UID: "pane", Name: "worker-pane", OwnerRef: &core.OwnerRef{Kind: core.KindAgent, UID: "agent"}}, Spec: core.PaneSpec{Role: core.PaneRoleAgent, Runtime: core.PaneRuntimeSpec{Kind: core.RuntimeProcess}}}
+	registry, err := json.Marshal(map[string]any{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5, "projects": []core.Project{project}, "windows": []core.Window{window}, "agents": []core.Agent{agent}, "panes": []core.Pane{pane}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(registryPath, registry, 0600); err != nil {
+		t.Fatal(err)
+	}
+	last := observed.Add(-time.Minute)
+	row := core.AgentSession{AgentUID: "agent", Provider: "codex", SessionID: "previous", ObservedAt: last, LastRecordAt: &last, Source: core.SessionSourceEstimated, ProjectUID: projectUID, WindowUID: "window", AgentName: "worker"}
+	history, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history = append(history, '\n')
+	historyPath := filepath.Join(state, "agent-session-history.jsonl")
+	if err = os.WriteFile(historyPath, history, 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: filepath.Join(root, "config"), StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	request := projmux.ListAgentSessionsRequest{Agent: "worker", Project: "sample", Windows: []string{"work"}}
+	var listed core.AgentSessionsList
+	listed, err = client.ListAgentSessions(ctx, request)
+	if err != nil || len(listed.Sessions) != 2 || listed.Sessions[0].LastRecordAt == nil || listed.Sessions[1].TranscriptPath != "" || listed.Sessions[1].Source != core.SessionSourceCurrent {
+		t.Fatalf("Agent sessions: %+v %v", listed, err)
+	}
+	*listed.Sessions[0].LastRecordAt = time.Time{}
+	listed.Sessions[0].SessionID = "changed"
+	listed, err = client.ListAgentSessions(ctx, request)
+	if err != nil || listed.Sessions[0].SessionID != "previous" || listed.Sessions[0].LastRecordAt.IsZero() {
+		t.Fatalf("Agent result ownership: %+v %v", listed, err)
+	}
+	projectRequest := projmux.ListProjectSessionsRequest{Project: "uid:" + projectUID}
+	var projected core.ProjectSessionsList
+	projected, err = client.ListProjectSessions(ctx, projectRequest)
+	if err != nil || len(projected.Sessions) != 2 || len(projected.Sessions[0].Agents) != 1 || projected.Sessions[0].Agents[0].Basis != core.SessionAffiliationRecorded {
+		t.Fatalf("Project sessions: %+v %v", projected, err)
+	}
+	projected.Sessions[0].Agents[0].AgentName = "changed"
+	*projected.Sessions[0].LastRecordAt = time.Time{}
+	projected, err = client.ListProjectSessions(ctx, projectRequest)
+	if err != nil || projected.Sessions[0].Agents[0].AgentName != "worker" || projected.Sessions[0].LastRecordAt.IsZero() {
+		t.Fatalf("Project result ownership: %+v %v", projected, err)
+	}
+	_, err = client.ListAgentSessions(ctx, projmux.ListAgentSessionsRequest{})
+	var refused *projmux.Refusal
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("explicit Agent refusal: %v", err)
+	}
+	_, err = client.ListProjectSessions(ctx, projmux.ListProjectSessionsRequest{Project: "missing"})
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeResourceNotFound {
+		t.Fatalf("Project refusal: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = client.ListProjectSessions(canceled, projectRequest); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err = client.ListAgentSessions(canceled, request); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	for path, before := range map[string][]byte{registryPath: registry, historyPath: history} {
+		after, err := os.ReadFile(path)
+		if err != nil || sha256.Sum256(before) != sha256.Sum256(after) {
+			t.Fatalf("session read wrote %s: %v", filepath.Base(path), err)
+		}
+	}
+	// A fixture change is setup for a refused read, not an SDK mutation.
+	agent.Spec.Provider = "antigravity"
+	agent.Status.SessionRef = nil
+	unsupported, err := json.Marshal(map[string]any{"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5, "projects": []core.Project{project}, "windows": []core.Window{window}, "agents": []core.Agent{agent}, "panes": []core.Pane{pane}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(registryPath, unsupported, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ListAgentSessions(ctx, request)
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeSessionsProviderUnsupported {
+		t.Fatalf("provider refusal: %v", err)
+	}
+	unchanged, err := os.ReadFile(registryPath)
+	if err != nil || sha256.Sum256(unchanged) != sha256.Sum256(unsupported) {
+		t.Fatalf("refused read changed Registry: %v", err)
+	}
+
+	if _, err = os.Stat(filepath.Join(root, "config")); !os.IsNotExist(err) {
+		t.Fatalf("session read materialized config: %v", err)
+	}
+}
