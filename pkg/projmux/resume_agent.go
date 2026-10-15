@@ -104,6 +104,14 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
 		return result, &Refusal{Code: CodeCreateExecutableInvalid, message: "Options.ProjmuxExecutable must name an existing executable file", cause: err}
 	}
+	return c.resumeAgentPlan(ctx, plan, socket, runner)
+}
+
+// resumeAgentPlan keeps the existing rebind transaction shared with relaunch.
+// Its caller owns selection and admission; it never infers a current Agent.
+func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.AgentResumePlan, socket string, runner mutationruntime.TmuxCommandRunner) (core.ResumeAgentResult, error) {
+	var result core.ResumeAgentResult
+	var err error
 	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
 	transaction.Outcomes = c.createOutcomes()
 	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime}

@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // relaunchReasonCodexPermissionsKept refuses a Codex profile switch whose new
@@ -96,30 +94,17 @@ func (c *agentCommand) newAgentRestart(spelling string, registry coremetadata.Re
 // confirmationRequired reports a Running Agent whose interaction does not say
 // it is between turns: restarting it may cut a turn.
 func (r *agentRestart) confirmationRequired() bool {
-	return r.running && r.interaction != coremetadata.InteractionIdle && r.interaction != coremetadata.InteractionResponseComplete
+	return r.sharedRestart().ConfirmationRequired()
 }
 
 // checkTarget refuses an Agent with no provider conversation, in a phase no
 // restart applies to, or Running without its managed Pane.
 func (r *agentRestart) checkTarget() error {
-	target := r.target
-	if target.Status.SessionRef.Empty() || strings.TrimSpace(target.Status.SessionRef.ConversationID()) == "" {
-		return r.refuse(r.tokens.noConversation, "has no provider conversation to resume; projmux records one the first time its provider hook fires")
+	p := r.sharedRestart()
+	if err := p.CheckTarget(r.registry, r.sharedTokens(), r.refuse); err != nil {
+		return err
 	}
-	r.running = target.Status.Phase == coremetadata.PhaseRunning
-	if !r.running && !slices.Contains(resumableAgentPhases, target.Status.Phase) {
-		return r.refuse(r.tokens.noConversation, r.tokens.phase(target.Status.Phase))
-	}
-	if r.running {
-		r.paneUID = strings.TrimSpace(target.Status.PaneRef)
-		pane, ok := r.registry.Pane(r.paneUID)
-		if !ok {
-			return r.refuse(r.tokens.noConversation, fmt.Sprintf("is %s but its managed pane %q is not in the registry", target.Status.Phase, r.paneUID))
-		}
-		if agentPaneNameCandidate(*pane, target.Metadata.UID) {
-			r.paneName = pane.Metadata.Name
-		}
-	}
+	r.running, r.paneUID, r.paneName = p.Running, p.PaneUID, p.PaneName
 	return nil
 }
 
@@ -131,53 +116,49 @@ func (r *agentRestart) checkTarget() error {
 // socket is the command's --socket or --socket-path: the server the stop
 // closes the managed Pane on, which is where the self target is judged.
 func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest, socket deleteSocketFlags) error {
-	// A reply-only Agent resumes into its fixed launch again, so a change it
-	// cannot carry is refused before anything else is read.
-	if refusal := replyOnlyRefusalOf(r.target.Metadata.Annotations, request); refusal.reason != "" {
-		return r.refuse(refusal.reason, refusal.detail())
-	}
-	resumePlan, err := c.predictStoppedAgentResume(r.registry, r.target, r.paneUID)
-	if err != nil {
-		return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
-	}
-	request.projectUID = resumePlan.projectUID
-	if c.rebind != nil && c.rebind.create != nil {
-		if r.comparesPromptParts && !resumePlan.dialogueReplyOnly {
-			// The same reads the resume makes, from the same Project.
-			request = request.withPromptParts(planAgentGuidanceWith(c.rebind.launcher, r.provider, r.target.Metadata.Annotations),
-				planProjectLinksWith(c.rebind.launcher, r.provider, resumePlan.project, r.target.Metadata.Annotations))
-		}
-		if r.settings, err = c.rebind.resolveSettings(r.provider, r.target.Metadata.Annotations, request); err != nil {
-			var switchErr *relaunchProfileError
-			if errors.As(err, &switchErr) {
-				return r.refuse(switchErr.reason, fmt.Sprintf("cannot take profile %q: %s", switchErr.name, switchErr.detail))
+	p := r.sharedRestart()
+	err := p.Plan(request.shared(), mutationruntime.AgentRestartPlanning{
+		Registry: r.registry, Tokens: r.sharedTokens(), Refuse: r.refuse,
+		Predict: func(pane string) (mutationruntime.AgentResumePlan, error) {
+			v, e := c.predictStoppedAgentResume(r.registry, r.target, pane)
+			return v.sharedPlan(), e
+		},
+		ResolveSettings: func(plan mutationruntime.AgentResumePlan, q mutationruntime.AgentSettingsRequest) (mutationruntime.AgentSettingsLaunch, error) {
+			if c.rebind == nil || c.rebind.create == nil {
+				return mutationruntime.AgentSettingsLaunch{}, nil
 			}
-			return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
-		}
-		if err := r.refuseLayerChange(request); err != nil {
-			return err
-		}
-	}
-	if r.provider == aiModeCodex {
-		if err := c.preflightCodexRelaunch(resumePlan, r.settings.launchAnnotations(resumePlan.annotations)); err != nil {
-			return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
-		}
-		if r.settings.resolution.ProfileSwitched {
-			if err := c.refuseCodexPermissionsKept(r); err != nil {
-				return err
+			if r.comparesPromptParts && !plan.DialogueReplyOnly {
+				q = q.WithPromptParts(planAgentGuidanceWith(c.rebind.launcher, r.provider, r.target.Metadata.Annotations).shared(), planProjectLinksWith(c.rebind.launcher, r.provider, plan.Project, r.target.Metadata.Annotations).shared())
 			}
-		}
-	}
-	if r.running {
-		switch self, cause := c.invokedFromAgentPane(r.registry, r.target.Metadata.UID, socket); self {
-		case selfTargetInside:
-			return r.refuse(r.tokens.selfTarget, "owns the Pane this command runs in; closing that Pane would end the command before the resume. Run it from another Pane")
-		case selfTargetUnobserved:
-			return r.refuse(r.tokens.selfTarget, "owns the Pane this command's environment names, and whether the command runs inside that Pane could not be determined: "+
-				cause+"; closing that Pane would end a command inside it before the resume. Run it from another Pane")
-		}
-	}
-	return nil
+			v, e := c.rebind.resolveSettings(r.provider, r.target.Metadata.Annotations, localAgentSettingsRequest(q))
+			var se *relaunchProfileError
+			if errors.As(e, &se) {
+				e = &mutationruntime.RelaunchProfileError{Name: se.name, Reason: se.reason, Detail: se.detail}
+			}
+			return v.shared(), e
+		},
+		PreflightCodex: func(plan mutationruntime.AgentResumePlan, settings mutationruntime.AgentSettingsLaunch) error {
+			r.settings = localAgentSettingsLaunch(settings)
+			if err := c.preflightCodexRelaunch(localAgentResumePlan(plan), settings.LaunchAnnotations(plan.Annotations)); err != nil {
+				return r.refuse(r.tokens.noConversation, "cannot be resumed: "+err.Error())
+			}
+			if settings.Resolution.ProfileSwitched {
+				return c.refuseCodexPermissionsKept(r)
+			}
+			return nil
+		},
+		SelfTarget: func() error {
+			switch self, cause := c.invokedFromAgentPane(r.registry, r.target.Metadata.UID, socket); self {
+			case selfTargetInside:
+				return r.refuse(r.tokens.selfTarget, "owns the Pane this command runs in; closing that Pane would end the command before the resume. Run it from another Pane")
+			case selfTargetUnobserved:
+				return r.refuse(r.tokens.selfTarget, "owns the Pane this command's environment names, and whether the command runs inside that Pane could not be determined: "+cause+"; closing that Pane would end a command inside it before the resume. Run it from another Pane")
+			}
+			return nil
+		},
+	})
+	r.settings = localAgentSettingsLaunch(p.Settings)
+	return err
 }
 
 // selfTarget is what the self target judgment of a restart observed.
@@ -297,37 +278,9 @@ func selfTargetUnobservedCause(skip string) string {
 	}
 }
 
-// asksInstructions reports a request that decides the Agent's instructions:
-// --instructions, a --reset of them, or a profile switch.
-func (r *agentRestart) asksInstructions(request agentSettingsRequest) bool {
-	return request.instructions != nil || slices.Contains(request.reset, agentsettings.ItemInstructions) || r.settings.resolution.ProfileSwitched
-}
-
-// refuseLayerChange refuses a change to the instructions that the launch could
-// not honor: instructions that cannot be read, and any change to a Codex
-// thread's, which keeps the developer message it started with. A plain resume
-// launches with the recorded instructions instead and says so; a command that
-// asked for other ones must not.
-func (r *agentRestart) refuseLayerChange(request agentSettingsRequest) error {
-	resolution := r.settings.resolution
-	if !r.asksInstructions(request) {
-		return nil
-	}
-	if name := resolution.InstructionsUnavailable; name != "" {
-		reason := persona.ReasonOf(r.settings.instructionsErr)
-		if reason == "" {
-			reason = persona.ReasonNotFound
-		}
-		detail := "cannot be read"
-		if r.settings.instructionsErr != nil {
-			detail = r.settings.instructionsErr.Error()
-		}
-		return r.refuse(reason, fmt.Sprintf("cannot take instructions %s: %s", name, detail))
-	}
-	if resolution.InstructionsNotApplied {
-		return r.refuse(personaReasonCodexInstructionsImmutable, "cannot change its instructions: Codex fixes developer instructions when the thread starts, and resume keeps the original message; create a new Codex Agent with a prompt to use different instructions")
-	}
-	return nil
+// refuseLayerChange also preserves the process relaunch consumer's gates.
+func (r *agentRestart) refuseLayerChange(q agentSettingsRequest) error {
+	return r.sharedRestart().RefuseLayerChange(q.shared(), r.refuse)
 }
 
 // refuseCodexPermissionsKept refuses a Codex profile switch that would leave
@@ -417,45 +370,40 @@ type agentRestartSteps struct {
 // stop of a Running Agent's managed Pane, and the resume. It returns the
 // managed Pane the Agent runs in afterwards, "" when that cannot be read.
 func (c *agentCommand) run(r *agentRestart, steps agentRestartSteps, stdout, stderr io.Writer) (string, error) {
-	if r.confirmationRequired() && !steps.yes {
-		return "", r.refuse(r.tokens.busy, fmt.Sprintf("is %s with interaction %s; restarting it would cut that turn. Re-run with --yes to restart it anyway, or with --dry-run to review",
-			r.target.Status.Phase, r.interaction))
-	}
-	if r.running {
-		// The stop runs through `delete pane`, which refuses outside tmux
-		// without an exact socket. Refuse that here, before anything changes.
-		if _, err := resolveDeleteTarget(r.spelling, steps.socket, c.lookupEnv); err != nil {
-			return "", err
-		}
-	}
-	if steps.beforeStop != nil {
-		if err := steps.beforeStop(); err != nil {
-			return "", err
-		}
-	}
 	forward := stdout
 	if steps.json {
 		forward = io.Discard
 	}
-	if r.running {
-		if err := c.stopAgentPane(steps.socket, r.paneUID, forward, stderr); err != nil {
-			// `delete pane` can fail after its live half already closed the
-			// Pane, so the error alone does not say whether the old provider
-			// session still runs.
-			liveness, observeErr := c.observeStoppedAgentPane(r.spelling, steps.socket, r.target.Metadata.UID, r.paneUID)
-			if err := steps.stopFailed(err, liveness, observeErr); err != nil {
-				return "", err
+	return r.sharedRestart().Run(mutationruntime.AgentRestartExecution{
+		Confirm: steps.yes, Tokens: r.sharedTokens(), Refuse: r.refuse,
+		ValidateTransport: func() error { _, e := resolveDeleteTarget(r.spelling, steps.socket, c.lookupEnv); return e },
+		BeforeStop:        steps.beforeStop,
+		Stop:              func() error { return c.stopAgentPane(steps.socket, r.paneUID, forward, stderr) },
+		Observe: func() (mutationruntime.AgentRestartLiveness, error) {
+			v, e := c.observeStoppedAgentPane(r.spelling, steps.socket, r.target.Metadata.UID, r.paneUID)
+			return mutationruntime.AgentRestartLiveness(v), e
+		},
+		StopFailed: func(e error, v mutationruntime.AgentRestartLiveness, o error) error {
+			return steps.stopFailed(e, personaPaneLiveness(v), o)
+		},
+		Resume: func(p mutationruntime.StoppedAgentPane) error {
+			return c.resumeStoppedAgent(r.target.Metadata.UID, stoppedAgentPane{uid: p.UID, name: p.Name}, steps.resume, forward, stderr)
+		},
+		ResumeFailed: steps.resumeFailed,
+		NewPane: func() string {
+			if after, e := c.loadRegistry(); e == nil {
+				if a, ok := after.Agent(r.target.Metadata.UID); ok {
+					return a.Status.PaneRef
+				}
 			}
-		}
-	}
-	stopped := stoppedAgentPane{uid: r.paneUID, name: r.paneName}
-	if err := c.resumeStoppedAgent(r.target.Metadata.UID, stopped, steps.resume, forward, stderr); err != nil {
-		return "", steps.resumeFailed(err)
-	}
-	if after, err := c.loadRegistry(); err == nil {
-		if resumed, ok := after.Agent(r.target.Metadata.UID); ok {
-			return resumed.Status.PaneRef, nil
-		}
-	}
-	return "", nil
+			return ""
+		},
+	})
+}
+
+func (r *agentRestart) sharedRestart() mutationruntime.AgentRestartPlan {
+	return mutationruntime.AgentRestartPlan{Target: r.target, Provider: r.provider, Running: r.running, PaneUID: r.paneUID, PaneName: r.paneName, Interaction: r.interaction, Settings: r.settings.shared()}
+}
+func (r *agentRestart) sharedTokens() mutationruntime.AgentRestartTokens {
+	return mutationruntime.AgentRestartTokens{Busy: r.tokens.busy, SelfTarget: r.tokens.selfTarget, NoConversation: r.tokens.noConversation, Phase: r.tokens.phase}
 }

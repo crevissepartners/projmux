@@ -7,9 +7,6 @@ import (
 
 type agentPaneNameHandoff struct{ name, sourceUID, reason string }
 
-func agentPaneNameCandidate(p coremetadata.Pane, u string) bool {
-	return mutationruntime.AgentPaneNameCandidate(p, u)
-}
 func selectAgentPaneNameHandoff(r coremetadata.Registry, a coremetadata.Agent, u []string) agentPaneNameHandoff {
 	v := mutationruntime.SelectAgentPaneNameHandoff(r, a, u)
 	return agentPaneNameHandoff{v.Name, v.SourceUID, v.Reason}

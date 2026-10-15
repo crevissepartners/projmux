@@ -1284,3 +1284,35 @@ for line in sys.stdin:
 		})
 	}
 }
+
+func TestExternalRelaunchAgent(t *testing.T) {
+	c, err := projmux.NewClient(projmux.Options{HomeDir: t.TempDir(), ConfigDir: t.TempDir(), StateDir: t.TempDir(), SocketPath: "/explicit/socket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	none := ""
+	req := core.RelaunchAgentRequest{Ref: "uid:agent", Project: "uid:project", Window: "uid:window", Model: "sonnet", Effort: "high", Profile: &none, Instructions: nil, Reset: []string{"instructions"}, SocketPath: "/explicit/socket", DryRun: true, Confirm: false}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var result core.RelaunchAgentResult
+	result, err = c.RelaunchAgent(ctx, req)
+	if !errors.Is(err, context.Canceled) || result.AgentUID != "" || result.Stop.Committed || result.Resume.PaneID != "" {
+		t.Fatalf("cancelled external relaunch: %+v %v", result, err)
+	}
+	_, err = c.RelaunchAgent(context.Background(), core.RelaunchAgentRequest{})
+	var refused *projmux.Refusal
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("explicit target refusal: %v", err)
+	}
+	_, err = c.RelaunchAgent(context.Background(), core.RelaunchAgentRequest{Ref: "uid:agent", SocketPath: "relative", DryRun: true})
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeRuntimeRequestInvalid {
+		t.Fatalf("explicit socket refusal: %v", err)
+	}
+	// All plan/settings/partial-failure types are usable from a separate module.
+	_ = core.RelaunchAgentResult{AgentUID: "agent", Phase: core.PhaseRunning, CurrentSettings: core.RelaunchAgentSettings{Profile: core.RelaunchAgentProfile{Name: "base", Digest: "digest", Source: "profile"}, Model: core.RelaunchAgentSetting{Value: "sonnet", Source: "relaunch", ProfileValue: "sonnet", Override: true}}, Recovery: "projmux agent resume uid:agent"}
+	for _, code := range []projmux.Code{projmux.CodeRelaunchProcessUnsupported, projmux.CodeRelaunchRequestInvalid, projmux.CodeRelaunchAgentBusy, projmux.CodeRelaunchNoConversation, projmux.CodeRelaunchProviderUnsupported, projmux.CodeRelaunchExecutionFailed, projmux.CodeRelaunchStopAlive, projmux.CodeRelaunchStopUnknown} {
+		if code == "" {
+			t.Fatal("empty public relaunch code")
+		}
+	}
+}
