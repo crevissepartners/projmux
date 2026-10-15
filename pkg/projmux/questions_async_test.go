@@ -115,3 +115,70 @@ func TestSDKAsyncReceiptUnknownPreservesOpaqueIDAndConstants(t *testing.T) {
 		}
 	}
 }
+
+type asyncPublicLegacyDispatcher struct {
+	views []core.ExactQuestion
+	calls int
+}
+
+func (d *asyncPublicLegacyDispatcher) ListQuestions(context.Context, string) ([]core.ExactQuestion, error) {
+	return d.views, nil
+}
+func (d *asyncPublicLegacyDispatcher) AnswerQuestion(context.Context, string, string, []core.QuestionSelection) error {
+	d.calls++
+	return nil
+}
+
+type asyncPublicReceiptDispatcher struct {
+	*asyncPublicLegacyDispatcher
+	result     core.QuestionAnswerResult
+	err        error
+	selections []core.QuestionSelection
+}
+
+func (d *asyncPublicReceiptDispatcher) AnswerQuestionReceipt(_ context.Context, _ string, _ string, selections []core.QuestionSelection) (core.QuestionAnswerResult, error) {
+	d.calls++
+	d.selections = selections
+	return d.result, d.err
+}
+
+func TestSDKOptionalPublicQuestionReceiptDispatcher(t *testing.T) {
+	c, _, uid, _ := sdkStopFixture(t)
+	if _, err := store.NewStore(store.PathFor(c.paths.StateDir)).Update(func(reg *m.Registry) error { a, _ := reg.Agent(uid); a.Status.Phase = m.PhaseRunning; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	id := "question-0000000000000001"
+	legacy := &asyncPublicLegacyDispatcher{views: []core.ExactQuestion{{QuestionID: id, Delivery: "async", CanAnswer: true, State: core.QuestionWaiting, Prompts: []core.ProviderQuestion{{ID: "q1", Question: "First", IsOther: true}, {ID: "q2", Question: "Second", Options: []core.ProviderQuestionOption{{Label: "cobalt"}}}}}}}
+	opts := Options{ConfigDir: c.paths.ConfigDir, StateDir: c.paths.StateDir, HomeDir: c.paths.StateDir, QuestionDispatcher: legacy}
+	var err error
+	c, err = NewClient(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, label := " exact text ", "cobalt"
+	request := AnswerQuestionRequest{Agent: "uid:" + uid, QuestionID: id, Selections: []core.QuestionSelection{{Question: 2, Option: &label}, {Question: 1, Text: &text}}}
+	_, err = c.AnswerQuestion(context.Background(), request)
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeQuestionHostUnsupported || legacy.calls != 0 {
+		t.Fatal("legacy dispatcher admitted async", err)
+	}
+	receipt := &asyncPublicReceiptDispatcher{asyncPublicLegacyDispatcher: legacy, result: core.QuestionAnswerResult{QuestionID: id, Delivery: "async", Outcome: "submitted"}}
+	opts.QuestionDispatcher = receipt
+	c, err = NewClient(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.AnswerQuestion(context.Background(), request)
+	if err != nil || result.QuestionID != id || result.Outcome != "submitted" || legacy.calls != 1 {
+		t.Fatal(result, err)
+	}
+	if len(receipt.selections) != 2 || receipt.selections[0].Question != 1 || receipt.selections[0].Text == nil || *receipt.selections[0].Text != text || receipt.selections[1].Question != 2 || receipt.selections[1].Option == nil || *receipt.selections[1].Option != label {
+		t.Fatal("normalization changed explicit answers", receipt.selections)
+	}
+	receipt.result.Outcome = "unknown"
+	receipt.err = &Refusal{Code: CodeQuestionDeliveryUnknown, message: "uncertain delivery; do not resend"}
+	result, err = c.AnswerQuestion(context.Background(), request)
+	if !errors.As(err, &refusal) || refusal.Code != CodeQuestionDeliveryUnknown || result.QuestionID != id || result.Delivery != "async" || result.Outcome != "unknown" {
+		t.Fatal(result, err)
+	}
+}

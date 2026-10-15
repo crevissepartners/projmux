@@ -54,16 +54,14 @@ func TestAsyncAnswerAtomicClaimAndStrictT1State(t *testing.T) {
 	var wg sync.WaitGroup
 	receipts := make(chan Record, 16)
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			receipt, err := store.BeginAsync(r)
 			if err == nil {
 				receipts <- receipt
 			} else if !errors.Is(err, ErrNotPending) {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(receipts)

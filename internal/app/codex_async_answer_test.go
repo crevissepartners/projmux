@@ -93,7 +93,7 @@ func TestAsyncAnswerCLIAndSDKSubmittedReadbackOnce(t *testing.T) {
 				method = "turn/steer"
 			}
 			submitted := 0
-			for _, line := range bytes.Split(wire, []byte("\n")) {
+			for line := range bytes.SplitSeq(wire, []byte("\n")) {
 				var message struct {
 					Method string `json:"method"`
 					Params struct {
@@ -157,12 +157,10 @@ func TestAsyncAnswerConcurrentSubmissionAndValidationEffects(t *testing.T) {
 	var wg sync.WaitGroup
 	success := make(chan bool, 8)
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r, err := client.AnswerQuestion(context.Background(), projmux.AnswerQuestionRequest{Agent: "uid:" + b.Agent, QuestionID: id, Selections: []core.QuestionSelection{{Question: 1, Text: ptr("explicit")}}})
 			success <- err == nil && r.Outcome == "submitted"
-		}()
+		})
 	}
 	wg.Wait()
 	close(success)
@@ -235,7 +233,7 @@ func TestAsyncClaimCrashPruneControllerReplacementCannotReopen(t *testing.T) {
 			clock := r.UpdatedAt.Add(25 * time.Hour)
 			if capacity {
 				clock = r.UpdatedAt
-				for i := 0; i < 64; i++ {
+				for i := range 64 {
 					copy := r
 					copy.ID = fmt.Sprintf("question-%016x", i+1)
 					copy.State = agentquestion.StateWaiting
@@ -412,7 +410,7 @@ func TestAsyncAnswerMultiplePromptsStayInOneOperatorInput(t *testing.T) {
 	}
 	after, _ = os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
 	answers := 0
-	for _, line := range bytes.Split(after, []byte("\n")) {
+	for line := range bytes.SplitSeq(after, []byte("\n")) {
 		var m struct {
 			Method string `json:"method"`
 			Params struct {
@@ -462,5 +460,25 @@ func TestAsyncAnswerAcceptedButLostSettlementStaysUnknown(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
 	if !bytes.Equal(before, after) {
 		t.Fatal("lost settlement wrote twice")
+	}
+}
+
+func TestAsyncAnswerAppDispatcherOptionalReceipt(t *testing.T) {
+	f, _, id := newAsyncAnswerFixture(t, true)
+	d := ProcessQuestionDispatcher{RegistryPath: f.path}
+	if !d.SupportsAsyncQuestionAnswers() {
+		t.Fatal("optional receipt capability absent")
+	}
+	receipt, err := d.AnswerExactProcessQuestionReceipt(context.Background(), f.endpoint.binding.Agent, id, map[int]agentquestion.Selection{0: {Text: "explicit", HasText: true}})
+	if err != nil || receipt.QuestionID != id || receipt.Delivery != "async" || receipt.Outcome != "submitted" {
+		t.Fatal(receipt, err)
+	}
+	before, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	if err = d.AnswerExactProcessQuestion(context.Background(), f.endpoint.binding.Agent, id, map[int]agentquestion.Selection{0: {Text: "retry", HasText: true}}); err == nil {
+		t.Fatal("legacy entrypoint replayed settled async answer")
+	}
+	after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("legacy adapter replayed input")
 	}
 }
