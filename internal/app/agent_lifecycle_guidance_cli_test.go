@@ -19,6 +19,9 @@ import (
 // These use only copied CLI binaries and protocol fixtures in the fixture HOME.
 // Session/Wait predicates are the existing readiness barriers, never sleeps.
 func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
@@ -151,6 +154,9 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 }
 
 func TestAgentLifecycleGuidanceFrozenActualCLI(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
 	f := deferredResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
