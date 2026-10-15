@@ -14,8 +14,9 @@ type RelaunchAgentRequest struct {
 }
 
 // RelaunchAgentResult keeps the plan even when execution fails. Recovery names
-// the exact Agent and conversation; callers must inspect the error and receipt
-// before deciding what to do. Operations are never automatically replayed.
+// the exact Agent and conversation when an immediate recovery is available.
+// Recovery is empty after a fresh phase refusal; inspect the error, notices and
+// receipt before further action. Operations are never automatically replayed.
 type RelaunchAgentResult struct {
 	AgentUID, AgentName, Provider                    string
 	Phase                                            AgentPhase

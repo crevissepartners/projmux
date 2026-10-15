@@ -406,6 +406,10 @@ Inspect the result even when the call fails: `Stop` and `Resume` retain their
 receipts, `Outcome` distinguishes a failed Stop from failed resume, and `Recovery`
 names the exact target. A failed Stop is observed as alive, closed or unknown;
 closed can continue with a notice, while alive and unknown refuse success.
+If the fresh Registry phase then refuses resume, `Recovery` is empty.
+The error and notice identify the Agent, old Pane and selected socket.
+Inspect Registry and runtime state before further action; no immediate recovery
+command is available. Other resumable failures retain their recovery guidance.
 Typed `*projmux.Refusal` codes and wrapped causes distinguish those results.
 Native Codex uses its existing same-thread settings-update/verification protocol;
 it never creates a new thread or turn as fallback. Do not automatically replay

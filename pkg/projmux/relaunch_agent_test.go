@@ -82,7 +82,7 @@ type relaunchFailureRunner struct {
 
 	mode string
 
-	observationOnly bool
+	observationOnly, resumeReadFailure bool
 
 	stopCause, observeCause error
 
@@ -135,6 +135,11 @@ func (r *relaunchFailureRunner) Run(ctx context.Context, name string, args ...st
 			}
 		case "display-message":
 			output.WriteString(render(format, r.pane, "%2"))
+		case "list-sessions":
+			if r.stops > 0 && r.resumeReadFailure {
+				return nil, r.observeCause
+			}
+			return nil, errors.New("fixture refused unexpected session read")
 		case "list-panes":
 			r.inventories++
 			if r.observationOnly || r.stops > 0 {
@@ -321,7 +326,7 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 				phaseCause := errors.As(err, &phase) && phase.MetadataUsageError()
 				cause := refusal.Unwrap()
 				phaseDiagnostic := cause != nil && strings.Contains(cause.Error(), "is Running and already owns a managed Pane")
-				stopNotice := len(out.Notices) == 1 && strings.Contains(out.Notices[0], runner.stopCause.Error())
+				stopNotice := len(out.Notices) == 2 && strings.Contains(out.Notices[0], runner.stopCause.Error())
 				if !phaseCause || !phaseDiagnostic || !stopNotice {
 					t.Fatalf("closed evidence lost: phaseCause=%t unwrapped=%t phaseDiagnostic=%t noticeCount=%d stopNotice=%t", phaseCause, cause != nil, phaseDiagnostic, len(out.Notices), stopNotice)
 				}
@@ -334,11 +339,18 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 			if len(out.Stop.Panes) != 1 || out.Stop.Panes[0].PaneUID != plan.PaneUID || out.Stop.Panes[0].PaneID != "%2" || len(out.Stop.Plan.Targets) != 1 {
 				t.Fatalf("exact uncommitted Stop plan lost: paneCount=%d targetCount=%d", len(out.Stop.Panes), len(out.Stop.Plan.Targets))
 			}
-			recoveryVerb := "agent relaunch uid:"
 			if mode == "closed" {
-				recoveryVerb = "agent resume uid:"
-			}
-			if !strings.Contains(out.Recovery, recoveryVerb+plan.Target.Metadata.UID) || !strings.Contains(out.Recovery, runner.socket) || !strings.Contains(out.Recovery, "--model "+runtime.ShellQuote("opus")) {
+				if out.Recovery != "" || strings.Contains(err.Error(), "recover with") || strings.Contains(err.Error(), "projmux agent resume") || strings.Contains(err.Error(), "projmux agent relaunch") {
+					t.Fatalf("phase refusal advertised an immediate recovery: recoveryEmpty=%t errorType=%T", out.Recovery == "", err)
+				}
+				for _, text := range []string{err.Error(), out.Notices[1]} {
+					for _, want := range []string{"uid:" + plan.Target.Metadata.UID, "uid:" + plan.PaneUID, runner.socket, "Registry phase is Running", "Registry and runtime state", "additional action is required", "No immediate recovery command is available"} {
+						if !strings.Contains(text, want) {
+							t.Fatalf("phase refusal lost exact inspection guidance: requiredPart=%q", want)
+						}
+					}
+				}
+			} else if !strings.Contains(out.Recovery, "agent relaunch uid:"+plan.Target.Metadata.UID) || !strings.Contains(out.Recovery, runner.socket) || !strings.Contains(out.Recovery, "--model "+runtime.ShellQuote("opus")) {
 				t.Fatalf("exact recovery lost: %q", out.Recovery)
 			}
 			if mode == "error" && !strings.Contains(err.Error(), runner.observeCause.Error()) {
@@ -357,6 +369,41 @@ func TestRelaunchAgentSDKStopFailureEvidence(t *testing.T) {
 				t.Fatalf("failed Stop changed Registry field paths (values omitted): %v", relaunchRegistryDifferencePaths(before, after))
 			}
 		})
+	}
+}
+
+func TestRelaunchAgentSDKResumableFailureKeepsRecovery(t *testing.T) {
+	client, before, plan, runner := relaunchFailureFixture(t)
+	// Stop succeeds and commits Offline. The later resume transaction's runtime
+	// read fails; this is different from a fresh phase refusal before rebind.
+	runner.stopCause = nil
+	runner.mode = "closed"
+	runner.resumeReadFailure = true
+	out, err := client.relaunchAgent(context.Background(), core.RelaunchAgentRequest{Ref: "uid:" + plan.Target.Metadata.UID, Model: "opus", Confirm: true}, runner)
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeRelaunchExecutionFailed || !errors.Is(err, runner.observeCause) {
+		t.Fatalf("resumable failure cause lost: errorType=%T observationCause=%t", err, errors.Is(err, runner.observeCause))
+	}
+	if out.Outcome != "resume-failed" || !out.Stop.Committed || out.NewPaneUID != "" || out.Resume.PaneID != "" || len(out.Notices) != 0 {
+		t.Fatalf("resumable failure receipt changed: outcome=%s stopCommitted=%t newPaneEmpty=%t resumePaneEmpty=%t notices=%d", out.Outcome, out.Stop.Committed, out.NewPaneUID == "", out.Resume.PaneID == "", len(out.Notices))
+	}
+	if !strings.Contains(out.Recovery, "agent resume uid:"+plan.Target.Metadata.UID) || !strings.Contains(out.Recovery, runner.socket) || !strings.Contains(out.Recovery, "--model "+runtime.ShellQuote("opus")) || !strings.Contains(err.Error(), "recover with: "+out.Recovery) {
+		t.Fatal("resumable failure lost its existing exact recovery guidance")
+	}
+	if runner.stops != 1 || runner.resumes != 0 {
+		t.Fatalf("resumable failure replayed effects: Stop=%d physicalResume=%d", runner.stops, runner.resumes)
+	}
+	after, loadErr := store.NewStore(store.PathFor(client.paths.StateDir)).LoadReadOnly()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	old, _ := before.Agent(plan.Target.Metadata.UID)
+	agent, ok := after.Agent(plan.Target.Metadata.UID)
+	if !ok || agent.Status.Phase != metadata.PhaseOffline || agent.Status.PaneRef != "" || !reflect.DeepEqual(old.Status.SessionRef, agent.Status.SessionRef) || !reflect.DeepEqual(old.Metadata.Annotations, agent.Metadata.Annotations) {
+		t.Fatal("committed Stop did not preserve the resumable conversation/settings")
+	}
+	if _, exists := after.Pane(plan.PaneUID); exists {
+		t.Fatal("committed Stop retained the old Pane")
 	}
 }
 

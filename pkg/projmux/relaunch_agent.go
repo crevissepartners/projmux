@@ -166,6 +166,8 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	}
 	// There is no further caller cancellation gate once the operation is admitted.
 	admitted := context.WithoutCancel(ctx)
+	freshPhaseRefused := false
+	var freshPhase metadata.AgentPhase
 	_, err = p.Run(runtime.AgentRestartExecution{
 		Confirm: q.Confirm, Tokens: tokens, Refuse: refuse,
 		ValidateTransport: func() error { _, err := runtime.ResolveDeleteTarget("agent relaunch", "", socket, nil); return err },
@@ -224,6 +226,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 				return errors.New("target Agent disappeared after Stop")
 			}
 			if err := runtime.RequireResumablePhase("agent resume", a); err != nil {
+				freshPhaseRefused, freshPhase = true, a.Status.Phase
 				return err
 			}
 			plan, err := runtime.BuildAgentResumePlan("agent resume", fresh, a)
@@ -243,6 +246,12 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		},
 		ResumeFailed: func(err error) error {
 			out.Outcome = "resume-failed"
+			if freshPhaseRefused {
+				out.Recovery = ""
+				detail := fmt.Sprintf("Agent uid:%s cannot resume after Stop of Pane uid:%s: Registry phase is %s (selected socket %q). Inspect the exact Registry and runtime state; additional action is required before another operation. No immediate recovery command is available.", target.Metadata.UID, p.PaneUID, freshPhase, socket)
+				out.Notices = append(out.Notices, detail)
+				return &Refusal{Code: CodeRelaunchExecutionFailed, message: detail, cause: err}
+			}
 			plain := errors.Is(err, codexappserver.ErrSettingsNotApplied) || errors.Is(err, codexappserver.ErrPolicyMismatch)
 			out.Recovery = relaunchRecovery(q, target.Metadata.UID, p.Resume, plain)
 			return &Refusal{Code: CodeRelaunchExecutionFailed, message: "Agent did not resume; inspect the receipt and recover with: " + out.Recovery, cause: err}
