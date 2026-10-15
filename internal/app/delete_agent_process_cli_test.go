@@ -642,6 +642,120 @@ func TestProcessDeleteLeafPaneActualCLI(t *testing.T) {
 				t.Fatalf("Pane dry-run: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 			}
 			if after := f.registry(t); !reflect.DeepEqual(before, after) || !processBirthAlive(activation.Child) {
+				// The original short-circuit determines whether the child probe ran.
+				// Recompare only the captured records; never probe the child again.
+				recordsEqual := reflect.DeepEqual(before, after)
+				child := "not-evaluated"
+				if recordsEqual {
+					child = "evaluated:false"
+				}
+				lines := []string{}
+				truncated := false
+				// Describe shape only. Even map keys and unknown enum strings may
+				// contain provider data, so neither is rendered.
+				describe := func(v reflect.Value, field string) string {
+					if !v.IsValid() {
+						return "absent"
+					}
+					description := "type=" + v.Type().String() + " present=true"
+					switch v.Kind() {
+					case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice:
+						description += fmt.Sprintf(" nonnil=%t", !v.IsNil())
+					case reflect.String:
+						description += fmt.Sprintf(" nonempty=%t", v.Len() != 0)
+						if field == "Phase" && v.Type() == reflect.TypeFor[coremetadata.AgentPhase]() {
+							switch coremetadata.AgentPhase(v.String()) {
+							case coremetadata.PhasePending, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed:
+								description += " enum=" + v.String()
+							}
+						}
+						if field == "ResumeState" && v.Type() == reflect.TypeFor[coremetadata.ProcessResumeState]() {
+							switch coremetadata.ProcessResumeState(v.String()) {
+							case coremetadata.ProcessResumeUnknown, coremetadata.ProcessResumable:
+								description += " enum=" + v.String()
+							}
+						}
+					}
+					return description
+				}
+				var diff func(string, string, reflect.Value, reflect.Value)
+				diff = func(path, field string, a, b reflect.Value) {
+					if a.IsValid() && b.IsValid() && a.Type() == b.Type() && ((a.Comparable() && b.Comparable() && a.Equal(b)) ||
+						(a.CanInterface() && b.CanInterface() && reflect.DeepEqual(a.Interface(), b.Interface()))) {
+						return
+					}
+					if len(lines) >= 255 {
+						truncated = true
+						return
+					}
+					if a.IsValid() && b.IsValid() && a.Type() == b.Type() {
+						switch a.Kind() {
+						case reflect.Pointer, reflect.Interface:
+							if !a.IsNil() && !b.IsNil() {
+								diff(path, field, a.Elem(), b.Elem())
+								return
+							}
+						case reflect.Struct:
+							for i := 0; i < a.NumField(); i++ {
+								name := a.Type().Field(i).Name
+								diff(path+"."+name, name, a.Field(i), b.Field(i))
+							}
+							return
+						case reflect.Map:
+							if a.IsNil() == b.IsNil() && a.Type().Key().Kind() == reflect.String {
+								keys := a.MapKeys()
+								for _, key := range b.MapKeys() {
+									if !a.MapIndex(key).IsValid() {
+										keys = append(keys, key)
+									}
+								}
+								// Sort internally for stable ordinals, without printing keys.
+								for i := 1; i < len(keys); i++ {
+									for j := i; j > 0 && keys[j].String() < keys[j-1].String(); j-- {
+										keys[j], keys[j-1] = keys[j-1], keys[j]
+									}
+								}
+								for i, key := range keys {
+									diff(fmt.Sprintf("%s.map[%06d]", path, i), "", a.MapIndex(key), b.MapIndex(key))
+								}
+								return
+							}
+						case reflect.Slice, reflect.Array:
+							if a.Kind() == reflect.Array || a.IsNil() == b.IsNil() {
+								for i := 0; i < a.Len() || i < b.Len(); i++ {
+									var av, bv reflect.Value
+									if i < a.Len() {
+										av = a.Index(i)
+									}
+									if i < b.Len() {
+										bv = b.Index(i)
+									}
+									diff(fmt.Sprintf("%s[%06d]", path, i), "", av, bv)
+								}
+								return
+							}
+						}
+					}
+					lines = append(lines, path+" before={"+describe(a, field)+"} after={"+describe(b, field)+"}")
+				}
+				diff("Registry", "", reflect.ValueOf(before), reflect.ValueOf(after))
+				for i := 1; i < len(lines); i++ {
+					for j := i; j > 0 && lines[j] < lines[j-1]; j-- {
+						lines[j], lines[j-1] = lines[j-1], lines[j]
+					}
+				}
+				// Reserve room for the summary; the entire diagnostic is one log
+				// payload, at most 256 entries and 16 KiB including that summary.
+				details := ""
+				for _, line := range lines {
+					if len(details)+len(line)+1 > 16*1024-512 {
+						truncated = true
+						break
+					}
+					details += "\n" + line
+				}
+				t.Logf("Pane dry-run diagnostics: records-equal=%t child=%s snapshot-child-pid-present=%t snapshot-child-start-nonempty=%t truncated=%t%s",
+					recordsEqual, child, activation.Child.PID != 0, activation.Child.Start != "", truncated, details)
 				t.Fatal("Pane dry-run changed records or stopped provider")
 			}
 
