@@ -37,10 +37,27 @@ type DeleteResult struct {
 	Windows      []DeleteWindow
 	Panes        []DeletePane
 	RegistryOnly []DeleteRegistryOnly
-	Receipt      OperationReceipt
-	OperationID  string
-	Committed    bool
-	Notice       string
+	// Processes is the public CLI's process Agent plan. It contains preflight
+	// evidence on DryRun, confirmation refusal, or execution failure, and final
+	// evidence after a committed deletion. It is not authority for a later Stop.
+	Processes   []DeleteProcess
+	Receipt     OperationReceipt
+	OperationID string
+	Committed   bool
+	Notice      string
+}
+
+// DeleteProcess contains only fields shown by the process delete CLI. Runtime
+// is live classification (running, offline, unknown, or stopped), not Agent phase.
+// HostPID is zero when the CLI does not report a live owner PID.
+type DeleteProcess struct {
+	AgentUID  string
+	WindowUID string
+	RootKind  Kind
+	RootUID   string
+	Runtime   string
+	Evidence  string
+	HostPID   int
 }
 
 // DeletePane is one exact live tmux Pane in the reviewed deletion plan.

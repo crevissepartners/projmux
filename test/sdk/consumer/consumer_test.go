@@ -567,11 +567,23 @@ func TestExternalDeleteProcessAgentConsumer(t *testing.T) {
 	if err != nil || preview.Committed || len(preview.Plan.Targets) != 1 {
 		t.Fatalf("external preview %+v %v", preview, err)
 	}
+	wantProcess := core.DeleteProcess{AgentUID: "agent", WindowUID: "window", RootKind: core.KindProject, RootUID: "project", Runtime: "unknown", Evidence: "activation-absent", HostPID: 0}
+	if len(preview.Processes) != 1 || preview.Processes[0] != wantProcess {
+		t.Fatalf("external process fields: %+v", preview.Processes)
+	}
+	preview.Processes[0].Runtime = "caller changed"
+	preflight, err := c.PreflightDelete(context.Background(), req)
+	if err != nil || len(preflight.Processes) != 0 {
+		t.Fatalf("Registry preflight acquired runtime: %+v %v", preflight, err)
+	}
 	req.DryRun = false
 	req.Confirm = true
 	deleted, err := c.Delete(context.Background(), req)
 	if err != nil || !deleted.Committed || deleted.Receipt.Target.UID != "agent" {
 		t.Fatalf("external delete %+v %v", deleted, err)
+	}
+	if len(deleted.Processes) != 1 || deleted.Processes[0] != wantProcess {
+		t.Fatalf("external final process fields: %+v", deleted.Processes)
 	}
 	for _, ref := range []core.Ref{{Kind: core.KindAgent, Value: "uid:agent"}, {Kind: core.KindPane, Value: "uid:pane"}} {
 		_, err = c.GetResource(context.Background(), ref)

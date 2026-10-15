@@ -61,6 +61,23 @@ func TestDeleteProcessSDKExplicitRootsAndInactiveParity(t *testing.T) {
 			if err != nil || result.Committed || len(result.Plan.Targets) != 1 {
 				t.Fatalf("dry %+v %v", result, err)
 			}
+			if len(result.Processes) != 1 || result.Processes[0].AgentUID != uid {
+				t.Fatalf("process plan missing: %+v", result.Processes)
+			}
+			wantProcess := result.Processes[0]
+			if mode == "unknown" {
+				if wantProcess.Runtime != "unknown" || wantProcess.Evidence != "activation-absent" {
+					t.Fatalf("unknown evidence: %+v", wantProcess)
+				}
+			} else if wantProcess.Runtime != "offline" || wantProcess.Evidence != "wait:normal exit=0" {
+				t.Fatalf("offline evidence: %+v", wantProcess)
+			}
+			result.Processes[0].Evidence = "caller changed"
+			result.Plan.Targets[0].Descendants[0].Name = "caller changed"
+			again, err := first.Delete(context.Background(), req)
+			if err != nil || !reflect.DeepEqual(again.Processes, []core.DeleteProcess{wantProcess}) || again.Plan.Targets[0].Descendants[0].Name == "caller changed" {
+				t.Fatalf("caller-owned preview: %+v %v", again, err)
+			}
 			after, _ := os.ReadFile(path)
 			if !bytes.Equal(before, after) {
 				t.Fatal("dry changed Registry")
@@ -70,6 +87,9 @@ func TestDeleteProcessSDKExplicitRootsAndInactiveParity(t *testing.T) {
 			var refusal *Refusal
 			if !errors.As(err, &refusal) || refusal.Code != CodeConfirmationRequired || result.Committed {
 				t.Fatalf("confirm %+v %v", result, err)
+			}
+			if !reflect.DeepEqual(result.Processes, []core.DeleteProcess{wantProcess}) {
+				t.Fatalf("confirmation lost process plan: %+v", result.Processes)
 			}
 			req.Confirm = true
 			ctx, cancel := context.WithCancel(context.Background())
@@ -91,6 +111,9 @@ func TestDeleteProcessSDKExplicitRootsAndInactiveParity(t *testing.T) {
 			result, err = first.Delete(context.Background(), req)
 			if err != nil || !result.Committed || result.OperationID == "" || result.Receipt.Target.UID != uid {
 				t.Fatalf("delete %+v %v", result, err)
+			}
+			if !reflect.DeepEqual(result.Processes, []core.DeleteProcess{wantProcess}) {
+				t.Fatalf("committed process plan: %+v", result.Processes)
 			}
 			latest, err := store.NewStore(path).LoadReadOnly()
 			if err != nil {
