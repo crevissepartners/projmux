@@ -889,15 +889,21 @@ func observeRelaunchObserverReceipts(t *testing.T, record, binary, state string,
 	if !wait {
 		return true
 	}
+	var diagnostics *relaunchObserverDiagnostics
+	if t.Name() == "TestRelaunchAgentSDKNativeCodexAndPostStopCancellation/sdk-cancel-success" {
+		diagnostics = &relaunchObserverDiagnostics{}
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for len(witnesses) > 0 {
 		remaining := witnesses[:0]
 		for _, old := range witnesses {
+			diagnostics.captureBefore(old)
 			now, _, err := localipc.Process(old.PID)
 			if errors.Is(err, localipc.ErrProcessAbsent) {
 				continue
 			}
 			if err != nil {
+				diagnostics.report(t, old, births, err)
 				t.Errorf("observer exit unreadable pid=%d: %v", old.PID, err)
 				return false
 			}
