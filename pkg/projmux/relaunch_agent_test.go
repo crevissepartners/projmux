@@ -440,8 +440,11 @@ func TestRelaunchAgentSDKNoStopFreshPhaseRefusal(t *testing.T) {
 						t.Fatalf("no-Stop guidance lost required part %q", want)
 					}
 				}
+				// TempDir includes this test's NoStop name. The exact socket
+				// was checked above; only prose is subject to forbidden words.
+				diagnostic := strings.ReplaceAll(text, runner.socket, "<selected socket>")
 				for _, absent := range []string{"Stop", "Pane uid:", "recover with", "projmux agent resume", "projmux agent relaunch"} {
-					if strings.Contains(text, absent) {
+					if strings.Contains(diagnostic, absent) {
 						t.Fatalf("no-Stop guidance invented action or target: %q", absent)
 					}
 				}
