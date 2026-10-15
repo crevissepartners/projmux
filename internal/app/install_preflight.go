@@ -461,7 +461,7 @@ func renderInstallCodexWarnings(owners []installProcessOwner) string {
 			buf.WriteString("   No host control/proof upgrade indicated by this snapshot.\n")
 			continue
 		}
-		fmt.Fprintf(&buf, "   For this Agent only, from another controller with the installed build, review then explicitly relaunch on the same conversation:\n     projmux agent relaunch uid:%s --detach --dry-run\n     projmux agent relaunch uid:%s --detach\n", owner.AgentUID, owner.AgentUID)
+		fmt.Fprintf(&buf, "   For this Agent only, from another controller with the installed build, review then explicitly relaunch on the same conversation.\n   Review the individual dry run with `projmux agent relaunch uid:%s --detach --dry-run`; explicitly recover with `projmux agent relaunch uid:%s --detach`.\n", owner.AgentUID, owner.AgentUID)
 	}
 	if buf.Len() > 0 {
 		buf.WriteString("   Installing a CLI leaves running hosts unchanged. Both source and target hosts need peer support; changing the caller CLI alone is insufficient.\n")

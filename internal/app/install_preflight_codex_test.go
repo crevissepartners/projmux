@@ -84,7 +84,7 @@ func TestInstallPreflightCodexWarningsPreserveVerdicts(t *testing.T) {
 					t.Fatalf("unnecessary recovery: %s", out.String())
 				}
 			} else {
-				for _, want := range []string{"projmux agent relaunch uid:agent-exact --detach --dry-run", "projmux agent relaunch uid:agent-exact --detach\n"} {
+				for _, want := range []string{"Review the individual dry run with `projmux agent relaunch uid:agent-exact --detach --dry-run`", "explicitly recover with `projmux agent relaunch uid:agent-exact --detach`."} {
 					if !strings.Contains(out.String(), want) {
 						t.Fatalf("missing recovery %s", out.String())
 					}
