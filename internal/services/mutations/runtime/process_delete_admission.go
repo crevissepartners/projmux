@@ -58,10 +58,11 @@ func AdmitProcessDeleteStop(path string, action, prompt string, authority proces
 		if plan.Signature() != admission.Signature {
 			return processhost.ErrStale
 		}
-		// The requested host must be one of the Agents this exact plan removes.
+		// The requested host must own the exact Pane or be an Agent this plan removes.
 		included := false
 		for _, t := range plan.Targets {
-			if plan.Kind == coremetadata.KindAgent && t.Match.UID == authority.Binding.Agent {
+			if (plan.Kind == coremetadata.KindPane && t.Match.UID == authority.Binding.Pane) ||
+				(plan.Kind == coremetadata.KindAgent && t.Match.UID == authority.Binding.Agent) {
 				included = true
 			}
 			for _, d := range t.Descendants {
