@@ -513,6 +513,10 @@ func TestProcessDeleteClaimSDKCLIProjectionAndNoFakeWait(t *testing.T) {
 					t.Fatal(err)
 				}
 				if sdk {
+					preview, err := client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: first.ref, DryRun: true})
+					if err != nil || len(preview.Processes) != 1 || preview.Processes[0].Runtime != "offline" || preview.Processes[0].HostPID != 0 {
+						t.Fatalf("SDK claim preview differs from CLI: %+v %v", preview.Processes, err)
+					}
 					result, err := client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: first.ref, Confirm: true})
 					if err != nil || !result.Committed || result.Receipt.Effects.Runtime != core.RuntimeUnchanged {
 						t.Fatalf("SDK claim %+v %v", result, err)

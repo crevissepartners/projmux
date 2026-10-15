@@ -235,7 +235,12 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 		for i, t := range targets {
 			processes[i] = core.DeleteProcess{AgentUID: t.Agent, WindowUID: t.Window,
 				RootKind: core.Kind(t.RootKind), RootUID: t.RootUID,
-				Runtime: t.Runtime, Evidence: t.Evidence, HostPID: t.HostPID}
+				Runtime: t.Runtime, Evidence: t.Evidence}
+			// The CLI only prints a PID for a running provider owner, never
+			// for the owner of a child-free deferred claim.
+			if t.Runtime == "running" {
+				processes[i].HostPID = t.HostPID
+			}
 		}
 		return processes
 	}

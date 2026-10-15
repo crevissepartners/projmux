@@ -236,6 +236,45 @@ func TestDeleteProcessSDKClaimGuardCancellationAndStaleBirth(t *testing.T) {
 	}
 }
 
+func TestDeleteProcessSDKClaimPlanUsesOnlyCLIHostPID(t *testing.T) {
+	c, reg, uid, paneUID := sdkStopFixture(t)
+	owner := exec.Command("sleep", "10")
+	if err := owner.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Process.Kill(); _ = owner.Wait() })
+	identity, _, err := localipc.Process(owner.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, _ := reg.Pane(paneUID)
+	path := mutationruntime.DeferredClaimPath(store.PathFor(c.paths.StateDir), uid)
+	unlock, err := mutationruntime.LockDeferredClaim(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := mutationruntime.DeferredClaimRecord{Version: 1, Agent: uid, Binding: pane.Status.ProcessSession.Binding, Provider: "codex", Thread: pane.Status.ProcessSession.ThreadID, Process: identity, Nonce: "claim", Detached: true}
+	err = mutationruntime.WriteDeferredClaim(path, claim)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Delete(context.Background(), core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:" + uid, DryRun: true})
+	if err != nil || len(result.Processes) != 1 {
+		t.Fatalf("claim preview: %+v %v", result, err)
+	}
+	p := result.Processes[0]
+	// The CLI prints the original provider's Wait evidence here, without
+	// reporting the PID of the still child-free claimant as a running owner.
+	if p.Runtime != "offline" || p.Evidence != "wait:normal exit=0" || p.HostPID != 0 {
+		t.Fatalf("claim preview differs from CLI: %+v", p)
+	}
+	current, err := mutationruntime.ReadDeferredClaim(path)
+	if err != nil || current.StopRequested || !mutationruntime.DeferredClaimLive(claim) {
+		t.Fatalf("preview changed the live claim: %v", err)
+	}
+}
+
 func TestDeleteProcessSDKAdmittedDeadlineHasPublicRefusal(t *testing.T) {
 	cause := &mutationruntime.ProcessDeleteError{Token: "process-delete-stop-unconfirmed", Runtime: "running", Cause: fmt.Errorf("owner retirement: %w", context.DeadlineExceeded)}
 	err := deleteRefusal(CodeDeleteExecutionFailed, cause)
