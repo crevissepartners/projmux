@@ -53,12 +53,65 @@ func TestSDKAsyncQuestionsReadAndAnswerRefusal(t *testing.T) {
 		text := "explicit answer"
 		_, err = c.AnswerQuestion(context.Background(), AnswerQuestionRequest{Agent: "uid:" + uid, QuestionID: r.ID, Selections: []core.QuestionSelection{{Question: 1, Text: &text}}})
 		var refusal *Refusal
-		if !errors.As(err, &refusal) || refusal.Code != CodeQuestionNotPending {
+		if !errors.As(err, &refusal) || refusal.Code != CodeQuestionHostUnsupported {
 			t.Fatal(err)
 		}
 		after, _ := os.ReadFile(st.Path())
 		if d.writes != 0 || !bytes.Equal(before, after) {
 			t.Fatal("SDK answer effects")
+		}
+	}
+}
+
+type asyncSDKReceiptDispatcher struct {
+	asyncSDKDispatcher
+	receipt processquestions.AnswerReceipt
+	err     error
+}
+
+func (d *asyncSDKReceiptDispatcher) SupportsAsyncQuestionAnswers() bool { return true }
+func (d *asyncSDKReceiptDispatcher) AnswerExactProcessQuestionReceipt(context.Context, string, string, map[int]agentquestion.Selection) (processquestions.AnswerReceipt, error) {
+	d.writes++
+	return d.receipt, d.err
+}
+
+func TestSDKAsyncReceiptUnknownPreservesOpaqueIDAndConstants(t *testing.T) {
+	if MaxAsyncQuestionTextBytes != 4096 || MaxAsyncQuestionSelectionsBytes != 16384 || MaxAsyncQuestionTextBytes != agentquestion.MaxAsyncQuestionTextBytes || MaxAsyncQuestionSelectionsBytes != agentquestion.MaxAsyncQuestionSelectionsBytes {
+		t.Fatal("SDK bounds drift")
+	}
+	c, _, uid, _ := sdkStopFixture(t)
+	if _, err := store.NewStore(store.PathFor(c.paths.StateDir)).Update(func(reg *m.Registry) error {
+		agent, _ := reg.Agent(uid)
+		agent.Status.Phase = m.PhaseRunning
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id := "question-0000000000000001"
+	prompts := []agentquestion.Question{{ID: "q1", Question: "Explicit", IsOther: true}}
+	d := &asyncSDKReceiptDispatcher{asyncSDKDispatcher: asyncSDKDispatcher{views: []processquestions.ExactQuestion{{QuestionID: id, Delivery: "async", State: agentquestion.StateWaiting, CanAnswer: true, Prompts: prompts}}}}
+	c.questionDispatcher = d
+	text := "explicit"
+	request := AnswerQuestionRequest{Agent: "uid:" + uid, QuestionID: id, Selections: []core.QuestionSelection{{Question: 1, Text: &text}}}
+	for _, outcome := range []string{"submitted", "unknown"} {
+		d.receipt = processquestions.AnswerReceipt{QuestionID: id, Delivery: "async", Outcome: outcome}
+		d.err = nil
+		if outcome == "unknown" {
+			d.receipt.Code = "question-delivery-unknown"
+			d.err = &processquestions.DeliveryError{Receipt: d.receipt}
+		}
+		result, err := c.AnswerQuestion(context.Background(), request)
+		if result.QuestionID != id || result.Delivery != "async" || result.Outcome != outcome {
+			t.Fatal(result, err)
+		}
+		if outcome == "submitted" && err != nil {
+			t.Fatal(err)
+		}
+		if outcome == "unknown" {
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Code != CodeQuestionDeliveryUnknown {
+				t.Fatal(err)
+			}
 		}
 	}
 }

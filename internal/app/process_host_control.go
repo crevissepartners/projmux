@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/integrations/processquestions"
 )
 
 // The kernel's per-user socket credentials admit short-lived terminal clients.
@@ -54,7 +55,8 @@ func (t processForegroundToken) request() processhost.Request {
 type processForegroundResult struct {
 	Accepted            bool
 	InvalidAnswer       bool
-	Questions           []ExactProcessQuestion `json:",omitempty"`
+	Questions           []ExactProcessQuestion          `json:",omitempty"`
+	QuestionReceipt     *processquestions.AnswerReceipt `json:",omitempty"`
 	Stale, Busy, Closed bool
 	// Unsupported names an action this owner does not implement. A client
 	// built before it reads the refusal as stale.

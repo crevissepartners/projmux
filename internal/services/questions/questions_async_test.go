@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,5 +113,55 @@ func TestAsyncServiceMergedNamespacesAndReadFailures(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Dir(empty.AsyncStore().Path())); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("read created async namespace", err)
+	}
+}
+
+type asyncReceiptServiceDispatcher struct {
+	asyncReadDispatcher
+	receipt processquestions.AnswerReceipt
+	err     error
+}
+
+func (d *asyncReceiptServiceDispatcher) SupportsAsyncQuestionAnswers() bool { return true }
+func (d *asyncReceiptServiceDispatcher) AnswerExactProcessQuestionReceipt(context.Context, string, string, map[int]agentquestion.Selection) (processquestions.AnswerReceipt, error) {
+	d.answers++
+	return d.receipt, d.err
+}
+
+func TestAsyncServiceReceiptAndUnknownResult(t *testing.T) {
+	st := agentquestion.NewStore(t.TempDir())
+	r, err := st.AsyncStore().Create(agentquestion.Record{ID: "question-0000000000000001", Provider: "codex", Delivery: "async", AgentUID: "agent", Questions: json.RawMessage(`[{"id":"q1","question":"Choose","isOther":true,"options":[]}]`), Deadline: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompts, _ := r.ParsedQuestions()
+	a := m.Agent{Metadata: m.ObjectMeta{UID: "agent", Name: "fixture"}, Spec: m.AgentSpec{Provider: "codex"}, Status: m.AgentStatus{PaneRef: "pane", Phase: m.PhaseRunning}}
+	p := m.Pane{Metadata: m.ObjectMeta{UID: "pane"}, Spec: m.PaneSpec{Runtime: m.PaneRuntimeSpec{Kind: m.RuntimeProcess}}}
+	d := &asyncReceiptServiceDispatcher{asyncReadDispatcher: asyncReadDispatcher{views: []processquestions.ExactQuestion{{QuestionID: r.ID, Delivery: "async", CanAnswer: true, State: agentquestion.StateWaiting, Prompts: prompts}}}}
+	service := Service{OpenStore: func() (*agentquestion.Store, error) { return st, nil }, LoadRegistry: func() (m.Registry, error) { return m.Registry{Agents: []m.Agent{a}, Panes: []m.Pane{p}}, nil }, Dispatcher: d}
+	list, err := service.List(context.Background(), a)
+	if err != nil || !list.Questions[0].CanAnswer {
+		t.Fatal(list, err)
+	}
+	for _, outcome := range []string{"submitted", "unknown"} {
+		d.receipt = processquestions.AnswerReceipt{QuestionID: r.ID, Delivery: "async", Outcome: outcome}
+		d.err = nil
+		if outcome == "unknown" {
+			d.receipt.Code = "question-delivery-unknown"
+			d.err = &processquestions.DeliveryError{Receipt: d.receipt}
+		}
+		result, err := service.Answer(context.Background(), Request{Spelling: "agent question answer", QuestionID: r.ID, Texts: []string{"1=explicit"}}, a)
+		if result.QuestionID != r.ID || result.Delivery != "async" || result.Outcome != outcome {
+			t.Fatal(result, err)
+		}
+		if outcome == "submitted" && err != nil {
+			t.Fatal(err)
+		}
+		if outcome == "unknown" {
+			var failure *Failure
+			if !errors.As(err, &failure) || failure.Code != "question-delivery-unknown" || strings.Contains(err.Error(), "nothing was changed") {
+				t.Fatal(err)
+			}
+		}
 	}
 }

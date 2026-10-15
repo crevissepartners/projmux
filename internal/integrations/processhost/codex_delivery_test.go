@@ -21,14 +21,14 @@ func TestCodexUserDeliveryIdleAndExactRunning(t *testing.T) {
 	c, _, log := codexStart(t, testHost(t, nil), "codex-normal")
 	a := codexAuthority(c)
 	first, err := c.DeliverUserTurn(context.Background(), a, "input-1", "hold")
-	if err != nil || first != (UserTurnDelivery{UserTurnStart, "input-1", "turn-1"}) {
+	if err != nil || first != (UserTurnDelivery{Mode: UserTurnStart, Operation: "input-1", TurnID: "turn-1", WriteAttempted: true}) {
 		t.Fatalf("start=%+v %v", first, err)
 	}
 	if err := c.Turn(context.Background(), a, "explicit", "hold"); !errors.Is(err, ErrBusy) {
 		t.Fatalf("explicit running=%v", err)
 	}
 	next, err := c.DeliverUserTurn(context.Background(), a, "input-2", "more")
-	if err != nil || next != (UserTurnDelivery{UserTurnSteer, "input-2", first.TurnID}) {
+	if err != nil || next != (UserTurnDelivery{Mode: UserTurnSteer, Operation: "input-2", TurnID: first.TurnID, WriteAttempted: true}) {
 		t.Fatalf("steer=%+v %v", next, err)
 	}
 	for _, op := range []string{"input-1", "input-2"} {
@@ -97,7 +97,7 @@ func TestCodexUserDeliveryQueuedCompletionAndRefusal(t *testing.T) {
 			if refused != (mode != "codex-steer-queue") {
 				t.Fatalf("delivery=%+v %v", got, err)
 			}
-			if refused && got != (UserTurnDelivery{}) {
+			if refused && got != (UserTurnDelivery{WriteAttempted: true}) {
 				t.Fatalf("false receipt=%+v", got)
 			}
 			queue := mode != "codex-steer-refusal"
@@ -198,7 +198,7 @@ func TestCodexUserDeliveryUncertainStopsOwnedChild(t *testing.T) {
 		t.Fatal(e)
 	}
 	r, e := c.DeliverUserTurn(context.Background(), a, "steer", "more")
-	if e == nil || r != (UserTurnDelivery{}) {
+	if e == nil || r != (UserTurnDelivery{WriteAttempted: true}) {
 		t.Fatalf("unknown=%+v %v", r, e)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -321,7 +321,7 @@ func TestCodexUserDeliveryAdmissionAfterCompletionStarts(t *testing.T) {
 	observeUntil(t, c.handle, func(s Snapshot) bool { return s.Turn == "" })
 	adapter.unlock()
 	r, e := <-result, <-errs
-	if e != nil || r != (UserTurnDelivery{UserTurnStart, "next", "turn-2"}) {
+	if e != nil || r != (UserTurnDelivery{Mode: UserTurnStart, Operation: "next", TurnID: "turn-2", WriteAttempted: true}) {
 		t.Fatalf("admission=%+v %v", r, e)
 	}
 	if countMethod(codexWire(t, log), "turn/steer") != 0 {
@@ -464,7 +464,7 @@ func TestCodexSteerUserTurnIdleAndCompletionAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := c.SteerUserTurn(context.Background(), a, "steer", "more")
-	if err != nil || got != (UserTurnDelivery{UserTurnSteer, "steer", first.TurnID}) {
+	if err != nil || got != (UserTurnDelivery{Mode: UserTurnSteer, Operation: "steer", TurnID: first.TurnID, WriteAttempted: true}) {
 		t.Fatalf("steer=%+v %v", got, err)
 	}
 	if err := adapter.lock(context.Background()); err != nil {

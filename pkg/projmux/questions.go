@@ -24,7 +24,21 @@ type QuestionDispatcher interface {
 	AnswerQuestion(context.Context, string, string, []core.QuestionSelection) error
 }
 
+// QuestionReceiptDispatcher optionally supports complete async submissions.
+// Implementations report submitted only after durable settlement and preserve
+// the result on unknown delivery errors. Older dispatchers remain read-only.
+type QuestionReceiptDispatcher interface {
+	AnswerQuestionReceipt(context.Context, string, string, []core.QuestionSelection) (core.QuestionAnswerResult, error)
+}
+
 const (
+	MaxAsyncQuestionTextBytes            = agentquestion.MaxAsyncQuestionTextBytes
+	MaxAsyncQuestionSelectionsBytes      = agentquestion.MaxAsyncQuestionSelectionsBytes
+	CodeQuestionStale               Code = "question-stale"
+	CodeQuestionBusy                Code = "question-busy"
+	CodeQuestionHostUnsupported     Code = "question-host-unsupported"
+	CodeQuestionAnswerTooLarge      Code = "question-answer-too-large"
+	CodeQuestionDeliveryUnknown     Code = "question-delivery-unknown"
 	CodeQuestionNotFound            Code = "question-not-found"
 	CodeQuestionNotPending          Code = "question-not-pending"
 	CodeQuestionExpired             Code = "question-expired"
@@ -138,7 +152,7 @@ func (c *Client) AnswerQuestion(ctx context.Context, input AnswerQuestionRequest
 		}
 	}
 	result, err := c.questionService().Answer(ctx, request, agent)
-	return core.QuestionAnswerResult{QuestionID: result.QuestionID, AgentUID: result.AgentUID, AgentName: result.AgentName}, questionRefusal(err)
+	return core.QuestionAnswerResult{QuestionID: result.QuestionID, AgentUID: result.AgentUID, AgentName: result.AgentName, Delivery: result.Delivery, Outcome: result.Outcome}, questionRefusal(err)
 }
 func questionRefusal(err error) error {
 	// The host can reject a validated choice when its live question changes.
@@ -191,4 +205,46 @@ func (d publicQuestionDispatcher) AnswerExactProcessQuestion(ctx context.Context
 		}
 	}
 	return d.AnswerQuestion(ctx, uid, id, out)
+}
+
+func (d publicQuestionDispatcher) SupportsAsyncQuestionAnswers() bool {
+	_, ok := d.QuestionDispatcher.(QuestionReceiptDispatcher)
+	return ok
+}
+func (d publicQuestionDispatcher) AnswerExactProcessQuestionReceipt(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) (processquestions.AnswerReceipt, error) {
+	capability, ok := d.QuestionDispatcher.(QuestionReceiptDispatcher)
+	if !ok {
+		return processquestions.AnswerReceipt{}, &processquestions.DeliveryError{Receipt: processquestions.AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-host-unsupported"}}
+	}
+	out := []core.QuestionSelection{}
+	keys := make([]int, 0, len(selections))
+	for i := range selections {
+		keys = append(keys, i)
+	}
+	slices.Sort(keys)
+	for _, i := range keys {
+		v := selections[i]
+		for _, label := range v.Labels {
+			value := label
+			out = append(out, core.QuestionSelection{Question: i + 1, Option: &value})
+		}
+		if v.HasText {
+			value := v.Text
+			out = append(out, core.QuestionSelection{Question: i + 1, Text: &value})
+		}
+	}
+	result, err := capability.AnswerQuestionReceipt(ctx, uid, id, out)
+	receipt := processquestions.AnswerReceipt{QuestionID: result.QuestionID, Delivery: result.Delivery, Outcome: result.Outcome}
+	if err != nil {
+		var refusal *Refusal
+		if errors.As(err, &refusal) {
+			receipt.Code = string(refusal.Code)
+		} else {
+			receipt.Code = "question-delivery-unknown"
+			receipt.Outcome = "unknown"
+		}
+		receipt.QuestionID, receipt.Delivery, receipt.Message = id, "async", err.Error()
+		return receipt, &processquestions.DeliveryError{Receipt: receipt, Cause: err}
+	}
+	return receipt, nil
 }

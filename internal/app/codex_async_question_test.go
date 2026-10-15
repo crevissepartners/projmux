@@ -99,7 +99,7 @@ func TestCodexAsyncStableExactKeyAndDeadline(t *testing.T) {
 
 // The protocol fixture emits the original native frames without changing their
 // item/message shape. Only the handshake is synthetic; no real provider runs.
-func newAsyncProcessFixture(t *testing.T, frames []string, complete bool) *processCodexFixture {
+func newAsyncProcessFixture(t *testing.T, frames []string, complete bool, behaviors ...string) *processCodexFixture {
 	t.Helper()
 	framesJSON, _ := json.Marshal(frames)
 	script := `import json,sys,os,time
@@ -113,8 +113,15 @@ for line in sys.stdin:
  def reply(x): emit({'id':m['id'],'result':x})
  if method=='initialize': reply({'userAgent':'projmux/0.162.1'})
  elif method=='thread/start': reply({'thread':{'id':thread},'model':'stub-model','reasoningEffort':'low','sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'})
+ elif method=='turn/steer':
+  if BEHAVIOR=='lost': sys.exit(0)
+  elif BEHAVIOR=='refused': emit({'id':m['id'],'error':{'code':-32000,'message':'fixture refusal'}})
+  else: reply({})
  elif method=='turn/start':
   count+=1
+  if count>1 and BEHAVIOR=='lost': sys.exit(0)
+  if count>1 and BEHAVIOR=='refused':
+   emit({'id':m['id'],'error':{'code':-32000,'message':'fixture refusal'}}); continue
   current=turn if count==1 else 'next-turn'
   reply({'turn':{'id':current}})
   if count==1:
@@ -133,6 +140,12 @@ for line in sys.stdin:
 		flag = "True"
 	}
 	script = strings.ReplaceAll(script, "COMPLETE", flag)
+	behavior := ""
+	if len(behaviors) > 0 {
+		behavior = behaviors[0]
+	}
+	behaviorJSON, _ := json.Marshal(behavior)
+	script = strings.ReplaceAll(script, "BEHAVIOR", string(behaviorJSON))
 	return newProcessCodexFixtureWithEvents(t, func(root, binary string, env []string) processhost.Command {
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
 	}, 8)

@@ -21,8 +21,35 @@ type Request struct {
 	QuestionID string
 	Selections map[int]agentquestion.Selection
 }
+
+// AnswerReceipt is app metadata, not a native question acknowledgement.
+type AnswerReceipt struct {
+	QuestionID string
+	Delivery   string
+	Outcome    string `json:",omitempty"`
+	Code       string `json:",omitempty"`
+	Message    string `json:",omitempty"`
+}
+type ReceiptDispatcher interface {
+	SupportsAsyncQuestionAnswers() bool
+	AnswerExactProcessQuestionReceipt(context.Context, string, string, map[int]agentquestion.Selection) (AnswerReceipt, error)
+}
+type DeliveryError struct {
+	Receipt AnswerReceipt
+	Cause   error
+}
+
+func (e *DeliveryError) Error() string {
+	if e.Receipt.Message != "" {
+		return e.Receipt.Code + ": " + e.Receipt.Message
+	}
+	return e.Receipt.Code
+}
+func (e *DeliveryError) Unwrap() error { return e.Cause }
+
 type Result struct {
 	Accepted, InvalidAnswer bool
+	QuestionReceipt         *AnswerReceipt `json:",omitempty"`
 	Questions               []ExactQuestion
 }
 type envelope struct{ Questions *Request }
@@ -85,7 +112,21 @@ func (d Dispatcher) AnswerExactProcessQuestion(ctx context.Context, uid, id stri
 	_, err := d.call(ctx, uid, id, selections)
 	return err
 }
-func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) (Result, error) {
+func (d Dispatcher) SupportsAsyncQuestionAnswers() bool { return true }
+func (d Dispatcher) AnswerExactProcessQuestionReceipt(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection) (AnswerReceipt, error) {
+	if id == "" || len(selections) == 0 {
+		return AnswerReceipt{}, agentquestion.ErrInvalidAnswer
+	}
+	result, err := d.call(ctx, uid, id, selections, true)
+	if result.QuestionReceipt != nil {
+		return *result.QuestionReceipt, err
+	}
+	if err != nil {
+		return AnswerReceipt{}, err
+	}
+	return AnswerReceipt{}, &DeliveryError{Receipt: AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-host-unsupported"}}
+}
+func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection, async ...bool) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -135,15 +176,42 @@ func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int
 	if agent.Spec.Provider != "codex" && agent.Spec.Provider != "claude" {
 		return Result{}, processhost.ErrStale
 	}
-	result, err := call(ctx, socket, inode, activation.HostProcess, wire)
+	if len(async) > 0 && async[0] {
+		if _, err := localipc.MarshalJSON(wire); err != nil {
+			return Result{}, &DeliveryError{Receipt: AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-answer-too-large"}, Cause: err}
+		}
+	}
+	result, err := call(ctx, socket, inode, activation.HostProcess, wire, async...)
 	if err != nil {
-		return Result{}, err
+		return result, err
 	} // uncertain writes are never retried
 	current, err := intmetadata.NewStore(path).LoadDegradedReadOnly()
 	next, exists := current.Pane(binding.Pane)
 	afterInode, inodeErr := localipc.InspectOwnedSocket(socket)
 	if err != nil || !exists || next.Status.Activation.Process == nil || *next.Status.Activation.Process != activation || !observationMatches(current, binding, view) || !SessionMatches(current, binding, agent.Spec.Provider, session, connection) || inodeErr != nil || afterInode != inode {
+		if len(async) > 0 && async[0] {
+			receipt := AnswerReceipt{QuestionID: id, Delivery: "async", Outcome: "unknown", Code: "question-delivery-unknown", Message: "question transport identity changed after submission; do not resend"}
+			return Result{QuestionReceipt: &receipt}, &DeliveryError{Receipt: receipt, Cause: processhost.ErrStale}
+		}
 		return Result{}, processhost.ErrStale
+	}
+	if result.QuestionReceipt != nil && len(async) > 0 && async[0] {
+		receipt := *result.QuestionReceipt
+		if receipt.QuestionID != id || receipt.Delivery != "async" || (result.Accepted && (receipt.Outcome != "submitted" || receipt.Code != "")) || (!result.Accepted && receipt.Code == "") {
+			receipt = AnswerReceipt{QuestionID: id, Delivery: "async", Outcome: "unknown", Code: "question-delivery-unknown", Message: "invalid question receipt; do not resend"}
+		}
+		if receipt.Code == "question-delivery-unknown" {
+			receipt.Outcome = "unknown"
+		}
+		result.QuestionReceipt = &receipt
+		if receipt.Code != "" {
+			return result, &DeliveryError{Receipt: receipt}
+		}
+		return result, nil
+	}
+	if len(async) > 0 && async[0] {
+		receipt := AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-host-unsupported", Message: "host does not support async answer receipts"}
+		return Result{QuestionReceipt: &receipt}, &DeliveryError{Receipt: receipt}
 	}
 	if !result.Accepted {
 		if result.InvalidAnswer {
@@ -191,7 +259,7 @@ func observationOwnership(reg coremetadata.Registry, binding processhost.Binding
 		int64(view.Host.OwnerUID) == int64(os.Getuid()) && int64(view.Child.OwnerUID) == int64(os.Getuid())
 }
 
-func call(ctx context.Context, socket string, socketIdentity localipc.SocketIdentity, host coremetadata.ProcessIdentity, request any) (Result, error) {
+func call(ctx context.Context, socket string, socketIdentity localipc.SocketIdentity, host coremetadata.ProcessIdentity, request any, async ...bool) (Result, error) {
 	identity, err := localipc.InspectOwnedSocket(socket)
 	if err != nil || identity != socketIdentity {
 		return Result{}, processhost.ErrStale
@@ -214,14 +282,23 @@ func call(ctx context.Context, socket string, socketIdentity localipc.SocketIden
 	if err != nil || peer != host || ctx.Err() != nil {
 		return Result{}, processhost.ErrStale
 	}
-	if err = localipc.WriteJSON(conn, request); err != nil {
+	// Encode before attempting any bytes so frame refusal is definitive.
+	if _, err = localipc.MarshalJSON(request); err != nil {
 		return Result{}, err
 	}
-	if err = conn.CloseWrite(); err != nil {
-		return Result{}, err
+	err = localipc.WriteJSON(conn, request)
+	if err == nil {
+		err = conn.CloseWrite()
 	}
 	var result Result
-	err = localipc.ReadJSON(conn, &result)
+	if err == nil {
+		err = localipc.ReadJSON(conn, &result)
+	}
+	if err != nil && len(async) > 0 && async[0] {
+		wire := request.(envelope)
+		receipt := AnswerReceipt{QuestionID: wire.Questions.QuestionID, Delivery: "async", Outcome: "unknown", Code: "question-delivery-unknown", Message: "question IPC delivery is uncertain; do not resend"}
+		return Result{QuestionReceipt: &receipt}, &DeliveryError{Receipt: receipt, Cause: err}
+	}
 	return result, err
 }
 func schemaBinding(b coremetadata.ProcessBinding) processhost.Binding {
