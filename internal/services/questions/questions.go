@@ -248,6 +248,40 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 				if !supported || !capability.SupportsAsyncQuestionAnswers() {
 					return failure("question-host-unsupported", nil)
 				}
+				if view.State == agentquestion.StateWaiting {
+					// A pluggable receipt dispatcher is still subject to the service's
+					// current Agent/lifetime fence. Original-turn completion is not a fence.
+					fresh, readErr := c.LoadRegistry()
+					if readErr != nil {
+						return result, readErr
+					}
+					current, found := fresh.Agent(agent.Metadata.UID)
+					if !found {
+						return failure("question-stale", nil)
+					}
+					if agent.Status.Phase != coremetadata.PhaseRunning || current.Status.Phase != coremetadata.PhaseRunning {
+						return failure(questionReasonClosed, nil)
+					}
+					currentPane, present := fresh.Pane(current.Status.PaneRef)
+					original, originalPresent := reg.Agent(agent.Metadata.UID)
+					if !present || !originalPresent || original.Status.PaneRef != agent.Status.PaneRef || current.Status.PaneRef != agent.Status.PaneRef || current.Spec.Provider != agent.Spec.Provider || current.Metadata.OwnerUID() != original.Metadata.OwnerUID() || currentPane.Metadata.UID != pane.Metadata.UID || currentPane.Metadata.OwnerUID() != pane.Metadata.OwnerUID() || currentPane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+						return failure("question-stale", nil)
+					}
+					before, after := pane.Status.ProcessSession, currentPane.Status.ProcessSession
+					if (before == nil) != (after == nil) {
+						return failure("question-stale", nil)
+					}
+					if before != nil && (before.Binding != after.Binding || before.Provider != after.Provider || before.ThreadID != after.ThreadID || before.SessionID != after.SessionID || before.ConnectionID != after.ConnectionID) {
+						return failure("question-stale", nil)
+					}
+					oldActivation, newActivation := pane.Status.Activation.Process, currentPane.Status.Activation.Process
+					if (oldActivation == nil) != (newActivation == nil) {
+						return failure("question-stale", nil)
+					}
+					if oldActivation != nil && *oldActivation != *newActivation {
+						return failure("question-stale", nil)
+					}
+				}
 				if view.State != agentquestion.StateWaiting {
 					reason, _ := StateRefusal(view.State)
 					if view.State == agentquestion.StateClosed {
@@ -331,6 +365,40 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 				return AnswerResult{}, err
 			}
 			return AnswerResult{QuestionID: view.QuestionID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name}, nil
+		}
+		// A missing live view is not a missing opaque key when this Agent has
+		// retained async history. This is read-only and never dispatches input.
+		if c.OpenStore != nil {
+			st, openErr := c.OpenStore()
+			if openErr != nil {
+				return AnswerResult{}, openErr
+			}
+			history, found, readErr := st.AsyncStore().Get(request.QuestionID)
+			if readErr != nil {
+				return AnswerResult{}, readErr
+			}
+			if found && history.AgentUID == agent.Metadata.UID && history.Delivery == "async" {
+				result := AnswerResult{QuestionID: history.ID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Delivery: "async"}
+				code := "question-stale"
+				switch history.State {
+				case agentquestion.StateExpired:
+					code = questionReasonExpired
+				case agentquestion.StateClosed:
+					code = questionReasonClosed
+				}
+				switch history.Disposition {
+				case "async-submitted":
+					result.Outcome = "submitted"
+				case "async-unknown":
+					result.Outcome = "unknown"
+				case "async-not-submitted":
+					result.Outcome = "not-submitted"
+				}
+				if result.Outcome != "" {
+					code = questionReasonNotPending
+				}
+				return result, &Failure{Code: code, Message: code + ": async form is unavailable; do not resend"}
+			}
 		}
 		return AnswerResult{}, refuse(questionReasonNotFound, "has no current exact question")
 	}
