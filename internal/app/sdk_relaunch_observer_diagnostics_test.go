@@ -138,10 +138,7 @@ func relaunchFormatObserverDiagnostic(expected metadata.ProcessIdentity, tuple s
 		case interface{ Unwrap() []error }:
 			children := u.Unwrap()
 			// Bound both traversal and retained children, including joined errors.
-			available := relaunchDiagnosticCauseLimit - n - 1 - len(pending)
-			if available > len(children) {
-				available = len(children)
-			}
+			available := min(relaunchDiagnosticCauseLimit-n-1-len(pending), len(children))
 			if available > 0 {
 				pending = append(pending, children[:available]...)
 			}
