@@ -890,7 +890,7 @@ func observeRelaunchObserverReceipts(t *testing.T, record, binary, state string,
 		return true
 	}
 	var diagnostics *relaunchObserverDiagnostics
-	if t.Name() == "TestRelaunchAgentSDKNativeCodexAndPostStopCancellation/sdk-cancel-success" {
+	if strings.HasPrefix(t.Name(), "TestRelaunchAgentSDKNativeCodexAndPostStopCancellation/") {
 		diagnostics = &relaunchObserverDiagnostics{}
 	}
 	deadline := time.Now().Add(5 * time.Second)
