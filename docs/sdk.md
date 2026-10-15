@@ -290,9 +290,19 @@ operator start/steer acceptance and durable app receipt settlement. This does no
 prove model consumption or a completed answer, and adds no native per-question
 RPC or acknowledgement. Readback uses `closed` / `async-submitted` /
 `CanAnswer: false`. `CodeQuestionDeliveryUnknown` preserves the same ID and
-`Outcome: "unknown"` with the error; readback uses `async-unknown`. Never retry an
+`Outcome: "unknown"` with the error; its retained claim uses `async-unknown`. Never retry an
 unknown submission. A repeated attempt returns `CodeQuestionNotPending` without
 asserting that an earlier attempt had no effect.
+
+The call receipt and a later exact, valid read are separate observations. A
+submitted-row rename followed by a directory fsync error can leave an unknown
+call receipt while a later read shows `async-submitted`. Preserve the original
+receipt and error: the visible row is additional current storage evidence, not
+retroactive call success, proof of crash durability, or model receipt/consumption.
+An `async-unknown` row, read error, or absence does not resolve uncertainty. Keep
+`CanAnswer: false` and never resend. When storage fails, a call's proven absence
+of native input (`not-submitted`) and its visible stored disposition must also
+be kept distinct; a retained unknown claim does not prove native input occurred.
 
 `MaxAsyncQuestionTextBytes` is 4096 UTF-8 bytes per original, untrimmed direct
 text. `MaxAsyncQuestionSelectionsBytes` is 16384 bytes for the normalized zero-based

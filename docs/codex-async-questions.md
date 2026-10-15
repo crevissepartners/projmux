@@ -48,10 +48,19 @@ not confirm model consumption or completion of the question.
 
 After an uncertain delivery, the typed refusal is `question-delivery-unknown`.
 The result preserves the question ID, `Delivery: "async"`, and
-`Outcome: "unknown"`, including when an error is returned. Readback uses
+`Outcome: "unknown"`, including when an error is returned. The retained claim uses
 `closed` / `async-unknown` / `canAnswer: false`. Do not retry an unknown
 submission. A second attempt is refused with `question-not-pending`; that
 refusal says nothing about the effects of the previous attempt.
+
+The call receipt and a later exact, valid read are different observations. If
+a submitted row was renamed into place before directory fsync failed, the call
+still returns unknown and its original error, while a later read may show
+`async-submitted`. That row is additional evidence of the currently visible
+stored state; it does not retroactively make the call successful or prove
+durability after a crash, model receipt, or model consumption. An
+`async-unknown` row, a read error, or a missing row does not resolve uncertainty.
+Keep the form locked and never resend in any of these cases.
 
 Async free text is limited to 4096 UTF-8 bytes per prompt, counted without
 trimming. The complete normalized zero-based `map[int]Selection`, encoded
@@ -73,7 +82,10 @@ After all validation, the host locks the form before attempting the durable
 claim. If storage or a definite local admission fails at that point, provider
 input is not written and the form stays locked. When storage remains writable,
 readback uses `closed` / `async-not-submitted` / `canAnswer: false`; storage
-errors remain errors. Handle this as “not submitted; form locked” and use the
+errors remain errors. A call's proven absence of native input and the visible
+stored disposition are separate observations when storage fails; a retained
+`async-unknown` claim does not prove that input was written. Handle this as
+“not submitted; form locked” and use the
 native surface. It is distinct from uncertain delivery after the native call
 boundary. The sticky host tombstone prevents old writers' normal pruning from
 reopening the question, including after a controller replacement.
