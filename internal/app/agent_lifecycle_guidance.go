@@ -96,7 +96,9 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 	switch {
 	case r.InstructionsNotApplied:
 		add("instructions", "not-applied", "codex-instructions-immutable", value(instructions))
-		a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
+		if wantedInstructions != instructions {
+			a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
+		}
 	case r.InstructionsUnavailable != "" || s.settings.instructionsErr != nil || s.settings.snapshotErr != nil || s.resumed.personaUnavailable != nil:
 		add("instructions", "not-applied", "instructions-unavailable", nil)
 		a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
@@ -114,10 +116,10 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 		{"link-rules", "link-rules-unavailable", s.links.active || s.snapshot, s.links.unavailable != nil || s.resumed.projectLinksUnavailable != nil},
 	} {
 		switch {
-		case part.unavailable:
-			add(part.setting, "not-applied", part.reason, nil)
 		case s.provider == aiModeCodex:
 			add(part.setting, "preserved", "codex-instructions-immutable", nil)
+		case part.unavailable:
+			add(part.setting, "not-applied", part.reason, nil)
 		case s.snapshot && part.setting != "project-guidance":
 			add(part.setting, "preserved", "recorded-snapshot", nil)
 		case part.active:
@@ -153,8 +155,18 @@ func frozenAgentSettingsApplication(record *deferredLaunchRecord, pending bool) 
 			v = record.NewAnnotations[coremetadata.AnnotationAgentProfile]
 			e.Status, e.Reason = "recorded", "profile-recipe-recorded"
 		case "model":
+			if !pending && record.Model == "" {
+				e.Status, e.Reason = "unobserved", "application-unobserved"
+				a.Entries = append(a.Entries, e)
+				continue
+			}
 			v = record.Model
 		case "effort":
+			if !pending && record.Effort == "" {
+				e.Status, e.Reason = "unobserved", "application-unobserved"
+				a.Entries = append(a.Entries, e)
+				continue
+			}
 			v = record.Effort
 		case "instructions":
 			v = record.NewAnnotations[coremetadata.AnnotationAgentPersona]
@@ -191,17 +203,16 @@ func writeAgentSettingsNotice(w io.Writer, a *agentSettingsApplication) {
 	if a == nil || a.NotAppliedCount == 0 {
 		return
 	}
-	delivered := 0
-	var missing []string
+	var delivered, missing []string
 	for _, e := range a.Entries {
 		if e.Status == "delivered" {
-			delivered++
+			delivered = append(delivered, fmt.Sprintf(lifecycleText("delivered-entry"), lifecycleText("setting."+e.Setting), lifecycleText("reason."+e.Reason)))
 		}
 		if e.Status == "not-applied" {
 			missing = append(missing, fmt.Sprintf(lifecycleText("missing"), lifecycleText("setting."+e.Setting), lifecycleText("reason."+e.Reason), lifecycleText("next."+e.Reason)))
 		}
 	}
-	fmt.Fprintf(w, lifecycleText("summary")+"\n", delivered, a.NotAppliedCount, strings.Join(missing, "; "))
+	fmt.Fprintf(w, lifecycleText("summary")+"\n", len(delivered), strings.Join(delivered, ", "), a.NotAppliedCount, strings.Join(missing, "; "))
 }
 
 func trailingAgentPromptFlag(fs *flag.FlagSet, prompt []string) string {

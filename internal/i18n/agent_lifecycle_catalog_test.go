@@ -43,7 +43,7 @@ func TestAgentLifecycleCatalogLocaleAndArgumentParity(t *testing.T) {
 			t.Fatal(reason)
 		}
 	}
-	for _, key := range []string{"help.resume", "help.relaunch", "help.application", "help.mapping", "help.lifetime", "help.model", "prompt", "foreground", "summary", "missing", "pending", "claim-waiting"} {
+	for _, key := range []string{"help.resume", "help.relaunch", "help.application", "help.mapping", "help.lifetime", "help.model", "prompt", "foreground", "summary", "missing", "pending", "claim-waiting", "delivered-entry"} {
 		if _, ok := en[Key("agent.lifecycle."+key)]; !ok {
 			t.Fatal(key)
 		}

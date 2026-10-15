@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/profile"
 )
 
 func lifecycleEntry(t *testing.T, a *agentSettingsApplication, setting string) agentSettingApplication {
@@ -136,8 +137,8 @@ func TestAgentSettingsApplicationProjection(t *testing.T) {
 		}
 	})
 	t.Run("multiple failures override planned delivery once", func(t *testing.T) {
-		s := lifecycleSource(aiModeCodex, "tmux")
-		s.settings.resolution.InstructionsNotApplied = true
+		s := lifecycleSource(aiModeClaude, "tmux")
+		s.settings.instructionsErr = errors.New("private instructions error")
 		s.settings.resolution.WantedInstructions = "replacement"
 		s.resumed.effortSkipped = true
 		s.resumed.effortInvalid = "invalid"
@@ -150,12 +151,29 @@ func TestAgentSettingsApplicationProjection(t *testing.T) {
 			t.Fatalf("count %+v", a)
 		}
 		e := lifecycleEntry(t, a, "instructions")
-		if *e.Value != "lead" || *e.RequestedValue != "replacement" || e.NextAction == "" {
+		if e.Value != nil || e.RequestedValue == nil || *e.RequestedValue != "replacement" || e.NextAction == "" {
 			t.Fatal(e)
 		}
 		var b bytes.Buffer
 		writeAgentSettingsNotice(&b, a)
-		for _, w := range []string{"not applied=5", "instructions", "effort", "agent-guidance", "project-guidance", "link-rules", "cannot replace"} {
+		wantDelivered := "delivered=2 [model (passed in launch arguments), workspace (resolved launch workspace)]"
+		if !strings.Contains(b.String(), wantDelivered) || strings.Count(b.String(), "\n") != 1 {
+			t.Fatalf("delivered list/one-line summary: %s", &b)
+		}
+		last := -1
+		for _, label := range []string{"model (", "workspace (", "effort (", "instructions (", "agent-guidance (", "project-guidance (", "link-rules ("} {
+			at := strings.Index(b.String(), label)
+			if at <= last || strings.Count(b.String(), label) != 1 {
+				t.Fatalf("unordered/duplicate logical setting %s: %s", label, &b)
+			}
+			last = at
+		}
+		for _, value := range []string{"actual-model", "/fixture/work", "replacement", "secret body", "private path", "secret URL"} {
+			if strings.Contains(b.String(), value) {
+				t.Fatal("new summary disclosed a value or private body")
+			}
+		}
+		for _, w := range []string{"not applied=5", "instructions", "effort", "agent-guidance", "project-guidance", "link-rules", "unavailable"} {
 			if !strings.Contains(b.String(), w) {
 				t.Fatalf("missing %q: %s", w, &b)
 			}
@@ -164,6 +182,83 @@ func TestAgentSettingsApplicationProjection(t *testing.T) {
 		for _, secret := range []string{"secret body", "private path", "secret URL", "duplicate"} {
 			if bytes.Contains(raw, []byte(secret)) {
 				t.Fatal("private source leaked")
+			}
+		}
+	})
+	t.Run("Codex thread guidance is preserved despite current file errors", func(t *testing.T) {
+		source := lifecycleSource(aiModeCodex, "process")
+		source.guidance.unavailable = errors.New("private current guidance")
+		source.links.project.unavailable = errors.New("private current project")
+		source.links.unavailable = errors.New("private current rules")
+		source.resumed.agentGuidanceUnavailable = errors.New("private duplicate")
+		for _, override := range []bool{false, true} {
+			source.settings.resolution.InstructionsNotApplied = override
+			source.settings.resolution.WantedInstructions = "replacement"
+			a := preparedAgentSettingsApplication(source)
+			want := 0
+			if override {
+				want = 1
+			}
+			if a.NotAppliedCount != want {
+				t.Fatalf("invented changed setting from an unavailable current file: %+v", a)
+			}
+			for _, name := range []string{"agent-guidance", "project-guidance", "link-rules"} {
+				e := lifecycleEntry(t, a, name)
+				if e.Status != "preserved" || e.Reason != "codex-instructions-immutable" || e.Value != nil || e.RequestedValue != nil || e.NextAction != "" {
+					t.Fatal(e)
+				}
+			}
+		}
+	})
+	t.Run("immutable requested name is optional without losing explicit none", func(t *testing.T) {
+		for _, wanted := range []string{"lead", "replacement", ""} {
+			source := lifecycleSource(aiModeCodex, "tmux")
+			source.settings.resolution.InstructionsNotApplied = true
+			source.settings.resolution.WantedInstructions = wanted
+			a := preparedAgentSettingsApplication(source)
+			e := lifecycleEntry(t, a, "instructions")
+			if a.NotAppliedCount != 1 || e.Status != "not-applied" || e.Reason != "codex-instructions-immutable" || e.Value == nil || *e.Value != "lead" {
+				t.Fatal(e)
+			}
+			if wanted == "lead" {
+				if e.RequestedValue != nil {
+					t.Fatal("duplicate requested name", e)
+				}
+			} else if e.RequestedValue == nil || *e.RequestedValue != wanted {
+				t.Fatal("lost distinct request or explicit none", e)
+			}
+		}
+		source := lifecycleSource(aiModeClaude, "tmux")
+		source.settings.instructionsErr = errors.New("unavailable")
+		source.settings.resolution.WantedInstructions = "lead"
+		e := lifecycleEntry(t, preparedAgentSettingsApplication(source), "instructions")
+		if e.Value != nil || e.RequestedValue == nil || *e.RequestedValue != "lead" {
+			t.Fatal("unavailable effective value lost its known request", e)
+		}
+	})
+	t.Run("unspecified frozen provider values stay unobserved after startup", func(t *testing.T) {
+		record := &deferredLaunchRecord{NewAnnotations: map[string]string{}}
+		record.Command.Dir = "/frozen"
+		for _, pending := range []bool{true, false} {
+			a := frozenAgentSettingsApplication(record, pending)
+			if a.NotAppliedCount != 0 || len(a.Entries) != 8 {
+				t.Fatal(a)
+			}
+			for _, setting := range []string{"model", "effort"} {
+				e := lifecycleEntry(t, a, setting)
+				if pending {
+					if e.Status != "pending" || e.Value == nil || *e.Value != "" {
+						t.Fatal("lost frozen recorded empty value", e)
+					}
+				} else if e.Status != "unobserved" || e.Reason != "application-unobserved" || e.Value != nil {
+					t.Fatal("invented provider value", e)
+				}
+			}
+			for _, setting := range []string{"profile", "instructions"} {
+				e := lifecycleEntry(t, a, setting)
+				if e.Value == nil || *e.Value != "" {
+					t.Fatal("lost explicit none", e)
+				}
 			}
 		}
 	})
@@ -252,6 +347,54 @@ func TestRelaunchApplicationUsesPreparedSettings(t *testing.T) {
 	_, _, err = runRoute(t, failed.command, "resume", "uid:"+personaAttachAgent)
 	if err == nil || received != 0 {
 		t.Fatalf("failure=%v disclosures=%d", err, received)
+	}
+}
+
+func TestProcessRelaunchApplicationRetainsActualPreparedSource(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := newRelaunchFixture(t)
+			f.command.ai = f.planner
+			f.command.rebind.create.homeDir = f.planner.homeDir
+			f.command.rebind.create.lookupEnv = f.planner.lookupEnv
+			paths, err := configPaths(f.planner.homeDir, f.planner.lookupEnv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profiles := profile.NewDefaultStore(paths)
+			digest := writeCodexProfile(t, profiles, "changing", "model = \"preview-model\"\neffort = \"low\"\n")
+			annotations := map[string]string{coremetadata.AnnotationAgentProfile: "changing", coremetadata.AnnotationAgentProfileDigest: digest, coremetadata.AnnotationAgentProfileSource: coremetadata.SettingSourceRelaunch}
+			outer, err := f.planner.ResolveAgentSettingsRequest(provider, annotations, agentSettingsRequest{projectUID: "prj-alpha", source: "relaunch"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			actualDir := t.TempDir()
+			f.command.resolveWorkspace = func(_ string, _ coremetadata.Registry, _ coremetadata.Project, _ string, _ string, _ []string) (coremetadata.AgentWorkspace, error) {
+				return coremetadata.AgentWorkspace{CWD: actualDir}, nil
+			}
+			recipe := processRelaunchRecipe{restart: &agentRestart{provider: provider, settings: outer}, annotations: outer.launchAnnotations(annotations), workspace: coremetadata.AgentWorkspace{CWD: "/preview-only"}}
+			writeCodexProfile(t, profiles, "changing", "model = \"actual-model\"\neffort = \"high\"\n")
+			existingPane, _ := f.store.registry.Pane(personaAttachPane)
+			pane := existingPane.Clone()
+			pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: provider, Binding: coremetadata.ProcessBinding{ProjectUID: "prj-alpha"}}
+			launch, err := f.command.planProcessRelaunchLaunch(f.agent(t), pane, agentRelaunchRequest{}, recipe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if launch.settings.resolution.New.Model.Value != "preview-model" || launch.applicationSettings.resolution.New.Model.Value != "actual-model" || launch.applicationSettings.resolution.New.Effort.Value != "high" || launch.command.Dir != actualDir || recipe.workspace.CWD != "/preview-only" {
+				t.Fatalf("runtime preview or disclosure source lost: %+v", launch)
+			}
+			if provider == aiModeClaude {
+				if argvValue(launch.command.Args, "--model") != "actual-model" || argvValue(launch.command.Args, "--effort") != "high" {
+					t.Fatal(launch.command.Args)
+				}
+			} else if launch.config.Settings.Model != "actual-model" || launch.config.Settings.Effort != "high" {
+				t.Fatal(launch.config.Settings)
+			}
+			if f.store.writes != 0 || f.store.transactions != 0 || len(splitWindowCalls(f.tmux)) != 0 || len(f.deletes.killed) != 0 {
+				t.Fatal("preparation changed runtime state")
+			}
+		})
 	}
 }
 

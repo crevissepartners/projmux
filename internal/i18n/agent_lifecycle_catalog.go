@@ -4,12 +4,13 @@ package i18n
 // remain literal data. Both locales define the same keys and format arguments.
 var agentLifecycleCatalog = catalogFragment{name: "agent-lifecycle", locales: map[Locale]map[Key]Entry{
 	Locale("en-US"): {
+		Key("agent.lifecycle.delivered-entry"):                     textEntry("%s (%s)"),
 		Key("agent.lifecycle.claim-waiting"):                       textEntry("Waiting for first input; the provider has not started."),
 		Key("agent.lifecycle.pending"):                             textEntry("waiting for first input; settings are recorded and not yet applied"),
 		Key("agent.lifecycle.help.model"):                          textEntry("Model and effort are recorded with their launch source. In tmux, an explicit model or changed profile model is passed; otherwise the conversation keeps its model, whose current provider value is unobserved. Process resume passes the resolved model and effort to its new provider generation. Valid resolved effort is passed on supported paths. Codex retains its original developer instructions."),
 		Key("agent.lifecycle.prompt"):                              textEntry("%s is part of the prompt. Put command options before --; the prompt is unchanged."),
 		Key("agent.lifecycle.foreground"):                          textEntry("This existing process Agent runs in the foreground even when config agent-host=process. Keep stdin open; EOF, INT or TERM ends this owned provider. Use --detach for an independent owner."),
-		Key("agent.lifecycle.summary"):                             textEntry("Settings: delivered=%d, not applied=%d: %s"),
+		Key("agent.lifecycle.summary"):                             textEntry("Settings: delivered=%d [%s], not applied=%d: %s"),
 		Key("agent.lifecycle.missing"):                             textEntry("%s (%s). %s"),
 		Key("agent.lifecycle.help.resume"):                         textEntry("Reconnect the recorded conversation; supported paths can apply current profile settings and explicit model/effort. The Agent stays the same; tmux creates a new Pane, process keeps its Pane with a new generation."),
 		Key("agent.lifecycle.help.relaunch"):                       textEntry("Explicitly restart the same conversation with the resolved profile, overrides or resets. Settings support depends on host and provider; Codex keeps its original thread developer instructions."),
@@ -46,12 +47,13 @@ var agentLifecycleCatalog = catalogFragment{name: "agent-lifecycle", locales: ma
 		Key("agent.lifecycle.next.link-rules-unavailable"):         textEntry("Restore Project link rules, then retry the same resume command."),
 	},
 	Locale("ko-KR"): {
+		Key("agent.lifecycle.delivered-entry"):                     textEntry("%s (%s)"),
 		Key("agent.lifecycle.claim-waiting"):                       textEntry("첫 입력 대기 중; provider는 아직 시작되지 않았습니다."),
 		Key("agent.lifecycle.pending"):                             textEntry("첫 입력 대기 중; 설정은 기록됐으며 아직 적용되지 않았습니다"),
 		Key("agent.lifecycle.help.model"):                          textEntry("모델과 추론 수준은 실행 출처와 함께 기록됩니다. tmux는 명시한 모델 또는 변경된 프로필 모델을 전달하고 그 외에는 대화의 모델을 유지하며 현재 provider 값은 미관측입니다. process resume는 확정한 모델과 추론 수준을 새 provider 실행 세대에 전달합니다. 지원 경로에서는 유효한 추론 수준을 전달합니다. Codex는 기존 developer instructions를 유지합니다."),
 		Key("agent.lifecycle.prompt"):                              textEntry("%s은(는) 입력 본문에 포함됩니다. 명령 옵션은 -- 앞에 두세요. 입력 본문은 그대로 전달됩니다."),
 		Key("agent.lifecycle.foreground"):                          textEntry("config agent-host=process여도 기존 process Agent는 포그라운드로 실행됩니다. 표준 입력을 열어 두세요. EOF, INT 또는 TERM은 이번 실행의 provider를 종료합니다. 독립 소유자로 실행하려면 --detach를 사용하세요."),
-		Key("agent.lifecycle.summary"):                             textEntry("설정: 전달 %d개, 미적용 %d개: %s"),
+		Key("agent.lifecycle.summary"):                             textEntry("설정: 전달 %d개 [%s], 미적용 %d개: %s"),
 		Key("agent.lifecycle.missing"):                             textEntry("%s (%s). %s"),
 		Key("agent.lifecycle.help.resume"):                         textEntry("기록된 대화에 다시 연결합니다. 지원 경로에서는 현재 프로필 설정과 명시한 model/effort를 적용할 수 있습니다. Agent는 유지되고 tmux는 새 Pane을, process는 같은 Pane의 새 실행 세대를 사용합니다."),
 		Key("agent.lifecycle.help.relaunch"):                       textEntry("같은 대화를 현재 프로필, 재정의 또는 초기화한 설정으로 명시적으로 재시작합니다. 설정 지원은 host와 provider에 따라 다르며 Codex는 기존 thread의 developer instructions를 유지합니다."),
