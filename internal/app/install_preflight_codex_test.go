@@ -123,7 +123,7 @@ func TestInstallPreflightCodexWarningsPreserveVerdicts(t *testing.T) {
 func TestInstallCodexCensusSharedBudgetKeepsUnknownRemainder(t *testing.T) {
 	reg := installCodexRegistry(t)
 	base := reg.Panes[1]
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		p, a := base, reg.Agents[0]
 		p.Metadata.UID = fmt.Sprintf("pane-extra-%02d", i)
 		a.Metadata.UID = fmt.Sprintf("agent-extra-%02d", i)
