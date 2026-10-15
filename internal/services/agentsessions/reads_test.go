@@ -95,7 +95,7 @@ func TestProjectEmptyRefPreservesCLIAdmission(t *testing.T) {
 	loadErr := errors.New("Registry read failed")
 	service := Service{
 		LoadRegistry: func() (metadata.Registry, error) { loads++; return metadata.Registry{}, loadErr },
-		StateDir: func() (string, error) { states++; return t.TempDir(), nil },
+		StateDir:     func() (string, error) { states++; return t.TempDir(), nil },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
