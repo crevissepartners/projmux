@@ -545,6 +545,7 @@ func TestInstallCodexBudgetDoesNotSkipClaudeCoordination(t *testing.T) {
 				defer cancel()
 				parentDeadline, _ := ctx.Deadline()
 				codexCalls, legacyCalls, lastCalls, sourceCalls := 0, 0, 0, 0
+				var censusStart time.Time
 				host := func(readCtx context.Context, _ coremetadata.Registry, _ string, p coremetadata.Pane) (processHostObservation, bool) {
 					switch p.Metadata.UID {
 					case first.Metadata.UID:
@@ -553,7 +554,7 @@ func TestInstallCodexBudgetDoesNotSkipClaudeCoordination(t *testing.T) {
 					case legacy.Metadata.UID:
 						legacyCalls++
 						deadline, ok := readCtx.Deadline()
-						if !ok || !deadline.After(parentDeadline) || time.Until(deadline) < 150*time.Millisecond || time.Until(deadline) > processObservationReadLimit {
+						if !ok || !deadline.After(parentDeadline) || deadline.Before(censusStart.Add(processObservationReadLimit)) || time.Until(deadline) > processObservationReadLimit {
 							t.Errorf("legacy lost its independent 250ms: deadline=%v, parent=%v", deadline, parentDeadline)
 						}
 						if readCtx.Err() != nil {
@@ -595,6 +596,7 @@ func TestInstallCodexBudgetDoesNotSkipClaudeCoordination(t *testing.T) {
 					}
 					return installPeerSupport{State: "unknown", Reason: "fixture-source-proof"}
 				}
+				censusStart = time.Now()
 				owners := liveInstallProcessOwners(reg, func(coremetadata.ProcessIdentity) bool { return true }, newInstallProcessOwnerObserver(ctx, "unused", host, source))
 				wantCodex := 1
 				if budget == "expired-before" {
