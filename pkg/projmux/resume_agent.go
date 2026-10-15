@@ -98,11 +98,11 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 		socket = c.runtimeSocketPath
 	}
 	if c.projmuxExecutable == "" || !filepath.IsAbs(c.projmuxExecutable) {
-		return result, &Refusal{Code: CodeCreateExecutableInvalid, message: "Options.ProjmuxExecutable must name an absolute projmux executable"}
+		return result, &Refusal{Code: CodeExecutableInvalid, message: "Options.ProjmuxExecutable must name an absolute projmux executable"}
 	}
 	info, err := os.Stat(c.projmuxExecutable)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-		return result, &Refusal{Code: CodeCreateExecutableInvalid, message: "Options.ProjmuxExecutable must name an existing executable file", cause: err}
+		return result, &Refusal{Code: CodeExecutableInvalid, message: "Options.ProjmuxExecutable must name an existing executable file", cause: err}
 	}
 	return c.resumeAgentPlan(ctx, plan, socket, runner)
 }

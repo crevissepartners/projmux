@@ -20,6 +20,10 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
+// CodeExecutableInvalid identifies invalid Options.ProjmuxExecutable values in
+// ResumeAgent and RelaunchAgent. Creation retains CodeCreateExecutableInvalid.
+const CodeExecutableInvalid Code = "executable-invalid"
+
 const (
 	CodeCreateExecutableInvalid  Code = "create-executable-invalid"
 	CodeCreateRouteRefused       Code = "create-route-refused"
