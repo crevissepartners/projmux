@@ -36,6 +36,7 @@ type processAgentResumeOptions struct {
 }
 type processAgentResumeRequest struct{ options processAgentResumeOptions }
 type processAgentResumeResult struct {
+	settingsApplication     *agentSettingsApplication
 	Binding                 processhost.Binding
 	Handle                  processOwnedHandle
 	Previous                processResumePrevious
@@ -222,6 +223,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 			return result, errors.Join(err, c.finishDeferredLaunch(deferredLaunch, result, false))
 		}
 	}
+	result.settingsApplication = processResumeSettingsApplication(candidate, settingsPlan, plan, deferredLaunch)
 	return result, nil
 }
 

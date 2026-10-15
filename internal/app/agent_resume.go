@@ -123,9 +123,10 @@ func (p agentResumePlan) launchAnnotations() map[string]string {
 // calls CreateAgent at all, so the uid and metadata.name of the resumed Agent
 // cannot change no matter what happens on the runtime side.
 type agentRebinder struct {
-	create           *createCommand
-	launcher         agentResumeLauncher
-	resolveWorkspace func(string, coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
+	settingsApplication func(*agentSettingsApplication) // optional invocation-local value receiver
+	create              *createCommand
+	launcher            agentResumeLauncher
+	resolveWorkspace    func(string, coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
 }
 
 func newAgentRebinder(create *createCommand, launcher agentResumeLauncher) *agentRebinder {
@@ -405,6 +406,12 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		fmt.Fprintln(stderr, settingsNotice)
 	}
 
+	application := preparedAgentSettingsApplication(agentApplicationSource{provider: plan.provider, host: "tmux", settings: settings, resumed: resumed, guidance: guidance, links: links, workspace: workspace, annotations: plan.launchAnnotations()})
+	if r.settingsApplication != nil {
+		r.settingsApplication(application)
+	} else {
+		writeAgentSettingsNotice(stderr, application)
+	}
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)
 	return err
 }

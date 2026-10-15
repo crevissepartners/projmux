@@ -73,15 +73,19 @@ type agentRelaunchResult struct {
 	CurrentHost          string                            `json:"currentHost"`
 	TargetHost           string                            `json:"targetHost"`
 	RelaunchReasons      []string                          `json:"relaunchReasons"`
+	SettingsApplication  *agentSettingsApplication         `json:"settingsApplication,omitempty"`
 }
 
 // agentRelaunchRequest is one parsed `agent relaunch` argv.
 type agentRelaunchRequest struct {
-	agentRef string
-	host     string
-	prompt   []string
-	model    string
-	effort   string
+	trailingPromptFlag string
+	detachSet          bool
+	foregroundNotice   bool
+	agentRef           string
+	host               string
+	prompt             []string
+	model              string
+	effort             string
 	// profile and instructions are nil when not given; a pointer to "" is
 	// `none`.
 	profile       *string
@@ -154,6 +158,7 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	request.allowHostLost = true
+	request.foregroundNotice = c.defaultProcessForegroundNotice(!request.detachSet && request.host == "")
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -168,7 +173,11 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 	}
 	target := agent.Clone()
 	if request.detach && !request.dryRun {
-		return c.runDetachedProcessRelaunch(registry, target, request, stdout, stderr)
+		err := c.runDetachedProcessRelaunch(registry, target, request, stdout, stderr)
+		if err == nil {
+			writeAgentLifecyclePromptNotice(stderr, request.trailingPromptFlag)
+		}
+		return err
 	}
 	return c.dispatchRelaunch(registry, target, request, stdout, stderr)
 }
@@ -272,7 +281,8 @@ func (c *agentCommand) runTmuxRelaunch(registry coremetadata.Registry, target co
 	}
 	newPane, err := c.run(restart, agentRestartSteps{
 		yes: request.yes, socket: request.socket, json: request.json,
-		beforeStop: beforeStop,
+		beforeStop:          beforeStop,
+		settingsApplication: func(a *agentSettingsApplication) { result.SettingsApplication = a },
 		stopFailed: func(err error, liveness personaPaneLiveness, observeErr error) error {
 			// Nothing was written before the stop, so there is nothing to
 			// restore either way.
@@ -415,6 +425,12 @@ func parseAgentRelaunchArgs(args []string, stderr io.Writer) (agentRelaunchReque
 			return agentRelaunchRequest{}, usageError(fmt.Sprintf("%s: --%s sets the %s and --reset removes its override; give one of them; nothing was changed", spelling, item, item))
 		}
 	}
+	request.trailingPromptFlag = trailingAgentPromptFlag(fs, request.prompt)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "detach" {
+			request.detachSet = true
+		}
+	})
 	request.json = output == "json"
 	request.agentRef = positionals[0]
 	request.flags.addPositionalRef(request.agentRef)
@@ -568,6 +584,9 @@ func writeAgentRelaunchResult(stdout io.Writer, request agentRelaunchRequest, re
 	default:
 		_, err := fmt.Fprintf(stdout, "agent/%s relaunched from %s to %s; %s on the same conversation\n",
 			result.AgentName, current, describeRelaunchTarget(result), result.Outcome)
+		if err == nil {
+			writeAgentSettingsNotice(stdout, result.SettingsApplication)
+		}
 		return err
 	}
 }

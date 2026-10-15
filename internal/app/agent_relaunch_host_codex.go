@@ -454,6 +454,8 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 	if err != nil {
 		return fail(err)
 	}
+	result.SettingsApplication = preparedAgentSettingsApplication(agentApplicationSource{provider: aiModeCodex, host: "process", settings: settings, guidance: recipe.guidance, links: recipe.links, workspace: recipe.workspace, annotations: recipe.annotations})
+	owned.settingsApplication = result.SettingsApplication
 	result.NewPaneUID, result.Outcome = binding.Pane, personaOutcomeRestarted
 	return c.finishOwnedHostTransfer(ctx, cancel, &owned, sync, result, source.request, stdout, stderr, fail)
 }

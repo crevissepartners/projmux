@@ -347,7 +347,11 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
 	}
 	if *detach {
-		return c.runDetachedProcessResume(*agent, flags, *model, *effort, *dialogueReplyOnly, *waitForPeer, prompt, stdout, stderr)
+		err := c.runDetachedProcessResume(*agent, flags, *model, *effort, *dialogueReplyOnly, *waitForPeer, prompt, stdout, stderr)
+		if err == nil && flags.output != "none" {
+			writeAgentLifecyclePromptNotice(stderr, trailingAgentPromptFlag(fs, prompt))
+		}
+		return err
 	}
 	if *waitForPeer {
 		if len(prompt) > 0 || *dialogueReplyOnly {
@@ -356,7 +360,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		if pane, ambiguous := processResumePane(registry, agent.Metadata.UID); pane == nil || ambiguous {
 			return usageError("agent resume: --wait-for-peer requires one retired process Agent")
 		}
-		return c.runDeferredResumeCLI(*agent, flags, *model, *effort, stdout, stderr)
+		return c.runDeferredResumeCLI(*agent, flags, *model, *effort, stdout, stderr, c.lifecycleNotices(fs, prompt))
 	}
 	return c.resumeResolvedAgent(fs, flags, registry, agent, *model, *effort, *dialogueReplyOnly, prompt, stdout, stderr)
 }
@@ -367,7 +371,7 @@ func (c *agentCommand) resumeResolvedAgent(fs *flag.FlagSet, flags resourceQuery
 		if dialogueReplyOnly {
 			return usageError("agent resume: process agents do not support --dialogue-reply-only")
 		}
-		return c.runProcessResumeCLI(*agent, flags, model, effort, prompt, stdout, stderr)
+		return c.runProcessResumeCLI(*agent, flags, model, effort, prompt, stdout, stderr, c.lifecycleNotices(fs, prompt))
 	}
 	outputFlag := ""
 	fs.Visit(func(value *flag.Flag) {

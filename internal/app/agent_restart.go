@@ -350,9 +350,10 @@ func codexThreadSettingsNotApplied(err error) bool {
 
 // agentRestartSteps are the parts of one restart its command owns.
 type agentRestartSteps struct {
-	yes    bool
-	socket deleteSocketFlags
-	json   bool
+	settingsApplication func(*agentSettingsApplication)
+	yes                 bool
+	socket              deleteSocketFlags
+	json                bool
 	// beforeStop runs once every check passed, right before the stop; nil
 	// writes nothing before it.
 	beforeStop func() error
@@ -387,7 +388,13 @@ func (c *agentCommand) run(r *agentRestart, steps agentRestartSteps, stdout, std
 			return steps.stopFailed(e, personaPaneLiveness(v), o)
 		},
 		Resume: func(p mutationruntime.StoppedAgentPane) error {
-			return c.resumeStoppedAgent(r.target.Metadata.UID, stoppedAgentPane{uid: p.UID, name: p.Name}, steps.resume, forward, stderr)
+			call := *c
+			if steps.settingsApplication != nil && c.rebind != nil {
+				rebinder := *c.rebind
+				rebinder.settingsApplication = steps.settingsApplication
+				call.rebind = &rebinder
+			}
+			return call.resumeStoppedAgent(r.target.Metadata.UID, stoppedAgentPane{uid: p.UID, name: p.Name}, steps.resume, forward, stderr)
 		},
 		ResumeFailed: steps.resumeFailed,
 		NewPane: func() string {

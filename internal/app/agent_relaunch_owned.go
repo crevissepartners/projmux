@@ -139,6 +139,7 @@ func (c *agentCommand) finishOwnedHostTransfer(ctx context.Context, cancel conte
 		return fail(err)
 	}
 	fmt.Fprintf(stderr, "agent uid:%s pane uid:%s runtime=process foreground=owned\n", owned.Binding.Agent, owned.Binding.Pane)
+	writeRelaunchLifecycleNotices(stderr, request)
 	return runProcessRelaunchOwner(ctx, cancel, owned, synchronization, processStdinEOFTrigger)
 }
 
@@ -215,7 +216,7 @@ func (c *agentCommand) prepareOwnedClaudeResume(ctx context.Context, opts proces
 		if err = ctx.Err(); err != nil {
 			return agentHostTransferResult{}, err
 		}
-		return agentHostTransferResult{State: agentProcessPrepared, Result: agentRelaunchResult{AgentUID: candidate.Agent.Metadata.UID, PaneUID: candidate.Pane.Metadata.UID, NewPaneUID: candidate.Pane.Metadata.UID, Provider: aiModeClaude, CurrentHost: "process", TargetHost: "process", Action: "resume", Phase: coremetadata.PhaseOffline}, Prepared: processPreparedProjection(prepared)}, nil
+		return agentHostTransferResult{State: agentProcessPrepared, Result: agentRelaunchResult{AgentUID: candidate.Agent.Metadata.UID, PaneUID: candidate.Pane.Metadata.UID, NewPaneUID: candidate.Pane.Metadata.UID, Provider: aiModeClaude, CurrentHost: "process", TargetHost: "process", Action: "resume", Phase: coremetadata.PhaseOffline, SettingsApplication: frozenAgentSettingsApplication(prepared, true)}, Prepared: processPreparedProjection(prepared)}, nil
 	}
 	reg, err := c.loadRegistry()
 	if err != nil {

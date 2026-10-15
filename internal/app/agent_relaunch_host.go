@@ -148,7 +148,11 @@ func (c *agentCommand) moveProcessToTmux(reg coremetadata.Registry, target corem
 	if request.json {
 		forward = io.Discard
 	}
-	if err := c.rebindRetiredProcessToTmux(plan, forward, stderr); err != nil {
+	call := *c
+	rebinder := *c.rebind
+	rebinder.settingsApplication = func(a *agentSettingsApplication) { result.SettingsApplication = a }
+	call.rebind = &rebinder
+	if err := call.rebindRetiredProcessToTmux(plan, forward, stderr); err != nil {
 		return fmt.Errorf("agent relaunch: tmux launch failed; previous process recipe and conversation retained; recover with: %s: %w", processRelaunchRecovery(reg, target, request), err)
 	}
 	after, err := c.loadRegistry()
@@ -437,6 +441,8 @@ func (c *agentCommand) startTmuxTransfer(ctx context.Context, cancel context.Can
 	if err != nil {
 		return fail(err)
 	}
+	result.SettingsApplication = preparedAgentSettingsApplication(agentApplicationSource{provider: aiModeClaude, host: "process", settings: settings, guidance: recipe.guidance, links: recipe.links, workspace: recipe.workspace, annotations: recipe.annotations})
+	owned.settingsApplication = result.SettingsApplication
 	result.NewPaneUID, result.Outcome = binding.Pane, personaOutcomeRestarted
 	return c.finishOwnedHostTransfer(ctx, cancel, &owned, sync, result, source.request, stdout, stderr, fail)
 }

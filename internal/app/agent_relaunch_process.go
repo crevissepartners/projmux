@@ -396,6 +396,8 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
 	}
+	result.SettingsApplication = preparedAgentSettingsApplication(agentApplicationSource{provider: recipe.restart.provider, host: "process", settings: launch.settings, guidance: recipe.guidance, links: recipe.links, workspace: recipe.workspace, annotations: recipe.annotations})
+	owned.settingsApplication = result.SettingsApplication
 	result.NewPaneUID = binding.Pane
 	if candidate.HostLost != nil {
 		if _, err = fmt.Fprintln(stderr, processRelaunchHostLostNotice); err != nil {
@@ -421,6 +423,7 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 			return fail(err)
 		}
 	}
+	writeRelaunchLifecycleNotices(stderr, request)
 	return runProcessRelaunchOwner(ctx, cancel, &owned, sync, processStdinEOFTrigger)
 }
 
