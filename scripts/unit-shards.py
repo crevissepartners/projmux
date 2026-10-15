@@ -67,7 +67,8 @@ def run(shard: str, directory: Path) -> None:
             if "Output" in event:
                 print(event["Output"], end="", flush=True)
         status = process.wait()
-    evidence = dict(shard=shard, head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+    evidence = dict(shard=shard, run_id=os.environ.get("GITHUB_RUN_ID", "local"),
+                    run_attempt=int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")), head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                     packages=packages, inventory=inventory, selected=expected,
                     executed={p: sorted(v) for p, v in seen.items()},
                     completed=sorted(completed), status=status)
@@ -86,6 +87,7 @@ def validate_execution(evidence: dict) -> None:
 
 def verify(directory: Path, head: str) -> None:
     manifests = [json.loads(p.read_text()) for p in directory.glob("*/manifest.json")]
+    manifests.sort(key=lambda m: m["shard"])
     if sorted(m["shard"] for m in manifests) != sorted(SHARDS):
         raise ValueError("missing, duplicate, or unexpected shard evidence")
     packages = manifests[0]["packages"]
@@ -93,8 +95,12 @@ def verify(directory: Path, head: str) -> None:
         raise ValueError("invalid package inventory")
     baseline = {}
     union = {}
+    run_id = os.environ.get("GITHUB_RUN_ID", "local")
+    run_attempt = int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
     for m in manifests:
         validate_execution(m)
+        if m["run_id"] != run_id or not 1 <= m["run_attempt"] <= run_attempt:
+            raise ValueError("stale run or future attempt evidence")
         if m["head"] != head or m["packages"] != packages:
             raise ValueError("shards must describe the same head and complete package set")
         owned = {p for p in packages if (p == APP) == (m["shard"] != "rest")}
@@ -112,7 +118,8 @@ def verify(directory: Path, head: str) -> None:
             union.setdefault(package, []).extend(expected)
     if sorted(baseline) != packages or {p: sorted(v) for p, v in union.items()} != baseline:
         raise ValueError("partition union differs from unpartitioned package/test inventory")
-    summary = dict(head=head, packages=len(packages), names=sum(map(len, baseline.values())),
+    summary = dict(head=head, run_id=run_id, run_attempt=run_attempt,
+                   shards=manifests, packages=len(packages), names=sum(map(len, baseline.values())),
                    kinds={kind: sum(n.startswith(kind) for names in baseline.values() for n in names)
                           for kind in ("Test", "Example", "Fuzz")}, inventory=baseline)
     (directory / "comparison.json").write_text(json.dumps(summary, indent=2) + "\n")

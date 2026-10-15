@@ -79,8 +79,15 @@ for a shorter critical path; runner time and wall time must be measured separate
   evidence fails closed. A skipped individual test retains its original
   semantics; strict tmux still refuses missing tmux.
   Each workflow attempt preserves `unit-evidence-*` (manifests and Go JSON
-  events) and `unit-inventory-comparison` (complete unpartitioned inventory
-  and Test/Example/Fuzz counts) for comparing repeated runs on one PR head.
+  events) and `unit-inventory-comparison-<attempt>` (complete unpartitioned
+  inventory, selected/executed names, Test/Example/Fuzz counts, and child
+  run/attempt provenance) for comparing repeated runs on one PR head.
+  Child artifacts overwrite their own fixed shard name on a rerun, so a
+  failed-child rerun can reuse successful children from an earlier attempt
+  of that same run and head. The comparison retains each child's attempt
+  number and rejects other runs or future attempts. Comparison artifacts
+  are unique per attempt; download child event artifacts before rerunning
+  when their earlier detailed logs are needed.
 - The real-tmux Go tests in `internal/app` find tmux through one helper,
   `requireRealTmux`. Without tmux they skip; `PROJMUX_REAL_TMUX_STRICT=1`
   turns a missing tmux into a test failure instead, so a run that is meant to

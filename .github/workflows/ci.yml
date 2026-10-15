@@ -252,6 +252,7 @@ jobs:
           name: unit-evidence-${{ matrix.shard }}
           path: .bin/unit-evidence/${{ matrix.shard }}/
           if-no-files-found: error
+          overwrite: true
 
   unit-rest:
     name: Unit / remaining packages
@@ -296,6 +297,7 @@ jobs:
           name: unit-evidence-rest
           path: .bin/unit-evidence/${{ matrix.shard }}/
           if-no-files-found: error
+          overwrite: true
 
   unit-contracts:
     name: Unit / contracts and static gates
@@ -371,7 +373,7 @@ jobs:
         if: success() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
-          name: unit-inventory-comparison
+          name: unit-inventory-comparison-${{ github.run_attempt }}
           path: .bin/unit-evidence/comparison.json
           if-no-files-found: error
 

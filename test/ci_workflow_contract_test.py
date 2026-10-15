@@ -453,7 +453,7 @@ class UnitShardContractTest(unittest.TestCase):
         for shard in module.SHARDS:
             inventory = {p: ns for p, ns in baseline.items() if (p == module.APP) == (shard != "rest")}
             selected = {p: [n for n in ns if module.selected(shard, p, n)] for p, ns in inventory.items()}
-            result.append(dict(shard=shard, head="a" * 40, packages=packages,
+            result.append(dict(shard=shard, head="a" * 40, run_id="local", run_attempt=1, packages=packages,
                                inventory=inventory, selected=selected, executed=copy.deepcopy(selected),
                                completed=sorted(inventory), status=0))
         return result
@@ -476,7 +476,7 @@ class UnitShardContractTest(unittest.TestCase):
     def test_comparison_rejects_missing_duplicate_failed_stale_and_incomplete_execution(self) -> None:
         original = self.evidence()
         mutations = {"missing": original[:-1], "duplicate": original + [original[0]]}
-        for field, value in (("head", "b" * 40), ("status", 1), ("completed", []),
+        for field, value in (("head", "b" * 40), ("run_id", "other-run"), ("run_attempt", 2), ("status", 1), ("completed", []),
                              ("packages", []), ("executed", {}), ("selected", {}), ("inventory", {})):
             evidence = copy.deepcopy(original)
             evidence[0][field] = value
@@ -484,6 +484,24 @@ class UnitShardContractTest(unittest.TestCase):
         for name, evidence in mutations.items():
             with self.subTest(mutation=name), self.assertRaises(ValueError):
                 self.verify(evidence)
+
+    def test_partial_rerun_reuses_successful_same_head_shards_and_keeps_attempts(self) -> None:
+        from unittest.mock import patch
+
+        evidence = self.evidence()
+        evidence[0]["run_attempt"] = 2
+        with patch.dict(os.environ, {"GITHUB_RUN_ID": "local", "GITHUB_RUN_ATTEMPT": "2"}):
+            summary = self.verify(evidence)
+        self.assertEqual(summary["run_attempt"], 2)
+        self.assertEqual([m["run_attempt"] for m in summary["shards"]], [2, 1, 1, 1])
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        for child in ("unit-app", "unit-rest"):
+            upload = workflow_step(workflow_job(workflow, child), "Preserve unit inventory and results")
+            self.assertIn("          overwrite: true", upload)
+            self.assertNotIn("github.run_attempt", upload)
+        comparison = workflow_step(workflow_job(workflow, "unit"), "Preserve inventory comparison")
+        self.assertIn("name: unit-inventory-comparison-${{ github.run_attempt }}", comparison)
+        self.assertNotIn("overwrite: true", comparison)
 
     def test_runner_records_unfiltered_listing_and_fuzz_seed_execution(self) -> None:
         # Protocol fixture: validate the real runner without compiling product code.
