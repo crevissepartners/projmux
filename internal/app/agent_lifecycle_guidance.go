@@ -33,6 +33,7 @@ type agentApplicationSource struct {
 	replyOnly      bool
 	nativeReady    bool
 	provider, host string
+	modelArg       string
 	settings       agentSettingsLaunch
 	resumed        agentResumeLaunch
 	guidance       agentGuidanceLaunch
@@ -71,6 +72,8 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 	}
 	if s.settings.layered && r.New.Model.Value != "" && (s.host == "process" || r.PassModel) {
 		add("model", "delivered", reason, value(r.New.Model.Value))
+	} else if !s.settings.layered && s.modelArg != "" {
+		add("model", "delivered", reason, value(s.modelArg))
 	} else if s.host == "process" {
 		add("model", "unobserved", "application-unobserved", nil)
 	} else {
@@ -85,17 +88,18 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 	} else {
 		add("effort", "unobserved", "application-unobserved", nil)
 	}
-	instructions := r.New.Instructions.Value
+	instructions, wantedInstructions := r.New.Instructions.Value, r.WantedInstructions
 	if !s.settings.layered {
 		instructions = s.annotations[coremetadata.AnnotationAgentPersona]
+		wantedInstructions = instructions
 	}
 	switch {
 	case r.InstructionsNotApplied:
 		add("instructions", "not-applied", "codex-instructions-immutable", value(instructions))
-		a.Entries[len(a.Entries)-1].RequestedValue = value(r.WantedInstructions)
+		a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
 	case r.InstructionsUnavailable != "" || s.settings.instructionsErr != nil || s.settings.snapshotErr != nil || s.resumed.personaUnavailable != nil:
 		add("instructions", "not-applied", "instructions-unavailable", nil)
-		a.Entries[len(a.Entries)-1].RequestedValue = value(r.WantedInstructions)
+		a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
 	case s.provider == aiModeCodex:
 		add("instructions", "preserved", "codex-instructions-immutable", value(instructions))
 	default:
@@ -114,6 +118,8 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 			add(part.setting, "not-applied", part.reason, nil)
 		case s.provider == aiModeCodex:
 			add(part.setting, "preserved", "codex-instructions-immutable", nil)
+		case s.snapshot && part.setting != "project-guidance":
+			add(part.setting, "preserved", "recorded-snapshot", nil)
 		case part.active:
 			add(part.setting, "delivered", "launch-arguments", nil)
 		default:

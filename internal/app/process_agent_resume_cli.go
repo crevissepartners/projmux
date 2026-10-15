@@ -172,7 +172,7 @@ func (r *processAgentResumeResult) writeResumeResult(creator *createCommand, std
 			return err
 		}
 		projection.SettingsApplication = r.settingsApplication
-		return json.NewEncoder(stdout).Encode(projection)
+		return writeJSON(stdout, projection)
 	}
 	return creator.writeResultsWithReceipt(stdout, "agent resume", mode, coremetadata.KindAgent, []createResult{result}, receipt)
 }

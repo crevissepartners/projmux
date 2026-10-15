@@ -101,6 +101,29 @@ func TestAgentSettingsApplicationProjection(t *testing.T) {
 			}
 		}
 	})
+	t.Run("ordinary process preserves recorded guidance snapshots", func(t *testing.T) {
+		s := lifecycleSource(aiModeClaude, "process")
+		s.snapshot = true
+		a := preparedAgentSettingsApplication(s)
+		for _, setting := range []string{"agent-guidance", "link-rules"} {
+			e := lifecycleEntry(t, a, setting)
+			if e.Status != "preserved" || e.Reason != "recorded-snapshot" {
+				t.Fatal(e)
+			}
+		}
+		if e := lifecycleEntry(t, a, "project-guidance"); e.Status != "delivered" {
+			t.Fatal(e)
+		}
+	})
+	t.Run("legacy explicit model still describes actual arguments", func(t *testing.T) {
+		s := lifecycleSource(aiModeClaude, "tmux")
+		s.settings = agentSettingsLaunch{}
+		s.modelArg = "explicit-model"
+		e := lifecycleEntry(t, preparedAgentSettingsApplication(s), "model")
+		if e.Status != "delivered" || *e.Value != "explicit-model" {
+			t.Fatal(e)
+		}
+	})
 	t.Run("preserved model has no invented value", func(t *testing.T) {
 		s := lifecycleSource(aiModeClaude, "tmux")
 		s.settings.resolution.PassModel = false

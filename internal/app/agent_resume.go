@@ -406,7 +406,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		fmt.Fprintln(stderr, settingsNotice)
 	}
 
-	application := preparedAgentSettingsApplication(agentApplicationSource{nativeReady: usedNative, replyOnly: plan.dialogueReplyOnly, provider: plan.provider, host: "tmux", settings: settings, resumed: resumed, guidance: guidance, links: links, workspace: workspace, annotations: plan.launchAnnotations()})
+	application := preparedAgentSettingsApplication(agentApplicationSource{modelArg: settings.model(plan.modelOverride), nativeReady: usedNative, replyOnly: plan.dialogueReplyOnly, provider: plan.provider, host: "tmux", settings: settings, resumed: resumed, guidance: guidance, links: links, workspace: workspace, annotations: plan.launchAnnotations()})
 	if r.settingsApplication != nil {
 		r.settingsApplication(application)
 	} else {
