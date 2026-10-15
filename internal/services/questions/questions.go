@@ -128,7 +128,18 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 	if err != nil {
 		return List{}, fmt.Errorf("%s: %w", request.Spelling, err)
 	}
-	records, err := store.List(agent.Metadata.UID)
+	readRecords := func() ([]agentquestion.Record, error) {
+		legacy, err := store.List(agent.Metadata.UID)
+		if err != nil {
+			return nil, err
+		}
+		async, err := store.AsyncStore().List(agent.Metadata.UID)
+		if err != nil {
+			return nil, err
+		}
+		return append(legacy, async...), nil
+	}
+	records, err := readRecords()
 	if err != nil {
 		return List{}, fmt.Errorf("%s: %w", request.Spelling, err)
 	}
@@ -151,7 +162,7 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 		if err != nil {
 			return List{}, err
 		}
-		records, err = store.List(agent.Metadata.UID)
+		records, err = readRecords()
 		if err != nil {
 			return List{}, err
 		}
@@ -162,6 +173,19 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 			continue
 		}
 		view := View{ID: record.ID, State: record.State, Disposition: record.Disposition, CreatedAt: record.CreatedAt, Deadline: record.Deadline, UpdatedAt: record.UpdatedAt, Answers: record.Answers, Delivery: "held-question", CanAnswer: record.State == agentquestion.StateWaiting, Asking: ClosedAsking(record)}
+		if record.Delivery == "async" {
+			view.Delivery, view.CanAnswer = "async", false
+			current := false
+			for _, exact := range result.ExactQuestions {
+				if exact.QuestionID == record.ID && exact.Delivery == "async" {
+					current = true
+					break
+				}
+			}
+			if !current && view.State == agentquestion.StateWaiting {
+				view.State, view.Disposition = agentquestion.StateClosed, "process-stale"
+			}
+		}
 		if process && agent.Status.Phase != coremetadata.PhaseRunning {
 			view.CanAnswer = false
 		}
@@ -203,6 +227,13 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 			if view.QuestionID != request.QuestionID {
 				continue
 			}
+			if view.Delivery == "async" {
+				reason, detail := StateRefusal(view.State)
+				if reason == "" {
+					reason, detail = questionReasonNotPending, "async question delivery is read-only"
+				}
+				return AnswerResult{}, refuse(reason, detail)
+			}
 			if !view.CanAnswer {
 				return AnswerResult{}, refuse(questionReasonNotPending, "question is no longer waiting")
 			}
@@ -232,8 +263,18 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 	if err != nil {
 		return AnswerResult{}, fmt.Errorf("%s: %w", request.Spelling, err)
 	}
+	asyncRecord, asyncFound, err := store.AsyncStore().Get(request.QuestionID)
+	if err != nil {
+		return AnswerResult{}, fmt.Errorf("%s: %w", request.Spelling, err)
+	}
+	if asyncFound {
+		record, found = asyncRecord, true
+	}
 	if !found || record.AgentUID != agent.Metadata.UID {
 		return AnswerResult{}, refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.QuestionID))
+	}
+	if record.Delivery == "async" && record.State == agentquestion.StateWaiting {
+		return AnswerResult{}, refuse(questionReasonNotPending, "async question delivery is read-only")
 	}
 	if reason, detail := RecordRefusal(record); reason != "" {
 		return AnswerResult{}, refuse(reason, fmt.Sprintf("question %s %s", record.ID, detail))

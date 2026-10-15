@@ -154,6 +154,7 @@ func ValidID(id string) bool { return idPattern.MatchString(id) }
 type Record struct {
 	ID          string            `json:"id"`
 	Provider    string            `json:"provider,omitempty"`
+	Delivery    string            `json:"delivery,omitempty"`
 	AgentUID    string            `json:"agentUID"`
 	PaneUID     string            `json:"paneUID,omitempty"`
 	SessionID   string            `json:"sessionID,omitempty"`
@@ -216,8 +217,9 @@ type diskState struct {
 
 // Store is the private, flock-guarded question file of one state directory.
 type Store struct {
-	path string
-	now  func() time.Time
+	path           string
+	now            func() time.Time
+	asyncNamespace bool
 	// removeTemp, when set by an in-package test, replaces os.Remove for the
 	// temp files a dead write left.
 	removeTemp func(path string) error
@@ -237,6 +239,25 @@ func NewStore(stateDir string) *Store {
 
 // NewStoreAt opens the store at an exact file path.
 func NewStoreAt(path string) *Store { return &Store{path: path, now: time.Now} }
+
+// AsyncStore isolates async metadata from the strict legacy reader and its
+// directory-wide temporary-file cleanup. Each namespace retains its own budget.
+// Clock and lock callbacks follow the copied store; repeated calls are stable.
+func (s *Store) AsyncStore() *Store {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	if !out.asyncNamespace && out.path != "" {
+		out.path = filepath.Join(filepath.Dir(out.path), ".async", storeFileName)
+	}
+	out.asyncNamespace = true
+	return &out
+}
+
+func (s *Store) acceptsNamespace(record Record) bool {
+	return s != nil && (record.Delivery == "async") == s.asyncNamespace
+}
 
 // WithClock returns the same store reading time from now.
 func (s *Store) WithClock(now func() time.Time) *Store {
@@ -273,7 +294,7 @@ func (s *Store) Create(record Record) (Record, error) {
 	record.Answers = nil
 	record.UpdatedAt = record.CreatedAt
 	record.Questions = compactQuestions(record.Questions)
-	if !validRecord(record) || !record.Deadline.After(record.CreatedAt) {
+	if !validRecord(record) || !s.acceptsNamespace(record) || !record.Deadline.After(record.CreatedAt) {
 		return Record{}, ErrInvalidRecord
 	}
 	err := s.withLock(patientLockWait, func() error {
@@ -451,6 +472,9 @@ func refusalFor(record Record) error {
 	}
 	switch record.State {
 	case StateWaiting:
+		if record.Delivery == "async" {
+			return ErrNotPending
+		}
 		return nil
 	case StateAnswered:
 		return ErrNotPending
@@ -644,6 +668,9 @@ func pruneRecords(records []Record, now time.Time, incoming int) ([]Record, erro
 }
 
 func validRecord(record Record) bool {
+	if record.Delivery != "" && (record.Delivery != "async" || record.Provider != "codex" || record.State == StateAnswered || len(record.Answers) != 0) {
+		return false
+	}
 	if !ValidID(record.ID) || strings.TrimSpace(record.AgentUID) == "" || record.CreatedAt.IsZero() ||
 		record.Deadline.IsZero() || record.UpdatedAt.IsZero() {
 		return false
@@ -737,7 +764,16 @@ func (s *Store) loadLocked() (diskState, error) {
 	if err != nil {
 		return diskState{}, err
 	}
-	return decodeState(data)
+	state, err := decodeState(data)
+	if err != nil {
+		return diskState{}, err
+	}
+	for _, record := range state.Records {
+		if !s.acceptsNamespace(record) {
+			return diskState{}, ErrMalformedStore
+		}
+	}
+	return state, nil
 }
 
 func decodeState(data []byte) (diskState, error) {

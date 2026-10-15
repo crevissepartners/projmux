@@ -66,7 +66,19 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 	}
 	e := c.endpoint
 	if _, err := e.route(ctx); err != nil {
+		snap, observeErr := e.handle.Observe(e.binding)
+		if observeErr != nil {
+			return errors.Join(err, observeErr)
+		}
+		snap.State = "unknown"
+		if captureErr := c.captureAsyncSnapshot(snap); captureErr != nil {
+			return errors.Join(err, captureErr)
+		}
 		for id, r := range c.records {
+			if r.Kind == "async-question" {
+				delete(c.records, id)
+				continue
+			}
 			c.closeRecord(id, r)
 			_ = e.handle.Expire(e.authority(), r)
 			delete(c.records, id)
@@ -78,7 +90,15 @@ func (c *codexProcessControl) syncControls(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err = c.captureAsyncSnapshot(snap); err != nil {
+		return err
+	}
 	pending := make(map[string]bool, len(snap.Pending))
+	for id, r := range c.records {
+		if r.Kind == "async-question" {
+			pending[id] = true
+		}
+	}
 	for _, r := range snap.Pending {
 		id := processControlID(e.binding, r)
 		pending[id] = true

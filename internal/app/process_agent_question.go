@@ -69,9 +69,27 @@ func processQuestionPrompts(provider string, request processhost.Request) ([]age
 	}
 	return agentquestion.ParseQuestions(input.Questions)
 }
-func exactQuestionViews(provider string, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store) ([]ExactProcessQuestion, error) {
+func exactQuestionViews(provider string, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store, snapshots ...processhost.Snapshot) ([]ExactProcessQuestion, error) {
 	views := []ExactProcessQuestion{}
 	for id, r := range records {
+		if provider == aiModeCodex && r.Kind == "async-question" {
+			var snap *processhost.Snapshot
+			if len(snapshots) == 1 {
+				snap = &snapshots[0]
+			} else if len(snapshots) > 1 {
+				return nil, processhost.ErrStale
+			}
+			view, err := asyncQuestionView(id, r, store, snap)
+			if err != nil {
+				return nil, err
+			}
+			if view.QuestionID == "" {
+				delete(records, id)
+				continue
+			}
+			views = append(views, view)
+			continue
+		}
 		if r.Kind != "question" {
 			continue
 		}
@@ -199,7 +217,7 @@ func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuest
 		return nil, err
 	}
 	if r.QuestionID == "" {
-		return exactQuestionViews(aiModeCodex, c.records, c.nativeQuestions, c.questions)
+		return exactQuestionViews(aiModeCodex, c.records, c.nativeQuestions, c.questions, snap)
 	}
 	request, prompts, held, err := exactQuestionRequest(aiModeCodex, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {
@@ -248,6 +266,11 @@ func applyExactProcessQuestions(ctx context.Context, peer coremetadata.ProcessId
 
 // Query admission is question-only: it never consumes an approval or message.
 func captureExactQuestions(provider string, b processhost.Binding, snap processhost.Snapshot, records *map[string]processhost.Request, native *map[string]bool, resolver func() config.AgentQuestionAnswering, store *agentquestion.Store, window time.Duration, now func() time.Time) error {
+	if provider == aiModeCodex {
+		if err := captureAsyncQuestions(b, snap, records, store, window); err != nil {
+			return err
+		}
+	}
 	if snap.State != "ready" || now == nil || store == nil {
 		return processhost.ErrStale
 	}
