@@ -141,7 +141,8 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 }
 
 // A frozen recipe has committed values but no provider yet. Consuming it later
-// reports its frozen command, without consulting the current profile again.
+// reports only facts backed by that frozen command, without consulting the
+// current profile. Recorded Model/Effort can predate the command preparation.
 func frozenAgentSettingsApplication(record *deferredLaunchRecord, pending bool) *agentSettingsApplication {
 	a := &agentSettingsApplication{Entries: make([]agentSettingApplication, 0, 8)}
 	for _, setting := range []string{"profile", "model", "effort", "instructions", "agent-guidance", "project-guidance", "link-rules", "workspace"} {
@@ -155,14 +156,14 @@ func frozenAgentSettingsApplication(record *deferredLaunchRecord, pending bool) 
 			v = record.NewAnnotations[coremetadata.AnnotationAgentProfile]
 			e.Status, e.Reason = "recorded", "profile-recipe-recorded"
 		case "model":
-			if !pending && record.Model == "" {
+			if !pending {
 				e.Status, e.Reason = "unobserved", "application-unobserved"
 				a.Entries = append(a.Entries, e)
 				continue
 			}
 			v = record.Model
 		case "effort":
-			if !pending && record.Effort == "" {
+			if !pending {
 				e.Status, e.Reason = "unobserved", "application-unobserved"
 				a.Entries = append(a.Entries, e)
 				continue

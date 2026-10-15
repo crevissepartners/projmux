@@ -288,8 +288,19 @@ func TestAgentSettingsApplicationProjection(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			if *lifecycleEntry(t, a, "model").Value != "frozen-model" {
-				t.Fatal(a)
+			for _, setting := range []string{"model", "effort"} {
+				e := lifecycleEntry(t, a, setting)
+				if pending {
+					want := "frozen-model"
+					if setting == "effort" {
+						want = "medium"
+					}
+					if e.Value == nil || *e.Value != want {
+						t.Fatal("pending recorded value lost", e)
+					}
+				} else if e.Status != "unobserved" || e.Reason != "application-unobserved" || e.Value != nil {
+					t.Fatal("outer snapshot became actual provider evidence", e)
+				}
 			}
 		}
 	})
