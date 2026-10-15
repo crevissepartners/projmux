@@ -10,7 +10,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
-func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, stdout, stderr io.Writer) error {
+func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, stdout, stderr io.Writer, notices ...agentLifecycleNotices) error {
 	mode, err := resolveLifecycleProjection("agent resume", flags.output)
 	if err != nil {
 		return usageError(err.Error())
@@ -34,6 +34,10 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 		if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed\n", agent.Metadata.UID, claim.record.Binding.PaneUID); err != nil {
 			return err
 		}
+	}
+	writeAgentFirstInputNotice(stderr, mode == cli.OutputModeDefault)
+	for _, notice := range notices {
+		notice.writeForMode(stderr, mode)
 	}
 	// The claim waits for its first input under the same EOF trigger; the owned
 	// Wait below does not start it again.

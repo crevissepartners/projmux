@@ -36,6 +36,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 		}
 		return err
 	}
+	result.SettingsApplication = frozenAgentSettingsApplication(record, true)
 	if session := detachedRelaunchSession(ctx); session != nil {
 		return session.finishClaim(ctx, cancel, c, claim, record, previous, result, request)
 	}
@@ -61,6 +62,8 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 	if _, err = fmt.Fprintf(output, "agent uid:%s pane uid:%s runtime=process foreground=claimed\n", record.Agent, record.Retired.Binding.PaneUID); err != nil {
 		return err
 	}
+	writeAgentFirstInputNotice(stderr, !request.json)
+	writeRelaunchLifecycleNotices(stderr, request)
 	processStartStdinEOF(ctx, cancel)
 	owned, err := claim.WaitPeer(ctx)
 	if err != nil {
@@ -77,6 +80,7 @@ func (c *agentCommand) startDeferredRelaunch(ctx context.Context, cancel context
 	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
 	}
+	result.SettingsApplication = owned.settingsApplication
 	result.NewPaneUID = owned.Binding.Pane
 	if err = writeAgentRelaunchResult(stdout, request, result); err != nil {
 		return owned.fail(err)

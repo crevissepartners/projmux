@@ -258,6 +258,14 @@ Allowed effects:
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [--detach] [-o <mode>] [-- <prompt>]
 ```
 
+Reconnect the recorded conversation; supported paths can apply current profile settings and explicit model/effort. The Agent stays the same; tmux creates a new Pane, process keeps its Pane with a new generation.
+
+Successful supported JSON results add settingsApplication with entries and notAppliedCount. Entries use setting/status/reason and optional value/requestedValue/nextAction; missing optional values mean unknown, while an empty value means explicit none. Ordered settings: profile, model, effort, instructions, agent-guidance, project-guidance, link-rules, workspace. Statuses: delivered (launch arguments or thread settings ready), recorded (recipe only), pending (frozen recipe awaiting first input), preserved, not-applied, unobserved. Only not-applied counts; profile recording does not prove every profile member reached the provider. No application projection is inferred from a dry-run or unchanged result. Codex developer instructions cannot be replaced by resume or relaunch. Workspace value is the resolved CWD; additional roots retain their existing resource representation.
+
+Logical settings group existing ResumeRecipeChange.Field values without renaming them: profile = profile/profileDigest; model = model; effort = effort; instructions = instructions/instructionsDigest; agent-guidance = guidanceDigest; project-guidance = projectGuidanceDigest; link-rules = linkRulesDigest; workspace = workspace.cwd/workspace.additionalWritableRoots. Counts are logical settings, not changed fields. Unknown fields stay unknown. nextAction is display-only text, never an executable instruction for consumers.
+
+Options after -- are prompt text; a trailing registered option gets a stderr reminder without changing input. Existing process Agents remain foreground-owned unless --detach is selected, regardless of the default host for new Agents. Turn interrupt controls a turn; agent stop waits for the process provider and owner retirement, or releases a child-free claim without fake Wait. Foreground EOF/INT/TERM ends the owned provider. A frozen recipe is recorded before first input; provider application is pending until startup.
+
 Process resume keeps the Agent UID and Pane UID, starts a fresh owned host generation, and never creates a replacement conversation. It requires processSession.resumeState=resumable and no live owner.
 
 Without --wait-for-peer, process Claude requires -- <prompt>: stream-json emits init only after the first user frame. Codex can reattach without a prompt. This is a new user turn; interrupted turns are not resent.
@@ -292,7 +300,7 @@ A native Codex resume applies the model and effort it launches with, and the Pro
 
 --model and --effort are recorded on the Agent with the source resume (projmux.io/model-source, projmux.io/effort-source).
 
-Items the Agent does not override take its profile's current instructions, model, and effort; the model is passed only when it changed.
+Model and effort are recorded with their launch source. In tmux, an explicit model or changed profile model is passed; otherwise the conversation keeps its model, whose current provider value is unobserved. Process resume passes the resolved model and effort to its new provider generation. Valid resolved effort is passed on supported paths. Codex retains its original developer instructions.
 
 The new Pane carries the name of the Agent's old Pane row; when delete pane left no such row, it is named <agent-name>-pane as create agent names it. A name that cannot be used leaves the automatic one, and a held name is disclosed in one stderr line.
 
@@ -319,7 +327,15 @@ Allowed effects:
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--detach] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 ```
 
-The model and effort are recorded on the Agent (projmux.io/model, projmux.io/effort) with the source relaunch (projmux.io/model-source, projmux.io/effort-source); later resumes re-pass the effort but not the model.
+Explicitly restart the same conversation with the resolved profile, overrides or resets. Settings support depends on host and provider; Codex keeps its original thread developer instructions.
+
+Successful supported JSON results add settingsApplication with entries and notAppliedCount. Entries use setting/status/reason and optional value/requestedValue/nextAction; missing optional values mean unknown, while an empty value means explicit none. Ordered settings: profile, model, effort, instructions, agent-guidance, project-guidance, link-rules, workspace. Statuses: delivered (launch arguments or thread settings ready), recorded (recipe only), pending (frozen recipe awaiting first input), preserved, not-applied, unobserved. Only not-applied counts; profile recording does not prove every profile member reached the provider. No application projection is inferred from a dry-run or unchanged result. Codex developer instructions cannot be replaced by resume or relaunch. Workspace value is the resolved CWD; additional roots retain their existing resource representation.
+
+Logical settings group existing ResumeRecipeChange.Field values without renaming them: profile = profile/profileDigest; model = model; effort = effort; instructions = instructions/instructionsDigest; agent-guidance = guidanceDigest; project-guidance = projectGuidanceDigest; link-rules = linkRulesDigest; workspace = workspace.cwd/workspace.additionalWritableRoots. Counts are logical settings, not changed fields. Unknown fields stay unknown. nextAction is display-only text, never an executable instruction for consumers.
+
+Options after -- are prompt text; a trailing registered option gets a stderr reminder without changing input. Existing process Agents remain foreground-owned unless --detach is selected, regardless of the default host for new Agents. Turn interrupt controls a turn; agent stop waits for the process provider and owner retirement, or releases a child-free claim without fake Wait. Foreground EOF/INT/TERM ends the owned provider. A frozen recipe is recorded before first input; provider application is pending until startup.
+
+Model and effort are recorded with their launch source. In tmux, an explicit model or changed profile model is passed; otherwise the conversation keeps its model, whose current provider value is unobserved. Process resume passes the resolved model and effort to its new provider generation. Valid resolved effort is passed on supported paths. Codex retains its original developer instructions.
 
 --profile switches the Agent's profile (none: no profile) and clears every override but the ones given with it; naming the profile it has keeps its overrides. --instructions overrides the instructions (none: no instructions), and --reset removes the overrides of instructions, model, or effort (all: every one) so they follow the profile again. It is all one restart.
 

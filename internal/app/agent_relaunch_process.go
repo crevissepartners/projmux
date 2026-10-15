@@ -33,10 +33,11 @@ type processRelaunchRecipe struct {
 }
 
 type processRelaunchLaunch struct {
-	settings agentSettingsLaunch
-	command  processhost.Command
-	config   processhost.CodexConfig
-	prompt   string
+	settings            agentSettingsLaunch
+	applicationSettings agentSettingsLaunch
+	command             processhost.Command
+	config              processhost.CodexConfig
+	prompt              string
 }
 
 type processRelaunchSynchronization struct {
@@ -265,11 +266,11 @@ func (c *agentCommand) planProcessRelaunchLaunch(target coremetadata.Agent, pane
 	planned := processResumeCandidate{Agent: target.Clone(), Pane: pane.Clone(), Record: *pane.Status.ProcessSession.Clone()}
 	planned.Agent.Metadata.Annotations = r.annotations
 	planned.Agent.Spec.Workspace = r.workspace
-	plan, config, _, err := c.planProcessResume(planned, processAgentResumeOptions{promptPartsPrepared: true})
+	plan, config, applicationSettings, err := c.planProcessResume(planned, processAgentResumeOptions{promptPartsPrepared: true})
 	if err != nil {
 		return processRelaunchLaunch{}, err
 	}
-	return processRelaunchLaunch{settings: launchSettings, command: plan, config: config, prompt: prompt}, nil
+	return processRelaunchLaunch{settings: launchSettings, applicationSettings: applicationSettings, command: plan, config: config, prompt: prompt}, nil
 }
 
 func (c *agentCommand) stopProcessRelaunch(ctx context.Context, reg coremetadata.Registry, target coremetadata.Agent, pane coremetadata.Pane, request agentRelaunchRequest, restart *agentRestart) (processResumeCandidate, error) {
@@ -396,6 +397,8 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
 	}
+	result.SettingsApplication = preparedAgentSettingsApplication(agentApplicationSource{provider: recipe.restart.provider, host: "process", settings: launch.applicationSettings, guidance: recipe.guidance, links: recipe.links, workspace: coremetadata.AgentWorkspace{CWD: launch.command.Dir}, annotations: recipe.annotations})
+	owned.settingsApplication = result.SettingsApplication
 	result.NewPaneUID = binding.Pane
 	if candidate.HostLost != nil {
 		if _, err = fmt.Fprintln(stderr, processRelaunchHostLostNotice); err != nil {
@@ -421,6 +424,7 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 			return fail(err)
 		}
 	}
+	writeRelaunchLifecycleNotices(stderr, request)
 	return runProcessRelaunchOwner(ctx, cancel, &owned, sync, processStdinEOFTrigger)
 }
 

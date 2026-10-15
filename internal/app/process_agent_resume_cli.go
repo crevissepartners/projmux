@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,7 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, prompt []string, stdout, stderr io.Writer) error {
+func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, prompt []string, stdout, stderr io.Writer, notices ...agentLifecycleNotices) error {
 	mode, err := resolveLifecycleProjection("agent resume", flags.output)
 	if err != nil {
 		return usageError(err.Error())
@@ -61,6 +63,9 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 		if _, err = fmt.Fprintf(stderr, "previous generation: interruptedTurn=%s expiredControls=%d\n", result.Previous.InterruptedTurn, len(result.Previous.Expired)); err != nil {
 			return result.fail(err)
 		}
+	}
+	for _, notice := range notices {
+		notice.writeForMode(stderr, mode)
 	}
 	return result.ownedWait(syncChanged, syncControls, syncAttention).run(ctx, cancel, processStdinEOFTrigger, stderr)
 }
@@ -148,6 +153,27 @@ func (r *processAgentResumeResult) writeResumeResult(creator *createCommand, std
 	result := r.owner.Created
 	result.action = cli.ActionReused
 	receipt := processResumeReceipt(r.Binding, result.name)
+	if mode != cli.OutputModeNone {
+		writeAgentSettingsNotice(stderr, r.settingsApplication)
+	}
+	if mode == cli.OutputModeJSON && r.settingsApplication != nil {
+		var existing bytes.Buffer
+		if err := creator.writeResultsWithReceipt(&existing, "agent resume", mode, coremetadata.KindAgent, []createResult{result}, receipt); err != nil {
+			return err
+		}
+		// Preserve the existing Items as raw JSON; no resource or receipt is rebuilt.
+		var projection struct {
+			APIVersion          string                    `json:"apiVersion"`
+			Kind                string                    `json:"kind"`
+			Items               json.RawMessage           `json:"items"`
+			SettingsApplication *agentSettingsApplication `json:"settingsApplication,omitempty"`
+		}
+		if err := json.Unmarshal(existing.Bytes(), &projection); err != nil {
+			return err
+		}
+		projection.SettingsApplication = r.settingsApplication
+		return writeJSON(stdout, projection)
+	}
 	return creator.writeResultsWithReceipt(stdout, "agent resume", mode, coremetadata.KindAgent, []createResult{result}, receipt)
 }
 
