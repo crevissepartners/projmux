@@ -33,6 +33,7 @@ type QuestionView struct {
 	Answers     map[string]string `json:"answers,omitempty"`
 	Delivery    string            `json:"delivery,omitempty"`
 	CanAnswer   bool              `json:"canAnswer"`
+	CanDecline  bool              `json:"canDecline"`
 }
 
 // QuestionPrompt is one question of a record, numbered the way `answer`
@@ -61,6 +62,7 @@ type ExactQuestion struct {
 	Policy     string             `json:"policy"`
 	Delivery   string             `json:"delivery"`
 	CanAnswer  bool               `json:"canAnswer"`
+	CanDecline bool               `json:"canDecline"`
 	Prompts    []ProviderQuestion `json:"prompts"`
 	State      QuestionState      `json:"state"`
 	Deadline   *time.Time         `json:"deadline,omitempty"`
@@ -89,6 +91,14 @@ type QuestionSelection struct {
 	Text     *string
 }
 type QuestionAnswerResult struct {
+	QuestionID, AgentUID, AgentName string
+	Delivery                        string `json:",omitempty"`
+	Outcome                         string `json:",omitempty"`
+}
+
+// QuestionDeclineResult reports submission of a non-answer notice, not an answer
+// or native cancellation acknowledgement. Unknown outcomes must not be retried.
+type QuestionDeclineResult struct {
 	QuestionID, AgentUID, AgentName string
 	Delivery                        string `json:",omitempty"`
 	Outcome                         string `json:",omitempty"`

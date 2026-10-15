@@ -76,7 +76,7 @@ func (s *Store) BeginAsync(expected Record) (Record, error) {
 // FinishAsync settles the exact claim, never a replacement or pruned record.
 // No answer body is persisted. Losing settlement can only yield uncertainty.
 func (s *Store) FinishAsync(receipt Record, outcome string) error {
-	if outcome != "submitted" && outcome != "unknown" && outcome != "not-submitted" {
+	if outcome != "submitted" && outcome != "unknown" && outcome != "not-submitted" && outcome != "declined" {
 		return ErrInvalidRecord
 	}
 	return s.withLock(lockWait, func() error {

@@ -32,6 +32,7 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 			for i := range views {
 				if views[i].Delivery == "async" {
 					views[i].CanAnswer = false
+					views[i].CanDecline = false
 				}
 			}
 			return views, err
@@ -62,7 +63,7 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 			t.Fatal(out.String(), err)
 		}
 		q := listed.Questions[0]
-		if q.State != agentquestion.StateWaiting || q.Delivery != "async" || q.CanAnswer || len(q.Prompts[0].Options) != 2 || !q.Prompts[0].IsOther {
+		if q.State != agentquestion.StateWaiting || q.Delivery != "async" || q.CanAnswer || q.CanDecline || len(q.Prompts[0].Options) != 2 || !q.Prompts[0].IsOther {
 			t.Fatal(q)
 		}
 		client, err := projmux.NewClient(projmux.Options{StateDir: state, ConfigDir: filepath.Join(f.root, "config"), HomeDir: f.root})
@@ -83,6 +84,12 @@ func TestCodexAsyncQuestionCLIAndSDKNativeSourceReadOnly(t *testing.T) {
 		if err == nil {
 			t.Fatal("SDK async answer accepted")
 		}
+		decline, declineErr := client.DeclineQuestion(context.Background(), "uid:"+b.Agent, q.ID)
+		var declineRefusal *projmux.Refusal
+		if !errors.As(declineErr, &declineRefusal) || declineRefusal.Code != projmux.CodeQuestionDeclineUnsupported || decline.Outcome != "" {
+			t.Fatal("old host gained decline support", decline, declineErr)
+		}
+
 		if _, err = oldHost(context.Background(), processQuestionRequest{Binding: b, QuestionID: q.ID, Selections: map[int]agentquestion.Selection{0: {Text: "answer", HasText: true}}}); !errors.Is(err, processhost.ErrStale) {
 			t.Fatal("direct callback", err)
 		}

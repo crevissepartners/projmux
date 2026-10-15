@@ -32,6 +32,10 @@ type Request struct {
 	Spelling, QuestionID    string
 	Options, Indexes, Texts []string
 }
+type DeclineResult struct {
+	QuestionID, AgentUID, AgentName string
+	Delivery, Outcome               string
+}
 type AnswerResult struct {
 	QuestionID, AgentUID, AgentName string
 	Delivery, Outcome               string
@@ -98,9 +102,10 @@ type View struct {
 	Answers     map[string]string   `json:"answers,omitempty"`
 	// asking is the text form's word on whether the provider still asks a
 	// closed question; JSON readers take it from the disposition.
-	Delivery  string `json:"delivery,omitempty"`
-	CanAnswer bool   `json:"canAnswer"`
-	Asking    string `json:"-"`
+	Delivery   string `json:"delivery,omitempty"`
+	CanAnswer  bool   `json:"canAnswer"`
+	CanDecline bool   `json:"canDecline"`
+	Asking     string `json:"-"`
 }
 
 // Prompt is one question of a record, numbered the way `answer`
@@ -185,6 +190,13 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 					current = true
 					capability, supported := c.Dispatcher.(processquestions.ReceiptDispatcher)
 					view.CanAnswer = supported && capability.SupportsAsyncQuestionAnswers() && exact.CanAnswer && exact.State == agentquestion.StateWaiting && record.State == agentquestion.StateWaiting
+					decline, supportsDecline := c.Dispatcher.(processquestions.DeclineReceiptDispatcher)
+					view.CanDecline = supportsDecline && decline.SupportsAsyncQuestionDeclines() && exact.CanDecline && exact.State == agentquestion.StateWaiting && record.State == agentquestion.StateWaiting
+					for _, prompt := range questions {
+						if prompt.IsSecret {
+							view.CanDecline = false
+						}
+					}
 					break
 				}
 			}
@@ -211,6 +223,168 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 	}
 	return result, nil
 }
+
+// Decline submits an explicit operator non-answer notice for a complete async
+// set. It shares the host's answer claim, never a blank selection or cancel RPC.
+func (c Service) Decline(ctx context.Context, request Request, agent coremetadata.Agent) (DeclineResult, error) {
+	if err := ctx.Err(); err != nil {
+		return DeclineResult{}, err
+	}
+	result := DeclineResult{QuestionID: request.QuestionID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name}
+	failure := func(code string, cause error) (DeclineResult, error) {
+		message := code
+		if cause != nil {
+			message += ": " + cause.Error()
+		}
+		return result, &Failure{Code: code, Message: message, Cause: cause}
+	}
+	if !agentquestion.ValidID(request.QuestionID) {
+		return failure(questionReasonNotFound, agentquestion.ErrNotFound)
+	}
+	if len(request.Options)+len(request.Indexes)+len(request.Texts) != 0 {
+		return failure(questionReasonInvalidAnswer, agentquestion.ErrInvalidAnswer)
+	}
+	reg, err := c.LoadRegistry()
+	if err != nil {
+		return result, err
+	}
+	pane, process := reg.Pane(agent.Status.PaneRef)
+	process = process && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess
+	capability, supported := c.Dispatcher.(processquestions.DeclineReceiptDispatcher)
+	if process && agent.Status.Phase == coremetadata.PhaseRunning {
+		views, readErr := c.Dispatcher.ReadExactProcessQuestions(ctx, agent.Metadata.UID)
+		if readErr != nil {
+			return result, readErr
+		}
+		for _, view := range views {
+			if view.QuestionID != request.QuestionID {
+				continue
+			}
+			if view.Delivery != "async" || agent.Spec.Provider != "codex" {
+				return failure("question-decline-unsupported", nil)
+			}
+			result.Delivery = "async"
+			if !supported || !capability.SupportsAsyncQuestionDeclines() {
+				return failure("question-decline-unsupported", nil)
+			}
+			if view.State == agentquestion.StateWaiting {
+				fresh, readErr := c.LoadRegistry()
+				if readErr != nil {
+					return result, readErr
+				}
+				current, found := fresh.Agent(agent.Metadata.UID)
+				if !found {
+					return failure("question-stale", nil)
+				}
+				if agent.Status.Phase != coremetadata.PhaseRunning || current.Status.Phase != coremetadata.PhaseRunning {
+					return failure(questionReasonClosed, nil)
+				}
+				currentPane, present := fresh.Pane(current.Status.PaneRef)
+				original, originalPresent := reg.Agent(agent.Metadata.UID)
+				if !present || !originalPresent || original.Status.PaneRef != agent.Status.PaneRef || current.Status.PaneRef != agent.Status.PaneRef || current.Spec.Provider != agent.Spec.Provider || current.Metadata.OwnerUID() != original.Metadata.OwnerUID() || currentPane.Metadata.UID != pane.Metadata.UID || currentPane.Metadata.OwnerUID() != pane.Metadata.OwnerUID() || currentPane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+					return failure("question-stale", nil)
+				}
+				before, after := pane.Status.ProcessSession, currentPane.Status.ProcessSession
+				if (before == nil) != (after == nil) {
+					return failure("question-stale", nil)
+				}
+				if before != nil && (before.Binding != after.Binding || before.Provider != after.Provider || before.ThreadID != after.ThreadID || before.SessionID != after.SessionID || before.ConnectionID != after.ConnectionID) {
+					return failure("question-stale", nil)
+				}
+				oldActivation, newActivation := pane.Status.Activation.Process, currentPane.Status.Activation.Process
+				if (oldActivation == nil) != (newActivation == nil) {
+					return failure("question-stale", nil)
+				}
+				if oldActivation != nil && *oldActivation != *newActivation {
+					return failure("question-stale", nil)
+				}
+				for _, prompt := range view.Prompts {
+					if prompt.IsSecret {
+						return failure(questionReasonSecretNativeOnly, errors.New("secret question sets require the native surface"))
+					}
+				}
+				if !view.CanDecline {
+					return failure("question-decline-unsupported", nil)
+				}
+				if view.Deadline != nil && !time.Now().Before(*view.Deadline) {
+					return failure(questionReasonExpired, agentquestion.ErrExpired)
+				}
+				receipt, deliveryErr := capability.DeclineExactProcessQuestionReceipt(ctx, agent.Metadata.UID, view.QuestionID)
+				result.Outcome = receipt.Outcome
+				if deliveryErr != nil {
+					var typed *processquestions.DeliveryError
+					if errors.As(deliveryErr, &typed) {
+						if typed.Receipt.Code == "question-delivery-unknown" {
+							result.Outcome = "unknown"
+						}
+						return failure(typed.Receipt.Code, deliveryErr)
+					}
+					code := "question-stale"
+					if errors.Is(deliveryErr, processhost.ErrBusy) || errors.Is(deliveryErr, agentquestion.ErrBusy) {
+						code = "question-busy"
+					}
+					if errors.Is(deliveryErr, processhost.ErrClosed) {
+						code = questionReasonClosed
+					}
+					return failure(code, deliveryErr)
+				}
+				if receipt.QuestionID != view.QuestionID || receipt.Delivery != "async" || receipt.Outcome != "submitted" {
+					result.Outcome = "unknown"
+					return failure("question-delivery-unknown", nil)
+				}
+				return result, nil
+			}
+			if view.State == agentquestion.StateExpired {
+				return failure(questionReasonExpired, agentquestion.ErrExpired)
+			}
+			// For terminal views the owned store distinguishes answer from notice.
+			break
+		}
+	}
+	st, err := c.OpenStore()
+	if err != nil {
+		return result, err
+	}
+	history, found, err := st.AsyncStore().Get(request.QuestionID)
+	if err != nil {
+		return result, err
+	}
+	if found && history.AgentUID == agent.Metadata.UID && history.Delivery == "async" {
+		result.Delivery = "async"
+		if history.State == agentquestion.StateExpired {
+			return failure(questionReasonExpired, agentquestion.ErrExpired)
+		}
+		switch history.Disposition {
+		case "async-declined":
+			result.Outcome = "submitted"
+			return failure(questionReasonNotPending, agentquestion.ErrNotPending)
+		case "async-submitted":
+			return failure(questionReasonNotPending, agentquestion.ErrNotPending)
+		case "async-unknown":
+			result.Outcome = "unknown"
+			return failure(questionReasonNotPending, agentquestion.ErrNotPending)
+		case "async-not-submitted":
+			result.Outcome = "not-submitted"
+			return failure(questionReasonNotPending, agentquestion.ErrNotPending)
+		}
+		if history.State != agentquestion.StateWaiting || agent.Status.Phase != coremetadata.PhaseRunning {
+			return failure(questionReasonClosed, agentquestion.ErrClosed)
+		}
+		if !supported || !capability.SupportsAsyncQuestionDeclines() {
+			return failure("question-decline-unsupported", nil)
+		}
+		return failure("question-stale", processhost.ErrStale)
+	}
+	legacy, found, err := st.Get(request.QuestionID)
+	if err != nil {
+		return result, err
+	}
+	if found && legacy.AgentUID == agent.Metadata.UID {
+		return failure("question-decline-unsupported", nil)
+	}
+	return failure(questionReasonNotFound, agentquestion.ErrNotFound)
+}
+
 func (c Service) Answer(ctx context.Context, request Request, agent coremetadata.Agent) (AnswerResult, error) {
 	if err := ctx.Err(); err != nil {
 		return AnswerResult{}, err
@@ -296,6 +470,8 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 						}
 						if found && stored.AgentUID == agent.Metadata.UID {
 							switch stored.Disposition {
+							case "async-declined":
+								reason = questionReasonNotPending
 							case "async-submitted":
 								reason, result.Outcome = questionReasonNotPending, "submitted"
 							case "async-unknown":
@@ -394,7 +570,7 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 				case "async-not-submitted":
 					result.Outcome = "not-submitted"
 				}
-				if result.Outcome != "" {
+				if result.Outcome != "" || history.Disposition == "async-declined" {
 					code = questionReasonNotPending
 				}
 				return result, &Failure{Code: code, Message: code + ": async form is unavailable; do not resend"}
@@ -430,7 +606,7 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 		case "async-not-submitted":
 			outcome = "not-submitted"
 		}
-		if outcome != "" {
+		if outcome != "" || record.Disposition == "async-declined" {
 			return AnswerResult{QuestionID: record.ID, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Delivery: "async", Outcome: outcome}, &Failure{Code: questionReasonNotPending, Message: "question-not-pending: async form is locked; do not resend"}
 		}
 	}

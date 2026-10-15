@@ -34,6 +34,7 @@ type processForegroundRequest struct {
 // processQuestionRequest is a question-only private operation. The opaque ID
 // selects the host's pending token; client selections never become argv or logs.
 type processQuestionRequest struct {
+	Action     string `json:",omitempty"`
 	Binding    processhost.Binding
 	QuestionID string
 	Selections map[int]agentquestion.Selection

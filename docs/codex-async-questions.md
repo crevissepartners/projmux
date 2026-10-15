@@ -35,6 +35,39 @@ is secret, the entire set requires the native surface
 (`question-secret-native-only`). Blocking Codex requests and Claude questions
 retain their existing answer paths.
 
+To explicitly decline every question in the current set, use:
+
+```sh
+projmux agent question decline <agent-ref> <question-id>
+```
+
+SDK callers use `Client.DeclineQuestion(ctx, agentRef, questionID)` and inspect
+`core.QuestionDeclineResult`. This action takes no option, index, or text and
+never fabricates empty answers. A new host advertises `canDecline: true` only
+for its current, waiting, nonsecret async set. Missing `canDecline` on older
+hosts means false; answer support does not imply decline support. Blocking
+Codex, Claude, legacy questions, and unsupported dispatchers refuse with
+`question-decline-unsupported` before input. Secret sets still require the
+native surface (`question-secret-native-only`).
+
+Decline uses the same ordinary operator start/steer lane, including after the
+original turn completes. It sends the original item and complete questions
+with an explicit operator non-answer intent. It does not issue a native
+per-question cancel or acknowledgement. The CLI prints `<question-id> decline
+submitted`, `decline not-submitted`, or `decline unknown` for that notice's
+receipt; model receipt is unconfirmed.
+
+Answer and decline share one terminal fence and atomic claim. Only one can
+win. A successful decline notice settles to `closed` / `async-declined`, with
+both `canAnswer` and `canDecline` false. Declining it again returns
+`question-not-pending` and the prior notice outcome. Answering after decline
+never reports an answer as submitted; declining after an answer never reports
+that answer as a submitted decline notice. Unknown delivery and proven
+non-submission retain their existing locked outcomes and original error causes.
+Do not resend or reopen on uncertainty, receipt loss, pruning, or read failure.
+A later `async-declined` row is current stored evidence, not retroactive success
+of an unknown call, crash durability, or proof the model read the notice.
+
 An async answer uses Codex's ordinary operator input: `turn/steer` while active
 or `turn/start` while idle. The input includes the original item ID, prompt
 text, and explicit answers. There is no separate native per-question answer

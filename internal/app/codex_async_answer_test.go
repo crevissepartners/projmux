@@ -200,173 +200,191 @@ func TestAsyncAnswerUnknownPreservesResultAndNeverResends(t *testing.T) {
 }
 
 func TestAsyncClaimCrashPruneControllerReplacementCannotReopen(t *testing.T) {
-	for _, capacity := range []bool{false, true} {
-		t.Run(fmt.Sprintf("capacity-%t", capacity), func(t *testing.T) {
-			f, _, id := newAsyncAnswerFixture(t, false)
-			b := f.endpoint.binding
-			st := f.control.questions.AsyncStore()
-			r, _, err := st.Get(id)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Same frozen claim boundary as the product, then simulate loss of the
-			// controller before native delivery or settlement.
-			if err = f.endpoint.handle.RetainAsyncQuestion(b, f.control.records[id], r.Deadline, true); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = st.BeginAsync(r); err != nil {
-				t.Fatal(err)
-			}
-			raw, err := os.ReadFile(st.Path())
-			if err != nil {
-				t.Fatal(err)
-			}
-			var disk struct {
-				Version int                    `json:"version"`
-				Records []agentquestion.Record `json:"records"`
-			}
-			if err = json.Unmarshal(raw, &disk); err != nil {
-				t.Fatal(err)
-			}
-			// Frozen T1 pruning: terminal rows older than 24h are discarded, and
-			// capacity removes the oldest terminal other than direct-answer-pending.
-			clock := r.UpdatedAt.Add(25 * time.Hour)
-			if capacity {
-				clock = r.UpdatedAt
-				for i := range 64 {
-					copy := r
-					copy.ID = fmt.Sprintf("question-%016x", i+1)
-					copy.State = agentquestion.StateWaiting
-					copy.Disposition = ""
-					copy.UpdatedAt = clock
-					copy.Deadline = clock.Add(time.Hour)
-					disk.Records = append(disk.Records, copy)
+	for _, settlement := range []string{"unknown", "declined"} {
+		for _, capacity := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s-capacity-%t", settlement, capacity), func(t *testing.T) {
+				f, _, id := newAsyncAnswerFixture(t, false)
+				b := f.endpoint.binding
+				st := f.control.questions.AsyncStore()
+				r, _, err := st.Get(id)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			kept := disk.Records[:0]
-			for _, row := range disk.Records {
-				if row.State.Terminal() && row.UpdatedAt.Before(clock.Add(-24*time.Hour)) {
-					continue
+				// Keep the frozen claim boundary, with either a lost controller before
+				// native input or an already settled decline, then exercise old pruning.
+				if err = f.endpoint.handle.RetainAsyncQuestion(b, f.control.records[id], r.Deadline, true); err != nil {
+					t.Fatal(err)
 				}
-				kept = append(kept, row)
-			}
-			disk.Records = kept
-			for len(disk.Records) > 64 {
-				oldest := -1
-				for i, row := range disk.Records {
-					if row.State.Terminal() && row.Disposition != "direct-answer-pending" && (oldest < 0 || row.UpdatedAt.Before(disk.Records[oldest].UpdatedAt)) {
-						oldest = i
+				claim, claimErr := st.BeginAsync(r)
+				if claimErr != nil {
+					t.Fatal(claimErr)
+				}
+				if settlement == "declined" {
+					if err = st.FinishAsync(claim, "declined"); err != nil {
+						t.Fatal(err)
 					}
 				}
-				if oldest < 0 {
-					t.Fatal("T1 capacity")
+				raw, err := os.ReadFile(st.Path())
+				if err != nil {
+					t.Fatal(err)
 				}
-				disk.Records = append(disk.Records[:oldest], disk.Records[oldest+1:]...)
-			}
-			raw, _ = json.Marshal(disk)
-			if err = os.WriteFile(st.Path(), raw, 0600); err != nil {
-				t.Fatal(err)
-			}
-			replacement := &codexProcessControl{endpoint: f.endpoint, questions: f.control.questions, questionWindow: f.control.questionWindow, now: f.control.now}
-			snap, _ := f.endpoint.handle.Observe(b)
-			if err = replacement.captureAsyncSnapshot(snap); err != nil {
-				t.Fatal(err)
-			}
-			views, err := exactQuestionViews(aiModeCodex, replacement.records, nil, replacement.questions, snap)
-			if err != nil || len(views) != 0 {
-				t.Fatal("pruned claim reopened", views, err)
-			}
-			if err = f.endpoint.handle.Turn(context.Background(), f.endpoint.authority(), "replay", "fixture"); err != nil {
-				t.Fatal(err)
-			}
-			replay := f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" && s.Sequence > snap.Sequence })
-			if !replay.AsyncQuestions[0].Closed {
-				t.Fatal("replay reopened host tombstone")
-			}
-			if err = replacement.captureAsyncSnapshot(replay); err != nil {
-				t.Fatal(err)
-			}
-			before, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-			_, err = replacement.answerAsyncQuestion(context.Background(), processQuestionRequest{Binding: b, QuestionID: id, Selections: map[int]agentquestion.Selection{0: {Text: "retry", HasText: true}}}, snap)
-			if err == nil {
-				t.Fatal("reopened")
-			}
-			after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-			if !bytes.Equal(before, after) {
-				t.Fatal("wire after crash")
-			}
-		})
+				var disk struct {
+					Version int                    `json:"version"`
+					Records []agentquestion.Record `json:"records"`
+				}
+				if err = json.Unmarshal(raw, &disk); err != nil {
+					t.Fatal(err)
+				}
+				// Frozen T1 pruning: terminal rows older than 24h are discarded, and
+				// capacity removes the oldest terminal other than direct-answer-pending.
+				clock := r.UpdatedAt.Add(25 * time.Hour)
+				if capacity {
+					clock = r.UpdatedAt
+					for i := range 64 {
+						copy := r
+						copy.ID = fmt.Sprintf("question-%016x", i+1)
+						copy.State = agentquestion.StateWaiting
+						copy.Disposition = ""
+						copy.UpdatedAt = clock
+						copy.Deadline = clock.Add(time.Hour)
+						disk.Records = append(disk.Records, copy)
+					}
+				}
+				kept := disk.Records[:0]
+				for _, row := range disk.Records {
+					if row.State.Terminal() && row.UpdatedAt.Before(clock.Add(-24*time.Hour)) {
+						continue
+					}
+					kept = append(kept, row)
+				}
+				disk.Records = kept
+				for len(disk.Records) > 64 {
+					oldest := -1
+					for i, row := range disk.Records {
+						if row.State.Terminal() && row.Disposition != "direct-answer-pending" && (oldest < 0 || row.UpdatedAt.Before(disk.Records[oldest].UpdatedAt)) {
+							oldest = i
+						}
+					}
+					if oldest < 0 {
+						t.Fatal("T1 capacity")
+					}
+					disk.Records = append(disk.Records[:oldest], disk.Records[oldest+1:]...)
+				}
+				raw, _ = json.Marshal(disk)
+				if err = os.WriteFile(st.Path(), raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				replacement := &codexProcessControl{endpoint: f.endpoint, questions: f.control.questions, questionWindow: f.control.questionWindow, now: f.control.now}
+				snap, _ := f.endpoint.handle.Observe(b)
+				if err = replacement.captureAsyncSnapshot(snap); err != nil {
+					t.Fatal(err)
+				}
+				views, err := exactQuestionViews(aiModeCodex, replacement.records, nil, replacement.questions, snap)
+				if err != nil || len(views) != 0 {
+					t.Fatal("pruned claim reopened", views, err)
+				}
+				if err = f.endpoint.handle.Turn(context.Background(), f.endpoint.authority(), "replay", "fixture"); err != nil {
+					t.Fatal(err)
+				}
+				replay := f.wait(t, func(s processhost.Snapshot) bool { return s.Turn == "" && s.Sequence > snap.Sequence })
+				if !replay.AsyncQuestions[0].Closed {
+					t.Fatal("replay reopened host tombstone")
+				}
+				if err = replacement.captureAsyncSnapshot(replay); err != nil {
+					t.Fatal(err)
+				}
+				before, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+				_, err = replacement.answerAsyncQuestion(context.Background(), processQuestionRequest{Binding: b, QuestionID: id, Selections: map[int]agentquestion.Selection{0: {Text: "retry", HasText: true}}}, snap)
+				if err == nil {
+					t.Fatal("reopened")
+				}
+				_, declineErr := replacement.exactQuestions(context.Background(), processQuestionRequest{Binding: b, QuestionID: id, Action: "decline"})
+				if declineErr == nil {
+					t.Fatal("pruned question declined again")
+				}
+				after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+				if !bytes.Equal(before, after) {
+					t.Fatal("wire after crash")
+				}
+			})
+		}
 	}
 }
 
 func TestAsyncAnswerFenceThenStorageOrBeforeWriteFailure(t *testing.T) {
-	for _, storageFailure := range []bool{false, true} {
-		t.Run(fmt.Sprintf("storage-%t", storageFailure), func(t *testing.T) {
-			f, _, id := newAsyncAnswerFixture(t, true)
-			b := f.endpoint.binding
-			st := f.control.questions.AsyncStore()
-			original, err := os.ReadFile(st.Path())
-			if err != nil {
-				t.Fatal(err)
-			}
-			lock, err := os.OpenFile(st.Path()+".flock", os.O_RDWR, 0600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer lock.Close()
-			if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-				t.Fatal(err)
-			}
-			defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
-			before, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			result := make(chan error, 1)
-			go func() {
-				_, err := f.control.exactQuestions(ctx, processQuestionRequest{Binding: b, QuestionID: id, Selections: map[int]agentquestion.Selection{0: {Text: "explicit", HasText: true}}})
-				result <- err
-			}()
-			f.wait(t, func(s processhost.Snapshot) bool { return s.AsyncQuestions[0].Closed })
-			if storageFailure {
-				if err = os.WriteFile(st.Path(), []byte("malformed fixture"), 0600); err != nil {
+	for _, action := range []string{"", "decline"} {
+		for _, storageFailure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("action-%s-storage-%t", action, storageFailure), func(t *testing.T) {
+				f, _, id := newAsyncAnswerFixture(t, true)
+				b := f.endpoint.binding
+				st := f.control.questions.AsyncStore()
+				original, err := os.ReadFile(st.Path())
+				if err != nil {
 					t.Fatal(err)
 				}
-			} else {
-				cancel()
-			}
-			if err = unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
-				t.Fatal(err)
-			}
-			err = <-result
-			var receipt *asyncAnswerError
-			if !errors.As(err, &receipt) || receipt.receipt.Outcome != "not-submitted" || receipt.receipt.Code == "question-delivery-unknown" {
-				t.Fatal(receipt, err)
-			}
-			after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
-			if !bytes.Equal(before, after) {
-				t.Fatal("before-write failure wrote native input")
-			}
-			if storageFailure {
-				if !errors.Is(err, agentquestion.ErrMalformedStore) {
-					t.Fatal("storage failure hidden", err)
-				}
-				if _, readErr := f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b}); !errors.Is(readErr, agentquestion.ErrMalformedStore) {
-					t.Fatal("read error hidden", readErr)
-				}
-				if err = os.WriteFile(st.Path(), original, 0600); err != nil {
+				lock, err := os.OpenFile(st.Path()+".flock", os.O_RDWR, 0600)
+				if err != nil {
 					t.Fatal(err)
 				}
-				// Reconciliation closes the original waiting record as not submitted;
-				// it must not mistake this form fence for a provider process exit.
-				if _, err = f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b}); err != nil {
+				defer lock.Close()
+				if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 					t.Fatal(err)
 				}
-			}
-			stored, found, err := st.Get(id)
-			if err != nil || !found || stored.State != agentquestion.StateClosed || stored.Disposition != "async-not-submitted" {
-				t.Fatal(stored, err)
-			}
-		})
+				defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+				before, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				result := make(chan error, 1)
+				go func() {
+					request := processQuestionRequest{Binding: b, QuestionID: id, Action: action}
+					if action == "" {
+						request.Selections = map[int]agentquestion.Selection{0: {Text: "explicit", HasText: true}}
+					}
+					_, err := f.control.exactQuestions(ctx, request)
+					result <- err
+				}()
+				f.wait(t, func(s processhost.Snapshot) bool { return s.AsyncQuestions[0].Closed })
+				if storageFailure {
+					if err = os.WriteFile(st.Path(), []byte("malformed fixture"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					cancel()
+				}
+				if err = unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
+					t.Fatal(err)
+				}
+				err = <-result
+				var receipt *asyncAnswerError
+				if !errors.As(err, &receipt) || receipt.receipt.Outcome != "not-submitted" || receipt.receipt.Code == "question-delivery-unknown" {
+					t.Fatal(receipt, err)
+				}
+				after, _ := os.ReadFile(filepath.Join(f.root, "wire.jsonl"))
+				if !bytes.Equal(before, after) {
+					t.Fatal("before-write failure wrote native input")
+				}
+				if storageFailure {
+					if !errors.Is(err, agentquestion.ErrMalformedStore) {
+						t.Fatal("storage failure hidden", err)
+					}
+					if _, readErr := f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b}); !errors.Is(readErr, agentquestion.ErrMalformedStore) {
+						t.Fatal("read error hidden", readErr)
+					}
+					if err = os.WriteFile(st.Path(), original, 0600); err != nil {
+						t.Fatal(err)
+					}
+					// Reconciliation closes the original waiting record as not submitted;
+					// it must not mistake this form fence for a provider process exit.
+					if _, err = f.control.exactQuestions(context.Background(), processQuestionRequest{Binding: b}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				stored, found, err := st.Get(id)
+				if err != nil || !found || stored.State != agentquestion.StateClosed || stored.Disposition != "async-not-submitted" {
+					t.Fatal(stored, err)
+				}
+			})
+		}
 	}
 }
 

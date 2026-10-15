@@ -17,6 +17,7 @@ import (
 )
 
 type Request struct {
+	Action     string `json:",omitempty"`
 	Binding    processhost.Binding
 	QuestionID string
 	Selections map[int]agentquestion.Selection
@@ -34,6 +35,13 @@ type ReceiptDispatcher interface {
 	SupportsAsyncQuestionAnswers() bool
 	AnswerExactProcessQuestionReceipt(context.Context, string, string, map[int]agentquestion.Selection) (AnswerReceipt, error)
 }
+
+// DeclineReceiptDispatcher is optional; answer support does not imply decline.
+type DeclineReceiptDispatcher interface {
+	SupportsAsyncQuestionDeclines() bool
+	DeclineExactProcessQuestionReceipt(context.Context, string, string) (AnswerReceipt, error)
+}
+
 type DeliveryError struct {
 	Receipt AnswerReceipt
 	Cause   error
@@ -75,6 +83,7 @@ type ExactQuestion struct {
 	Policy     string                   `json:"policy"`
 	Delivery   string                   `json:"delivery"`
 	CanAnswer  bool                     `json:"canAnswer"`
+	CanDecline bool                     `json:"canDecline"`
 	Prompts    []agentquestion.Question `json:"prompts"`
 	State      agentquestion.State      `json:"state"`
 	Deadline   *time.Time               `json:"deadline,omitempty"`
@@ -126,7 +135,22 @@ func (d Dispatcher) AnswerExactProcessQuestionReceipt(ctx context.Context, uid, 
 	}
 	return AnswerReceipt{}, &DeliveryError{Receipt: AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-host-unsupported"}}
 }
+
+func (d Dispatcher) SupportsAsyncQuestionDeclines() bool { return true }
+func (d Dispatcher) DeclineExactProcessQuestionReceipt(ctx context.Context, uid, id string) (AnswerReceipt, error) {
+	if id == "" {
+		return AnswerReceipt{}, &DeliveryError{Receipt: AnswerReceipt{QuestionID: id, Code: "question-not-found"}, Cause: agentquestion.ErrNotFound}
+	}
+	result, err := d.callAction(ctx, uid, id, nil, "decline", true)
+	if result.QuestionReceipt != nil {
+		return *result.QuestionReceipt, err
+	}
+	return AnswerReceipt{}, err
+}
 func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection, async ...bool) (Result, error) {
+	return d.callAction(ctx, uid, id, selections, "", len(async) > 0 && async[0])
+}
+func (d Dispatcher) callAction(ctx context.Context, uid, id string, selections map[int]agentquestion.Selection, action string, async bool) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -171,17 +195,17 @@ func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int
 	if err != nil {
 		return Result{}, err
 	}
-	request := &Request{Binding: binding, QuestionID: id, Selections: selections}
+	request := &Request{Binding: binding, QuestionID: id, Selections: selections, Action: action}
 	wire := envelope{Questions: request}
 	if agent.Spec.Provider != "codex" && agent.Spec.Provider != "claude" {
 		return Result{}, processhost.ErrStale
 	}
-	if len(async) > 0 && async[0] {
+	if async {
 		if _, err := localipc.MarshalJSON(wire); err != nil {
 			return Result{}, &DeliveryError{Receipt: AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-answer-too-large"}, Cause: err}
 		}
 	}
-	result, err := call(ctx, socket, inode, activation.HostProcess, wire, async...)
+	result, err := call(ctx, socket, inode, activation.HostProcess, wire, async)
 	if err != nil {
 		return result, err
 	} // uncertain writes are never retried
@@ -189,13 +213,13 @@ func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int
 	next, exists := current.Pane(binding.Pane)
 	afterInode, inodeErr := localipc.InspectOwnedSocket(socket)
 	if err != nil || !exists || next.Status.Activation.Process == nil || *next.Status.Activation.Process != activation || !observationMatches(current, binding, view) || !SessionMatches(current, binding, agent.Spec.Provider, session, connection) || inodeErr != nil || afterInode != inode {
-		if len(async) > 0 && async[0] {
+		if async {
 			receipt := AnswerReceipt{QuestionID: id, Delivery: "async", Outcome: "unknown", Code: "question-delivery-unknown", Message: "question transport identity changed after submission; do not resend"}
 			return Result{QuestionReceipt: &receipt}, &DeliveryError{Receipt: receipt, Cause: processhost.ErrStale}
 		}
 		return Result{}, processhost.ErrStale
 	}
-	if result.QuestionReceipt != nil && len(async) > 0 && async[0] {
+	if result.QuestionReceipt != nil && async {
 		receipt := *result.QuestionReceipt
 		if receipt.QuestionID != id || receipt.Delivery != "async" || (result.Accepted && (receipt.Outcome != "submitted" || receipt.Code != "")) || (!result.Accepted && receipt.Code == "") {
 			receipt = AnswerReceipt{QuestionID: id, Delivery: "async", Outcome: "unknown", Code: "question-delivery-unknown", Message: "invalid question receipt; do not resend"}
@@ -209,8 +233,14 @@ func (d Dispatcher) call(ctx context.Context, uid, id string, selections map[int
 		}
 		return result, nil
 	}
-	if len(async) > 0 && async[0] {
-		receipt := AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-host-unsupported", Message: "host does not support async answer receipts"}
+	if async {
+		code := "question-host-unsupported"
+		message := "host does not support async answer receipts"
+		if action == "decline" {
+			code = "question-decline-unsupported"
+			message = "host does not support decline receipts"
+		}
+		receipt := AnswerReceipt{QuestionID: id, Delivery: "async", Code: code, Message: message}
 		return Result{QuestionReceipt: &receipt}, &DeliveryError{Receipt: receipt}
 	}
 	if !result.Accepted {

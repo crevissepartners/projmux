@@ -40,7 +40,7 @@ const (
 )
 
 // agentQuestionActions are the `agent question` subcommands in help order.
-var agentQuestionActions = []string{"enable", "disable", "list", "answer"}
+var agentQuestionActions = []string{"enable", "disable", "list", "answer", "decline"}
 
 // agentQuestionRequest is one parsed `agent question` argv.
 type agentQuestionRequest struct {
@@ -90,6 +90,8 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 		return c.setQuestionChannel(request, agent, false, stdout)
 	case "list":
 		return c.listQuestions(request, agent, stdout)
+	case "decline":
+		return c.declineQuestion(request, agent, stdout)
 	default:
 		return c.answerQuestion(request, agent, refuse, stdout)
 	}
@@ -126,7 +128,7 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 		return agentQuestionRequest{}, flagParseError(err)
 	}
 	want, shape := 1, "<agent-ref>"
-	if request.action == "answer" {
+	if request.action == "answer" || request.action == "decline" {
 		want, shape = 2, "<agent-ref> <question-id>"
 	}
 	if len(positionals) != want {
@@ -137,8 +139,10 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 	}
 	request.json = output == "json"
 	request.flags.addPositionalRef(positionals[0])
-	if request.action == "answer" {
+	if request.action == "answer" || request.action == "decline" {
 		request.questionID = positionals[1]
+	}
+	if request.action == "answer" {
 		if len(request.options)+len(request.indexes)+len(request.texts) == 0 {
 			return agentQuestionRequest{}, usageError(request.spelling + " requires at least one --option, --index, or --text")
 		}
@@ -185,9 +189,10 @@ type agentQuestionView struct {
 	Answers     map[string]string     `json:"answers,omitempty"`
 	// asking is the text form's word on whether the provider still asks a
 	// closed question; JSON readers take it from the disposition.
-	Delivery  string `json:"delivery,omitempty"`
-	CanAnswer bool   `json:"canAnswer"`
-	asking    string
+	Delivery   string `json:"delivery,omitempty"`
+	CanAnswer  bool   `json:"canAnswer"`
+	CanDecline bool   `json:"canDecline"`
+	asking     string
 }
 
 // agentQuestionPrompt is one question of a record, numbered the way `answer`
@@ -333,6 +338,17 @@ func (c *agentCommand) answerQuestion(request agentQuestionRequest, agent coreme
 	_, err = fmt.Fprintf(stdout, "%s %s for agent/%s\n", result.QuestionID, verb, result.AgentName)
 	return err
 }
+func (c *agentCommand) declineQuestion(request agentQuestionRequest, agent coremetadata.Agent, stdout io.Writer) error {
+	result, err := c.questionService().Decline(context.Background(), questionRequest(request), agent)
+	if result.Outcome != "" {
+		_, writeErr := fmt.Fprintf(stdout, "%s decline %s for agent/%s\n", result.QuestionID, result.Outcome, result.AgentName)
+		if err == nil {
+			return writeErr
+		}
+	}
+	return MapMetadataError(err)
+}
+
 func questionRecordRefusal(record agentquestion.Record) (string, string) {
 	return questions.RecordRefusal(record)
 }

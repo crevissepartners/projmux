@@ -351,6 +351,32 @@ Existing `Options.QuestionDispatcher` implementations retain their interface.
 An implementation can additionally implement `QuestionReceiptDispatcher` to
 return async answer receipts; implementations without it cannot submit async
 answers. Blocking Codex, Claude, and legacy question contracts remain unchanged.
+
+For a current async set with `CanDecline: true`, call
+`client.DeclineQuestion(ctx, agentRef, questionID)`. It returns a distinct
+`core.QuestionDeclineResult`; its `Outcome: "submitted"` means an operator
+non-answer notice was submitted, not an answer, native cancellation, or proof
+of model receipt. The original turn may already have completed. The notice
+covers the whole set and takes no selections. Successful readback is
+`closed` / `async-declined` / `CanAnswer: false` / `CanDecline: false`.
+Answer and decline race for the same once claim. A repeat returns
+`CodeQuestionNotPending`; an earlier answer is never labeled a submitted
+non-answer notice, nor is an earlier decline labeled a submitted answer.
+Keep both actions locked for unknown or post-fence not-submitted outcomes,
+including when a later valid read shows `async-declined`. Preserve the original
+receipt and error; read failure or missing history never permits a resend.
+
+`CodeQuestionDeclineUnsupported` covers blocking Codex, Claude, legacy, old
+hosts, and dispatchers without decline support. Missing `CanDecline` means
+false, independently of `CanAnswer`. Secret sets require the native surface.
+An optional `QuestionDeclineReceiptDispatcher` supplies
+`DeclineQuestionReceipt(context.Context, string, string)
+(core.QuestionDeclineResult, error)` without extending `QuestionDispatcher` or
+requiring `QuestionReceiptDispatcher`. A decline-only dispatcher can advertise
+that capability while async answers remain unavailable. Wrapped errors retain
+`errors.Is`/`errors.As` causes alongside typed outcome metadata. Already canceled
+contexts before admission return the ordinary context error with no dispatch.
+
 See [Headless Codex async questions](codex-async-questions.md).
 
 ## Stop a Project including headless Agents
