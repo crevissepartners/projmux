@@ -490,8 +490,15 @@ class UnitShardContractTest(unittest.TestCase):
 
     def test_compact_selector_preserves_prefix_neighbours_and_procfs_argv_budget(self) -> None:
         module = self.shards
+        neighbours = [("TestFoo", "TestFooLonger"), ("Example", "ExampleExtended"),
+                      ("FuzzFoo", "FuzzFooLonger")]
+        for short, long in neighbours:
+            self.assertLess(len(short), module.PREFIX_WIDTH)
+            self.assertTrue(long.startswith(short))
+            self.assertNotEqual([s for s in module.SHARDS if module.selected(s, module.APP, short)],
+                                [s for s in module.SHARDS if module.selected(s, module.APP, long)])
         names = sorted(["TestA", "TestAB", "TestABCDEFGHIJ", "TestABCDEFGHIJMore",
-                        "ExampleA", "FuzzA"] + [f"TestFamily{n:04d}Case" for n in range(6000)])
+                        "ExampleA", "FuzzA"] + [name for pair in neighbours for name in pair] + [f"TestFamily{n:04d}Case" for n in range(6000)])
         for shard in module.SHARDS[:-1]:
             chosen = [name for name in names if module.selected(shard, module.APP, name)]
             pattern = module.app_pattern(chosen)
@@ -499,6 +506,11 @@ class UnitShardContractTest(unittest.TestCase):
             self.assertLessEqual(len(pattern.encode()), 4096)
         with patch.object(module, "MAX_SELECTOR_BYTES", 1), self.assertRaises(ValueError):
             module.app_pattern(names)
+        unicode_names = ["TestÆæøÅåß"]
+        unicode_pattern = module.app_pattern(unicode_names)
+        self.assertGreater(len(unicode_pattern.encode()), len(unicode_pattern))
+        with patch.object(module, "MAX_SELECTOR_BYTES", len(unicode_pattern)), self.assertRaises(ValueError):
+            module.app_pattern(unicode_names)
 
     def test_partial_rerun_reuses_successful_same_head_shards_and_keeps_attempts(self) -> None:
         evidence = self.evidence()
@@ -556,6 +568,11 @@ for package in packages:
                                         text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
             self.shards.verify(root, subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())
+            for shard in self.shards.SHARDS[:-1]:
+                manifest = json.loads((root / shard / "manifest.json").read_text())
+                self.assertEqual(manifest["selector_bytes"], len(manifest["selector"].encode()))
+                self.assertLessEqual(manifest["go_argv_bytes"], 8192)
+                self.assertGreater(manifest["go_argv_bytes"], manifest["selector_bytes"])
             calls = [json.loads(line) for line in (root / "calls").read_text().splitlines()]
             runs = [args for args in calls if args[0] == "test" and "-list" not in args]
             self.assertEqual(len(runs), 4)

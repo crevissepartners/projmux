@@ -81,10 +81,14 @@ def run(shard: str, directory: Path) -> None:
             raise ValueError("compact app selector differs from selected inventory")
         args += ["-run", pattern]
     args += owned
+    command = go(*args)
+    command_bytes = sum(len(os.fsencode(argument)) + 1 for argument in command)
+    if shard != "rest" and command_bytes > 8192:
+        raise ValueError("app Go command exceeds its 8KiB argv budget")
     seen = {p: [] for p in owned}
     completed = set()
     with (directory / "events.jsonl").open("w") as output:
-        process = subprocess.Popen(go(*args), stdout=subprocess.PIPE, text=True)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
         assert process.stdout is not None
         for line in process.stdout:
             output.write(line)
@@ -98,7 +102,8 @@ def run(shard: str, directory: Path) -> None:
         status = process.wait()
     evidence = dict(shard=shard, run_id=os.environ.get("GITHUB_RUN_ID", "local"),
                     run_attempt=int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")), head=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                    selector=pattern, packages=packages, inventory=inventory, selected=expected,
+                    selector=pattern, selector_bytes=len(pattern.encode()) if pattern else 0,
+                    go_argv_bytes=command_bytes, packages=packages, inventory=inventory, selected=expected,
                     executed={p: sorted(v) for p, v in seen.items()},
                     completed=sorted(completed), status=status)
     (directory / "manifest.json").write_text(json.dumps(evidence, indent=2) + "\n")

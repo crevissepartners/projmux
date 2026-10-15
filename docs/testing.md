@@ -68,7 +68,9 @@ for a shorter critical path; runner time and wall time must be measured separate
   three, keeping each prefix cohort together. A compressed trie selector has
   a 4KiB budget: existing process identity tests retain their 8KiB argv limit.
   Short names match exactly, and the runner checks the compact selector
-  against the selected inventory before execution. Each shard lists
+  against the selected inventory before execution. Evidence records UTF-8
+  selector bytes and the NUL-delimited Go command argv byte count; the app
+  command is also bounded to 8KiB. Each shard lists
   its unfiltered names on the same checkout, then runs its selection with
   `go test -json -count=1`; ordinary Fuzz seed execution stays enabled,
   without starting fuzzing. Empty packages are retained. The remaining
