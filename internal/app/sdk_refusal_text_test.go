@@ -238,7 +238,8 @@ func TestSDKControlSocketParity(t *testing.T) {
 					return strings.TrimSpace(string(out))
 				}
 				paneID, windowID, serverPID := run("display-message", "-p", "#{pane_id}"), run("display-message", "-p", "#{window_id}"), run("display-message", "-p", "#{pid}")
-				run("set-option", "-t", "=control", tmuxopts.SessionRole, "control")
+				sessionID := run("display-message", "-p", "#{session_id}")
+				run("set-option", "-t", sessionID, tmuxopts.SessionRole, "control")
 				run("set-option", "-w", "-t", windowID, "automatic-rename", "off")
 				run("rename-window", "-t", windowID, "--", seed.window.Metadata.Name)
 				run("set-option", "-w", "-t", windowID, tmuxopts.WindowUID, seed.window.Metadata.UID)
