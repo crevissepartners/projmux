@@ -238,6 +238,9 @@ func TestSDKControlSocketParity(t *testing.T) {
 					return strings.TrimSpace(string(out))
 				}
 				paneID, windowID, serverPID := run("display-message", "-p", "#{pane_id}"), run("display-message", "-p", "#{window_id}"), run("display-message", "-p", "#{pid}")
+				// The standalone invocation carries the exact physical socket receipt.
+				run("set-option", "-gu", tmuxopts.AppGlobal)
+				run("set-option", "-gu", runtimeMutationSocketNameOption)
 				sessionID := run("display-message", "-p", "#{session_id}")
 				run("set-option", "-t", sessionID, tmuxopts.SessionRole, "control")
 				run("set-option", "-w", "-t", windowID, "automatic-rename", "off")
@@ -268,7 +271,7 @@ func TestSDKControlSocketParity(t *testing.T) {
 						}
 						return ""
 					}
-					runner := tmux.ExecRunner{}
+					runner := refusalExactSocketRunner{socket: socket}
 					cmd := &renameCommand{store: storage, mirror: inheritedResourceMutationMirror(lookup, runner), tmuxRunner: runner, lookupEnv: lookup}
 					var out, stderr bytes.Buffer
 					err := cmd.Run([]string{strings.ToLower(string(tc.kind)), req.Ref, "--name", req.Name}, &out, &stderr)
@@ -284,4 +287,14 @@ func TestSDKControlSocketParity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A fixture invocation may only probe and mutate its private physical server.
+type refusalExactSocketRunner struct{ socket string }
+
+func (r refusalExactSocketRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if len(args) < 2 || args[0] != "-S" || args[1] != r.socket {
+		return nil, errors.New("fixture requires its exact private -S socket")
+	}
+	return (tmux.ExecRunner{}).Run(ctx, name, args...)
 }
