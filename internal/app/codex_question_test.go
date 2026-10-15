@@ -268,11 +268,33 @@ func TestCodexQuestionPickerEscAndErrorCloseAtOnce(t *testing.T) {
 			fixture := newQuestionFixture(t, false)
 			popup := newFakeQuestionPopup("client-1")
 			fixture.runPickerInPopup(popup, test.steps...)
+			releasePicker := make(chan struct{})
+			release := func() {
+				select {
+				case <-releasePicker:
+				default:
+					close(releasePicker)
+				}
+			}
+			openPicker := popup.open
+			popup.open = func(ctx context.Context, target claudeQuestionPopupTarget, closed <-chan struct{}) error {
+				<-releasePicker
+				return openPicker(ctx, target, closed)
+			}
 			channel := codexTurnEndChannel(t, fixture, popup, config.AgentQuestionAnsweringProjmux)
 			channel.clientPoll = 5 * time.Millisecond
 			responder := recordingCodexQuestionResponder{replies: make(chan codexQuestionReply, 1)}
+			waited := false
+			defer func() {
+				release()
+				if !waited {
+					waitCodexQuestionWaiter(t, channel)
+				}
+			}()
 			record := handleCodexTurnEndQuestion(t, fixture, channel, responder)
+			release()
 			waitCodexQuestionWaiter(t, channel)
+			waited = true
 			got, _, err := fixture.store.Get(record.ID)
 			if err != nil || got.State != agentquestion.StateClosed || got.Disposition != string(test.reason) {
 				t.Fatalf("record = %s/%q, %v, want closed/%s", got.State, got.Disposition, err, test.reason)

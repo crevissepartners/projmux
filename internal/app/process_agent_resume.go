@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"slices"
@@ -13,8 +14,10 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -42,6 +45,9 @@ type processAgentResumeResult struct {
 	previousAttention       *processAttentionRecord
 	attentionChecked        bool
 	previousActivation      *coremetadata.ProcessActivation
+	previousAnnotations     map[string]string
+	reservedSettings        *agentSettingsLaunch
+	settingsReady           bool
 	deferredSynchronization *processResumeSynchronization
 }
 
@@ -185,6 +191,10 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		removeHostLostLease(path, *candidate.HostLost)
 	}
 	result = c.processResumeResult(candidate, b, path)
+	if deferredLaunch == nil {
+		result.previousAnnotations = maps.Clone(candidate.Agent.Metadata.Annotations)
+		result.reservedSettings = &settingsPlan
+	}
 	if notice := settingsPlan.projectGuidance.notice(candidate.Agent.Metadata.Name); notice != "" {
 		result.owner.Notices = append(result.owner.Notices, notice)
 	}
@@ -330,6 +340,7 @@ func (r *processAgentResumeResult) startClaudeResume(ctx context.Context, host *
 	if handle != nil {
 		r.Handle = handle
 	}
+	r.settingsReady = err == nil
 	return err
 }
 
@@ -350,8 +361,12 @@ func (r *processAgentResumeResult) startCodexResume(ctx context.Context, host *p
 		r.Handle = endpoint.handle
 	}
 	if err != nil || frame.Kind == "" {
+		r.settingsReady = err == nil
 		return err
 	}
+	// Preparation applied the thread settings; later observation or first-turn
+	// delivery errors must not roll that recipe back.
+	r.settingsReady = true
 	snapshot, err := r.Handle.Observe(r.Binding)
 	if err != nil {
 		return err
@@ -377,14 +392,79 @@ func (r *processAgentResumeResult) restoreReservation() error {
 		return nil
 	}
 	_, _, err := intmetadata.NewStore(r.owner.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
-		if r.previousActivation != nil {
-			return intmetadata.DefaultMutator().RestoreProcessHostLostResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord, *r.previousActivation)
+		if r.reservedSettings != nil {
+			if err := r.checkReservedRecipe(reg); err != nil {
+				return err
+			}
 		}
-		return intmetadata.DefaultMutator().RestoreProcessResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord)
+		var err error
+		if r.previousActivation != nil {
+			err = intmetadata.DefaultMutator().RestoreProcessHostLostResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord, *r.previousActivation)
+		} else {
+			err = intmetadata.DefaultMutator().RestoreProcessResume(reg, metadataProcessBinding(r.Binding), *r.previousRecord)
+		}
+		if err != nil {
+			return err
+		}
+		if r.reservedSettings != nil {
+			agent, _ := reg.Agent(r.Binding.Agent)
+			agent.Metadata.Annotations = maps.Clone(r.previousAnnotations)
+		}
+		return nil
 	})
 	if err == nil {
 		r.previousRecord = nil
 	}
+	return err
+}
+
+func (r *processAgentResumeResult) checkReservedRecipe(reg *coremetadata.Registry) error {
+	expected := reg.Clone()
+	agent, found := expected.Agent(r.Binding.Agent)
+	if !found {
+		return processhost.ErrStale
+	}
+	agent.Metadata.Annotations = maps.Clone(r.previousAnnotations)
+	if err := r.reservedSettings.record(&expected, intmetadata.DefaultMutator(), r.Binding.Agent); err != nil {
+		return err
+	}
+	agent, _ = expected.Agent(r.Binding.Agent)
+	current, _ := reg.Agent(r.Binding.Agent)
+	if !reflect.DeepEqual(current.Metadata.Annotations, agent.Metadata.Annotations) {
+		return errors.New("resume annotations changed; previous recipe restoration refused")
+	}
+	return nil
+}
+
+// A born startup failure retains its actual Wait and conversation history.
+// Only its unchanged recipe can be restored after exact child retirement.
+func (r *processAgentResumeResult) restoreFailedStartSettings() error {
+	if r.reservedSettings == nil || r.settingsReady {
+		return nil
+	}
+	binding := metadataProcessBinding(r.Binding)
+	if !r.owner.waitRecorded || !coremetadata.MatchesProcessWait(binding, r.owner.waitReceipt) {
+		return errors.New("cannot restore resume recipe before exact actual Wait")
+	}
+	activation, err := mutationruntime.ReadProcessRetirement(r.owner.registryPath, binding, r.owner.waitReceipt)
+	if err != nil {
+		return err
+	}
+	if !processIdentityAbsent(activation.Child, localipc.Process) {
+		return errors.New("cannot restore resume recipe before exact child retirement")
+	}
+	_, _, err = intmetadata.NewStore(r.owner.registryPath).UpdateConvergent(func(reg *coremetadata.Registry) error {
+		agent, found := reg.Agent(r.Binding.Agent)
+		pane, present := reg.Pane(r.Binding.Pane)
+		if !found || !present || agent.Status.Phase != coremetadata.PhaseOffline || !pane.Status.Activation.IsZero() || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != binding || !coremetadata.SameProcessWait(agent.Status.LastTermination, r.owner.waitReceipt) || !coremetadata.SameProcessWait(pane.Status.LastTermination, r.owner.waitReceipt) {
+			return processhost.ErrStale
+		}
+		if err := r.checkReservedRecipe(reg); err != nil {
+			return err
+		}
+		agent.Metadata.Annotations = maps.Clone(r.previousAnnotations)
+		return nil
+	})
 	return err
 }
 

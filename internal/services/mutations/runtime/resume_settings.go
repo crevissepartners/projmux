@@ -228,6 +228,8 @@ func (l AgentSettingsLaunch) LaunchAnnotations(base map[string]string) map[strin
 		SetOrDelete(out, coremetadata.AnnotationAgentProfile, r.New.Profile.Name)
 		SetOrDelete(out, coremetadata.AnnotationAgentProfileDigest, r.New.Profile.Digest)
 		SetOrDelete(out, coremetadata.AnnotationAgentProfileSource, r.New.Profile.Source)
+	} else if r.New.Profile.Name != "" && r.New.Profile.Digest != "" {
+		SetOrDelete(out, coremetadata.AnnotationAgentProfileDigest, r.New.Profile.Digest)
 	}
 	SetOrDelete(out, coremetadata.AnnotationAgentEffort, r.New.Effort.Value)
 	if r.InstructionsChanged() {
@@ -304,6 +306,10 @@ func (l AgentSettingsLaunch) Record(registry *coremetadata.Registry, mutator cor
 	r := l.Resolution
 	if r.ProfileSwitched {
 		if _, err := mutator.SetAgentProfile(registry, AgentUID, r.New.Profile.Name, r.New.Profile.Digest, r.New.Profile.Source); err != nil {
+			return MapMetadataError(err)
+		}
+	} else if r.New.Profile.Name != "" && r.New.Profile.Digest != "" {
+		if _, err := mutator.SetAgentProfileDigest(registry, AgentUID, r.New.Profile.Name, r.New.Profile.Digest); err != nil {
 			return MapMetadataError(err)
 		}
 	}
