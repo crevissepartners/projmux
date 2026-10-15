@@ -104,6 +104,7 @@ func TestRenameWithoutSocketCallsNoTmux(t *testing.T) {
 }
 
 type renameContainmentRunner struct {
+	control        bool
 	mode           string
 	writes, probes int
 	name           string
@@ -137,7 +138,18 @@ func (r *renameContainmentRunner) Run(_ context.Context, _ string, args ...strin
 		if r.mode == "owner" {
 			root = "other"
 		}
-		row := "%1\\037pan-one\\037@1\\037win-one\\037$1\\037" + root + "\\037\n"
+		role := ""
+		if r.control {
+			root = ""
+			role = "control"
+		}
+		if r.control && r.mode == "owner" {
+			root = "other"
+		}
+		if r.mode == "role" {
+			role = ""
+		}
+		row := "%1\\037pan-one\\037@1\\037win-one\\037$1\\037" + root + "\\037" + role + "\n"
 		if r.mode == "uid" {
 			row = strings.ReplaceAll(row, "pan-one", "other")
 		}
@@ -202,5 +214,27 @@ func TestRenameExplicitSocketStopsAfterServerReplacement(t *testing.T) {
 	_, err := renamer.MirrorRenamed(context.Background(), metadata.KindWindow, "win-one", "new")
 	if err == nil || r.writes != 1 || r.tab != "old" {
 		t.Fatalf("replacement did not stop remaining writes: %+v %v", r, err)
+	}
+}
+
+func TestRenameControlSessionPaneExplicitContainment(t *testing.T) {
+	for _, mode := range []string{"", "owner", "role", "uid", "duplicate", "pid"} {
+		t.Run(mode, func(t *testing.T) {
+			reg := renameProofRegistry()
+			reg.Projects = nil
+			reg.ControlSessions = []metadata.ControlSession{{Metadata: metadata.ObjectMeta{UID: "ctl-one"}}}
+			reg.Windows[0].Metadata.OwnerRef = &metadata.OwnerRef{Kind: metadata.KindControlSession, UID: "ctl-one"}
+			reg.Panes = []metadata.Pane{{Metadata: metadata.ObjectMeta{UID: "pan-one", Name: "old", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "win-one"}}}}
+			runner := &renameContainmentRunner{mode: mode, control: true}
+			renamer := ExplicitSocketRenamer(Store{}, func() (metadata.Registry, error) { return reg, nil }, "/tmp/explicit.sock", runner)
+			_, err := renamer.MirrorRenamed(t.Context(), metadata.KindPane, "pan-one", "new")
+			if mode == "" {
+				if err != nil || runner.writes != 1 {
+					t.Fatalf("ControlSession proof failed: %v writes=%d", err, runner.writes)
+				}
+			} else if err == nil || runner.writes != 0 {
+				t.Fatalf("unproven ControlSession accepted: %v writes=%d", err, runner.writes)
+			}
+		})
 	}
 }

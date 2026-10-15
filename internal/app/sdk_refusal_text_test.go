@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -186,7 +188,7 @@ func TestSDKRefusalTextControlSessionRename(t *testing.T) {
 func refusalTextSocket(t *testing.T) string {
 	t.Helper()
 	requireRealTmux(t)
-	socket := filepath.Join(t.TempDir(), "s")
+	socket := filepath.Join(shortTempDomain(t), "s")
 	run := func(args ...string) {
 		t.Helper()
 		if out, err := exec.Command("tmux", append([]string{"-S", socket}, args...)...).CombinedOutput(); err != nil {
@@ -198,4 +200,87 @@ func refusalTextSocket(t *testing.T) string {
 	run("set-option", "-g", tmuxopts.AppGlobal, "1")
 	run("set-option", "-g", runtimeMutationSocketNameOption, "projmux")
 	return socket
+}
+
+func TestSDKControlSocketParity(t *testing.T) {
+	fake := newFakeResourceStore(t)
+	seed := seedControlOwnedGraph(t, fake, nil, "control")
+	mut := store.DefaultMutator()
+	agent, err := mut.CreateAgent(&fake.registry, seed.window.Metadata.UID, metadata.CreateAgentOptions{Name: "worker", Provider: "claude", OperationID: "socket-parity"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedPane, err := mut.AttachAgentPane(&fake.registry, agent.Metadata.UID, metadata.BootstrapPane{Name: "worker-pane"}, "socket-parity-pane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name         string
+		kind         core.Kind
+		uid, paneUID string
+	}{
+		{"window", core.KindWindow, seed.window.Metadata.UID, seed.pane.Metadata.UID},
+		{"pane", core.KindPane, seed.pane.Metadata.UID, seed.pane.Metadata.UID},
+		{"agent", core.KindAgent, agent.Metadata.UID, ownedPane.Metadata.UID},
+		{"agent-pane", core.KindPane, ownedPane.Metadata.UID, ownedPane.Metadata.UID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var snapshots []string
+			for _, sdk := range []bool{false, true} {
+				state, storage, _ := renameState(t, fake.registry)
+				socket := refusalTextSocket(t)
+				run := func(args ...string) string {
+					t.Helper()
+					out, err := exec.Command("tmux", append([]string{"-S", socket}, args...)...).CombinedOutput()
+					if err != nil {
+						t.Fatalf("exact socket: %v %s", err, out)
+					}
+					return strings.TrimSpace(string(out))
+				}
+				paneID, windowID, serverPID := run("display-message", "-p", "#{pane_id}"), run("display-message", "-p", "#{window_id}"), run("display-message", "-p", "#{pid}")
+				run("set-option", "-t", "=control", tmuxopts.SessionRole, "control")
+				run("set-option", "-w", "-t", windowID, "automatic-rename", "off")
+				run("rename-window", "-t", windowID, "--", seed.window.Metadata.Name)
+				run("set-option", "-w", "-t", windowID, tmuxopts.WindowUID, seed.window.Metadata.UID)
+				run("set-option", "-w", "-t", windowID, tmuxopts.WindowName, seed.window.Metadata.Name)
+				run("set-option", "-p", "-t", paneID, tmuxopts.PaneUID, tc.paneUID)
+				original, _ := fake.registry.Pane(tc.paneUID)
+				run("set-option", "-p", "-t", paneID, tmuxopts.PaneName, original.Metadata.Name)
+				req := core.RenameRequest{Kind: tc.kind, Ref: "uid:" + tc.uid, Name: "renamed", SocketPath: socket}
+				if sdk {
+					client, err := projmux.NewClient(projmux.Options{StateDir: state})
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, err := client.Rename(t.Context(), req)
+					t.Logf("SDK explicit socket %s: %v", tc.name, err)
+					if err != nil || !result.Committed || result.Notice != "" {
+						t.Fatalf("SDK: %+v %v", result, err)
+					}
+				} else {
+					lookup := func(key string) string {
+						switch key {
+						case "TMUX":
+							return socket + "," + serverPID + ",0"
+						case "TMUX_PANE":
+							return paneID
+						}
+						return ""
+					}
+					runner := tmux.ExecRunner{}
+					cmd := &renameCommand{store: storage, mirror: inheritedResourceMutationMirror(lookup, runner), tmuxRunner: runner, lookupEnv: lookup}
+					var out, stderr bytes.Buffer
+					err := cmd.Run([]string{strings.ToLower(string(tc.kind)), req.Ref, "--name", req.Name}, &out, &stderr)
+					t.Logf("CLI explicit socket %s: %v", tc.name, err)
+					if err != nil || stderr.Len() != 0 {
+						t.Fatalf("CLI: %v %s", err, stderr.String())
+					}
+				}
+				snapshots = append(snapshots, run("list-panes", "-a", "-F", tmuxRowFormat("#{window_name}", "#{"+tmuxopts.WindowName+"}", "#{"+tmuxopts.PaneName+"}")))
+			}
+			if snapshots[0] != snapshots[1] {
+				t.Fatalf("CLI/SDK mirrors differ: %q / %q", snapshots[0], snapshots[1])
+			}
+		})
+	}
 }
