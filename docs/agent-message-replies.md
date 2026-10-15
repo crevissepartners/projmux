@@ -1,5 +1,42 @@
 # Explicit reply recovery
 
+## Codex peer delivery
+
+Codex peer `agent message send` and explicit `--reply-to` delivery use the same
+policy for tmux and process Agents: an idle thread starts a turn; an active
+thread accepts `thread/inject_items` history context. Active peer delivery never
+uses `turn/steer`. Operator input and explicit turn start, steer, and deliver
+commands retain their existing behavior.
+
+Injected items use a fixed assistant message with `output_text`, prefixed as
+external untrusted peer context. The original source, reply correlation and
+coordination-only authority remain in the envelope. The assistant role is a
+carrier for external data, not a statement authored by the target or approval
+from its user. This wire shape alone does not prove that a model will respect
+the trust boundary.
+
+The tmux receipt `provider-peer-context-accepted` witnesses acceptance of either
+an idle turn start or an active history injection. That token alone does not
+identify which operation occurred. Process receipts distinguish active history
+acceptance (`host-history-injected`) from idle turn/start acceptance
+(`host-turn-accepted`). None of these receipts proves reading, answering or
+completing the peer request. Injected items are included in subsequent model
+requests; if the active turn ends before its next request, consumption waits
+until a later turn. Injection does not wake that later turn. See the
+[app-server contract](https://learn.chatgpt.com/docs/app-server#inject-items-into-a-thread).
+
+The connection must support the validated Codex 0.162.1 injection contract.
+Older observers and process hosts refuse the new peer operation before writing;
+there is no legacy start/steer fallback. A process Codex source must also expose
+the peer source validation endpoint for its exact live generation. An older
+source host without that capability is refused before the target writes;
+source validation never falls back to the main host socket. Unsupported provider
+methods are refusals. A cancelled or uncertain write, or a failed receipt commit,
+never triggers automatic injection, start or steer retries. The provider does not
+promise deduplication: bounded message claims prevent replay, and unresolved
+claims can exhaust admission until their outcomes are resolved. Receipt and
+model consumption remain separate.
+
 An explicit Claude reply names the original request with `--reply-to`. The
 broker preserves that request's `conversationRef`, reverses its source and
 target Agents, and retains peer, untrusted, coordination-only authority. The

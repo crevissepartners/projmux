@@ -41,10 +41,20 @@ type codexProcessEndpoint struct {
 	closeLease     func(context.Context) error
 	closeErr       error
 	messages       atomic.Pointer[codexProcessMessages]
+	peerSource     *codexPeerSource
 }
 
 func (e *codexProcessEndpoint) close(ctx context.Context) error {
-	e.once.Do(func() { processQuestionCallbacks.Delete(e.binding); e.closeErr = e.closeLease(ctx) })
+	e.once.Do(func() {
+		processQuestionCallbacks.Delete(e.binding)
+		if e.closeErr = e.peerSource.close(ctx); e.closeErr == nil {
+			e.closeErr = e.closeLease(ctx)
+		} else {
+			// Stop accepting retired main-host requests while preserving the
+			// lease and any replacement inode for explicit incomplete cleanup.
+			_ = e.listener.Unix.Close()
+		}
+	})
 	return e.closeErr
 }
 func (e *codexProcessEndpoint) authority() processhost.Authority {
@@ -113,6 +123,12 @@ func startProcessCodexConversation(ctx context.Context, host *processhost.Host, 
 		return nil, err
 	}
 	endpoint := &codexProcessEndpoint{binding: launch.Binding, ownerMode: processOwnerMode(ctx), stopRecorder: processStopRecorder(ctx), socket: socket, listener: listener, closeLease: closeLease, registryPath: registryPath}
+	endpoint.peerSource, err = newCodexPeerSource(processCodexPeerSourceSocket(registryPath, launch.Binding.Pane, launch.Binding.Generation))
+	if err != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), localipc.Deadline)
+		defer cancel()
+		return nil, errors.Join(err, closeLease(cleanup))
+	}
 	launch.Command.Env = processCodexLaunchEnv(launch, socket)
 	launch.Completion = &processhost.Completion{Cleanup: endpoint.close}
 	if transfer != nil {
@@ -209,6 +225,10 @@ func startProcessCodexConversation(ctx context.Context, host *processhost.Host, 
 	// closes only this owned endpoint and child; the caller must persist actual
 	// Wait before discarding its Registry reservation, or retain unknown refs.
 	if _, err = endpoint.route(ctx); err != nil {
+		rollback()
+		return endpoint, err
+	}
+	if err = endpoint.peerSource.start(ctx, endpoint); err != nil {
 		rollback()
 		return endpoint, err
 	}
@@ -328,7 +348,7 @@ func (e *codexProcessEndpoint) exchangeForeground(ctx context.Context, conn *net
 			return err
 		case "validate":
 			return nil
-		case "message":
+		case "message", "peer-message":
 			messages := e.messages.Load()
 			if messages == nil || r.MessageRef == "" {
 				return processhost.ErrStale
@@ -371,41 +391,25 @@ func (e *codexProcessEndpoint) exchangeRoute(ctx context.Context, conn *net.Unix
 	_ = localipc.WriteJSON(conn, result)
 }
 func (e *codexProcessEndpoint) call(ctx context.Context, messageRef string) (codexProcessExchangeResult, error) {
-	if ctx.Err() != nil {
-		return codexProcessExchangeResult{}, ctx.Err()
-	}
 	identity, err := localipc.InspectOwnedSocket(e.socket)
 	if err != nil || identity != e.socketIdentity {
 		return codexProcessExchangeResult{}, processhost.ErrStale
 	}
-	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: e.socket, Net: "unix"})
+	action := "peer-message"
+	if messageRef == "" {
+		action = "validate"
+	}
+	result, err := callProcessForeground(ctx, e.socket, identity, e.evidence.HostProcess, codexProcessExchange{Foreground: &processForegroundRequest{Action: action, Authority: e.authority(), MessageRef: messageRef}})
 	if err != nil {
 		return codexProcessExchangeResult{}, err
 	}
-	defer conn.Close()
-	deadline := time.Now().Add(localipc.Deadline)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+	if result.Unsupported {
+		return codexProcessExchangeResult{}, errProcessHostUnsupportedAction
 	}
-	_ = conn.SetDeadline(deadline)
-	peer, _, err := localipc.PeerProcess(conn)
-	if err != nil || peer != e.evidence.HostProcess {
+	if !result.Accepted {
 		return codexProcessExchangeResult{}, processhost.ErrStale
 	}
-	if err = localipc.WriteJSON(conn, codexProcessExchange{Binding: e.binding, Evidence: e.evidence, MessageRef: messageRef}); err != nil {
-		return codexProcessExchangeResult{}, err
-	}
-	if err = conn.CloseWrite(); err != nil {
-		return codexProcessExchangeResult{}, err
-	}
-	var result codexProcessExchangeResult
-	if err = localipc.ReadJSON(conn, &result); err != nil {
-		return result, err
-	}
-	if !result.Valid {
-		return result, processhost.ErrStale
-	}
-	return result, nil
+	return codexProcessExchangeResult{Valid: true, Receipt: result.Receipt}, nil
 }
 
 func codexProcessHookObservationOnly(env func(string) string) bool {

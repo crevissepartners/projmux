@@ -89,7 +89,7 @@ var errProcessHostUnsupportedAction = errors.New("process-host-unsupported-actio
 // is reported in observation and decides the unsupported-action refusal.
 var (
 	claudeForegroundActions = []string{"delete-stop", "interrupt", "respond", "stop", "turn"}
-	codexForegroundActions  = []string{"approval", "delete-stop", "interrupt", "message", "question", "stop", "turn", "user-deliver", "user-steer", "validate"}
+	codexForegroundActions  = []string{"approval", "delete-stop", "interrupt", "message", "peer-message", "question", "stop", "turn", "user-deliver", "user-steer", "validate"}
 )
 
 func processForegroundSupported(actions []string, action string) error {

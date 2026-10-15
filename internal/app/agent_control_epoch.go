@@ -2,10 +2,17 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -22,6 +29,7 @@ const (
 	agentControlOpStart     = "turn-start"
 	agentControlOpSteer     = "turn-steer"
 	agentControlOpDeliver   = "turn-deliver"
+	agentControlOpPeer      = "peer-context"
 	agentControlOpInterrupt = "turn-interrupt"
 	agentControlOpApprovals = "approval-list"
 	agentControlOpReview    = "approval-review"
@@ -79,6 +87,12 @@ type codexControlEpoch struct {
 	// recordRefusal journals each typed broker refusal a wire call returns,
 	// including the one a delivery absorbs by waiting out the retry window.
 	recordRefusal func(diagnostics.CodexBrokerOperation, error)
+	// Peer callbacks read the stored envelope and claim before provider bytes.
+	// Neither may call the target control socket while this epoch is locked.
+	peerEnvelope func(context.Context, string) (string, error)
+	peerClaim    func(string) error
+	peerUsed     map[string]bool
+	peerPrune    func(context.Context) error
 }
 
 func newCodexControlEpoch(wire agentControlWire, identity codexLifecycleIdentity, epoch string, snapshot codexappserver.LifecycleSnapshot, current func(codexLifecycleIdentity) bool) *codexControlEpoch {
@@ -335,6 +349,8 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 		return agentControlResponse{OK: true, Availability: e.availability(), Approvals: e.approvals()}
 	case agentControlOpDeliver:
 		return e.deliver(ctx, request)
+	case agentControlOpPeer:
+		return e.peer(ctx, request)
 	case agentControlOpStart:
 		if strings.TrimSpace(request.Text) == "" {
 			return refusedControl("stale-turn", "thread is not idle; new turn write refused")
@@ -644,4 +660,224 @@ func (e *agentControlRefusal) Error() string {
 		return fmt.Sprintf("native Codex control unavailable (%s)", e.Code)
 	}
 	return fmt.Sprintf("%s (%s)", e.Message, e.Code)
+}
+
+// peer owns a separate admission contract. Operator deliver remains unchanged.
+func (e *codexControlEpoch) peer(ctx context.Context, request agentControlRequest) agentControlResponse {
+	wire, ok := e.wire.(interface {
+		PeerInjectionSupported() bool
+		InjectPeerContext(context.Context, string, string) error
+	})
+	if !ok || !wire.PeerInjectionSupported() {
+		return refusedControl("peer-injection-unsupported", "peer context injection is unsupported by this exact provider connection")
+	}
+	if !coremessage.ValidRef(request.RequestKey) || e.peerEnvelope == nil || e.peerClaim == nil {
+		return refusedControl("peer-invalid", "peer message admission is unavailable")
+	}
+	state := e.readTurnState(ctx, "peer context")
+	if state.refusal != nil {
+		return *state.refusal
+	}
+	if state.drained {
+		return refusedControl("drain-required", "fresh peer state is unavailable during drain")
+	}
+	if ctx.Err() != nil {
+		return refusedControl("peer-invalid", "peer admission was cancelled before write")
+	}
+	if !e.current(e.identity) {
+		return refusedControl("stale-binding", "peer target generation changed")
+	}
+	state.reconcile(e)
+	if !e.canStart() && !e.canMutateCurrentTurn() {
+		return refusedControl("no-active-turn", "peer thread state cannot take context")
+	}
+	if e.peerPrune != nil {
+		if err := e.peerPrune(ctx); err != nil {
+			return refusedControl("peer-claim-used", "peer claim store unavailable")
+		}
+	}
+	if ctx.Err() != nil || !e.current(e.identity) {
+		return refusedControl("stale-binding", "peer admission no longer current before claim")
+	}
+	// Pruning may inspect many settled receipts. Read the stored envelope and
+	// source/target authority after that work, immediately before claiming.
+	text, err := e.peerEnvelope(ctx, request.RequestKey)
+	if err != nil {
+		return refusedControl("peer-invalid", "stored peer authority or source/target generation is no longer current")
+	}
+	if ctx.Err() != nil || !e.current(e.identity) {
+		return refusedControl("stale-binding", "peer admission no longer current before claim")
+	}
+	if e.peerUsed == nil {
+		e.peerUsed = make(map[string]bool)
+	}
+	if e.peerUsed[request.RequestKey] {
+		return refusedControl("peer-claim-used", "peer operation consumed; previous provider outcome may be unknown")
+	}
+	if len(e.peerUsed) >= 256 {
+		return refusedControl("peer-busy", "peer unresolved operation ledger full")
+	}
+	if err = e.peerClaim(request.RequestKey); err != nil {
+		if errors.Is(err, errCodexPeerClaimsFull) {
+			return refusedControl("peer-busy", "peer unresolved durable operation ledger full")
+		}
+		return refusedControl("peer-claim-used", "peer durable operation claim unavailable or consumed; previous outcome may be unknown")
+	}
+	e.peerUsed[request.RequestKey] = true
+
+	if e.canStart() {
+		result, err := e.wire.StartExactTurn(ctx, e.identity.ThreadID, text)
+		if err != nil {
+			if codexappserver.IsResponseError(err) {
+				return refusedControl("provider-refused", "provider refused peer turn")
+			}
+			return controlWireFailure("peer-outcome-unknown", err)
+		}
+		if result.ThreadID != e.identity.ThreadID || result.TurnID == "" {
+			return refusedControl("protocol-error", "peer start receipt identity is incomplete")
+		}
+		e.turnID, e.turnState, e.threadState = result.TurnID, codexappserver.TurnStateInProgress, codexappserver.ThreadStateActive
+		e.pending = map[string]codexappserver.ApprovalEnvelope{}
+		e.ambiguous = map[string]struct{}{}
+		return agentControlResponse{OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID, Acceptance: agentControlAcceptanceProvider, Delivery: agentControlDeliveryUnconfirmed}
+	}
+	if err := wire.InjectPeerContext(ctx, e.identity.ThreadID, text); err != nil {
+		if codexappserver.IsResponseError(err) {
+			return refusedControl("provider-refused", "provider refused peer history")
+		}
+		return controlWireFailure("peer-outcome-unknown", err)
+	}
+	return agentControlResponse{OK: true, ThreadID: e.identity.ThreadID, TurnID: e.turnID, Acceptance: agentControlAcceptanceProvider, Delivery: agentControlDeliveryUnconfirmed}
+}
+
+var errCodexPeerClaimsFull = errors.New("codex peer unresolved claims full")
+
+// configureCodexPeer uses fresh Registry authority and the peer-only read-only
+// source endpoint. It never requests a locked epoch status or main host socket.
+func configureCodexPeer(e *codexControlEpoch, stateDir string, load func() (coremetadata.Registry, error), exactRegistryPath ...string) {
+	registryPath := intmetadata.PathFor(stateDir)
+	if len(exactRegistryPath) == 1 {
+		registryPath = exactRegistryPath[0]
+	}
+	store := messagestore.NewStore(stateDir)
+	e.peerEnvelope = func(ctx context.Context, ref string) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		record, found, err := store.Get(ref)
+		if err != nil || !found || record.Delivery.State.Terminal() {
+			return "", errors.New("peer record unavailable")
+		}
+		env := record.Envelope
+		if env.Validate() != nil || env.Authority != coremessage.PeerAuthority() || env.Origin != (coremessage.Origin{}) || !env.Deadline.After(time.Now().UTC()) || env.AcceptedAt.After(time.Now().UTC()) || env.Target.AgentUID != e.identity.AgentUID || env.Target.PaneUID != e.identity.PaneUID || env.Target.ActivationGeneration != e.identity.Generation {
+			return "", errors.New("peer envelope refused")
+		}
+		reg, err := load()
+		if err != nil {
+			return "", err
+		}
+		for _, stored := range []coremessage.Route{env.Source, env.Target} {
+			route, err := resolveCodexPeerSourceRoute(ctx, registryPath, reg, stored.AgentUID)
+			if err != nil || !messageRouteAccepts(route, stored) {
+				return "", errors.New("peer route changed")
+			}
+		}
+		return codexCoordinationContent(env)
+	}
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(e.identity.AgentUID+"/"+e.identity.Generation)))
+	dir := filepath.Join(stateDir, "codex-peer-claims", key)
+	e.peerPrune = func(ctx context.Context) error {
+		settled := make(map[string]bool)
+		check := func(ref string) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			if value, ok := settled[ref]; ok {
+				return value, nil
+			}
+			r, found, err := store.Get(ref)
+			if err != nil {
+				return false, err
+			}
+			value := found && r.Delivery.State.Terminal() && !r.Delivery.OutcomeUnknown
+			settled[ref] = value
+			return value, nil
+		}
+		for ref := range e.peerUsed {
+			value, err := check(ref)
+			if err != nil {
+				return err
+			}
+			if value {
+				delete(e.peerUsed, ref)
+			}
+		}
+		entries, err := os.ReadDir(dir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			path := filepath.Join(dir, entry.Name())
+			body, err := os.ReadFile(path) // #nosec G304 -- private peer claim directory with hashed message filenames.
+			if err != nil {
+				return err
+			}
+			if len(body) == 0 {
+				continue
+			}
+			value, err := check(string(body))
+			if err != nil {
+				return err
+			}
+			if value {
+				if err := os.Remove(path); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	e.peerClaim = func(ref string) error {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		if len(entries) >= 256 {
+			return errCodexPeerClaimsFull
+		}
+		path := filepath.Join(dir, fmt.Sprintf("%x", sha256.Sum256([]byte(ref))))
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600) // #nosec G304 -- caller-owned state root, hashed generation and message refs.
+		if err != nil {
+			return err
+		}
+		_, writeErr := file.WriteString(ref)
+		if writeErr != nil {
+			_ = file.Close()
+			return writeErr
+		}
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if syncErr != nil {
+			return syncErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		parent, err := os.Open(dir) // #nosec G304 -- sync the private claim directory just created above.
+		if err != nil {
+			return err
+		}
+		defer parent.Close()
+		return parent.Sync()
+	}
 }

@@ -45,8 +45,9 @@ type CodexHandle struct{ handle *Handle }
 type UserTurnMode string
 
 const (
-	UserTurnStart UserTurnMode = "start"
-	UserTurnSteer UserTurnMode = "steer"
+	UserTurnStart     UserTurnMode = "start"
+	UserTurnSteer     UserTurnMode = "steer"
+	PeerHistoryInject UserTurnMode = "inject"
 )
 
 // UserTurnDelivery witnesses provider acceptance, not model consumption.
@@ -61,6 +62,13 @@ type UserTurnDelivery struct {
 // A refused or uncertain steer is never retried as another turn or a start.
 func (c *CodexHandle) DeliverUserTurn(ctx context.Context, a Authority, operation, prompt string) (UserTurnDelivery, error) {
 	return c.handle.adapter.(*codexAdapter).deliver(ctx, a, operation, prompt, true, false)
+}
+
+// DeliverPeerContext starts while idle or appends untrusted history while active.
+// validate rechecks source/target generation and peer authority under the owned
+// admission semaphore, before consuming the bounded message operation claim.
+func (c *CodexHandle) DeliverPeerContext(ctx context.Context, a Authority, operation, envelope string, validate func(context.Context) error) (UserTurnDelivery, error) {
+	return c.handle.adapter.(*codexAdapter).peer(ctx, a, operation, envelope, validate)
 }
 
 // SteerUserTurn only delivers to the running turn selected at owned admission.
@@ -339,6 +347,113 @@ func (c *codexAdapter) deliver(ctx context.Context, a Authority, operation, prom
 	var err error
 	if mode == UserTurnSteer {
 		_, err = c.client.SteerExactTurn(ctx, a.Session, turn, prompt)
+	} else {
+		settings := p.launch.adapter.(CodexConfig).Settings
+		turn, err = c.client.StartTurnWithOptions(ctx, a.Session, prompt, operation, settings.Model, settings.Effort)
+	}
+	if err != nil {
+		if codexappserver.IsResponseError(err) {
+			p.mu.Lock()
+			c.awaitingReply = false
+			if mode == UserTurnStart {
+				raw, _ := json.Marshal(codexTurnResult{ThreadID: a.Session, Turn: codexResultTurn{ID: operation, Status: "failed", Error: &codexResultError{Message: "server-refused"}}})
+				p.emitLocked("turn-result", raw, nil)
+			}
+			queueErr := c.drainReplyLocked()
+			p.mu.Unlock()
+			if queueErr != nil {
+				p.protocolFailure(queueErr)
+			}
+		} else {
+			p.protocolFailure(err)
+		}
+		return UserTurnDelivery{}, err
+	}
+	p.mu.Lock()
+	if p.state != "ready" {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, ErrClosed
+	}
+	if mode == UserTurnStart {
+		p.turn = turn
+		c.rememberProviderTurnLocked(turn)
+		p.emitLocked("turn-submitted", nil, nil)
+	}
+	c.awaitingReply = false
+	err = c.drainReplyLocked()
+	p.mu.Unlock()
+	if err != nil {
+		p.protocolFailure(err)
+		return UserTurnDelivery{}, err
+	}
+	return UserTurnDelivery{Mode: mode, Operation: operation, TurnID: turn}, nil
+}
+
+func (c *codexAdapter) peer(ctx context.Context, a Authority, operation, prompt string, validate func(context.Context) error) (UserTurnDelivery, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.p.host.limits.Startup)
+	defer cancel()
+	if err := c.lock(ctx); err != nil {
+		return UserTurnDelivery{}, err
+	}
+	defer c.unlock()
+	if !codexappserver.PeerInjectionSupported(c.client.NegotiatedVersion()) {
+		return UserTurnDelivery{}, codexappserver.ErrUnsupported
+	}
+	// Drain preceding notifications before selecting idle versus active. The
+	// control semaphore orders peer and operator writes, while the reader runs.
+	if err := c.flushNotifications(ctx); err != nil {
+		return UserTurnDelivery{}, err
+	}
+	p := c.p
+	p.mu.Lock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, err
+	}
+	p.mu.Unlock()
+	// Route validation can inspect this same handle. Never call it under p.mu.
+	if validate == nil {
+		return UserTurnDelivery{}, ErrStale
+	}
+	if err := validate(ctx); err != nil {
+		return UserTurnDelivery{}, err
+	}
+	p.mu.Lock()
+	if err := p.admitLocked(ctx, a); err != nil {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, err
+	}
+	if operation == "" || len(operation) > 256 || p.usedTurns[operation] || c.usedDeliveries[operation] {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, ErrStale
+	}
+	mode, turn := UserTurnStart, p.turn
+	if turn != "" {
+		mode = PeerHistoryInject
+	} else if p.activeCriticalLocked() >= p.host.limits.Events {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, ErrBusy
+	}
+	if strings.TrimSpace(prompt) == "" {
+		p.mu.Unlock()
+		return UserTurnDelivery{}, ErrStale
+	}
+	// Consume before writing, independently of request-ID fencing. Starting
+	// retains the existing turn fence; steering must never clear usedRequests.
+	for len(c.deliveryOrder) >= p.host.limits.Events {
+		delete(c.usedDeliveries, c.deliveryOrder[0])
+		c.deliveryOrder = c.deliveryOrder[1:]
+	}
+	c.usedDeliveries[operation] = true
+	c.deliveryOrder = append(c.deliveryOrder, operation)
+	if mode == UserTurnStart {
+		p.rememberTurnLocked(operation)
+	}
+	c.awaitingReply = true
+	p.mu.Unlock()
+	var err error
+	if mode == PeerHistoryInject {
+		err = c.client.InjectPeerContext(ctx, a.Session, prompt)
 	} else {
 		settings := p.launch.adapter.(CodexConfig).Settings
 		turn, err = c.client.StartTurnWithOptions(ctx, a.Session, prompt, operation, settings.Model, settings.Effort)

@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,7 +154,7 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 	cases := []pushCase{
 		{
 			name:      "delivery succeeds",
-			wantState: coremessage.StateDelivered, wantReason: "provider-turn-push",
+			wantState: coremessage.StateDelivered, wantReason: "provider-peer-context-accepted",
 			wantCalls: 1, wantBindings: 1,
 		},
 		{
@@ -188,13 +187,13 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 		},
 		{
 			name:      "transport failure is ambiguous",
-			errs:      map[string]error{agentControlOpDeliver: errors.New("fixture transport failure")},
+			errs:      map[string]error{agentControlOpPeer: errors.New("fixture transport failure")},
 			wantState: coremessage.StateFailed, wantReason: codexPushUnknownReason, wantUnknown: true,
 			wantCalls: 1, wantBindings: 1,
 		},
 		{
 			name:      "zero response is ambiguous",
-			responses: map[string]agentControlResponse{agentControlOpDeliver: {}},
+			responses: map[string]agentControlResponse{agentControlOpPeer: {}},
 			wantState: coremessage.StateFailed, wantReason: codexPushUnknownReason, wantUnknown: true,
 			wantCalls: 1, wantBindings: 1,
 		},
@@ -202,7 +201,7 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 	for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "lifecycle-retry", "lifecycle-busy", "drain-required"} {
 		cases = append(cases, pushCase{
 			name:      "delivery known-zero " + code,
-			responses: map[string]agentControlResponse{agentControlOpDeliver: refusal(code)},
+			responses: map[string]agentControlResponse{agentControlOpPeer: refusal(code)},
 			wantState: coremessage.StateFailed, wantReason: codexPushRefusedReason,
 			wantCalls: 1, wantBindings: 1,
 		})
@@ -210,7 +209,7 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 	for _, code := range []string{"turn-in-progress", "stale-turn", "turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""} {
 		cases = append(cases, pushCase{
 			name:      "delivery ambiguous " + code,
-			responses: map[string]agentControlResponse{agentControlOpDeliver: refusal(code)},
+			responses: map[string]agentControlResponse{agentControlOpPeer: refusal(code)},
 			wantState: coremessage.StateFailed, wantReason: codexPushUnknownReason, wantUnknown: true,
 			wantCalls: 1, wantBindings: 1,
 		})
@@ -231,9 +230,9 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 				updated.Delivery.OutcomeUnknown != test.wantUnknown {
 				t.Fatalf("delivery = %+v, want %s/%s/unknown=%t", updated.Delivery, test.wantState, test.wantReason, test.wantUnknown)
 			}
-			if fixture.calls[agentControlOpDeliver] != test.wantCalls ||
+			if fixture.calls[agentControlOpPeer] != test.wantCalls ||
 				fixture.binding.calls != test.wantBindings {
-				t.Fatalf("deliver=%d bindings=%d, want %d/%d", fixture.calls[agentControlOpDeliver],
+				t.Fatalf("deliver=%d bindings=%d, want %d/%d", fixture.calls[agentControlOpPeer],
 					fixture.binding.calls, test.wantCalls, test.wantBindings)
 			}
 			if fixture.calls[agentControlOpStart] != 0 || fixture.calls[agentControlOpSteer] != 0 {
@@ -252,128 +251,17 @@ func TestCodexCoordinationPushClassifiesNativeOutcomesForSenders(t *testing.T) {
 	}
 }
 
-func TestCodexCoordinationPushLegacyFallbackWritesOnce(t *testing.T) {
-	idle := codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}
-	active := activeWithThreadState(codexappserver.ThreadStateActive)
-	for _, test := range []struct {
-		name      string
-		legacy    bool
-		snapshot  codexappserver.LifecycleSnapshot
-		wantOps   []string
-		wantStart int
-		wantSteer int
-		wantReads int
-	}{
-		{name: "legacy idle starts", legacy: true, snapshot: idle, wantStart: 1, wantReads: 1,
-			wantOps: []string{agentControlOpDeliver, agentControlOpStart}},
-		{name: "legacy busy steers", legacy: true, snapshot: active, wantSteer: 1, wantReads: 2,
-			wantOps: []string{agentControlOpDeliver, agentControlOpStart, agentControlOpSteer}},
-		{name: "current idle delivers", snapshot: idle, wantStart: 1, wantReads: 1,
-			wantOps: []string{agentControlOpDeliver}},
-		{name: "current busy delivers", snapshot: active, wantSteer: 1, wantReads: 1,
-			wantOps: []string{agentControlOpDeliver}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newCodexPushFixture(t)
-			wire := &fakeExactControlWire{snapshot: test.snapshot}
-			epoch := newCodexControlEpoch(wire, phase6CLIIdentity(), "epoch-1", test.snapshot,
-				func(codexLifecycleIdentity) bool { return true })
-			var operations []string
-			var texts []string
-			fixture.cmd.controlCall = func(ctx context.Context, _ string, _ coremetadata.CodexEndpointRef,
-				_ codexLifecycleIdentity, request agentControlRequest,
-			) (agentControlResponse, error) {
-				operations = append(operations, request.Operation)
-				texts = append(texts, request.Text)
-				if test.legacy && request.Operation == agentControlOpDeliver {
-					return refusal("invalid-operation"), nil
-				}
-				return epoch.Handle(ctx, request), nil
-			}
-			const ref = "message-legacy-writes-once"
-			stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex",
-				"--message-ref", ref, "--", "peer coordination payload")
-			stored := persistedDelivery(t, fixture.store, ref)
-			if err != nil || stored.Delivery.State != coremessage.StateDelivered {
-				t.Fatalf("send err=%v delivery=%+v, want delivered", err, stored.Delivery)
-			}
-			assertSendExitFollowsReceipt(t, stdout, err, ref, stored.Delivery)
-			if !slices.Equal(operations, test.wantOps) || wire.start != test.wantStart ||
-				wire.steer != test.wantSteer || wire.writes() != 1 || wire.reads != test.wantReads {
-				t.Fatalf("operations=%v start=%d steer=%d writes=%d reads=%d, want ops=%v start=%d steer=%d writes=1 reads=%d",
-					operations, wire.start, wire.steer, wire.writes(), wire.reads, test.wantOps, test.wantStart, test.wantSteer, test.wantReads)
-			}
-			wantText, err := codexCoordinationContent(stored.Envelope)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, text := range texts {
-				if text != wantText {
-					t.Fatalf("control text = %q, want the original coordination envelope %q", text, wantText)
-				}
+func TestCodexCoordinationPushOldObserverRefusesWithoutFallback(t *testing.T) {
+	for _, code := range []string{"invalid-operation", "peer-injection-unsupported"} {
+		t.Run(code, func(t *testing.T) {
+			f := newCodexPushFixture(t)
+			f.script(map[string]agentControlResponse{agentControlOpPeer: refusal(code)}, nil)
+			r := f.accept(t, "message-old")
+			got, err := f.cmd.pushCodexCoordination(r, f.target, r.Envelope)
+			if err == nil || got.Delivery.OutcomeUnknown || f.calls[agentControlOpPeer] != 1 || len(f.calls) != 1 {
+				t.Fatalf("receipt=%+v err=%v calls=%v", got.Delivery, err, f.calls)
 			}
 		})
-	}
-}
-
-func TestCodexCoordinationPushLegacyFallbackClassifiesAndStops(t *testing.T) {
-	type fallbackCase struct {
-		name        string
-		response    agentControlResponse
-		err         error
-		wantUnknown bool
-	}
-	for _, operation := range []string{agentControlOpStart, agentControlOpSteer} {
-		cases := []fallbackCase{
-			{name: "transport failure", err: errors.New("fixture transport failure"), wantUnknown: true},
-			{name: "binding refusal", err: &exactAgentControlBindingError{Reason: "fixture binding refusal"}},
-		}
-		for _, code := range []string{"stale-epoch", "stale-binding", "unavailable", "turn-state-unavailable",
-			"lifecycle-retry", "lifecycle-busy", "drain-required", "invalid-operation", "stale-turn", "no-active-turn",
-			"turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""} {
-			unknown := slices.Contains([]string{"turn-start-failed", "timeout", "protocol-error", "fixture-unrecognised-code", ""}, code) ||
-				(operation == agentControlOpStart && code == "no-active-turn") ||
-				(operation == agentControlOpSteer && code == "stale-turn")
-			cases = append(cases, fallbackCase{name: code, response: refusal(code), wantUnknown: unknown})
-		}
-		if operation == agentControlOpSteer {
-			cases = append(cases, fallbackCase{name: "turn-in-progress", response: refusal("turn-in-progress"), wantUnknown: true})
-		}
-		for _, test := range cases {
-			t.Run(operation+"/"+test.name, func(t *testing.T) {
-				fixture := newCodexPushFixture(t)
-				responses := map[string]agentControlResponse{agentControlOpDeliver: refusal("invalid-operation")}
-				wantSteer := 0
-				if operation == agentControlOpSteer {
-					responses[agentControlOpStart] = refusal("turn-in-progress")
-					wantSteer = 1
-				}
-				responses[operation] = test.response
-				fixture.script(responses, map[string]error{operation: test.err})
-				const ref = "message-legacy-stops"
-				stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex",
-					"--message-ref", ref, "--", "peer coordination payload")
-				stored := persistedDelivery(t, fixture.store, ref)
-				wantReason := codexPushRefusedReason
-				if test.wantUnknown {
-					wantReason = codexPushUnknownReason
-				}
-				if err == nil || IsUsageError(err) || stored.Delivery.State != coremessage.StateFailed || stored.Delivery.Reason != wantReason ||
-					stored.Delivery.OutcomeUnknown != test.wantUnknown {
-					t.Fatalf("send err=%v delivery=%+v, want failed/%s/unknown=%t", err, stored.Delivery, wantReason, test.wantUnknown)
-				}
-				fields := receiptFields(t, stdout)
-				if fields[0] != ref || fields[1] != string(stored.Delivery.State) || fields[2] != wantReason ||
-					fields[3] != agentMessageReceiptFailureAction(receiptFor(stored), 0) {
-					t.Fatalf("receipt = %q, want the persisted failure and its action", stdout)
-				}
-				if fixture.calls[agentControlOpDeliver] != 1 || fixture.calls[agentControlOpStart] != 1 ||
-					fixture.calls[agentControlOpSteer] != wantSteer || fixture.binding.calls != 1 {
-					t.Fatalf("calls=%v bindings=%d, want deliver=1 start=1 steer=%d bindings=1",
-						fixture.calls, fixture.binding.calls, wantSteer)
-				}
-			})
-		}
 	}
 }
 
@@ -440,7 +328,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 		{
 			name: "known zero-write refusal",
 			prepare: func(_ *testing.T, f *codexPushFixture) {
-				f.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("stale-epoch")}, nil)
+				f.script(map[string]agentControlResponse{agentControlOpPeer: refusal("stale-epoch")}, nil)
 			},
 			wantState: "failed", wantReason: codexPushRefusedReason,
 			wantAction: "no turn was written; retry manually once the target thread state allows it",
@@ -448,7 +336,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 		{
 			name: "ambiguous outcome",
 			prepare: func(_ *testing.T, f *codexPushFixture) {
-				f.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("timeout")}, nil)
+				f.script(map[string]agentControlResponse{agentControlOpPeer: refusal("timeout")}, nil)
 			},
 			wantState: "failed", wantReason: codexPushUnknownReason,
 			wantAction: "inspect provider outcome; do not resend while unknown; automatic resend disabled",
@@ -491,7 +379,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 	// cause is never overwritten by the persistence error.
 	t.Run("failure event whose persistence fails keeps the original cause", func(t *testing.T) {
 		fixture := newCodexPushFixture(t)
-		fixture.script(map[string]agentControlResponse{agentControlOpDeliver: refusal("stale-epoch")}, nil)
+		fixture.script(map[string]agentControlResponse{agentControlOpPeer: refusal("stale-epoch")}, nil)
 		fixture.cmd.messageStore = applyFailingMessageStore{agentMessageStore: fixture.store, err: errors.New("fixture persist failure")}
 		stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex",
 			"--message-ref", "message-persist-failure", "--", "peer coordination payload")
@@ -524,7 +412,7 @@ func TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity(t *tes
 			fields[3] != "inspect provider outcome; do not resend while unknown; automatic resend disabled" {
 			t.Fatalf("receipt = %q, want the ambiguous persist projection", stdout)
 		}
-		if fixture.calls[agentControlOpDeliver] != 1 {
+		if fixture.calls[agentControlOpPeer] != 1 {
 			t.Fatalf("calls = %v, want exactly one delivery", fixture.calls)
 		}
 	})
@@ -537,12 +425,12 @@ func TestCodexCoordinationPushKeepsTerminalReceiptAndSkipsExtraSteer(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixture.calls[agentControlOpDeliver] != 1 {
+	if fixture.calls[agentControlOpPeer] != 1 {
 		t.Fatalf("calls = %v, want one delivery operation", fixture.calls)
 	}
-	if delivered.Delivery.State != coremessage.StateDelivered || delivered.Delivery.Reason != "provider-turn-push" ||
+	if delivered.Delivery.State != coremessage.StateDelivered || delivered.Delivery.Reason != "provider-peer-context-accepted" ||
 		delivered.Delivery.OutcomeUnknown {
-		t.Fatalf("delivery = %+v, want delivered/provider-turn-push", delivered.Delivery)
+		t.Fatalf("delivery = %+v, want delivered/provider-peer-context-accepted", delivered.Delivery)
 	}
 	// The delivered reason names the push and nothing beyond it: a pushed turn
 	// is not evidence of model consumption, acknowledgement, or completion.
@@ -593,7 +481,7 @@ func receiptStateAndReason(t *testing.T, stdout string) (string, string) {
 func TestClassifyCodexTurnPushCountsADrainAsRefusedNotUnknown(t *testing.T) {
 	t.Parallel()
 
-	for _, operation := range []string{agentControlOpStart, agentControlOpDeliver, agentControlOpSteer} {
+	for _, operation := range []string{agentControlOpStart, agentControlOpDeliver, agentControlOpPeer, agentControlOpSteer} {
 		outcome := classifyCodexTurnPush(operation, refusal(string(codexbroker.RefusalDrainRequired)), nil)
 		if outcome.delivered || outcome.unknown || outcome.reason != codexPushRefusedReason || outcome.err == nil {
 			t.Errorf("%s drain-required outcome = %+v, want a known-zero refusal with a cause", operation, outcome)
@@ -614,9 +502,17 @@ func TestProductionPeerMessageUsesBoundedLifecycleAndKnownLimitRefusal(t *testin
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newCodexPushFixture(t)
 			wire, provider := newBoundedProductionWire(t, test.state, test.failure)
-			epoch := newCodexControlEpoch(wire, phase6CLIIdentity(), "epoch-1", codexappserver.LifecycleSnapshot{}, func(codexLifecycleIdentity) bool {
+			epoch := newCodexControlEpoch(&boundedPeerWire{boundedProductionWire: wire}, phase6CLIIdentity(), "epoch-1", codexappserver.LifecycleSnapshot{}, func(codexLifecycleIdentity) bool {
 				return test.failure != "changed" || provider.count("thread/read") == 0
 			})
+			epoch.peerEnvelope = func(ctx context.Context, ref string) (string, error) {
+				r, _, err := fixture.store.Get(ref)
+				if err != nil {
+					return "", err
+				}
+				return codexCoordinationContent(r.Envelope)
+			}
+			epoch.peerClaim = func(string) error { return nil }
 			calls := 0
 			fixture.cmd.controlCall = func(ctx context.Context, _ string, _ coremetadata.CodexEndpointRef, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
 				calls++
@@ -625,7 +521,7 @@ func TestProductionPeerMessageUsesBoundedLifecycleAndKnownLimitRefusal(t *testin
 			ref := "message-bounded-" + test.name
 			stdout, _, err := runRoute(t, fixture.cmd, "message", "send", "uid:agt-alpha-codex", "--message-ref", ref, "--", "peer coordination payload")
 			stored := persistedDelivery(t, fixture.store, ref)
-			writes := provider.count("turn/start") + provider.count("turn/steer")
+			writes := provider.count("turn/start") + provider.count("turn/steer") + provider.count("thread/inject_items")
 			if calls != 1 || writes != test.wantWrite || provider.count("full-history") != 0 {
 				t.Fatalf("calls=%d writes=%d full=%d", calls, writes, provider.count("full-history"))
 			}
@@ -645,10 +541,17 @@ func TestProductionPeerMessageUsesBoundedLifecycleAndKnownLimitRefusal(t *testin
 	}
 	// Both exact legacy operations also classify lifecycle payload refusal as
 	// known pre-write, while post-write stale-turn stays unknown for steer.
-	for _, operation := range []string{agentControlOpStart, agentControlOpSteer, agentControlOpDeliver} {
+	for _, operation := range []string{agentControlOpStart, agentControlOpSteer, agentControlOpDeliver, agentControlOpPeer} {
 		outcome := classifyCodexTurnPush(operation, refusedControl("payload-too-large", "body-free limit"), nil)
 		if outcome.unknown || outcome.delivered || outcome.steer || outcome.reason != codexPushRefusedReason {
 			t.Fatalf("operation=%s outcome=%+v", operation, outcome)
 		}
 	}
+}
+
+type boundedPeerWire struct{ *boundedProductionWire }
+
+func (*boundedPeerWire) PeerInjectionSupported() bool { return true }
+func (w *boundedPeerWire) InjectPeerContext(ctx context.Context, thread, envelope string) error {
+	return codexappserver.InjectPeerContextOn(ctx, w.Client, thread, envelope)
 }

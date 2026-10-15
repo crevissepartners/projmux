@@ -11,13 +11,14 @@ import (
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
 // The foreground owner supplies the exact endpoint set. There is no ambient
 // daemon lookup or fallback to the shared broker. Delivered witnesses a typed
-// turn/start acceptance while idle, or a turn/steer acceptance into the exact
-// running turn, separately from the provider's later turn result.
+// turn/start acceptance while idle, or history acceptance into the exact
+// active thread, separately from the provider's later turn result.
 type codexProcessMessages struct {
 	mu            sync.Mutex
 	store         *messagestore.Store
@@ -37,6 +38,26 @@ func processCodexMessageRoute(ctx context.Context, e *codexProcessEndpoint) (cor
 		return coremessage.Route{}, err
 	}
 	return coremessage.Route{AgentUID: route.AgentUID, PaneUID: route.PaneUID, ActivationGeneration: route.Generation, Provider: "codex", Incarnation: route.Incarnation()}, nil
+}
+
+func (m *codexProcessMessages) peerSourceRoute(ctx context.Context, target *codexProcessEndpoint, uid string) (coremessage.Route, error) {
+	if local := m.endpoints[uid]; local != nil {
+		return processCodexMessageRoute(ctx, local)
+	}
+	// Receiver-local override avoids changing the creation owner's closure.
+	// Production endpoints always carry their exact Registry path.
+	if target.registryPath != "" {
+		reg, err := intmetadata.NewStore(target.registryPath).LoadDegradedReadOnly()
+		if err != nil {
+			return coremessage.Route{}, err
+		}
+		route, err := resolveCodexPeerSourceRoute(ctx, target.registryPath, reg, uid)
+		if err != nil {
+			return coremessage.Route{}, err
+		}
+		return publicMessageRoute(route), nil
+	}
+	return coremessage.Route{}, processhost.ErrStale
 }
 func (m *codexProcessMessages) send(ctx context.Context, source, target, messageRef, conversationRef, payload string, now, deadline time.Time) (codexProcessReceipt, error) {
 	from, err := processCodexMessageRoute(ctx, m.endpoints[source])
@@ -116,10 +137,7 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 	}
 	to, err := processCodexMessageRoute(ctx, target)
 	kind, reason, unknown := coremessage.EventDeliver, "host-turn-accepted", false
-	from, sourceErr := processCodexMessageRoute(ctx, m.endpoints[envelope.Source.AgentUID])
-	if sourceErr != nil && m.resolveSource != nil {
-		from, sourceErr = m.resolveSource(ctx, envelope.Source.AgentUID)
-	}
+	from, sourceErr := m.peerSourceRoute(ctx, target, envelope.Source.AgentUID)
 	switch {
 	case !envelope.Deadline.After(observedAt):
 		kind, reason = coremessage.EventExpire, "deadline-expired"
@@ -141,19 +159,31 @@ func (m *codexProcessMessages) receive(ctx context.Context, target *codexProcess
 			kind, reason = coremessage.EventRefuse, "host-busy"
 			break
 		}
-		// A running turn takes the envelope as a steer, as a tmux Codex target
-		// does. A refused or uncertain steer is never retried as a start.
+		// Active peer input appends history without steering. Recheck both
+		// routes inside serialized host admission, before consuming the claim.
 		operation := fmt.Sprintf("message-%x", sha256.Sum256([]byte(messageRef)))
-		delivery, turnErr := target.handle.DeliverUserTurn(ctx, target.authority(), operation, content)
+		delivery, turnErr := target.handle.DeliverPeerContext(ctx, target.authority(), operation, content, func(ctx context.Context) error {
+			if envelope.Authority != coremessage.PeerAuthority() || envelope.Origin != (coremessage.Origin{}) || envelope.Validate() != nil || !envelope.Deadline.After(now().UTC()) {
+				return processhost.ErrStale
+			}
+			freshTo, targetErr := processCodexMessageRoute(ctx, target)
+			freshFrom, sourceErr := m.peerSourceRoute(ctx, target, envelope.Source.AgentUID)
+			if targetErr != nil || sourceErr != nil || !freshTo.Same(envelope.Target) || !freshFrom.Same(envelope.Source) {
+				return processhost.ErrStale
+			}
+			return nil
+		})
 		switch {
 		case turnErr == nil:
-			if delivery.Mode == processhost.UserTurnSteer {
-				reason = "host-turn-steered"
+			if delivery.Mode == processhost.PeerHistoryInject {
+				reason = "host-history-injected"
 			}
 		case errors.Is(turnErr, processhost.ErrBusy):
 			kind, reason = coremessage.EventRefuse, "host-busy"
 		case errors.Is(turnErr, processhost.ErrStale):
 			kind, reason = coremessage.EventStale, "stale-binding"
+		case errors.Is(turnErr, codexappserver.ErrUnsupported):
+			kind, reason = coremessage.EventRefuse, "peer-injection-unsupported"
 		case codexappserver.IsResponseError(turnErr):
 			kind, reason = coremessage.EventRefuse, "provider-refused"
 		default:

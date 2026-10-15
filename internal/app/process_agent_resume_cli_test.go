@@ -675,6 +675,7 @@ func deferredResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		t.Fatal(err)
 	}
 	if provider == aiModeCodex {
+		prepareProcessCodexPeerCLI(t, f)
 		path := filepath.Join(f.root, "codex-provider.py")
 		raw, err := os.ReadFile(path)
 		if err != nil {

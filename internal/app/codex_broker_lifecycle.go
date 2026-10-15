@@ -798,6 +798,19 @@ func (e *codexBrokerLifecycleEpoch) InterruptExactTurn(ctx context.Context, thre
 	return codexappserver.InterruptExactTurnOn(ctx, e, threadID, turnID)
 }
 
+// PeerInjectionSupported is scoped to the exact version generation accepted
+// by the broker bind, rather than an ambient executable/version probe.
+func (e *codexBrokerLifecycleEpoch) PeerInjectionSupported() bool {
+	return e != nil && codexappserver.PeerInjectionSupported(e.endpoint.EndpointGenerationID)
+}
+
+func (e *codexBrokerLifecycleEpoch) InjectPeerContext(ctx context.Context, threadID, envelope string) error {
+	if !e.PeerInjectionSupported() {
+		return codexappserver.ErrUnsupported
+	}
+	return codexappserver.InjectPeerContextOn(ctx, e, threadID, envelope)
+}
+
 // RespondServerRequest answers exactly one inbound server request through the
 // single-use lease the broker minted when it delivered that request.
 //

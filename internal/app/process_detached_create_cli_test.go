@@ -196,6 +196,7 @@ func testProcessChildSurvivesParentProviderGroupCLI(t *testing.T, inferred bool)
 			var f processCreateCLI
 			if provider == "codex" {
 				f = newProcessCodexCreateCLI(t).processCreateCLI
+				prepareProcessCodexPeerCLI(t, f)
 			} else {
 				f = newProcessCreateCLI(t)
 			}
@@ -579,6 +580,7 @@ func TestDetachedProcessConversationResumeAndTranscriptCLI(t *testing.T) {
 			transcript := filepath.Join(f.root, ".claude", "projects", aisessions.EncodeClaudeProjectPath(f.root), conversation+".jsonl")
 			meta := ""
 			if provider == "codex" {
+				prepareProcessCodexPeerCLI(t, f)
 				scriptPath = filepath.Join(f.root, "codex-provider.py")
 				conversation = "process-thread"
 				transcript = filepath.Join(f.root, ".codex", "sessions", "rollout-"+conversation+".jsonl")

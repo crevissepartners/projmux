@@ -309,8 +309,8 @@ func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
 }
 
 func TestCodexProcessForegroundAndCoordinationWireRemainDistinct(t *testing.T) {
-	left := newProcessCodexFixture(t, nil)
-	right := newProcessCodexFixture(t, nil)
+	left := newProcessCodexPeerFixture(t, nil)
+	right := newProcessCodexPeerFixture(t, nil)
 	e := left.endpoint
 	request := processForegroundRequest{Authority: e.authority(), Action: "turn", Operation: "operator-input", Prompt: "plain operator input"}
 	if err := applyCodexForeground(context.Background(), e.handle, request); err != nil {
