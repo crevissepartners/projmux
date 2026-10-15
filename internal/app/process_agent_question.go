@@ -69,13 +69,23 @@ func processQuestionPrompts(provider string, request processhost.Request) ([]age
 	}
 	return agentquestion.ParseQuestions(input.Questions)
 }
-func exactQuestionViews(provider string, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store) ([]ExactProcessQuestion, error) {
+func exactQuestionViews(provider string, records map[string]processhost.Request, native map[string]bool, store *agentquestion.Store, snapshots ...processhost.Snapshot) ([]ExactProcessQuestion, error) {
 	views := []ExactProcessQuestion{}
 	for id, r := range records {
 		if provider == aiModeCodex && r.Kind == "async-question" {
-			view, err := asyncQuestionView(id, r, store)
+			var snap *processhost.Snapshot
+			if len(snapshots) == 1 {
+				snap = &snapshots[0]
+			} else if len(snapshots) > 1 {
+				return nil, processhost.ErrStale
+			}
+			view, err := asyncQuestionView(id, r, store, snap)
 			if err != nil {
 				return nil, err
+			}
+			if view.QuestionID == "" {
+				delete(records, id)
+				continue
 			}
 			views = append(views, view)
 			continue
@@ -207,7 +217,7 @@ func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuest
 		return nil, err
 	}
 	if r.QuestionID == "" {
-		return exactQuestionViews(aiModeCodex, c.records, c.nativeQuestions, c.questions)
+		return exactQuestionViews(aiModeCodex, c.records, c.nativeQuestions, c.questions, snap)
 	}
 	request, prompts, held, err := exactQuestionRequest(aiModeCodex, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {

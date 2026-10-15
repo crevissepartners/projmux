@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
@@ -251,5 +252,177 @@ func TestCodexAsyncAbsentDoesNotReadBlockingStoreClock(t *testing.T) {
 	records["question-native"] = processhost.Request{Kind: "question"}
 	if err := captureAsyncQuestions(b, snap, &records, store, time.Minute); err != nil || calls != 0 {
 		t.Fatal("blocking metadata consumed async clock", calls, err)
+	}
+}
+
+func TestCodexAsyncTerminalPruneKeepsBlockingAndNewQuestions(t *testing.T) {
+	for _, mode := range []string{"capacity", "24h"} {
+		t.Run(mode, func(t *testing.T) {
+			b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "generation", Operation: "operation"}
+			now := time.Now().UTC()
+			clock := now
+			store := agentquestion.NewStore(t.TempDir()).WithClock(func() time.Time { return clock })
+			sidecar := store.AsyncStore()
+			input := json.RawMessage(`[{"id":"q1","question":"Async","isOther":true,"options":[]}]`)
+			old := processhost.AsyncQuestion{CreatedAt: now, Request: processhost.Request{ID: "call_old", Session: "thread", Connection: "connection", Turn: "old-turn", Kind: "async-question", Tool: "agentMessage", Input: input}}
+			snap := processhost.Snapshot{Binding: b, State: "ready", Session: "thread", Connection: "connection", AsyncQuestions: []processhost.AsyncQuestion{old}}
+			var records map[string]processhost.Request
+			var native map[string]bool
+			if err := captureAsyncQuestions(b, snap, &records, store, time.Hour); err != nil {
+				t.Fatal(err)
+			}
+			id := codexAsyncQuestionID(b, old.Request)
+			deadline := snap.AsyncQuestions[0].Deadline
+			clock = now.Add(time.Hour)
+			if _, err := sidecar.Close(id, agentquestion.CloseReason("process-ended")); err != nil {
+				t.Fatal(err)
+			}
+			terminal, found, err := sidecar.Get(id)
+			if err != nil || !found || terminal.State != agentquestion.StateExpired {
+				t.Fatal("expiry not established", terminal, err)
+			}
+			snap.AsyncQuestions[0].Closed = true // the host's retained terminal observation
+			addOther := func(n int) {
+				_, err := sidecar.Create(agentquestion.Record{ID: fmt.Sprintf("question-%016x", n), Provider: "codex", Delivery: "async", AgentUID: "other", Questions: input, CreatedAt: clock, Deadline: clock.Add(48 * time.Hour)})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "capacity" {
+				for i := range 63 {
+					addOther(i)
+				}
+				addOther(63) // normal writer pressure evicts the old expired history
+				if _, err = sidecar.Close("question-0000000000000000", agentquestion.CloseReason("process-ended")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				clock = now.Add(26 * time.Hour)
+				addOther(0)
+			}
+			if _, found, err = sidecar.Get(id); err != nil || found {
+				t.Fatal("normal prune did not remove old history", err)
+			}
+			next := old
+			next.Request.ID = "call_new"
+			next.Request.Turn = "new-turn"
+			next.CreatedAt = clock
+			snap.Turn = "new-turn"
+			snap.AsyncQuestions = append(snap.AsyncQuestions, next)
+			snap.Pending = []processhost.Request{{ID: "blocking", Connection: "connection", Session: "thread", Turn: "new-turn", Kind: "question", Input: json.RawMessage(`{"method":"item/tool/requestUserInput","params":{"questions":[{"id":"held","question":"Blocking","isOther":true,"options":[]}]}}`)}}
+			resolver := func() config.AgentQuestionAnswering { return config.AgentQuestionAnsweringProjmux }
+			synchronize := processSnapshotSynchronizer(func(s processhost.Snapshot) error {
+				return captureExactQuestions(aiModeCodex, b, s, &records, &native, resolver, store, time.Hour, func() time.Time { return clock })
+			}, func(s processhost.Snapshot) error {
+				return captureExactQuestions(aiModeCodex, b, s, &records, &native, resolver, store, time.Hour, func() time.Time { return clock })
+			})
+			if err = synchronize(snap); err != nil {
+				t.Fatal("normal prune escalated through owner synchronization", err)
+			}
+			views, err := exactQuestionViews(aiModeCodex, records, native, store, snap)
+			if err != nil || len(views) != 2 {
+				t.Fatal("blocking/new async unavailable", views, err)
+			}
+			if _, tracked := records[id]; tracked {
+				t.Fatal("pruned tombstone still tracked")
+			}
+			if !snap.AsyncQuestions[0].Deadline.Equal(deadline) || snap.AsyncQuestions[0].Request.Tool != old.Request.Tool || string(snap.AsyncQuestions[0].Request.Input) != string(old.Request.Input) {
+				t.Fatal("proof renewed deadline or changed native input")
+			}
+			asyncSeen, blockingSeen := false, false
+			for _, v := range views {
+				if v.QuestionID == id {
+					t.Fatal("pruned view reopened")
+				}
+				if v.Delivery == "async" {
+					asyncSeen = !v.CanAnswer && v.State == agentquestion.StateWaiting
+				}
+				if v.Delivery == "held-question" {
+					blockingSeen = v.CanAnswer && v.State == agentquestion.StateWaiting
+				}
+			}
+			if !asyncSeen || !blockingSeen {
+				t.Fatal("read/answer contracts changed", views)
+			}
+			before, _ := os.ReadFile(sidecar.Path())
+			beforeLegacy, _ := os.ReadFile(store.Path())
+			if err = captureExactQuestions(aiModeCodex, b, snap, &records, &native, resolver, store, 2*time.Hour, func() time.Time { return clock }); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := os.ReadFile(sidecar.Path())
+			afterLegacy, _ := os.ReadFile(store.Path())
+			if string(before) != string(after) || string(beforeLegacy) != string(afterLegacy) {
+				t.Fatal("terminal replay recreated history or rewrote deadlines")
+			}
+			if _, found, err = sidecar.Get(id); err != nil || found {
+				t.Fatal("terminal replay reopened", err)
+			}
+		})
+	}
+}
+
+func TestCodexAsyncViewPruneRaceRequiresTerminalProof(t *testing.T) {
+	b := processhost.Binding{Host: "host", Project: "project", Window: "window", Agent: "agent", Pane: "pane", Generation: "generation", Operation: "operation"}
+	now := time.Now().UTC()
+	clock := now
+	store := agentquestion.NewStore(t.TempDir()).WithClock(func() time.Time { return clock })
+	sidecar := store.AsyncStore()
+	q := processhost.AsyncQuestion{CreatedAt: now, Request: processhost.Request{ID: "call_item", Session: "thread", Connection: "connection", Turn: "turn", Kind: "async-question", Tool: "agentMessage", Input: json.RawMessage(`[{"id":"q1","question":"Async","isOther":true,"options":[]}]`)}}
+	snap := processhost.Snapshot{Binding: b, State: "ready", Session: "thread", Connection: "connection", AsyncQuestions: []processhost.AsyncQuestion{q}}
+	var records map[string]processhost.Request
+	if err := captureAsyncQuestions(b, snap, &records, store, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	id := codexAsyncQuestionID(b, q.Request)
+	if _, err := sidecar.Close(id, agentquestion.CloseReason("process-ended")); err != nil {
+		t.Fatal(err)
+	}
+	if err := captureAsyncQuestions(b, snap, &records, store, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if !snap.AsyncQuestions[0].Closed || snap.AsyncQuestions[0].Deadline.IsZero() {
+		t.Fatal("caller clone lost observed terminal proof")
+	}
+	clock = now.Add(26 * time.Hour)
+	if _, err := sidecar.Create(agentquestion.Record{ID: "question-ffffffffffffffff", Provider: "codex", Delivery: "async", AgentUID: "other", Questions: q.Request.Input, CreatedAt: clock, Deadline: clock.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// Pruning happens after capture, immediately before the view's Get.
+	if _, err := exactQuestionViews(aiModeCodex, records, nil, store); !errors.Is(err, agentquestion.ErrNotFound) {
+		t.Fatal("proof-free missing was ignored", err)
+	}
+	wrong := snap
+	wrong.Binding.Generation = "wrong"
+	if _, err := exactQuestionViews(aiModeCodex, records, nil, store, wrong); !errors.Is(err, processhost.ErrStale) {
+		t.Fatal("wrong proof accepted", err)
+	}
+	before, _ := os.ReadFile(sidecar.Path())
+	views, err := exactQuestionViews(aiModeCodex, records, nil, store, snap)
+	if err != nil || len(views) != 0 || len(records) != 0 {
+		t.Fatal("terminal view race not retired", views, err)
+	}
+	after, _ := os.ReadFile(sidecar.Path())
+	if string(before) != string(after) {
+		t.Fatal("view recreated pruned record")
+	}
+	// An active known loss remains an error in both capture and view.
+	records[id] = q.Request
+	snap.AsyncQuestions[0].Closed = false
+	snap.AsyncQuestions[0].Deadline = now.Add(time.Hour)
+	if err = captureAsyncQuestions(b, snap, &records, store, time.Hour); !errors.Is(err, agentquestion.ErrNotFound) {
+		t.Fatal("active missing ignored", err)
+	}
+	if _, err = exactQuestionViews(aiModeCodex, records, nil, store, snap); !errors.Is(err, agentquestion.ErrNotFound) {
+		t.Fatal("active view missing ignored", err)
+	}
+	snap.AsyncQuestions[0].Closed = true
+	if err = os.WriteFile(sidecar.Path(), []byte("malformed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = captureAsyncQuestions(b, snap, &records, store, time.Hour); !errors.Is(err, agentquestion.ErrMalformedStore) {
+		t.Fatal("terminal proof hid malformed store", err)
+	}
+	if _, err = exactQuestionViews(aiModeCodex, records, nil, store, snap); !errors.Is(err, agentquestion.ErrMalformedStore) {
+		t.Fatal("terminal view hid malformed store", err)
 	}
 }
