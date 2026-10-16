@@ -529,9 +529,6 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 						if _, _, err := mut.RecordAgentSessionRef(r, created.Agent.Metadata.UID, m.AgentSessionObservation{Provider: provider, SessionID: "process-session"}); err != nil {
 							return err
 						}
-						if _, err := mut.SetAgentActivation(r, created.Agent.Metadata.UID, m.ActivationAcknowledged, "provider-hook", ""); err != nil {
-							return err
-						}
 						_, err := mut.SetAgentInteraction(r, created.Agent.Metadata.UID, m.InteractionIdle, "provider-hook")
 						return err
 					}); err != nil {
@@ -543,9 +540,21 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					t.Fatal(err)
 				}
 				source, ok := reg.Agent(created.Agent.Metadata.UID)
-				if !ok || source.Status.SessionRef == nil || source.Status.Activation.State != m.ActivationAcknowledged {
-					t.Fatal("explicit source has no verified conversation/activation")
+				wantActivation := m.ActivationAcknowledged
+				if provider == "claude" {
+					// This interactive source has no requested initial task. A
+					// session hook cannot turn not_requested into acknowledged.
+					wantActivation = m.ActivationNotRequested
+					p, _ := reg.Pane(source.Status.PaneRef)
+					if p.Status.Activation.Claude == nil || !p.Status.Activation.Claude.Process.Valid() {
+						t.Fatal("explicit Claude source has no exact process proof")
+					}
 				}
+				if !ok || source.Status.Phase != m.PhaseRunning || source.Status.SessionRef == nil || source.Status.Activation.State != wantActivation {
+					t.Fatalf("explicit source conversation/activation mismatch: %+v", source)
+				}
+				t.Logf("explicit source provider=%s phase=%s activation=%s", provider, source.Status.Phase, source.Status.Activation.State)
+				cleanupPath := os.Getenv("PATH")
 				for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
 					t.Setenv(key, f.root+"/poison")
 				}
@@ -610,9 +619,6 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 				if !a.Status.SessionRef.SameConversation(source.Status.SessionRef) {
 					t.Fatal("host move changed conversation")
 				}
-				if _, err = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: ref, Confirm: true, SocketPath: socket}); err != nil {
-					t.Fatal(err)
-				}
 				if after := sdkCreateDirectorySnapshot(t, sibling); !reflect.DeepEqual(siblingBefore, after) {
 					t.Fatalf("host move changed sibling Config/State: before=%v after=%v", siblingBefore, after)
 				}
@@ -627,6 +633,13 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					if !json.Valid(line) {
 						t.Fatalf("invalid explicit journal row: %q", line)
 					}
+				}
+				// Delete's existing tmux runner resolves PATH in the caller. All
+				// host-move assertions above retain poisoned ambient inputs;
+				// restore only PATH for this separate cleanup operation.
+				t.Setenv("PATH", cleanupPath)
+				if _, err = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: ref, Confirm: true, SocketPath: socket}); err != nil {
+					t.Fatal(err)
 				}
 			})
 		}
