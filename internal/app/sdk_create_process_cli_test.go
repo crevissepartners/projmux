@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -252,6 +254,61 @@ func TestSDKDetachedProcessCreateCancellationRollsBackBirth(t *testing.T) {
 	reg, err = f.store.LoadReadOnly()
 	if err != nil || len(reg.Agents) != 0 || !processActivationAbsent(activation, localipc.Process) {
 		t.Fatal("rollback/retirement not confirmed", err)
+	}
+}
+
+// Keep the deadline visible while deterministically delaying context timer
+// publication. The real socket deadline must still classify the SDK failure.
+type sdkIdentitySocketFirstContext struct {
+	context.Context
+	deadline time.Time
+	done     chan struct{}
+}
+
+func (c *sdkIdentitySocketFirstContext) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c *sdkIdentitySocketFirstContext) Done() <-chan struct{}       { return c.done }
+func (c *sdkIdentitySocketFirstContext) Err() error                  { return nil }
+
+func TestSDKDetachedProcessCreateIdentityDeadlinePreservesFailure(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "silent-launcher")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexec sleep 20\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	paths := config.Paths{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state")}
+	storage := intmetadata.NewStore(intmetadata.PathFor(paths.StateDir))
+	reg := resourceFixtureRegistry(t)
+	if _, err := storage.Update(func(target *coremetadata.Registry) error { *target = reg.Clone(); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(storage.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: executable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &sdkIdentitySocketFirstContext{Context: context.Background(), deadline: time.Now().Add(-time.Second), done: make(chan struct{})}
+	result, err := client.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:prj-alpha", Window: "uid:win-alpha-main", Provider: "claude", Host: "process", Detach: true})
+	var refusal *projmux.Refusal
+	var detail *projmux.CreateProcessError
+	var transport *net.OpError
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, os.ErrDeadlineExceeded) || !errors.As(err, &transport) || !errors.As(err, &refusal) || !errors.As(err, &detail) {
+		t.Fatalf("deadline causes/typed failure lost: %v", err)
+	}
+	if refusal.Code != projmux.CodeCreateExecutionFailed || detail.Code != refusal.Code || refusal.AgentUID != "" || detail.Owner != (core.ProcessIdentity{}) || detail.Binding != (core.ProcessBinding{}) || !reflect.DeepEqual(result, core.CreateAgentResult{}) {
+		t.Fatalf("identity failure projection changed: result=%+v refusal=%+v detail=%+v", result, refusal, detail)
+	}
+	if want := "process-detached-identity-handshake-failed: " + transport.Error(); err.Error() != want {
+		t.Fatalf("failure text=%q want=%q", err, want)
+	}
+	if failure := cli.ClassifyFailure(err, false); !failure.Print || failure.ExitCode != 1 {
+		t.Fatalf("failure exit changed: %+v", failure)
+	}
+	after, readErr := os.ReadFile(storage.Path())
+	if readErr != nil || !bytes.Equal(before, after) {
+		t.Fatalf("identity timeout changed Registry: %v", readErr)
 	}
 }
 
