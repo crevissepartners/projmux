@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	"github.com/crevissepartners/projmux/internal/core/agentsettings"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -297,7 +298,7 @@ func TestAPlainRelaunchRestartsAnAgentWhoseGuidanceOrLinkRulesChanged(t *testing
 	paths := linkRulesPaths(t, f.planner)
 	v1 := []byte("Prefer projmux create agent and projmux agent message send.")
 	writeAgentGuidance(t, paths, v1)
-	_, v1Digest := agentGuidanceSnapshot(t, paths, v1)
+	_, v1Digest := agentGuidanceSnapshot(t, paths, append(agentguidance.Default(), append([]byte("\n\n"), v1...)...))
 	f.setAnnotations(withAnnotations(effortAnnotations("high"), coremetadata.AnnotationAgentGuidanceDigest, v1Digest))
 
 	relaunchJSON := func(t *testing.T, args ...string) string {
@@ -345,7 +346,7 @@ func TestAPlainRelaunchRestartsAnAgentWhoseGuidanceOrLinkRulesChanged(t *testing
 		t.Fatalf("plain relaunch = %s, want restarted", stdout)
 	}
 	after := f.assertRestartedOnTheSameConversation(t, personaAttachPane)
-	_, v2Digest := agentGuidanceSnapshot(t, paths, v2)
+	_, v2Digest := agentGuidanceSnapshot(t, paths, append(agentguidance.Default(), append([]byte("\n\n"), v2...)...))
 	_, rulesDigest := linkRulesSnapshot(t, paths, linkRulesAlpha, linkRulesProject(t, f.store, alpha))
 	if got := after.Metadata.Annotations; got[coremetadata.AnnotationAgentGuidanceDigest] != v2Digest ||
 		got[coremetadata.AnnotationAgentProjectLinkRulesDigest] != rulesDigest ||

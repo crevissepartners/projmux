@@ -139,19 +139,20 @@ func TestCreateClaudeAgentWithoutAGuidanceFileLaunchesTheDefaultAndRecordsItsDig
 }
 
 // TestCreateClaudeAgentWithAGuidanceFileLaunchesItsContentAndRecordsItsDigest
-// is acceptance 2, first half: the file replaces the default verbatim and the
-// digest follows it.
+// is acceptance 2, first half: the file follows the current default verbatim
+// and the digest covers the assembled guidance.
 func TestCreateClaudeAgentWithAGuidanceFileLaunchesItsContentAndRecordsItsDigest(t *testing.T) {
 	t.Parallel()
 	f := newAgentGuidanceCreate(t)
 	custom := []byte("Only ever talk to other agents through projmux.\n")
 	writeAgentGuidance(t, f.paths, custom)
 	tail, annotations, _ := f.run(t)
-	path, digest := agentGuidanceSnapshot(t, f.paths, custom)
+	assembled := bytes.Join([][]byte{agentguidance.Default(), custom}, []byte("\n\n"))
+	path, digest := agentGuidanceSnapshot(t, f.paths, assembled)
 	if got := systemPromptFileOf(t, tail); got != path {
 		t.Fatalf("exec argv tail = %q, want the custom guidance %s", tail, path)
 	}
-	if content, err := os.ReadFile(path); err != nil || !bytes.Equal(content, custom) {
+	if content, err := os.ReadFile(path); err != nil || !bytes.Equal(content, assembled) {
 		t.Fatalf("guidance snapshot = %q, %v; want the file verbatim", content, err)
 	}
 	if want := map[string]string{coremetadata.AnnotationAgentGuidanceDigest: digest}; !maps.Equal(annotations, want) {
@@ -347,7 +348,7 @@ func TestResumeComparesTheAgentGuidanceWithItsRecordedDigest(t *testing.T) {
 	// Changed guidance.
 	custom := []byte("Changed guidance.\n")
 	writeAgentGuidance(t, paths, custom)
-	customPath, customDigest := agentGuidanceSnapshot(t, paths, custom)
+	customPath, customDigest := agentGuidanceSnapshot(t, paths, bytes.Join([][]byte{agentguidance.Default(), custom}, []byte("\n\n")))
 	store = newFakeResourceStore(t)
 	tail, _ = resumeClaudeAgentWithGuidance(t, planner, store, same)
 	if want := []string{"--append-system-prompt-file", customPath, "--system-prompt-snapshot", "off", "--resume", personaResumeConversation}; !slices.Equal(tail, want) {
@@ -611,4 +612,77 @@ func guidanceNoticeLines(stderr string) []string {
 		}
 	}
 	return lines
+}
+
+func TestCreateGuidanceFragmentsSnapshotAndUnavailableNotice(t *testing.T) {
+	t.Run("ordered snapshot", func(t *testing.T) {
+		f := newAgentGuidanceCreate(t)
+		dir := filepath.Join(f.paths.ConfigDir, agentguidance.FragmentsDirName)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for name, text := range map[string]string{"20-b.md": "B\n", "10-a.md": "A\n"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		writeAgentGuidance(t, f.paths, []byte("USER\n"))
+		tail, annotations, stderr := f.run(t)
+		want := append(agentguidance.Default(), []byte("\n\nA\n\n\nB\n\n\nUSER\n")...)
+		path, digest := agentGuidanceSnapshot(t, f.paths, want)
+		if systemPromptFileOf(t, tail) != path || annotations[coremetadata.AnnotationAgentGuidanceDigest] != digest || strings.Contains(stderr, agentGuidanceReasonUnavailable) {
+			t.Fatalf("launch: %q %v %q", tail, annotations, stderr)
+		}
+		if text, err := os.ReadFile(path); err != nil || !bytes.Equal(text, want) {
+			t.Fatalf("snapshot: %q %v", text, err)
+		}
+	})
+	t.Run("fragment error", func(t *testing.T) {
+		f := newAgentGuidanceCreate(t)
+		dir := filepath.Join(f.paths.ConfigDir, agentguidance.FragmentsDirName)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "large.md"), bytes.Repeat([]byte("x"), agentguidance.MaxSize+1), 0600); err != nil {
+			t.Fatal(err)
+		}
+		tail, annotations, stderr := f.run(t)
+		if slices.Contains(tail, "--append-system-prompt-file") || annotations != nil || strings.Count(stderr, agentGuidanceReasonUnavailable) != 1 {
+			t.Fatalf("launch after fragment error: %q %v %q", tail, annotations, stderr)
+		}
+	})
+}
+
+func TestClaudeResumeReloadsFragmentsWhileCodexKeepsThreadGuidance(t *testing.T) {
+	planner := agentLaunchArgvTestCommand(t)
+	paths := linkRulesPaths(t, planner)
+	dir := filepath.Join(paths.ConfigDir, agentguidance.FragmentsDirName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "app.md")
+	if err := os.WriteFile(path, []byte("FIRST"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := planner.PlanCodexAgentGuidance()
+	if !before.active || before.unavailable != nil || before.digest == "" {
+		t.Fatal("missing initial Codex guidance")
+	}
+	if err := os.WriteFile(path, []byte("SECOND"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	recorded := map[string]string{coremetadata.AnnotationAgentGuidanceDigest: before.digest}
+	store := newFakeResourceStore(t)
+	tail, _ := resumeClaudeAgentWithGuidance(t, planner, store, recorded)
+	want := append(agentguidance.Default(), []byte("\n\nSECOND")...)
+	snapshot, digest := agentGuidanceSnapshot(t, paths, want)
+	if systemPromptFileOf(t, tail) != snapshot || recordedAgentAnnotations(store, "agt-beta-codex")[coremetadata.AnnotationAgentGuidanceDigest] != digest {
+		t.Fatalf("Claude resume did not reload fragment: %q", tail)
+	}
+	if g := planner.PlanAgentGuidance(aiModeCodex, recorded); g.active {
+		t.Fatal("Codex resume unexpectedly planned new guidance")
+	}
+	if before.digest == digest || !bytes.HasSuffix(before.text, []byte("FIRST")) {
+		t.Fatal("original Codex thread guidance mutated")
+	}
 }

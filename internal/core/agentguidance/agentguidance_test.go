@@ -17,7 +17,7 @@ func newTestStore(t *testing.T) Store {
 	return NewStore(filepath.Join(root, "config"), filepath.Join(root, "state"))
 }
 
-func TestProcessGuidancePreservesTmuxCustomAndOff(t *testing.T) {
+func TestProcessGuidanceAddsContextWithoutChangingTmuxOrOff(t *testing.T) {
 	store := newTestStore(t)
 	before, err := store.Load()
 	if err != nil {
@@ -40,8 +40,8 @@ func TestProcessGuidancePreservesTmuxCustomAndOff(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := store.LoadProcess()
-		if err != nil || !bytes.Equal(got.Text, plain.Text) || got.Digest != plain.Digest || got.Source != plain.Source {
-			t.Fatalf("process changed custom/off guidance: %v %+v", err, got)
+		if err != nil || (plain.Off() && !got.Off()) || (!plain.Off() && !bytes.Contains(got.Text, []byte(processText))) {
+			t.Fatalf("process context or off guidance mismatch: %v %+v", err, got)
 		}
 	}
 }
@@ -99,7 +99,7 @@ func TestLoadWithoutAFileIsTheDefault(t *testing.T) {
 	}
 }
 
-func TestLoadReadsTheFileVerbatimAndWhitespaceIsOff(t *testing.T) {
+func TestLoadAppendsUserBytesAndPreservesLegacyOff(t *testing.T) {
 	t.Parallel()
 	store := newTestStore(t)
 	custom := []byte("  Use projmux for everything.\n\n")
@@ -110,8 +110,8 @@ func TestLoadReadsTheFileVerbatimAndWhitespaceIsOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Source != SourceFile || !bytes.Equal(got.Text, custom) || got.Digest != Digest(custom) {
-		t.Fatalf("Load = %+v, want the file verbatim", got)
+	if got.Source != SourceFile || !bytes.Equal(got.Text, append(Default(), append([]byte("\n\n"), custom...)...)) || got.Digest != Digest(got.Text) {
+		t.Fatalf("Load = %+v, want the default followed by the user file verbatim", got)
 	}
 	for _, blank := range [][]byte{nil, []byte(" \n\t\r\n")} {
 		if err := store.Save(blank); err != nil {
@@ -128,8 +128,8 @@ func TestLoadReadsTheFileVerbatimAndWhitespaceIsOff(t *testing.T) {
 	if err := store.Disable(); err != nil {
 		t.Fatal(err)
 	}
-	if content, err := os.ReadFile(store.Path()); err != nil || len(content) != 0 {
-		t.Fatalf("Disable wrote %q, %v; want an empty file", content, err)
+	if content, err := os.ReadFile(store.Path()); err != nil || !bytes.Equal(content, []byte(" \n\t\r\n")) {
+		t.Fatalf("Disable wrote %q, %v; want the user file preserved", content, err)
 	}
 	if err := store.Reset(); err != nil {
 		t.Fatal(err)
@@ -171,8 +171,8 @@ func TestLoadRefusesAnOversizeOrUnreadableFile(t *testing.T) {
 	if err := store.Save(bytes.Repeat([]byte("x"), MaxSize)); err != nil {
 		t.Fatalf("Save at MaxSize: %v", err)
 	}
-	if got, err := store.Load(); err != nil || len(got.Text) != MaxSize {
-		t.Fatalf("Load at MaxSize = %d bytes, %v", len(got.Text), err)
+	if got, err := store.Load(); err == nil {
+		t.Fatalf("Load whose user part leaves no room for default = %d bytes, %v", len(got.Text), err)
 	}
 	if err := os.WriteFile(store.Path(), bytes.Repeat([]byte("x"), MaxSize+1), 0o600); err != nil {
 		t.Fatal(err)
