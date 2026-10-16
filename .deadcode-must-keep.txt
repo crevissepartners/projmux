@@ -297,6 +297,8 @@ Refusal.Unwrap	Public v0 rename SDK entrypoint or exact-socket adapter; retained
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
 RegistrationLease	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 Registry.rebuildMissingReservations	v0-to-v1 name reservation rebuild retained as the migration proof for the live scopeFor reservation scoping.
+RelaunchProcessError.Error	Public relaunch startup failure diagnostics preserve exact owner and binding for external recovery.
+RelaunchProcessError.Unwrap	Public relaunch startup cause preserves errors.Is/errors.As; cancellation and exact-witness negative fixtures cover unknown versus proven identity.
 RenderBar	Uncolored HUD bar renderer retained as the test seam that pins the BarFillCount fill math shared with RenderColoredBar.
 RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAIBadgeStyle retained as the switch preview golden seam.
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
@@ -312,8 +314,6 @@ ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained wi
 ResumeCommand	Per-provider Agent CLI resume command wrappers retained as the tested adapter surface after snapshot replay, their only product caller, was removed.
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 ResumeLaunchService.PlanAgentResume	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
-RelaunchProcessError.Error	Public relaunch startup failure diagnostics preserve exact owner and binding for external recovery.
-RelaunchProcessError.Unwrap	Public relaunch startup cause preserves errors.Is/errors.As; cancellation and exact-witness negative fixtures cover unknown versus proven identity.
 ResumeProcessError.Error	Public ResumeAgent recovery cause preserves diagnostics with exact binding and owner through typed startup failures.
 ResumeProcessError.Unwrap	Public ResumeAgent recovery cause preserves errors.Is/errors.As across detached startup and cleanup failure.
 ResumeReceipt	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
