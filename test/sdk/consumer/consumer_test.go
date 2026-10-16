@@ -1326,6 +1326,48 @@ for line in sys.stdin:
 					t.Fatalf("resume Wait: %+v %v", stopped, err)
 				}
 			})
+			t.Run("SDK detached relaunch after caller exit", func(t *testing.T) {
+				caller := exec.Command(os.Args[0], "-test.run=^TestExternalSDKDetachedProcessRelaunchCallerExit$")
+				caller.Env = env
+				if out, err := caller.CombinedOutput(); err != nil {
+					t.Fatalf("relaunch caller: %v %s", err, out)
+				}
+				raw, err := os.ReadFile(lease + "/relaunch-result.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var relaunched core.RelaunchAgentResult
+				if err = json.Unmarshal(raw, &relaunched); err != nil {
+					t.Fatal(err)
+				}
+				if relaunched.Binding.AgentUID != result.Binding.AgentUID || relaunched.Binding.PaneUID != result.Binding.PaneUID || relaunched.Binding.Generation == result.Binding.Generation || relaunched.ClaimWaiting {
+					t.Fatalf("relaunch identity: %+v", relaunched)
+				}
+				result.Binding = relaunched.Binding
+				stopAttempted = false
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				resource, err := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: "uid:" + agent.Metadata.UID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sessionID(resource.(core.Agent)) != beforeCID {
+					t.Fatal("relaunch replaced conversation")
+				}
+				pane, err := c.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + result.Binding.PaneUID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				activation := pane.(core.Pane).Status.Activation.Process
+				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
+					t.Fatal("relaunch caller exit retired owner")
+				}
+				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: result.Binding})
+				stopAttempted = true
+				if err != nil || !stopped.Stopped || stopped.Termination == nil {
+					t.Fatalf("relaunch Wait: %+v %v", stopped, err)
+				}
+			})
 			if _, err = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:" + agent.Metadata.UID, Confirm: true}); err != nil {
 				t.Fatal(err)
 			}
@@ -1359,7 +1401,7 @@ func TestExternalRelaunchAgent(t *testing.T) {
 	}
 	// All plan/settings/partial-failure types are usable from a separate module.
 	_ = core.RelaunchAgentResult{AgentUID: "agent", Phase: core.PhaseRunning, CurrentSettings: core.RelaunchAgentSettings{Profile: core.RelaunchAgentProfile{Name: "base", Digest: "digest", Source: "profile"}, Model: core.RelaunchAgentSetting{Value: "sonnet", Source: "relaunch", ProfileValue: "sonnet", Override: true}}, Recovery: "projmux agent resume uid:agent"}
-	for _, code := range []projmux.Code{projmux.CodeRelaunchProcessUnsupported, projmux.CodeRelaunchRequestInvalid, projmux.CodeRelaunchAgentBusy, projmux.CodeRelaunchNoConversation, projmux.CodeRelaunchProviderUnsupported, projmux.CodeRelaunchExecutionFailed, projmux.CodeRelaunchStopAlive, projmux.CodeRelaunchStopUnknown} {
+	for _, code := range []projmux.Code{projmux.CodeRelaunchProcessUnsupported, projmux.CodeRelaunchSelfTarget, projmux.CodeRelaunchSourceStale, projmux.CodeRelaunchRequestInvalid, projmux.CodeRelaunchAgentBusy, projmux.CodeRelaunchNoConversation, projmux.CodeRelaunchProviderUnsupported, projmux.CodeRelaunchExecutionFailed, projmux.CodeRelaunchStopAlive, projmux.CodeRelaunchStopUnknown} {
 		if code == "" {
 			t.Fatal("empty public relaunch code")
 		}
@@ -1543,6 +1585,48 @@ func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(root+"/resume-result.json", raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExternalSDKDetachedProcessRelaunchCallerExit(t *testing.T) {
+	root := os.Getenv("PMX_SDK_CREATE_CHILD")
+	if root == "" {
+		return
+	}
+	raw, err := os.ReadFile(root + "/resume-result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous core.ResumeAgentResult
+	if err = json.Unmarshal(raw, &previous); err != nil {
+		t.Fatal(err)
+	}
+	c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: root + "/deep/custom-settings", StateDir: root + "/deep/custom-records", ProjmuxExecutable: os.Getenv("PMX_SDK_CREATE_BINARY")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"HOME", "PATH", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+		if err = os.Setenv(key, root+"/poison"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := core.RelaunchAgentRequest{Ref: "uid:" + previous.Agent.Metadata.UID, Detach: true, Binding: previous.Binding}
+	if os.Getenv("PMX_SDK_CREATE_PROVIDER") == "claude" {
+		request.Prompt = "resumed input"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	result, err := c.RelaunchAgent(ctx, request)
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err = json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(root+"/relaunch-result.json", raw, 0600); err != nil {
 		t.Fatal(err)
 	}
 }

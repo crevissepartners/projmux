@@ -1,11 +1,15 @@
 package core
 
-// RelaunchAgentRequest restarts one exact tmux Claude or Codex Agent in its
+// RelaunchAgentRequest restarts one exact Claude or Codex Agent in its
 // recorded conversation. Nil Profile/Instructions preserve the layer; a pointer
 // to an empty string selects none. SocketPath is an explicit absolute socket.
-// No actor, active Pane, process destination or first prompt is inferred.
+// No actor, active Pane, destination or first prompt is inferred.
+// Process destinations require Detach; Binding optionally fences the source generation.
 type RelaunchAgentRequest struct {
 	Ref, Project, Window  string
+	Host, Prompt          string
+	Detach                bool
+	Binding               ProcessBinding
 	Model, Effort         string
 	Profile, Instructions *string
 	Reset                 []string
@@ -19,6 +23,9 @@ type RelaunchAgentRequest struct {
 // receipt before further action. Operations are never automatically replayed.
 type RelaunchAgentResult struct {
 	AgentUID, AgentName, Provider                    string
+	CurrentHost, TargetHost                          string
+	Binding                                          ProcessBinding
+	ClaimWaiting                                     bool
 	Phase                                            AgentPhase
 	Interaction                                      string
 	PaneUID, NewPaneUID                              string

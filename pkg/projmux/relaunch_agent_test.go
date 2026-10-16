@@ -19,7 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-func TestRelaunchAgentAdmissionAndProcessRefusal(t *testing.T) {
+func TestRelaunchAgentAdmissionAndProcessInputs(t *testing.T) {
 	c, _, uid, _ := sdkStopFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -33,7 +33,7 @@ func TestRelaunchAgentAdmissionAndProcessRefusal(t *testing.T) {
 		{core.RelaunchAgentRequest{}, CodeSelectorInvalid},
 		{core.RelaunchAgentRequest{Ref: "uid:missing", Reset: []string{"invalid"}}, CodeRelaunchRequestInvalid},
 		{core.RelaunchAgentRequest{Ref: "uid:" + uid, SocketPath: "relative"}, CodeRuntimeRequestInvalid},
-		{core.RelaunchAgentRequest{Ref: "uid:" + uid, DryRun: true}, CodeRelaunchProcessUnsupported},
+		{core.RelaunchAgentRequest{Ref: "uid:" + uid, DryRun: true}, CodeRelaunchRequestInvalid},
 	} {
 		_, err := c.RelaunchAgent(context.Background(), tc.req)
 		var refused *Refusal

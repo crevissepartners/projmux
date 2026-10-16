@@ -38,6 +38,10 @@ func (c *aiCommand) ResolveAgentSettingsRequest(provider string, annotations map
 // from the create command's home, where its profile policy is re-read too
 // (codexResumeProfile), and any other Agent through the resume launcher.
 func (r *agentRebinder) resolveSettings(provider string, annotations map[string]string, request agentSettingsRequest) (agentSettingsLaunch, error) {
+	if r.create.processCreateContext != nil {
+		launch, err := mutationruntime.ResolveAgentSettingsWithPaths(r.create.processCreatePaths, provider, annotations, request.shared())
+		return localAgentSettingsLaunch(launch), localResumeError(err)
+	}
 	// Even a launcher without layered settings must honor the recorded scope.
 	if name := annotations[coremetadata.AnnotationAgentProfile]; name != "" {
 		_, _, _, err := resolveRecordedProfile(r.create.homeDir, r.create.lookupEnv, name, request.projectUID)

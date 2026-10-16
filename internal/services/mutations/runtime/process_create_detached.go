@@ -37,6 +37,7 @@ type ProcessCreateCommitted struct {
 }
 
 type ProcessDetachedReply struct {
+	Relaunch              json.RawMessage `json:",omitempty"`
 	ErrorDetail           json.RawMessage `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
@@ -57,6 +58,9 @@ type ProcessDetachedLauncher struct {
 	PayloadDir string
 	Verify     func(ProcessDetachedReply, coremetadata.ProcessIdentity) error
 	Cleanup    func(coremetadata.ProcessIdentity, ProcessDetachedReply) error
+	// Admit is used only by explicit SDK relaunch: a read-only plan precedes Stop.
+	Admit                  func(ProcessDetachedReply) error
+	CompleteAfterAdmission bool
 }
 
 func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout, stderr io.Writer) (ready ProcessDetachedReply, returnErr error) {
@@ -146,6 +150,33 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	}
 	if err = decoder.Decode(&ready); err != nil {
 		return ready, fmt.Errorf("process-detached-startup-handshake-failed: owner pid %d: %w", identity.Owner.PID, errors.Join(err, ctx.Err()))
+	}
+	if ready.Phase == "planned" && ready.Error == "" {
+		if ready.Owner != identity.Owner || l.Admit == nil {
+			return ready, errors.New("process-detached-plan-invalid")
+		}
+		if err = l.Admit(ready); err != nil {
+			return ready, err
+		}
+		if err = ctx.Err(); err != nil {
+			return ready, err
+		}
+		if l.CompleteAfterAdmission {
+			// A tmux destination has no owned process to roll back. Once Stop
+			// is admitted its rebind/recovery finishes despite request cancellation.
+			if !interrupt() {
+				return ready, ctx.Err()
+			}
+			if err = conn.SetDeadline(time.Now().Add(ProcessDetachedStartupTimeout)); err != nil {
+				return ready, err
+			}
+		}
+		if err = encoder.Encode("admit"); err != nil {
+			return ready, err
+		}
+		if err = decoder.Decode(&ready); err != nil {
+			return ready, errors.Join(err, ctx.Err())
+		}
 	}
 	if ready.Phase == "starting" && ready.Error == "" {
 		started := ready

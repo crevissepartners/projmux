@@ -282,6 +282,22 @@ func processCreateObservationStatePayload(payload *os.File) (string, bool, error
 	if err := reader.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return "", true, errors.New("process-detached-request-trailing-data")
 	}
+	if request.RelaunchContext != nil {
+		if request.Context != nil || request.ResumeContext != nil || request.Resume != nil || request.Relaunch == nil {
+			return "", true, errors.New("process-detached-context-relaunch-only")
+		}
+		frozen := *request.RelaunchContext
+		if err := mutationruntime.ValidateProcessCreateContext(frozen); err != nil {
+			return "", true, err
+		}
+		if request.RegistryPath != intmetadata.PathFor(frozen.Paths.StateDir) || !request.Caller.Valid() || int64(request.Caller.OwnerUID) != int64(os.Getuid()) {
+			return "", true, errors.New("process-detached-context-registry-mismatch")
+		}
+		if _, err := parseAgentRelaunchArgs(request.Relaunch.Args, io.Discard); err != nil {
+			return "", true, err
+		}
+		return frozen.Paths.StateDir, true, nil
+	}
 	if request.ResumeContext != nil {
 		if request.Context != nil || request.Resume == nil || request.Relaunch != nil {
 			return "", true, errors.New("process-detached-context-resume-only")

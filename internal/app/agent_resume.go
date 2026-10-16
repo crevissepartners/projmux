@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -191,7 +190,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var nativePolicy codexappserver.ThreadPolicy
 	var err error
 	if plan.provider == aiModeCodex {
-		prepared, route, nativeSettings, prepareErr := mutationruntime.PrepareNativeCodexResume(context.Background(), spelling, plan.sharedPlan(), func() (config.Paths, error) { return configPaths(r.create.homeDir, r.create.lookupEnv) }, func(ctx context.Context, ref *coremetadata.AgentSessionRef, agentRef string) (mutationruntime.NativeCodexRoute, error) {
+		prepared, route, nativeSettings, prepareErr := mutationruntime.PrepareNativeCodexResume(context.Background(), spelling, plan.sharedPlan(), r.create.processCreatePaths, func(ctx context.Context, ref *coremetadata.AgentSessionRef, agentRef string) (mutationruntime.NativeCodexRoute, error) {
 			ctx, cancel := prepareNativeContext(ctx)
 			defer cancel()
 			route, err := resolveCodexNativeResumeRoute(ctx, r.create.codexNative, ref, agentRef)

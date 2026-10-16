@@ -43,6 +43,8 @@ for a shorter critical path; runner time and wall time must be measured separate
   temporary root, and runs every top-level test in
   `codex_process_binding_test.go`, `codex_process_ownership_test.go`,
   `process_attention_wiring_test.go`, and `process_host_supervisor_test.go`.
+  SDK process relaunch fixtures in `sdk_relaunch_process_cli_test.go` cover
+  frozen domains, host moves, child-free claims and startup cancellation.
   The runner sets `PMX_TEST_CLI` to that copy, isolates HOME, XDG directories
   and tmux's temporary directory, removes inherited `TMUX`, `TMUX_PANE`,
   `PROJMUX_*` and provider credentials, and keeps the Go caches fixed with

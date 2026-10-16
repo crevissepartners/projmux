@@ -30,16 +30,18 @@ const processDetachedLogLimit = 64 << 10
 // task) is an unlinked private file; the handshake is a private duplex fd.
 // The intermediate launcher never owns a provider and exits before success.
 type processDetachedRequest struct {
-	Relaunch      *processDetachedRelaunchRequest `json:",omitempty"`
-	Resume        *processDetachedResumeRequest   `json:",omitempty"`
-	Options       processAgentCreateOptions
-	Output        cli.OutputMode
-	Caller        coremetadata.ProcessIdentity
-	RegistryPath  string
-	Context       *mutationruntime.ProcessCreateContext `json:",omitempty"`
-	ResumeContext *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	RelaunchContext *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	Relaunch        *processDetachedRelaunchRequest       `json:",omitempty"`
+	Resume          *processDetachedResumeRequest         `json:",omitempty"`
+	Options         processAgentCreateOptions
+	Output          cli.OutputMode
+	Caller          coremetadata.ProcessIdentity
+	RegistryPath    string
+	Context         *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	ResumeContext   *mutationruntime.ProcessCreateContext `json:",omitempty"`
 }
 type processDetachedReply struct {
+	Relaunch              json.RawMessage `json:",omitempty"`
 	ErrorDetail           json.RawMessage `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
@@ -162,6 +164,15 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 		return err
 	}
 	_ = payload.Close()
+	if req.RelaunchContext != nil {
+		if req.Context != nil || req.ResumeContext != nil || req.Resume != nil || req.Relaunch == nil || resume == nil {
+			return errors.New("process-detached-context-relaunch-only")
+		}
+		if err = command.bindProcessCreateContext(*req.RelaunchContext); err != nil {
+			return err
+		}
+		resume.bindProcessResumeContext(command, *req.RelaunchContext)
+	}
 	if req.ResumeContext != nil {
 		if req.Context != nil || req.Resume == nil || req.Relaunch != nil || resume == nil {
 			return errors.New("process-detached-context-resume-only")

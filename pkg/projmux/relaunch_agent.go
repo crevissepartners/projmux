@@ -80,11 +80,19 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		return out, resourceRefusal(err)
 	}
 	target, _ := reg.Agent(selected.Matches[0].UID)
+	processSource := false
 	for _, p := range reg.PanesOf(target.Metadata.UID) {
 		if p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-			return out, &Refusal{Code: CodeRelaunchProcessUnsupported, message: "RelaunchAgent supports tmux Agents only; use projmux agent relaunch for a process Agent"}
+			processSource = true
 		}
 	}
+	if processSource || (q.Host != "" && q.Host != "tmux") {
+		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg)
+	}
+	if q.Detach || q.Prompt != "" || q.Binding != (core.ProcessBinding{}) {
+		return out, &Refusal{Code: CodeRelaunchRequestInvalid, message: "RelaunchAgentRequest process inputs require a process destination or source"}
+	}
+
 	refuse := func(reason, detail string) error {
 		return &Refusal{Code: Code(reason), message: fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason)}
 	}

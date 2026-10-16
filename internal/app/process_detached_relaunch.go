@@ -16,15 +16,11 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // Carry public argv and the exact read-only source proof, never planner pointers.
-type processDetachedRelaunchRequest struct {
-	Args          []string
-	Source        coremetadata.Agent
-	Pane          *coremetadata.Pane
-	AllowHostLost bool
-}
+type processDetachedRelaunchRequest = mutationruntime.ProcessDetachedRelaunchRequest
 
 type detachedRelaunchSessionKey struct{}
 type processDetachedRelaunchSession struct {
@@ -84,7 +80,7 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 	if err != nil {
 		return err
 	}
-	err = launchProcessDetached(ctx, executable, processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.rebind.create, stdout, stderr)
+	_, err = mutationruntime.LaunchDetachedProcessRelaunch(ctx, executable, mutationruntime.ProcessDetachedRelaunchEnvelope{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.loadRegistry, stdout, stderr, nil, false)
 	return c.detachedRelaunchFailure(reg, target, request, planned.processRecovery, err)
 }
 
@@ -149,7 +145,7 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 	if err != nil {
 		return err
 	}
-	if !request.detach || request.dryRun || request.agentRef != "uid:"+wire.Source.Metadata.UID {
+	if (req.RelaunchContext == nil && (!request.detach || request.dryRun)) || request.agentRef != "uid:"+wire.Source.Metadata.UID {
 		return errors.New("process-detached-relaunch-request-invalid")
 	}
 	request.allowHostLost = wire.AllowHostLost
@@ -159,12 +155,12 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 	}
 	target, found := reg.Agent(wire.Source.Metadata.UID)
 	if !found || !detachedRelaunchSourceEqual(target, &wire.Source) {
-		return encodeDetachedResumeError(encoder, identity, processhost.Binding{}, processhost.ErrStale)
+		return encodeDetachedRelaunchError(encoder, identity, processhost.Binding{}, nil, processhost.ErrStale)
 	}
 	if wire.Pane != nil {
 		pane, present := reg.Pane(wire.Pane.Metadata.UID)
 		if !present || !reflect.DeepEqual(pane.Status.Activation, wire.Pane.Status.Activation) || !processResumeRecordEqual(pane.Status.ProcessSession, wire.Pane.Status.ProcessSession) {
-			return encodeDetachedResumeError(encoder, identity, processhost.Binding{}, processhost.ErrStale)
+			return encodeDetachedRelaunchError(encoder, identity, processhost.Binding{}, nil, processhost.ErrStale)
 		}
 	}
 	life, cancel := processForegroundLifetime()
@@ -179,6 +175,9 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 	call.processAncestors = creator.processAncestors
 	call.hostTransferContext = life
 	call.hostTransferResult = &agentHostTransferResult{}
+	if req.RelaunchContext != nil {
+		return call.runSDKProcessRelaunchOwner(life, cancel, session, reg, target.Clone(), request)
+	}
 	err = call.dispatchRelaunch(reg, target.Clone(), request, io.Discard, io.Discard)
 	if err != nil {
 		_ = encoder.Encode(processDetachedReply{Owner: identity, Error: err.Error()})
@@ -187,13 +186,13 @@ func runProcessDetachedRelaunchOwner(conn net.Conn, encoder *json.Encoder, decod
 }
 
 func detachedRelaunchSourceEqual(a, b *coremetadata.Agent) bool {
-	return reflect.DeepEqual(a.Spec, b.Spec) && reflect.DeepEqual(a.Metadata, b.Metadata) && a.Status.Phase == b.Status.Phase && a.Status.PaneRef == b.Status.PaneRef && a.Status.SessionRef.SameConversation(b.Status.SessionRef)
+	return mutationruntime.DetachedRelaunchSourceEqual(a, b)
 }
 
 func (s *processDetachedRelaunchSession) finishOwned(ctx context.Context, cancel context.CancelFunc, owned *processAgentResumeResult, sync processRelaunchSynchronization, result agentRelaunchResult, request agentRelaunchRequest, fail func(error) error, beforeOwned ...func() error) error {
 	rollback := func(cause error) error {
 		cancel()
-		return encodeDetachedResumeError(s.encoder, s.identity, owned.Binding, fail(cause))
+		return encodeDetachedRelaunchError(s.encoder, s.identity, owned.Binding, &result, fail(cause))
 	}
 	if err := s.encoder.Encode(processDetachedReply{Owner: s.identity, Binding: owned.Binding, Phase: "starting"}); err != nil {
 		return rollback(err)
@@ -202,7 +201,8 @@ func (s *processDetachedRelaunchSession) finishOwned(ctx context.Context, cancel
 	if err := writeAgentRelaunchResult(&output, request, result); err != nil {
 		return rollback(err)
 	}
-	reply := processDetachedReply{Owner: s.identity, Binding: owned.Binding, Stdout: output.String(), Stderr: fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=detached\n", owned.Binding.Agent, owned.Binding.Pane)}
+	raw, _ := json.Marshal(result)
+	reply := processDetachedReply{Relaunch: raw, Owner: s.identity, Binding: owned.Binding, Stdout: output.String(), Stderr: fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=detached\n", owned.Binding.Agent, owned.Binding.Pane)}
 	if owned.Previous.MayBeTruncated {
 		reply.Stderr += processRelaunchHostLostNotice + "\n"
 	}
@@ -236,7 +236,7 @@ func (s *processDetachedRelaunchSession) finishClaim(ctx context.Context, cancel
 		cancel()
 		cause = errors.Join(cause, claim.Close())
 		cause = errors.Join(cause, c.rollbackDetachedRelaunchClaim(record, previous))
-		return encodeDetachedResumeError(s.encoder, s.identity, binding, cause)
+		return encodeDetachedRelaunchError(s.encoder, s.identity, binding, &result, cause)
 	}
 	result.Phase = coremetadata.PhaseOffline
 	result.NewPaneUID = binding.Pane
@@ -248,7 +248,8 @@ func (s *processDetachedRelaunchSession) finishClaim(ctx context.Context, cancel
 	if err := writeAgentRelaunchResult(&output, request, result); err != nil {
 		return fail(err)
 	}
-	reply := processDetachedReply{Owner: s.identity, Binding: binding, Claim: &claim.record, Stdout: output.String(), Stderr: fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=detached claim=waiting\n", binding.Agent, binding.Pane)}
+	raw, _ := json.Marshal(result)
+	reply := processDetachedReply{Relaunch: raw, Owner: s.identity, Binding: binding, Claim: &claim.record, Stdout: output.String(), Stderr: fmt.Sprintf("agent uid:%s pane uid:%s runtime=process foreground=detached claim=waiting\n", binding.Agent, binding.Pane)}
 	if err := s.encoder.Encode(reply); err != nil {
 		return fail(err)
 	}
@@ -337,45 +338,7 @@ func (c *agentCommand) rollbackDetachedRelaunchClaim(record, previous *deferredL
 }
 
 func awaitDetachedRelaunchCleanup(command *createCommand, req processDetachedRequest, owner coremetadata.ProcessIdentity, ready processDetachedReply) error {
-	ctx, cancel := context.WithTimeout(context.Background(), processRelaunchRetirementTimeout)
-	defer cancel()
-	ticker := time.NewTicker(processRelaunchRetirementPoll)
-	defer ticker.Stop()
-	source := req.Relaunch.Source
-	for {
-		reg, err := command.store.snapshot()
-		settled := false
-		if err == nil {
-			agent, exists := reg.Agent(source.Metadata.UID)
-			if exists {
-				// Admission failures may leave the old owner untouched. Never stop it.
-				settled = detachedRelaunchSourceEqual(agent, &source)
-				if settled && req.Relaunch.Pane != nil {
-					previous := req.Relaunch.Pane
-					current, present := reg.Pane(previous.Metadata.UID)
-					settled = present && reflect.DeepEqual(current.Status.Activation, previous.Status.Activation) && processResumeRecordEqual(current.Status.ProcessSession, previous.Status.ProcessSession)
-				}
-				pane, ambiguous := processResumePane(reg, source.Metadata.UID)
-				if pane != nil && !ambiguous && pane.Status.ProcessSession != nil && agent.Status.Phase == coremetadata.PhaseOffline && pane.Status.Activation.IsZero() {
-					binding := pane.Status.ProcessSession.Binding
-					settled = settled || (sameHostTransferSpec(agent.Spec, source.Spec) && reflect.DeepEqual(agent.Metadata.Annotations, source.Metadata.Annotations) && coremetadata.MatchesProcessWait(binding, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination))
-				}
-				if agent.Status.Phase == coremetadata.PhaseOffline && agent.Status.PaneRef == "" && relaunchCurrentHost(reg, *agent) == "tmux" && sameHostTransferSpec(agent.Spec, source.Spec) && reflect.DeepEqual(agent.Metadata.Annotations, source.Metadata.Annotations) {
-					settled = true
-				}
-			}
-		}
-		c := &agentCommand{messagePaths: agentMessagePaths{registryPath: req.RegistryPath}}
-		claim, claimErr := readDeferredClaim(c.deferredClaimPath(source.Metadata.UID))
-		if settled && claimErr == nil && (claim.Agent == "" || claim.Process != owner) && processIdentityAbsent(owner, localipc.Process) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("process-detached-cleanup-unconfirmed: agent uid:%s; inspect with: projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", source.Metadata.UID, source.Metadata.UID, source.Metadata.UID, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return mutationruntime.AwaitDetachedProcessRelaunchCleanup(command.store.snapshot, req.RegistryPath, *req.Relaunch, owner)
 }
 
 // The preview carries the exact recipe's command, never permission to recover.
