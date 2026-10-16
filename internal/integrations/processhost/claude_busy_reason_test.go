@@ -86,6 +86,9 @@ func TestClaudeBusyRefusalsNameTheirReason(t *testing.T) {
 		if err := p.Interrupt(context.Background(), a, "interrupt"); err != nil {
 			t.Fatal(err)
 		}
+		// Interrupt returns after writing the request. Consume its asynchronous
+		// ACK before measuring the refusal's zero-write observation interval.
+		observeUntil(t, p, func(Snapshot) bool { return hasEvent(p, "interrupt-ack") })
 		refuseNamed(t, p, join(p, a), ErrClaudeInterruptPending)
 		fixtureFrame(t, p, map[string]any{"type": "fixture-release-interrupt"})
 		observeUntil(t, p, func(s Snapshot) bool { return s.Turn == "" })
