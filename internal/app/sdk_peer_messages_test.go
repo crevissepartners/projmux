@@ -46,7 +46,7 @@ func TestSDKPeerMessageProcessSendStatusReplay(t *testing.T) {
 			ref := "uid:" + f.endpoint.binding.Agent
 			request := projmux.SendMessageRequest{Source: ref, Target: ref, Text: "peer context only", MessageRef: "message-sdk-peer", TTL: time.Minute}
 			var first core.MessageReceipt
-			for attempt := 0; attempt < 2; attempt++ {
+			for attempt := range 2 {
 				var got core.MessageReceipt
 				if lane == "sdk" {
 					got, err = sdk.SendMessage(context.Background(), request)
@@ -184,7 +184,7 @@ func TestSDKPeerMessageReceiptStateParity(t *testing.T) {
 					request := projmux.SendMessageRequest{Source: ref, Target: ref, Text: "peer", MessageRef: "message-state-parity", TTL: time.Minute}
 					expectedState := map[string]core.MessageState{"delivered": core.MessageDelivered, "held": core.MessageHeld, "refused": core.MessageRefused, "expired": core.MessageExpired, "stale": core.MessageStale, "unknown": core.MessageFailed}[state]
 					var first core.MessageReceipt
-					for attempt := 0; attempt < 2; attempt++ {
+					for attempt := range 2 {
 						var got core.MessageReceipt
 						if lane == "sdk" {
 							got, err = sdk.SendMessage(context.Background(), request)

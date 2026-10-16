@@ -18,7 +18,7 @@ func ReceiptFailureAction(receipt Receipt, claudeContentBytes int) string {
 			ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery},
 			claudeContentBytes)
 	}
-	return agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
+	return SendFailureAction(receipt.Delivery, claudeContentBytes)
 }
 
 func adapterForReplyReceipt(receipt Receipt) string {
@@ -30,7 +30,7 @@ func adapterForReplyReceipt(receipt Receipt) string {
 
 func agentMessageReplyFailureAction(record messagestore.Record, claudeContentBytes int) string {
 	if messagestore.KnownZeroReply(record) {
-		return agentMessageSendFailureAction(record.Delivery, claudeContentBytes) + "; retry manually with the same --reply-to and a new --message-ref (or omit --message-ref); original deadline and exact routes must remain valid"
+		return SendFailureAction(record.Delivery, claudeContentBytes) + "; retry manually with the same --reply-to and a new --message-ref (or omit --message-ref); original deadline and exact routes must remain valid"
 	}
 	return "inspect original and previous reply status and provider outcome; do not resend"
 }
@@ -38,17 +38,17 @@ func agentMessageReplyFailureAction(record messagestore.Record, claudeContentByt
 // agentMessageSendFailureAction names the mixed-version cause of an
 // invalid-content failure: an older target helper still caps push content at
 // the 4096-byte payload limit. The persisted reason is never changed.
-func agentMessageSendFailureAction(delivery coremessage.Delivery, claudeContentBytes int) string {
+func SendFailureAction(delivery coremessage.Delivery, claudeContentBytes int) string {
 	if !delivery.OutcomeUnknown && delivery.Reason == "provider-frame-invalid-content" &&
 		claudeContentBytes > coremessage.MaxPayloadBytes {
 		return fmt.Sprintf("rendered push content is %d bytes, above the %d-byte content limit of an older target helper; "+
 			"re-activate (restart) the target Agent to load the current helper before retrying",
 			claudeContentBytes, coremessage.MaxPayloadBytes)
 	}
-	return agentMessageFailureAction(delivery)
+	return FailureAction(delivery)
 }
 
-func agentMessageFailureAction(delivery coremessage.Delivery) string {
+func FailureAction(delivery coremessage.Delivery) string {
 	if delivery.OutcomeUnknown {
 		return "inspect provider outcome; do not resend while unknown; automatic resend disabled"
 	}

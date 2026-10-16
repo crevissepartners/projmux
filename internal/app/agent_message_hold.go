@@ -227,24 +227,6 @@ func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, tar
 		func() { c.heldRelease().releaseIfHeld(target.Metadata.UID) })
 }
 
-func (c *agentCommand) earlierHeldFor(agentUID, messageRef string) (bool, string) {
-	lister, ok := c.messageStore.(agentMessageHeldLister)
-	if !ok {
-		return false, ""
-	}
-	held, err := lister.HeldFor(agentUID)
-	if err != nil {
-		return false, ""
-	}
-	for _, record := range held {
-		if record.Envelope.MessageRef != messageRef {
-			return true, record.Delivery.Reason
-		}
-	}
-	return false, ""
-}
-
-// heldReleaseOutcome is how judging one held record ended.
 type heldReleaseOutcome int
 
 const (

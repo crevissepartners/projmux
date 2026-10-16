@@ -173,81 +173,8 @@ func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath st
 	return (agentmessages.ClaudeAdapter{}).Status(ctx, registryPath, route, ref)
 }
 
-func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) (agentdelivery.Delivery, bool) {
-	if response.Version != claudeCoordinationVersion || response.AutoResend || response.Reason != "" ||
-		response.ReplyRef != "" || response.ReplyCreated || response.ReplyDelivery != nil || response.QualificationRef != "" ||
-		response.ProviderVersion != "" || response.Ambiguous || response.ToolResult != nil {
-		return agentdelivery.Delivery{}, false
-	}
-	switch response.Kind {
-	case "refused":
-		if response.Delivery.MessageRef == "" && response.Delivery.State == "" {
-			return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateRefused, Reason: "provider-refused"}, true
-		}
-	case "stale":
-		if response.Delivery.MessageRef == "" && response.Delivery.State == "" {
-			return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "target-activation-stale"}, true
-		}
-	}
-	delivery := response.Delivery
-	if delivery.MessageRef != messageRef || (!delivery.State.Terminal() && delivery.State != agentdelivery.StateHeld) || response.Kind != string(delivery.State) {
-		return agentdelivery.Delivery{}, false
-	}
-	switch delivery.State {
-	case agentdelivery.StateDelivered:
-		if delivery.Ambiguous || delivery.WaiterRef == "" || (delivery.Reason != "provider-pipe-full-frame" && delivery.Reason != claudeNativePeerJoinedReason) {
-			return agentdelivery.Delivery{}, false
-		}
-	case agentdelivery.StateRefused, agentdelivery.StateExpired, agentdelivery.StateStale:
-		if delivery.Ambiguous || delivery.WaiterRef != "" || delivery.Reason == "" {
-			return agentdelivery.Delivery{}, false
-		}
-		validReason := (delivery.State == agentdelivery.StateRefused &&
-			(delivery.Reason == "exact-provider-version-unqualified" || delivery.Reason == "provider-frame-unsupported")) ||
-			(delivery.State == agentdelivery.StateExpired &&
-				(delivery.Reason == "ttl" || delivery.Reason == "ttl-after-durable-handoff")) ||
-			(delivery.State == agentdelivery.StateStale &&
-				(delivery.Reason == "helper-stale" || delivery.Reason == "unknown-message"))
-		if !validReason {
-			return agentdelivery.Delivery{}, false
-		}
-	case agentdelivery.StateHeld:
-		if delivery.Ambiguous || delivery.WaiterRef != "" || delivery.Reason != claudeHoldReasonTurnActive {
-			return agentdelivery.Delivery{}, false
-		}
-	case agentdelivery.StateFailed:
-		switch {
-		case delivery.WaiterRef == "":
-			if delivery.Ambiguous || delivery.Reason != "broker-handoff-persist-failed" {
-				return agentdelivery.Delivery{}, false
-			}
-		case delivery.Ambiguous:
-			if delivery.Reason != "provider-handoff-outcome-unknown" &&
-				delivery.Reason != "provider-write-partial" &&
-				delivery.Reason != "broker-delivery-persist-failed" &&
-				delivery.Reason != "observation-timeout" && delivery.Reason != "delivery-outcome-unknown" {
-				return agentdelivery.Delivery{}, false
-			}
-		case !knownClaudeProviderFailureReason(delivery.Reason):
-			return agentdelivery.Delivery{}, false
-		}
-	}
-	return delivery, true
-}
-
-func ambiguousClaudeDelivery(messageRef string) agentdelivery.Delivery {
-	return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateFailed,
-		Reason: "provider-handoff-outcome-unknown", Ambiguous: true}
-}
-
 // claudePrivateCoordinationEnvelope is the one private envelope a Claude push
 // carries. Submit sends it and the send pre-check renders it.
-func claudePrivateCoordinationEnvelope(target claudeCoordinationTarget, envelope coremessage.Envelope) claudeCoordinationEnvelope {
-	return claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: envelope.MessageRef, Target: target,
-		Source:   claudeCoordinationSourceOf(envelope.Authority),
-		Deadline: envelope.Deadline, BrokerEnvelope: &envelope}
-}
-
 // claudeSendAssumedTokenBytes is the auth token length the sender assumes. The
 // sender never reads a messaging token; only the target helper holds one.
 const claudeSendAssumedTokenBytes = 48
@@ -275,28 +202,10 @@ func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, e
 
 // claudeSendFrameBytes measures with the real frame builder. An oversized frame
 // is reported by the builder's canonical size reason, which carries the size.
-func claudeSendFrameBytes(token, content string) (int, error) {
-	frame, err := buildClaudeProviderPushFrame(token, content)
-	if err == nil {
-		return len(frame), nil
-	}
-	var size int
-	if reason := err.Error(); isClaudeProviderFrameSizeReason(reason) {
-		if _, scanErr := fmt.Sscanf(reason, "provider-frame-too-large: frameBytes=%d", &size); scanErr == nil {
-			return size, nil
-		}
-	}
-	return 0, err
-}
-
 // agentMessageReceipt follows the envelope's Origin and Source rule: an Agent
 // message's receipt has a source and no origin, byte for byte as before, and
 // operator input's has an origin and no source.
 type agentMessageReceipt = agentmessages.Receipt
-
-func receiptFor(record messagestore.Record) agentMessageReceipt {
-	return agentmessages.ReceiptFor(record)
-}
 
 func (c *agentCommand) runMessage(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
@@ -371,16 +280,8 @@ func agentMessageUndelivered(delivery coremessage.Delivery) bool {
 // agentMessageReceiptFailureAction is the one action selection for a terminal
 // undelivered receipt. writeAgentMessageReceiptText prints it and a nonzero send
 // error names it, so the two cannot drift.
-func agentMessageReceiptFailureAction(receipt agentMessageReceipt, claudeContentBytes int) string {
-	if receipt.Target.Provider != string(aiprovider.Claude) {
-		claudeContentBytes = 0
-	}
-	if receipt.ReplyTo != "" {
-		return agentMessageReplyFailureAction(messagestore.Record{Envelope: coremessage.Envelope{
-			ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery},
-			claudeContentBytes)
-	}
-	return agentMessageSendFailureAction(receipt.Delivery, claudeContentBytes)
+func agentMessageReceiptFailureAction(receipt agentMessageReceipt, bytes int) string {
+	return agentmessages.ReceiptFailureAction(receipt, bytes)
 }
 
 // explicitReplyRefusalReason names a ValidateReply refusal for the CLI and the
@@ -399,16 +300,8 @@ func explicitReplyRefusalReason(reply coremessage.Envelope, correlation error) s
 	return coremessage.ReasonExplicitReplyCorrelation
 }
 
-func (c *agentCommand) replyCorrelationRefusal(originalRef, reason string) error {
-	response := claudeCoordinationResponse{Reason: reason}
-	if lookup, ok := c.messageStore.(interface {
-		Reply(string) (messagestore.Record, bool, error)
-	}); ok {
-		if previous, found, err := lookup.Reply(originalRef); err == nil && found {
-			response.ReplyRef, response.ReplyDelivery = previous.Envelope.MessageRef, &previous.Delivery
-		}
-	}
-	return fmt.Errorf("replyTo=%s: %w", originalRef, explicitReplyRefusal(response))
+func (c *agentCommand) replyCorrelationRefusal(ref, reason string) error {
+	return (agentmessages.Service{Store: c.messageStore}).ReplyCorrelationRefusal(ref, reason)
 }
 
 func (c *agentCommand) resolveMessageTargetRoute(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
@@ -781,16 +674,8 @@ func (c *agentCommand) resolveMessageAgent(registry coremetadata.Registry, ref, 
 	return agent.Clone(), nil
 }
 
-func requireAgentMessageCapability(action string, agent coremetadata.Agent) error {
-	provider, ok := aiprovider.Lookup(agent.Spec.Provider)
-	if !ok {
-		return fmt.Errorf("capability %s unsupported for provider %q", action, agent.Spec.Provider)
-	}
-	_, cell, ok := aiprovider.LookupAgentCapability(action, provider.ID)
-	if !ok || cell.Mode == aiprovider.SupportUnsupported {
-		return fmt.Errorf("capability %s unsupported for provider %q", action, agent.Spec.Provider)
-	}
-	return nil
+func requireAgentMessageCapability(action string, a coremetadata.Agent) error {
+	return agentmessages.RequireCapability(action, a)
 }
 
 func (c *agentCommand) resolveMessageRoute(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
@@ -871,59 +756,6 @@ func agentMessageOriginLabel(origin coremessage.Origin) string {
 	return origin.Kind + " (" + origin.Client + ")"
 }
 
-func adapterForReplyReceipt(receipt agentMessageReceipt) string {
-	if receipt.Target.Provider == "claude" {
-		return "claude-coordination"
-	}
-	return "codex-inbox"
-}
-
-func agentMessageReplyFailureAction(record messagestore.Record, claudeContentBytes int) string {
-	if messagestore.KnownZeroReply(record) {
-		return agentMessageSendFailureAction(record.Delivery, claudeContentBytes) + "; retry manually with the same --reply-to and a new --message-ref (or omit --message-ref); original deadline and exact routes must remain valid"
-	}
-	return "inspect original and previous reply status and provider outcome; do not resend"
-}
-
-// agentMessageSendFailureAction names the mixed-version cause of an
-// invalid-content failure: an older target helper still caps push content at
-// the 4096-byte payload limit. The persisted reason is never changed.
-func agentMessageSendFailureAction(delivery coremessage.Delivery, claudeContentBytes int) string {
-	if !delivery.OutcomeUnknown && delivery.Reason == "provider-frame-invalid-content" &&
-		claudeContentBytes > coremessage.MaxPayloadBytes {
-		return fmt.Sprintf("rendered push content is %d bytes, above the %d-byte content limit of an older target helper; "+
-			"re-activate (restart) the target Agent to load the current helper before retrying",
-			claudeContentBytes, coremessage.MaxPayloadBytes)
-	}
-	return agentMessageFailureAction(delivery)
-}
-
-func agentMessageFailureAction(delivery coremessage.Delivery) string {
-	if delivery.OutcomeUnknown {
-		return "inspect provider outcome; do not resend while unknown; automatic resend disabled"
-	}
-	if isClaudeProviderFrameSizeReason(delivery.Reason) {
-		return "reduce payload before retrying; frame bytes include auth and serialized content"
-	}
-	switch delivery.Reason {
-	case "provider-frame-invalid-auth":
-		return "check provider auth configuration before retrying"
-	case "provider-frame-invalid-content", "provider-frame-build-failed", "provider-frame-unsupported",
-		"claude-private-frame-unsupported", "codex-turn-content-build-failed":
-		return "correct message content or configuration before retrying"
-	case "codex-native-control-unconfigured", "codex-native-binding-unavailable":
-		return "check exact Agent native control availability before retrying"
-	case codexPushRefusedReason:
-		return "no turn was written; retry manually once the target thread state allows it"
-	case "provider-prewrite-refused":
-		return "check current provider route before retrying"
-	case "provider-write-zero":
-		return "check provider connection before retrying"
-	default:
-		return "check message status and target availability before retrying"
-	}
-}
-
 func (c *agentCommand) messageClock() time.Time {
 	if c == nil || c.messageNow == nil {
 		return time.Now().UTC()
@@ -983,7 +815,7 @@ func (c *agentCommand) peerMessageService() agentmessages.Service {
 		},
 		NewRef: c.newMessageRef, Claude: c.messageClaude, RouteRefusalPrefix: claudeRouteRefusalPrefix,
 		ResumeRecovery: codexResumeRecovery, FailureAction: agentMessageReceiptFailureAction, MapRegistryError: MapMetadataError,
-		Store: c.messageStore, LoadRegistry: c.readMessageRegistry, Now: c.messageClock,
+		CorrelationRefusal: c.replyCorrelationRefusal, Store: c.messageStore, LoadRegistry: c.readMessageRegistry, Now: c.messageClock,
 		ResolveRoute: func(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
 			return c.resolveMessageRoute(reg, agent)
 		},

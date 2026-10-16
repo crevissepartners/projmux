@@ -27,9 +27,9 @@ const (
 type ClaudeAdapter struct{ Executable func() (string, error) }
 type claudeCoordinationTarget = claudeadapter.CoordinationTarget
 type claudeCoordinationRequest = claudeadapter.CoordinationRequest[json.RawMessage, claudeCoordinationEnvelope, json.RawMessage, json.RawMessage, coremessage.Envelope]
-type claudeCoordinationResponse = claudeadapter.CoordinationResponse[json.RawMessage, json.RawMessage, json.RawMessage, agentdelivery.Delivery, coremessage.Delivery]
+type ClaudeResponse = claudeadapter.CoordinationResponse[json.RawMessage, json.RawMessage, json.RawMessage, agentdelivery.Delivery, coremessage.Delivery]
 
-func requestClaudeCoordination(ctx context.Context, path string, route coremetadata.AgentRouteRef, req claudeCoordinationRequest) (claudeCoordinationResponse, error) {
+func requestClaudeCoordination(ctx context.Context, path string, route coremetadata.AgentRouteRef, req claudeCoordinationRequest) (ClaudeResponse, error) {
 	return claudeadapter.CallCoordination[json.RawMessage, claudeCoordinationEnvelope, json.RawMessage, json.RawMessage, coremessage.Envelope, json.RawMessage, json.RawMessage, agentdelivery.Delivery, coremessage.Delivery](ctx, path, route, req)
 }
 func claudeCoordinationCallPossiblyDispatched(err error) bool {
@@ -113,7 +113,7 @@ func (a ClaudeAdapter) Submit(ctx context.Context, registryPath string, route co
 		}
 		return ambiguousClaudeDelivery(envelope.MessageRef), nil
 	}
-	delivery, valid := claudeResponseDelivery(envelope.MessageRef, response)
+	delivery, valid := ClaudeResponseDelivery(envelope.MessageRef, response)
 	if !valid {
 		return ambiguousClaudeDelivery(envelope.MessageRef), nil
 	}
@@ -133,14 +133,14 @@ func (a ClaudeAdapter) Status(ctx context.Context, registryPath string, route co
 	if err != nil {
 		return agentdelivery.Delivery{}, err
 	}
-	delivery, valid := claudeResponseDelivery(messageRef, response)
+	delivery, valid := ClaudeResponseDelivery(messageRef, response)
 	if !valid {
 		return agentdelivery.Delivery{}, errors.New("claude coordination response is invalid")
 	}
 	return delivery, nil
 }
 
-func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) (agentdelivery.Delivery, bool) {
+func ClaudeResponseDelivery(messageRef string, response ClaudeResponse) (agentdelivery.Delivery, bool) {
 	if response.Version != claudeCoordinationVersion || response.AutoResend || response.Reason != "" ||
 		response.ReplyRef != "" || response.ReplyCreated || response.ReplyDelivery != nil || response.QualificationRef != "" ||
 		response.ProviderVersion != "" || response.Ambiguous || response.ToolResult != nil {
@@ -291,7 +291,7 @@ func (a ClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string,
 		return "", false, &ReplyUncertainError{Err: fmt.Errorf("replyRef=%s: explicit-reply-outcome-unknown; inspect message status; do not resend", reply.MessageRef)}
 	}
 	if response.Kind == "reply-refused" {
-		return "", false, explicitReplyRefusal(response)
+		return "", false, ExplicitReplyRefusal(response)
 	}
 	if response.ReplyRef != reply.MessageRef || response.Reason != "" || response.ReplyDelivery != nil ||
 		(response.Kind != "reply-accepted" || !response.ReplyCreated) && (response.Kind != "reply-replayed" || response.ReplyCreated) {
@@ -300,7 +300,7 @@ func (a ClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string,
 	return response.ReplyRef, response.ReplyCreated, nil
 }
 
-func explicitReplyRefusal(response claudeCoordinationResponse) error {
+func ExplicitReplyRefusal(response ClaudeResponse) error {
 	action := "inspect original and previous reply status; do not resend"
 	if response.Reason == coremessage.ReasonExplicitReplyConversationChanged {
 		action = "the original belongs to another conversation of that Agent; send a new message without --reply-to"
@@ -348,7 +348,7 @@ func renderProviderCoordinationContent(envelope claudeCoordinationEnvelope, exec
 	// Operator input has no Agent to answer, in the sent frame or the sized one.
 	if broker.Operator() {
 		source = coordinationFrameOrigin{Kind: broker.Origin.Kind, Client: broker.Origin.Client}
-		sourceNotice, replyAction = coordinationOperatorSourceNotice(broker.Origin.Client), ""
+		sourceNotice, replyAction = OperatorSourceNotice(broker.Origin.Client), ""
 	}
 	content, err := json.Marshal(claudeProviderCoordinationContent{
 		Kind: "projmux-coordination", SchemaVersion: coordinationFrameSchemaVersion,
@@ -390,7 +390,7 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 	if token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
 		return nil, errors.New("provider-frame-invalid-auth")
 	}
-	if !validClaudeProviderPushContent(content) {
+	if !ValidClaudePushContent(content) {
 		return nil, errors.New("provider-frame-invalid-content")
 	}
 	auth, err := json.Marshal(claudeProviderAuthFrame{Type: "auth", Token: token})
@@ -415,7 +415,7 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 // validClaudeProviderPushContent judges push content shape only. Its size is
 // bounded by the serialized frame budget, never by the reply payload limit that
 // validClaudeAssistantReply keeps for the reply tool argv body.
-func validClaudeProviderPushContent(content string) bool {
+func ValidClaudePushContent(content string) bool {
 	return content != "" && utf8.ValidString(content) && !strings.ContainsRune(content, '\x00')
 }
 
@@ -459,7 +459,7 @@ const coordinationSourceNotice = "Source agent/provider are claimed, unverified.
 // claimed; what the reader must know is which client the input came through
 // and that a person's identity was not checked either. The client is the
 // origin's own name value; this file knows no client by name.
-func coordinationOperatorSourceNotice(client string) string {
+func OperatorSourceNotice(client string) string {
 	return "Operator input that arrived through the projmux " + client + " client; projmux did not verify the person."
 }
 

@@ -68,7 +68,7 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 	// route resolution so its reason is the one reported, whatever the target.
 	if replyTo != "" {
 		if original, found, err := s.Store.Get(replyTo); err == nil && found && original.Envelope.Operator() {
-			return fmt.Errorf("%s: %w", spelling, s.replyCorrelationRefusal(replyTo, message.ReasonExplicitReplyOperatorOrigin))
+			return fmt.Errorf("%s: %w", spelling, s.ReplyCorrelationRefusal(replyTo, message.ReasonExplicitReplyOperatorOrigin))
 		}
 	}
 	registry, err := s.LoadRegistry()
@@ -95,7 +95,7 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 	if err != nil {
 		if replyTo != "" {
 			return fmt.Errorf("%s: %s: %w; %w", spelling, s.RouteRefusalPrefix("source", err), err,
-				s.replyCorrelationRefusal(replyTo, "explicit-reply-source-route-stale"))
+				s.ReplyCorrelationRefusal(replyTo, "explicit-reply-source-route-stale"))
 		}
 		return fmt.Errorf("%s: %s: %w", spelling, s.RouteRefusalPrefix("source", err), err)
 	}
@@ -109,7 +109,7 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 	if err != nil {
 		if replyTo != "" {
 			err = fmt.Errorf("%s: %s: %w; %w", spelling, s.RouteRefusalPrefix("target", err), err,
-				s.replyCorrelationRefusal(replyTo, "explicit-reply-target-route-stale"))
+				s.ReplyCorrelationRefusal(replyTo, "explicit-reply-target-route-stale"))
 		} else {
 			err = fmt.Errorf("%s: %s: %w", spelling, s.RouteRefusalPrefix("target", err), err)
 		}
@@ -176,10 +176,10 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 			envelope.AcceptedAt, envelope.Deadline = existing.Envelope.AcceptedAt, existing.Envelope.Deadline
 		}
 		if !original.Envelope.Deadline.After(now) {
-			return fmt.Errorf("%s: %w", spelling, s.replyCorrelationRefusal(replyTo, "explicit-reply-deadline-expired"))
+			return fmt.Errorf("%s: %w", spelling, s.ReplyCorrelationRefusal(replyTo, "explicit-reply-deadline-expired"))
 		}
 		if err := message.ValidateReply(original.Envelope, envelope); err != nil {
-			return fmt.Errorf("%s: %w; %w", spelling, err, s.replyCorrelationRefusal(replyTo, explicitReplyRefusalReason(envelope, err)))
+			return fmt.Errorf("%s: %w; %w", spelling, err, s.ReplyCorrelationRefusal(replyTo, explicitReplyRefusalReason(envelope, err)))
 		}
 	}
 	// The envelope is judged before any provider work. The store refuses the
@@ -297,7 +297,10 @@ func agentMessageUndelivered(delivery message.Delivery) bool {
 	return delivery.State.Terminal() && delivery.State != message.StateDelivered
 }
 
-func (s Service) replyCorrelationRefusal(originalRef, reason string) error {
+func (s Service) ReplyCorrelationRefusal(originalRef, reason string) error {
+	if s.CorrelationRefusal != nil {
+		return s.CorrelationRefusal(originalRef, reason)
+	}
 	previousRef := ""
 	var delivery *message.Delivery
 	if lookup, ok := s.Store.(interface {

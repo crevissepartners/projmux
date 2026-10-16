@@ -47,6 +47,7 @@ type Store interface {
 // Service owns receipt transitions. Adapters only resolve exact authorities and
 // exchange bounded provider frames. Status never dispatches a message.
 type Service struct {
+	CorrelationRefusal func(string, string) error
 	// Only the CLI adapter sets this; SDK requests always require Source.
 	AllowImplicitSource bool
 	RegistryPath        string

@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
@@ -54,10 +53,6 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 // validClaudeProviderPushContent judges push content shape only. Its size is
 // bounded by the serialized frame budget, never by the reply payload limit that
 // validClaudeAssistantReply keeps for the reply tool argv body.
-func validClaudeProviderPushContent(content string) bool {
-	return content != "" && utf8.ValidString(content) && !strings.ContainsRune(content, '\x00')
-}
-
 // Reasons cross the helper/public boundary and are persisted in existing
 // receipts. Only closed tokens and canonical numeric frame sizes belong here;
 // never attach a marshal, socket, credential, content, or writer error.

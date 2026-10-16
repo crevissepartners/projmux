@@ -63,19 +63,6 @@ func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, regist
 	return (agentmessages.ClaudeAdapter{}).ExplicitReply(ctx, registryPath, source, reply)
 }
 
-func explicitReplyRefusal(response claudeCoordinationResponse) error {
-	action := "inspect original and previous reply status; do not resend"
-	if response.Reason == coremessage.ReasonExplicitReplyConversationChanged {
-		action = "the original belongs to another conversation of that Agent; send a new message without --reply-to"
-	}
-	if response.ReplyDelivery != nil {
-		return fmt.Errorf("%s; previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
-			response.Reason, response.ReplyRef, response.ReplyDelivery.State, response.ReplyDelivery.Reason,
-			response.ReplyDelivery.OutcomeUnknown, action)
-	}
-	return fmt.Errorf("%s; previousRef=%s; %s", response.Reason, response.ReplyRef, action)
-}
-
 func (b *liveClaudeDialogueBroker) ReplyStatus(originalRef string) (messagestore.Record, bool, error) {
 	return b.store.Reply(originalRef)
 }
