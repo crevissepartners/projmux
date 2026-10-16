@@ -403,3 +403,69 @@ func TestProcessDeleteRejectsReplacedClaimBeforeEffect(t *testing.T) {
 		})
 	}
 }
+
+// Terminal tasks are represented here by the reader's confirmed-absence result;
+// the Linux reader's S-to-Z/X race is covered in localipc, where its seam lives.
+func TestProcessDeleteUnknownOwnerIdentityEvidence(t *testing.T) {
+	for _, mode := range []string{"both-absent", "uncertain", "host-live", "child-live", "binding-changed"} {
+		t.Run(mode, func(t *testing.T) {
+			reg, plan, target := deleteProcessFixture(t)
+			before := reg.Clone()
+			d := NewProcessAgentDeleter(filepath.Join(t.TempDir(), "metadata", "registry.json"))
+			d.Load = func() (m.Registry, error) { return reg.Clone(), nil }
+			d.ReadIdentity = func(pid int) (m.ProcessIdentity, int, error) {
+				if mode == "uncertain" {
+					return m.ProcessIdentity{}, 0, errors.New("process identity unavailable")
+				}
+				if mode == "host-live" && pid == target.Activation.HostProcess.PID {
+					return target.Activation.HostProcess, 0, nil
+				}
+				if mode == "child-live" && pid == target.Activation.Child.PID {
+					return target.Activation.Child, 0, nil
+				}
+				return m.ProcessIdentity{}, 0, localipc.ErrProcessAbsent
+			}
+			d.Alive = func(identity m.ProcessIdentity) bool {
+				actual, _, err := d.ReadIdentity(identity.PID)
+				return err == nil && actual == identity
+			}
+			stops, commits := 0, 0
+			d.Stop = func(context.Context, m.Registry, m.Agent) error {
+				stops++
+				return errors.New("owner must not be stopped without evidence")
+			}
+			d.Mutate = func(_ m.Kind, _ []string, apply func(*m.Registry, m.Mutator) error) error {
+				commits++
+				return apply(&reg, store.DefaultMutator())
+			}
+			targets, err := d.ClassifyPlan(reg, plan)
+			if mode == "host-live" && (err != nil || len(targets) != 1 || targets[0].Runtime != processDeleteRuntimeRunning) {
+				t.Fatalf("live host was not classified running: %+v %v", targets, err)
+			}
+			if mode == "binding-changed" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				pane, _ := reg.Pane(target.Pane)
+				pane.Status.ProcessSession.Binding.Generation = "replacement-generation"
+				before = reg.Clone()
+			}
+			var outcome ProcessDeleteOutcome
+			if err == nil {
+				outcome, err = d.Execute(context.Background(), plan, targets, nil)
+			}
+			if mode == "both-absent" {
+				if err != nil || stops != 0 || commits != 1 || len(outcome.Targets) != 1 || outcome.Targets[0].Runtime != processDeleteRuntimeUnknown || outcome.Targets[0].Evidence != "owner-host-and-child-absent" {
+					t.Fatalf("outcome=%+v err=%v stops=%d commits=%d", outcome, err, stops, commits)
+				}
+				if _, present := reg.Agent(target.Agent); present {
+					t.Fatal("confirmed-absent unknown owner was retained")
+				}
+				return
+			}
+			if err == nil || commits != 0 || !reflect.DeepEqual(before, reg) {
+				t.Fatalf("unsafe deletion: err=%v stops=%d commits=%d", err, stops, commits)
+			}
+		})
+	}
+}
