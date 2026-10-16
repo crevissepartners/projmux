@@ -146,17 +146,29 @@ func runAgentMessageRelease(args []string) error {
 		return usageError("internal " + agentMessageReleaseRoute + " requires --agent uid:<agent>")
 	}
 	command := newAgentCommand()
-	if len(args) == 8 {
-		if args[2] != "--config-dir" || args[4] != "--state-dir" || args[6] != "--socket-path" || !filepath.IsAbs(args[3]) || !filepath.IsAbs(args[5]) || args[7] != "" && !filepath.IsAbs(args[7]) {
-			return usageError("invalid explicit held-message release paths")
-		}
-		var err error
-		command, err = explicitMessageReleaseCommand(config.Paths{ConfigDir: args[3], StateDir: args[5]}, args[7])
+	paths, socket, explicit, err := parseMessageReleasePaths(args)
+	if err != nil {
+		return err
+	}
+	if explicit {
+		command, err = explicitMessageReleaseCommand(paths, socket)
 		if err != nil {
 			return err
 		}
 	}
 	return command.releaseHeldMessages(strings.TrimPrefix(args[1], selector.UIDPrefix))
+}
+
+// parseMessageReleasePaths is shared with main's outer journal routing. Even
+// malformed explicit arguments must never select an ambient journal.
+func parseMessageReleasePaths(args []string) (config.Paths, string, bool, error) {
+	if len(args) == 2 && args[0] == "--agent" {
+		return config.Paths{}, "", false, nil
+	}
+	if len(args) != 8 || args[0] != "--agent" || !strings.HasPrefix(args[1], selector.UIDPrefix) || args[2] != "--config-dir" || args[4] != "--state-dir" || args[6] != "--socket-path" || !filepath.IsAbs(args[3]) || !filepath.IsAbs(args[5]) || args[7] != "" && !filepath.IsAbs(args[7]) {
+		return config.Paths{}, "", true, usageError("invalid explicit held-message release paths")
+	}
+	return config.Paths{ConfigDir: args[3], StateDir: args[5]}, args[7], true, nil
 }
 
 func explicitMessageReleaseCommand(paths config.Paths, socket string) (*agentCommand, error) {

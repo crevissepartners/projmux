@@ -272,3 +272,27 @@ func TestSDKPeerMessageReleaseFreezesRegistryCASAndMirror(t *testing.T) {
 		t.Fatalf("release touched ambient state: %v", err)
 	}
 }
+
+func TestSDKPeerMessageReleaseOuterJournalUsesExactState(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "deep", "custom-config")
+	stateDir := filepath.Join(root, "deep", "custom-state")
+	args := []string{"internal", agentMessageReleaseRoute, "--agent", "uid:agent-target", "--config-dir", configDir, "--state-dir", stateDir, "--socket-path", ""}
+	state, explicit, err := NativeObservationStateDir(args)
+	if err != nil || !explicit || state != stateDir {
+		t.Fatalf("outer journal route=%q/%t/%v", state, explicit, err)
+	}
+	for _, invalid := range [][]string{args[:8], append(append([]string{}, args[:7]...), "relative", "--socket-path", ""), {"internal", agentMessageReleaseRoute, "--state-dir", stateDir}} {
+		if state, explicit, err := NativeObservationStateDir(invalid); err == nil || !explicit || state != "" {
+			t.Fatalf("invalid explicit route fell back: %v => %q/%t/%v", invalid, state, explicit, err)
+		}
+	}
+	if _, explicit, err := NativeObservationStateDir(args[:4]); err != nil || explicit {
+		t.Fatalf("legacy release changed: %t/%v", explicit, err)
+	}
+	// Selecting the outer journal is pure, including malformed explicit paths.
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("journal selection wrote outside an invocation: %v/%v", entries, err)
+	}
+}
