@@ -17,8 +17,11 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 func detachedResumeCLI(t *testing.T, ctx context.Context, f processCreateCLI, args ...string) []byte {
@@ -182,15 +185,96 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
 			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 			defer cancel()
+			// Cache only values observed by this test's original calls. Emission
+			// does no state/IPC/process reads and never replays a failed poll.
+			started := time.Now()
+			type validReceipt struct {
+				At                     time.Duration
+				State, Reason, Unknown string
+			}
+			type peerPoll struct {
+				Ref, Stage                         string
+				Started, PollStarted, PollFinished time.Duration
+				Polls                              int
+				Command, Decode                    string
+				LastValid                          validReceipt
+			}
+			var diagnostic struct {
+				Stage, Phase                  string
+				BodyPassedBeforeSourceCleanup bool
+				StageAt, EmittedAt            time.Duration
+				EnqueueRef, EnqueueResult     string
+				Record                        struct {
+					Sampled                                                 bool
+					At                                                      time.Duration
+					BindingOwnerSame, GenerationChanged                     bool
+					SessionSame, ThreadSame, ConnectionPresent, TurnPresent bool
+				}
+				Pause struct {
+					Started, Finished                          time.Duration
+					Inbox, Claim, Identity, Input, Stop, Proof string
+					ClaimUnlock, InboxClose, Rescue, Preserve  string
+					StopSent, ProofOK                          bool
+				}
+				NotSampled [4]string
+				Peers      [3]peerPoll
+			}
+			diagnostic.NotSampled = [4]string{"source-record", "host", "lease", "pending"}
+			diagnostic.Pause.Inbox, diagnostic.Pause.Claim = "not-sampled", "not-sampled"
+			diagnostic.Pause.Identity, diagnostic.Pause.Input = "not-sampled", "not-sampled"
+			diagnostic.Pause.Stop, diagnostic.Pause.Proof = "not-sampled", "not-sampled"
+			diagnostic.Pause.ClaimUnlock, diagnostic.Pause.InboxClose, diagnostic.Pause.Rescue, diagnostic.Pause.Preserve = "not-called", "not-called", "not-needed", "not-needed"
+			for i, ref := range []string{"detached-first", "detached-second", "detached-third"} {
+				diagnostic.Peers[i] = peerPoll{Ref: ref, Stage: "not-sampled", Command: "not-sampled", Decode: "not-sampled", LastValid: validReceipt{State: "not-sampled", Reason: "not-sampled", Unknown: "not-sampled"}}
+			}
+			stage := func(name string) {
+				diagnostic.Stage, diagnostic.StageAt = name, time.Since(started)
+			}
+			emitted := false
+			emit := func(phase string) {
+				if !t.Failed() || emitted {
+					return
+				}
+				emitted = true
+				diagnostic.Phase = phase
+				diagnostic.EmittedAt = time.Since(started)
+				raw, err := json.Marshal(diagnostic)
+				const prefix = "detached peer cached failure: "
+				if err != nil || len(prefix)+len(raw) > 4096 {
+					t.Log("detached peer cached failure: encoding unavailable or size limit")
+					return
+				}
+				t.Log(prefix + string(raw))
+			}
+			defer func() {
+				phase := "setup-fallback"
+				if diagnostic.BodyPassedBeforeSourceCleanup {
+					phase = "source-cleanup-failure-after-body-pass"
+				}
+				emit(phase)
+			}()
+			stage("initial-owned")
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			stage("initial-conversation")
 			awaitDetachedInitialConversation(t, ctx, f, first.ref)
+			stage("initial-wait")
 			first.shutdown(t)
+			stage("retired-record")
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			stage("source-owned")
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source"))
 			defer source.shutdown(t)
+			defer func() {
+				// This boundary precedes the original source shutdown defer.
+				// Passing it is not evidence of source cleanup or provider Wait.
+				diagnostic.BodyPassedBeforeSourceCleanup = !t.Failed()
+				emit("body-failure-before-source-cleanup")
+			}()
 			cleanupDetachedResume(t, f, first.ref)
+			stage("claim-handshake")
 			detachedResumeCLI(t, ctx, f, "agent", "resume", first.ref, "--wait-for-peer", "--detach")
 			c := &agentCommand{messagePaths: agentMessagePaths{registryPath: f.store.Path()}}
+			stage("claim-read")
 			claim, err := readDeferredClaim(c.deferredClaimPath(old.Binding.AgentUID))
 			if err != nil {
 				t.Fatal(err)
@@ -199,36 +283,289 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = process.Signal(syscall.SIGSTOP); err != nil {
-				t.Fatal(err)
+			// Only this fresh fixture's pre-send, input-free claim may use
+			// inbox -> claim order. No Store method may reenter the held inbox.
+			sameClaimProcess := func() string {
+				identity, _, identityErr := localipc.Process(claim.Process.PID)
+				if errors.Is(identityErr, localipc.ErrProcessAbsent) {
+					return "absent"
+				}
+				if identityErr != nil {
+					return "unconfirmed"
+				}
+				if identity != claim.Process {
+					return "different"
+				}
+				return "same"
 			}
-			t.Cleanup(func() { _ = process.Signal(syscall.SIGCONT) })
+			// The existing fixture sentinel also preserves other unresolved owned
+			// cleanup cases. Never move/delete this or any other fixture root here.
+			preservePauseRoot := func() {
+				diagnostic.Pause.Preserve = "requested"
+				if os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("claim pause cleanup unresolved\n"), 0600) != nil {
+					diagnostic.Pause.Preserve = "write-error"
+				}
+			}
+			continueClaim := func() string {
+				if identity := sameClaimProcess(); identity != "same" {
+					return identity
+				}
+				if process.Signal(syscall.SIGCONT) != nil {
+					return "signal-error"
+				}
+				return "sent"
+			}
+			var inboxCloseErr error
+			func() {
+				diagnostic.Pause.Started = time.Since(started)
+				var inboxGuard *os.File
+				var claimUnlock func()
+				// t.Fatal/Goexit also runs this finalizer, before source.shutdown.
+				defer func() {
+					if claimUnlock != nil {
+						diagnostic.Pause.ClaimUnlock = "called"
+						claimUnlock()
+						// The func() API hides Close errors; this is not release proof.
+						diagnostic.Pause.ClaimUnlock = "returned"
+					}
+					if inboxGuard != nil {
+						inboxCloseErr = inboxGuard.Close()
+						diagnostic.Pause.InboxClose = "returned-nil"
+						if inboxCloseErr != nil {
+							diagnostic.Pause.InboxClose = "returned-error"
+						}
+					}
+					if diagnostic.Pause.StopSent && (!diagnostic.Pause.ProofOK || t.Failed() || inboxCloseErr != nil) {
+						diagnostic.Pause.Rescue = continueClaim()
+						if diagnostic.Pause.Rescue != "sent" {
+							preservePauseRoot()
+						}
+					}
+					if inboxCloseErr != nil {
+						preservePauseRoot()
+					}
+					diagnostic.Pause.Finished = time.Since(started)
+				}()
+				stage("pause-inbox-guard")
+				inbox := messagestore.NewStore(filepath.Dir(filepath.Dir(f.store.Path()))).Path()
+				relative, pathErr := filepath.Rel(f.root, inbox)
+				if pathErr != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+					diagnostic.Pause.Inbox = "outside-fixture"
+					t.Fatal("claim pause inbox outside fixture")
+				}
+				if err = localstate.EnsurePrivateDir(filepath.Dir(inbox)); err != nil {
+					diagnostic.Pause.Inbox = "prepare-error"
+					t.Fatal("claim pause inbox directory unavailable")
+				}
+				inboxGuard, err = localstate.AcquireFileLockContext(ctx, inbox+".flock", localstate.LockWaitLimit, nil)
+				if err != nil {
+					diagnostic.Pause.Inbox = "acquire-error"
+					t.Fatal("claim pause inbox guard unavailable")
+				}
+				diagnostic.Pause.Inbox = "acquired"
+				stage("pause-claim-guard")
+				claimPath := c.deferredClaimPath(old.Binding.AgentUID)
+				claimUnlock, err = mutationruntime.LockDeferredClaimContext(ctx, claimPath)
+				if err != nil {
+					diagnostic.Pause.Claim = "acquire-error"
+					t.Fatal("claim pause claim guard unavailable")
+				}
+				diagnostic.Pause.Claim = "acquired"
+				stage("pause-authority")
+				current, claimErr := readDeferredClaim(claimPath)
+				reg, registryErr := f.store.LoadReadOnly()
+				pane, paneOK := reg.Pane(old.Binding.PaneUID)
+				agent, agentOK := reg.Agent(old.Binding.AgentUID)
+				if claimErr != nil || registryErr != nil || !claim.Process.Valid() || claim.Nonce == "" ||
+					current.Nonce != claim.Nonce || current.Agent != claim.Agent || current.Agent != old.Binding.AgentUID ||
+					current.Process != claim.Process || current.Binding != claim.Binding || current.Binding != old.Binding ||
+					current.Provider != claim.Provider || current.Provider != old.Provider ||
+					current.Session != claim.Session || current.Session != old.SessionID ||
+					current.Thread != claim.Thread || current.Thread != old.ThreadID ||
+					!current.Detached || !claim.Detached || current.StopRequested || current.Inflight != "" ||
+					!deferredClaimMatches(current, reg, old.Binding.AgentUID) || !paneOK || !agentOK ||
+					pane.Status.ProcessSession == nil || !pane.Status.Activation.IsZero() ||
+					pane.Status.ProcessSession.ResumeState != coremetadata.ProcessResumable ||
+					agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != pane.Metadata.UID ||
+					sameClaimProcess() != "same" {
+					diagnostic.Pause.Identity = "refused"
+					t.Fatal("claim pause authority changed or unavailable")
+				}
+				diagnostic.Pause.Identity = "exact"
+				input, inputErr := c.readDeferredInput(old.Binding.AgentUID)
+				if inputErr != nil {
+					diagnostic.Pause.Input = "read-error"
+					t.Fatal("claim pause input unavailable")
+				}
+				if input != nil {
+					diagnostic.Pause.Input = "present"
+					t.Fatal("claim pause requires no user input")
+				}
+				diagnostic.Pause.Input = "absent"
+				stage("sigstop")
+				diagnostic.Pause.Stop = "attempted"
+				if err = process.Signal(syscall.SIGSTOP); err != nil {
+					diagnostic.Pause.Stop = "signal-error"
+					t.Fatal(err)
+				}
+				diagnostic.Pause.Stop, diagnostic.Pause.StopSent = "sent", true
+				t.Cleanup(func() {
+					// Absence suppresses the signal; it is not provider Wait evidence.
+					if result := continueClaim(); result != "sent" && result != "absent" {
+						preservePauseRoot()
+					}
+				})
+				stage("pause-stopped-proof")
+				processCLIUntil(t, ctx, func() bool {
+					if sameClaimProcess() != "same" {
+						diagnostic.Pause.Proof = "identity-error"
+						t.Fatal("claim pause identity unavailable before stopped proof")
+					}
+					out, proofErr := exec.CommandContext(ctx, "/bin/ps", "-o", "state=", "-p", fmt.Sprint(claim.Process.PID)).CombinedOutput()
+					if proofErr != nil {
+						diagnostic.Pause.Proof = "command-error"
+						t.Fatal("claim pause stopped observation unavailable")
+					}
+					if sameClaimProcess() != "same" {
+						diagnostic.Pause.Proof = "identity-error"
+						t.Fatal("claim pause identity unavailable after stopped proof")
+					}
+					if !strings.HasPrefix(strings.TrimSpace(string(out)), "T") {
+						diagnostic.Pause.Proof = "not-yet-stopped"
+						return false
+					}
+					diagnostic.Pause.Proof, diagnostic.Pause.ProofOK = "stopped", true
+					return true
+				})
+			}()
+			if inboxCloseErr != nil {
+				t.Fatal("claim pause inbox close failed")
+			}
 			for i, ref := range []string{"detached-first", "detached-second", "detached-third"} {
+				stage("enqueue")
+				diagnostic.EnqueueRef, diagnostic.EnqueueResult = ref, "in-flight"
 				processCLIUntil(t, ctx, func() bool {
 					out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--", "peer-"+string(rune('0'+i))).CombinedOutput()
+					diagnostic.EnqueueResult = "other-error"
 					if err == nil {
-						return bytes.Contains(out, []byte("held"))
+						held := bytes.Contains(out, []byte("held"))
+						diagnostic.EnqueueResult = "ok-not-held"
+						if held {
+							diagnostic.EnqueueResult = "ok-held"
+						}
+						return held
 					}
 					if bytes.Contains(out, []byte("source Agent is not eligible")) {
+						diagnostic.EnqueueResult = "source-ineligible"
 						return false
 					}
 					t.Fatalf("peer: %v %s", err, out)
 					return false
 				})
 			}
+			stage("sigcont")
+			if sameClaimProcess() != "same" {
+				preservePauseRoot()
+				t.Fatal("claim identity unavailable before continue")
+			}
 			if err = process.Signal(syscall.SIGCONT); err != nil {
+				preservePauseRoot()
 				t.Fatal(err)
 			}
+			stage("resumed-record")
 			next := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				diagnostic.Record.Sampled, diagnostic.Record.At = true, time.Since(started)
+				diagnostic.Record.BindingOwnerSame = r.Binding.AgentUID == old.Binding.AgentUID && r.Binding.PaneUID == old.Binding.PaneUID && r.Binding.ProjectUID == old.Binding.ProjectUID && r.Binding.WindowUID == old.Binding.WindowUID
+				diagnostic.Record.GenerationChanged = r.Binding.Generation != old.Binding.Generation
+				diagnostic.Record.SessionSame, diagnostic.Record.ThreadSame = r.SessionID == old.SessionID, r.ThreadID == old.ThreadID
+				diagnostic.Record.ConnectionPresent, diagnostic.Record.TurnPresent = r.ConnectionID != "", r.TurnID != ""
 				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
 			})
+			stage("conversation-check")
 			if next.SessionID != old.SessionID || next.ThreadID != old.ThreadID {
 				t.Fatal("peer replaced dialogue")
 			}
-			for _, ref := range []string{"detached-first", "detached-second", "detached-third"} {
-				deferredCLIStatus(t, ctx, f, ref, "delivered")
+			// Same Output/JSON/terminal/return operations as deferredCLIStatus;
+			// the extra fields are value copies, never aliases of its decode map.
+			status := func(index int, ref, state string) map[string]any {
+				t.Helper()
+				poll := &diagnostic.Peers[index]
+				poll.Started = time.Since(started)
+				var receipt map[string]any
+				processCLIUntil(t, ctx, func() bool {
+					poll.Stage = "command"
+					poll.Polls++
+					poll.PollStarted, poll.Command, poll.Decode = time.Since(started), "in-flight", "not-sampled"
+					raw, err := exec.CommandContext(ctx, f.binary, "agent", "message", "status", ref, "-o", "json").Output()
+					poll.PollFinished = time.Since(started)
+					poll.Stage = "command-returned"
+					poll.Command, poll.Decode = "ok", "not-sampled"
+					if err != nil {
+						poll.Command = "start-or-wait-error"
+						var exit *exec.ExitError
+						switch {
+						case errors.Is(ctx.Err(), context.DeadlineExceeded):
+							poll.Command = "context-deadline"
+						case errors.Is(ctx.Err(), context.Canceled):
+							poll.Command = "context-cancel"
+						case errors.As(err, &exit):
+							poll.Command = "exit-nonzero"
+						}
+						return false
+					}
+					poll.Stage = "decode"
+					decodeErr := json.Unmarshal(raw, &receipt)
+					if decodeErr != nil {
+						poll.Decode = "decode-error"
+						var syntax *json.SyntaxError
+						var shape *json.UnmarshalTypeError
+						if errors.As(decodeErr, &syntax) {
+							poll.Decode = "syntax-error"
+						} else if errors.As(decodeErr, &shape) {
+							poll.Decode = "type-error"
+						}
+						return false
+					}
+					delivery, _ := receipt["delivery"].(map[string]any)
+					poll.Decode = "valid"
+					if delivery == nil {
+						poll.Decode = "missing-delivery"
+					}
+					latest := validReceipt{At: poll.PollFinished, State: "other", Reason: "other", Unknown: "not-sampled"}
+					if value, ok := delivery["state"].(string); ok {
+						switch value {
+						case "held", "accepted", "delivered", "failed", "refused", "expired", "stale":
+							latest.State = value
+						}
+					}
+					if value, ok := delivery["reason"].(string); ok {
+						switch value {
+						case "", "target-awaiting-resume", "target-turn-active", "provider-resume-first-frame", "provider-native-peer-joined", "provider-prewrite-refused", "broker-handoff-persist-failed", "broker-delivery-persist-failed", "provider-handoff-outcome-unknown", "stale-binding", "target-activation-stale", "deadline-expired":
+							latest.Reason = value
+						}
+					}
+					if value, ok := delivery["outcomeUnknown"].(bool); ok {
+						latest.Unknown = fmt.Sprint(value)
+					}
+					if delivery != nil {
+						poll.LastValid = latest
+					}
+					poll.Stage = "terminal-check"
+					if terminal := delivery["state"]; terminal != "held" && terminal != "accepted" && terminal != state {
+						t.Fatalf("unexpected terminal state want %s: %s", state, raw)
+					}
+					return delivery["state"] == state
+				})
+				poll.Stage = "complete"
+				return receipt
 			}
+			for i, ref := range []string{"detached-first", "detached-second", "detached-third"} {
+				stage("receipt-" + ref)
+				status(i, ref, "delivered")
+			}
+			stage("target-stop-wait")
 			detachedResumeCLI(t, ctx, f, "agent", "stop", first.ref)
+			stage("wire-read")
 			wire, err := os.ReadFile(f.trace)
 			if err != nil {
 				t.Fatal(err)
@@ -264,6 +601,7 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 					peerFrames = append(peerFrames, frame["message"].(map[string]any)["content"].(string))
 				}
 			}
+			stage("wire-count-order")
 			if len(peerFrames) != 3 {
 				t.Fatalf("peer count: %q", peerFrames)
 			}
