@@ -593,14 +593,17 @@ func TestProcessDeleteLeafPaneActualCLI(t *testing.T) {
 			defer cancel()
 			owner := f.startOwner(t, ctx)
 			// Wait for the actual conversation, so equality after deletion
-			// cannot pass merely because both references are empty.
+			// cannot pass merely because both references are empty. Its first
+			// binding can precede the owner's asynchronous activation ACK;
+			// wait for that commit too before taking the no-write baseline.
 			processCLIUntil(t, ctx, func() bool {
 				reg := f.registry(t)
 				p, _ := reg.Pane(owner.pane)
 				a, _ := reg.Agent(owner.agent)
 				return p.Status.ProcessSession != nil &&
 					(p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") &&
-					p.Status.ProcessSession.TurnID == "" && a.Status.SessionRef != nil
+					p.Status.ProcessSession.TurnID == "" && a.Status.SessionRef != nil &&
+					a.Status.Activation.State == coremetadata.ActivationAcknowledged
 			})
 			siblingUID := ""
 			_, err := f.store.Update(func(reg *coremetadata.Registry) error {
