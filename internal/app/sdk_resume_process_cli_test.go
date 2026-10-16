@@ -147,7 +147,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 						t.Fatal(e)
 					}
 					pane, _ := reg.Pane(claim.Binding.PaneUID)
-					if pane.Status.LastTermination == nil || pane.Status.LastTermination.Generation != resumed.Binding.Generation {
+					if pane.Status.LastTermination == nil || pane.Status.LastTermination.Generation != stopped.Termination.Generation || !pane.Status.LastTermination.ObservedAt.Equal(stopped.Termination.ObservedAt) || pane.Status.LastTermination.OperationID != stopped.Termination.OperationID {
 						t.Fatal("claim invented termination")
 					}
 				})
@@ -164,6 +164,22 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 							t.Error(e)
 						}
 					}()
+
+					for {
+						resource, e := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: sourceRef})
+						if e != nil {
+							t.Fatal(e)
+						}
+						live := resource.(core.Agent)
+						if live.Status.Phase == core.PhaseRunning && live.Status.SessionRef != nil {
+							break
+						}
+						select {
+						case <-ctx.Done():
+							t.Fatal("peer source session not ready")
+						case <-time.After(10 * time.Millisecond):
+						}
+					}
 
 					claim, e := c.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: ref, Detach: true, WaitForPeer: true, Binding: resumed.Binding})
 					if e != nil {
