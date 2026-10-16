@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -80,9 +81,33 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 				initial := await(func(p core.Pane) bool {
 					return p.Status.ProcessSession != nil && p.Status.ProcessSession.ConnectionID != "" && (p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") && p.Status.ProcessSession.TurnID == ""
 				})
+				for {
+					resource, e := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: ref})
+					if e != nil {
+						t.Fatal(e)
+					}
+					confirmed := resource.(core.Agent)
+					if confirmed.Status.SessionRef != nil {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal("initial stream session was not confirmed")
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: created.Binding})
 				if err != nil || !stopped.Stopped || stopped.Termination == nil {
 					t.Fatalf("initial Stop: %+v %v", stopped, err)
+				}
+				retired, e := storage.LoadReadOnly()
+				if e != nil {
+					t.Fatal(e)
+				}
+				retiredPane, _ := retired.Pane(created.Binding.PaneUID)
+				t.Logf("initial retired provider=%s session=%+v termination=%+v", provider, retiredPane.Status.ProcessSession, retiredPane.Status.LastTermination)
+				if retiredPane.Status.ProcessSession.ResumeState != m.ProcessResumable {
+					t.Fatal("confirmed initialized conversation did not become resumable after Stop")
 				}
 				before, err := os.ReadFile(storage.Path())
 				if err != nil {
@@ -209,5 +234,42 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSDKDetachedProcessResumeIdentityDeadlinePreservesFailure(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "silent-launcher")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexec sleep 20\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	paths := config.Paths{ConfigDir: root + "/deep/settings", StateDir: root + "/deep/records"}
+	storage := metadata.NewStore(metadata.PathFor(paths.StateDir))
+	reg := processResumeQueryFixture(t)
+	if _, err := storage.Update(func(r *m.Registry) error { *r = reg.Clone(); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(storage.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: executable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &sdkIdentitySocketFirstContext{Context: context.Background(), deadline: time.Now().Add(-time.Second), done: make(chan struct{})}
+	result, err := c.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:" + reg.Agents[0].Metadata.UID, Detach: true, Prompt: "continue"})
+	var refusal *projmux.Refusal
+	var detail *projmux.ResumeProcessError
+	var transport *net.OpError
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &transport) || !errors.As(err, &refusal) || !errors.As(err, &detail) || refusal.Code != projmux.CodeResumeExecutionFailed || detail.Code != refusal.Code {
+		t.Fatalf("typed timeout cause lost: %T %v", err, err)
+	}
+	if result.Binding != (core.ProcessBinding{}) || detail.Owner != (core.ProcessIdentity{}) || result.Agent.Metadata.UID != "" {
+		t.Fatalf("identity failure invented resources %+v %+v", result, detail)
+	}
+	after, readErr := os.ReadFile(storage.Path())
+	if readErr != nil || !bytes.Equal(before, after) {
+		t.Fatal("identity timeout changed Registry", readErr)
 	}
 }
