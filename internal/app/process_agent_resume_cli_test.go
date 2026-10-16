@@ -31,11 +31,11 @@ import (
 )
 
 type processResumeCLIInvocation struct {
-	cmd    *exec.Cmd
-	input  io.WriteCloser
-	stderr *bytes.Buffer
-	ref    string
-	done   bool
+	cmd     *exec.Cmd
+	input   io.WriteCloser
+	stderr  *bytes.Buffer
+	ref     string
+	done    bool
 	cleanup claudeReadinessCleanup
 }
 
@@ -721,11 +721,11 @@ func deferredResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 }
 
 type deferredCLIClaim struct {
-	cmd    *exec.Cmd
-	input  io.WriteCloser
-	output *bufio.Reader
-	stderr bytes.Buffer
-	done   bool
+	cmd     *exec.Cmd
+	input   io.WriteCloser
+	output  *bufio.Reader
+	stderr  bytes.Buffer
+	done    bool
 	cleanup claudeReadinessCleanup
 }
 
@@ -829,7 +829,9 @@ func TestDeferredPeerWakeAndKilledClaimantActualCLI(t *testing.T) {
 					route.result("source-command", beforeErr)
 					select {
 					case <-ctx.Done():
-						if provider == aiModeClaude { route.failure(t, f, source.ref) }
+						if provider == aiModeClaude {
+							route.failure(t, f, source.ref)
+						}
 						t.Fatal("source route never ready")
 					case <-time.After(10 * time.Millisecond):
 					}
@@ -1190,7 +1192,9 @@ func TestDeferredPeerWakeLatencyActualCLI(t *testing.T) {
 				}
 				select {
 				case <-ctx.Done():
-					if provider == aiModeClaude { route.failure(t, f, source.ref) }
+					if provider == aiModeClaude {
+						route.failure(t, f, source.ref)
+					}
 					t.Fatal("source route never ready")
 				case <-time.After(10 * time.Millisecond):
 				}

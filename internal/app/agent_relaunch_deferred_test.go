@@ -41,7 +41,9 @@ func deferredRelaunchFixture(t *testing.T) processCreateCLI {
 	}
 	t.Cleanup(func() {
 		var before claudeReadinessRoot
-		if t.Failed() { before = claudeReadinessRootFor(root) }
+		if t.Failed() {
+			before = claudeReadinessRootFor(root)
+		}
 		started := time.Now()
 		err := os.RemoveAll(root)
 		claudeReadinessRootRemoved(t, before, started, err, root)
