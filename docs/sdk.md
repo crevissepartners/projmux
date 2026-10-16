@@ -589,8 +589,8 @@ one Agent. Source selects an unverified Agent anchor; it does not authenticate t
 caller, grant operator authority, or select a user-input channel. No active Pane,
 current directory or inherited tmux actor is inferred.
 
-`MessageRef` optionally supplies the CLI's idempotency reference. A repeated
-matching reference returns its stored receipt without dispatching again; a
+`MessageRef` optionally supplies the CLI's idempotency reference. After current route admission, a repeated matching reference returns its
+stored receipt without dispatching again; a
 changed immutable envelope refuses. `ReplyTo` preserves conversation correlation,
 exact conversation incarnations and the original deadline. Operator-origin
 messages cannot be replied to through a peer route. `TTL` zero selects ten

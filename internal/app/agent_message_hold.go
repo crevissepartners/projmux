@@ -13,8 +13,11 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
@@ -163,6 +166,20 @@ func runAgentMessageRelease(args []string) error {
 		command.messageRoute = liveAgentMessageRouteResolver{registryPath: command.messagePaths.registryPath}
 		command.loadRegistry = command.messagePaths.loadRegistry
 		command.controlPaths = func() (config.Paths, error) { return paths, nil }
+		// Turn-end release CAS must use the same Registry as message reads.
+		// Arbitrary SDK StateDir paths cannot be reconstructed from XDG parents.
+		storage := intmetadata.NewDefaultStore(paths)
+		command.store = &resourceStore{load: storage.LoadReadOnly, snapshot: storage.LoadDegradedReadOnly, update: storage.Update, mutator: intmetadata.DefaultMutator, stateDir: func() (string, error) { return paths.StateDir, nil }}
+		command.mirror = nil
+		if args[7] != "" {
+			target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{SocketPath: args[7]})
+			if err != nil {
+				return err
+			}
+			runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target}
+			command.mirror = &tmuxAgentMutationMirror{lookup: intmetadata.NewMirror(runner), runner: runner}
+		}
+
 		// Preserve the same exact path arguments on a release-window handoff.
 		command.messageRelease = func(uid string) error {
 			binary, err := os.Executable()
