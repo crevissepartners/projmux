@@ -88,10 +88,18 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		}
 		return VerifyDetachedProcessCreateBinding(reg, ready.Binding, owner)
 	}
+	var cleanupBinding processhost.Binding
 	l.Cleanup = func(owner m.ProcessIdentity, ready ProcessDetachedReply) error {
-		return AwaitDetachedProcessResumeCleanup(load, *wire.Resume, owner, ready.Binding)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), ProcessAgentStopTimeout)
+		defer cancel()
+		var err error
+		cleanupBinding, err = awaitDetachedProcessResumeCleanup(cleanupCtx, load, wire.RegistryPath, *wire.Resume, owner, ready.Binding)
+		return err
 	}
 	reply, err := l.Launch(ctx, wire, stdout, stderr)
+	if reply.Binding == (processhost.Binding{}) {
+		reply.Binding = cleanupBinding
+	}
 	if err != nil {
 		code := reply.ErrorCode
 		if code == "" {
@@ -123,9 +131,16 @@ func ExecuteDetachedProcessResume(ctx context.Context, frozen ProcessCreateConte
 	return LaunchDetachedProcessResume(ctx, frozen.Executable, ProcessDetachedResumeEnvelope{Resume: &wire, Output: "none", Caller: caller, RegistryPath: storage.Path(), ResumeContext: &frozen}, storage.LoadReadOnly, io.Discard, io.Discard)
 }
 
-func AwaitDetachedProcessResumeCleanup(load func() (m.Registry, error), request ProcessDetachedResumeRequest, owner m.ProcessIdentity, binding processhost.Binding) error {
+func AwaitDetachedProcessResumeCleanup(load func() (m.Registry, error), registryPath string, request ProcessDetachedResumeRequest, owner m.ProcessIdentity, binding processhost.Binding) error {
 	ctx, cancel := context.WithTimeout(context.Background(), ProcessAgentStopTimeout)
 	defer cancel()
+	_, err := awaitDetachedProcessResumeCleanup(ctx, load, registryPath, request, owner, binding)
+	return err
+}
+
+// No generation is inferred from a PID or newest Registry record alone. A
+// missing startup reply can recover only this request's exact owner witness.
+func awaitDetachedProcessResumeCleanup(ctx context.Context, load func() (m.Registry, error), registryPath string, request ProcessDetachedResumeRequest, owner m.ProcessIdentity, binding processhost.Binding) (processhost.Binding, error) {
 	ticker := time.NewTicker(ProcessAgentStopPoll)
 	defer ticker.Stop()
 	for {
@@ -135,16 +150,41 @@ func AwaitDetachedProcessResumeCleanup(load func() (m.Registry, error), request 
 			pane, ambiguous := ProcessAgentPane(reg, request.Agent)
 			if exists && pane != nil && !ambiguous && pane.Status.ProcessSession != nil {
 				b := pane.Status.ProcessSession.Binding
+				if binding == (processhost.Binding{}) && recoveredDetachedResumeBinding(registryPath, request, *agent, *pane, owner) {
+					binding = processResumeHostBinding(b)
+				}
 				settled := agent.Status.Phase == m.PhaseOffline && ((b == request.Previous && pane.Status.Activation.IsZero()) || (b == processCreateSchemaBinding(binding) && m.MatchesProcessWait(b, pane.Status.LastTermination) && m.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)))
 				if settled && ProcessIdentityAbsent(owner, localipc.Process) {
-					return nil
+					return binding, nil
 				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", request.Agent, request.Previous.PaneUID, request.Agent, request.Agent, ctx.Err())
+			return binding, fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", request.Agent, request.Previous.PaneUID, request.Agent, request.Agent, ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+func processResumeHostBinding(b m.ProcessBinding) processhost.Binding {
+	return processhost.Binding{Host: b.HostInstanceID, Project: b.ProjectUID, Window: b.WindowUID, Agent: b.AgentUID, Pane: b.PaneUID, Generation: b.Generation, Operation: b.OperationID}
+}
+
+func recoveredDetachedResumeBinding(registryPath string, request ProcessDetachedResumeRequest, agent m.Agent, pane m.Pane, owner m.ProcessIdentity) bool {
+	b, old := pane.Status.ProcessSession.Binding, request.Previous
+	if !owner.Valid() || request.Agent != old.AgentUID || agent.Metadata.UID != old.AgentUID || agent.Status.PaneRef != old.PaneUID || pane.Metadata.UID != old.PaneUID || pane.Metadata.OwnerUID() != old.AgentUID || b.AgentUID != old.AgentUID || b.PaneUID != old.PaneUID || b.WindowUID != old.WindowUID || b.ProjectUID != old.ProjectUID || b.Generation == old.Generation || b.OperationID == old.OperationID || b.HostInstanceID == old.HostInstanceID {
+		return false
+	}
+	if activation := pane.Status.Activation.Process; activation != nil && activation.Binding == b && activation.HostProcess == owner && activation.Child.Valid() {
+		current, _, err := localipc.Process(owner.PID)
+		if err == nil && current == owner {
+			return true
+		}
+	}
+	if !m.MatchesProcessWait(b, pane.Status.LastTermination) || !m.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) {
+		return false
+	}
+	activation, err := ReadProcessRetirement(registryPath, b, pane.Status.LastTermination)
+	return err == nil && activation.HostProcess == owner
 }

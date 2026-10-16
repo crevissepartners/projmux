@@ -299,30 +299,7 @@ func awaitDetachedRequestCleanup(command *createCommand, req processDetachedRequ
 	if req.Resume == nil {
 		return awaitDetachedStartupCleanup(command, owner, ready.Binding)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), processRelaunchRetirementTimeout)
-	defer cancel()
-	ticker := time.NewTicker(processRelaunchRetirementPoll)
-	defer ticker.Stop()
-	for {
-		reg, err := command.store.snapshot()
-		settled := false
-		if err == nil {
-			agent, exists := reg.Agent(req.Resume.Agent)
-			pane, ambiguous := processResumePane(reg, req.Resume.Agent)
-			if exists && pane != nil && !ambiguous && pane.Status.ProcessSession != nil {
-				b := pane.Status.ProcessSession.Binding
-				settled = agent.Status.Phase == coremetadata.PhaseOffline && ((b == req.Resume.Previous && pane.Status.Activation.IsZero()) || (b == metadataProcessBinding(ready.Binding) && coremetadata.MatchesProcessWait(b, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)))
-			}
-		}
-		if settled && processIdentityAbsent(owner, localipc.Process) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", req.Resume.Agent, req.Resume.Previous.PaneUID, req.Resume.Agent, req.Resume.Agent, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+	return mutationruntime.AwaitDetachedProcessResumeCleanup(command.store.snapshot, req.RegistryPath, mutationruntime.ProcessDetachedResumeRequest(*req.Resume), owner, ready.Binding)
 }
 
 func processResumeErrorCode(err error) string {
