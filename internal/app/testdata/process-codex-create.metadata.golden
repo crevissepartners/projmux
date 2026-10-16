@@ -6,7 +6,7 @@
       "uid": "AGENT",
       "name": "owned",
       "annotations": {
-        "projmux.io/agent-guidance-digest": "6f4af80845cb150a5572b559f2ca4042b6dcb833f69de4a199dc23b35a49a470",
+        "projmux.io/agent-guidance-digest": "ed0abc7115757a430780f0ec97cb3167a5b5da2bbc27742072dd03814958702e",
         "projmux.io/effort": "low",
         "projmux.io/effort-source": "flag",
         "projmux.io/model": "stub-model",

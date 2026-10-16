@@ -1695,7 +1695,10 @@ developer instructions when it starts its own thread. It tells the Agent to
 create other agents with `projmux create agent` instead of a subagent built
 into its provider, and to
 message them with `projmux agent message send` instead of a message channel
-local to its provider. The guidance lives in one file,
+local to its provider. It also tells the Agent to ask the user for decisions
+and approvals with its provider's question tool, unless other agents depend on
+it to keep working: an open question pauses its turn and holds their messages.
+The guidance lives in one file,
 `<config dir>/agent-guidance.md` (by default
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-guidance.md`), and there is no
 CLI command that edits it.
