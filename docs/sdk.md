@@ -14,6 +14,22 @@ frontends must still use the deletion executor's locked admission when executing
 Remove the label with `projmux label agent <ref> projmux.io/protected-`
 before retrying.
 
+`Client.Delete` returns the CLI's process Agent classification in
+`DeleteResult.Processes`: AgentUID, WindowUID, RootKind, RootUID, Runtime,
+Evidence and HostPID. Dry runs and confirmation refusals include the reviewed
+plan; a committed deletion includes the final classification, including
+`stopped` after an owner Stop and confirmed Wait. Execution errors retain the
+preflight evidence, which does not prove that the runtime is still unchanged.
+Runtime is the CLI's live classification, separate from Registry Agent phase;
+HostPID is zero when no live owner PID is reported. The returned slice belongs
+to the caller. Owner credentials and private admission evidence are excluded.
+`PreflightDelete` continues to check Registry protection without runtime access.
+
+Instruction/profile metadata, process input UI descriptors, question session
+metadata and running Agent aggregates that the corresponding CLI output does
+not expose are outside these result projections. Existing `ListProfiles.Valid`
+and capabilities `Agent.Phase` remain available on those separate reads.
+
 ## Shell Window and Pane creation
 
 `Client.CreateWindow(ctx, core.CreateWindowRequest{Project: "uid:..."})` creates

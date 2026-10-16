@@ -228,6 +228,23 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 	if err != nil {
 		return out, deleteRefusal(CodeDeleteRuntimeRefused, err)
 	}
+	// Classification also contains private owner credentials. Copy only the
+	// CLI-visible fields, rather than serializing the internal target wholesale.
+	projectProcesses := func(targets []mutationruntime.ProcessDeleteTarget) []core.DeleteProcess {
+		processes := make([]core.DeleteProcess, len(targets))
+		for i, t := range targets {
+			processes[i] = core.DeleteProcess{AgentUID: t.Agent, WindowUID: t.Window,
+				RootKind: core.Kind(t.RootKind), RootUID: t.RootUID,
+				Runtime: t.Runtime, Evidence: t.Evidence}
+			// The CLI only prints a PID for a running provider owner, never
+			// for the owner of a child-free deferred claim.
+			if t.Runtime == "running" {
+				processes[i].HostPID = t.HostPID
+			}
+		}
+		return processes
+	}
+	out.Processes = projectProcesses(targets)
 	if req.DryRun {
 		return out, nil
 	}
@@ -243,6 +260,7 @@ func (c *Client) deleteProcess(ctx context.Context, req core.DeleteRequest, reg 
 		return out, deleteRefusal(CodeDeleteExecutionFailed, err)
 	}
 	out.Committed = true
+	out.Processes = projectProcesses(outcome.Targets)
 	out.OperationID = operation
 	if err = unregisterCopy(outcome.Affected, &out.Plan.Affected); err != nil {
 		return out, err

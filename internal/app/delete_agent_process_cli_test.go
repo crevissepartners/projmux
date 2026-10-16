@@ -393,12 +393,29 @@ func TestProcessDeleteSDKRunningAndOfflineActualCLI(t *testing.T) {
 				if err != nil || result.Committed || len(result.Plan.Targets) != 1 {
 					t.Fatalf("dry %+v %v", result, err)
 				}
+				if len(result.Processes) != 1 || result.Processes[0].AgentUID != owner.agent {
+					t.Fatalf("process preview missing: %+v", result.Processes)
+				}
+				previewProcess := result.Processes[0]
+				wantRuntime := "running"
+				if offline {
+					wantRuntime = "offline"
+				}
+				if previewProcess.Runtime != wantRuntime || previewProcess.Evidence == "" || (!offline && previewProcess.HostPID != activation.HostProcess.PID) {
+					t.Fatalf("process preview evidence: %+v", previewProcess)
+				}
 				f.requireKept(t, owner)
 				req.DryRun = false
 				req.Confirm = true
 				result, err = c.Delete(ctx, req)
 				if err != nil || !result.Committed {
 					t.Fatalf("delete %+v %v", result, err)
+				}
+				if !offline {
+					wantRuntime = "stopped"
+				}
+				if len(result.Processes) != 1 || result.Processes[0].Runtime != wantRuntime || !strings.HasPrefix(result.Processes[0].Evidence, "wait:") {
+					t.Fatalf("final process evidence: %+v", result.Processes)
 				}
 				if !offline {
 					if err = owner.wait(); err != nil {
@@ -496,6 +513,10 @@ func TestProcessDeleteClaimSDKCLIProjectionAndNoFakeWait(t *testing.T) {
 					t.Fatal(err)
 				}
 				if sdk {
+					preview, err := client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: first.ref, DryRun: true})
+					if err != nil || len(preview.Processes) != 1 || preview.Processes[0].Runtime != "offline" || preview.Processes[0].HostPID != 0 {
+						t.Fatalf("SDK claim preview differs from CLI: %+v %v", preview.Processes, err)
+					}
 					result, err := client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: first.ref, Confirm: true})
 					if err != nil || !result.Committed || result.Receipt.Effects.Runtime != core.RuntimeUnchanged {
 						t.Fatalf("SDK claim %+v %v", result, err)
