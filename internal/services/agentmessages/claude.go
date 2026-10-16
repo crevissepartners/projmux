@@ -327,14 +327,6 @@ type claudeProviderCoordinationContent struct {
 	ReplyAction     string                 `json:"replyAction"`
 }
 
-func providerCoordinationContent(envelope claudeCoordinationEnvelope, executable ...string) (string, error) {
-	toolExecutable := ""
-	if len(executable) == 1 {
-		toolExecutable = executable[0]
-	}
-	return renderProviderCoordinationContent(envelope, toolExecutable, false)
-}
-
 // renderProviderCoordinationContent renders the frame content. sizeAsPeer
 // keeps the peer replyAction on a self-anchored frame; only the sender's size
 // pre-check asks for it, and the frame actually sent never does.
@@ -513,4 +505,12 @@ func coordinationReplyAction(source, target coremessage.Route, peer string) stri
 func validCoordinationRef(value string) bool {
 	value = strings.TrimSpace(value)
 	return value != "" && len(value) <= 160 && !strings.ContainsAny(value, "\r\n\x00")
+}
+
+// RenderClaudeContent shares the helper's actual content with the send precheck.
+func RenderClaudeContent(envelope coremessage.Envelope, executable string, sizeAsPeer bool) (string, error) {
+	return renderProviderCoordinationContent(claudeCoordinationEnvelope{BrokerEnvelope: &envelope}, executable, sizeAsPeer)
+}
+func BuildClaudePushFrame(token, content string) ([]byte, error) {
+	return buildClaudeProviderPushFrame(token, content)
 }

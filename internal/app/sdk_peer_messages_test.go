@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +82,146 @@ func TestSDKPeerMessageProcessSendStatusReplay(t *testing.T) {
 			stored, found, err := disk.Get(request.MessageRef)
 			if err != nil || !found || stored.Envelope.Authority != message.PeerAuthority() || stored.Envelope.Operator() {
 				t.Fatalf("authority changed: %+v %v", stored, err)
+			}
+		})
+	}
+}
+
+// A child-free protocol fixture owns both sides of one exact socket. No provider
+// executable or user turn is started; every receipt outcome is deterministic.
+func TestSDKPeerMessageReceiptStateParity(t *testing.T) {
+	for _, state := range []string{"delivered", "held", "refused", "expired", "stale", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			for _, lane := range []string{"sdk", "cli"} {
+				t.Run(lane, func(t *testing.T) {
+					root := t.TempDir()
+					paths := config.Paths{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state")}
+					registryPath := intmetadata.PathFor(paths.StateDir)
+					h := newSessionRefHarness(t, "codex")
+					reg := h.registry.Clone()
+					agent, _ := reg.Agent(h.agentUID)
+					pane, _ := reg.Pane(h.paneUID)
+					window, _ := reg.Window(agent.Metadata.OwnerUID())
+					binding := coremetadata.ProcessBinding{HostInstanceID: "host-sdk-parity", ProjectUID: window.Metadata.OwnerUID(), WindowUID: window.Metadata.UID, AgentUID: h.agentUID, PaneUID: h.paneUID, Generation: "gen-sdk-parity", OperationID: "op-sdk-parity"}
+					identity, _, err := localipc.Process(os.Getpid())
+					if err != nil {
+						t.Fatal(err)
+					}
+					pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+					pane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, AgentUID: h.agentUID, Generation: binding.Generation, OperationID: binding.OperationID, Process: &coremetadata.ProcessActivation{Binding: binding, HostProcess: identity, Child: identity}}
+					pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "codex", Binding: binding, ThreadID: "thread-sdk-parity"}
+					agent.Status.Activation = coremetadata.AgentActivation{}
+					registry := intmetadata.NewStore(registryPath)
+					if _, err := registry.Update(func(r *coremetadata.Registry) error { *r = reg; return nil }); err != nil {
+						t.Fatal(err)
+					}
+					disk := store.NewStore(paths.StateDir)
+					socket := processCodexHostSocket(registryPath, h.paneUID, binding.Generation)
+					listener, err := localipc.Listen(socket)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = listener.Close(); _ = os.Remove(filepath.Dir(socket)) })
+					var writes atomic.Int32
+					done := make(chan struct{})
+					go func() {
+						defer close(done)
+						for {
+							conn, err := listener.Unix.AcceptUnix()
+							if err != nil {
+								return
+							}
+							func() {
+								defer conn.Close()
+								var req codexProcessExchange
+								if localipc.ReadJSON(conn, &req) != nil || req.Foreground == nil {
+									return
+								}
+								if req.Foreground.Action == "validate" {
+									_ = localipc.WriteJSON(conn, processForegroundResult{Accepted: true})
+									return
+								}
+								if req.Foreground.Action != "peer-message" {
+									return
+								}
+								writes.Add(1)
+								if state == "unknown" {
+									return
+								}
+								result := processForegroundResult{}
+								if state == "refused" {
+									result.Unsupported = true
+								} else if state == "stale" {
+									result.Stale = true
+								} else {
+									r, found, err := disk.Get(req.Foreground.MessageRef)
+									if err != nil || !found {
+										return
+									}
+									kind := map[string]message.EventKind{"delivered": message.EventDeliver, "held": message.EventHold, "expired": message.EventExpire}[state]
+									updated, _, err := disk.Apply(r.Envelope.MessageRef, message.Event{Kind: kind, MessageRef: r.Envelope.MessageRef, ConversationRef: r.Envelope.ConversationRef, Target: r.Envelope.Target, Reason: "fixture-" + state, ObservedAt: time.Now().UTC()})
+									if err != nil {
+										return
+									}
+									result.Accepted = true
+									result.Receipt = &codexProcessReceipt{Delivery: updated.Delivery}
+								}
+								_ = localipc.WriteJSON(conn, result)
+							}()
+						}
+					}()
+					t.Cleanup(func() { _ = listener.Unix.Close(); <-done })
+					sdk, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, SocketPath: filepath.Join(root, "unused.sock")})
+					if err != nil {
+						t.Fatal(err)
+					}
+					cmd := newAgentCommand()
+					cmd.messagePaths = agentMessagePaths{registryPath: registryPath, loadRegistry: registry.LoadReadOnly}
+					cmd.messageStore = disk
+					cmd.messageRoute = liveAgentMessageRouteResolver{registryPath: registryPath}
+					ref := "uid:" + h.agentUID
+					request := projmux.SendMessageRequest{Source: ref, Target: ref, Text: "peer", MessageRef: "message-state-parity", TTL: time.Minute}
+					expectedState := map[string]core.MessageState{"delivered": core.MessageDelivered, "held": core.MessageHeld, "refused": core.MessageRefused, "expired": core.MessageExpired, "stale": core.MessageStale, "unknown": core.MessageFailed}[state]
+					var first core.MessageReceipt
+					for attempt := 0; attempt < 2; attempt++ {
+						var got core.MessageReceipt
+						if lane == "sdk" {
+							got, err = sdk.SendMessage(context.Background(), request)
+						} else {
+							_, _, err = runRoute(t, cmd, "message", "send", ref, "--source", ref, "--message-ref", request.MessageRef, "--ttl", "1m", "--", request.Text)
+						}
+						shouldFail := state != "delivered" && state != "held"
+						if (err != nil) != shouldFail {
+							t.Fatalf("send error=%v state=%s", err, state)
+						}
+						observed, statusErr := sdk.MessageStatus(context.Background(), request.MessageRef)
+						if statusErr != nil {
+							t.Fatal(statusErr)
+						}
+						if lane == "sdk" && got != observed {
+							t.Fatalf("partial SDK receipt differs from status: %+v %+v", got, observed)
+						}
+						if observed.Delivery.State != expectedState || observed.Delivery.OutcomeUnknown != (state == "unknown") || observed.Deadline.Sub(observed.Delivery.AcceptedAt) != time.Minute {
+							t.Fatalf("receipt=%+v", observed)
+						}
+						if attempt == 0 {
+							first = observed
+						} else if observed != first {
+							t.Fatalf("replay changed receipt: %+v %+v", first, observed)
+						}
+						var out, diagnostics bytes.Buffer
+						if e := cmd.runMessageStatus([]string{request.MessageRef, "-o", "json"}, &out, &diagnostics); e != nil {
+							t.Fatal(e)
+						}
+						encoded, _ := json.Marshal(observed)
+						if strings.TrimSpace(out.String()) != string(encoded) {
+							t.Fatalf("CLI/SDK JSON differs: %s %s", out.String(), encoded)
+						}
+					}
+					if writes.Load() != 1 {
+						t.Fatalf("replayed peer transport %d times", writes.Load())
+					}
+				})
 			}
 		})
 	}

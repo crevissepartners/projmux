@@ -825,49 +825,7 @@ func (c *agentCommand) publicMessageEvent(record messagestore.Record, kind corem
 }
 
 func (c *agentCommand) projectClaudeDelivery(record messagestore.Record, private agentdelivery.Delivery, adapterErr error) (messagestore.Record, error) {
-	kind, reason, unknown := coremessage.EventKind(""), private.Reason, private.Ambiguous
-	if private.MessageRef != "" && private.MessageRef != record.Envelope.MessageRef {
-		return record, nil
-	}
-	if adapterErr != nil {
-		kind, reason, unknown = coremessage.EventFail, "provider-handoff-outcome-unknown", true
-	} else if private.MessageRef != record.Envelope.MessageRef {
-		return record, nil
-	} else {
-		switch private.State {
-		case agentdelivery.StateHeld:
-			kind = coremessage.EventHold
-		case agentdelivery.StateHandoff:
-			updated, _, err := c.messageStore.MarkHandoff(record.Envelope.MessageRef)
-			return updated, err
-		case agentdelivery.StateDelivered:
-			kind = coremessage.EventDeliver
-		case agentdelivery.StateRefused:
-			kind = coremessage.EventRefuse
-		case agentdelivery.StateExpired:
-			if private.Ambiguous {
-				kind, reason, unknown = coremessage.EventFail, "provider-handoff-outcome-unknown", true
-			} else {
-				kind = coremessage.EventExpire
-			}
-		case agentdelivery.StateStale:
-			if private.Ambiguous {
-				kind, reason, unknown = coremessage.EventFail, "provider-handoff-outcome-unknown", true
-			} else {
-				kind = coremessage.EventStale
-			}
-		case agentdelivery.StateFailed:
-			kind, unknown = coremessage.EventFail, private.Ambiguous
-		}
-	}
-	if kind == "" {
-		return record, nil
-	}
-	updated, _, err := c.messageStore.Apply(record.Envelope.MessageRef, c.publicMessageEvent(record, kind, reason, unknown))
-	if err != nil {
-		return record, err
-	}
-	return updated, nil
+	return c.peerMessageService().ProjectClaudeDelivery(record, private, adapterErr)
 }
 
 func (c *agentCommand) staleMessageEvent(record messagestore.Record, reason string) coremessage.Event {
