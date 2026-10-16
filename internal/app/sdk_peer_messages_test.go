@@ -1,0 +1,443 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
+	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
+	store "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
+	"github.com/crevissepartners/projmux/pkg/projmux"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
+)
+
+// Exercise the public API against the exact process peer wire, using only our
+// protocol fixture. CLI and SDK each receive a fresh fixture and receipt store.
+func TestSDKPeerMessageProcessSendStatusReplay(t *testing.T) {
+	for _, lane := range []string{"sdk", "cli"} {
+		t.Run(lane, func(t *testing.T) {
+			f := newProcessCodexPeerFixture(t, processCodexSteerFixture("reply({})"))
+			paths := config.Paths{ConfigDir: filepath.Join(f.root, "config", "projmux"), StateDir: filepath.Join(f.root, "state", "projmux")}
+			disk := store.NewStore(paths.StateDir)
+			m := &codexProcessMessages{store: disk, endpoints: map[string]*codexProcessEndpoint{f.endpoint.binding.Agent: f.endpoint}}
+			f.endpoint.messages.Store(m)
+			f.turn(t, "original", "hold")
+			f.wait(t, func(s processhost.Snapshot) bool { return s.Turn != "" })
+			sdk, err := projmux.NewClient(projmux.Options{ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, HomeDir: f.root, SocketPath: filepath.Join(f.root, "unused.sock")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := newAgentCommand()
+			cmd.messagePaths = agentMessagePaths{registryPath: f.path, loadRegistry: f.store.LoadReadOnly}
+			cmd.messageStore = disk
+			cmd.messageRoute = liveAgentMessageRouteResolver{registryPath: f.path}
+			ref := "uid:" + f.endpoint.binding.Agent
+			request := projmux.SendMessageRequest{Source: ref, Target: ref, Text: "peer context only", MessageRef: "message-sdk-peer", TTL: time.Minute}
+			var first core.MessageReceipt
+			for attempt := range 2 {
+				var got core.MessageReceipt
+				if lane == "sdk" {
+					got, err = sdk.SendMessage(context.Background(), request)
+				} else {
+					_, _, err = runRoute(t, cmd, "message", "send", ref, "--source", ref, "--message-ref", request.MessageRef, "--ttl", "1m", "--", request.Text)
+					if err == nil {
+						got, err = sdk.MessageStatus(context.Background(), request.MessageRef)
+					}
+				}
+				if err != nil || got.Delivery.State != core.MessageDelivered || got.Delivery.Reason != "host-history-injected" || got.Delivery.OutcomeUnknown {
+					t.Fatalf("attempt=%d receipt=%+v err=%v", attempt, got, err)
+				}
+				if attempt == 0 {
+					first = got
+				} else if got != first {
+					t.Fatalf("replay changed receipt: %+v %+v", first, got)
+				}
+			}
+			starts, items := processCodexTurnWrites(t, f)
+			if starts != 1 || len(items) != 1 {
+				t.Fatalf("peer replay/input boundary: turn starts=%d peer items=%d", starts, len(items))
+			}
+			if !strings.Contains(items[0]["text"], "untrusted-coordination-only") {
+				t.Fatalf("missing peer envelope: %v", items)
+			}
+			var stdout, stderr bytes.Buffer
+			if err := cmd.runMessageStatus([]string{request.MessageRef, "-o", "json"}, &stdout, &stderr); err != nil {
+				t.Fatal(err)
+			}
+			want, _ := json.Marshal(first)
+			if strings.TrimSpace(stdout.String()) != string(want) {
+				t.Fatalf("CLI/SDK receipt JSON differs: %s %s", stdout.String(), want)
+			}
+			stored, found, err := disk.Get(request.MessageRef)
+			if err != nil || !found || stored.Envelope.Authority != message.PeerAuthority() || stored.Envelope.Operator() {
+				t.Fatalf("authority changed: %+v %v", stored, err)
+			}
+		})
+	}
+}
+
+// A child-free protocol fixture owns both sides of one exact socket. No provider
+// executable or user turn is started; every receipt outcome is deterministic.
+func TestSDKPeerMessageReceiptStateParity(t *testing.T) {
+	for _, state := range []string{"delivered", "held", "refused", "expired", "stale", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			for _, lane := range []string{"sdk", "cli"} {
+				t.Run(lane, func(t *testing.T) {
+					root := t.TempDir()
+					paths := config.Paths{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state")}
+					registryPath := intmetadata.PathFor(paths.StateDir)
+					h := newSessionRefHarness(t, "codex")
+					reg := h.registry.Clone()
+					agent, _ := reg.Agent(h.agentUID)
+					pane, _ := reg.Pane(h.paneUID)
+					window, _ := reg.Window(agent.Metadata.OwnerUID())
+					binding := coremetadata.ProcessBinding{HostInstanceID: "host-sdk-parity", ProjectUID: window.Metadata.OwnerUID(), WindowUID: window.Metadata.UID, AgentUID: h.agentUID, PaneUID: h.paneUID, Generation: "gen-sdk-parity", OperationID: "op-sdk-parity"}
+					identity, _, err := localipc.Process(os.Getpid())
+					if err != nil {
+						t.Fatal(err)
+					}
+					pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
+					pane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, AgentUID: h.agentUID, Generation: binding.Generation, OperationID: binding.OperationID, Process: &coremetadata.ProcessActivation{Binding: binding, HostProcess: identity, Child: identity}}
+					pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "codex", Binding: binding, ThreadID: "thread-sdk-parity", ConnectionID: binding.OperationID, ResumeState: coremetadata.ProcessResumeUnknown}
+					agent.Status.Activation = coremetadata.AgentActivation{}
+					registry := intmetadata.NewStore(registryPath)
+					if _, err := registry.Update(func(r *coremetadata.Registry) error { *r = reg; return nil }); err != nil {
+						t.Fatal(err)
+					}
+					disk := store.NewStore(paths.StateDir)
+					socket := processCodexHostSocket(registryPath, h.paneUID, binding.Generation)
+					listener, err := localipc.Listen(socket)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = listener.Close(); _ = os.Remove(filepath.Dir(socket)) })
+					var writes atomic.Int32
+					done := make(chan struct{})
+					go func() {
+						defer close(done)
+						for {
+							conn, err := listener.Unix.AcceptUnix()
+							if err != nil {
+								return
+							}
+							func() {
+								defer conn.Close()
+								var req codexProcessExchange
+								if localipc.ReadJSON(conn, &req) != nil || req.Foreground == nil {
+									return
+								}
+								if req.Foreground.Action == "validate" {
+									_ = localipc.WriteJSON(conn, processForegroundResult{Accepted: true})
+									return
+								}
+								if req.Foreground.Action != "peer-message" {
+									return
+								}
+								writes.Add(1)
+								if state == "unknown" {
+									return
+								}
+								result := processForegroundResult{}
+								if state == "refused" {
+									result.Unsupported = true
+								} else if state == "stale" {
+									result.Stale = true
+								} else {
+									r, found, err := disk.Get(req.Foreground.MessageRef)
+									if err != nil || !found {
+										return
+									}
+									kind := map[string]message.EventKind{"delivered": message.EventDeliver, "held": message.EventHold, "expired": message.EventExpire}[state]
+									updated, _, err := disk.Apply(r.Envelope.MessageRef, message.Event{Kind: kind, MessageRef: r.Envelope.MessageRef, ConversationRef: r.Envelope.ConversationRef, Target: r.Envelope.Target, Reason: "fixture-" + state, ObservedAt: time.Now().UTC()})
+									if err != nil {
+										return
+									}
+									result.Accepted = true
+									result.Receipt = &codexProcessReceipt{Delivery: updated.Delivery}
+								}
+								_ = localipc.WriteJSON(conn, result)
+							}()
+						}
+					}()
+					t.Cleanup(func() { _ = listener.Unix.Close(); <-done })
+					sdk, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, SocketPath: filepath.Join(root, "unused.sock")})
+					if err != nil {
+						t.Fatal(err)
+					}
+					cmd := newAgentCommand()
+					cmd.messagePaths = agentMessagePaths{registryPath: registryPath, loadRegistry: registry.LoadReadOnly}
+					cmd.messageStore = disk
+					cmd.messageRoute = liveAgentMessageRouteResolver{registryPath: registryPath}
+					ref := "uid:" + h.agentUID
+					request := projmux.SendMessageRequest{Source: ref, Target: ref, Text: "peer", MessageRef: "message-state-parity", TTL: time.Minute}
+					expectedState := map[string]core.MessageState{"delivered": core.MessageDelivered, "held": core.MessageHeld, "refused": core.MessageRefused, "expired": core.MessageExpired, "stale": core.MessageStale, "unknown": core.MessageFailed}[state]
+					var first core.MessageReceipt
+					for attempt := range 2 {
+						var got core.MessageReceipt
+						if lane == "sdk" {
+							got, err = sdk.SendMessage(context.Background(), request)
+						} else {
+							_, _, err = runRoute(t, cmd, "message", "send", ref, "--source", ref, "--message-ref", request.MessageRef, "--ttl", "1m", "--", request.Text)
+						}
+						shouldFail := state != "delivered" && state != "held"
+						if (err != nil) != shouldFail {
+							t.Fatalf("send error=%v state=%s", err, state)
+						}
+						observed, statusErr := sdk.MessageStatus(context.Background(), request.MessageRef)
+						if statusErr != nil {
+							t.Fatal(statusErr)
+						}
+						if lane == "sdk" && got != observed {
+							t.Fatalf("partial SDK receipt differs from status: %+v %+v", got, observed)
+						}
+						if observed.Delivery.State != expectedState || observed.Delivery.OutcomeUnknown != (state == "unknown") || observed.Deadline.Sub(observed.Delivery.AcceptedAt) != time.Minute {
+							t.Fatalf("receipt=%+v", observed)
+						}
+						if attempt == 0 {
+							first = observed
+						} else if observed != first {
+							t.Fatalf("replay changed receipt: %+v %+v", first, observed)
+						}
+						var out, diagnostics bytes.Buffer
+						if e := cmd.runMessageStatus([]string{request.MessageRef, "-o", "json"}, &out, &diagnostics); e != nil {
+							t.Fatal(e)
+						}
+						encoded, _ := json.Marshal(observed)
+						if strings.TrimSpace(out.String()) != string(encoded) {
+							t.Fatalf("CLI/SDK JSON differs: %s %s", out.String(), encoded)
+						}
+					}
+					changed := request
+					changed.Text = "changed immutable payload"
+					_, mismatch := sdk.SendMessage(context.Background(), changed)
+					var refusal *projmux.Refusal
+					if !errors.As(mismatch, &refusal) || refusal.Code != projmux.CodeMessageRetryMismatch {
+						t.Fatalf("immutable mismatch: %v", mismatch)
+					}
+					if writes.Load() != 1 {
+						t.Fatalf("replayed peer transport %d times", writes.Load())
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSDKPeerMessageReleaseFreezesRegistryCASAndMirror(t *testing.T) {
+	root := t.TempDir()
+	poison := filepath.Join(root, "ambient")
+	t.Setenv("XDG_STATE_HOME", poison)
+	t.Setenv("TMUX", filepath.Join(root, "foreign.sock")+",1,1")
+	paths := config.Paths{ConfigDir: filepath.Join(root, "arbitrary-config"), StateDir: filepath.Join(root, "arbitrary-state")}
+	h := newSessionRefHarness(t, "claude")
+	reg := h.registry.Clone()
+	target, _ := reg.Agent(h.agentUID)
+	target.Status.Interaction = coremetadata.AgentInteraction{Kind: coremetadata.InteractionApprovalRequired, ObservedAt: time.Now().UTC(), Source: string(coremetadata.InteractionSourceProviderHook)}
+	blocked := target.Status.Interaction
+	disk := intmetadata.NewDefaultStore(paths)
+	if _, err := disk.Update(func(r *coremetadata.Registry) error { *r = reg; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	command, err := explicitMessageReleaseCommand(paths, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.mirror != nil {
+		t.Fatal("release inherited a foreign tmux mirror")
+	}
+	if err := command.commitClaudeTurnEnd(target.Clone(), blocked); err != nil {
+		t.Fatal(err)
+	}
+	after, err := disk.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := after.Agent(h.agentUID)
+	if updated.Status.Interaction.Kind != coremetadata.InteractionResponseComplete {
+		t.Fatalf("wrong Registry received release CAS: %+v", updated.Status.Interaction)
+	}
+	if _, err := os.Stat(poison); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("release touched ambient state: %v", err)
+	}
+}
+
+func TestSDKPeerMessageReleaseOuterJournalUsesExactState(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "deep", "custom-config")
+	stateDir := filepath.Join(root, "deep", "custom-state")
+	args := []string{"internal", agentMessageReleaseRoute, "--agent", "uid:agent-target", "--config-dir", configDir, "--state-dir", stateDir, "--socket-path", ""}
+	state, explicit, err := NativeObservationStateDir(args)
+	if err != nil || !explicit || state != stateDir {
+		t.Fatalf("outer journal route=%q/%t/%v", state, explicit, err)
+	}
+	for _, invalid := range [][]string{args[:8], append(append([]string{}, args[:7]...), "relative", "--socket-path", ""), {"internal", agentMessageReleaseRoute, "--state-dir", stateDir}} {
+		if state, explicit, err := NativeObservationStateDir(invalid); err == nil || !explicit || state != "" {
+			t.Fatalf("invalid explicit route fell back: %v => %q/%t/%v", invalid, state, explicit, err)
+		}
+	}
+	if _, explicit, err := NativeObservationStateDir(args[:4]); err != nil || explicit {
+		t.Fatalf("legacy release changed: %t/%v", explicit, err)
+	}
+	// Selecting the outer journal is pure, including malformed explicit paths.
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("journal selection wrote outside an invocation: %v/%v", entries, err)
+	}
+}
+
+type deferredApplyFailureStore struct {
+	*store.Store
+	cause   error
+	applies int
+}
+
+func (s *deferredApplyFailureStore) Apply(string, message.Event) (store.Record, bool, error) {
+	s.applies++
+	return store.Record{}, false, s.cause
+}
+
+func TestSDKDeferredPeerPostAcceptanceFailureRetainsGeneratedReceipt(t *testing.T) {
+	c, options := deferredClaimFixture(t)
+	claim, err := c.claimDeferredProcessAgent(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	reg, err := c.loadRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := reg.Agent(claim.record.Agent)
+	_, sourceRegistry, _ := exactControlCLICommand(t)
+	source, _ := sourceRegistry.registry.Agent("agt-alpha-codex")
+	route := mustMessageRoute(t, sourceRegistry.registry, source.Metadata.UID)
+	disk := c.messageStore.(*store.Store)
+	cause := errors.New("injected post-acceptance read failure")
+	failing := &deferredApplyFailureStore{Store: disk, cause: cause}
+	generated, dispatches := 0, 0
+	now := time.Now().UTC()
+	s := agentmessages.Service{RegistryPath: c.messagePaths.registryPath, Store: failing, LoadRegistry: c.loadRegistry, Now: func() time.Time { return now },
+		NewRef:            func(string) string { generated++; return "message-generated-deferred" },
+		RequireCapability: agentmessages.RequireCapability,
+		ResolveSource: func(context.Context, coremetadata.Registry, string, string) (coremetadata.Agent, error) {
+			return source.Clone(), nil
+		},
+		ResolveAgent: func(context.Context, coremetadata.Registry, string, string) (coremetadata.Agent, error) {
+			return target.Clone(), nil
+		},
+		ResolveRoute: func(context.Context, coremetadata.Registry, coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+			return route, nil
+		},
+		Deliver: func(context.Context, store.Record, coremetadata.Agent, coremetadata.AgentRouteRef, message.Envelope) (store.Record, error) {
+			dispatches++
+			t.Fatal("deferred message dispatched")
+			return store.Record{}, nil
+		},
+	}
+	s.Deferred = func(ctx context.Context, reg coremetadata.Registry, source, target coremetadata.Agent, route coremetadata.AgentRouteRef, ref, reply, text string, ttl time.Duration, report func(agentmessages.Receipt, int) error) (bool, error) {
+		return s.SendDeferred(ctx, reg, source, target, route, ref, reply, text, ttl, report, nil)
+	}
+	req := agentmessages.SendRequest{Source: "uid:" + source.Metadata.UID, Target: "uid:" + target.Metadata.UID, Text: "peer", TTL: time.Minute}
+	result, err := s.Send(context.Background(), req)
+	if !errors.Is(err, cause) || result.Receipt.MessageRef != "message-generated-deferred" || result.Receipt.Delivery.State != message.StateHeld || result.Receipt.Delivery.OutcomeUnknown {
+		t.Fatalf("receipt=%+v err=%v", result, err)
+	}
+	durable, found, err := disk.Get(result.Receipt.MessageRef)
+	if err != nil || !found || agentmessages.ReceiptFor(durable) != result.Receipt {
+		t.Fatalf("durable receipt=%+v/%t/%v", durable, found, err)
+	}
+	req.MessageRef = result.Receipt.MessageRef
+	replay, err := s.Send(context.Background(), req)
+	if err != nil || replay.Receipt != result.Receipt || generated != 1 || failing.applies != 1 || dispatches != 0 {
+		t.Fatalf("replay=%+v err=%v generated=%d applies=%d dispatches=%d", replay, err, generated, failing.applies, dispatches)
+	}
+}
+
+type sdkReleaseProjectionAdapter struct {
+	calls      int
+	messageRef string
+}
+
+func (a *sdkReleaseProjectionAdapter) Submit(context.Context, string, coremetadata.AgentRouteRef, message.Envelope) (agentdelivery.Delivery, error) {
+	a.calls++
+	return agentdelivery.Delivery{MessageRef: a.messageRef, State: agentdelivery.StateDelivered}, nil
+}
+func (a *sdkReleaseProjectionAdapter) Status(context.Context, string, coremetadata.AgentRouteRef, string) (agentdelivery.Delivery, error) {
+	return agentdelivery.Delivery{}, errors.New("unexpected fixture status")
+}
+
+func TestSDKExplicitReleaseProjectionErrorsPreserveLegacyCLI(t *testing.T) {
+	root := t.TempDir()
+	paths := config.Paths{ConfigDir: filepath.Join(root, "arbitrary-config"), StateDir: filepath.Join(root, "arbitrary-state")}
+	disk := store.NewStore(paths.StateDir)
+	now := time.Now().UTC()
+	envelope := message.Envelope{Version: message.Version, MessageRef: "message-projection-failure", ConversationRef: "conversation-projection-failure", Authority: message.PeerAuthority(), Payload: "peer", AcceptedAt: now, Deadline: now.Add(time.Minute), Source: message.Route{AgentUID: "source", PaneUID: "source-pane", ActivationGeneration: "source-generation", Provider: "codex", Incarnation: "route-source"}, Target: message.Route{AgentUID: "target", PaneUID: "target-pane", ActivationGeneration: "target-generation", Provider: "claude", Incarnation: "route-target"}}
+	record, _, err := disk.PutAccepted(envelope, "claude-coordination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("injected accepted-provider projection error")
+	adapter := &sdkReleaseProjectionAdapter{messageRef: envelope.MessageRef}
+	legacy := newAgentCommand()
+	if legacy.messageExplicitRelease {
+		t.Fatal("legacy CLI enabled explicit SDK release policy")
+	}
+	explicit, err := explicitMessageReleaseCommand(paths, "")
+	if err != nil || !explicit.messageExplicitRelease {
+		t.Fatalf("explicit release policy missing: %v", err)
+	}
+	target := coremetadata.Agent{}
+	target.Spec.Provider = "claude"
+	for _, test := range []struct {
+		name      string
+		command   *agentCommand
+		wantError bool
+	}{{"legacy", legacy, false}, {"sdk-explicit", explicit, true}} {
+		t.Run(test.name, func(t *testing.T) {
+			c := test.command
+			c.messageStore = applyFailingMessageStore{agentMessageStore: disk, err: cause}
+			c.messageClaude = adapter
+			c.messageNow = func() time.Time { return now }
+			result, err := c.pushCoordination(record, target, coremetadata.AgentRouteRef{}, envelope)
+			if test.wantError {
+				if !errors.Is(err, cause) || !strings.Contains(err.Error(), "provider-handoff-outcome-unknown") || !result.Delivery.OutcomeUnknown || result.Delivery.Reason != "provider-handoff-outcome-unknown" {
+					t.Fatalf("SDK child result=%+v err=%v", result, err)
+				}
+			} else if err != nil || agentmessages.ReceiptFor(result) != agentmessages.ReceiptFor(record) {
+				t.Fatalf("legacy CLI result changed: %+v/%v", result, err)
+			}
+			if result.Envelope.MessageRef != record.Envelope.MessageRef {
+				t.Fatal("accepted ref lost")
+			}
+		})
+	}
+	if adapter.calls != 2 {
+		t.Fatalf("projection retried provider: %d", adapter.calls)
+	}
+	// Shared Status may return a useful partial receipt; the CLI must retain
+	// its pre-existing error text and emit no receipt on refresh failure.
+	legacy.messagePaths = agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return coremetadata.Registry{}, nil }}
+	var out, diagnostic bytes.Buffer
+	err = legacy.runMessageStatus([]string{envelope.MessageRef, "-o", "json"}, &out, &diagnostic)
+	if err == nil || err.Error() != "agent message status: persist delivery projection: "+cause.Error() || out.Len() != 0 || diagnostic.Len() != 0 {
+		t.Fatalf("CLI status error/output changed: %v/%q/%q", err, out.String(), diagnostic.String())
+	}
+	durable, found, err := disk.Get(envelope.MessageRef)
+	if err != nil || !found || agentmessages.ReceiptFor(durable) != agentmessages.ReceiptFor(record) {
+		t.Fatalf("projection changed durable receipt: %+v/%t/%v", durable, found, err)
+	}
+}

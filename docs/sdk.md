@@ -579,3 +579,49 @@ values are unchanged.
 `Rename` accepts exact Window, Pane and Agent references under a ControlSession
 root as well as under a Project. It uses the same Registry transaction and
 runtime mirror checks as CLI rename, without deriving an active target.
+
+## Peer messages and receipts
+
+`Client.SendMessage(ctx, projmux.SendMessageRequest{Source: "uid:agent-…",
+Target: "uid:agent-…", Text: "untrusted coordination"})` submits the same peer
+coordination as CLI `agent message send`. Both references must resolve to exactly
+one Agent. Source selects an unverified Agent anchor; it does not authenticate the
+caller, grant operator authority, or select a user-input channel. No active Pane,
+current directory or inherited tmux actor is inferred.
+
+`MessageRef` optionally supplies the CLI's idempotency reference. After current route admission, a repeated matching reference returns its
+stored receipt without dispatching again; a
+changed immutable envelope refuses. `ReplyTo` preserves conversation correlation,
+exact conversation incarnations and the original deadline. Operator-origin
+messages cannot be replied to through a peer route. `TTL` zero selects ten
+minutes; positive values are bounded by 24 hours. Payloads retain the existing
+4096-byte UTF-8 limit, and Claude's serialized auth-plus-content frame retains its
+8192-byte limit. There is no truncation, splitting or automatic retry.
+
+Use the Client's explicit Home, Config, State and socket paths. Claude sends also
+require an absolute `Options.ProjmuxExecutable` of this build so held delivery can
+use the existing internal release helper with those same captured paths. That
+helper inherits no provider messaging credentials or active Pane context. Sending
+to an existing child-free deferred claim retains its existing held receipt and
+claimant-driven first-peer delivery; this API does not create a new owner.
+
+Both methods return `core.MessageReceipt`, including MessageRef, ConversationRef,
+ReplyTo, opaque Source and Target fences, Deadline and Delivery. Delivery.State
+uses `accepted`, `held`, `delivered`, `refused`, `expired`, `stale` or `failed`.
+`Delivery.OutcomeUnknown` is a separate boolean; preserve it and Reason even when
+the call returns an error. Delivered acknowledges peer context acceptance, not
+model consumption, a response, or completion. A held receipt preserves the CLI's
+existing release order and deadline. An uncertain outcome must never be
+interpreted as a proven absence of delivery or automatically resent.
+
+`Client.MessageStatus(ctx, messageRef)` follows the original receipt without
+submitting input. Terminal receipts are returned as stored. Nonterminal reads can
+persist the CLI's existing expiry, removed/stale target, or provider status
+projection; status is not a promise of a write-free filesystem read. The result
+is a snapshot whose values belong to the caller.
+
+Inspect a partial receipt on error before recovery. Typed `*projmux.Refusal`
+codes distinguish invalid input, missing messages, immutable retry mismatches,
+route unavailability and delivery failures. Context cancellation remains available
+through `errors.Is`. Qualification, provider creation, user turn input and
+operator authentication are separate APIs and are not added by peer messaging.

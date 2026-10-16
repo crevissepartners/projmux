@@ -3,19 +3,22 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
 // claudeHoldReasonAwaitingOperator is the reason a coordination message is
@@ -33,12 +36,6 @@ const agentMessageReleaseRoute = "agent-message-release"
 // another for the same target. The holder re-lists held records before it
 // unlocks, so a waiter that gives up cannot strand a record held before that.
 const agentMessageReleaseLockWait = 30 * time.Second
-
-// agentMessageDispatchLockWait bounds how long one send queues behind another
-// send's dispatch to the same target. One dispatch is bounded by the local IPC
-// deadline of its provider submit, so a wait this long only ends on a stuck
-// holder.
-const agentMessageDispatchLockWait = 30 * time.Second
 
 // agentMessageReleaseRetryWindow bounds how long one release keeps its lock
 // re-judging a record it cannot judge yet or watching a target that awaits its
@@ -84,10 +81,6 @@ type agentMessageHeldLister interface {
 
 type agentMessageReleaseLocker interface {
 	LockTargetRelease(string, time.Duration) (func(), error)
-}
-
-type agentMessageDispatchLocker interface {
-	LockTargetDispatch(string, time.Duration) (func(), error)
 }
 
 // heldMessageRelease launches the detached release for an Agent that has at
@@ -149,10 +142,66 @@ func launchAgentMessageRelease(agentUID string) error {
 
 // runAgentMessageRelease is the detached release process.
 func runAgentMessageRelease(args []string) error {
-	if len(args) != 2 || args[0] != "--agent" || !strings.HasPrefix(args[1], selector.UIDPrefix) {
+	if (len(args) != 2 && len(args) != 8) || args[0] != "--agent" || !strings.HasPrefix(args[1], selector.UIDPrefix) {
 		return usageError("internal " + agentMessageReleaseRoute + " requires --agent uid:<agent>")
 	}
-	return newAgentCommand().releaseHeldMessages(strings.TrimPrefix(args[1], selector.UIDPrefix))
+	command := newAgentCommand()
+	paths, socket, explicit, err := parseMessageReleasePaths(args)
+	if err != nil {
+		return err
+	}
+	if explicit {
+		command, err = explicitMessageReleaseCommand(paths, socket)
+		if err != nil {
+			return err
+		}
+	}
+	return command.releaseHeldMessages(strings.TrimPrefix(args[1], selector.UIDPrefix))
+}
+
+// parseMessageReleasePaths is shared with main's outer journal routing. Even
+// malformed explicit arguments must never select an ambient journal.
+func parseMessageReleasePaths(args []string) (config.Paths, string, bool, error) {
+	if len(args) == 2 && args[0] == "--agent" {
+		return config.Paths{}, "", false, nil
+	}
+	if len(args) != 8 || args[0] != "--agent" || !strings.HasPrefix(args[1], selector.UIDPrefix) || args[2] != "--config-dir" || args[4] != "--state-dir" || args[6] != "--socket-path" || !filepath.IsAbs(args[3]) || !filepath.IsAbs(args[5]) || args[7] != "" && !filepath.IsAbs(args[7]) {
+		return config.Paths{}, "", true, usageError("invalid explicit held-message release paths")
+	}
+	return config.Paths{ConfigDir: args[3], StateDir: args[5]}, args[7], true, nil
+}
+
+func explicitMessageReleaseCommand(paths config.Paths, socket string) (*agentCommand, error) {
+	command := newAgentCommand()
+	command.messageExplicitRelease = true
+	command.messagePaths = defaultAgentMessagePaths(paths)
+	command.messageStore = newAgentMessageStore(paths.StateDir)
+	command.messageRoute = liveAgentMessageRouteResolver{registryPath: command.messagePaths.registryPath}
+	command.loadRegistry = command.messagePaths.loadRegistry
+	command.controlPaths = func() (config.Paths, error) { return paths, nil }
+	// Turn-end release CAS must use the same Registry as message reads.
+	// Arbitrary SDK StateDir paths cannot be reconstructed from XDG parents.
+	storage := intmetadata.NewDefaultStore(paths)
+	command.store = &resourceStore{load: storage.LoadReadOnly, snapshot: storage.LoadDegradedReadOnly, update: storage.Update, mutator: intmetadata.DefaultMutator, stateDir: func() (string, error) { return paths.StateDir, nil }}
+	command.mirror = nil
+	if socket != "" {
+		target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{SocketPath: socket})
+		if err != nil {
+			return nil, err
+		}
+		runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target}
+		command.mirror = &tmuxAgentMutationMirror{lookup: intmetadata.NewMirror(runner), runner: runner}
+	}
+
+	// Preserve the same exact path arguments on a release-window handoff.
+	command.messageRelease = func(uid string) error {
+		binary, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		return agentmessages.LaunchRelease(agentmessages.ReleaseOptions{Executable: binary, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, HomeDir: os.Getenv("HOME"), Path: os.Getenv("PATH"), SocketPath: socket}, uid)
+	}
+	return command, nil
 }
 
 // heldRelease is the send side's view of the held-message release.
@@ -173,73 +222,14 @@ func (c *agentCommand) heldRelease() heldMessageRelease {
 // step runs under the target's dispatch lock: a busy helper answers held before
 // the send records the hold, and a later send that read the held records in
 // that gap would overtake this one once the turn ends.
-func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, target coremetadata.Agent,
-	targetRoute coremetadata.AgentRouteRef, envelope coremessage.Envelope,
-) (messagestore.Record, error) {
-	if target.Spec.Provider != string(aiprovider.Claude) {
-		return c.pushCoordination(record, target, targetRoute, envelope)
-	}
-	if locker, ok := c.messageStore.(agentMessageDispatchLocker); ok {
-		unlock, err := locker.LockTargetDispatch(target.Metadata.UID, agentMessageDispatchLockWait)
-		if err != nil {
-			// No helper was called, so this is a known zero write. Recording it
-			// as failed keeps the accepted record from waiting unreachable:
-			// a resend of the same ref and the release both skip accepted.
-			failed, _, applyErr := c.messageStore.Apply(record.Envelope.MessageRef,
-				c.publicMessageEvent(record, coremessage.EventFail, "provider-prewrite-refused", false))
-			if applyErr != nil {
-				return record, fmt.Errorf("keep send order to the target: %w", errors.Join(err, applyErr))
-			}
-			return failed, nil
-		}
-		defer unlock()
-	}
-	blocked := claudeAgentAwaitsOperator(target, c.messageClock())
-	earlier, reason := c.earlierHeldFor(target.Metadata.UID, record.Envelope.MessageRef)
-	if !blocked && !earlier {
-		updated, err := c.pushCoordination(record, target, targetRoute, envelope)
-		if err == nil && updated.Delivery.State == coremessage.StateHeld {
-			c.heldRelease().releaseIfHeld(target.Metadata.UID)
-		}
-		return updated, err
-	}
-	if blocked || reason == "" {
-		reason = claudeHoldReasonAwaitingOperator
-	}
-	held, _, err := c.messageStore.Apply(record.Envelope.MessageRef,
-		c.publicMessageEvent(record, coremessage.EventHold, reason, false))
-	if err != nil {
-		return record, fmt.Errorf("hold message while the target awaits its operator: %w", err)
-	}
-	if held.Delivery.State != coremessage.StateHeld {
-		return held, nil
-	}
-	// Every hold launches the release. A hold caused only by earlier held
-	// messages has no dialog to wait for. A blocked target may never send the
-	// hook that would release it: a dialog that closed after the send's read,
-	// or a denied permission, leaves none, so the release watches the target.
-	c.heldRelease().releaseIfHeld(target.Metadata.UID)
-	return held, nil
+func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, target coremetadata.Agent, targetRoute coremetadata.AgentRouteRef, envelope coremessage.Envelope) (messagestore.Record, error) {
+	return c.peerMessageService().DeliverOrHold(context.Background(), record, target, targetRoute, envelope,
+		func(ctx context.Context, r messagestore.Record, a coremetadata.Agent, route coremetadata.AgentRouteRef, e coremessage.Envelope) (messagestore.Record, error) {
+			return c.pushCoordination(r, a, route, e)
+		},
+		func() error { c.heldRelease().releaseIfHeld(target.Metadata.UID); return nil })
 }
 
-func (c *agentCommand) earlierHeldFor(agentUID, messageRef string) (bool, string) {
-	lister, ok := c.messageStore.(agentMessageHeldLister)
-	if !ok {
-		return false, ""
-	}
-	held, err := lister.HeldFor(agentUID)
-	if err != nil {
-		return false, ""
-	}
-	for _, record := range held {
-		if record.Envelope.MessageRef != messageRef {
-			return true, record.Delivery.Reason
-		}
-	}
-	return false, ""
-}
-
-// heldReleaseOutcome is how judging one held record ended.
 type heldReleaseOutcome int
 
 const (

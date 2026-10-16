@@ -23,7 +23,7 @@ const observedFrameCorpus = "../../../internal/app/testdata/claude-dialogue-obse
 // TestCoordinationContentDeclaresExactlyTheProducerFrameKeys reads this one
 // from source.
 const (
-	producerCoordinationFrameFile = "../../../internal/app/claude_push_hub.go"
+	producerCoordinationFrameFile = "../../../internal/services/agentmessages/claude.go"
 	producerCoordinationFrameType = "claudeProviderCoordinationContent"
 	fixtureCoordinationFrameType  = "coordinationContent"
 )
@@ -33,7 +33,7 @@ const (
 // same keys, the keys under the user frame's message included, so the same
 // comparison reads these from source too.
 const (
-	producerProviderFrameFile     = "../../../internal/app/claude_provider_push.go"
+	producerProviderFrameFile     = "../../../internal/services/agentmessages/claude.go"
 	producerProviderAuthFrameType = "claudeProviderAuthFrame"
 	fixtureProviderAuthFrameType  = "providerAuthFrame"
 	producerProviderUserFrameType = "claudeProviderUserFrame"
@@ -260,9 +260,11 @@ func TestCoordinationContentDecodesEveryFrameShape(t *testing.T) {
 // Only the key name is compared; tag options such as omitempty leave a key out
 // of a frame, and a missing key never breaks a strict decode.
 func TestCoordinationContentDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
-	producer, _ := producerFrameFields(t, producerCoordinationFrameFile, producerCoordinationFrameType)
-	fixture, _ := fixtureFrameFields(t, fixtureCoordinationFrameType, reflect.TypeFor[coordinationContent]())
-	compareFrameKeys(t, "", producerCoordinationFrameType, producer, fixtureCoordinationFrameType, fixture)
+	for _, producerFile := range []string{producerCoordinationFrameFile, "../../../internal/app/claude_push_hub.go"} {
+		producer, _ := producerFrameFields(t, producerFile, producerCoordinationFrameType)
+		fixture, _ := fixtureFrameFields(t, fixtureCoordinationFrameType, reflect.TypeFor[coordinationContent]())
+		compareFrameKeys(t, "", producerCoordinationFrameType, producer, fixtureCoordinationFrameType, fixture)
+	}
 }
 
 // TestProviderAuthFrameDeclaresExactlyTheProducerFrameKeys holds the auth line
@@ -281,29 +283,32 @@ func TestProviderAuthFrameDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
 // field is followed, so a new nested struct is compared only once a test names
 // it here.
 func TestProviderUserFrameDeclaresExactlyTheProducerFrameKeys(t *testing.T) {
-	producer, producerTypes := producerFrameFields(t, producerProviderFrameFile, producerProviderUserFrameType)
-	fixture, fixtureTypes := fixtureFrameFields(t, fixtureProviderUserFrameType, reflect.TypeFor[providerFrame]())
-	compareFrameKeys(t, "", producerProviderUserFrameType, producer, fixtureProviderUserFrameType, fixture)
+	for _, producerFile := range []string{producerProviderFrameFile, "../../../internal/app/claude_provider_push.go"} {
+		producer, producerTypes := producerFrameFields(t, producerFile, producerProviderUserFrameType)
+		fixture, fixtureTypes := fixtureFrameFields(t, fixtureProviderUserFrameType, reflect.TypeFor[providerFrame]())
+		compareFrameKeys(t, "", producerProviderUserFrameType, producer, fixtureProviderUserFrameType, fixture)
 
-	producerMessage, declared := producerTypes[providerUserFrameMessageKey]
-	if !declared {
-		t.Fatalf("%s declares no %s key, so the comparison cannot read the keys under it",
-			producerProviderUserFrameType, providerUserFrameMessageKey)
+		producerMessage, declared := producerTypes[providerUserFrameMessageKey]
+		if !declared {
+			t.Fatalf("%s declares no %s key, so the comparison cannot read the keys under it",
+				producerProviderUserFrameType, providerUserFrameMessageKey)
+		}
+		named, ok := producerMessage.(*ast.Ident)
+		if !ok {
+			t.Fatalf("%s.%s is not a named type of %s, so the comparison cannot read its keys",
+				producerProviderUserFrameType, providerUserFrameMessageKey, producerFile)
+		}
+		fixtureMessage, declared := fixtureTypes[providerUserFrameMessageKey]
+		if !declared {
+			t.Fatalf("%s declares no %s key, so the comparison cannot read the keys under it",
+				fixtureProviderUserFrameType, providerUserFrameMessageKey)
+		}
+		fixtureMessageName := fixtureProviderUserFrameType + "." + providerUserFrameMessageKey
+		producer, _ = producerFrameFields(t, producerFile, named.Name)
+		fixture, _ = fixtureFrameFields(t, fixtureMessageName, fixtureMessage)
+		compareFrameKeys(t, providerUserFrameMessageKey+".", named.Name, producer, fixtureMessageName, fixture)
+
 	}
-	named, ok := producerMessage.(*ast.Ident)
-	if !ok {
-		t.Fatalf("%s.%s is not a named type of %s, so the comparison cannot read its keys",
-			producerProviderUserFrameType, providerUserFrameMessageKey, producerProviderFrameFile)
-	}
-	fixtureMessage, declared := fixtureTypes[providerUserFrameMessageKey]
-	if !declared {
-		t.Fatalf("%s declares no %s key, so the comparison cannot read the keys under it",
-			fixtureProviderUserFrameType, providerUserFrameMessageKey)
-	}
-	fixtureMessageName := fixtureProviderUserFrameType + "." + providerUserFrameMessageKey
-	producer, _ = producerFrameFields(t, producerProviderFrameFile, named.Name)
-	fixture, _ = fixtureFrameFields(t, fixtureMessageName, fixtureMessage)
-	compareFrameKeys(t, providerUserFrameMessageKey+".", named.Name, producer, fixtureMessageName, fixture)
 }
 
 // compareFrameKeys reports each key that only one side declares, naming the

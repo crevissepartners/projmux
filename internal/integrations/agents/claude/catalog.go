@@ -180,6 +180,8 @@ func CallCoordination[O, E, Q, I, B, T, R, D, RD any](ctx context.Context, regis
 		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{}
 	}
 	defer connection.Close()
+	stopCancellation := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	defer stopCancellation()
 	unixConnection, ok := connection.(*net.UnixConn)
 	if !ok {
 		return CoordinationResponse[T, Q, R, D, RD]{}, CoordinationCallError{}

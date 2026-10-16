@@ -1,6 +1,7 @@
 package agentmessage
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -108,4 +109,23 @@ func TestLockTargetDispatchIsIndependentOfTheReleaseLock(t *testing.T) {
 		t.Fatalf("dispatch after unlock: %v", err)
 	}
 	again()
+}
+
+func TestDispatchLockHonorsCallerCancellation(t *testing.T) {
+	disk := NewStore(t.TempDir())
+	release, err := disk.LockTargetDispatch("agent-context", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if unlock, err := disk.LockTargetDispatchContext(ctx, "agent-context", time.Second); !errors.Is(err, context.Canceled) || unlock != nil {
+		t.Fatalf("canceled lock: %v", err)
+	}
+	ctx, done := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer done()
+	if unlock, err := disk.LockTargetDispatchContext(ctx, "agent-context", time.Second); !errors.Is(err, context.DeadlineExceeded) || unlock != nil {
+		t.Fatalf("deadline lock: %v", err)
+	}
 }

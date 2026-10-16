@@ -355,32 +355,56 @@ func TestAgentMessageSendFlagSetCannotNameAnOrigin(t *testing.T) {
 		t.Fatalf("agent message send flags = %v, want %v", flags, want)
 	}
 
-	envelopes := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch node := node.(type) {
-		case *ast.CompositeLit:
-			selector, ok := node.Type.(*ast.SelectorExpr)
-			if !ok || selector.Sel.Name != "Envelope" {
-				return true
-			}
-			envelopes++
-			for _, element := range node.Elts {
-				if pair, ok := element.(*ast.KeyValueExpr); ok {
-					if key, ok := pair.Key.(*ast.Ident); ok && key.Name == "Origin" {
-						t.Errorf("agent_message.go builds an Envelope with an Origin")
+	// Flags live in the CLI adapter; envelopes now live in shared execution.
+	// Inspect every real send producer and require evidence in each service
+	// file so extraction cannot silently make the negative audit vacuous.
+	total := 0
+	for _, path := range []string{
+		"agent_message.go", "process_agent_deferred_send.go",
+		"codex_process_message.go", "agent_message_qualification.go", "claude_reply_tool.go",
+		"../services/agentmessages/send.go", "../services/agentmessages/deferred.go",
+	} {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelopes := 0
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.CompositeLit:
+				selector, ok := node.Type.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "Envelope" {
+					return true
+				}
+				envelopes++
+				for _, element := range node.Elts {
+					if pair, ok := element.(*ast.KeyValueExpr); ok {
+						if key, ok := pair.Key.(*ast.Ident); ok && key.Name == "Origin" {
+							t.Errorf("%s builds an Envelope with an Origin", path)
+						}
+					}
+				}
+			case *ast.AssignStmt:
+				for _, left := range node.Lhs {
+					if selector, ok := left.(*ast.SelectorExpr); ok && selector.Sel.Name == "Origin" {
+						t.Errorf("%s assigns an Origin", path)
 					}
 				}
 			}
-		case *ast.AssignStmt:
-			for _, left := range node.Lhs {
-				if selector, ok := left.(*ast.SelectorExpr); ok && selector.Sel.Name == "Origin" {
-					t.Errorf("agent_message.go assigns an Origin")
-				}
-			}
+			return true
+		})
+
+		if path != "agent_message.go" && path != "process_agent_deferred_send.go" && envelopes == 0 {
+			t.Fatalf("audit found no Envelope literal in %s, so it proves nothing", path)
 		}
-		return true
-	})
-	if envelopes == 0 {
-		t.Fatal("audit found no Envelope literal in agent_message.go, so it proves nothing")
+		total += envelopes
 	}
+	if total == 0 {
+		t.Fatal("audit found no peer Envelope producers")
+	}
+
 }

@@ -1,15 +1,14 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
@@ -35,11 +34,6 @@ type claudeProviderPoster interface {
 	Post(string, func() bool) (claudeProviderPostOutcome, error)
 }
 
-type claudeProviderAuthFrame struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
-}
-
 type claudeProviderUserMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -53,36 +47,7 @@ type claudeProviderUserFrame struct {
 // buildClaudeProviderPushFrame owns the only permitted post-auth vendor frame.
 // Do not add a control, reply, status, or inferred frame to this boundary.
 func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
-	if token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
-		return nil, errors.New("provider-frame-invalid-auth")
-	}
-	if !validClaudeProviderPushContent(content) {
-		return nil, errors.New("provider-frame-invalid-content")
-	}
-	auth, err := json.Marshal(claudeProviderAuthFrame{Type: "auth", Token: token})
-	if err != nil {
-		return nil, errors.New("provider-frame-build-failed")
-	}
-	message, err := json.Marshal(claudeProviderUserFrame{Type: "user", Message: claudeProviderUserMessage{Role: "user", Content: content}})
-	if err != nil {
-		return nil, errors.New("provider-frame-build-failed")
-	}
-	frame := make([]byte, 0, len(auth)+len(message)+2)
-	frame = append(frame, auth...)
-	frame = append(frame, '\n')
-	frame = append(frame, message...)
-	frame = append(frame, '\n')
-	if len(frame) > claudeProviderFrameMaxBytes {
-		return nil, errors.New(claudeProviderFrameSizeReason(len(frame)))
-	}
-	return frame, nil
-}
-
-// validClaudeProviderPushContent judges push content shape only. Its size is
-// bounded by the serialized frame budget, never by the reply payload limit that
-// validClaudeAssistantReply keeps for the reply tool argv body.
-func validClaudeProviderPushContent(content string) bool {
-	return content != "" && utf8.ValidString(content) && !strings.ContainsRune(content, '\x00')
+	return agentmessages.BuildClaudePushFrame(token, content)
 }
 
 // Reasons cross the helper/public boundary and are persisted in existing
