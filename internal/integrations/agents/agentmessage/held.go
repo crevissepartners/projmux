@@ -1,6 +1,7 @@
 package agentmessage
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -82,6 +83,19 @@ func (s *Store) LockTargetDispatch(agentUID string, wait time.Duration) (func(),
 var targetLocks sync.Map
 
 func (s *Store) lockTarget(kind, agentUID string, wait time.Duration) (func(), error) {
+	return s.lockTargetContext(context.Background(), kind, agentUID, wait)
+}
+
+// LockTargetDispatchContext retains send ordering while honoring a caller's
+// earlier deadline. Cancellation never dispatches through the held lock.
+func (s *Store) LockTargetDispatchContext(ctx context.Context, agentUID string, wait time.Duration) (func(), error) {
+	return s.lockTargetContext(ctx, "dispatch", agentUID, wait)
+}
+func (s *Store) lockTargetContext(ctx context.Context, kind, agentUID string, wait time.Duration) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if s == nil || s.path == "" {
 		return nil, errors.New("agent message store path is empty")
 	}
@@ -102,6 +116,10 @@ func (s *Store) lockTarget(kind, agentUID string, wait time.Duration) (func(), e
 	inProcess := value.(*sync.Mutex)
 	deadline := time.Now().Add(wait)
 	for {
+		if err := ctx.Err(); err != nil {
+			_ = lock.Close()
+			return nil, err
+		}
 		err = unix.EWOULDBLOCK
 		if inProcess.TryLock() {
 			err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
@@ -117,7 +135,14 @@ func (s *Store) lockTarget(kind, agentUID string, wait time.Duration) (func(), e
 			}
 			return nil, err
 		}
-		time.Sleep(releaseLockRetryInterval)
+		timer := time.NewTimer(releaseLockRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = lock.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	return func() {
 		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)

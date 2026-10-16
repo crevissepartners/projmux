@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 	"strings"
 	"time"
 
@@ -59,31 +59,8 @@ func claudeProviderLineage(read func(int) (coremetadata.ProcessIdentity, int, er
 	return false, errClaudeLineageUnknown
 }
 
-func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string,
-	source coremetadata.AgentRouteRef, reply coremessage.Envelope,
-) (string, bool, error) {
-	target, ok := claudeadapter.TargetForRoute(source)
-	if !ok {
-		return "", false, coremessage.EnvelopeRefusal(coremessage.ReasonRouteInvalid,
-			"the reply source route names no Claude coordination target")
-	}
-	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
-	defer cancel()
-	response, err := requestClaudeCoordination(ctx, registryPath, source, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "explicit-reply", Target: target,
-		SessionID: target.Authority.SessionID, ReplyEnvelope: &reply,
-	})
-	if err != nil || response.Version != claudeCoordinationVersion || response.AutoResend {
-		return "", false, fmt.Errorf("replyRef=%s: explicit-reply-outcome-unknown; inspect message status; do not resend", reply.MessageRef)
-	}
-	if response.Kind == "reply-refused" {
-		return "", false, explicitReplyRefusal(response)
-	}
-	if response.ReplyRef != reply.MessageRef || response.Reason != "" || response.ReplyDelivery != nil ||
-		(response.Kind != "reply-accepted" || !response.ReplyCreated) && (response.Kind != "reply-replayed" || response.ReplyCreated) {
-		return "", false, fmt.Errorf("replyRef=%s: invalid-explicit-reply-receipt; inspect message status; do not resend", reply.MessageRef)
-	}
-	return response.ReplyRef, response.ReplyCreated, nil
+func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string, source coremetadata.AgentRouteRef, reply coremessage.Envelope) (string, bool, error) {
+	return (agentmessages.ClaudeAdapter{}).ExplicitReply(ctx, registryPath, source, reply)
 }
 
 func explicitReplyRefusal(response claudeCoordinationResponse) error {

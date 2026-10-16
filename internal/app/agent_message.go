@@ -7,10 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +21,7 @@ import (
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
 const defaultAgentMessageTimeout = 30 * time.Second
@@ -168,57 +167,10 @@ type agentMessageClaudeAdapter interface {
 type liveAgentMessageClaudeAdapter struct{}
 
 func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (agentdelivery.Delivery, error) {
-	target, ok := claudeadapter.TargetForRoute(route)
-	if !ok {
-		return agentdelivery.Delivery{}, errors.New("claude target authority is unavailable")
-	}
-	private := claudePrivateCoordinationEnvelope(target, envelope)
-	now := time.Now()
-	if !private.valid(now, route) {
-		return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateRefused,
-			Reason: "claude-private-frame-unsupported"}, nil
-	}
-	deadline := now.Add(localipc.Deadline)
-	if envelope.Deadline.Before(deadline) {
-		deadline = envelope.Deadline
-	}
-	callCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	response, err := requestClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &private,
-	})
-	if err != nil {
-		if !claudeCoordinationCallPossiblyDispatched(err) {
-			return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateFailed,
-				Reason: "provider-prewrite-refused"}, nil
-		}
-		return ambiguousClaudeDelivery(envelope.MessageRef), nil
-	}
-	delivery, valid := claudeResponseDelivery(envelope.MessageRef, response)
-	if !valid {
-		return ambiguousClaudeDelivery(envelope.MessageRef), nil
-	}
-	return delivery, nil
+	return (agentmessages.ClaudeAdapter{}).Submit(ctx, registryPath, route, envelope)
 }
-
-func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, messageRef string) (agentdelivery.Delivery, error) {
-	target, ok := claudeadapter.TargetForRoute(route)
-	if !ok {
-		return agentdelivery.Delivery{}, errors.New("claude target authority is unavailable")
-	}
-	callCtx, cancel := context.WithTimeout(ctx, localipc.Deadline)
-	defer cancel()
-	response, err := requestClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "status", Target: target, MessageRef: messageRef,
-	})
-	if err != nil {
-		return agentdelivery.Delivery{}, err
-	}
-	delivery, valid := claudeResponseDelivery(messageRef, response)
-	if !valid {
-		return agentdelivery.Delivery{}, errors.New("claude coordination response is invalid")
-	}
-	return delivery, nil
+func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, ref string) (agentdelivery.Delivery, error) {
+	return (agentmessages.ClaudeAdapter{}).Status(ctx, registryPath, route, ref)
 }
 
 func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) (agentdelivery.Delivery, bool) {
@@ -313,31 +265,12 @@ type claudeSendRender struct{ frameBytes, contentBytes int }
 // frame is at least that envelope, which carries the full durable route; the
 // v2 self frame without replyAction can fall below it.
 func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, envelope coremessage.Envelope) (claudeSendRender, error) {
-	target, _ := claudeadapter.TargetForRoute(route)
-	private := claudePrivateCoordinationEnvelope(target, envelope)
-	executables := []string{""}
 	executable := os.Executable
 	if c != nil && c.messageExecutable != nil {
 		executable = c.messageExecutable
 	}
-	if own, err := executable(); err == nil && own != "" {
-		executables = append(executables, own)
-	}
-	token := strings.Repeat("0", claudeSendAssumedTokenBytes)
-	var render claudeSendRender
-	for _, candidate := range executables {
-		content, err := renderProviderCoordinationContent(private, candidate, true)
-		if err != nil {
-			return claudeSendRender{}, err
-		}
-		frameBytes, err := claudeSendFrameBytes(token, content)
-		if err != nil {
-			return claudeSendRender{}, err
-		}
-		render.frameBytes = max(render.frameBytes, frameBytes)
-		render.contentBytes = max(render.contentBytes, len(content))
-	}
-	return render, nil
+	rendered, err := (agentmessages.ClaudeAdapter{Executable: executable}).Render(route, envelope)
+	return claudeSendRender{frameBytes: rendered.FrameBytes, contentBytes: rendered.ContentBytes}, err
 }
 
 // claudeSendFrameBytes measures with the real frame builder. An oversized frame
@@ -359,23 +292,10 @@ func claudeSendFrameBytes(token, content string) (int, error) {
 // agentMessageReceipt follows the envelope's Origin and Source rule: an Agent
 // message's receipt has a source and no origin, byte for byte as before, and
 // operator input's has an origin and no source.
-type agentMessageReceipt struct {
-	Version         int                  `json:"version"`
-	MessageRef      string               `json:"messageRef"`
-	ConversationRef string               `json:"conversationRef"`
-	ReplyTo         string               `json:"replyTo,omitempty"`
-	Origin          coremessage.Origin   `json:"origin,omitzero"`
-	Source          coremessage.Route    `json:"source,omitzero"`
-	Target          coremessage.Route    `json:"target"`
-	Delivery        coremessage.Delivery `json:"delivery"`
-	Deadline        time.Time            `json:"deadline"`
-}
+type agentMessageReceipt = agentmessages.Receipt
 
 func receiptFor(record messagestore.Record) agentMessageReceipt {
-	return agentMessageReceipt{Version: record.Envelope.Version, MessageRef: record.Envelope.MessageRef,
-		ConversationRef: record.Envelope.ConversationRef, ReplyTo: record.Envelope.ReplyTo,
-		Origin: record.Envelope.Origin, Source: record.Envelope.Source, Target: record.Envelope.Target, Delivery: record.Delivery,
-		Deadline: record.Envelope.Deadline}
+	return agentmessages.ReceiptFor(record)
 }
 
 func (c *agentCommand) runMessage(args []string, stdout, stderr io.Writer) error {
@@ -429,214 +349,15 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	if ttl <= 0 || ttl > coremessage.MaxTTL {
 		return usageError(fmt.Sprintf("%s: --ttl must be greater than zero and at most %s", spelling, coremessage.MaxTTL))
 	}
-	authorityAction := coremessage.ActionCoordinationSend
-	if replyTo != "" {
-		authorityAction = coremessage.ActionCoordinationReply
+	service := c.peerMessageService()
+	service.AllowImplicitSource = true
+	service.Accepted = func(reg coremetadata.Registry, source coremetadata.Agent, route coremetadata.AgentRouteRef) {
+		c.warnForeignClaudeSource(stderr, &reg, source, route)
 	}
-	if !coremessage.Authorize(coremessage.PrincipalPeer, authorityAction) {
-		return fmt.Errorf("%s: peer authority does not permit %s", spelling, authorityAction)
+	service.Deferred = func(ctx context.Context, reg coremetadata.Registry, source, target coremetadata.Agent, route coremetadata.AgentRouteRef, ref, reply, text string, ttl time.Duration, report func(agentmessages.Receipt, int) error) (bool, error) {
+		return c.sendDeferredPeer(ctx, reg, source, target, route, ref, reply, text, ttl, report, service.Accepted)
 	}
-	// Operator input has no Agent route to answer on. The refusal comes before
-	// route resolution so its reason is the one reported, whatever the target.
-	if replyTo != "" {
-		if original, found, err := c.messageStore.Get(replyTo); err == nil && found && original.Envelope.Operator() {
-			return fmt.Errorf("%s: %w", spelling, c.replyCorrelationRefusal(replyTo, coremessage.ReasonExplicitReplyOperatorOrigin))
-		}
-	}
-	registry, err := c.readMessageRegistry()
-	if err != nil {
-		return MapMetadataError(err)
-	}
-	source, err := c.anchoredMessageAgent(registry, sourceRef, spelling)
-	if err != nil {
-		return err
-	}
-	target, err := c.resolveMessageAgent(registry, positionals[0], spelling)
-	if err != nil {
-		return err
-	}
-	if err := requireAgentMessageCapability("message.send", source); err != nil {
-		return err
-	}
-	if err := requireAgentMessageCapability("message.send", target); err != nil {
-		return err
-	}
-	// Both static cells and both exact activation authorities are proved before
-	// accepting or dispatching a message. Refusals may read earlier reply receipts.
-	sourceRoute, err := c.resolveMessageRoute(registry, source)
-	if err != nil {
-		if replyTo != "" {
-			return fmt.Errorf("%s: %s: %w; %w", spelling, claudeRouteRefusalPrefix("source", err), err,
-				c.replyCorrelationRefusal(replyTo, "explicit-reply-source-route-stale"))
-		}
-		return fmt.Errorf("%s: %s: %w", spelling, claudeRouteRefusalPrefix("source", err), err)
-	}
-	if handled, deferredErr := c.sendDeferredPeer(registry, source, target, sourceRoute, messageRef, replyTo, args[separator+1], ttl, stdout, stderr); handled {
-		return deferredErr
-	}
-	targetRoute, err := c.resolveMessageTargetRoute(registry, target)
-	if err != nil {
-		if replyTo != "" {
-			err = fmt.Errorf("%s: %s: %w; %w", spelling, claudeRouteRefusalPrefix("target", err), err,
-				c.replyCorrelationRefusal(replyTo, "explicit-reply-target-route-stale"))
-		} else {
-			err = fmt.Errorf("%s: %s: %w", spelling, claudeRouteRefusalPrefix("target", err), err)
-		}
-		// An Offline/Failed Codex target is recovered by resuming it (on the
-		// default daemon endpoint, or with a typed refusal naming its own next
-		// command); other providers keep their existing refusal text.
-		if target.Spec.Provider == aiModeCodex && slices.Contains(resumableAgentPhases, target.Status.Phase) {
-			return codexResumeRecovery(err, target)
-		}
-		return err
-	}
-	if messageRef == "" {
-		messageRef = c.newMessageRef("message")
-	}
-	now := c.messageClock()
-	conversationRef := conversationRefFor(messageRef)
-	if replyTo != "" {
-		conversationRef = ""
-	}
-	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: messageRef,
-		ConversationRef: conversationRef, ReplyTo: replyTo,
-		Source: publicMessageRoute(sourceRoute), Target: publicMessageRoute(targetRoute), Authority: coremessage.PeerAuthority(),
-		Payload: args[separator+1], AcceptedAt: now, Deadline: now.Add(ttl)}
-	// A first-frame deferred delivery keeps its retired address as receipt
-	// evidence. Replays use that stored address and never dispatch again.
-	if pane, found := registry.Pane(target.Status.PaneRef); found && pane.Spec.Runtime.Kind == coremetadata.RuntimeProcess {
-		if existing, found, getErr := c.messageStore.Get(messageRef); getErr != nil {
-			return getErr
-		} else if found && existing.Delivery.Reason == "provider-resume-first-frame" && existing.Envelope.Target.AgentUID == target.Metadata.UID && targetRoute.AcceptsIncarnation(existing.Envelope.Target.Incarnation) {
-			envelope.Target = existing.Envelope.Target
-		}
-	}
-	if replyTo != "" {
-		original, found, getErr := c.messageStore.Get(replyTo)
-		if getErr != nil || !found {
-			if getErr == nil {
-				getErr = messagestore.ErrNotFound
-			}
-			return fmt.Errorf("%s: reply correlation failed: %w", spelling, getErr)
-		}
-		envelope.ConversationRef = original.Envelope.ConversationRef
-		// The reply predicate (coremessage.ReplyRoutes) compares incarnations
-		// exactly and has no authority to read either value. Answer in the shape
-		// the original used whenever the current route accepts it; otherwise
-		// keep the current value so the changed conversation is refused below.
-		// The Pane and activation stay the current ones: a relaunch into the
-		// same conversation still correlates, and the reply goes to the Agent
-		// as it runs now.
-		if sourceRoute.AcceptsIncarnation(original.Envelope.Target.Incarnation) {
-			envelope.Source.Incarnation = original.Envelope.Target.Incarnation
-		}
-		if targetRoute.AcceptsIncarnation(original.Envelope.Source.Incarnation) {
-			envelope.Target.Incarnation = original.Envelope.Source.Incarnation
-		}
-		if envelope.Deadline.After(original.Envelope.Deadline) {
-			envelope.Deadline = original.Envelope.Deadline
-		}
-		// A same-ref call is a receipt replay, never a new dispatch. Keep the
-		// durable times so reducing the remaining original TTL cannot change
-		// its immutable-envelope comparison.
-		if existing, exists, err := c.messageStore.Get(messageRef); err != nil {
-			return fmt.Errorf("%s: reply receipt lookup failed: %w", spelling, err)
-		} else if exists && existing.Envelope.ReplyTo == replyTo {
-			envelope.AcceptedAt, envelope.Deadline = existing.Envelope.AcceptedAt, existing.Envelope.Deadline
-		}
-		if !original.Envelope.Deadline.After(now) {
-			return fmt.Errorf("%s: %w", spelling, c.replyCorrelationRefusal(replyTo, "explicit-reply-deadline-expired"))
-		}
-		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
-			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, explicitReplyRefusalReason(envelope, err)))
-		}
-	}
-	// The envelope is judged before any provider work. The store refuses the
-	// same shapes on its own first line, so returning here changes no durable
-	// state; it keeps the cause next to the send that caused it instead of
-	// letting a downstream reader restate it.
-	if err := envelope.Validate(); err != nil {
-		return fmt.Errorf("%s: refused before acceptance: %w", spelling, err)
-	}
-	// A Claude target's push frame is judged here, before any receipt exists.
-	claudeContentBytes := 0
-	if target.Spec.Provider == string(aiprovider.Claude) {
-		render, renderErr := c.claudeSendFrameRender(targetRoute, envelope)
-		if renderErr != nil {
-			return fmt.Errorf("%s: claude push frame unavailable before acceptance: %w", spelling, renderErr)
-		}
-		if render.frameBytes > claudeProviderFrameMaxBytes {
-			return fmt.Errorf("%s: refused before acceptance: %s; reduce payload before retrying; frame bytes include auth and serialized content",
-				spelling, claudeProviderFrameSizeReason(render.frameBytes))
-		}
-		claudeContentBytes = render.contentBytes
-	}
-	if source.Spec.Provider == string(aiprovider.Claude) && replyTo != "" {
-		if adapter, ok := c.messageClaude.(interface {
-			ExplicitReply(context.Context, string, coremetadata.AgentRouteRef, coremessage.Envelope) (string, bool, error)
-		}); ok {
-			ref, created, replyErr := adapter.ExplicitReply(context.Background(), c.messagePaths.registryPath, sourceRoute, envelope)
-			if replyErr != nil {
-				return fmt.Errorf("%s: explicit reply refused: %w", spelling, replyErr)
-			}
-			record, found, getErr := c.messageStore.Get(ref)
-			if getErr != nil || !found || !record.Envelope.SameRetry(envelope) {
-				return fmt.Errorf("%s: explicit reply receipt unavailable", spelling)
-			}
-			// A reply is delivered the same way any other message is. Without
-			// this it only reached the store, and with the self-claim inbox gone
-			// nothing would ever hand it to the target.
-			var pushErr error
-			if created {
-				record, pushErr = c.deliverOrHoldCoordination(record, target, targetRoute, record.Envelope)
-			}
-			if err := writeAgentMessageReceiptText(stdout, receiptFor(record), claudeContentBytes); err != nil {
-				return err
-			}
-			if pushErr != nil {
-				return fmt.Errorf("%s: %w", spelling, pushErr)
-			}
-			if agentMessageUndelivered(record.Delivery) {
-				return fmt.Errorf("%s: explicit reply not delivered: previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
-					spelling, ref, record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown,
-					agentMessageReplyFailureAction(record, claudeContentBytes))
-			}
-			return nil
-		}
-		return fmt.Errorf("%s: exact explicit reply adapter is unavailable", spelling)
-	}
-	adapter := "codex-inbox"
-	if target.Spec.Provider == string(aiprovider.Claude) {
-		adapter = "claude-coordination"
-	}
-	record, created, err := c.messageStore.PutAccepted(envelope, adapter)
-	if err != nil {
-		return fmt.Errorf("%s: %w", spelling, err)
-	}
-	// Only an accepted send is judged. The reply above needs no warning: its
-	// coordination server already refuses a caller outside the provider.
-	c.warnForeignClaudeSource(stderr, &registry, source, sourceRoute)
-	var pushErr error
-	if created {
-		record, pushErr = c.deliverOrHoldCoordination(record, target, targetRoute, envelope)
-	}
-	// The receipt is written before the failure is returned, so the sender sees
-	// the terminal state, reason, and action on stdout and still exits nonzero.
-	receipt := receiptFor(record)
-	if err := writeAgentMessageReceiptText(stdout, receipt, claudeContentBytes); err != nil {
-		return err
-	}
-	if pushErr != nil {
-		return fmt.Errorf("%s: %w", spelling, pushErr)
-	}
-	// A push that returned no cause, and a same-ref replay that pushed nothing,
-	// still exit by the receipt they printed.
-	if agentMessageUndelivered(record.Delivery) {
-		return fmt.Errorf("%s: message not delivered: messageRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
-			spelling, record.Envelope.MessageRef, record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown,
-			agentMessageReceiptFailureAction(receipt, claudeContentBytes))
-	}
-	return nil
+	return service.ExecuteSend(context.Background(), agentmessages.SendRequest{Source: sourceRef, Target: positionals[0], Text: args[separator+1], MessageRef: messageRef, ReplyTo: replyTo, TTL: ttl}, func(r agentmessages.Receipt, n int) error { return writeAgentMessageReceiptText(stdout, r, n) })
 }
 
 // agentMessageUndelivered is the one judgment of a send's exit: a terminal
@@ -927,52 +648,11 @@ func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer)
 	if len(refs) != 1 || (output != "" && output != "json") {
 		return usageError(spelling + " requires <message-ref> [-o json]")
 	}
-	record, found, err := c.messageStore.Get(refs[0])
-	if err != nil || !found {
-		if err == nil {
-			err = messagestore.ErrNotFound
-		}
-		return fmt.Errorf("%s: %w", spelling, err)
+	receipt, err := c.peerMessageService().Status(context.Background(), refs[0])
+	if err != nil {
+		return err
 	}
-	if !record.Delivery.State.Terminal() {
-		registry, loadErr := c.readMessageRegistry()
-		if loadErr != nil {
-			return loadErr
-		}
-		target, ok := registry.Agent(record.Envelope.Target.AgentUID)
-		if !ok {
-			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-removed"))
-		} else if capabilityErr := requireAgentMessageCapability("message.status", *target); capabilityErr != nil {
-			return capabilityErr
-		} else if record.Delivery.State == coremessage.StateHeld && record.Delivery.Reason == deferredHoldReason {
-			record, found, err = c.messageStore.Status(refs[0], c.messageClock())
-			if err == nil && !found {
-				err = messagestore.ErrNotFound
-			}
-		} else if route, routeErr := c.resolveMessageRoute(registry, *target); routeErr != nil || !messageRouteAccepts(route, record.Envelope.Target) {
-			record, _, err = c.messageStore.Apply(record.Envelope.MessageRef, c.staleMessageEvent(record, "target-activation-stale"))
-		} else if record.Delivery.State == coremessage.StateHeld {
-			// A held message never reached a helper, which would answer
-			// unknown-message. The store is its only witness, and its deadline
-			// read reports expired once the TTL has passed.
-			record, found, err = c.messageStore.Status(refs[0], c.messageClock())
-			if err == nil && !found {
-				err = messagestore.ErrNotFound
-			}
-		} else if record.Adapter == "claude-coordination" {
-			private, statusErr := c.messageClaude.Status(context.Background(), c.messagePaths.registryPath, route, record.Envelope.MessageRef)
-			record, err = c.projectClaudeDelivery(record, private, statusErr)
-		} else if record.Adapter == "codex-inbox" {
-			record, found, err = c.messageStore.Status(refs[0], c.messageClock())
-			if err == nil && !found {
-				err = messagestore.ErrNotFound
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("%s: persist delivery projection: %w", spelling, err)
-		}
-	}
-	return writeAgentMessageReceipt(stdout, receiptFor(record), output == "json")
+	return writeAgentMessageReceipt(stdout, receipt, output == "json")
 }
 
 func (c *agentCommand) runWait(args []string, stdout, stderr io.Writer) error {
@@ -1315,5 +995,44 @@ func waitAgentMessagePoll(ctx context.Context, duration time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+// peerMessageService supplies the CLI's existing exact transport adapters.
+// CLI parsing, ambient source selection and rendering remain outside execution.
+func (c *agentCommand) peerMessageService() agentmessages.Service {
+	return agentmessages.Service{
+
+		RegistryPath: c.messagePaths.registryPath,
+		ResolveSource: func(ctx context.Context, reg coremetadata.Registry, ref, spelling string) (coremetadata.Agent, error) {
+			return c.anchoredMessageAgent(reg, ref, spelling)
+		},
+		ResolveAgent: func(ctx context.Context, reg coremetadata.Registry, ref, spelling string) (coremetadata.Agent, error) {
+			return c.resolveMessageAgent(reg, ref, spelling)
+		},
+		ResolveTarget: func(ctx context.Context, reg coremetadata.Registry, a coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+			return c.resolveMessageTargetRoute(reg, a)
+		},
+		Deferred: func(ctx context.Context, reg coremetadata.Registry, source, target coremetadata.Agent, route coremetadata.AgentRouteRef, ref, reply, text string, ttl time.Duration, report func(agentmessages.Receipt, int) error) (bool, error) {
+			return c.sendDeferredPeer(ctx, reg, source, target, route, ref, reply, text, ttl, report, nil)
+		},
+		Render: func(ctx context.Context, route coremetadata.AgentRouteRef, e coremessage.Envelope) (agentmessages.Render, error) {
+			r, err := c.claudeSendFrameRender(route, e)
+			return agentmessages.Render{FrameBytes: r.frameBytes, ContentBytes: r.contentBytes}, err
+		},
+		Deliver: func(ctx context.Context, r messagestore.Record, a coremetadata.Agent, route coremetadata.AgentRouteRef, e coremessage.Envelope) (messagestore.Record, error) {
+			return c.deliverOrHoldCoordination(r, a, route, e)
+		},
+		NewRef: c.newMessageRef, Claude: c.messageClaude, RouteRefusalPrefix: claudeRouteRefusalPrefix,
+		ResumeRecovery: codexResumeRecovery, FailureAction: agentMessageReceiptFailureAction, MapRegistryError: MapMetadataError,
+		Store: c.messageStore, LoadRegistry: c.readMessageRegistry, Now: c.messageClock,
+		ResolveRoute: func(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+			return c.resolveMessageRoute(reg, agent)
+		},
+		RequireCapability: requireAgentMessageCapability,
+		ClaudeStatus: func(ctx context.Context, route coremetadata.AgentRouteRef, ref string) (agentdelivery.Delivery, error) {
+			return c.messageClaude.Status(ctx, c.messagePaths.registryPath, route, ref)
+		},
+		DeferredHoldReason: deferredHoldReason,
 	}
 }
