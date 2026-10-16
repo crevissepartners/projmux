@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -110,7 +109,7 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	ctx, cancel, release := c.hostTransferLifetime()
 	defer release()
 	authority := *pane.Status.Activation.Codex.Authority
-	domain, err := codexBrokerStateDomain(c.lookupEnv, os.UserHomeDir)
+	paths, err := c.rebind.create.processCreatePaths()
 	if err != nil {
 		return err
 	}
@@ -118,7 +117,7 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	if err != nil {
 		return err
 	}
-	discovery, err := codexBrokerRuntimeDiscovery(domain, key, authority.BrokerRuntimeID)
+	discovery, err := codexBrokerRuntimeDiscovery(paths.StateDir, key, authority.BrokerRuntimeID)
 	if err != nil {
 		return err
 	}
@@ -201,7 +200,7 @@ func (c *agentCommand) planHostProcessCodexLaunch(recipe processRelaunchRecipe) 
 		return processhost.Command{}, processhost.CodexConfig{}, settings, err
 	}
 	ai := c.ai.(*aiCommand)
-	command, err := processhost.CodexCommand(ai.findAgentBinary(aiModeCodex), recipe.workspace.CWD, os.Environ(), nil)
+	command, err := processhost.CodexCommand(ai.findAgentBinary(aiModeCodex), recipe.workspace.CWD, ai.processCreateEnvironment(), nil)
 	config := processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(recipe.workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{Model: settings.resolution.New.Model.Value, Effort: annotations[coremetadata.AnnotationAgentEffort], Policy: policy}}
 	return command, config, settings, err
 }
@@ -381,11 +380,15 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 		journalErr := writeCodexHostTransfer(source.journalPath, source.journal)
 		return fmt.Errorf("agent relaunch: transfer failed; previous recipe/conversation retained; recover with: %s --host tmux: %w", tmuxTransferRecovery(reg, source.retired, source.request), errors.Join(cause, journalErr))
 	}
-	executable, err := os.Executable()
+	executable, err := creator.processCreateExecutable()
 	if err != nil {
 		return fail(err)
 	}
-	host, err := processhost.NewHost(binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: command.Env}, creator.processCreateTransactions(owned.owner.registryPath), processhost.DefaultLimits())
+	supervisorEnv, err := creator.processCreateSupervisorEnvironment(command.Env, binding, owned.owner.registryPath)
+	if err != nil {
+		return fail(err)
+	}
+	host, err := processhost.NewHost(binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: supervisorEnv}, creator.processCreateTransactions(owned.owner.registryPath), processhost.DefaultLimits())
 	if err != nil {
 		return fail(err)
 	}

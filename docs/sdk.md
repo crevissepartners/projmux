@@ -99,8 +99,9 @@ now return `CodeExecutableInvalid` (`executable-invalid`) before effects, replac
 their previous `CodeCreateExecutableInvalid` result. Consumers matching those
 errors should update their code checks. `CreateAgent`, `CreateWindow`, and
 `CreatePane` retain `CodeCreateExecutableInvalid` (`create-executable-invalid`);
-the existing constant remains exported. Relaunch dry runs and unchanged plans
-retain their existing behavior without requiring an executable.
+the existing constant remains exported. Tmux relaunch dry runs and unchanged
+plans retain their behavior without requiring an executable. Process planning
+requires the same-build executable for its internal owned executor.
 
 
 ## Optional create outcome recording
@@ -496,13 +497,12 @@ and `CreateProcessError` causes with exact owner and binding references; a nonze
 cannot be confirmed. Inspect that generation before using `StopAgent` or `Delete`;
 an uncertain startup must not be automatically retried.
 
-### Relaunch a tmux Agent
+### Relaunch an Agent
 
 `Client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: "uid:..."})` uses the
 CLI's shared restart plan and stop/rebind sequence for an exact Claude or Codex
 Agent. Project and Window optionally scope the explicit reference; no current
-Pane or caller Agent is inferred. Process Agents and host moves are unsupported
-and refused before Stop. Configure explicit Home, Config, State and socket paths,
+Pane or caller Agent is inferred. Process Agents and public CLI host moves are supported as described below. Configure explicit Home, Config, State and socket paths,
 and an absolute `Options.ProjmuxExecutable` from the same build.
 
 `Profile` and `Instructions` are pointers: nil leaves the selection unchanged;
@@ -516,7 +516,7 @@ restarts it. Offline and Failed Agents resume without Stop.
 `Confirm`; this can interrupt its current turn. Cancellation prevents admission.
 After Stop is admitted, rebind or failure recovery finishes independently of
 later caller cancellation. The Agent UID and provider conversation are preserved;
-a committed rebind creates a new Pane/generation. Success acknowledges the
+a committed tmux rebind creates a new Pane/generation. Success acknowledges the
 commit, not provider activation, a model response or terminal rendering.
 
 Inspect the result even when the call fails: `Stop` and `Resume` retain their
@@ -644,8 +644,7 @@ Use the born binding from a fresh resource read after peer delivery.
 
 Process requests require Detach and reject SocketPath and DialogueReplyOnly.
 The zero values preserve the tmux resume API; process-specific inputs on tmux
-Agents refuse before effects. Process relaunch and host moves remain unsupported
-by this method.
+Agents refuse before effects. Use `RelaunchAgent` for process relaunch and host moves.
 
 Use an absolute `Options.ProjmuxExecutable` from the same build. The constructor's
 captured Home, Config, State and provider environment reach the detached owner
@@ -661,3 +660,50 @@ contains a typed code and wraps `*projmux.ResumeProcessError` with Owner and Bin
 Unknown cleanup retains exact recovery resources and must not be automatically
 retried. A committed generation that later exits retains its actual termination
 record; a child-free claim does not prove provider birth or a response.
+
+
+### Process relaunch and execution host moves
+
+`RelaunchAgentRequest{Ref: "uid:agent-…", Detach: true}` restarts an existing
+process Claude or Codex Agent through the same internal owned executor as CLI
+`agent relaunch --detach`, even when its settings are unchanged. `Prompt` supplies
+explicit first input. Promptless same-host Claude instead returns `ClaimWaiting`
+with an exact child-free claim and a frozen launch recipe. The first peer input
+starts that recipe in the preserved conversation. Stopping the claim before
+birth releases it without inventing an actual Wait record.
+
+Set `Host: "process", Detach: true` to move a tmux Agent into an independent
+process owner; Claude requires a Prompt for this move. Set `Host: "tmux"` with an
+explicit absolute `SocketPath` to move a process Agent into tmux. Unsupported
+public CLI combinations refuse before Stop. SDK foreground process ownership is
+unsupported. Omitted Host retains the source host and never uses the configured
+creation default. Existing tmux-only calls retain their behavior.
+
+Agent UID and conversation are preserved; same-host process relaunch also keeps
+the Pane UID and starts a fresh owner generation. `CurrentHost`, `TargetHost`,
+`Binding` and `ClaimWaiting` identify the result. An optional request Binding
+fences the source generation. DryRun, self-target, busy without Confirm, stale
+bindings and unsupported requests cannot stop the source. Old process writers
+must pass exact Stop, actual Wait and retirement barriers before replacement.
+
+Use `Options.ProjmuxExecutable` from the same build. Frozen Home, Config, State
+and captured provider environment reach the existing internal owner, including
+arbitrary absolute Config/State roots. The SDK reads or changes no ambient
+environment during the operation and does not select accounts or read/copy
+credentials. No public CLI command is used as an execution subprocess.
+
+Cancellation prevents admission; admitted tmux rebind/recovery finishes despite
+later cancellation. Process startup failure or cancellation settles through the
+owned rollback path. After a successful detached handshake, caller cancellation
+or exit cannot stop its owner. Success proves ownership/commit, not a response.
+Inspect partial results and `*projmux.RelaunchProcessError` (Owner, Binding, Code)
+through `*projmux.Refusal` and errors.As. `CodeRelaunchSelfTarget` and
+`CodeRelaunchSourceStale` distinguish those refusals; wrapped causes retain context
+and stale-binding identity. Unknown cleanup never means Offline success; inspect
+the exact resources before public Stop/Resume/Delete recovery and do not retry
+automatically. The existing CLI admission and output contracts are unchanged.
+`CodeRelaunchProcessUnsupported` remains exported for source compatibility.
+
+Host-lost recovery is outside this SDK relaunch contract; use the public CLI
+`agent relaunch` recovery path after inspecting the exact resources. The SDK
+refuses absent ownership evidence without replacing it with an invented Wait.

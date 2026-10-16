@@ -35,7 +35,8 @@ const (
 	CodeRelaunchStopUnknown         Code = "relaunch-stop-unknown"
 )
 
-// RelaunchAgent shares the CLI's tmux restart plan and execution sequence.
+// RelaunchAgent shares the CLI restart plan and execution sequence, including
+// detached process relaunch and public execution host moves.
 // Cancellation prevents admission; after admission Stop and its rebind or
 // recovery complete independently of caller cancellation. DryRun changes nothing.
 // A successful commit does not acknowledge provider activation or a response.
@@ -57,6 +58,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	if err != nil {
 		return out, resourceRefusal(err)
 	}
+	requestSocket := q.SocketPath
 	socket := q.SocketPath
 	if socket == "" {
 		socket = c.runtimeSocketPath
@@ -80,11 +82,22 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		return out, resourceRefusal(err)
 	}
 	target, _ := reg.Agent(selected.Matches[0].UID)
+	processSource := false
 	for _, p := range reg.PanesOf(target.Metadata.UID) {
 		if p.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-			return out, &Refusal{Code: CodeRelaunchProcessUnsupported, message: "RelaunchAgent supports tmux Agents only; use projmux agent relaunch for a process Agent"}
+			processSource = true
 		}
 	}
+	if processSource || (q.Host != "" && q.Host != "tmux") {
+		if processSource && q.Host != "tmux" {
+			q.SocketPath = requestSocket
+		}
+		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg)
+	}
+	if q.Detach || q.Prompt != "" || q.Binding != (core.ProcessBinding{}) {
+		return out, &Refusal{Code: CodeRelaunchRequestInvalid, message: "RelaunchAgentRequest process inputs require a process destination or source"}
+	}
+
 	refuse := func(reason, detail string) error {
 		return &Refusal{Code: Code(reason), message: fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason)}
 	}
