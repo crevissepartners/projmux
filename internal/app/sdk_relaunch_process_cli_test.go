@@ -139,7 +139,7 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 				if _, e = storage.Update(func(r *m.Registry) error { *r = reg.Clone(); return nil }); e != nil {
 					t.Fatal(e)
 				}
-				c, e := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary})
+				c, e := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: filepath.Join(f.root, "unused-client-tmux.sock")})
 				if e != nil {
 					t.Fatal(e)
 				}

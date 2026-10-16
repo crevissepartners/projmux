@@ -550,3 +550,28 @@ func relaunchRegistryDifferencePaths(before, after metadata.Registry) []string {
 	}
 	return paths
 }
+
+func TestRelaunchProcessSocketRequestIsIndependentFromClientDefault(t *testing.T) {
+	client, before, uid, _ := sdkStopFixture(t)
+	client.runtimeSocketPath = "/explicit/client-default.sock"
+	client.projmuxExecutable = "" // Admission must reach this gate without launching anything.
+	for _, tc := range []struct {
+		name, socket string
+		code         Code
+	}{
+		{"client tmux default is unused", "", CodeExecutableInvalid},
+		{"explicit process socket is refused", "/explicit/request.sock", CodeRelaunchRequestInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.RelaunchAgent(context.Background(), core.RelaunchAgentRequest{Ref: "uid:" + uid, Detach: true, SocketPath: tc.socket})
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Code != tc.code {
+				t.Fatalf("want %s, got %v", tc.code, err)
+			}
+			after, err := store.NewStore(store.PathFor(client.paths.StateDir)).LoadReadOnly()
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatalf("socket admission changed Registry: %v", err)
+			}
+		})
+	}
+}

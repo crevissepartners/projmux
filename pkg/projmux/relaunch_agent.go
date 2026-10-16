@@ -58,6 +58,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	if err != nil {
 		return out, resourceRefusal(err)
 	}
+	requestSocket := q.SocketPath
 	socket := q.SocketPath
 	if socket == "" {
 		socket = c.runtimeSocketPath
@@ -88,6 +89,9 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		}
 	}
 	if processSource || (q.Host != "" && q.Host != "tmux") {
+		if processSource && q.Host != "tmux" {
+			q.SocketPath = requestSocket
+		}
 		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg)
 	}
 	if q.Detach || q.Prompt != "" || q.Binding != (core.ProcessBinding{}) {
