@@ -412,7 +412,7 @@ func TestSDKDetachedProcessResumeCLICancellationOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(f.root, "claude"), []byte(fmt.Sprintf("#!/bin/sh\nexec %q -u -c 'import sys; sys.stdin.buffer.read()'\n", python)), 0700); err != nil {
+	if err = os.WriteFile(filepath.Join(f.root, "claude"), fmt.Appendf(nil, "#!/bin/sh\nexec %q -u -c 'import sys; sys.stdin.buffer.read()'\n", python), 0700); err != nil {
 		t.Fatal(err)
 	}
 	for _, version := range []struct {
