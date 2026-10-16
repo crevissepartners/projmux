@@ -86,7 +86,7 @@ func (c *Client) peerMessages() agentmessages.Service {
 		Control: agentcontrol.Client{Runner: frozenTurnRunner{c}, StateDir: c.paths.StateDir, Transport: c.transport, LoadRegistry: load},
 		Executable: func() (string, error) {
 			if c.projmuxExecutable == "" {
-				return "", errors.New("Claude peer messages require Options.ProjmuxExecutable for held-message release")
+				return "", errors.New("claude peer messages require Options.ProjmuxExecutable for held-message release")
 			}
 			return c.projmuxExecutable, nil
 		},

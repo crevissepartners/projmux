@@ -50,9 +50,6 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 	return agentmessages.BuildClaudePushFrame(token, content)
 }
 
-// validClaudeProviderPushContent judges push content shape only. Its size is
-// bounded by the serialized frame budget, never by the reply payload limit that
-// validClaudeAssistantReply keeps for the reply tool argv body.
 // Reasons cross the helper/public boundary and are persisted in existing
 // receipts. Only closed tokens and canonical numeric frame sizes belong here;
 // never attach a marshal, socket, credential, content, or writer error.

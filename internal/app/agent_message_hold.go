@@ -37,12 +37,6 @@ const agentMessageReleaseRoute = "agent-message-release"
 // unlocks, so a waiter that gives up cannot strand a record held before that.
 const agentMessageReleaseLockWait = 30 * time.Second
 
-// agentMessageDispatchLockWait bounds how long one send queues behind another
-// send's dispatch to the same target. One dispatch is bounded by the local IPC
-// deadline of its provider submit, so a wait this long only ends on a stuck
-// holder.
-const agentMessageDispatchLockWait = 30 * time.Second
-
 // agentMessageReleaseRetryWindow bounds how long one release keeps its lock
 // re-judging a record it cannot judge yet or watching a target that awaits its
 // operator, so a helper that stays busy or a dialog that stays open cannot hold
@@ -87,10 +81,6 @@ type agentMessageHeldLister interface {
 
 type agentMessageReleaseLocker interface {
 	LockTargetRelease(string, time.Duration) (func(), error)
-}
-
-type agentMessageDispatchLocker interface {
-	LockTargetDispatch(string, time.Duration) (func(), error)
 }
 
 // heldMessageRelease launches the detached release for an Agent that has at

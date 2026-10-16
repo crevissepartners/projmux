@@ -200,8 +200,6 @@ func (c *agentCommand) claudeSendFrameRender(route coremetadata.AgentRouteRef, e
 	return claudeSendRender{frameBytes: rendered.FrameBytes, contentBytes: rendered.ContentBytes}, err
 }
 
-// claudeSendFrameBytes measures with the real frame builder. An oversized frame
-// is reported by the builder's canonical size reason, which carries the size.
 // agentMessageReceipt follows the envelope's Origin and Source rule: an Agent
 // message's receipt has a source and no origin, byte for byte as before, and
 // operator input's has an origin and no source.
