@@ -10,10 +10,12 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1330,6 +1332,29 @@ func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
 	script := strings.Replace(string(raw), "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})", "elif prompt=='send-message':\n   emit({'type':'assistant','session_id':'process-session','content':'running'})", 1)
 	// Keep the native arrival in the existing turn, without a control prompt.
 	script = strings.Replace(script, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();continue", 1)
+	// This test alone records fixed phase flags and the sender's actual Wait.
+	// The sidecar contains no provider frames, credentials or environment.
+	senderObservation := `t6_lock=threading.Lock()
+t6_state={'hook_returned':False,'init_emitted':False,'native_seen':False,'started':False,'exited':False,'exit_code':0,'agent':''}
+def t6_note(**values):
+ with t6_lock:
+  t6_state.update(values)
+  try:
+   path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-observation')
+   with open(path+'.tmp','w') as out: out.write(json.dumps(t6_state))
+   os.replace(path+'.tmp',path)
+  except OSError: pass
+def t6_wait(child):
+ code=child.wait()
+ t6_note(exited=True,exit_code=code)
+`
+	script = strings.Replace(script, "write_lock=threading.Lock()", senderObservation+"write_lock=threading.Lock()", 1)
+	script = strings.Replace(script, "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})", "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})\nt6_note(hook_returned=True)", 1)
+	send := "subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)"
+	// Init output alone does not publish registration or open the host turn.
+	// The sole provider-child sender waits for the parent's private release.
+	script = strings.Replace(script, send, "t6_note(init_emitted=True)\n   while not os.path.exists(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'peer-release')): threading.Event().wait(0.01)\n   child="+send+"\n   t6_note(started=True,agent=b['Agent'])\n   threading.Thread(target=t6_wait,args=(child,),daemon=True).start()", 1)
+	script = strings.Replace(script, "c.close();continue", "c.close();t6_note(native_seen=True);continue", 1)
 	if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -1351,27 +1376,317 @@ func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
 			_ = cmd.Wait()
 		}
 	}()
+	// Failure rendering uses only the last poll's cache. In particular, a
+	// missing receipt never triggers a new host/Registry lookup after failure.
+	stage, registrySummary := "owner-receipt", "not-sampled"
+	hostSummary, registrationSummary := "not-sampled", "not-sampled"
+	preparationChecks := "not-sampled"
+	var preparationStarted, preparationSampled time.Time
+	var preparationElapsed time.Duration
+	stageStarted := time.Now()
+	var receipt []byte
+	var receiptErr error
+	receiptSampled := false
+	sidecarSummary := "not-sampled"
+	var sidecarSampled time.Time
+	var uid string
+	classifyRead := func(err error) string {
+		switch {
+		case err == nil:
+			return "ok"
+		case errors.Is(err, os.ErrNotExist):
+			return "missing"
+		case errors.Is(err, os.ErrPermission):
+			return "permission"
+		default:
+			return "other"
+		}
+	}
+	sampleSender := func() {
+		sidecarSampled = time.Now()
+		file, readErr := os.Open(filepath.Join(f.root, "message-observation"))
+		if readErr != nil {
+			sidecarSummary = classifyRead(readErr)
+			return
+		}
+		var buffer [1025]byte
+		n, readErr := file.Read(buffer[:])
+		_ = file.Close()
+		if n > 1024 {
+			sidecarSummary = "oversize"
+			return
+		}
+		var observed struct {
+			HookReturned bool   `json:"hook_returned"`
+			InitEmitted  bool   `json:"init_emitted"`
+			NativeSeen   bool   `json:"native_seen"`
+			Started      bool   `json:"started"`
+			Exited       bool   `json:"exited"`
+			ExitCode     int    `json:"exit_code"`
+			Agent        string `json:"agent"`
+		}
+		if readErr != nil || json.Unmarshal(buffer[:n], &observed) != nil {
+			sidecarSummary = "unreadable"
+			return
+		}
+		exitCode := "not-observed"
+		if observed.Exited {
+			exitCode = fmt.Sprint(observed.ExitCode)
+		}
+		sidecarSummary = fmt.Sprintf("hook_returned=%t init_emitted=%t native_seen=%t started=%t exit_observed=%t exit_code=%s agent_matches=%t", observed.HookReturned, observed.InitEmitted, observed.NativeSeen, observed.Started, observed.Exited, exitCode, observed.Started && observed.Agent == uid)
+	}
+	cacheRegistry := func(reg coremetadata.Registry, readErr error) {
+		a, agentFound := reg.Agent(uid)
+		if readErr != nil || !agentFound {
+			registrySummary = "unavailable"
+			return
+		}
+		p, paneFound := reg.Pane(a.Status.PaneRef)
+		if !paneFound || p.Status.ProcessSession == nil || p.Status.Activation.Process == nil {
+			registrySummary = "incomplete"
+			return
+		}
+		b, session := p.Status.Activation.Process.Binding, p.Status.ProcessSession
+		registrySummary = fmt.Sprintf("binding_matches=%t session_matches=%t turn_present=%t running=%t", b.AgentUID == uid && b.PaneUID == p.Metadata.UID && p.Metadata.OwnerUID() == uid && b.ProjectUID == f.project && b.WindowUID == f.window && b == session.Binding, session.SessionID == "process-session", session.TurnID != "", a.Status.Phase == coremetadata.PhaseRunning)
+	}
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		// Parse fixed tokens only: never print the receipt/error text itself.
+		prefix := receipt
+		if len(prefix) > 4096 {
+			prefix = prefix[:4096]
+		}
+		state, reason := "not-observed", "not-observed"
+		fields := strings.Fields(string(prefix))
+		if len(fields) > 1 {
+			switch fields[1] {
+			case "accepted", "held", "delivered", "refused", "failed", "expired", "stale":
+				state = fields[1]
+			}
+		}
+		for _, field := range fields {
+			value := strings.TrimPrefix(field, "reason=")
+			switch value {
+			case "provider-native-peer-joined", "provider-prewrite-refused", "provider-write-zero", "provider-write-partial", "provider-handoff-outcome-unknown", "broker-handoff-persist-failed", "broker-delivery-persist-failed", "target-turn-active", "ttl", "ttl-after-durable-handoff":
+				reason = value
+			}
+		}
+		deadline, _ := ctx.Deadline()
+		sampledAge := "not-sampled"
+		if !sidecarSampled.IsZero() {
+			sampledAge = time.Since(sidecarSampled).String()
+		}
+		receiptRead := "not-sampled"
+		if receiptSampled {
+			receiptRead = classifyRead(receiptErr)
+		}
+		preparationAge, preparationDuration := "not-sampled", "not-sampled"
+		if !preparationSampled.IsZero() {
+			preparationAge = time.Since(preparationSampled).String()
+			preparationDuration = preparationElapsed.String()
+		}
+		diagnostic := fmt.Sprintf("running-peer failure cache: stage=%s stage_elapsed=%s context_elapsed=%s deadline_ended=%t receipt_sampled=%t receipt_read=%s receipt_bytes=%d state=%s reason=%s source_unconfirmed=%t target_unconfirmed=%t authority_unavailable=%t sender_cache_age=%s sender={%s} registry={%s} host={%s} registration={%s} prepare_elapsed=%s prepare_cache_age=%s prepare_last_pass=%s; hook_returned/init_emitted do not prove readiness; cached values are not a post-failure liveness check", stage, time.Since(stageStarted), 25*time.Second-time.Until(deadline), ctx.Err() != nil, receiptSampled, receiptRead, len(receipt), state, reason, bytes.Contains(prefix, []byte("source Agent readiness is unconfirmed")), bytes.Contains(prefix, []byte("target Agent readiness is unconfirmed")), bytes.Contains(prefix, []byte("process Claude authority is unavailable")), sampledAge, sidecarSummary, registrySummary, hostSummary, registrationSummary, preparationDuration, preparationAge, preparationChecks)
+		if len(diagnostic) > 2048 {
+			diagnostic = diagnostic[:2048]
+		}
+		t.Log(diagnostic)
+	}()
 	line, err := bufio.NewReader(output).ReadString('\n')
 	if err != nil {
 		t.Fatal(err, stderr.String())
 	}
 	ref := strings.Fields(line)[1]
-	uid := strings.TrimPrefix(ref, "uid:")
-	var receipt []byte
+	uid = strings.TrimPrefix(ref, "uid:")
+	// One preparation budget inside the unchanged 25s test context. No
+	// goroutine is abandoned on timeout; each wire call is synchronous.
+	// Filesystem/process inspection is synchronous and has no syscall deadline.
+	prepareCtx, cancelPrepare := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelPrepare()
+	preparationStarted = time.Now()
+	var fixedBinding coremetadata.ProcessBinding
+	prepare := func() bool {
+		preparationSampled = time.Now()
+		defer func() { preparationElapsed = time.Since(preparationStarted) }()
+		preparationChecks = "none"
+		hostSummary, registrationSummary = "not-sampled-this-attempt", "not-sampled-this-attempt"
+		stage, stageStarted = "prepare-registry", time.Now()
+		if prepareCtx.Err() != nil {
+			return false
+		}
+		sampleSender()
+		reg, readErr := f.store.LoadReadOnly()
+		cacheRegistry(reg, readErr)
+		a, found := reg.Agent(uid)
+		if readErr != nil || !found {
+			return false
+		}
+		pane, found := reg.Pane(a.Status.PaneRef)
+		if !found || pane.Status.Activation.Process == nil || pane.Status.ProcessSession == nil {
+			return false
+		}
+		activation, session := *pane.Status.Activation.Process, pane.Status.ProcessSession
+		binding := activation.Binding
+		if binding.AgentUID != uid || binding.PaneUID != pane.Metadata.UID || pane.Metadata.OwnerUID() != uid || binding.ProjectUID != f.project || binding.WindowUID != f.window || binding != session.Binding || binding.Generation == "" {
+			return false
+		}
+		if fixedBinding == (coremetadata.ProcessBinding{}) {
+			fixedBinding = binding
+		}
+		if binding != fixedBinding {
+			t.Fatal("preparation binding changed")
+		}
+		initialTurn := binding.OperationID + "-initial"
+		if session.SessionID != "process-session" || session.TurnID != initialTurn || a.Status.Phase != coremetadata.PhaseRunning {
+			return false
+		}
+		preparationChecks = "registry"
+		stage, stageStarted = "prepare-host-stream", time.Now()
+		view, ok := observeProcessHostOwnerContext(prepareCtx, reg, f.store.Path(), *pane)
+		hostSummary = fmt.Sprintf("observed=%t binding_matches=%t ready=%t turn=%t pending_zero=%t exit_nil=%t", ok, view.Binding == processSchemaBinding(binding), view.State == "ready", view.Turn, view.Pending == 0, view.Exit == nil)
+		if !ok || view.State != "ready" || !view.Turn || view.Pending != 0 || view.Exit != nil || view.Binding != processSchemaBinding(binding) {
+			return false
+		}
+		// Lookup is read-only and uses the owned socket/context API rather
+		// than discoverProcessClaudeProof's context-free DialUnix path.
+		preparationChecks = "host-stream"
+		stage, stageStarted = "prepare-registration", time.Now()
+		hostSocket := processClaudeHostSocket(f.store.Path(), binding.PaneUID, binding.Generation)
+		hostIdentity, inspectErr := localipc.InspectOwnedSocket(hostSocket)
+		if inspectErr != nil || prepareCtx.Err() != nil {
+			return false
+		}
+		lookup := claudeProcessCheck{Binding: processSchemaBinding(binding), Session: "process-session", Lookup: true}
+		var registration claudeProcessCheckResult
+		lookupErr := localipc.ExchangeOwnedJSON(prepareCtx, hostSocket, hostIdentity, activation.HostProcess, lookup, &registration)
+		registrationSummary = fmt.Sprintf("lookup_ok=%t valid=%t binding_matches=%t child_matches=%t ready=%t", lookupErr == nil, registration.Valid, registration.Binding == lookup.Binding, registration.Process == activation.Child, registration.Registration != nil && registration.Registration.Ready)
+		if lookupErr != nil || !registration.Valid || registration.Binding != lookup.Binding || registration.Process != activation.Child || registration.Registration == nil || !registration.Registration.Ready {
+			return false
+		}
+		authority := registration.Registration.Authority
+		if !authority.Valid() || authority.Process != activation.Child || authority.SessionID != "process-session" {
+			return false
+		}
+		evidence := coremetadata.ClaudeProcessRouteEvidence{HostInstance: binding.HostInstanceID, PaneUID: binding.PaneUID, Generation: binding.Generation, SessionID: "process-session", Process: activation.Child, HostProcess: activation.HostProcess, Registration: *registration.Registration}
+		route, reason := coremetadata.ResolveProcessClaudeRoute(reg, uid, evidence, func(e coremetadata.ClaudeProcessRouteEvidence) bool {
+			return e.Registration == *registration.Registration
+		})
+		if reason != "" {
+			return false
+		}
+		preparationChecks = "registration"
+		stage, stageStarted = "prepare-lease", time.Now()
+		lease := claudeadapter.LeaseSocket(f.store.Path(), binding.PaneUID, binding.Generation, authority.RegistrationGeneration)
+		leaseIdentity, inspectErr := localipc.InspectOwnedSocket(lease)
+		if inspectErr != nil || prepareCtx.Err() != nil {
+			return false
+		}
+		dialer := net.Dialer{}
+		connection, dialErr := dialer.DialContext(prepareCtx, "unix", lease)
+		if dialErr != nil {
+			return false
+		}
+		leaseReady := func() bool {
+			defer connection.Close()
+			unixConnection, unix := connection.(*net.UnixConn)
+			if !unix {
+				return false
+			}
+			deadline, _ := prepareCtx.Deadline()
+			if connection.SetDeadline(deadline) != nil {
+				return false
+			}
+			peer, _, peerErr := localipc.PeerProcess(unixConnection)
+			if peerErr != nil || peer != authority.LeaseProcess {
+				return false
+			}
+			var ready [1]byte
+			n, readErr := connection.Read(ready[:])
+			current, currentErr := localipc.InspectOwnedSocket(lease)
+			return readErr == nil && n == 1 && ready[0] == 1 && currentErr == nil && current == leaseIdentity
+		}()
+		if !leaseReady {
+			return false
+		}
+		target, ok := claudeadapter.TargetForRoute(route)
+		if !ok {
+			return false
+		}
+		preparationChecks = "lease"
+		stage, stageStarted = "prepare-coordination-probe", time.Now()
+		probe, probeErr := requestClaudeCoordination(prepareCtx, f.store.Path(), route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "probe", Target: target})
+		if probeErr != nil || probe.Kind != "ready" || probe.AutoResend || probe.Ambiguous {
+			return false
+		}
+		preparationChecks = "coordination-probe"
+		stage, stageStarted = "prepare-eligibility", time.Now()
+		eligible, eligibilityErr := requestClaudeCoordination(prepareCtx, f.store.Path(), route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "eligibility", Target: target})
+		if eligibilityErr != nil || eligible.Kind != "qualified" || eligible.ProviderVersion != claudeFrozenFrameProviderVersion || eligible.Reason != "exact-public-init-and-explicit-reply" || eligible.AutoResend || eligible.Ambiguous {
+			return false
+		}
+		preparationChecks = "eligibility"
+		stage, stageStarted = "prepare-final-fence", time.Now()
+		var confirmed claudeProcessCheckResult
+		if localipc.ExchangeOwnedJSON(prepareCtx, hostSocket, hostIdentity, activation.HostProcess, lookup, &confirmed) != nil || !confirmed.Valid || confirmed.Binding != lookup.Binding || confirmed.Process != activation.Child || confirmed.Registration == nil || *confirmed.Registration != *registration.Registration {
+			return false
+		}
+		latest, readErr := f.store.LoadReadOnly()
+		cacheRegistry(latest, readErr)
+		latestAgent, found := latest.Agent(uid)
+		if readErr != nil || !found || latestAgent.Status.PaneRef != binding.PaneUID || latestAgent.Status.Phase != coremetadata.PhaseRunning {
+			return false
+		}
+		latestPane, found := latest.Pane(binding.PaneUID)
+		if !found || latestPane.Status.Activation.Process == nil || *latestPane.Status.Activation.Process != activation || latestPane.Status.ProcessSession == nil || latestPane.Status.ProcessSession.Binding != binding || latestPane.Status.ProcessSession.SessionID != "process-session" || latestPane.Status.ProcessSession.TurnID != initialTurn {
+			return false
+		}
+		view, ok = observeProcessHostOwnerContext(prepareCtx, latest, f.store.Path(), *latestPane)
+		hostSummary = fmt.Sprintf("observed=%t binding_matches=%t ready=%t turn=%t pending_zero=%t exit_nil=%t", ok, view.Binding == lookup.Binding, view.State == "ready", view.Turn, view.Pending == 0, view.Exit == nil)
+		if !ok || view.State != "ready" || !view.Turn || view.Pending != 0 || view.Exit != nil || view.Binding != lookup.Binding || prepareCtx.Err() != nil {
+			return false
+		}
+		preparationChecks = "final-fence"
+		return true
+	}
+	// Poll read-only readiness; never retry the send or repeat qualification.
+	for !prepare() {
+		select {
+		case <-prepareCtx.Done():
+			t.Fatal("peer readiness exceeded the shared preparation budget")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if prepareCtx.Err() != nil {
+		t.Fatal("preparation ended before release")
+	}
+	// Readiness observations are not atomic with this write. The real
+	// sender and native admission still perform their own exact fences.
+	stage, stageStarted = "peer-release", time.Now()
+	if err = os.WriteFile(filepath.Join(f.root, "peer-release"), nil, 0600); err != nil {
+		t.Fatal("private peer release unavailable")
+	}
+	cancelPrepare()
+	stage, stageStarted = "peer-receipt", time.Now()
 	processCLIUntil(t, ctx, func() bool {
-		receipt, _ = os.ReadFile(filepath.Join(f.root, "message-receipt"))
+		receipt, receiptErr = os.ReadFile(filepath.Join(f.root, "message-receipt"))
+		receiptSampled = true
+		sampleSender()
 		return bytes.Contains(receipt, []byte("delivered")) || bytes.Contains(receipt, []byte("held"))
 	})
 	if !bytes.Contains(receipt, []byte("\tdelivered")) {
 		t.Fatalf("running peer %s", receipt)
 	}
+	stage, stageStarted = "message-status", time.Now()
 	messageRef := strings.Fields(string(receipt))[0]
 	status, statusErr := exec.CommandContext(ctx, f.binary, "agent", "message", "status", messageRef, "-o", "json").CombinedOutput()
 	if statusErr != nil || !bytes.Contains(status, []byte(claudeNativePeerJoinedReason)) {
 		t.Fatalf("joined receipt reason %v %s", statusErr, status)
 	}
+	stage, stageStarted = "session-turn", time.Now()
 	processCLIUntil(t, ctx, func() bool {
-		reg, _ := f.store.LoadReadOnly()
+		reg, readErr := f.store.LoadReadOnly()
+		cacheRegistry(reg, readErr)
 		agent, _ := reg.Agent(uid)
 		pane, _ := reg.Pane(agent.Status.PaneRef)
 		session := pane.Status.ProcessSession
@@ -1387,6 +1702,7 @@ func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
 	if session == nil || session.SessionID != "process-session" || session.TurnID == "" || agent.Status.Phase != coremetadata.PhaseRunning {
 		t.Fatal("native admission replaced active ownership", pane)
 	}
+	stage, stageStarted = "native-and-stdin", time.Now()
 	running := session.TurnID
 	native, err := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
 	if err != nil {
@@ -1400,20 +1716,25 @@ func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
 		t.Fatalf("peer leaked into user stdin %s", stdin)
 	}
 	// The same registration remains current after delivery; no replacement.
+	stage, stageStarted = "registration-current", time.Now()
 	out, err := exec.CommandContext(ctx, f.binary, "agent", "capabilities", ref, "-o", "json").CombinedOutput()
 	if err != nil || bytes.Contains(out, []byte("ended-not-current")) {
 		t.Fatalf("registration ended %v %s", err, out)
 	}
+	stage, stageStarted = "joined-finish", time.Now()
 	out, err = exec.CommandContext(ctx, f.binary, "agent", "turn", "start", ref, "--", "joined-finish").CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte("running-turn="+running)) {
 		t.Fatalf("turn changed %v %s", err, out)
 	}
+	stage, stageStarted = "turn-ended", time.Now()
 	processCLIUntil(t, ctx, func() bool {
-		reg, _ := f.store.LoadReadOnly()
+		reg, readErr := f.store.LoadReadOnly()
+		cacheRegistry(reg, readErr)
 		a, _ := reg.Agent(uid)
 		p, _ := reg.Pane(a.Status.PaneRef)
 		return p.Status.ProcessSession != nil && p.Status.ProcessSession.TurnID == ""
 	})
+	stage, stageStarted = "owner-wait", time.Now()
 	_ = input.Close()
 	err = cmd.Wait()
 	waited = true
