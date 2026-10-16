@@ -41,9 +41,10 @@ type ProcessResumeFailure struct {
 	Binding processhost.Binding
 	Code    string
 	Cause   error
+	message string
 }
 
-func (e *ProcessResumeFailure) Error() string { return e.Cause.Error() }
+func (e *ProcessResumeFailure) Error() string { return e.message }
 func (e *ProcessResumeFailure) Unwrap() error { return e.Cause }
 
 // LaunchDetachedProcessResume is the CLI/SDK startup transaction. The owner
@@ -63,6 +64,11 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		}
 		b := processCreateSchemaBinding(ready.Binding)
 		old := wire.Resume.Previous
+		if wire.ResumeContext != nil {
+			if ready.Result == nil || ready.Result.Agent.Metadata.UID != b.AgentUID || ready.Result.Pane.Metadata.UID != b.PaneUID || ready.Result.Pane.Status.ProcessSession == nil || ready.Result.Pane.Status.ProcessSession.Binding != b {
+				return processhost.ErrStale
+			}
+		}
 		if b.AgentUID != wire.Resume.Agent || b.PaneUID != old.PaneUID || b.ProjectUID != old.ProjectUID || b.WindowUID != old.WindowUID {
 			return processhost.ErrStale
 		}
@@ -91,10 +97,11 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		if code == "" {
 			code = "resume-execution-failed"
 		}
+		message := err.Error()
 		if code == "process-resume-refused" {
 			err = errors.Join(err, processhost.ErrResumeRefused)
 		}
-		err = &ProcessResumeFailure{Owner: reply.Owner, Binding: reply.Binding, Code: code, Cause: errors.Join(err, ctx.Err())}
+		err = &ProcessResumeFailure{Owner: reply.Owner, Binding: reply.Binding, Code: code, Cause: errors.Join(err, ctx.Err()), message: message}
 	}
 	return reply, err
 }
@@ -136,7 +143,7 @@ func AwaitDetachedProcessResumeCleanup(load func() (m.Registry, error), request 
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; cleanup: projmux agent stop uid:%s: %w", request.Agent, request.Previous.PaneUID, request.Agent, ctx.Err())
+			return fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", request.Agent, request.Previous.PaneUID, request.Agent, request.Agent, ctx.Err())
 		case <-ticker.C:
 		}
 	}

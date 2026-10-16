@@ -112,6 +112,7 @@ Client.relaunchAgent	Public RelaunchAgent implementation for external SDK consum
 Client.relaunchLiveness	Public RelaunchAgent failure-observation closure; TestRelaunchLivenessSelectsExactPane injects exact Registry/socket inventory and TestRelaunchAgentSDKStopFailureEvidence checks typed Stop cause, retained plan/recovery and no replay.
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.resumeAgentPlan	Public ResumeAgent/RelaunchAgent shared transaction closure; TestResumeAgentSDKCLIParity, TestResumeAgentSDKCLIRollback and TestRelaunchAgentSDKNativeCodexAndPostStopCancellation protect commit and recovery.
+Client.resumeProcessAgent	Public ResumeAgent detached process closure; supplemental frozen-domain/claim and external caller-exit fixtures cover identity and lifetime.
 Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Client.turn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -149,6 +150,7 @@ Dispositions	Closed CLI route disposition catalog retained as the test seam that
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 ExecuteDetachedProcessCreate	Public Client.CreateAgent detached execution closure shares the owned launcher and app callbacks; exercised by public-only consumer and CLI parity fixtures.
+ExecuteDetachedProcessResume	Public ResumeAgent detached startup closure shares CLI launch execution; external caller-exit and explicit-domain fixtures protect captured routing.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 FallbackProvenance	Read-only HUD provenance projection retained for callers of the usage snapshot seam.
 FindProjectStopTarget	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
@@ -308,6 +310,8 @@ ResumeAdapter.ResumeCommand	Shared Agent CLI resume command renderer retained wi
 ResumeCommand	Per-provider Agent CLI resume command wrappers retained as the tested adapter surface after snapshot replay, their only product caller, was removed.
 ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 ResumeLaunchService.PlanAgentResume	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
+ResumeProcessError.Error	Public ResumeAgent recovery cause preserves diagnostics with exact binding and owner through typed startup failures.
+ResumeProcessError.Unwrap	Public ResumeAgent recovery cause preserves errors.Is/errors.As across detached startup and cleanup failure.
 ResumeReceipt	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
