@@ -578,7 +578,7 @@ validTeardownObservation	The closed observation validator is retained inside the
 validateCapabilityTMUXSocketRoot	Test-only installed qualification helper retained to reject overlong private tmux routes before lifecycle mutation.
 validateInheritedEnvironment	Test-only installed qualification helper retained for inherited tmux refusal proof.
 validateManagedIdentity	Test-only installed qualification helper retained for foreign PID/socket cleanup refusal proof.
-validateRelaunchLayers	Public RelaunchAgent independent settings-input validation closure; TestRelaunchLayerConflictAndExactRecovery and TestRelaunchAgentAdmissionAndProcessRefusal protect conflicts/reset and lookup ordering.
+validateRelaunchLayers	Public RelaunchAgent independent settings-input validation closure; TestRelaunchLayerConflictAndExactRecovery and TestRelaunchAgentAdmissionAndProcessInputs protect conflicts/reset and lookup ordering.
 versionOrUnknown	Test-only installed qualification helper retained for nonblank version-tuple evidence.
 waitForProcessExit	Test-only installed qualification helper retained for independently bounded direct kill-wait proof.
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.

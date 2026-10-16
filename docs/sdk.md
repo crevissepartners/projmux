@@ -99,8 +99,9 @@ now return `CodeExecutableInvalid` (`executable-invalid`) before effects, replac
 their previous `CodeCreateExecutableInvalid` result. Consumers matching those
 errors should update their code checks. `CreateAgent`, `CreateWindow`, and
 `CreatePane` retain `CodeCreateExecutableInvalid` (`create-executable-invalid`);
-the existing constant remains exported. Relaunch dry runs and unchanged plans
-retain their existing behavior without requiring an executable.
+the existing constant remains exported. Tmux relaunch dry runs and unchanged
+plans retain their behavior without requiring an executable. Process planning
+requires the same-build executable for its internal owned executor.
 
 
 ## Optional create outcome recording
@@ -515,7 +516,7 @@ restarts it. Offline and Failed Agents resume without Stop.
 `Confirm`; this can interrupt its current turn. Cancellation prevents admission.
 After Stop is admitted, rebind or failure recovery finishes independently of
 later caller cancellation. The Agent UID and provider conversation are preserved;
-a committed rebind creates a new Pane/generation. Success acknowledges the
+a committed tmux rebind creates a new Pane/generation. Success acknowledges the
 commit, not provider activation, a model response or terminal rendering.
 
 Inspect the result even when the call fails: `Stop` and `Resume` retain their

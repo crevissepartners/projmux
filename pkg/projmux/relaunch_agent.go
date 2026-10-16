@@ -35,7 +35,8 @@ const (
 	CodeRelaunchStopUnknown         Code = "relaunch-stop-unknown"
 )
 
-// RelaunchAgent shares the CLI's tmux restart plan and execution sequence.
+// RelaunchAgent shares the CLI restart plan and execution sequence, including
+// detached process relaunch and public execution host moves.
 // Cancellation prevents admission; after admission Stop and its rebind or
 // recovery complete independently of caller cancellation. DryRun changes nothing.
 // A successful commit does not acknowledge provider activation or a response.
