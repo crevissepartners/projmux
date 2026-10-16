@@ -84,7 +84,7 @@ func TestAsyncAnswerAtomicClaimAndStrictT1State(t *testing.T) {
 	if json.Unmarshal(raw, &shape) != nil {
 		t.Fatal("JSON")
 	}
-	for _, outcome := range []string{"submitted", "unknown", "not-submitted"} {
+	for _, outcome := range []string{"submitted", "unknown", "not-submitted", "declined"} {
 		t.Run(outcome, func(t *testing.T) {
 			isolated := NewStore(t.TempDir()).AsyncStore().WithClock(func() time.Time { return now })
 			original, err := isolated.Create(r)
@@ -162,5 +162,45 @@ func TestAsyncClaimPruningNeverPretendsSettlement(t *testing.T) {
 	}
 	if err = store.FinishAsync(claim, "submitted"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("capacity receipt loss", err)
+	}
+}
+
+func TestAsyncDeclineSettlementAndClaimRace(t *testing.T) {
+	now := time.Now().UTC()
+	st := NewStore(t.TempDir()).AsyncStore().WithClock(func() time.Time { return now })
+	r, err := st.Create(asyncNamespaceRecord("question-0000000000000001", now, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	wins := make(chan string, 2)
+	var wg sync.WaitGroup
+	for _, outcome := range []string{"submitted", "declined"} {
+		wg.Go(func() {
+			<-start
+			claim, err := st.BeginAsync(r)
+			if err == nil {
+				if err = st.FinishAsync(claim, outcome); err != nil {
+					t.Error(err)
+				}
+				wins <- outcome
+			} else if !errors.Is(err, ErrNotPending) {
+				t.Error(err)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(wins)
+	if len(wins) != 1 {
+		t.Fatal("claim winners", len(wins))
+	}
+	outcome := <-wins
+	stored, found, err := st.Get(r.ID)
+	if err != nil || !found || stored.State != StateClosed || stored.Disposition != "async-"+outcome || len(stored.Answers) != 0 {
+		t.Fatal(stored, err)
+	}
+	if err = st.FinishAsync(stored, "declined"); !errors.Is(err, ErrNotPending) {
+		t.Fatal("settled claim changed", err)
 	}
 }

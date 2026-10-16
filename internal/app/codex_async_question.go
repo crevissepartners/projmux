@@ -158,7 +158,14 @@ func asyncQuestionView(id string, r processhost.Request, store *agentquestion.St
 	}
 	prompts, err := agentquestion.ParseCodexQuestions(r.Input)
 	deadline := record.Deadline
-	return ExactProcessQuestion{QuestionID: id, Policy: "projmux", Delivery: "async", CanAnswer: snap != nil && snap.State == "ready" && snap.Exit == nil && proof != nil && !proof.Closed && record.State == agentquestion.StateWaiting, State: record.State, Deadline: &deadline, Prompts: prompts}, err
+	canAnswer := snap != nil && snap.State == "ready" && snap.Exit == nil && proof != nil && !proof.Closed && record.State == agentquestion.StateWaiting
+	canDecline := canAnswer && err == nil
+	for _, prompt := range prompts {
+		if prompt.IsSecret {
+			canDecline = false
+		}
+	}
+	return ExactProcessQuestion{QuestionID: id, Policy: "projmux", Delivery: "async", CanAnswer: canAnswer, CanDecline: canDecline, State: record.State, Deadline: &deadline, Prompts: prompts}, err
 }
 
 func (c *codexProcessControl) captureAsyncSnapshot(snap processhost.Snapshot) error {

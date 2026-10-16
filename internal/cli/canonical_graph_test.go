@@ -112,8 +112,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Adds non-sensitive config accounts add/list/remove to the public graph.
-	const want = "7290bad68c130ec6a93e0049ebfb89bb6e75600b977d8fc0baefb94cf96f5871"
+	// Adds the explicit whole-set async Codex question decline route.
+	const want = "a7dd97608a97907b54caa663ad3e186feccdbf35abfb7aa3bedb894e32b84716"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

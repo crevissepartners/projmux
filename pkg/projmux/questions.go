@@ -31,9 +31,16 @@ type QuestionReceiptDispatcher interface {
 	AnswerQuestionReceipt(context.Context, string, string, []core.QuestionSelection) (core.QuestionAnswerResult, error)
 }
 
+// QuestionDeclineReceiptDispatcher optionally submits a non-answer notice for
+// the complete async question set. It does not extend QuestionDispatcher.
+type QuestionDeclineReceiptDispatcher interface {
+	DeclineQuestionReceipt(context.Context, string, string) (core.QuestionDeclineResult, error)
+}
+
 const (
 	MaxAsyncQuestionTextBytes            = agentquestion.MaxAsyncQuestionTextBytes
 	MaxAsyncQuestionSelectionsBytes      = agentquestion.MaxAsyncQuestionSelectionsBytes
+	CodeQuestionDeclineUnsupported  Code = "question-decline-unsupported"
 	CodeQuestionStale               Code = "question-stale"
 	CodeQuestionBusy                Code = "question-busy"
 	CodeQuestionHostUnsupported     Code = "question-host-unsupported"
@@ -154,6 +161,19 @@ func (c *Client) AnswerQuestion(ctx context.Context, input AnswerQuestionRequest
 	result, err := c.questionService().Answer(ctx, request, agent)
 	return core.QuestionAnswerResult{QuestionID: result.QuestionID, AgentUID: result.AgentUID, AgentName: result.AgentName, Delivery: result.Delivery, Outcome: result.Outcome}, questionRefusal(err)
 }
+
+// DeclineQuestion explicitly declines the whole current async question set.
+// Submitted means the operator notice was submitted, not read by the model.
+// A delivery marked unknown is locked and must never be resent.
+func (c *Client) DeclineQuestion(ctx context.Context, agentRef, questionID string) (core.QuestionDeclineResult, error) {
+	agent, err := c.questionAgent(ctx, agentRef, "agent question decline", "DeclineQuestion agentRef")
+	if err != nil {
+		return core.QuestionDeclineResult{}, err
+	}
+	result, err := c.questionService().Decline(ctx, questions.Request{Spelling: "agent question decline", QuestionID: questionID}, agent)
+	return core.QuestionDeclineResult{QuestionID: result.QuestionID, AgentUID: result.AgentUID, AgentName: result.AgentName, Delivery: result.Delivery, Outcome: result.Outcome}, questionRefusal(err)
+}
+
 func questionRefusal(err error) error {
 	// The host can reject a validated choice when its live question changes.
 	// Preserve the CLI transport error text while exposing its refusal code.
@@ -234,6 +254,31 @@ func (d publicQuestionDispatcher) AnswerExactProcessQuestionReceipt(ctx context.
 		}
 	}
 	result, err := capability.AnswerQuestionReceipt(ctx, uid, id, out)
+	receipt := processquestions.AnswerReceipt{QuestionID: result.QuestionID, Delivery: result.Delivery, Outcome: result.Outcome}
+	if err != nil {
+		var refusal *Refusal
+		if errors.As(err, &refusal) {
+			receipt.Code = string(refusal.Code)
+		} else {
+			receipt.Code = "question-delivery-unknown"
+			receipt.Outcome = "unknown"
+		}
+		receipt.QuestionID, receipt.Delivery, receipt.Message = id, "async", err.Error()
+		return receipt, &processquestions.DeliveryError{Receipt: receipt, Cause: err}
+	}
+	return receipt, nil
+}
+
+func (d publicQuestionDispatcher) SupportsAsyncQuestionDeclines() bool {
+	_, ok := d.QuestionDispatcher.(QuestionDeclineReceiptDispatcher)
+	return ok
+}
+func (d publicQuestionDispatcher) DeclineExactProcessQuestionReceipt(ctx context.Context, uid, id string) (processquestions.AnswerReceipt, error) {
+	capability, ok := d.QuestionDispatcher.(QuestionDeclineReceiptDispatcher)
+	if !ok {
+		return processquestions.AnswerReceipt{}, &processquestions.DeliveryError{Receipt: processquestions.AnswerReceipt{QuestionID: id, Delivery: "async", Code: "question-decline-unsupported"}}
+	}
+	result, err := capability.DeclineQuestionReceipt(ctx, uid, id)
 	receipt := processquestions.AnswerReceipt{QuestionID: result.QuestionID, Delivery: result.Delivery, Outcome: result.Outcome}
 	if err != nil {
 		var refusal *Refusal

@@ -39,6 +39,11 @@ func (d ProcessQuestionDispatcher) AnswerExactProcessQuestionReceipt(ctx context
 	return (processquestions.Dispatcher{RegistryPath: d.RegistryPath}).AnswerExactProcessQuestionReceipt(ctx, uid, id, selections)
 }
 
+func (d ProcessQuestionDispatcher) SupportsAsyncQuestionDeclines() bool { return true }
+func (d ProcessQuestionDispatcher) DeclineExactProcessQuestionReceipt(ctx context.Context, uid, id string) (processquestions.AnswerReceipt, error) {
+	return (processquestions.Dispatcher{RegistryPath: d.RegistryPath}).DeclineExactProcessQuestionReceipt(ctx, uid, id)
+}
+
 // Callbacks are local to the owning host and keyed by the complete immutable
 // binding. They carry no frontend authority and are removed with its socket.
 var processQuestionCallbacks sync.Map // processhost.Binding -> func(context.Context, processQuestionRequest) ([]ExactProcessQuestion,error)
@@ -163,6 +168,9 @@ func admitHeldDirect(store *agentquestion.Store, provider string, b processhost.
 }
 
 func (c *claudeProcessControl) exactQuestions(ctx context.Context, r processQuestionRequest) ([]ExactProcessQuestion, error) {
+	if (r.Action != "" && r.Action != "decline") || (r.Action == "decline" && (r.QuestionID == "" || len(r.Selections) != 0)) {
+		return nil, processhost.ErrStale
+	}
 	if r.Binding != c.binding {
 		return nil, processhost.ErrStale
 	}
@@ -181,6 +189,9 @@ func (c *claudeProcessControl) exactQuestions(ctx context.Context, r processQues
 	}
 	if r.QuestionID == "" {
 		return exactQuestionViews(aiModeClaude, c.records, c.nativeQuestions, c.questions)
+	}
+	if r.Action == "decline" {
+		return nil, &asyncAnswerError{receipt: processquestions.AnswerReceipt{QuestionID: r.QuestionID, Delivery: "async", Code: "question-decline-unsupported"}, cause: errors.New("question-decline-unsupported")}
 	}
 	request, prompts, held, err := exactQuestionRequest(aiModeClaude, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {
@@ -206,6 +217,9 @@ func (c *claudeProcessControl) exactQuestions(ctx context.Context, r processQues
 	return nil, err
 }
 func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuestionRequest) ([]ExactProcessQuestion, error) {
+	if (r.Action != "" && r.Action != "decline") || (r.Action == "decline" && (r.QuestionID == "" || len(r.Selections) != 0)) {
+		return nil, processhost.ErrStale
+	}
 	if c.endpoint == nil || r.Binding != c.endpoint.binding {
 		return nil, processhost.ErrStale
 	}
@@ -226,6 +240,9 @@ func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuest
 	}
 	if request, ok := c.records[r.QuestionID]; ok && request.Kind == "async-question" {
 		return c.answerAsyncQuestion(ctx, r, snap)
+	}
+	if r.Action == "decline" {
+		return nil, &asyncAnswerError{receipt: processquestions.AnswerReceipt{QuestionID: r.QuestionID, Delivery: "async", Code: "question-decline-unsupported"}, cause: errors.New("question-decline-unsupported")}
 	}
 	request, prompts, held, err := exactQuestionRequest(aiModeCodex, r, c.records, c.nativeQuestions, c.questions)
 	if err != nil {
@@ -251,7 +268,7 @@ func (c *codexProcessControl) exactQuestions(ctx context.Context, r processQuest
 }
 func applyExactProcessQuestions(ctx context.Context, peer coremetadata.ProcessIdentity, r processQuestionRequest, current func(context.Context, processhost.Binding) error) processForegroundResult {
 	result := processForegroundResult{Stale: true}
-	if (r.QuestionID == "" && len(r.Selections) != 0) || (r.QuestionID != "" && len(r.Selections) == 0) {
+	if (r.Action != "" && r.Action != "decline") || (r.Action == "decline" && (r.QuestionID == "" || len(r.Selections) != 0)) || (r.Action == "" && ((r.QuestionID == "" && len(r.Selections) != 0) || (r.QuestionID != "" && len(r.Selections) == 0))) {
 		return result
 	}
 	callback, ok := processQuestionCallbacks.Load(r.Binding)

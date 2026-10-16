@@ -52,8 +52,11 @@ func (c *codexProcessControl) answerAsyncQuestion(ctx context.Context, r process
 		return refuse("question-expired", agentquestion.ErrExpired)
 	}
 	if record.State != agentquestion.StateWaiting {
-		if record.Disposition == "async-submitted" {
+		if (r.Action == "" && record.Disposition == "async-submitted") || (r.Action == "decline" && record.Disposition == "async-declined") {
 			receipt.Outcome = "submitted"
+		}
+		if record.Disposition == "async-not-submitted" {
+			receipt.Outcome = "not-submitted"
 		}
 		if record.Disposition == "async-unknown" {
 			receipt.Outcome = "unknown"
@@ -66,21 +69,43 @@ func (c *codexProcessControl) answerAsyncQuestion(ctx context.Context, r process
 	if !time.Now().Before(record.Deadline) {
 		return refuse("question-expired", agentquestion.ErrExpired)
 	}
-	if code, err := agentquestion.ValidateAsyncSelections(view.Prompts, r.Selections); err != nil {
-		return refuse(code, err)
+	prompt := ""
+	if r.Action == "decline" {
+		for _, q := range view.Prompts {
+			if q.IsSecret {
+				return refuse("question-secret-native-only", errors.New("secret question sets require the native surface"))
+			}
+		}
+		if !view.CanDecline {
+			return refuse("question-decline-unsupported", errors.New("question-decline-unsupported"))
+		}
+		raw, marshalErr := json.Marshal(struct {
+			Item      string                   `json:"itemId"`
+			Questions []agentquestion.Question `json:"questions"`
+			Intent    string                   `json:"intent"`
+		}{request.ID, view.Prompts, "The operator explicitly declines to answer every question in this set."})
+		if marshalErr != nil {
+			return refuse("question-invalid-answer", marshalErr)
+		}
+		prompt = "Operator non-answer notice for the original async question set (this is not an answer or a native cancellation acknowledgement):\n" + string(raw)
+	} else {
+		if code, err := agentquestion.ValidateAsyncSelections(view.Prompts, r.Selections); err != nil {
+			return refuse(code, err)
+		}
+		answers, _ := agentquestion.BuildCodexAnswers(view.Prompts, r.Selections)
+		// Structured ordinary user text preserves original item/prompt/answer linkage.
+		// It is never persisted as a question answer or sent as a peer envelope.
+		raw, err := json.Marshal(struct {
+			Item      string                   `json:"itemId"`
+			Questions []agentquestion.Question `json:"questions"`
+			Answers   map[string]string        `json:"answers"`
+		}{request.ID, view.Prompts, answers})
+		if err != nil {
+			return refuse("question-invalid-answer", err)
+		}
+		prompt = "Operator answers to the original async question set:\n" + string(raw)
 	}
-	answers, _ := agentquestion.BuildCodexAnswers(view.Prompts, r.Selections)
-	// Structured ordinary user text preserves original item/prompt/answer linkage.
-	// It is never persisted as a question answer or sent as a peer envelope.
-	raw, err := json.Marshal(struct {
-		Item      string                   `json:"itemId"`
-		Questions []agentquestion.Question `json:"questions"`
-		Answers   map[string]string        `json:"answers"`
-	}{request.ID, view.Prompts, answers})
-	if err != nil {
-		return refuse("question-invalid-answer", err)
-	}
-	prompt := "Operator answers to the original async question set:\n" + string(raw)
+
 	if _, err = localipc.MarshalJSON(struct{ Questions *processQuestionRequest }{&r}); err != nil {
 		return refuse("question-answer-too-large", err)
 	}
@@ -132,7 +157,11 @@ func (c *codexProcessControl) answerAsyncQuestion(ctx context.Context, r process
 	if attentionErr != nil && outcome == "submitted" {
 		outcome = "unknown"
 	}
-	settleErr := store.FinishAsync(claim, outcome)
+	settlement := outcome
+	if r.Action == "decline" && outcome == "submitted" {
+		settlement = "declined"
+	}
+	settleErr := store.FinishAsync(claim, settlement)
 	if outcome == "not-submitted" {
 		receipt.Outcome = outcome
 		code := "question-closed"
