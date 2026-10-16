@@ -328,7 +328,8 @@ func TestSDKDeferredPeerPostAcceptanceFailureRetainsGeneratedReceipt(t *testing.
 	cause := errors.New("injected post-acceptance read failure")
 	failing := &deferredApplyFailureStore{Store: disk, cause: cause}
 	generated, dispatches := 0, 0
-	s := agentmessages.Service{RegistryPath: c.messagePaths.registryPath, Store: failing, LoadRegistry: c.loadRegistry,
+	now := time.Now().UTC()
+	s := agentmessages.Service{RegistryPath: c.messagePaths.registryPath, Store: failing, LoadRegistry: c.loadRegistry, Now: func() time.Time { return now },
 		NewRef:            func(string) string { generated++; return "message-generated-deferred" },
 		RequireCapability: agentmessages.RequireCapability,
 		ResolveSource: func(context.Context, coremetadata.Registry, string, string) (coremetadata.Agent, error) {
