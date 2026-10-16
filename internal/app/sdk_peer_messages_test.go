@@ -234,3 +234,41 @@ func TestSDKPeerMessageReceiptStateParity(t *testing.T) {
 		})
 	}
 }
+
+func TestSDKPeerMessageReleaseFreezesRegistryCASAndMirror(t *testing.T) {
+	root := t.TempDir()
+	poison := filepath.Join(root, "ambient")
+	t.Setenv("XDG_STATE_HOME", poison)
+	t.Setenv("TMUX", filepath.Join(root, "foreign.sock")+",1,1")
+	paths := config.Paths{ConfigDir: filepath.Join(root, "arbitrary-config"), StateDir: filepath.Join(root, "arbitrary-state")}
+	h := newSessionRefHarness(t, "claude")
+	reg := h.registry.Clone()
+	target, _ := reg.Agent(h.agentUID)
+	target.Status.Interaction = coremetadata.AgentInteraction{Kind: coremetadata.InteractionApprovalRequired, ObservedAt: time.Now().UTC(), Source: string(coremetadata.InteractionSourceProviderHook)}
+	blocked := target.Status.Interaction
+	disk := intmetadata.NewDefaultStore(paths)
+	if _, err := disk.Update(func(r *coremetadata.Registry) error { *r = reg; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	command, err := explicitMessageReleaseCommand(paths, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.mirror != nil {
+		t.Fatal("release inherited a foreign tmux mirror")
+	}
+	if err := command.commitClaudeTurnEnd(target.Clone(), blocked); err != nil {
+		t.Fatal(err)
+	}
+	after, err := disk.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := after.Agent(h.agentUID)
+	if updated.Status.Interaction.Kind != coremetadata.InteractionResponseComplete {
+		t.Fatalf("wrong Registry received release CAS: %+v", updated.Status.Interaction)
+	}
+	if _, err := os.Stat(poison); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("release touched ambient state: %v", err)
+	}
+}

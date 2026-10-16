@@ -160,36 +160,45 @@ func runAgentMessageRelease(args []string) error {
 		if args[2] != "--config-dir" || args[4] != "--state-dir" || args[6] != "--socket-path" || !filepath.IsAbs(args[3]) || !filepath.IsAbs(args[5]) || args[7] != "" && !filepath.IsAbs(args[7]) {
 			return usageError("invalid explicit held-message release paths")
 		}
-		paths := config.Paths{ConfigDir: args[3], StateDir: args[5]}
-		command.messagePaths = defaultAgentMessagePaths(paths)
-		command.messageStore = newAgentMessageStore(paths.StateDir)
-		command.messageRoute = liveAgentMessageRouteResolver{registryPath: command.messagePaths.registryPath}
-		command.loadRegistry = command.messagePaths.loadRegistry
-		command.controlPaths = func() (config.Paths, error) { return paths, nil }
-		// Turn-end release CAS must use the same Registry as message reads.
-		// Arbitrary SDK StateDir paths cannot be reconstructed from XDG parents.
-		storage := intmetadata.NewDefaultStore(paths)
-		command.store = &resourceStore{load: storage.LoadReadOnly, snapshot: storage.LoadDegradedReadOnly, update: storage.Update, mutator: intmetadata.DefaultMutator, stateDir: func() (string, error) { return paths.StateDir, nil }}
-		command.mirror = nil
-		if args[7] != "" {
-			target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{SocketPath: args[7]})
-			if err != nil {
-				return err
-			}
-			runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target}
-			command.mirror = &tmuxAgentMutationMirror{lookup: intmetadata.NewMirror(runner), runner: runner}
-		}
-
-		// Preserve the same exact path arguments on a release-window handoff.
-		command.messageRelease = func(uid string) error {
-			binary, err := os.Executable()
-			if err != nil {
-				return err
-			}
-			return agentmessages.LaunchRelease(agentmessages.ReleaseOptions{Executable: binary, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, HomeDir: os.Getenv("HOME"), Path: os.Getenv("PATH"), SocketPath: args[7]}, uid)
+		var err error
+		command, err = explicitMessageReleaseCommand(config.Paths{ConfigDir: args[3], StateDir: args[5]}, args[7])
+		if err != nil {
+			return err
 		}
 	}
 	return command.releaseHeldMessages(strings.TrimPrefix(args[1], selector.UIDPrefix))
+}
+
+func explicitMessageReleaseCommand(paths config.Paths, socket string) (*agentCommand, error) {
+	command := newAgentCommand()
+	command.messagePaths = defaultAgentMessagePaths(paths)
+	command.messageStore = newAgentMessageStore(paths.StateDir)
+	command.messageRoute = liveAgentMessageRouteResolver{registryPath: command.messagePaths.registryPath}
+	command.loadRegistry = command.messagePaths.loadRegistry
+	command.controlPaths = func() (config.Paths, error) { return paths, nil }
+	// Turn-end release CAS must use the same Registry as message reads.
+	// Arbitrary SDK StateDir paths cannot be reconstructed from XDG parents.
+	storage := intmetadata.NewDefaultStore(paths)
+	command.store = &resourceStore{load: storage.LoadReadOnly, snapshot: storage.LoadDegradedReadOnly, update: storage.Update, mutator: intmetadata.DefaultMutator, stateDir: func() (string, error) { return paths.StateDir, nil }}
+	command.mirror = nil
+	if socket != "" {
+		target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{SocketPath: socket})
+		if err != nil {
+			return nil, err
+		}
+		runner := explicitTmuxRunner{Runner: inttmux.ExecRunner{}, Target: target}
+		command.mirror = &tmuxAgentMutationMirror{lookup: intmetadata.NewMirror(runner), runner: runner}
+	}
+
+	// Preserve the same exact path arguments on a release-window handoff.
+	command.messageRelease = func(uid string) error {
+		binary, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		return agentmessages.LaunchRelease(agentmessages.ReleaseOptions{Executable: binary, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, HomeDir: os.Getenv("HOME"), Path: os.Getenv("PATH"), SocketPath: socket}, uid)
+	}
+	return command, nil
 }
 
 // heldRelease is the send side's view of the held-message release.
