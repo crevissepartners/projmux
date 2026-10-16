@@ -487,6 +487,14 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 				}
 				sibling := filepath.Join(filepath.Dir(paths.StateDir), "projmux")
 				siblingBefore := sdkCreateSeedSibling(t, sibling)
+				assertSibling := func(stage string) {
+					t.Helper()
+					after := sdkCreateDirectorySnapshot(t, sibling)
+					if !reflect.DeepEqual(siblingBefore, after) {
+						t.Fatalf("sibling changed after %s: before=%v after=%v", stage, siblingBefore, after)
+					}
+					t.Logf("sibling unchanged after %s", stage)
+				}
 				c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
 				if err != nil {
 					t.Fatal(err)
@@ -502,6 +510,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				assertSibling("SDK tmux Create")
 				if provider == "claude" {
 					// The persistent shell fixture emits no native hook. Record the
 					// same exact process/session evidence as hostMoveCLIFixture,
@@ -540,6 +549,10 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					t.Fatal(err)
 				}
 				source, ok := reg.Agent(created.Agent.Metadata.UID)
+				activation := source.Status.Activation.State
+				if activation == "" {
+					activation = m.ActivationNotRequested
+				}
 				wantActivation := m.ActivationAcknowledged
 				if provider == "claude" {
 					// This interactive source has no requested initial task. A
@@ -550,7 +563,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 						t.Fatal("explicit Claude source has no exact process proof")
 					}
 				}
-				if !ok || source.Status.Phase != m.PhaseRunning || source.Status.SessionRef == nil || source.Status.Activation.State != wantActivation {
+				if !ok || source.Status.Phase != m.PhaseRunning || source.Status.SessionRef == nil || activation != wantActivation {
 					t.Fatalf("explicit source conversation/activation mismatch: %+v", source)
 				}
 				t.Logf("explicit source provider=%s phase=%s activation=%s", provider, source.Status.Phase, source.Status.Activation.State)
@@ -585,6 +598,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					q.Prompt = "continue"
 				}
 				moved, err := c.RelaunchAgent(ctx, q)
+				assertSibling("tmux to process Relaunch")
 				if rejectStart {
 					var detail *projmux.RelaunchProcessError
 					if !errors.As(err, &detail) || detail.Owner.PID == 0 || errors.Unwrap(detail) == nil {
@@ -598,6 +612,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					if err != nil || !stopped.Stopped || stopped.Termination == nil {
 						t.Fatalf("exact Stop %+v: %v", stopped, err)
 					}
+					assertSibling("exact process Stop")
 					r, err := storage.LoadReadOnly()
 					if err != nil {
 						t.Fatal(err)
@@ -610,6 +625,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					if err != nil || back.AgentUID != source.Metadata.UID || back.TargetHost != "tmux" || back.NewPaneUID == "" {
 						t.Fatalf("reverse host move %+v: %v", back, err)
 					}
+					assertSibling("process to tmux Relaunch")
 				}
 				r, err := storage.LoadReadOnly()
 				if err != nil {
