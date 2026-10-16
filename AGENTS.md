@@ -126,7 +126,7 @@ Branch protection:
 
 ## Testing
 - Unit tests cover pure naming, selection, parsing, and state logic.
-- `make test-process-host-cli` builds this checkout and runs the process-host CLI fixture tests against a copy of that binary, with an isolated HOME and protocol fixtures instead of real providers. CI runs it as `Process Host CLI Tests` behind the aggregate `Test`; it is not one of the five required checks or a required Local check. Run it manually when you change process-host or provider-process code. Details: [docs/testing.md](docs/testing.md).
+- `make test-process-host-cli` builds this checkout and runs the process-host CLI fixture tests against a copy of that binary, with an isolated HOME and protocol fixtures instead of real providers. CI runs it as `Process Host CLI Tests` behind the aggregate `Test`; it is not one of the five required checks or a required Local check. Run it manually when you change process-host or provider-process code, the default agent guidance, or how Agent creation builds prompts and instructions: its projection fixtures pin the guidance digest a create records, which `make test` does not check. Details: [docs/testing.md](docs/testing.md).
 - Integration tests cover tmux command orchestration, config loading, and state file interactions.
 - End-to-end tests cover full session flows against real tmux behavior.
 - When adding a feature, decide where it belongs in that stack and add or update the test there.
