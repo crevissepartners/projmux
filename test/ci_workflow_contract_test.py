@@ -313,6 +313,10 @@ DARWIN_COMMANDS = {
             'PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '
             "'^TestDetached(Process|Create|OwnerLog|Identity|Stop)' ./internal/app"
         ),
+        "Diagnose Task7 claim peer order once": (
+            'PMX_TEST_CLI="$PWD/projmux" go test -v -count=1 -timeout=120s -run '
+            "'^TestDetachedProcessResumeClaimPeerOrderCLI$' ./internal/app -args -t7-claim-peer-order-probe"
+        ),
     },
     "darwin-process": {
         "Exercise process Claude binding and endpoint receipts": (
@@ -359,6 +363,7 @@ def assert_darwin_children(workflow: str) -> None:
         for name in (
             "Compile and test native key adapter", DARWIN_TEST_COMPILE_STEP,
             "Exercise detached process CLI lifetime boundaries",
+            "Diagnose Task7 claim peer order once",
         ):
             if name in commands:
                 step = workflow_step(job, name)
