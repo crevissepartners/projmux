@@ -99,6 +99,11 @@ func encodeDetachedRelaunchError(encoder interface{ Encode(any) error }, owner m
 
 func (c *agentCommand) bindProcessRelaunchContext(creator *createCommand, frozen mutationruntime.ProcessCreateContext, wire processDetachedRelaunchRequest) {
 	c.bindProcessResumeContext(creator, frozen)
+	// bindProcessCreateContext has verified the shared AI adapter. Native
+	// observers created by a process-to-tmux move need the same frozen domain.
+	creator.agents.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{
+		Paths: frozen.Paths, RegistryPath: c.messagePaths.registryPath, Executable: frozen.Executable,
+	}
 	deletion := newDeleteCommand()
 	deletion.store = creator.store
 	deletion.lookupEnv = creator.lookupEnv
