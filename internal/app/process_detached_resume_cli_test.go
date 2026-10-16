@@ -182,15 +182,86 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
 			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 			defer cancel()
+			// Cache only values observed by this test's original calls. Emission
+			// does no state/IPC/process reads and never replays a failed poll.
+			started := time.Now()
+			type validReceipt struct {
+				At                     time.Duration
+				State, Reason, Unknown string
+			}
+			type peerPoll struct {
+				Ref, Stage                         string
+				Started, PollStarted, PollFinished time.Duration
+				Polls                              int
+				Command, Decode                    string
+				LastValid                          validReceipt
+			}
+			var diagnostic struct {
+				Stage, Phase                  string
+				BodyPassedBeforeSourceCleanup bool
+				StageAt, EmittedAt            time.Duration
+				EnqueueRef, EnqueueResult     string
+				Record                        struct {
+					Sampled                                                 bool
+					At                                                      time.Duration
+					BindingOwnerSame, GenerationChanged                     bool
+					SessionSame, ThreadSame, ConnectionPresent, TurnPresent bool
+				}
+				NotSampled [4]string
+				Peers      [3]peerPoll
+			}
+			diagnostic.NotSampled = [4]string{"source-record", "host", "lease", "pending"}
+			for i, ref := range []string{"detached-first", "detached-second", "detached-third"} {
+				diagnostic.Peers[i] = peerPoll{Ref: ref, Stage: "not-sampled", Command: "not-sampled", Decode: "not-sampled", LastValid: validReceipt{State: "not-sampled", Reason: "not-sampled", Unknown: "not-sampled"}}
+			}
+			stage := func(name string) {
+				diagnostic.Stage, diagnostic.StageAt = name, time.Since(started)
+			}
+			emitted := false
+			emit := func(phase string) {
+				if !t.Failed() || emitted {
+					return
+				}
+				emitted = true
+				diagnostic.Phase = phase
+				diagnostic.EmittedAt = time.Since(started)
+				raw, err := json.Marshal(diagnostic)
+				const prefix = "detached peer cached failure: "
+				if err != nil || len(prefix)+len(raw) > 4096 {
+					t.Log("detached peer cached failure: encoding unavailable or size limit")
+					return
+				}
+				t.Log(prefix + string(raw))
+			}
+			defer func() {
+				phase := "setup-fallback"
+				if diagnostic.BodyPassedBeforeSourceCleanup {
+					phase = "source-cleanup-failure-after-body-pass"
+				}
+				emit(phase)
+			}()
+			stage("initial-owned")
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			stage("initial-conversation")
 			awaitDetachedInitialConversation(t, ctx, f, first.ref)
+			stage("initial-wait")
 			first.shutdown(t)
+			stage("retired-record")
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
+			stage("source-owned")
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source"))
 			defer source.shutdown(t)
+			defer func() {
+				// This boundary precedes the original source shutdown defer.
+				// Passing it is not evidence of source cleanup or provider Wait.
+				diagnostic.BodyPassedBeforeSourceCleanup = !t.Failed()
+				emit("body-failure-before-source-cleanup")
+			}()
 			cleanupDetachedResume(t, f, first.ref)
+			stage("claim-handshake")
 			detachedResumeCLI(t, ctx, f, "agent", "resume", first.ref, "--wait-for-peer", "--detach")
 			c := &agentCommand{messagePaths: agentMessagePaths{registryPath: f.store.Path()}}
+			stage("claim-read")
 			claim, err := readDeferredClaim(c.deferredClaimPath(old.Binding.AgentUID))
 			if err != nil {
 				t.Fatal(err)
@@ -199,36 +270,131 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			stage("sigstop")
 			if err = process.Signal(syscall.SIGSTOP); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = process.Signal(syscall.SIGCONT) })
 			for i, ref := range []string{"detached-first", "detached-second", "detached-third"} {
+				stage("enqueue")
+				diagnostic.EnqueueRef, diagnostic.EnqueueResult = ref, "in-flight"
 				processCLIUntil(t, ctx, func() bool {
 					out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--", "peer-"+string(rune('0'+i))).CombinedOutput()
+					diagnostic.EnqueueResult = "other-error"
 					if err == nil {
-						return bytes.Contains(out, []byte("held"))
+						held := bytes.Contains(out, []byte("held"))
+						diagnostic.EnqueueResult = "ok-not-held"
+						if held {
+							diagnostic.EnqueueResult = "ok-held"
+						}
+						return held
 					}
 					if bytes.Contains(out, []byte("source Agent is not eligible")) {
+						diagnostic.EnqueueResult = "source-ineligible"
 						return false
 					}
 					t.Fatalf("peer: %v %s", err, out)
 					return false
 				})
 			}
+			stage("sigcont")
 			if err = process.Signal(syscall.SIGCONT); err != nil {
 				t.Fatal(err)
 			}
+			stage("resumed-record")
 			next := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				diagnostic.Record.Sampled, diagnostic.Record.At = true, time.Since(started)
+				diagnostic.Record.BindingOwnerSame = r.Binding.AgentUID == old.Binding.AgentUID && r.Binding.PaneUID == old.Binding.PaneUID && r.Binding.ProjectUID == old.Binding.ProjectUID && r.Binding.WindowUID == old.Binding.WindowUID
+				diagnostic.Record.GenerationChanged = r.Binding.Generation != old.Binding.Generation
+				diagnostic.Record.SessionSame, diagnostic.Record.ThreadSame = r.SessionID == old.SessionID, r.ThreadID == old.ThreadID
+				diagnostic.Record.ConnectionPresent, diagnostic.Record.TurnPresent = r.ConnectionID != "", r.TurnID != ""
 				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
 			})
+			stage("conversation-check")
 			if next.SessionID != old.SessionID || next.ThreadID != old.ThreadID {
 				t.Fatal("peer replaced dialogue")
 			}
-			for _, ref := range []string{"detached-first", "detached-second", "detached-third"} {
-				deferredCLIStatus(t, ctx, f, ref, "delivered")
+			// Same Output/JSON/terminal/return operations as deferredCLIStatus;
+			// the extra fields are value copies, never aliases of its decode map.
+			status := func(index int, ref, state string) map[string]any {
+				t.Helper()
+				poll := &diagnostic.Peers[index]
+				poll.Started = time.Since(started)
+				var receipt map[string]any
+				processCLIUntil(t, ctx, func() bool {
+					poll.Stage = "command"
+					poll.Polls++
+					poll.PollStarted, poll.Command, poll.Decode = time.Since(started), "in-flight", "not-sampled"
+					raw, err := exec.CommandContext(ctx, f.binary, "agent", "message", "status", ref, "-o", "json").Output()
+					poll.PollFinished = time.Since(started)
+					poll.Stage = "command-returned"
+					poll.Command, poll.Decode = "ok", "not-sampled"
+					if err != nil {
+						poll.Command = "start-or-wait-error"
+						var exit *exec.ExitError
+						switch {
+						case errors.Is(ctx.Err(), context.DeadlineExceeded):
+							poll.Command = "context-deadline"
+						case errors.Is(ctx.Err(), context.Canceled):
+							poll.Command = "context-cancel"
+						case errors.As(err, &exit):
+							poll.Command = "exit-nonzero"
+						}
+						return false
+					}
+					poll.Stage = "decode"
+					decodeErr := json.Unmarshal(raw, &receipt)
+					if decodeErr != nil {
+						poll.Decode = "decode-error"
+						var syntax *json.SyntaxError
+						var shape *json.UnmarshalTypeError
+						if errors.As(decodeErr, &syntax) {
+							poll.Decode = "syntax-error"
+						} else if errors.As(decodeErr, &shape) {
+							poll.Decode = "type-error"
+						}
+						return false
+					}
+					delivery, _ := receipt["delivery"].(map[string]any)
+					poll.Decode = "valid"
+					if delivery == nil {
+						poll.Decode = "missing-delivery"
+					}
+					latest := validReceipt{At: poll.PollFinished, State: "other", Reason: "other", Unknown: "not-sampled"}
+					if value, ok := delivery["state"].(string); ok {
+						switch value {
+						case "held", "accepted", "delivered", "failed", "refused", "expired", "stale":
+							latest.State = value
+						}
+					}
+					if value, ok := delivery["reason"].(string); ok {
+						switch value {
+						case "", "target-awaiting-resume", "target-turn-active", "provider-resume-first-frame", "provider-native-peer-joined", "provider-prewrite-refused", "broker-handoff-persist-failed", "broker-delivery-persist-failed", "provider-handoff-outcome-unknown", "stale-binding", "target-activation-stale", "deadline-expired":
+							latest.Reason = value
+						}
+					}
+					if value, ok := delivery["outcomeUnknown"].(bool); ok {
+						latest.Unknown = fmt.Sprint(value)
+					}
+					if delivery != nil {
+						poll.LastValid = latest
+					}
+					poll.Stage = "terminal-check"
+					if terminal := delivery["state"]; terminal != "held" && terminal != "accepted" && terminal != state {
+						t.Fatalf("unexpected terminal state want %s: %s", state, raw)
+					}
+					return delivery["state"] == state
+				})
+				poll.Stage = "complete"
+				return receipt
 			}
+			for i, ref := range []string{"detached-first", "detached-second", "detached-third"} {
+				stage("receipt-" + ref)
+				status(i, ref, "delivered")
+			}
+			stage("target-stop-wait")
 			detachedResumeCLI(t, ctx, f, "agent", "stop", first.ref)
+			stage("wire-read")
 			wire, err := os.ReadFile(f.trace)
 			if err != nil {
 				t.Fatal(err)
@@ -264,6 +430,7 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 					peerFrames = append(peerFrames, frame["message"].(map[string]any)["content"].(string))
 				}
 			}
+			stage("wire-count-order")
 			if len(peerFrames) != 3 {
 				t.Fatalf("peer count: %q", peerFrames)
 			}
