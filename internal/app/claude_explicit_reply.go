@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 	"strings"
 	"time"
