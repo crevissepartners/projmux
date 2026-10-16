@@ -193,6 +193,36 @@ func testProfileDigestBornResumeFailure(t *testing.T) {
 				awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *m.ProcessSessionRecord) bool {
 					return r.ConnectionID != "" && processRelaunchConversation(r) != ""
 				})
+				if provider == aiModeClaude {
+					initial := mustRegistry(t, f)
+					pane, _ := processResumePane(initial, strings.TrimPrefix(first.ref, "uid:"))
+					if pane == nil || pane.Status.ProcessSession == nil {
+						t.Fatal("initial Claude process binding is unavailable")
+					}
+					binding := pane.Status.ProcessSession.Binding
+					confirmed := func(reg m.Registry) bool {
+						activation, observedProvider, current := reg.CurrentProcessActivation(binding)
+						a, agentFound := reg.Agent(binding.AgentUID)
+						p, paneFound := reg.Pane(binding.PaneUID)
+						if !current || observedProvider != aiModeClaude || activation.Binding != binding || !agentFound || !paneFound || p.Status.ProcessSession == nil || a.Status.SessionRef == nil || a.Status.SessionRef.Claude == nil {
+							return false
+						}
+						s := p.Status.ProcessSession
+						return s.Binding == binding && s.ConnectionID == binding.OperationID && s.SessionID != "" && a.Status.SessionRef.Claude.SessionID == s.SessionID
+					}
+					// SessionStart reserves IDs before stream init. Confirm the Registry
+					// evidence and this exact host's readiness in separate reads before EOF.
+					awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *m.ProcessSessionRecord) bool {
+						reg := mustRegistry(t, f)
+						if ctx.Err() != nil || r.Binding != binding || !confirmed(reg) {
+							return false
+						}
+						b := processSchemaBinding(binding)
+						observer := remoteProcessObserver{ctx: ctx, registry: reg, registryPath: f.store.Path(), binding: b}
+						view, err := observer.Observe(b)
+						return err == nil && view.Binding == b && view.State == "ready" && view.Exit == nil && ctx.Err() == nil && confirmed(mustRegistry(t, f))
+					})
+				}
 				first.shutdown(t)
 				old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *m.ProcessSessionRecord) bool { return r.ResumeState == m.ProcessResumable })
 				before := digestCLIAnnotations(t, f, first.ref)
