@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	store "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
@@ -88,5 +89,36 @@ func TestCancellationAndMissingSourceReadNothing(t *testing.T) {
 	}
 	if result, err := s.Send(context.Background(), SendRequest{Target: "uid:agent-target", Text: "peer", TTL: time.Minute}); err == nil || result.Receipt.MessageRef != "" {
 		t.Fatalf("%+v %v", result, err)
+	}
+}
+
+type projectionFailureStore struct {
+	Store
+	cause error
+}
+
+func (s projectionFailureStore) Apply(string, message.Event) (store.Record, bool, error) {
+	return store.Record{}, false, s.cause
+}
+func (s projectionFailureStore) MarkHandoff(string) (store.Record, bool, error) {
+	return store.Record{}, false, s.cause
+}
+
+func TestSDKClaudeProjectionFailureRetainsReceiptAndUncertainty(t *testing.T) {
+	for _, state := range []agentdelivery.State{agentdelivery.StateDelivered, agentdelivery.StateHeld, agentdelivery.StateHandoff} {
+		t.Run(string(state), func(t *testing.T) {
+			s, r := receiptFixture(t)
+			disk := s.Store
+			cause := errors.New("injected projection failure")
+			s.Store = projectionFailureStore{Store: disk, cause: cause}
+			result, err := s.projectClaudeSend(r, agentdelivery.Delivery{MessageRef: r.Envelope.MessageRef, State: state}, nil)
+			if !errors.Is(err, cause) || result.Envelope.MessageRef != r.Envelope.MessageRef || result.Delivery.State != r.Delivery.State || !result.Delivery.OutcomeUnknown || result.Delivery.Reason != "provider-handoff-outcome-unknown" {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			durable, found, err := disk.Get(r.Envelope.MessageRef)
+			if err != nil || !found || ReceiptFor(durable) != ReceiptFor(r) {
+				t.Fatalf("durable state changed: %+v/%t/%v", durable, found, err)
+			}
+		})
 	}
 }

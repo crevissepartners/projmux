@@ -100,11 +100,7 @@ func New(o Options) Service {
 				return s.pushNative(ctx, r, a, route, e, o.Control)
 			}
 			private, submitErr := adapter.Submit(ctx, s.RegistryPath, route, e)
-			updated, err := s.ProjectClaudeDelivery(r, private, submitErr)
-			if err != nil {
-				return r, nil
-			}
-			return updated, nil
+			return s.projectClaudeSend(r, private, submitErr)
 		}, func() {
 			if o.Release != nil {
 				_ = o.Release(a.Metadata.UID)
@@ -112,6 +108,19 @@ func New(o Options) Service {
 		})
 	}
 	return s
+}
+
+// projectClaudeSend preserves SDK uncertainty when a provider has answered but
+// its projection cannot be stored. The CLI keeps its existing adapter policy;
+// no durable state is fabricated and no second submission is attempted.
+func (s Service) projectClaudeSend(record store.Record, private agentdelivery.Delivery, submitErr error) (store.Record, error) {
+	updated, err := s.ProjectClaudeDelivery(record, private, submitErr)
+	if err != nil {
+		record.Delivery.OutcomeUnknown = true
+		record.Delivery.Reason = "provider-handoff-outcome-unknown"
+		return record, err
+	}
+	return updated, nil
 }
 
 func RequireCapability(action string, a metadata.Agent) error {
