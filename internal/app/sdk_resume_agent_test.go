@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
@@ -349,5 +350,26 @@ func TestResumeAgentCLIPlanningFailureIsWrappedOnce(t *testing.T) {
 	want := "agent resume: agent/" + target.Metadata.Name + " cannot resume claude conversation " + personaResumeConversation + ": " + failure.Error()
 	if err == nil || err.Error() != want || !errors.Is(err, failure) {
 		t.Fatalf("planning failure = %v, want %q with original cause", err, want)
+	}
+}
+
+func TestSDKProcessResumeProfileFailureCodeThroughSettingsAdapter(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			root := t.TempDir()
+			command := &aiCommand{processCreateContext: &mutationruntime.ProcessCreateContext{Paths: config.Paths{ConfigDir: root + "/config", StateDir: root + "/state"}}}
+			annotations := map[string]string{metadata.AnnotationAgentProfile: "removed-profile"}
+			_, shared := mutationruntime.ResolveAgentSettingsWithPaths(command.processCreatePaths, provider, annotations, mutationruntime.AgentSettingsRequest{})
+			_, err := command.ResolveAgentSettingsRequest(provider, annotations, agentSettingsRequest{})
+			var local *profileResumeError
+			if shared == nil || !errors.As(err, &local) || err.Error() != shared.Error() {
+				t.Fatalf("settings adapter lost profile refusal or changed CLI diagnostic: shared=%v local=%T %v", shared, err, err)
+			}
+			sentinel := errors.New("transport context")
+			joined := errors.Join(sentinel, err)
+			if !errors.Is(joined, sentinel) || processResumeErrorCode(joined) != "profile-resume-unavailable" {
+				t.Fatalf("joined profile refusal classified as %q: %v", processResumeErrorCode(joined), joined)
+			}
+		})
 	}
 }

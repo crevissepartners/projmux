@@ -312,7 +312,8 @@ func processResumeErrorCode(err error) string {
 		return refusal.Reason
 	}
 	var profile *mutationruntime.ProfileResumeError
-	if errors.As(err, &profile) {
+	var localProfile *profileResumeError
+	if errors.As(err, &profile) || errors.As(err, &localProfile) {
 		return "profile-resume-unavailable"
 	}
 	if coremetadata.IsUsageError(err) {
