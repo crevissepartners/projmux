@@ -46,7 +46,7 @@ make install
 ## Scope
 - `projmux` is a standalone tmux session-management application.
 - Keep portable session-management behavior in `projmux`.
-- Keep machine-local policy outside the application unless the migration plan explicitly calls for it.
+- Keep machine-local policy outside the application.
 - This file is the shareable, tool-agnostic repo contract. Personal agent recipes, reverse-engineering notes, and machine-local operating memos belong in your own untracked notes, not this tracked file.
 - Local-only agent overlays may live in an untracked `AGENTS.local.md`.
 
@@ -86,7 +86,7 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - Use a dedicated checkout/worktree per task when parallel work would otherwise collide.
 - Keep one agent per checkout/worktree. Do not share a dirty checkout across agents.
 - If another agent owns a file, do not overwrite their changes. Adjust around them or coordinate a handoff.
-- Keep changes narrow. Split docs, bootstrap, migration, and feature work into separate branches unless they are inseparable.
+- Keep changes narrow. Split docs, refactor, and feature work into separate branches unless they are inseparable.
 - Make targets are the contract for local validation. Keep them stable and predictable.
 - If a target is missing for the area you are changing, add it or leave the gap explicit in docs and review notes.
 - Check ancestry before every first push or force-push. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so publishing that state only produces a failed CI run.
@@ -100,16 +100,12 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - In a linked worktree, `go build` stamps the enclosing checkout's `vcs.revision` (Go only treats a `.git` directory as a repository root), so `make build` there stamps no revision and says why. Prove a build's provenance with the binary's sha256 and the merge commit, not `vcs.revision`; a worktree build without `vcs.revision` is expected.
 - After merge, retire the merged checkout/worktree with your local tooling if you used one.
 
-Migration discipline:
-- Port one stable slice at a time. Do not mix bootstrap, feature redesign, and parity fixes in one change without a strong reason.
-- Match existing behavior first, then simplify or redesign in a later change.
-- When replacing shell logic with Go, keep user-facing entrypoints stable until the adapter layer is intentionally updated.
-- Compare new behavior against the maintained parity tests when the migrated feature already has coverage.
-- Record intentional behavior differences in docs and review notes.
+Behavior changes:
+- Change behavior and restructure code in separate changes; when restructuring, match existing behavior first.
+- Keep user-facing entrypoints (commands, flags, config keys) stable unless the change is intentional, and record intentional behavior differences in docs and the PR body.
 
 Communication:
-- Use concise progress updates.
-- Report blockers early, especially parity uncertainty or overlap with another agent's files.
+- Report blockers early, especially overlap with another agent's files.
 - When handing off, state the branch, checkout/worktree path, changed files, and remaining risks.
 
 ## PR
@@ -117,10 +113,9 @@ Communication:
 - release-please silently skips non-Conventional subjects.
 - The PR body uses the six sections of [docs/pr-guideline.md](docs/pr-guideline.md), which holds the full conventions.
 - Keep reviews small enough to reason about quickly.
-- List the commands you ran, especially the `make` targets and any parity checks.
+- List the commands you ran, especially the `make` targets.
 - Call out behavior changes separately from refactors.
 - Flag unverified areas instead of implying coverage you did not run.
-- If migration parity is incomplete, state the exact gap and the follow-up branch or issue.
 
 Branch protection:
 - `main` is protected by the ruleset `main-protect`. Direct pushes are blocked, even for repository admins.
@@ -138,14 +133,10 @@ Branch protection:
 - Details: [docs/testing.md](docs/testing.md).
 
 ## Security
-- `make security` runs three groups in parallel; CI runs each as its own job: `make security-go` (govulncheck, gosec), `make security-static` (staticcheck), `make security-policy` (gitleaks, actionlint, shellcheck).
-- `make security-tools` installs the Go-based scanners at the versions pinned in `.security/security-tools.versions`, and ShellCheck from the release assets whose digests `.security/shellcheck.sha256` pins; `make security-policy` refuses any other ShellCheck version.
-- gosec and staticcheck findings are compared with the reviewed baselines `.security/gosec-baseline.json` and `.security/staticcheck-baseline.json`. A finding beyond its baseline count fails the gate.
-- `.security/security-current-findings.json` pins the current finding counts and the baseline digests. **It is the only place a reviewed baseline digest is defined.** Change a baseline file and you change this pin in the same commit, or the gate fails.
-- Never restate a baseline digest anywhere else. Consumers resolve it through `scripts/security-baseline-pin.py`, and `make security-pin-contract` (part of `make test`) fails on a second copy. A copy in `test/security-contract.sh` drifted from the real file for four days in 2026-09 because no job ran the gate that would have caught it.
-- `make security-contract` is that gate: scanner parity, gitleaks history range, evidence typing, the stable aggregate, and actionlint. CI runs it as the job `Security / Contract gate`, which fans into the aggregate `Test`.
-- The same pin holds `package_count` and `package_set_sha256` for `go list ./...`, computed only by `scripts/security-package-pin.py`. If you add or remove a Go package, run `make security-pin-refresh` and commit the resulting diff; `make test` (`make security-pin-contract`) and the `Security / Contract gate` job fail on a mismatch and name that target.
-- gitleaks uses `.gitleaks.toml`. Never commit credentials or tokens.
+- Never commit credentials or tokens. gitleaks uses `.gitleaks.toml`.
+- `.security/security-current-findings.json` is the only place a reviewed baseline digest is defined. Never restate a digest anywhere else; `make security-pin-contract` (part of `make test`) fails on a second copy.
+- If you add or remove a Go package, run `make security-pin-refresh` and commit the resulting diff in the same change.
+- Before changing anything under `.security/`, a scanner version, or a reviewed baseline, read [Security gates](docs/testing.md#security-gates) in `docs/testing.md`.
 
 ## Compatibility
 Platforms:
@@ -160,7 +151,8 @@ Hook contract:
 - Adding, removing, or renaming any `PROJMUX_*` env var needs at least a minor release input: use a `feat(hooks): ...` PR title and leave the version/manifest update to release-please.
 - `PROJMUX_SOCKET` is the app socket name (`projmux`), supplied as hook routing metadata. It does not change how the tmux client invokes commands.
 - `PROJMUX_PANE` is the exact first pane id from standard persistent/ephemeral creation for `post-create`. It is intentionally absent from `pre-create`, which runs before that pane exists.
-- Process host `post-create` hooks run only when declaring `runtime = "process"`. This opts the hook into process-hosted Agents as well; tmux execution remains unchanged. Other values or events are configuration errors. Eligible contexts add `PROJMUX_RUNTIME=process`, remove `PROJMUX_PANE` even from inherited/configured environments, remove inherited `TMUX` and `TMUX_PANE`, and supply present but empty `PROJMUX_SESSION` and `PROJMUX_SESSION_KIND`. `PROJMUX_CWD` is the effective Agent workspace; socket metadata and the 5s timeout retain their meaning. Process post-create failures are returned to the creator; tmux failures remain logged and ignored. Tmux hook scripts must guard process contexts before issuing commands with empty targets. `create agent --host process` publicly creates a foreground-owned Claude or Codex Agent by default; stdin EOF and signals retain their existing provider Wait exit contract. `create agent --host process --detach` (including `--create-window`) opts into an independent owner and returns exit 0 only after startup and an exact identity/binding handshake. Its provider remains controllable after caller exit; later provider exit is observed through termination records. `agent stop <exact-ref>` supports process Agents only, waits for actual provider Wait and owner retirement, and preserves Agent, Pane, and conversation. `agent resume --detach` preserves Agent, Pane, and conversation with a fresh independent owner generation; Claude requires a prompt and Codex can reattach promptlessly. `--wait-for-peer --detach` returns after an exact child-free claim handshake; first peer input starts the preserved conversation, and `agent stop` releases the claim without fake Wait before birth or waits for actual Wait after birth. Reboot, logout, and whole service/cgroup or PID namespace termination survival are outside this contract. Owners may reparent to the nearest subreaper; detachment does not escape cgroups or PID namespaces, including temporary Codex sandbox native tool namespaces. Direct `create window --detach` and tmux stop/detached resume are unsupported. `agent relaunch --detach` supports existing process Agents and `--host process` destinations, explicitly restarting even with unchanged settings under an independent new owner after the existing writer and actual Wait/retirement barriers. Same-host promptless Claude returns an exact child-free frozen-recipe claim handshake; first peer input starts the same conversation, and stop preserves child-free versus actual Wait semantics. Foreground relaunch without --detach retains its existing unchanged/output/exit behavior. Unsupported tmux destinations, self-target, busy refusals, and dry-run occur before Stop. For public CLI new Agents (`create agent`, provider shortcuts, and `create window --provider <Agent provider>`), omitted `--host` follows central `config agent-host` (unset: tmux; process: detached startup). Explicit host overrides that setting; explicit process retains foreground ownership. Agent routes and shortcuts accept explicit `--detach=true|false` to override process lifetime. Shell-only Windows/Panes, internal TUI topology, SDK creation, and existing Agent resume/relaunch retain their contracts. Unsupported process combinations fail before effects with no tmux fallback. Hook failure stops only its owned provider, persists actual Wait, and rolls back its Agent/Pane; incomplete rollback reports exact resource refs and cleanup commands.
+- Process host `post-create` hooks run only when declaring `runtime = "process"`. This opts the hook into process-hosted Agents as well; tmux execution remains unchanged. Other values or events are configuration errors. Eligible contexts add `PROJMUX_RUNTIME=process`, remove `PROJMUX_PANE` even from inherited/configured environments, remove inherited `TMUX` and `TMUX_PANE`, and supply present but empty `PROJMUX_SESSION` and `PROJMUX_SESSION_KIND`. `PROJMUX_CWD` is the effective Agent workspace; socket metadata and the 5s timeout retain their meaning. Process post-create failures are returned to the creator; tmux failures remain logged and ignored. Tmux hook scripts must guard process contexts before issuing commands with empty targets. Hook failure stops only its owned provider, persists actual Wait, and rolls back its Agent/Pane; incomplete rollback reports exact resource refs and cleanup commands.
+- Process Agent lifecycle (`create agent --host process` with or without `--detach`, `agent stop`, `agent resume --detach`, `--wait-for-peer --detach`, `agent relaunch --detach`, and the `config agent-host` default for new CLI Agents) is public CLI contract, specified in [docs/process-host-operations.md](docs/process-host-operations.md#lifecycle-contract). Unsupported process combinations fail before effects with no tmux fallback.
 - Details: [docs/hooks.md](docs/hooks.md#environment).
 
 Configuration and environment:
