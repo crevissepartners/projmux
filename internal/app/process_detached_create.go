@@ -30,15 +30,17 @@ const processDetachedLogLimit = 64 << 10
 // task) is an unlinked private file; the handshake is a private duplex fd.
 // The intermediate launcher never owns a provider and exits before success.
 type processDetachedRequest struct {
-	Relaunch     *processDetachedRelaunchRequest `json:",omitempty"`
-	Resume       *processDetachedResumeRequest   `json:",omitempty"`
-	Options      processAgentCreateOptions
-	Output       cli.OutputMode
-	Caller       coremetadata.ProcessIdentity
-	RegistryPath string
-	Context      *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	Relaunch      *processDetachedRelaunchRequest `json:",omitempty"`
+	Resume        *processDetachedResumeRequest   `json:",omitempty"`
+	Options       processAgentCreateOptions
+	Output        cli.OutputMode
+	Caller        coremetadata.ProcessIdentity
+	RegistryPath  string
+	Context       *mutationruntime.ProcessCreateContext `json:",omitempty"`
+	ResumeContext *mutationruntime.ProcessCreateContext `json:",omitempty"`
 }
 type processDetachedReply struct {
+	ErrorDetail           json.RawMessage `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string
@@ -160,6 +162,15 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 		return err
 	}
 	_ = payload.Close()
+	if req.ResumeContext != nil {
+		if req.Context != nil || req.Resume == nil || req.Relaunch != nil || resume == nil {
+			return errors.New("process-detached-context-resume-only")
+		}
+		if err = command.bindProcessCreateContext(*req.ResumeContext); err != nil {
+			return err
+		}
+		resume.bindProcessResumeContext(command, *req.ResumeContext)
+	}
 	if req.Context != nil {
 		if req.Resume != nil || req.Relaunch != nil {
 			return errors.New("process-detached-context-create-only")

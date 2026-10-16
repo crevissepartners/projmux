@@ -418,8 +418,7 @@ Running process Agents no longer cause a batch preflight refusal.
 
 CLI and private process resume consumers can use `errors.As` to read
 `*projmux.ResumeRecipeChangedError` (also `*core.ResumeRecipeChangedError`)
-through usage and host-lost wrappers. This additive error does not enable process
-`Client.ResumeAgent`: its `resume-process-unsupported` refusal is unchanged.
+through usage and host-lost wrappers. SDK process resume preserves this detail through its detached startup error.
 
 The JSON fields are `Code` (`process-resume-refused`), `Reason`
 (`relaunch-no-conversation`), `agentUID`, `changes`, `relaunchCommand`, and
@@ -625,3 +624,40 @@ codes distinguish invalid input, missing messages, immutable retry mismatches,
 route unavailability and delivery failures. Context cancellation remains available
 through `errors.Is`. Qualification, provider creation, user turn input and
 operator authentication are separate APIs and are not added by peer messaging.
+
+### Detached process Agent resume
+
+`Client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:agent-…",
+Detach: true, Prompt: "continue"})` resumes an existing process Agent through
+the same internal detached execution service as CLI `agent resume --detach`.
+Claude requires a nonempty Prompt; Codex permits promptless resume. Agent UID,
+Pane UID and provider conversation remain the same, with a fresh owner generation.
+The process result has no tmux PaneID. `Binding` identifies the exact generation;
+provide the last observed Binding in the request to refuse a changed generation.
+Project and Window optionally scope the explicit Ref.
+
+`WaitForPeer: true` requires an empty Prompt. Success sets `ClaimWaiting` and
+acknowledges an exact child-free owner claim with the previous Binding. The first
+peer input starts the preserved conversation under a new generation. Stopping
+that claim before birth releases it without inventing a provider Wait record.
+Use the born binding from a fresh resource read after peer delivery.
+
+Process requests require Detach and reject SocketPath and DialogueReplyOnly.
+The zero values preserve the tmux resume API; process-specific inputs on tmux
+Agents refuse before effects. Process relaunch and host moves remain unsupported
+by this method.
+
+Use an absolute `Options.ProjmuxExecutable` from the same build. The constructor's
+captured Home, Config, State and provider environment reach the detached owner
+and supervisor, including arbitrary absolute Config/State directories. Later
+ambient environment changes do not alter the request. No account selection or
+AccountRef is added: captured CODEX_HOME and CLAUDE_CONFIG_DIR retain their existing
+meaning. Authentication files are neither read nor copied by this API.
+
+Cancellation before admission prevents execution. Startup cancellation settles
+through the owned rollback path; after success, caller cancellation or exit does
+not stop the detached owner. Inspect partial results on error: `*projmux.Refusal`
+contains a typed code and wraps `*projmux.ResumeProcessError` with Owner and Binding.
+Unknown cleanup retains exact recovery resources and must not be automatically
+retried. A committed generation that later exits retains its actual termination
+record; a child-free claim does not prove provider birth or a response.

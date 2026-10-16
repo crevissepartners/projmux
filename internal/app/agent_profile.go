@@ -202,7 +202,7 @@ func (c *aiCommand) resumeProfileSettings(m string, a map[string]string, u ...st
 // invalid refuses with profile-resume-unavailable; there is no resume that
 // drops its permissions.
 func (c *createCommand) codexResumeProfile(annotations map[string]string, projectUID ...string) (agentResumeLaunch, codexappserver.ThreadPolicy, error) {
-	launch, policy, err := mutationruntime.NativeCodexResumeProfile(func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }, annotations, projectUID...)
+	launch, policy, err := mutationruntime.NativeCodexResumeProfile(c.processCreatePaths, annotations, projectUID...)
 	return localAgentResumeLaunch(launch), policy, localResumeError(err)
 }
 

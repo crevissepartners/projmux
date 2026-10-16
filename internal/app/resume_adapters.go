@@ -190,7 +190,7 @@ func (c *aiCommand) resumeGuidanceSystemPromptFile(p string, a map[string]string
 }
 
 func (c *aiCommand) resumeLaunchService() *mutationruntime.ResumeLaunchService {
-	return &mutationruntime.ResumeLaunchService{Command: c.sharedAgentCommand(), Paths: func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) }, Guidance: c.sharedGuidance(), MissingBinary: c.missingAgentRunnerMessage}
+	return &mutationruntime.ResumeLaunchService{Command: c.sharedAgentCommand(), Paths: c.processCreatePaths, Guidance: c.sharedGuidance(), MissingBinary: c.missingAgentRunnerMessage}
 }
 
 func (p agentResumePlan) sharedPlan() mutationruntime.AgentResumePlan {

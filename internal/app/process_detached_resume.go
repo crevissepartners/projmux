@@ -19,17 +19,14 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	sdkcore "github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
 // No private planner/claim pointers cross the launch boundary. Explicit resume
 // retains its host-lost admission; deferred resume retains its retired proof.
-type processDetachedResumeRequest struct {
-	Agent         string
-	Model, Effort string
-	Prompt        processResumeFirstFrame
-	WaitForPeer   bool
-	Previous      coremetadata.ProcessBinding
-}
+type processDetachedResumeRequest mutationruntime.ProcessDetachedResumeRequest
 
 func (r processDetachedResumeRequest) options() processAgentResumeOptions {
 	return processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: r.Agent}, Model: r.Model, Effort: r.Effort, Prompt: r.Prompt, allowHostLost: !r.WaitForPeer}
@@ -77,7 +74,9 @@ func (c *agentCommand) runDetachedProcessResume(agent coremetadata.Agent, flags 
 	if err != nil {
 		return err
 	}
-	return launchProcessDetached(ctx, executable, processDetachedRequest{Resume: &wire, Output: mode, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.rebind.create, stdout, stderr)
+	shared := mutationruntime.ProcessDetachedResumeRequest(wire)
+	_, err = mutationruntime.LaunchDetachedProcessResume(ctx, executable, mutationruntime.ProcessDetachedResumeEnvelope{Resume: &shared, Output: string(mode), Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.loadRegistry, stdout, stderr)
+	return err
 }
 
 func detachedClaimCurrent(command *createCommand, reg coremetadata.Registry, claim deferredClaimRecord, owner coremetadata.ProcessIdentity) bool {
@@ -137,6 +136,12 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 		return fail(err)
 	}
 	reply := processDetachedReply{Owner: identity, Binding: result.Binding, Stdout: output.String(), Stderr: notices.String()}
+	if req.ResumeContext != nil {
+		reply.Result, err = processResumeCommitted(c, metadataProcessBinding(result.Binding), result.owner.Notices)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	if err = encoder.Encode(reply); err != nil {
 		return fail(err)
 	}
@@ -157,7 +162,12 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 }
 
 func encodeDetachedResumeError(encoder *json.Encoder, owner coremetadata.ProcessIdentity, binding processhost.Binding, err error) error {
-	_ = encoder.Encode(processDetachedReply{Owner: owner, Binding: binding, Error: err.Error()})
+	reply := processDetachedReply{Owner: owner, Binding: binding, Error: err.Error(), ErrorCode: processResumeErrorCode(err)}
+	var recipe *sdkcore.ResumeRecipeChangedError
+	if errors.As(err, &recipe) {
+		reply.ErrorDetail, _ = json.Marshal(recipe)
+	}
+	_ = encoder.Encode(reply)
 	return err
 }
 
@@ -212,7 +222,14 @@ func runDetachedClaimOwner(life context.Context, cancel context.CancelFunc, time
 	if err = c.rebind.create.writeResultsWithReceipt(&output, "agent resume", req.Output, coremetadata.KindAgent, []createResult{created}, processResumeReceipt(binding, agent.Metadata.Name)); err != nil {
 		return fail(err)
 	}
-	if err = encoder.Encode(processDetachedReply{Owner: identity, Binding: binding, Claim: &claim.record, Stdout: output.String(), Stderr: notices.String()}); err != nil {
+	reply := processDetachedReply{Owner: identity, Binding: binding, Claim: &claim.record, Stdout: output.String(), Stderr: notices.String()}
+	if req.ResumeContext != nil {
+		reply.Result, err = processResumeCommitted(c, claim.record.Binding, nil)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	if err = encoder.Encode(reply); err != nil {
 		return fail(err)
 	}
 	var commit string
@@ -282,28 +299,31 @@ func awaitDetachedRequestCleanup(command *createCommand, req processDetachedRequ
 	if req.Resume == nil {
 		return awaitDetachedStartupCleanup(command, owner, ready.Binding)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), processRelaunchRetirementTimeout)
-	defer cancel()
-	ticker := time.NewTicker(processRelaunchRetirementPoll)
-	defer ticker.Stop()
-	for {
-		reg, err := command.store.snapshot()
-		settled := false
-		if err == nil {
-			agent, exists := reg.Agent(req.Resume.Agent)
-			pane, ambiguous := processResumePane(reg, req.Resume.Agent)
-			if exists && pane != nil && !ambiguous && pane.Status.ProcessSession != nil {
-				b := pane.Status.ProcessSession.Binding
-				settled = agent.Status.Phase == coremetadata.PhaseOffline && ((b == req.Resume.Previous && pane.Status.Activation.IsZero()) || (b == metadataProcessBinding(ready.Binding) && coremetadata.MatchesProcessWait(b, pane.Status.LastTermination) && coremetadata.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)))
-			}
-		}
-		if settled && processIdentityAbsent(owner, localipc.Process) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("process-detached-cleanup-unconfirmed: remaining agent uid:%s pane uid:%s; inspect with projmux describe agent uid:%s; cleanup: projmux agent stop uid:%s: %w", req.Resume.Agent, req.Resume.Previous.PaneUID, req.Resume.Agent, req.Resume.Agent, ctx.Err())
-		case <-ticker.C:
-		}
+	return mutationruntime.AwaitDetachedProcessResumeCleanup(command.store.snapshot, req.RegistryPath, mutationruntime.ProcessDetachedResumeRequest(*req.Resume), owner, ready.Binding)
+}
+
+func processResumeErrorCode(err error) string {
+	var failure *mutations.Failure
+	if errors.As(err, &failure) {
+		return string(failure.Code)
 	}
+	var refusal *mutationruntime.AgentCreateRefusal
+	if errors.As(err, &refusal) {
+		return refusal.Reason
+	}
+	var profile *mutationruntime.ProfileResumeError
+	var localProfile *profileResumeError
+	if errors.As(err, &profile) || errors.As(err, &localProfile) {
+		return "profile-resume-unavailable"
+	}
+	if coremetadata.IsUsageError(err) {
+		return "resume-request-invalid"
+	}
+	if errors.Is(err, processhost.ErrStale) {
+		return "process-resume-refused"
+	}
+	if errors.Is(err, processhost.ErrResumeRefused) {
+		return "process-resume-refused"
+	}
+	return "resume-execution-failed"
 }

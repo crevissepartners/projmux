@@ -216,11 +216,11 @@
 // acknowledgement, like CLI agent resume. Transaction failures roll back.
 // Caller Context cancellation prevents admission only; admitted work completes.
 // Process Agents (including retired process Pane candidates) return
-// CodeResumeProcessUnsupported before effects. Native Codex resumes the stored
+// CodeResumeRequestInvalid unless explicitly detached. Native Codex resumes the stored
 // thread with current settings; CodeResumeNativeCodexUnavailable refuses missing
 // or unavailable native routing. CodeResumeNativeCodexUnsupported remains
-// exported for source compatibility. No Prompt input is exposed because the tmux CLI rejects
-// prompts. SocketPath overrides Options.SocketPath, or uses the proved app
+// exported for source compatibility. Prompt is process-only; tmux resume rejects
+// process inputs. SocketPath overrides Options.SocketPath, or uses the proved app
 // route when empty. Options.ProjmuxExecutable has the create supervisor contract.
 //
 // CreateAgent creates one tmux Claude, Antigravity or Codex Agent in explicit

@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
@@ -26,6 +27,10 @@ func (c *aiCommand) ResolveAgentSettings(provider string, annotations map[string
 // ResolveAgentSettingsRequest is resolveAgentSettings over the resume seam's
 // home.
 func (c *aiCommand) ResolveAgentSettingsRequest(provider string, annotations map[string]string, request agentSettingsRequest) (agentSettingsLaunch, error) {
+	if c.processCreateContext != nil {
+		launch, err := mutationruntime.ResolveAgentSettingsWithPaths(c.processCreatePaths, provider, annotations, request.shared())
+		return localAgentSettingsLaunch(launch), localResumeError(err)
+	}
 	return resolveAgentSettings(c.homeDir, c.lookupEnv, provider, annotations, request)
 }
 
