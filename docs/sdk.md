@@ -703,3 +703,7 @@ and stale-binding identity. Unknown cleanup never means Offline success; inspect
 the exact resources before public Stop/Resume/Delete recovery and do not retry
 automatically. The existing CLI admission and output contracts are unchanged.
 `CodeRelaunchProcessUnsupported` remains exported for source compatibility.
+
+Host-lost recovery is outside this SDK relaunch contract; use the public CLI
+`agent relaunch` recovery path after inspecting the exact resources. The SDK
+refuses absent ownership evidence without replacing it with an invented Wait.

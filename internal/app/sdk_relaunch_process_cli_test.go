@@ -446,3 +446,45 @@ func TestSDKDetachedProcessRelaunchCLIErrorParity(t *testing.T) {
 		})
 	}
 }
+
+// Host-lost recovery deliberately remains CLI-only. Restoring the captured
+// Running record after retiring our fixture processes supplies no actual Wait
+// evidence and must not admit a Stop, replacement writer, or Offline success.
+func TestSDKDetachedProcessRelaunchLostHostRefuses(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			f := hostLostCLIProviderFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
+			wireBefore, err := os.ReadFile(f.trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := c.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Detach: true, Confirm: true, Prompt: "unsupported recovery"})
+			var refused *projmux.Refusal
+			var detail *projmux.RelaunchProcessError
+			unavailable := err != nil && (strings.Contains(err.Error(), "process-host-unavailable") || strings.Contains(err.Error(), "has no current process ownership"))
+			if !errors.As(err, &refused) || !errors.As(err, &detail) || (refused.Code != projmux.CodeRelaunchExecutionFailed && refused.Code != projmux.CodeRelaunchNoConversation) || detail.Owner.PID <= 0 || !unavailable || result.Binding != (core.ProcessBinding{}) || result.ClaimWaiting {
+				t.Fatalf("lost-host admission: result=%+v error=%v", result, err)
+			}
+			after := mustRegistry(t, f)
+			wireAfter, readErr := os.ReadFile(f.trace)
+			if readErr != nil || !reflect.DeepEqual(before, after) || !bytes.Equal(wireBefore, wireAfter) {
+				t.Fatalf("lost-host refusal wrote Registry/provider frames: %v", readErr)
+			}
+			a, _ := after.Agent(old.Binding.AgentUID)
+			p, _ := after.Pane(old.Binding.PaneUID)
+			if a.Status.Phase != m.PhaseRunning || p.Status.LastTermination != nil || a.Status.LastTermination != nil || p.Status.ProcessSession.Binding != old.Binding {
+				t.Fatal("lost-host refusal fabricated termination or a new generation")
+			}
+		})
+	}
+}
