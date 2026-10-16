@@ -10,8 +10,9 @@ or an uncertain response never falls back to start or steer.
 
 Installing a new CLI does not replace an already running observer or process
 host. A new sender therefore refuses an older peer endpoint before provider
-effects. Relaunch the affected Agent with the current build before sending
-again; do not interpret a failed or unknown receipt as permission to resend.
+effects. Replace the affected Agent's host during explicit maintenance using
+the current build; do not interpret a failed or unknown receipt as permission
+to resend.
 This also applies to a process Codex source: its exact host generation needs
 the peer source validation endpoint. A missing endpoint refuses delivery before
 target provider effects, without retrying validation through the main socket.
@@ -51,24 +52,74 @@ Both-compatible rows indicate no host control/proof upgrade is needed by this
 snapshot and omit recovery commands. These verdicts do not validate the Codex
 provider version or actual injection acceptance.
 
-For each affected Agent, use its full UID from the warning. From another
-controller using the installed build, first inspect the public dry run, then
-explicitly request an individual relaunch on the same conversation:
+For an existing Codex process conversation, finish its work and arrange
+explicit maintenance for one exact Agent. Freeze new operator and peer input
+throughout the procedure. Older hosts do not provide an atomic stop-if-idle
+operation: a quiet snapshot alone cannot prevent an input race. Use a separate
+controller; never replace the controller executing this procedure.
+
+Before stopping, record the full Agent and Pane UIDs, Window, thread ID,
+generation/operation binding, and host/provider process birth identities.
+Record the intended CLI image's executable path, source revision and SHA-256
+separately from the running host image. Installing a CLI or reading its version
+does not prove that the existing host uses it. Inspect the current supported
+profile, model and effort configuration you intend to resume with.
+
+Run the public commands from that controller using the intended current build:
 
 ```sh
-projmux agent relaunch uid:<exact-agent-uid> --detach --dry-run
-projmux agent relaunch uid:<exact-agent-uid> --detach
+projmux describe agent uid:<exact-agent-uid> -o json
+projmux describe pane uid:<exact-pane-uid> -o json
+projmux agent stop uid:<exact-agent-uid>
+projmux describe agent uid:<exact-agent-uid> -o json
+projmux describe pane uid:<exact-pane-uid> -o json
 ```
 
-Review the planned recipe and arrange a maintenance window before proceeding.
-An unknown/busy or not-ready host needs investigation; a census is not proof
-that relaunch is safe or will succeed. Do not force busy admission, change
-settings to bypass a refusal, or relaunch the controller itself. Repeat the
-read-only preflight after individual recovery of both ends. These diagnostics
-do not stop/relaunch an Agent, send provider input, prove model consumption, or
-authorize resending a failed or uncertain message. Protocol fixtures and fake
-version/receipt fields do not establish actual old/new image interoperability
-or model consumption.
+Continue only after Stop succeeds, the same Agent is Offline with its Pane and
+thread preserved, and both resources' `lastTermination` identify the stopped
+generation/operation and contain actual supervisor Wait evidence (exit code or
+signal). Confirm retirement of the exact old host/provider process births.
+Missing sockets, EOF, process absence or a reconcile `unknown` receipt alone
+are insufficient. If those facts cannot be established, investigate before
+resuming; generic host-lost recovery is a different path.
+
+Then resume the preserved conversation without introducing a new task:
+
+```sh
+projmux agent resume uid:<exact-agent-uid> --detach -o json
+projmux describe agent uid:<exact-agent-uid> -o json
+projmux describe pane uid:<exact-pane-uid> -o json
+```
+
+Resume uses the supported current configuration. It does not freeze the old
+recipe or reject every configuration change as drift. Check `settingsApplication`
+for the prepared model/effort/profile and compare with the provider settings
+evidence available to you. A receipt's `delivered` setting describes preparation
+and delivery, not the model's entire internal state. Existing Codex developer
+instructions remain immutable: distinguish `preserved`, `not-applied` (including
+unavailable instructions), and unobserved/unknown evidence. Do not describe new
+instructions as applied. Recorded rollout instruction text, hashes or lengths
+do not establish what instructions were transmitted to the model.
+
+Successful detached startup confirms an owned handshake. Verify the same
+Agent UID, Pane UID and thread, a new generation/operation and host/provider
+birth, and the actual new executable image. Recheck both source and target
+peer proofs with the read-only preflight, recovering each affected endpoint
+individually. A fresh, bounded peer message can then test the recovered route;
+record its exact ref and both endpoint bindings. Never automatically replay a
+failed or uncertain message. Delivery acceptance is separate from a new
+generated response, and neither establishes that instructions changed.
+
+If resume is refused or startup fails, preserve the original failure and exact
+recovery refs. Inspect Offline state, the original Agent/Pane/thread, and any
+new failed generation's own actual Wait/retirement evidence separately from
+the old Stop receipt. A live/unretired or concurrent writer, changed ownership,
+or unknown proof invalidates the plan. Follow the reported public recovery
+guidance after investigation; do not loop, force admission, change permissions
+to bypass refusal, delete the preserved conversation, or use an old CLI as an
+automatic fallback. Current-image protocol fixtures, actual old/new binary
+observations and real-model generated replies are distinct evidence. No one
+of them alone proves instruction updates or future uninterrupted reachability.
 
 ## Current payload-free behavior (Codex 0.153.0)
 

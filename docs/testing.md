@@ -60,6 +60,19 @@ for a shorter critical path; runner time and wall time must be measured separate
   `make test-process-host-cli GO=/path/to/go` for a local toolchain matching
   go.mod). The real-tmux window rename test remains in its existing unit and
   integration jobs and is outside this process fixture target.
+  `process_codex_host_upgrade_cli_test.go` checks public Stop/actual Wait and
+  detached resume of the same Codex Agent/Pane/thread, current profile
+  model/effort preparation against the wire and settings receipt, immutable
+  legacy instructions, live-writer refusal, and provider-refusal cleanup.
+  It consumes the existing CLI/protocol fixtures; the selected suite also
+  retains `TestProcessResumeOwnerKillIsNotResumableActualCLI` and
+  `TestProcessCodexRelaunchUnretiredWriterActualCLI` for unretired writers.
+  This is current-image regression evidence. A separate old/new binary
+  observation must record each image's source and SHA, actual Wait/retirement,
+  same conversation and new host generation, and both peer endpoints.
+  A real model's nonce transformation in a new generated reply is separate
+  evidence again. Neither peer delivery nor that reply proves instruction
+  updates; rollout instruction records are not proof of transmitted instructions.
 - `make vet` runs `go vet ./...`. CI runs it with deadcode and the non-Go
   contracts in `Unit / contracts and static gates`.
 - CI partitions the ordinary Go suite into three `internal/app` shards and
