@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -204,7 +206,7 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 				}
 				rawAfter, _ := os.ReadFile(storage.Path())
 				if !bytes.Equal(rawBefore, rawAfter) {
-					t.Fatal("preflight changed Registry")
+					t.Fatalf("preflight changed Registry: %s", strings.Join(sdkRelaunchRegistryChanges(rawBefore, rawAfter), "; "))
 				}
 				startup, cancel := context.WithCancel(ctx)
 				result, e := c.RelaunchAgent(startup, request)
@@ -243,6 +245,52 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Preserve the full byte comparison while exposing which fixture facts raced.
+func sdkRelaunchRegistryChanges(before, after []byte) []string {
+	var left, right any
+	if json.Unmarshal(before, &left) != nil || json.Unmarshal(after, &right) != nil {
+		return []string{fmt.Sprintf("invalid JSON: before=%q after=%q", before, after)}
+	}
+	var changes []string
+	var compare func(string, any, any)
+	compare = func(path string, a, b any) {
+		if reflect.DeepEqual(a, b) {
+			return
+		}
+		if am, ok := a.(map[string]any); ok {
+			if bm, ok := b.(map[string]any); ok {
+				keys := make([]string, 0, len(am)+len(bm))
+				for key := range am {
+					keys = append(keys, key)
+				}
+				for key := range bm {
+					if _, exists := am[key]; !exists {
+						keys = append(keys, key)
+					}
+				}
+				slices.Sort(keys)
+				for _, key := range keys {
+					compare(path+"/"+key, am[key], bm[key])
+				}
+				return
+			}
+		}
+		if aa, ok := a.([]any); ok {
+			if ba, ok := b.([]any); ok && len(aa) == len(ba) {
+				for i := range aa {
+					compare(fmt.Sprintf("%s/%d", path, i), aa[i], ba[i])
+				}
+				return
+			}
+		}
+		aJSON, _ := json.Marshal(a)
+		bJSON, _ := json.Marshal(b)
+		changes = append(changes, fmt.Sprintf("%s: %s -> %s", path, aJSON, bJSON))
+	}
+	compare("", left, right)
+	return changes
 }
 
 func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
