@@ -70,6 +70,29 @@ first input; add `-- <first-prompt>` to start it immediately. Replacement retain
 the existing conversation and exact claim/recipe checks. Projmux does not edit
 the old argv or migrate it automatically.
 
+## Lifecycle contract
+
+These rules are public CLI contract for process-hosted Agents.
+
+- `create agent --host process` publicly creates a foreground-owned Claude or Codex Agent by default; stdin EOF and signals retain their existing provider Wait exit contract.
+- `create agent --host process --detach` (including `--create-window`) opts into an independent owner and returns exit 0 only after startup and an exact identity/binding handshake.
+- Its provider remains controllable after caller exit; later provider exit is observed through termination records.
+- `agent stop <exact-ref>` supports process Agents only, waits for actual provider Wait and owner retirement, and preserves Agent, Pane, and conversation.
+- `agent resume --detach` preserves Agent, Pane, and conversation with a fresh independent owner generation; Claude requires a prompt and Codex can reattach promptlessly.
+- `--wait-for-peer --detach` returns after an exact child-free claim handshake; first peer input starts the preserved conversation, and `agent stop` releases the claim without fake Wait before birth or waits for actual Wait after birth.
+- Reboot, logout, and whole service/cgroup or PID namespace termination survival are outside this contract.
+- Owners may reparent to the nearest subreaper; detachment does not escape cgroups or PID namespaces, including temporary Codex sandbox native tool namespaces.
+- Direct `create window --detach` and tmux stop/detached resume are unsupported.
+- `agent relaunch --detach` supports existing process Agents and `--host process` destinations, explicitly restarting even with unchanged settings under an independent new owner after the existing writer and actual Wait/retirement barriers.
+- Same-host promptless Claude returns an exact child-free frozen-recipe claim handshake; first peer input starts the same conversation, and stop preserves child-free versus actual Wait semantics.
+- Foreground relaunch without --detach retains its existing unchanged/output/exit behavior.
+- Unsupported tmux destinations, self-target, busy refusals, and dry-run occur before Stop.
+- For public CLI new Agents (`create agent`, provider shortcuts, and `create window --provider <Agent provider>`), omitted `--host` follows central `config agent-host` (unset: tmux; process: detached startup).
+- Explicit host overrides that setting; explicit process retains foreground ownership.
+- Agent routes and shortcuts accept explicit `--detach=true|false` to override process lifetime.
+- Shell-only Windows/Panes, internal TUI topology, SDK creation, and existing Agent resume/relaunch retain their contracts.
+- Unsupported process combinations fail before effects with no tmux fallback.
+
 ## Driving the Agent from another terminal
 
 A process Agent has no terminal of its own, so every interaction goes through
