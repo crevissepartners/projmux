@@ -23,7 +23,7 @@ const observedFrameCorpus = "../../../internal/app/testdata/claude-dialogue-obse
 // TestCoordinationContentDeclaresExactlyTheProducerFrameKeys reads this one
 // from source.
 const (
-	producerCoordinationFrameFile = "../../../internal/app/claude_push_hub.go"
+	producerCoordinationFrameFile = "../../../internal/services/agentmessages/claude.go"
 	producerCoordinationFrameType = "claudeProviderCoordinationContent"
 	fixtureCoordinationFrameType  = "coordinationContent"
 )
@@ -33,7 +33,7 @@ const (
 // same keys, the keys under the user frame's message included, so the same
 // comparison reads these from source too.
 const (
-	producerProviderFrameFile     = "../../../internal/app/claude_provider_push.go"
+	producerProviderFrameFile     = "../../../internal/services/agentmessages/claude.go"
 	producerProviderAuthFrameType = "claudeProviderAuthFrame"
 	fixtureProviderAuthFrameType  = "providerAuthFrame"
 	producerProviderUserFrameType = "claudeProviderUserFrame"
