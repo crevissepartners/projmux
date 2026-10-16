@@ -384,7 +384,11 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 	if err != nil {
 		return fail(err)
 	}
-	host, err := processhost.NewHost(binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: command.Env}, creator.processCreateTransactions(owned.owner.registryPath), processhost.DefaultLimits())
+	supervisorEnv, err := creator.processCreateSupervisorEnvironment(command.Env, binding, owned.owner.registryPath)
+	if err != nil {
+		return fail(err)
+	}
+	host, err := processhost.NewHost(binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: supervisorEnv}, creator.processCreateTransactions(owned.owner.registryPath), processhost.DefaultLimits())
 	if err != nil {
 		return fail(err)
 	}

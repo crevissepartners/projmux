@@ -170,12 +170,29 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 						_ = os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("SDK relaunch cleanup unconfirmed"), 0600)
 					}
 				})
+				// Init binds SessionRef before the owner's snapshot records ACK
+				// and the completed initial turn. Compare bytes only after those
+				// fixture writers have committed and two observations agree.
+				var previous []byte
+				var previousRevision time.Time
 				processCLIUntil(t, ctx, func() bool {
-					r, e := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: ref})
+					r, e := storage.LoadReadOnly()
 					if e != nil {
 						t.Fatal(e)
 					}
-					return r.(core.Agent).Status.SessionRef != nil
+					a, _ := r.Agent(created.Agent.Metadata.UID)
+					p, _ := r.Pane(created.Binding.PaneUID)
+					if a.Status.SessionRef == nil || a.Status.Activation.State != m.ActivationAcknowledged || p.Status.ProcessSession == nil || p.Status.ProcessSession.TurnID != "" || len(p.Status.ProcessSession.Pending) != 0 {
+						previous = nil
+						return false
+					}
+					raw, e := os.ReadFile(storage.Path())
+					if e != nil {
+						t.Fatal(e)
+					}
+					stable := r.UpdatedAt.Equal(previousRevision) && bytes.Equal(previous, raw)
+					previous, previousRevision = raw, r.UpdatedAt
+					return stable
 				})
 				before, e := storage.LoadReadOnly()
 				if e != nil {
@@ -185,7 +202,10 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 				request := core.RelaunchAgentRequest{Ref: ref, Detach: true, Confirm: true, Binding: created.Binding, Prompt: "continue"}
 				dry := request
 				dry.DryRun = true
-				rawBefore, _ := os.ReadFile(storage.Path())
+				rawBefore, e := os.ReadFile(storage.Path())
+				if e != nil {
+					t.Fatal(e)
+				}
 				plan, e := c.RelaunchAgent(ctx, dry)
 				if e != nil || !plan.DryRun || plan.CurrentHost != "process" || plan.TargetHost != "process" {
 					t.Fatalf("plan %+v %v", plan, e)
@@ -204,7 +224,10 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 				if _, e := c.RelaunchAgent(canceled, request); !errors.Is(e, context.Canceled) {
 					t.Fatal(e)
 				}
-				rawAfter, _ := os.ReadFile(storage.Path())
+				rawAfter, e := os.ReadFile(storage.Path())
+				if e != nil {
+					t.Fatal(e)
+				}
 				if !bytes.Equal(rawBefore, rawAfter) {
 					t.Fatalf("preflight changed Registry: %s", strings.Join(sdkRelaunchRegistryChanges(rawBefore, rawAfter), "; "))
 				}
@@ -394,6 +417,219 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 				t.Fatal("host move replaced conversation")
 			}
 		})
+	}
+}
+
+func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		for _, rejectStart := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/reject-start=%t", provider, rejectStart), func(t *testing.T) {
+				var f processCreateCLI
+				if provider == "claude" {
+					f = processResumeCLIFixture(t, provider)
+					wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "if [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nexec /bin/sleep 300\n"
+					if err := os.WriteFile(filepath.Join(f.root, provider), []byte(wrapper), 0700); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					f = processCodexRelaunchFixture(t)
+					codexHome, err := os.MkdirTemp(os.TempDir(), "c")
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = os.RemoveAll(codexHome) })
+					t.Setenv("CODEX_HOME", codexHome)
+					script := filepath.Join(f.root, "shared.py")
+					if err = os.WriteFile(script, []byte(codexHostMoveServerFixture), 0600); err != nil {
+						t.Fatal(err)
+					}
+					control := filepath.Join(codexHome, "app-server-control", "app-server-control.sock")
+					server := exec.Command("python3", "-u", script, "serve", control)
+					var stderr bytes.Buffer
+					server.Stderr = &stderr
+					if err = server.Start(); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						_ = server.Process.Kill()
+						_ = server.Wait()
+						if t.Failed() {
+							t.Log(stderr.String())
+						}
+					})
+					ready, done := context.WithTimeout(context.Background(), 10*time.Second)
+					defer done()
+					processCLIUntil(t, ready, func() bool { _, err := os.Stat(control); return err == nil })
+					wrapper := "#!/bin/sh\ncase \"$1 $2\" in\n'--version '| 'app-server proxy' | 'app-server daemon') exec python3 -u " + fmt.Sprintf("%q", script) + " \"$@\";;\n'app-server --listen') exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "codex-provider.py")) + ";;\nesac\nexec /bin/sleep 300\n"
+					if err = os.WriteFile(filepath.Join(f.root, provider), []byte(wrapper), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Remove(filepath.Join(f.root, "tmux")); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				socket, _ := sdkCreateSocket(t)
+				paths := config.Paths{ConfigDir: filepath.Join(f.root, "deep", "settings"), StateDir: filepath.Join(f.root, "deep", "records")}
+				original, err := os.ReadFile(f.store.Path())
+				if err != nil {
+					t.Fatal(err)
+				}
+				reg, err := f.store.LoadReadOnly()
+				if err != nil || len(reg.Agents) != 0 {
+					t.Fatal("fixture must have no live source in the default domain", err)
+				}
+				storage := metadata.NewStore(metadata.PathFor(paths.StateDir))
+				if _, err = storage.Update(func(r *m.Registry) error { *r = reg.Clone(); return nil }); err != nil {
+					t.Fatal(err)
+				}
+				sibling := filepath.Join(filepath.Dir(paths.StateDir), "projmux")
+				siblingBefore := sdkCreateSeedSibling(t, sibling)
+				c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+				defer cancel()
+				t.Cleanup(func() { cleanupSDKNativePeers(t, paths.StateDir) })
+				create := core.CreateAgentRequest{Project: "uid:" + f.project, Window: "uid:" + f.window, Provider: provider, Profile: "none", Host: "tmux", Model: "stub-model", Effort: "low"}
+				if provider == "codex" {
+					create.Payload = []string{"source context"}
+				}
+				created, err := c.CreateAgent(ctx, create)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if provider == "claude" {
+					// The persistent shell fixture emits no native hook. Record the
+					// same exact process/session evidence as hostMoveCLIFixture,
+					// against the SDK's State from the source's first creation.
+					pidText, err := exec.CommandContext(ctx, "tmux", "-S", socket, "display-message", "-p", "-t", created.PaneID, "#{pane_pid}").Output()
+					if err != nil {
+						t.Fatal(err)
+					}
+					var pid int
+					if _, err = fmt.Sscan(string(pidText), &pid); err != nil {
+						t.Fatal(err)
+					}
+					identity, _, err := localipc.Process(pid)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err = storage.Update(func(r *m.Registry) error {
+						mut := metadata.DefaultMutator()
+						p, _ := r.Pane(created.Agent.Status.PaneRef)
+						if p.Status.Activation.Claude == nil {
+							if err := mut.RecordClaudeProcess(r, p.Metadata.UID, created.Agent.Metadata.UID, p.Status.Activation.Generation, identity); err != nil {
+								return err
+							}
+						}
+						if _, _, err := mut.RecordAgentSessionRef(r, created.Agent.Metadata.UID, m.AgentSessionObservation{Provider: provider, SessionID: "process-session"}); err != nil {
+							return err
+						}
+						if _, err := mut.SetAgentActivation(r, created.Agent.Metadata.UID, m.ActivationAcknowledged, "provider-hook", ""); err != nil {
+							return err
+						}
+						_, err := mut.SetAgentInteraction(r, created.Agent.Metadata.UID, m.InteractionIdle, "provider-hook")
+						return err
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				reg, err = storage.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				source, ok := reg.Agent(created.Agent.Metadata.UID)
+				if !ok || source.Status.SessionRef == nil || source.Status.Activation.State != m.ActivationAcknowledged {
+					t.Fatal("explicit source has no verified conversation/activation")
+				}
+				for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+					t.Setenv(key, f.root+"/poison")
+				}
+				ref := "uid:" + source.Metadata.UID
+				t.Cleanup(func() {
+					clean, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					r, err := storage.LoadReadOnly()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					p, _ := processResumePane(r, source.Metadata.UID)
+					if p != nil && p.Status.Activation.Process != nil {
+						if _, err = c.StopAgent(clean, core.StopAgentRequest{Ref: ref}); err != nil {
+							t.Error(err)
+							_ = os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("SDK host move cleanup unconfirmed"), 0600)
+						}
+					}
+				})
+				if rejectStart {
+					if err = os.WriteFile(filepath.Join(f.root, provider), []byte("#!"+filepath.Join(f.root, "missing-interpreter")+"\n"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				q := core.RelaunchAgentRequest{Ref: ref, Host: "process", Detach: true, Confirm: true, SocketPath: socket}
+				if provider == "claude" {
+					q.Prompt = "continue"
+				}
+				moved, err := c.RelaunchAgent(ctx, q)
+				if rejectStart {
+					var detail *projmux.RelaunchProcessError
+					if !errors.As(err, &detail) || detail.Owner.PID == 0 || errors.Unwrap(detail) == nil {
+						t.Fatalf("startup refusal lost typed owner/cause: result=%+v error=%v", moved, err)
+					}
+				} else {
+					if err != nil || moved.Binding.AgentUID != source.Metadata.UID || moved.Binding.Generation == "" {
+						t.Fatalf("host move %+v: %v", moved, err)
+					}
+					stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: moved.Binding})
+					if err != nil || !stopped.Stopped || stopped.Termination == nil {
+						t.Fatalf("exact Stop %+v: %v", stopped, err)
+					}
+					r, err := storage.LoadReadOnly()
+					if err != nil {
+						t.Fatal(err)
+					}
+					p, _ := r.Pane(moved.Binding.PaneUID)
+					if !m.MatchesProcessWait(p.Status.ProcessSession.Binding, p.Status.LastTermination) || p.Status.Activation.Process != nil {
+						t.Fatal("host move lost actual Wait/retirement")
+					}
+					back, err := c.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Host: "tmux", Confirm: true, SocketPath: socket})
+					if err != nil || back.AgentUID != source.Metadata.UID || back.TargetHost != "tmux" || back.NewPaneUID == "" {
+						t.Fatalf("reverse host move %+v: %v", back, err)
+					}
+				}
+				r, err := storage.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ := r.Agent(source.Metadata.UID)
+				if !a.Status.SessionRef.SameConversation(source.Status.SessionRef) {
+					t.Fatal("host move changed conversation")
+				}
+				if _, err = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: ref, Confirm: true, SocketPath: socket}); err != nil {
+					t.Fatal(err)
+				}
+				if after := sdkCreateDirectorySnapshot(t, sibling); !reflect.DeepEqual(siblingBefore, after) {
+					t.Fatalf("host move changed sibling Config/State: before=%v after=%v", siblingBefore, after)
+				}
+				if after, err := os.ReadFile(f.store.Path()); err != nil || !bytes.Equal(original, after) {
+					t.Fatalf("host move changed default Registry: %v", err)
+				}
+				journal, err := os.ReadFile(filepath.Join(paths.StateDir, "logs", "operations.jsonl"))
+				if err != nil || len(bytes.TrimSpace(journal)) == 0 {
+					t.Fatalf("host move journal escaped explicit State: %v", err)
+				}
+				for _, line := range bytes.Split(bytes.TrimSpace(journal), []byte("\n")) {
+					if !json.Valid(line) {
+						t.Fatalf("invalid explicit journal row: %q", line)
+					}
+				}
+			})
+		}
 	}
 }
 
