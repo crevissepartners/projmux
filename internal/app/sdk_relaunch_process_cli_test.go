@@ -154,9 +154,13 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 					t.Fatal(e)
 				}
 				ref := "uid:" + created.Agent.Metadata.UID
+				deleted := false
 				t.Cleanup(func() {
 					clean, done := context.WithTimeout(context.Background(), 15*time.Second)
 					defer done()
+					if deleted {
+						return
+					}
 					if _, e := c.StopAgent(clean, core.StopAgentRequest{Ref: ref}); e != nil {
 						t.Error(e)
 						_ = os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("SDK relaunch cleanup unconfirmed"), 0600)
@@ -229,6 +233,7 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 				if _, e = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: ref, Confirm: true}); e != nil {
 					t.Fatal(e)
 				}
+				deleted = true
 				again, _ := os.ReadFile(f.store.Path())
 				if !bytes.Equal(original, again) {
 					t.Fatal("ambient Registry changed")
@@ -249,6 +254,18 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 			var socket string
 			if provider == "claude" {
 				f, source, _, socket = hostMoveCLIFixture(t)
+				// The host-move source fixture holds its first turn open. Use
+				// the existing deferred-peer protocol recipe for this claim test.
+				path := filepath.Join(f.root, "provider.py")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				script := strings.Replace(string(raw), "  inp={'questions'", "  emit({'type':'result','subtype':'success','session_id':'process-session'})\n  continue\n  inp={'questions'", 1)
+				script = strings.Replace(script, "'provider.sock'", "'provider-%s.sock'%os.getpid()", 1)
+				if err = os.WriteFile(path, []byte(script), 0600); err != nil {
+					t.Fatal(err)
+				}
 			} else {
 				f, source, _, socket = codexHostMoveCLIFixture(t)
 			}
@@ -275,7 +292,7 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 			if moved.Binding.AgentUID != source.Metadata.UID || moved.Binding.Generation == "" {
 				t.Fatalf("move %+v", moved)
 			}
-			awaitDetachedRelaunchInitialConversation(t, ctx, f, ref)
+			awaitProcessResumeRecord(t, ctx, f, ref, func(r *m.ProcessSessionRecord) bool { return r.ConnectionID != "" })
 			if provider == "claude" {
 				claim, e := c.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Detach: true, Confirm: true, Model: "frozen-model"})
 				if e != nil || !claim.ClaimWaiting || claim.Binding != moved.Binding {
@@ -327,5 +344,33 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 				t.Fatal("host move replaced conversation")
 			}
 		})
+	}
+}
+
+func TestSDKDetachedProcessRelaunchBusyStopsNothing(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	f := processResumeCLIFixture(t, aiModeClaude)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--model", "stub-model", "--effort", "low", "--", "question"))
+	defer first.shutdown(t)
+	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *m.ProcessSessionRecord) bool { return len(r.Pending) > 0 })
+	c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.store.LoadReadOnly()
+	wireBefore, _ := os.ReadFile(f.trace)
+	_, err = c.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: first.ref, Detach: true, Prompt: "unconfirmed"})
+	var refused *projmux.Refusal
+	if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchAgentBusy || strings.Contains(err.Error(), "cleanup-unconfirmed") {
+		t.Fatalf("busy refusal: %v", err)
+	}
+	after, _ := f.store.LoadReadOnly()
+	wireAfter, _ := os.ReadFile(f.trace)
+	if !reflect.DeepEqual(before, after) || !bytes.Equal(wireBefore, wireAfter) {
+		t.Fatal("SDK busy refusal wrote state/provider frame")
 	}
 }

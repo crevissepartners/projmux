@@ -109,7 +109,7 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	ctx, cancel, release := c.hostTransferLifetime()
 	defer release()
 	authority := *pane.Status.Activation.Codex.Authority
-	domain, err := codexBrokerStateDomain(c.lookupEnv, c.rebind.create.homeDir)
+	paths, err := c.rebind.create.processCreatePaths()
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (c *agentCommand) moveTmuxCodexToProcess(reg coremetadata.Registry, target 
 	if err != nil {
 		return err
 	}
-	discovery, err := codexBrokerRuntimeDiscovery(domain, key, authority.BrokerRuntimeID)
+	discovery, err := codexBrokerRuntimeDiscovery(paths.StateDir, key, authority.BrokerRuntimeID)
 	if err != nil {
 		return err
 	}

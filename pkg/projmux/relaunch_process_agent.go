@@ -152,6 +152,9 @@ func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentR
 		out.DryRun = q.DryRun
 	}
 	if err != nil {
+		if !q.DryRun && strings.HasPrefix(out.Outcome, "would-") {
+			out.Outcome = "relaunch-failed"
+		}
 		var failure *runtime.ProcessRelaunchFailure
 		if errors.As(err, &failure) {
 			detail := &RelaunchProcessError{Code: Code(failure.Code), Binding: out.Binding, cause: err}

@@ -171,7 +171,7 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 		if err = command.bindProcessCreateContext(*req.RelaunchContext); err != nil {
 			return err
 		}
-		resume.bindProcessResumeContext(command, *req.RelaunchContext)
+		resume.bindProcessRelaunchContext(command, *req.RelaunchContext, *req.Relaunch)
 	}
 	if req.ResumeContext != nil {
 		if req.Context != nil || req.Resume == nil || req.Relaunch != nil || resume == nil {

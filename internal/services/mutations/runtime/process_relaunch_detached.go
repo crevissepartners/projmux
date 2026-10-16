@@ -97,12 +97,29 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 			}
 			return nil
 		}
+		if wire.RelaunchContext == nil {
+			activation, _, current := reg.CurrentProcessActivation(processCreateSchemaBinding(ready.Binding))
+			if !current || activation.HostProcess != owner {
+				return processhost.ErrStale
+			}
+			return nil
+		}
 		return VerifyDetachedProcessCreateBinding(reg, ready.Binding, owner)
 	}
+	var recovered processhost.Binding
 	l.Cleanup = func(owner m.ProcessIdentity, ready ProcessDetachedReply) error {
-		return AwaitDetachedProcessRelaunchCleanup(load, wire.RegistryPath, *wire.Relaunch, owner)
+		err := AwaitDetachedProcessRelaunchCleanup(load, wire.RegistryPath, *wire.Relaunch, owner)
+		// SDK partial results can recover a missing reply only through the
+		// exact T5 owner witness, never from the newest generation alone.
+		if wire.RelaunchContext != nil && ready.Binding == (processhost.Binding{}) {
+			recovered = RecoverDetachedProcessRelaunchBinding(load, wire.RegistryPath, *wire.Relaunch, owner)
+		}
+		return err
 	}
 	reply, err := l.Launch(ctx, wire, stdout, stderr)
+	if reply.Binding == (processhost.Binding{}) {
+		reply.Binding = recovered
+	}
 	if err != nil {
 		code := reply.ErrorCode
 		if code == "" {
@@ -176,4 +193,27 @@ func AwaitDetachedProcessRelaunchCleanup(load func() (m.Registry, error), regist
 
 func sameRelaunchSpec(a, b m.AgentSpec) bool {
 	return a.Provider == b.Provider && a.Workspace.CWD == b.Workspace.CWD && slices.Equal(a.Workspace.AdditionalWritableRoots, b.Workspace.AdditionalWritableRoots)
+}
+
+// RecoverDetachedProcessRelaunchBinding is read-only and SDK-only. The prior
+// process binding and exact new owner must both be proven by the shared resume
+// activation/actual-Wait witness. A missing proof deliberately returns zero.
+func RecoverDetachedProcessRelaunchBinding(load func() (m.Registry, error), registryPath string, request ProcessDetachedRelaunchRequest, owner m.ProcessIdentity) processhost.Binding {
+	if request.Pane == nil || request.Pane.Status.ProcessSession == nil {
+		return processhost.Binding{}
+	}
+	reg, err := load()
+	if err != nil {
+		return processhost.Binding{}
+	}
+	agent, ok := reg.Agent(request.Source.Metadata.UID)
+	pane, ambiguous := ProcessAgentPane(reg, request.Source.Metadata.UID)
+	if !ok || pane == nil || ambiguous || pane.Status.ProcessSession == nil {
+		return processhost.Binding{}
+	}
+	resume := ProcessDetachedResumeRequest{Agent: request.Source.Metadata.UID, Previous: request.Pane.Status.ProcessSession.Binding}
+	if !recoveredDetachedResumeBinding(registryPath, resume, *agent, *pane, owner) {
+		return processhost.Binding{}
+	}
+	return processResumeHostBinding(pane.Status.ProcessSession.Binding)
 }

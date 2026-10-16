@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/integrations/tmux"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // The SDK uses the existing relaunch planner/owner. A read-only plan and an
@@ -32,7 +35,7 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 		return fail(usageError("agent relaunch: lost-host Claude requires an explicit first prompt; nothing was changed; recover with: " + planned.Result.RelaunchCommand))
 	}
 	if planned.Result.ConfirmationRequired && !request.yes {
-		return fail(usageError("agent relaunch: agent/" + target.Metadata.Name + " would interrupt work; re-run with --yes (relaunch-agent-busy); nothing was changed"))
+		return fail(usageError(fmt.Sprintf("agent relaunch: agent/%s is %s with interaction %s; restarting would cut that turn; re-run with --yes (%s); nothing was changed", target.Metadata.Name, target.Status.Phase, planned.Result.Interaction, relaunchReasonAgentBusy)))
 	}
 	raw, _ := json.Marshal(planned.Result)
 	if err := session.encoder.Encode(processDetachedReply{Owner: session.identity, Phase: "planned", Relaunch: raw}); err != nil {
@@ -91,4 +94,29 @@ func encodeDetachedRelaunchError(encoder interface{ Encode(any) error }, owner m
 	}
 	_ = encoder.Encode(processDetachedReply{Owner: owner, Binding: binding, Relaunch: raw, Error: err.Error(), ErrorCode: code})
 	return err
+}
+
+func (c *agentCommand) bindProcessRelaunchContext(creator *createCommand, frozen mutationruntime.ProcessCreateContext, wire processDetachedRelaunchRequest) {
+	c.bindProcessResumeContext(creator, frozen)
+	deletion := newDeleteCommand()
+	deletion.store = creator.store
+	deletion.lookupEnv = creator.lookupEnv
+	c.paneDelete = deletion
+	// Reuse the SDK's explicit tmux materializer as well as the owned process
+	// launcher. The ordinary CLI binders intentionally retain their ambient route.
+	request, err := parseAgentRelaunchArgs(wire.Args, io.Discard)
+	if err != nil {
+		return
+	} // The entrypoint validates the same request before effects.
+	execution, _ := mutationruntime.NewSDKCreate(frozen.Paths, request.socket.socketPath, creator.shell, frozen.Executable, creator.sessionNameFor, tmux.ExecRunner{}, func() ([]string, error) { return nil, nil })
+	creator.runtime = execution.Runtime
+	creator.runtimeBound = false
+	bind := func(ctx context.Context) error {
+		if err := execution.EnsureRuntimeRoute(ctx); err != nil {
+			return err
+		}
+		creator.reconciler = execution.Reconciler
+		return nil
+	}
+	creator.bindRuntime, creator.bindExplicitRuntime = bind, bind
 }
