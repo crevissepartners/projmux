@@ -9,7 +9,9 @@ import (
 	"time"
 
 	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
+	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	store "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	registry "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
@@ -85,5 +87,55 @@ func TestPeerMessageTerminalReceiptsPreserveStateUncertaintyAndStore(t *testing.
 				t.Fatalf("terminal read changed store: %+v %v", after, err)
 			}
 		})
+	}
+}
+
+func TestPeerMessageClaudeExecutableRequiredBeforeRouteOrAcceptance(t *testing.T) {
+	client, _, uid, paneUID := sdkStopFixture(t)
+	storage := registry.NewStore(registry.PathFor(client.paths.StateDir))
+	if _, err := storage.Update(func(reg *metadata.Registry) error {
+		agent, _ := reg.Agent(uid)
+		agent.Spec.Provider = "claude"
+		pane, _ := reg.Pane(paneUID)
+		pane.Status.ProcessSession.Provider = "claude"
+		pane.Status.ProcessSession.SessionID = pane.Status.ProcessSession.ThreadID
+		pane.Status.ProcessSession.ThreadID = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(storage.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	notExecutable := filepath.Join(t.TempDir(), "not-executable")
+	if err := os.WriteFile(notExecutable, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, executable := range []string{"", "relative", filepath.Join(t.TempDir(), "missing"), t.TempDir(), notExecutable} {
+		client.projmuxExecutable = executable
+		receipt, err := client.SendMessage(context.Background(), SendMessageRequest{Source: "uid:" + uid, Target: "uid:" + uid, Text: "peer"})
+		var refusal *Refusal
+		if !errors.As(err, &refusal) || refusal.Code != CodeMessageInvalidInput || receipt.MessageRef != "" {
+			t.Fatalf("executable=%q receipt=%+v err=%v", executable, receipt, err)
+		}
+	}
+	// A valid executable proceeds to the existing route refusal: this retired
+	// fixture has no live Claude authority, and must never reach acceptance.
+	client.projmuxExecutable, err = os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.SendMessage(context.Background(), SendMessageRequest{Source: "uid:" + uid, Target: "uid:" + uid, Text: "peer"})
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeMessageRouteUnavailable {
+		t.Fatalf("valid executable did not reach route admission: %v", err)
+	}
+	after, err := os.ReadFile(storage.Path())
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("Registry changed before admission: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(client.paths.StateDir, "agent-messages")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("message acceptance effect: %v", err)
 	}
 }

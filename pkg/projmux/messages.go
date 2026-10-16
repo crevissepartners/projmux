@@ -3,6 +3,7 @@ package projmux
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -82,7 +83,7 @@ func (c *Client) MessageStatus(ctx context.Context, ref string) (core.MessageRec
 
 func (c *Client) peerMessages() agentmessages.Service {
 	load := func() (metadata.Registry, error) { return resources.Load(c.paths) }
-	return agentmessages.New(agentmessages.Options{RegistryPath: registry.PathFor(c.paths.StateDir), StateDir: c.paths.StateDir, LoadRegistry: load,
+	service := agentmessages.New(agentmessages.Options{RegistryPath: registry.PathFor(c.paths.StateDir), StateDir: c.paths.StateDir, LoadRegistry: load,
 		Control: agentcontrol.Client{Runner: frozenTurnRunner{c}, StateDir: c.paths.StateDir, Transport: c.transport, LoadRegistry: load},
 		Executable: func() (string, error) {
 			if c.projmuxExecutable == "" {
@@ -94,6 +95,21 @@ func (c *Client) peerMessages() agentmessages.Service {
 			return agentmessages.LaunchRelease(agentmessages.ReleaseOptions{Executable: c.projmuxExecutable, ConfigDir: c.paths.ConfigDir, StateDir: c.paths.StateDir, HomeDir: c.discoveryHome, SocketPath: c.runtimeSocketPath, Path: c.agentEnvironment["PATH"]}, agent)
 		},
 	})
+	// Validate SDK-only prerequisites immediately after exact target selection,
+	// before live route probes, deferred acceptance or receipt writes. The CLI
+	// retains its existing executable discovery and release failure behavior.
+	resolve := service.ResolveAgent
+	service.ResolveAgent = func(ctx context.Context, reg metadata.Registry, ref, spelling string) (metadata.Agent, error) {
+		agent, err := resolve(ctx, reg, ref, spelling)
+		if err == nil && agent.Spec.Provider == "claude" {
+			info, executableErr := os.Stat(c.projmuxExecutable)
+			if executableErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+				return metadata.Agent{}, &Refusal{Code: CodeMessageInvalidInput, message: "Claude peer messages require an existing executable absolute Options.ProjmuxExecutable of this build", cause: executableErr}
+			}
+		}
+		return agent, err
+	}
+	return service
 }
 func publicMessageReceipt(r agentmessages.Receipt) core.MessageReceipt {
 	route := func(r message.Route) core.MessageRoute {
