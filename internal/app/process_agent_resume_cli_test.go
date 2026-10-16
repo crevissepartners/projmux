@@ -31,11 +31,12 @@ import (
 )
 
 type processResumeCLIInvocation struct {
-	cmd    *exec.Cmd
-	input  io.WriteCloser
-	stderr *bytes.Buffer
-	ref    string
-	done   bool
+	cmd     *exec.Cmd
+	input   io.WriteCloser
+	stderr  *bytes.Buffer
+	ref     string
+	done    bool
+	cleanup claudeReadinessCleanup
 }
 
 func startResumeCLIInvocation(t *testing.T, ctx context.Context, f processCreateCLI, args []string) *processResumeCLIInvocation {
@@ -55,11 +56,19 @@ func startResumeCLIInvocation(t *testing.T, ctx context.Context, f processCreate
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = run.input.Close()
+		run.cleanup.before(t, f, run.ref, run.cmd)
+		started := time.Now()
+		closeErr := run.input.Close()
+		run.cleanup.Close = append(run.cleanup.Close, claudeReadinessCallResult(started, closeErr))
 		if !run.done {
-			_ = run.cmd.Process.Kill()
-			_ = run.cmd.Wait()
+			started = time.Now()
+			killErr := run.cmd.Process.Kill()
+			run.cleanup.Kill = append(run.cleanup.Kill, claudeReadinessCallResult(started, killErr))
+			started = time.Now()
+			waitErr := run.cmd.Wait()
+			run.cleanup.CLIWait = append(run.cleanup.CLIWait, claudeReadinessCallResult(started, waitErr))
 		}
+		run.cleanup.after(t, f, run.ref)
 	})
 	line, err := bufio.NewReader(output).ReadString('\n')
 	if err != nil {
@@ -74,8 +83,12 @@ func startResumeCLIInvocation(t *testing.T, ctx context.Context, f processCreate
 }
 func (r *processResumeCLIInvocation) shutdown(t *testing.T) {
 	t.Helper()
-	_ = r.input.Close()
+	started := time.Now()
+	closeErr := r.input.Close()
+	r.cleanup.Close = append(r.cleanup.Close, claudeReadinessCallResult(started, closeErr))
+	started = time.Now()
 	err := r.cmd.Wait()
+	r.cleanup.CLIWait = append(r.cleanup.CLIWait, claudeReadinessCallResult(started, err))
 	r.done = true
 	if err != nil {
 		t.Fatalf("owner Wait: %v %s", err, r.stderr.String())
@@ -83,17 +96,24 @@ func (r *processResumeCLIInvocation) shutdown(t *testing.T) {
 }
 func awaitProcessResumeRecord(t *testing.T, ctx context.Context, f processCreateCLI, ref string, accept func(*coremetadata.ProcessSessionRecord) bool) coremetadata.ProcessSessionRecord {
 	t.Helper()
+	d := newClaudeReadinessTrace()
 	for {
+		d.Iteration++
 		reg, err := f.store.LoadReadOnly()
-		if err != nil {
+		if !d.check("registry-read-ok", err == nil) {
+			d.failure(t, f, ref)
 			t.Fatal(err)
 		}
 		pane, _ := processResumePane(reg, strings.TrimPrefix(ref, "uid:"))
-		if pane != nil && pane.Status.ProcessSession != nil && accept(pane.Status.ProcessSession) {
-			return *pane.Status.ProcessSession.Clone()
+		if d.check("pane-present", pane != nil) && d.check("session-record-present", pane.Status.ProcessSession != nil) {
+			d.record(pane.Status.ProcessSession)
+			if d.check("opaque-accept-callback", accept(pane.Status.ProcessSession)) {
+				return *pane.Status.ProcessSession.Clone()
+			}
 		}
 		select {
 		case <-ctx.Done():
+			d.failure(t, f, ref)
 			t.Fatal("process session predicate timed out")
 		case <-time.After(10 * time.Millisecond):
 		}
@@ -701,11 +721,12 @@ func deferredResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 }
 
 type deferredCLIClaim struct {
-	cmd    *exec.Cmd
-	input  io.WriteCloser
-	output *bufio.Reader
-	stderr bytes.Buffer
-	done   bool
+	cmd     *exec.Cmd
+	input   io.WriteCloser
+	output  *bufio.Reader
+	stderr  bytes.Buffer
+	done    bool
+	cleanup claudeReadinessCleanup
 }
 
 func startDeferredCLIClaim(t *testing.T, ctx context.Context, f processCreateCLI, ref string) *deferredCLIClaim {
@@ -726,11 +747,19 @@ func startDeferredCLIClaim(t *testing.T, ctx context.Context, f processCreateCLI
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = run.input.Close()
+		run.cleanup.before(t, f, ref, run.cmd)
+		started := time.Now()
+		closeErr := run.input.Close()
+		run.cleanup.Close = append(run.cleanup.Close, claudeReadinessCallResult(started, closeErr))
 		if !run.done {
-			_ = run.cmd.Process.Kill()
-			_ = run.cmd.Wait()
+			started = time.Now()
+			killErr := run.cmd.Process.Kill()
+			run.cleanup.Kill = append(run.cleanup.Kill, claudeReadinessCallResult(started, killErr))
+			started = time.Now()
+			waitErr := run.cmd.Wait()
+			run.cleanup.CLIWait = append(run.cleanup.CLIWait, claudeReadinessCallResult(started, waitErr))
 		}
+		run.cleanup.after(t, f, ref)
 	})
 	line, err := run.output.ReadString('\n')
 	if err != nil || !strings.Contains(line, "runtime=process foreground=claimed") || len(strings.Fields(line)) != 6 {
@@ -741,8 +770,13 @@ func startDeferredCLIClaim(t *testing.T, ctx context.Context, f processCreateCLI
 
 func (run *deferredCLIClaim) finish(t *testing.T) {
 	t.Helper()
-	_ = run.input.Close()
-	if err := run.cmd.Wait(); err != nil {
+	started := time.Now()
+	closeErr := run.input.Close()
+	run.cleanup.Close = append(run.cleanup.Close, claudeReadinessCallResult(started, closeErr))
+	started = time.Now()
+	err := run.cmd.Wait()
+	run.cleanup.CLIWait = append(run.cleanup.CLIWait, claudeReadinessCallResult(started, err))
+	if err != nil {
 		t.Fatalf("claim Wait: %v %s", err, run.stderr.String())
 	}
 	run.done = true
@@ -789,13 +823,20 @@ func TestDeferredPeerWakeAndKilledClaimantActualCLI(t *testing.T) {
 					return exec.CommandContext(ctx, f.binary, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", ref, "--", text).CombinedOutput()
 				}
 				before, beforeErr := send("no-claim", "without claimant")
-				for bytes.Contains(before, []byte("source Agent is not eligible")) {
+				route := newClaudeReadinessTrace()
+				route.Iteration = 1
+				for route.check("source-ineligible", bytes.Contains(before, []byte("source Agent is not eligible"))) {
+					route.result("source-command", beforeErr)
 					select {
 					case <-ctx.Done():
+						if provider == aiModeClaude {
+							route.failure(t, f, source.ref)
+						}
 						t.Fatal("source route never ready")
 					case <-time.After(10 * time.Millisecond):
 					}
 					before, beforeErr = send("no-claim", "without claimant")
+					route.Iteration++
 				}
 				if beforeErr == nil {
 					t.Fatalf("unclaimed accepted: %s", before)
@@ -1141,13 +1182,19 @@ func TestDeferredPeerWakeLatencyActualCLI(t *testing.T) {
 			target.shutdown(t)
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
 			// Probe the unclaimed target until the source's live route is ready.
+			route := newClaudeReadinessTrace()
 			for {
-				out, _ := exec.CommandContext(ctx, f.binary, "agent", "message", "send", target.ref, "--source", source.ref, "--", "route probe").CombinedOutput()
-				if bytes.Contains(out, []byte("target Agent is not eligible")) {
+				route.Iteration++
+				out, routeErr := exec.CommandContext(ctx, f.binary, "agent", "message", "send", target.ref, "--source", source.ref, "--", "route probe").CombinedOutput()
+				route.result("source-command", routeErr)
+				if route.check("target-ineligible", bytes.Contains(out, []byte("target Agent is not eligible"))) {
 					break
 				}
 				select {
 				case <-ctx.Done():
+					if provider == aiModeClaude {
+						route.failure(t, f, source.ref)
+					}
 					t.Fatal("source route never ready")
 				case <-time.After(10 * time.Millisecond):
 				}

@@ -39,7 +39,15 @@ func deferredRelaunchFixture(t *testing.T) processCreateCLI {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Cleanup(func() {
+		var before claudeReadinessRoot
+		if t.Failed() {
+			before = claudeReadinessRootFor(root)
+		}
+		started := time.Now()
+		err := os.RemoveAll(root)
+		claudeReadinessRootRemoved(t, before, started, err, root)
+	})
 	for _, key := range []string{"TMUX", "TMUX_PANE"} {
 		t.Setenv(key, "")
 	}
@@ -117,11 +125,19 @@ func deferredRelaunchCLI(t *testing.T, ctx context.Context, f processCreateCLI, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = run.input.Close()
+		run.cleanup.before(t, f, ref, run.cmd)
+		started := time.Now()
+		closeErr := run.input.Close()
+		run.cleanup.Close = append(run.cleanup.Close, claudeReadinessCallResult(started, closeErr))
 		if !run.done {
-			_ = run.cmd.Process.Kill()
-			_ = run.cmd.Wait()
+			started = time.Now()
+			killErr := run.cmd.Process.Kill()
+			run.cleanup.Kill = append(run.cleanup.Kill, claudeReadinessCallResult(started, killErr))
+			started = time.Now()
+			waitErr := run.cmd.Wait()
+			run.cleanup.CLIWait = append(run.cleanup.CLIWait, claudeReadinessCallResult(started, waitErr))
 		}
+		run.cleanup.after(t, f, ref)
 	})
 	barrier := filepath.Join(f.root, "hold-init")
 	if _, barrierErr := os.Stat(barrier); barrierErr == nil {
@@ -197,20 +213,26 @@ func deferredCandidate(t *testing.T, f processCreateCLI, ref string) processResu
 func deferredReady(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
 	t.Helper()
 	uid := strings.TrimPrefix(ref, "uid:")
+	d := newClaudeReadinessTrace()
 	for {
+		d.Iteration++
 		reg := mustRegistry(t, f)
 		pane, _ := processResumePane(reg, uid)
-		if pane != nil && pane.Status.ProcessSession != nil {
+		if d.check("pane-present", pane != nil) && d.check("session-record-present", pane.Status.ProcessSession != nil) {
 			s := pane.Status.ProcessSession
-			if s.SessionID != "" && s.ConnectionID != "" && s.TurnID == "" {
+			if d.check("session-present", s.SessionID != "") && d.check("connection-present", s.ConnectionID != "") && d.check("turn-empty", s.TurnID == "") {
 				b := processSchemaBinding(s.Binding)
 				observer := remoteProcessObserver{ctx: ctx, registry: reg, registryPath: f.store.Path(), binding: b}
 				view, err := observer.Observe(b)
+				d.result("host-observe", err)
 				proof, ok := discoverProcessClaudeProof(f.store.Path(), reg, uid)
+				d.resultBool("proof-discovery-aggregate", ok)
 				rows, attentionErr := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path()))).read()
+				d.result("attention-read", attentionErr)
 				completed := rows[b.Pane]
-				if err == nil && view.State == "ready" && ok && attentionErr == nil && completed.Binding == b && completed.Provider == aiModeClaude && completed.Sequence > 0 && completed.Badge == aibadge.ResponseComplete {
-					if _, err = lookupClaudeProcessRegistration(proof); err == nil {
+				if d.check("observe-ok", err == nil) && d.check("host-ready", view.State == "ready") && d.check("proof-guard", ok) && d.check("attention-guard", attentionErr == nil) && d.check("attention-binding-matches", completed.Binding == b) && d.check("attention-provider-claude", completed.Provider == aiModeClaude) && d.check("attention-sequence-positive", completed.Sequence > 0) && d.check("attention-response-complete", completed.Badge == aibadge.ResponseComplete) {
+					_, err = lookupClaudeProcessRegistration(proof)
+					if d.check("registration-lookup-ok", err == nil) {
 						return
 					}
 				}
@@ -218,6 +240,7 @@ func deferredReady(t *testing.T, ctx context.Context, f processCreateCLI, ref st
 		}
 		select {
 		case <-ctx.Done():
+			d.failure(t, f, ref)
 			t.Fatal("verified provider init/endpoint not ready")
 		case <-time.After(10 * time.Millisecond):
 		}
