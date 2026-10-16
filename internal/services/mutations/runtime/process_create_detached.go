@@ -117,7 +117,7 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	if err = decoder.Decode(&identity); err != nil {
 		_ = launcher.Process.Kill()
 		<-done
-		return ready, fmt.Errorf("process-detached-identity-handshake-failed: %w", errors.Join(err, ctx.Err()))
+		return ready, processDetachedIdentityFailure(ctx, deadline, err)
 	}
 	if !identity.Owner.Valid() || int64(identity.Owner.OwnerUID) != int64(os.Getuid()) {
 		_ = launcher.Process.Kill()
@@ -192,6 +192,28 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	}
 	failed = false
 	return ready, nil
+}
+
+// processDetachedIdentityFailure retains the historical message while making
+// the applied context deadline observable even if the socket timer wins the
+// race with the context timer. Other I/O failures keep their original causes.
+func processDetachedIdentityFailure(ctx context.Context, appliedDeadline time.Time, readErr error) error {
+	contextErr := ctx.Err()
+	cause := errors.Join(readErr, contextErr)
+	deadline, hasDeadline := ctx.Deadline()
+	if contextErr == nil && hasDeadline && !appliedDeadline.IsZero() && deadline.Equal(appliedDeadline) &&
+		!time.Now().Before(deadline) && errors.Is(readErr, os.ErrDeadlineExceeded) {
+		cause = &processDetachedDeadlineCause{cause: cause}
+	}
+	return fmt.Errorf("process-detached-identity-handshake-failed: %w", cause)
+}
+
+// Error preserves transport diagnostics; Unwrap adds only the missing cause.
+type processDetachedDeadlineCause struct{ cause error }
+
+func (e *processDetachedDeadlineCause) Error() string { return e.cause.Error() }
+func (e *processDetachedDeadlineCause) Unwrap() []error {
+	return []error{e.cause, context.DeadlineExceeded}
 }
 
 func SignalDetachedProcessOwner(identity coremetadata.ProcessIdentity) {
