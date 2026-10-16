@@ -86,7 +86,7 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - Use a dedicated checkout/worktree per task when parallel work would otherwise collide.
 - Keep one agent per checkout/worktree. Do not share a dirty checkout across agents.
 - If another agent owns a file, do not overwrite their changes. Adjust around them or coordinate a handoff.
-- Keep changes narrow. Split docs, bootstrap, migration, and feature work into separate branches unless they are inseparable.
+- Keep changes narrow. Split docs, refactor, and feature work into separate branches unless they are inseparable.
 - Make targets are the contract for local validation. Keep them stable and predictable.
 - If a target is missing for the area you are changing, add it or leave the gap explicit in docs and review notes.
 - Check ancestry before every first push or force-push. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so publishing that state only produces a failed CI run.
@@ -100,16 +100,12 @@ See [docs/architecture.md](docs/architecture.md), [docs/repo-layout.md](docs/rep
 - In a linked worktree, `go build` stamps the enclosing checkout's `vcs.revision` (Go only treats a `.git` directory as a repository root), so `make build` there stamps no revision and says why. Prove a build's provenance with the binary's sha256 and the merge commit, not `vcs.revision`; a worktree build without `vcs.revision` is expected.
 - After merge, retire the merged checkout/worktree with your local tooling if you used one.
 
-Migration discipline:
-- Port one stable slice at a time. Do not mix bootstrap, feature redesign, and parity fixes in one change without a strong reason.
-- Match existing behavior first, then simplify or redesign in a later change.
-- Keep user-facing entrypoints stable until the adapter layer is intentionally updated.
-- Compare new behavior against the maintained parity tests when the migrated feature already has coverage.
-- Record intentional behavior differences in docs and review notes.
+Behavior changes:
+- Change behavior and restructure code in separate changes; when restructuring, match existing behavior first.
+- Keep user-facing entrypoints (commands, flags, config keys) stable unless the change is intentional, and record intentional behavior differences in docs and the PR body.
 
 Communication:
-- Use concise progress updates.
-- Report blockers early, especially parity uncertainty or overlap with another agent's files.
+- Report blockers early, especially overlap with another agent's files.
 - When handing off, state the branch, checkout/worktree path, changed files, and remaining risks.
 
 ## PR
@@ -117,10 +113,9 @@ Communication:
 - release-please silently skips non-Conventional subjects.
 - The PR body uses the six sections of [docs/pr-guideline.md](docs/pr-guideline.md), which holds the full conventions.
 - Keep reviews small enough to reason about quickly.
-- List the commands you ran, especially the `make` targets and any parity checks.
+- List the commands you ran, especially the `make` targets.
 - Call out behavior changes separately from refactors.
 - Flag unverified areas instead of implying coverage you did not run.
-- If migration parity is incomplete, state the exact gap and the follow-up branch or issue.
 
 Branch protection:
 - `main` is protected by the ruleset `main-protect`. Direct pushes are blocked, even for repository admins.
@@ -138,14 +133,10 @@ Branch protection:
 - Details: [docs/testing.md](docs/testing.md).
 
 ## Security
-- `make security` runs three groups in parallel; CI runs each as its own job: `make security-go` (govulncheck, gosec), `make security-static` (staticcheck), `make security-policy` (gitleaks, actionlint, shellcheck).
-- `make security-tools` installs the Go-based scanners at the versions pinned in `.security/security-tools.versions`, and ShellCheck from the release assets whose digests `.security/shellcheck.sha256` pins; `make security-policy` refuses any other ShellCheck version.
-- gosec and staticcheck findings are compared with the reviewed baselines `.security/gosec-baseline.json` and `.security/staticcheck-baseline.json`. A finding beyond its baseline count fails the gate.
-- `.security/security-current-findings.json` pins the current finding counts and the baseline digests. **It is the only place a reviewed baseline digest is defined.** Change a baseline file and you change this pin in the same commit, or the gate fails.
-- Never restate a baseline digest anywhere else. Consumers resolve it through `scripts/security-baseline-pin.py`, and `make security-pin-contract` (part of `make test`) fails on a second copy.
-- `make security-contract` is that gate: scanner parity, gitleaks history range, evidence typing, the stable aggregate, and actionlint. CI runs it as the job `Security / Contract gate`, which fans into the aggregate `Test`.
-- The same pin holds `package_count` and `package_set_sha256` for `go list ./...`, computed only by `scripts/security-package-pin.py`. If you add or remove a Go package, run `make security-pin-refresh` and commit the resulting diff; `make test` (`make security-pin-contract`) and the `Security / Contract gate` job fail on a mismatch and name that target.
-- gitleaks uses `.gitleaks.toml`. Never commit credentials or tokens.
+- Never commit credentials or tokens. gitleaks uses `.gitleaks.toml`.
+- `.security/security-current-findings.json` is the only place a reviewed baseline digest is defined. Never restate a digest anywhere else; `make security-pin-contract` (part of `make test`) fails on a second copy.
+- If you add or remove a Go package, run `make security-pin-refresh` and commit the resulting diff in the same change.
+- Before changing anything under `.security/`, a scanner version, or a reviewed baseline, read [Security gates](docs/testing.md#security-gates) in `docs/testing.md`.
 
 ## Compatibility
 Platforms:
