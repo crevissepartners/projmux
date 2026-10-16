@@ -153,6 +153,9 @@ func (s Service) Status(ctx context.Context, ref string) (Receipt, error) {
 	if err != nil {
 		return ReceiptFor(r), fmt.Errorf("agent message status: persist delivery projection: %w", err)
 	}
+	if ctx.Err() != nil {
+		return ReceiptFor(r), ctx.Err()
+	}
 	return ReceiptFor(r), nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -109,7 +110,7 @@ func TestSDKPeerMessageReceiptStateParity(t *testing.T) {
 					}
 					pane.Spec.Runtime.Kind = coremetadata.RuntimeProcess
 					pane.Status.Activation = coremetadata.PaneActivation{Kind: coremetadata.RuntimeProcess, AgentUID: h.agentUID, Generation: binding.Generation, OperationID: binding.OperationID, Process: &coremetadata.ProcessActivation{Binding: binding, HostProcess: identity, Child: identity}}
-					pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "codex", Binding: binding, ThreadID: "thread-sdk-parity"}
+					pane.Status.ProcessSession = &coremetadata.ProcessSessionRecord{Provider: "codex", Binding: binding, ThreadID: "thread-sdk-parity", ConnectionID: binding.OperationID, ResumeState: coremetadata.ProcessResumeUnknown}
 					agent.Status.Activation = coremetadata.AgentActivation{}
 					registry := intmetadata.NewStore(registryPath)
 					if _, err := registry.Update(func(r *coremetadata.Registry) error { *r = reg; return nil }); err != nil {
@@ -217,6 +218,13 @@ func TestSDKPeerMessageReceiptStateParity(t *testing.T) {
 						if strings.TrimSpace(out.String()) != string(encoded) {
 							t.Fatalf("CLI/SDK JSON differs: %s %s", out.String(), encoded)
 						}
+					}
+					changed := request
+					changed.Text = "changed immutable payload"
+					_, mismatch := sdk.SendMessage(context.Background(), changed)
+					var refusal *projmux.Refusal
+					if !errors.As(mismatch, &refusal) || refusal.Code != projmux.CodeMessageRetryMismatch {
+						t.Fatalf("immutable mismatch: %v", mismatch)
 					}
 					if writes.Load() != 1 {
 						t.Fatalf("replayed peer transport %d times", writes.Load())

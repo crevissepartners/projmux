@@ -37,6 +37,9 @@ func (s Service) Send(ctx context.Context, req SendRequest) (Result, error) {
 	if out.Receipt.MessageRef == "" && errors.As(err, &partial) {
 		out.Receipt = partial.Receipt
 	}
+	if err != nil && ctx.Err() != nil {
+		err = errors.Join(err, ctx.Err())
+	}
 	return out, err
 }
 
