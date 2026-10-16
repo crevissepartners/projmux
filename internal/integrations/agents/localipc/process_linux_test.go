@@ -30,13 +30,14 @@ func TestLinuxProcessSnapshot(t *testing.T) {
 		{name: "normal", stats: []string{stat("S", "123", 7)}, uids: []string{"1000"}, wantUID: 1000},
 		{name: "foreign credential", stats: []string{stat("S", "123", 7)}, uids: []string{"42"}, wantUID: 42},
 		{name: "root credential", stats: []string{stat("S", "123", 7)}, uids: []string{"0"}},
-		{name: "exit between reads", stats: []string{stat("S", "123", 7), stat("Z", "123", 7)}, uids: []string{"1000"}, failure: "identity"},
+		{name: "exit between reads", stats: []string{stat("S", "123", 7), stat("Z", "123", 7)}, uids: []string{"1000"}, absent: true},
+		{name: "unknown first state then terminal", stats: []string{stat("?", "123", 7), stat("Z", "123", 7)}, uids: []string{"1000"}, failure: "identity"},
 		{name: "pid reused", stats: []string{stat("S", "123", 7), stat("S", "124", 7)}, uids: []string{"1000"}, failure: "identity"},
 		{name: "reparented", stats: []string{stat("S", "123", 7), stat("S", "123", 8)}, uids: []string{"1000"}, failure: "identity"},
 		{name: "live state changed", stats: []string{stat("S", "123", 7), stat("R", "123", 7)}, uids: []string{"1000"}, wantUID: 1000},
 		{name: "live stopped", stats: []string{stat("R", "123", 7), stat("T", "123", 7)}, uids: []string{"1000"}, wantUID: 1000},
 		{name: "live idle", stats: []string{stat("D", "123", 7), stat("I", "123", 7)}, uids: []string{"1000"}, wantUID: 1000},
-		{name: "late terminal", stats: []string{stat("S", "123", 7), stat("S", "123", 7), stat("X", "123", 7)}, uids: []string{"1000"}, failure: "identity"},
+		{name: "late terminal", stats: []string{stat("S", "123", 7), stat("S", "123", 7), stat("X", "123", 7)}, uids: []string{"1000"}, absent: true},
 		{name: "credential changed", stats: []string{stat("S", "123", 7)}, uids: []string{"1000", "0"}, failure: "identity"},
 		{name: "stat unreadable", failure: "stat-denied"},
 		{name: "boot unreadable", stats: []string{stat("S", "123", 7)}, uids: []string{"1000"}, failure: "boot"},
@@ -180,6 +181,12 @@ func TestLinuxParentTransitionRequiresCompleteCredentialEvidence(t *testing.T) {
 			}
 			identity, parent, err := readLinuxProcess(42, read)
 			witness, ok := ProcessParentTransition(err)
+			if change == "terminal" {
+				if !errors.Is(err, ErrProcessAbsent) || ok || identity.PID != 0 || parent != 0 {
+					t.Fatalf("terminal result: %+v %d %v", identity, parent, err)
+				}
+				return
+			}
 			if err == nil || identity.PID != 0 || parent != 0 || errors.Is(err, ErrProcessAbsent) {
 				t.Fatalf("transition was accepted: %+v %d %v", identity, parent, err)
 			}
@@ -190,5 +197,78 @@ func TestLinuxParentTransitionRequiresCompleteCredentialEvidence(t *testing.T) {
 				t.Fatal("incomplete witness", witness)
 			}
 		})
+	}
+}
+
+// Each terminal observation must be confirmed by one identical stat, just as
+// when the first stat is terminal. A reused PID or unstable stat stays unknown.
+func TestLinuxProcessExitDuringIdentityRead(t *testing.T) {
+	for _, stage := range []string{"middle", "last"} {
+		for _, state := range []string{"Z", "X"} {
+			for _, confirmation := range []string{"stable", "reused-before-terminal", "reused-after-terminal", "live", "state", "parent", "missing", "denied", "malformed"} {
+				t.Run(stage+"/"+state+"/"+confirmation, func(t *testing.T) {
+					reads := 0
+					terminalRead := 2
+					if stage == "last" {
+						terminalRead = 3
+					}
+					read := func(path string) ([]byte, error) {
+						if strings.HasSuffix(path, "/stat") {
+							reads++
+							observed, start, parent := "S", "123", "7"
+							if reads >= terminalRead {
+								observed = state
+							}
+							if confirmation == "reused-before-terminal" && reads >= terminalRead {
+								start = "124"
+							}
+							if reads > terminalRead {
+								switch confirmation {
+								case "reused-after-terminal":
+									start = "124"
+								case "live":
+									observed = "S"
+								case "state":
+									if state == "Z" {
+										observed = "X"
+									} else {
+										observed = "Z"
+									}
+								case "parent":
+									parent = "8"
+								case "missing":
+									return nil, os.ErrNotExist
+								case "denied":
+									return nil, os.ErrPermission
+								case "malformed":
+									return []byte("invalid"), nil
+								}
+							}
+							fields := []string{observed, parent}
+							for len(fields) < 19 {
+								fields = append(fields, "0")
+							}
+							return []byte("42 (fixture) " + strings.Join(append(fields, start), " ")), nil
+						}
+						if strings.HasSuffix(path, "/status") {
+							return []byte("Uid: 1000 1000 1000 1000\n"), nil
+						}
+						t.Fatalf("unexpected read: %s", path)
+						return nil, nil
+					}
+					identity, parent, err := readLinuxProcess(42, read)
+					wantAbsent := confirmation == "stable" || confirmation == "missing"
+					if errors.Is(err, ErrProcessAbsent) != wantAbsent || err == nil || identity.PID != 0 || parent != 0 {
+						t.Fatalf("identity=%+v parent=%d err=%v; want absent=%v", identity, parent, err, wantAbsent)
+					}
+					if !wantAbsent && err.Error() != "process identity unavailable" {
+						t.Fatalf("unexpected error: %v", err)
+					}
+					if confirmation != "reused-before-terminal" && reads != terminalRead+1 {
+						t.Fatalf("stat reads=%d; want %d", reads, terminalRead+1)
+					}
+				})
+			}
+		}
 	}
 }

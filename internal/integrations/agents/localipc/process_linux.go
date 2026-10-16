@@ -85,15 +85,20 @@ func readLinuxProcess(pid int, read func(string) ([]byte, error)) (coremetadata.
 	if err != nil {
 		return coremetadata.ProcessIdentity{}, 0, err
 	}
-	if first.state == "Z" || first.state == "X" {
+	// A terminal task is absent only after an identical confirming stat. Keep
+	// this proof the same whether exit precedes or races the identity read.
+	confirmAbsent := func(terminal linuxProcessStat) (coremetadata.ProcessIdentity, int, error) {
 		last, err := stat()
 		if err != nil {
 			return coremetadata.ProcessIdentity{}, 0, err
 		}
-		if last == first {
+		if last == terminal {
 			return coremetadata.ProcessIdentity{}, 0, ErrProcessAbsent
 		}
 		return coremetadata.ProcessIdentity{}, 0, unavailable
+	}
+	if first.state == "Z" || first.state == "X" {
+		return confirmAbsent(first)
 	}
 	owner, err := uid()
 	if err != nil {
@@ -102,6 +107,9 @@ func readLinuxProcess(pid int, read func(string) ([]byte, error)) (coremetadata.
 	middle, err := stat()
 	if err != nil {
 		return coremetadata.ProcessIdentity{}, 0, err
+	}
+	if sameLinuxLiveBirth(first, first) && middle.start == first.start && (middle.state == "Z" || middle.state == "X") {
+		return confirmAbsent(middle)
 	}
 	if !sameLinuxLiveBirthIgnoringParent(first, middle) {
 		return coremetadata.ProcessIdentity{}, 0, unavailable
@@ -113,6 +121,9 @@ func readLinuxProcess(pid int, read func(string) ([]byte, error)) (coremetadata.
 	last, err := stat()
 	if err != nil {
 		return coremetadata.ProcessIdentity{}, 0, err
+	}
+	if sameLinuxLiveBirth(first, first) && last.start == first.start && (last.state == "Z" || last.state == "X") {
+		return confirmAbsent(last)
 	}
 	if !sameLinuxLiveBirthIgnoringParent(first, last) || finalOwner != owner {
 		return coremetadata.ProcessIdentity{}, 0, unavailable
