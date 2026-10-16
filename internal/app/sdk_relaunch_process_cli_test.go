@@ -9,8 +9,10 @@ import (
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	metadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -372,5 +374,75 @@ func TestSDKDetachedProcessRelaunchBusyStopsNothing(t *testing.T) {
 	wireAfter, _ := os.ReadFile(f.trace)
 	if !reflect.DeepEqual(before, after) || !bytes.Equal(wireBefore, wireAfter) {
 		t.Fatal("SDK busy refusal wrote state/provider frame")
+	}
+}
+
+type sdkRelaunchCanceledOutput struct{ cancel context.CancelFunc }
+
+func (w sdkRelaunchCanceledOutput) Write([]byte) (int, error) {
+	w.cancel()
+	return 0, errors.New("fixture-relaunch-output-failed")
+}
+
+// Golden CLI diagnostics are measured with a copied main 6c875e75 binary.
+// No legacy relaunch verifier is retained in the product for this comparison.
+func TestSDKDetachedProcessRelaunchCLIErrorParity(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, mode := range []string{"canceled-output", "stale-source"} {
+		t.Run(mode, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, "claude")
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			defer cancel()
+			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
+			awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
+			first.shutdown(t)
+			cleanupDetachedResume(t, f, first.ref)
+			caller, _, err := localipc.Process(os.Getpid())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text []string
+			for _, shared := range []bool{false, true} {
+				reg, err := f.store.LoadReadOnly()
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ := reg.Agent(strings.TrimPrefix(first.ref, "uid:"))
+				p, _ := reg.Pane(a.Status.PaneRef)
+				clone := p.Clone()
+				wire := processDetachedRelaunchRequest{Source: a.Clone(), Pane: &clone, Args: []string{first.ref, "--detach", "--yes", "--", "continue"}}
+				if mode == "stale-source" {
+					wire.Source.Status.SessionRef = nil
+				}
+				admission, abort := context.WithCancel(ctx)
+				var output io.Writer = io.Discard
+				if mode == "canceled-output" {
+					output = sdkRelaunchCanceledOutput{abort}
+				}
+				if shared {
+					_, err = mutationruntime.LaunchDetachedProcessRelaunch(admission, f.binary, mutationruntime.ProcessDetachedRelaunchEnvelope{Relaunch: &wire, Caller: caller, RegistryPath: f.store.Path()}, f.store.LoadReadOnly, output, io.Discard, nil, false)
+				} else {
+					err = launchProcessDetached(admission, f.binary, processDetachedRequest{Relaunch: &wire, Caller: caller, RegistryPath: f.store.Path()}, &createCommand{store: &resourceStore{snapshot: f.store.LoadReadOnly}}, output, io.Discard)
+				}
+				abort()
+				if err == nil {
+					t.Fatal("expected deterministic refusal/output failure")
+				}
+				text = append(text, err.Error())
+			}
+			if text[0] != text[1] {
+				t.Fatalf("CLI error text changed from main adapter: before=%q after=%q", text[0], text[1])
+			}
+			golden := "stale process binding or request"
+			if mode == "canceled-output" {
+				golden = "fixture-relaunch-output-failed"
+			}
+			if text[0] != golden {
+				t.Fatalf("main CLI golden changed: got=%q want=%q", text[0], golden)
+			}
+			t.Logf("main/shared CLI %s error=%q", mode, text[0])
+		})
 	}
 }

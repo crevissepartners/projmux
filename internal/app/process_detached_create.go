@@ -74,6 +74,10 @@ func (c *createCommand) runDetachedProcessCreate(request processAgentCreateReque
 }
 
 func launchProcessDetached(ctx context.Context, executable string, request processDetachedRequest, command *createCommand, stdout, stderr io.Writer) error {
+	if request.Relaunch != nil {
+		_, err := mutationruntime.LaunchDetachedProcessRelaunch(ctx, executable, mutationruntime.ProcessDetachedRelaunchEnvelope{Relaunch: request.Relaunch, Caller: request.Caller, RegistryPath: request.RegistryPath, RelaunchContext: request.RelaunchContext}, command.store.snapshot, stdout, stderr, nil, false)
+		return err
+	}
 	convert := func(reply mutationruntime.ProcessDetachedReply) processDetachedReply {
 		var out processDetachedReply
 		raw, _ := json.Marshal(reply)
@@ -83,19 +87,16 @@ func launchProcessDetached(ctx context.Context, executable string, request proce
 	launcher := mutationruntime.ProcessDetachedLauncher{Executable: executable, Verify: func(reply mutationruntime.ProcessDetachedReply, owner coremetadata.ProcessIdentity) error {
 		ready := convert(reply)
 		identity := processDetachedReply{Owner: owner}
-		if request.Relaunch != nil && ready.Binding.Agent != request.Relaunch.Source.Metadata.UID {
-			return errors.New("process-detached-binding-invalid")
-		}
 		reg, err := command.store.snapshot()
 		if err != nil {
 			return err
 		}
-		if request.Relaunch == nil && request.Resume == nil {
+		if request.Resume == nil {
 			return mutationruntime.VerifyDetachedProcessCreateBinding(reg, ready.Binding, identity.Owner)
 		}
 		activation, _, current := reg.CurrentProcessActivation(metadataProcessBinding(ready.Binding))
 		if ready.Claim != nil {
-			claimAllowed := request.Relaunch != nil || (request.Resume != nil && request.Resume.WaitForPeer)
+			claimAllowed := request.Resume != nil && request.Resume.WaitForPeer
 			if !claimAllowed || !detachedClaimCurrent(command, reg, *ready.Claim, identity.Owner) {
 				return processhost.ErrStale
 			}

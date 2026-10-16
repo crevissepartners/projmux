@@ -92,7 +92,7 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 				return processhost.ErrStale
 			}
 			current, err := ReadDeferredClaim(DeferredClaimPath(wire.RegistryPath, ready.Binding.Agent))
-			if err != nil || !reflect.DeepEqual(current, claim) || !claim.Detached || claim.StopRequested || claim.Process != owner || claim.Binding != processCreateSchemaBinding(ready.Binding) || !DeferredClaimLive(claim) || !DeferredClaimMatches(claim, reg, ready.Binding.Agent) {
+			if err != nil || !reflect.DeepEqual(current, claim) || !claim.Detached || claim.StopRequested || claim.Process != owner || (wire.RelaunchContext != nil && claim.Binding != processCreateSchemaBinding(ready.Binding)) || !DeferredClaimLive(claim) || !DeferredClaimMatches(claim, reg, ready.Binding.Agent) {
 				return processhost.ErrStale
 			}
 			return nil
@@ -120,7 +120,7 @@ func LaunchDetachedProcessRelaunch(ctx context.Context, executable string, wire 
 	if reply.Binding == (processhost.Binding{}) {
 		reply.Binding = recovered
 	}
-	if err != nil {
+	if err != nil && wire.RelaunchContext != nil {
 		code := reply.ErrorCode
 		if code == "" {
 			code = "relaunch-execution-failed"
