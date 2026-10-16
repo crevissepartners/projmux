@@ -119,11 +119,7 @@ func (s Service) SendDeferred(ctx context.Context, registry coremetadata.Registr
 		var replyRef string
 		replyRef, created, err = explicit.ExplicitReply(ctx, s.RegistryPath, sourceRoute, envelope)
 		if err == nil {
-			var found bool
-			record, found, err = s.Store.Get(replyRef)
-			if !found && err == nil {
-				err = messagestore.ErrNotFound
-			}
+			record, err = s.acceptedReceipt(envelope, replyRef, "explicit-reply-receipt-unavailable")
 		}
 	} else {
 		store, ok := s.Store.(interface {
@@ -161,4 +157,17 @@ func (s Service) SendDeferred(ctx context.Context, registry coremetadata.Registr
 		return true, fmt.Errorf("agent message send: state=%s reason=%s", record.Delivery.State, record.Delivery.Reason)
 	}
 	return true, nil
+}
+
+// A successful peer or explicit-reply RPC has already accepted the envelope. A later
+// read failure cannot erase its generated ref or be treated as pre-acceptance.
+func (s Service) acceptedReceipt(envelope coremessage.Envelope, ref, reason string) (messagestore.Record, error) {
+	record, found, err := s.Store.Get(ref)
+	if err != nil || !found {
+		if err == nil {
+			err = messagestore.ErrNotFound
+		}
+		return messagestore.Record{}, partialUnknown(envelope, reason, err)
+	}
+	return record, nil
 }

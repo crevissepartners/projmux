@@ -105,6 +105,7 @@ func (s Service) Status(ctx context.Context, ref string) (Receipt, error) {
 		}
 		return Receipt{}, fmt.Errorf("agent message status: %w", err)
 	}
+	lastKnown := r
 	if r.Delivery.State.Terminal() {
 		return ReceiptFor(r), nil
 	}
@@ -152,6 +153,11 @@ func (s Service) Status(ctx context.Context, ref string) (Receipt, error) {
 		}
 	}
 	if err != nil {
+		// Failed refresh operations can return a zero record. Retain the last
+		// confirmed receipt rather than erasing the only recovery identity.
+		if r.Envelope.MessageRef == "" {
+			r = lastKnown
+		}
 		return ReceiptFor(r), fmt.Errorf("agent message status: persist delivery projection: %w", err)
 	}
 	if ctx.Err() != nil {
@@ -184,7 +190,10 @@ func (s Service) ProjectClaudeDelivery(record store.Record, private agentdeliver
 			kind = message.EventHold
 		case agentdelivery.StateHandoff:
 			updated, _, err := s.Store.MarkHandoff(record.Envelope.MessageRef)
-			return updated, err
+			if err != nil {
+				return record, err
+			}
+			return updated, nil
 		case agentdelivery.StateDelivered:
 			kind = message.EventDeliver
 		case agentdelivery.StateRefused:

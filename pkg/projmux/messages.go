@@ -133,14 +133,17 @@ func messageRefusal(err error, r core.MessageReceipt) error {
 	}
 	code := CodeMessageRouteUnavailable
 	switch {
+	case r.MessageRef != "":
+		// A confirmed acceptance or uncertain RPC result is a delivery failure,
+		// even when its later receipt read reports not-found. It must not look
+		// like a refusal before any message existed.
+		code = CodeMessageDeliveryFailed
 	case errors.Is(err, store.ErrNotFound):
 		code = CodeMessageNotFound
 	case errors.Is(err, message.ErrRetryMismatch):
 		code = CodeMessageRetryMismatch
 	case errors.Is(err, message.ErrInvalidEnvelope):
 		code = CodeMessageInvalidInput
-	case r.MessageRef != "":
-		code = CodeMessageDeliveryFailed
 	}
 	return &Refusal{Code: code, message: err.Error(), cause: err}
 }

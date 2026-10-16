@@ -139,3 +139,16 @@ func TestPeerMessageClaudeExecutableRequiredBeforeRouteOrAcceptance(t *testing.T
 		t.Fatalf("message acceptance effect: %v", err)
 	}
 }
+
+func TestPeerMessagePostAcceptanceNotFoundRemainsDeliveryFailure(t *testing.T) {
+	receipt := publicMessageReceipt(agentmessages.Receipt{MessageRef: "message-known"})
+	err := messageRefusal(store.ErrNotFound, receipt)
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || refusal.Code != CodeMessageDeliveryFailed || !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("post-acceptance not-found=%v", err)
+	}
+	err = messageRefusal(store.ErrNotFound, publicMessageReceipt(agentmessages.Receipt{}))
+	if !errors.As(err, &refusal) || refusal.Code != CodeMessageNotFound {
+		t.Fatalf("pre-acceptance not-found=%v", err)
+	}
+}

@@ -173,6 +173,7 @@ func parseMessageReleasePaths(args []string) (config.Paths, string, bool, error)
 
 func explicitMessageReleaseCommand(paths config.Paths, socket string) (*agentCommand, error) {
 	command := newAgentCommand()
+	command.messageExplicitRelease = true
 	command.messagePaths = defaultAgentMessagePaths(paths)
 	command.messageStore = newAgentMessageStore(paths.StateDir)
 	command.messageRoute = liveAgentMessageRouteResolver{registryPath: command.messagePaths.registryPath}
@@ -226,7 +227,7 @@ func (c *agentCommand) deliverOrHoldCoordination(record messagestore.Record, tar
 		func(ctx context.Context, r messagestore.Record, a coremetadata.Agent, route coremetadata.AgentRouteRef, e coremessage.Envelope) (messagestore.Record, error) {
 			return c.pushCoordination(r, a, route, e)
 		},
-		func() { c.heldRelease().releaseIfHeld(target.Metadata.UID) })
+		func() error { c.heldRelease().releaseIfHeld(target.Metadata.UID); return nil })
 }
 
 type heldReleaseOutcome int

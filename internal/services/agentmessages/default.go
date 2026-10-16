@@ -100,25 +100,26 @@ func New(o Options) Service {
 				return s.pushNative(ctx, r, a, route, e, o.Control)
 			}
 			private, submitErr := adapter.Submit(ctx, s.RegistryPath, route, e)
-			return s.projectClaudeSend(r, private, submitErr)
-		}, func() {
+			return s.ProjectClaudeSend(r, private, submitErr)
+		}, func() error {
 			if o.Release != nil {
-				_ = o.Release(a.Metadata.UID)
+				return o.Release(a.Metadata.UID)
 			}
+			return nil
 		})
 	}
 	return s
 }
 
-// projectClaudeSend preserves SDK uncertainty when a provider has answered but
+// ProjectClaudeSend preserves SDK uncertainty when a provider has answered but
 // its projection cannot be stored. The CLI keeps its existing adapter policy;
 // no durable state is fabricated and no second submission is attempted.
-func (s Service) projectClaudeSend(record store.Record, private agentdelivery.Delivery, submitErr error) (store.Record, error) {
+func (s Service) ProjectClaudeSend(record store.Record, private agentdelivery.Delivery, submitErr error) (store.Record, error) {
 	updated, err := s.ProjectClaudeDelivery(record, private, submitErr)
 	if err != nil {
 		record.Delivery.OutcomeUnknown = true
 		record.Delivery.Reason = "provider-handoff-outcome-unknown"
-		return record, err
+		return record, fmt.Errorf("provider-handoff-outcome-unknown: %w", err)
 	}
 	return updated, nil
 }
@@ -153,7 +154,7 @@ func probeError(outcome claude.ProbeOutcome, probe string) error {
 	}
 }
 
-func (s Service) DeliverOrHold(ctx context.Context, r store.Record, a metadata.Agent, route metadata.AgentRouteRef, e message.Envelope, push func(context.Context, store.Record, metadata.Agent, metadata.AgentRouteRef, message.Envelope) (store.Record, error), release func()) (store.Record, error) {
+func (s Service) DeliverOrHold(ctx context.Context, r store.Record, a metadata.Agent, route metadata.AgentRouteRef, e message.Envelope, push func(context.Context, store.Record, metadata.Agent, metadata.AgentRouteRef, message.Envelope) (store.Record, error), release func() error) (store.Record, error) {
 	if a.Spec.Provider != "claude" {
 		return push(ctx, r, a, route, e)
 	}
@@ -204,7 +205,7 @@ func (s Service) DeliverOrHold(ctx context.Context, r store.Record, a metadata.A
 			return updated, err
 		}
 		if updated.Delivery.State == message.StateHeld {
-			release()
+			return updated, release()
 		}
 		return updated, nil
 	}
@@ -216,7 +217,7 @@ func (s Service) DeliverOrHold(ctx context.Context, r store.Record, a metadata.A
 		return r, fmt.Errorf("hold message while the target awaits its operator: %w", err)
 	}
 	if held.Delivery.State == message.StateHeld {
-		release()
+		return held, release()
 	}
 	return held, nil
 }

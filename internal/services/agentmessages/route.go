@@ -125,11 +125,8 @@ func (s Service) pushProcessCodex(ctx context.Context, r store.Record, route met
 		}
 		return s.terminal(r, message.EventFail, "delivery-outcome-unknown", true, errors.New("process message receipt unavailable"))
 	}
-	updated, found, err := s.Store.Get(r.Envelope.MessageRef)
-	if err != nil || !found {
-		if err == nil {
-			err = store.ErrNotFound
-		}
+	updated, err := s.acceptedReceipt(r.Envelope, r.Envelope.MessageRef, "process-peer-receipt-unavailable")
+	if err != nil {
 		return r, err
 	}
 	return updated, nil

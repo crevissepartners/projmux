@@ -328,6 +328,9 @@ func (c *agentCommand) pushCoordination(record messagestore.Record, target corem
 	}
 	if target.Spec.Provider == string(aiprovider.Claude) {
 		private, submitErr := c.messageClaude.Submit(context.Background(), c.messagePaths.registryPath, targetRoute, envelope)
+		if c.messageExplicitRelease {
+			return c.peerMessageService().ProjectClaudeSend(record, private, submitErr)
+		}
 		updated, err := c.projectClaudeDelivery(record, private, submitErr)
 		if err != nil {
 			return record, nil

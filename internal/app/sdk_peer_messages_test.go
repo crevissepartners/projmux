@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	store "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
@@ -363,5 +364,80 @@ func TestSDKDeferredPeerPostAcceptanceFailureRetainsGeneratedReceipt(t *testing.
 	replay, err := s.Send(context.Background(), req)
 	if err != nil || replay.Receipt != result.Receipt || generated != 1 || failing.applies != 1 || dispatches != 0 {
 		t.Fatalf("replay=%+v err=%v generated=%d applies=%d dispatches=%d", replay, err, generated, failing.applies, dispatches)
+	}
+}
+
+type sdkReleaseProjectionAdapter struct {
+	calls      int
+	messageRef string
+}
+
+func (a *sdkReleaseProjectionAdapter) Submit(context.Context, string, coremetadata.AgentRouteRef, message.Envelope) (agentdelivery.Delivery, error) {
+	a.calls++
+	return agentdelivery.Delivery{MessageRef: a.messageRef, State: agentdelivery.StateDelivered}, nil
+}
+func (a *sdkReleaseProjectionAdapter) Status(context.Context, string, coremetadata.AgentRouteRef, string) (agentdelivery.Delivery, error) {
+	return agentdelivery.Delivery{}, errors.New("unexpected fixture status")
+}
+
+func TestSDKExplicitReleaseProjectionErrorsPreserveLegacyCLI(t *testing.T) {
+	root := t.TempDir()
+	paths := config.Paths{ConfigDir: filepath.Join(root, "arbitrary-config"), StateDir: filepath.Join(root, "arbitrary-state")}
+	disk := store.NewStore(paths.StateDir)
+	now := time.Now().UTC()
+	envelope := message.Envelope{Version: message.Version, MessageRef: "message-projection-failure", ConversationRef: "conversation-projection-failure", Authority: message.PeerAuthority(), Payload: "peer", AcceptedAt: now, Deadline: now.Add(time.Minute), Source: message.Route{AgentUID: "source", PaneUID: "source-pane", ActivationGeneration: "source-generation", Provider: "codex", Incarnation: "route-source"}, Target: message.Route{AgentUID: "target", PaneUID: "target-pane", ActivationGeneration: "target-generation", Provider: "claude", Incarnation: "route-target"}}
+	record, _, err := disk.PutAccepted(envelope, "claude-coordination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("injected accepted-provider projection error")
+	adapter := &sdkReleaseProjectionAdapter{messageRef: envelope.MessageRef}
+	legacy := newAgentCommand()
+	if legacy.messageExplicitRelease {
+		t.Fatal("legacy CLI enabled explicit SDK release policy")
+	}
+	explicit, err := explicitMessageReleaseCommand(paths, "")
+	if err != nil || !explicit.messageExplicitRelease {
+		t.Fatalf("explicit release policy missing: %v", err)
+	}
+	target := coremetadata.Agent{}
+	target.Spec.Provider = "claude"
+	for _, test := range []struct {
+		name      string
+		command   *agentCommand
+		wantError bool
+	}{{"legacy", legacy, false}, {"sdk-explicit", explicit, true}} {
+		t.Run(test.name, func(t *testing.T) {
+			c := test.command
+			c.messageStore = applyFailingMessageStore{agentMessageStore: disk, err: cause}
+			c.messageClaude = adapter
+			c.messageNow = func() time.Time { return now }
+			result, err := c.pushCoordination(record, target, coremetadata.AgentRouteRef{}, envelope)
+			if test.wantError {
+				if !errors.Is(err, cause) || !strings.Contains(err.Error(), "provider-handoff-outcome-unknown") || !result.Delivery.OutcomeUnknown || result.Delivery.Reason != "provider-handoff-outcome-unknown" {
+					t.Fatalf("SDK child result=%+v err=%v", result, err)
+				}
+			} else if err != nil || agentmessages.ReceiptFor(result) != agentmessages.ReceiptFor(record) {
+				t.Fatalf("legacy CLI result changed: %+v/%v", result, err)
+			}
+			if result.Envelope.MessageRef != record.Envelope.MessageRef {
+				t.Fatal("accepted ref lost")
+			}
+		})
+	}
+	if adapter.calls != 2 {
+		t.Fatalf("projection retried provider: %d", adapter.calls)
+	}
+	// Shared Status may return a useful partial receipt; the CLI must retain
+	// its pre-existing error text and emit no receipt on refresh failure.
+	legacy.messagePaths = agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return coremetadata.Registry{}, nil }}
+	var out, diagnostic bytes.Buffer
+	err = legacy.runMessageStatus([]string{envelope.MessageRef, "-o", "json"}, &out, &diagnostic)
+	if err == nil || err.Error() != "agent message status: persist delivery projection: "+cause.Error() || out.Len() != 0 || diagnostic.Len() != 0 {
+		t.Fatalf("CLI status error/output changed: %v/%q/%q", err, out.String(), diagnostic.String())
+	}
+	durable, found, err := disk.Get(envelope.MessageRef)
+	if err != nil || !found || agentmessages.ReceiptFor(durable) != agentmessages.ReceiptFor(record) {
+		t.Fatalf("projection changed durable receipt: %+v/%t/%v", durable, found, err)
 	}
 }

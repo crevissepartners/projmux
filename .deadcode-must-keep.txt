@@ -335,8 +335,8 @@ SaveAINewWindowModeFile	Central new-AI-window-mode writer retained for front end
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 ServeSupervisor	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Service.Get	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Service.ProjectClaudeSend	Client.SendMessage preserves an exact partial receipt and uncertainty when the Claude provider result cannot be persisted; CLI adapter behavior remains unchanged.
 Service.Send	Client.SendMessage uses this typed wrapper to preserve partial or uncertain receipts alongside errors.
-Service.projectClaudeSend	Client.SendMessage preserves an exact partial receipt and uncertainty when the Claude provider result cannot be persisted; CLI adapter behavior remains unchanged.
 Service.pushNative	Client.SendMessage dispatches the native Codex peer-context operation without user-turn fallback through this adapter.
 Service.pushProcessCodex	Client.SendMessage dispatches an existing exact process Codex peer-message and reloads its receipt through this adapter.
 Service.terminal	Client.SendMessage preserves known and uncertain terminal receipt projections when transport or persistence fails.

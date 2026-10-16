@@ -34,7 +34,7 @@ func (s Service) Send(ctx context.Context, req SendRequest) (Result, error) {
 	var out Result
 	err := s.ExecuteSend(ctx, req, func(r Receipt, n int) error { out = Result{r, n}; return nil })
 	var partial *PartialError
-	if out.Receipt.MessageRef == "" && errors.As(err, &partial) {
+	if errors.As(err, &partial) {
 		out.Receipt = partial.Receipt
 	}
 	if err != nil && ctx.Err() != nil {
@@ -220,7 +220,16 @@ func (s Service) ExecuteSend(ctx context.Context, req SendRequest, report func(R
 			}
 			record, found, getErr := s.Store.Get(ref)
 			if getErr != nil || !found || !record.Envelope.SameRetry(envelope) {
-				return partialUnknown(envelope, "explicit-reply-receipt-unavailable", fmt.Errorf("%s: explicit reply receipt unavailable", spelling))
+				if getErr == nil {
+					if !found {
+						getErr = store.ErrNotFound
+					} else {
+						getErr = message.ErrRetryMismatch
+					}
+				}
+				partial := partialUnknown(envelope, "explicit-reply-receipt-unavailable", fmt.Errorf("%s: explicit reply receipt unavailable", spelling))
+				partial.Cause = getErr // preserve the CLI text while retaining the SDK cause
+				return partial
 			}
 			// A reply is delivered the same way any other message is. Without
 			// this it only reached the store, and with the self-claim inbox gone
@@ -326,16 +335,22 @@ func (s Service) ReplyCorrelationRefusal(originalRef, reason string) error {
 type PartialError struct {
 	Receipt Receipt
 	Err     error
+	Cause   error // optional underlying failure omitted from legacy CLI text
 }
 
 func (e *PartialError) Error() string { return e.Err.Error() }
-func (e *PartialError) Unwrap() error { return e.Err }
+func (e *PartialError) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{e.Err, e.Cause}
+	}
+	return []error{e.Err}
+}
 
 type ReplyUncertainError struct{ Err error }
 
 func (e *ReplyUncertainError) Error() string { return e.Err.Error() }
 func (e *ReplyUncertainError) Unwrap() error { return e.Err }
-func partialUnknown(e message.Envelope, reason string, err error) error {
+func partialUnknown(e message.Envelope, reason string, err error) *PartialError {
 	r := ReceiptFor(store.Record{Envelope: e, Delivery: message.Delivery{MessageRef: e.MessageRef, ConversationRef: e.ConversationRef, State: message.StateFailed, Reason: reason, OutcomeUnknown: true, AcceptedAt: e.AcceptedAt}})
 	return &PartialError{Receipt: r, Err: err}
 }

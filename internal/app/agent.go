@@ -73,24 +73,25 @@ type agentCommand struct {
 	// only part of this namespace that mutates the registry, and it is held as
 	// its own seam so the read-only resolution and phase gate above it stay
 	// testable without a runtime.
-	rebind         *agentRebinder
-	reviews        agentReviewStarter
-	reviewBinding  agentReviewBindingLookup
-	reviewTimeout  time.Duration
-	controlBinding agentControlBindingLookup
-	controlRoute   func(context.Context) (runtimeMutationRoute, error)
-	controlRunner  tmuxCommandRunner
-	controlCall    agentControlCaller
-	controlPaths   agentControlPathResolver
-	controlPicker  agentControlPicker
-	controlTimeout time.Duration
-	messageStore   agentMessageStore
-	messagePaths   agentMessagePaths
-	messageNow     func() time.Time
-	messageSleep   func(context.Context, time.Duration) error
-	messageNewRef  func(string) string
-	messageClaude  agentMessageClaudeAdapter
-	messageRoute   agentMessageRouteResolver
+	rebind                 *agentRebinder
+	reviews                agentReviewStarter
+	reviewBinding          agentReviewBindingLookup
+	reviewTimeout          time.Duration
+	controlBinding         agentControlBindingLookup
+	controlRoute           func(context.Context) (runtimeMutationRoute, error)
+	controlRunner          tmuxCommandRunner
+	controlCall            agentControlCaller
+	controlPaths           agentControlPathResolver
+	controlPicker          agentControlPicker
+	controlTimeout         time.Duration
+	messageExplicitRelease bool // only the SDK's new eight-argument internal release
+	messageStore           agentMessageStore
+	messagePaths           agentMessagePaths
+	messageNow             func() time.Time
+	messageSleep           func(context.Context, time.Duration) error
+	messageNewRef          func(string) string
+	messageClaude          agentMessageClaudeAdapter
+	messageRoute           agentMessageRouteResolver
 	// messageCodexContent is the unexported render seam for the Codex
 	// coordination turn body. It exists so the content-build failure branch of
 	// the native push is reachable in tests; it is not a public surface.
