@@ -19,6 +19,7 @@ import (
 	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	store "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -294,5 +295,72 @@ func TestSDKPeerMessageReleaseOuterJournalUsesExactState(t *testing.T) {
 	entries, err := os.ReadDir(root)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("journal selection wrote outside an invocation: %v/%v", entries, err)
+	}
+}
+
+type deferredApplyFailureStore struct {
+	*store.Store
+	cause   error
+	applies int
+}
+
+func (s *deferredApplyFailureStore) Apply(string, message.Event) (store.Record, bool, error) {
+	s.applies++
+	return store.Record{}, false, s.cause
+}
+
+func TestSDKDeferredPeerPostAcceptanceFailureRetainsGeneratedReceipt(t *testing.T) {
+	c, options := deferredClaimFixture(t)
+	claim, err := c.claimDeferredProcessAgent(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	reg, err := c.loadRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := reg.Agent(claim.record.Agent)
+	_, sourceRegistry, _ := exactControlCLICommand(t)
+	source, _ := sourceRegistry.registry.Agent("agt-alpha-codex")
+	route := mustMessageRoute(t, sourceRegistry.registry, source.Metadata.UID)
+	disk := c.messageStore.(*store.Store)
+	cause := errors.New("injected post-acceptance read failure")
+	failing := &deferredApplyFailureStore{Store: disk, cause: cause}
+	generated, dispatches := 0, 0
+	s := agentmessages.Service{RegistryPath: c.messagePaths.registryPath, Store: failing, LoadRegistry: c.loadRegistry,
+		NewRef:            func(string) string { generated++; return "message-generated-deferred" },
+		RequireCapability: agentmessages.RequireCapability,
+		ResolveSource: func(context.Context, coremetadata.Registry, string, string) (coremetadata.Agent, error) {
+			return source.Clone(), nil
+		},
+		ResolveAgent: func(context.Context, coremetadata.Registry, string, string) (coremetadata.Agent, error) {
+			return target.Clone(), nil
+		},
+		ResolveRoute: func(context.Context, coremetadata.Registry, coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+			return route, nil
+		},
+		Deliver: func(context.Context, store.Record, coremetadata.Agent, coremetadata.AgentRouteRef, message.Envelope) (store.Record, error) {
+			dispatches++
+			t.Fatal("deferred message dispatched")
+			return store.Record{}, nil
+		},
+	}
+	s.Deferred = func(ctx context.Context, reg coremetadata.Registry, source, target coremetadata.Agent, route coremetadata.AgentRouteRef, ref, reply, text string, ttl time.Duration, report func(agentmessages.Receipt, int) error) (bool, error) {
+		return s.SendDeferred(ctx, reg, source, target, route, ref, reply, text, ttl, report, nil)
+	}
+	req := agentmessages.SendRequest{Source: "uid:" + source.Metadata.UID, Target: "uid:" + target.Metadata.UID, Text: "peer", TTL: time.Minute}
+	result, err := s.Send(context.Background(), req)
+	if !errors.Is(err, cause) || result.Receipt.MessageRef != "message-generated-deferred" || result.Receipt.Delivery.State != message.StateHeld || result.Receipt.Delivery.OutcomeUnknown {
+		t.Fatalf("receipt=%+v err=%v", result, err)
+	}
+	durable, found, err := disk.Get(result.Receipt.MessageRef)
+	if err != nil || !found || agentmessages.ReceiptFor(durable) != result.Receipt {
+		t.Fatalf("durable receipt=%+v/%t/%v", durable, found, err)
+	}
+	req.MessageRef = result.Receipt.MessageRef
+	replay, err := s.Send(context.Background(), req)
+	if err != nil || replay.Receipt != result.Receipt || generated != 1 || failing.applies != 1 || dispatches != 0 {
+		t.Fatalf("replay=%+v err=%v generated=%d applies=%d dispatches=%d", replay, err, generated, failing.applies, dispatches)
 	}
 }

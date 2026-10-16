@@ -142,10 +142,13 @@ func (s Service) SendDeferred(ctx context.Context, registry coremetadata.Registr
 		return true, err
 	}
 	if created {
-		record, _, err = s.Store.Apply(ref, s.event(record, coremessage.EventHold, deferredHoldReason, false))
-		if err != nil {
-			return true, err
+		held, _, applyErr := s.Store.Apply(ref, s.event(record, coremessage.EventHold, deferredHoldReason, false))
+		if applyErr != nil {
+			// PutDeferred already committed this exact receipt atomically. Preserve
+			// its generated ref for SDK recovery without adding CLI output or replay.
+			return true, &PartialError{Receipt: ReceiptFor(record), Err: applyErr}
 		}
+		record = held
 	}
 	// CLI lineage diagnostics run through its accepted callback.
 	if accepted != nil {
