@@ -430,7 +430,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 				var f processCreateCLI
 				if provider == "claude" {
 					f = processResumeCLIFixture(t, provider)
-					wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "if [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nexec /bin/sleep 300\n"
+					wrapper := "#!/bin/sh\n" + processFixtureExports(f.root) + "if [ -n \"$PMX_INTERNAL_CLAUDE_PROCESS_BINDING\" ]; then exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "provider.py")) + " \"$@\"; fi\nprintf 'born\\n' >> " + fmt.Sprintf("%q", filepath.Join(f.root, "tmux-provider-births")) + "\nexec /bin/sleep 300\n"
 					if err := os.WriteFile(filepath.Join(f.root, provider), []byte(wrapper), 0700); err != nil {
 						t.Fatal(err)
 					}
@@ -463,7 +463,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					ready, done := context.WithTimeout(context.Background(), 10*time.Second)
 					defer done()
 					processCLIUntil(t, ready, func() bool { _, err := os.Stat(control); return err == nil })
-					wrapper := "#!/bin/sh\ncase \"$1 $2\" in\n'--version '| 'app-server proxy' | 'app-server daemon') exec python3 -u " + fmt.Sprintf("%q", script) + " \"$@\";;\n'app-server --listen') exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "codex-provider.py")) + ";;\nesac\nexec /bin/sleep 300\n"
+					wrapper := "#!/bin/sh\ncase \"$1 $2\" in\n'--version '| 'app-server proxy' | 'app-server daemon') exec python3 -u " + fmt.Sprintf("%q", script) + " \"$@\";;\n'app-server --listen') exec python3 -u " + fmt.Sprintf("%q", filepath.Join(f.root, "codex-provider.py")) + ";;\nesac\nprintf 'born\\n' >> " + fmt.Sprintf("%q", filepath.Join(f.root, "tmux-provider-births")) + "\nexec /bin/sleep 300\n"
 					if err = os.WriteFile(filepath.Join(f.root, provider), []byte(wrapper), 0700); err != nil {
 						t.Fatal(err)
 					}
@@ -501,6 +501,13 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 				defer cancel()
+				providerBirths := func() int {
+					data, err := os.ReadFile(filepath.Join(f.root, "tmux-provider-births"))
+					if err != nil && !os.IsNotExist(err) {
+						t.Fatal(err)
+					}
+					return bytes.Count(data, []byte("born\n"))
+				}
 				t.Cleanup(func() { cleanupSDKNativePeers(t, paths.StateDir) })
 				create := core.CreateAgentRequest{Project: "uid:" + f.project, Window: "uid:" + f.window, Provider: provider, Profile: "none", Host: "tmux", Model: "stub-model", Effort: "low"}
 				if provider == "codex" {
@@ -511,6 +518,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					t.Fatal(err)
 				}
 				assertSibling("SDK tmux Create")
+				processCLIUntil(t, ctx, func() bool { return providerBirths() == 1 })
 				if provider == "claude" {
 					// The persistent shell fixture emits no native hook. Record the
 					// same exact process/session evidence as hostMoveCLIFixture,
@@ -624,6 +632,13 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 					back, err := c.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Host: "tmux", Confirm: true, SocketPath: socket})
 					if err != nil || back.AgentUID != source.Metadata.UID || back.TargetHost != "tmux" || back.NewPaneUID == "" {
 						t.Fatalf("reverse host move %+v: %v", back, err)
+					}
+					for providerBirths() != 2 {
+						select {
+						case <-ctx.Done():
+							t.Fatalf("reverse provider birth missing: want 2 births, got %d: %v", providerBirths(), ctx.Err())
+						case <-time.After(10 * time.Millisecond):
+						}
 					}
 					assertSibling("process to tmux Relaunch")
 				}

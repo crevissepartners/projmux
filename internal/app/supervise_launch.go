@@ -2,6 +2,7 @@ package app
 
 import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // mintGeneration issues one activation generation for a create/resume route.
@@ -26,5 +27,9 @@ func (c *createCommand) issuePaneActivation(
 	mutator coremetadata.Mutator,
 	paneUID, agentUID, operationID string,
 ) (superviseSpec, error) {
-	return issuePaneActivation(c.mintGeneration, working, mutator, paneUID, agentUID, operationID)
+	spec, err := issuePaneActivation(c.mintGeneration, working, mutator, paneUID, agentUID, operationID)
+	if err == nil && c.processCreateContext != nil {
+		spec.RegistryPath = intmetadata.PathFor(c.processCreateContext.Paths.StateDir)
+	}
+	return spec, err
 }
