@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -23,7 +22,7 @@ import (
 
 // Text is the exact provider input. Peer callers supply the existing serialized
 // untrusted coordination content; resume never promotes it to operator input.
-type processResumeFirstFrame struct{ Kind, Text string }
+type processResumeFirstFrame = mutationruntime.ProcessResumeFirstFrame
 type processResumeScope struct{ Project, Window selector.Ref }
 type processAgentResumeOptions struct {
 	Agent               selector.Ref
@@ -318,11 +317,15 @@ func (r *processAgentResumeResult) startProcessResume(ctx context.Context, creat
 		}
 		r.attentionChecked = true
 	}
-	executable, err := os.Executable()
+	executable, err := creator.processCreateExecutable()
 	if err != nil {
 		return err
 	}
-	host, err := processhost.NewHost(r.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: plan.Env}, creator.processCreateTransactions(r.owner.registryPath), processhost.DefaultLimits())
+	supervisorEnv, err := creator.processCreateSupervisorEnvironment(plan.Env, r.Binding, r.owner.registryPath)
+	if err != nil {
+		return err
+	}
+	host, err := processhost.NewHost(r.Binding.Host, processhost.Command{Path: executable, Args: []string{"internal", "process-host-supervisor"}, Env: supervisorEnv}, creator.processCreateTransactions(r.owner.registryPath), processhost.DefaultLimits())
 	if err != nil {
 		return err
 	}
@@ -580,7 +583,7 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 	if provider != aiModeCodex {
 		return processhost.Command{}, config, settingsPlan, errors.New("process-provider-unsupported: process resume requires Claude or Codex")
 	}
-	command, err := processhost.CodexCommand(path, workspace.CWD, os.Environ(), nil)
+	command, err := processhost.CodexCommand(path, workspace.CWD, ai.processCreateEnvironment(), nil)
 	config = processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{Model: model, Effort: effort, Policy: policy}}
 	return command, config, settingsPlan, err
 }

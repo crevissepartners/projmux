@@ -932,6 +932,7 @@ func TestExternalClaudeDetachedFirstInput(t *testing.T) {
 			}()
 			script := `import os,sys,json,socket,subprocess
 root=os.path.dirname(__file__)
+if os.path.exists(root+'/provider.sock'):os.unlink(root+'/provider.sock')
 s=socket.socket(socket.AF_UNIX);s.bind(root+'/provider.sock');os.chmod(root+'/provider.sock',0o600);s.listen()
 os.environ['CLAUDE_CODE_MESSAGING_SOCKET']=root+'/provider.sock'
 os.environ['CLAUDE_CODE_MESSAGING_TOKEN']='isolated-fixture-token'
@@ -1155,6 +1156,7 @@ func TestExternalSDKDetachedProcessCreateCallerExit(t *testing.T) {
 			}()
 			script := `import os,sys,json,socket,subprocess
 root=os.environ['HOME']
+if os.path.exists(root+'/provider.sock'):os.unlink(root+'/provider.sock')
 s=socket.socket(socket.AF_UNIX);s.bind(root+'/provider.sock');os.chmod(root+'/provider.sock',0o600);s.listen()
 os.environ['CLAUDE_CODE_MESSAGING_SOCKET']=root+'/provider.sock'
 os.environ['CLAUDE_CODE_MESSAGING_TOKEN']='sdk-create-fixture-token'
@@ -1177,7 +1179,7 @@ def emit(n):print(json.dumps(n),flush=True)
 for line in sys.stdin:
  n=json.loads(line);m=n.get('method','')
  if m=='initialize':emit({'id':n['id'],'result':{'userAgent':'projmux/0.160.0'}})
- elif m=='thread/start':emit({'id':n['id'],'result':{'thread':{'id':'sdk-create-thread'},'model':'stub-model','reasoningEffort':'low','sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'}})
+ elif m in ('thread/start','thread/resume'):emit({'id':n['id'],'result':{'thread':{'id':'sdk-create-thread'},'model':'stub-model','reasoningEffort':'low','sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'}})
  elif m=='turn/start':
   open(root+'/input-observed','w').write(n['params']['input'][0]['text'])
   emit({'method':'turn/started','params':{'threadId':'sdk-create-thread','turn':{'id':'turn-1'}}})
@@ -1289,6 +1291,41 @@ for line in sys.stdin:
 			if agent.Metadata.UID != result.Agent.Metadata.UID || agent.Status.PaneRef != result.Binding.PaneUID || sessionID(agent) != beforeCID {
 				t.Fatal("UID/Pane/conversation lost")
 			}
+			t.Run("SDK detached resume after caller exit", func(t *testing.T) {
+				caller := exec.Command(os.Args[0], "-test.run=^TestExternalSDKDetachedProcessResumeCallerExit$")
+				caller.Env = env
+				if out, err := caller.CombinedOutput(); err != nil {
+					t.Fatalf("resume caller: %v %s", err, out)
+				}
+				raw, err := os.ReadFile(lease + "/resume-result.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var resumed core.ResumeAgentResult
+				if err = json.Unmarshal(raw, &resumed); err != nil {
+					t.Fatal(err)
+				}
+				if resumed.Binding.AgentUID != result.Binding.AgentUID || resumed.Binding.PaneUID != result.Binding.PaneUID || resumed.Binding.Generation == result.Binding.Generation || resumed.ClaimWaiting || resumed.PaneID != "" || sessionID(resumed.Agent) != beforeCID {
+					t.Fatalf("resume identity: %+v", resumed)
+				}
+				result.Binding = resumed.Binding
+				stopAttempted = false
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				resource, err := c.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + resumed.Binding.PaneUID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				activation := resource.(core.Pane).Status.Activation.Process
+				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
+					t.Fatal("resume caller exit retired owner")
+				}
+				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: resumed.Binding})
+				stopAttempted = true
+				if err != nil || !stopped.Stopped || stopped.Termination == nil || stopped.Binding != resumed.Binding {
+					t.Fatalf("resume Wait: %+v %v", stopped, err)
+				}
+			})
 			if _, err = c.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:" + agent.Metadata.UID, Confirm: true}); err != nil {
 				t.Fatal(err)
 			}
@@ -1464,5 +1501,48 @@ func TestExternalAgentSessionsConsumer(t *testing.T) {
 
 	if _, err = os.Stat(filepath.Join(root, "config")); !os.IsNotExist(err) {
 		t.Fatalf("session read materialized config: %v", err)
+	}
+}
+
+// Invoked in an independent caller by the two-provider public lifecycle fixture.
+func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
+	root := os.Getenv("PMX_SDK_CREATE_CHILD")
+	if root == "" {
+		return
+	}
+	raw, err := os.ReadFile(root + "/result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous core.CreateAgentResult
+	if err = json.Unmarshal(raw, &previous); err != nil {
+		t.Fatal(err)
+	}
+	c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: root + "/deep/custom-settings", StateDir: root + "/deep/custom-records", ProjmuxExecutable: os.Getenv("PMX_SDK_CREATE_BINARY")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"HOME", "PATH", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+		if err = os.Setenv(key, root+"/poison"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := core.ResumeAgentRequest{Ref: "uid:" + previous.Agent.Metadata.UID, Detach: true, Binding: previous.Binding}
+	if os.Getenv("PMX_SDK_CREATE_PROVIDER") == "claude" {
+		request.Prompt = "resumed input"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	result, err := c.ResumeAgent(ctx, request)
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Projection = core.ResourceList{}
+	raw, err = json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(root+"/resume-result.json", raw, 0600); err != nil {
+		t.Fatal(err)
 	}
 }

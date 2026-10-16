@@ -37,6 +37,7 @@ type ProcessCreateCommitted struct {
 }
 
 type ProcessDetachedReply struct {
+	ErrorDetail           json.RawMessage `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string

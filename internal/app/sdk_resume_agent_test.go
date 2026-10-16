@@ -315,7 +315,7 @@ func TestResumeAgentSDKProcessAndRunningRefusals(t *testing.T) {
 			}
 			_, err = client.ResumeAgent(context.Background(), core.ResumeAgentRequest{Ref: "uid:" + agent.Metadata.UID})
 			var refusal *projmux.Refusal
-			want := projmux.CodeResumeProcessUnsupported
+			want := projmux.CodeResumeRequestInvalid
 			if scenario == "running-tmux" {
 				want = projmux.CodeResumePhaseNotResumable
 			}

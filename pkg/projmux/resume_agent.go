@@ -20,6 +20,7 @@ import (
 )
 
 const (
+	// CodeResumeProcessUnsupported remains exported for source compatibility.
 	CodeResumeProcessUnsupported Code = "resume-process-unsupported"
 	// CodeResumeNativeCodexUnsupported remains available for source compatibility.
 	CodeResumeNativeCodexUnsupported Code = "resume-native-codex-unsupported"
@@ -32,9 +33,10 @@ const (
 	CodeReplyOnlyLaunchFixed         Code = "reply-only-launch-fixed"
 )
 
-// ResumeAgent uses the CLI's shared rebind transaction. Context cancellation
-// prevents admission only; an admitted operation completes its commit/rollback.
-// The result does not imply provider activation acknowledgement.
+// ResumeAgent uses the CLI's shared tmux transaction or explicit detached
+// process startup. Tmux cancellation prevents admission only. Process startup
+// cancellation rolls back; after success the detached owner outlives the caller.
+// Success does not imply a provider response.
 func (c *Client) ResumeAgent(ctx context.Context, req core.ResumeAgentRequest) (core.ResumeAgentResult, error) {
 	return c.resumeAgent(ctx, req, tmux.ExecRunner{})
 }
@@ -70,8 +72,11 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 	agent, _ := reg.Agent(resolution.Matches[0].UID)
 	for _, pane := range reg.PanesOf(agent.Metadata.UID) {
 		if pane.Spec.Runtime.EffectiveKind() == metadata.RuntimeProcess {
-			return result, &Refusal{Code: CodeResumeProcessUnsupported, message: "ResumeAgent cannot resume a process Agent; use projmux agent resume"}
+			return c.resumeProcessAgent(ctx, req, *agent, reg)
 		}
+	}
+	if req.Detach || req.WaitForPeer || req.Prompt != "" || req.Binding != (core.ProcessBinding{}) {
+		return result, &Refusal{Code: CodeResumeRequestInvalid, message: "ResumeAgentRequest process inputs require a process Agent"}
 	}
 	fields := mutationruntime.AgentInputFields{Prefix: "ResumeAgentRequest"}
 	if err := mutationruntime.ValidateResumeAgent("agent resume", agent, req.Model, req.Effort, req.DialogueReplyOnly, fields); err != nil {

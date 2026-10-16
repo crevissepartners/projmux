@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"io"
 	"maps"
 	"os"
@@ -373,7 +374,7 @@ func (c *agentCommand) prepareDeferredLaunchMode(ctx context.Context, candidate 
 		for _, annotations := range annotationsToCheck {
 			if name := annotations[coremetadata.AnnotationAgentProfile]; name != "" {
 				creator := c.rebind.create
-				_, _, _, scopeErr := resolveRecordedProfile(creator.homeDir, creator.lookupEnv, name, candidate.Record.Binding.ProjectUID)
+				_, _, _, scopeErr := mutationruntime.ResolveRecordedProfileWithPaths(creator.processCreatePaths, name, candidate.Record.Binding.ProjectUID)
 				if profile.ReasonOf(scopeErr) == profile.ReasonOutOfScope {
 					return candidate, nil, scopeErr
 				}
