@@ -660,7 +660,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 				if err != nil || len(bytes.TrimSpace(journal)) == 0 {
 					t.Fatalf("host move journal escaped explicit State: %v", err)
 				}
-				for _, line := range bytes.Split(bytes.TrimSpace(journal), []byte("\n")) {
+				for line := range bytes.SplitSeq(bytes.TrimSpace(journal), []byte("\n")) {
 					if !json.Valid(line) {
 						t.Fatalf("invalid explicit journal row: %q", line)
 					}
