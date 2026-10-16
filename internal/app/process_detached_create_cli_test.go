@@ -200,6 +200,11 @@ func testProcessChildSurvivesParentProviderGroupCLI(t *testing.T, inferred bool)
 			} else {
 				f = newProcessCreateCLI(t)
 			}
+			diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+			if provider == "claude" {
+				diagnostic.paths = []string{f.store.Path()}
+			}
+			defer diagnostic.beforeCleanup()
 			script := filepath.Join(f.root, "provider.py")
 			raw, err := os.ReadFile(script)
 			if err != nil {
@@ -244,6 +249,7 @@ func testProcessChildSurvivesParentProviderGroupCLI(t *testing.T, inferred bool)
 					parent.Wait()
 				}
 			}()
+			defer diagnostic.beforeCleanup()
 			line, err := bufio.NewReader(output).ReadString('\n')
 			if err != nil {
 				t.Fatalf("parent startup: %v %s", err, parentErrors.String())

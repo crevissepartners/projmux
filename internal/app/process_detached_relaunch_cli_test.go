@@ -110,10 +110,14 @@ func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
 		t.Skip("set PMX_TEST_CLI to a copied product binary")
 	}
 	f := deferredResumeCLIFixture(t, "claude")
+	diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+	diagnostic.paths = []string{f.store.Path()}
+	defer diagnostic.beforeCleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "initial"))
 	defer first.shutdown(t)
+	defer diagnostic.beforeCleanup()
 	awaitDetachedRelaunchInitialConversation(t, ctx, f, first.ref)
 	old, _ := f.store.LoadReadOnly()
 	a, _ := old.Agent(strings.TrimPrefix(first.ref, "uid:"))
@@ -148,6 +152,7 @@ func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
 	detachedResumeCLI(t, ctx, f, "agent", "relaunch", first.ref, "--detach")
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", "claude", "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "peer-source", "--", "source"))
 	defer source.shutdown(t)
+	defer diagnostic.beforeCleanup()
 	awaitDetachedRelaunchInitialConversation(t, ctx, f, source.ref)
 	detachedResumeCLI(t, ctx, f, "agent", "message", "send", first.ref, "--source", source.ref, "--message-ref", "detached-relaunch-peer", "--", "resume frozen conversation")
 	deferredCLIStatus(t, ctx, f, "detached-relaunch-peer", "delivered")

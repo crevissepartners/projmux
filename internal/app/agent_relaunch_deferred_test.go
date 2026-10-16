@@ -639,6 +639,9 @@ func TestDeferredClaudeRelaunchUserUsesRawFirstFrameActualCLI(t *testing.T) {
 	for _, relaunch := range []bool{true, false} {
 		t.Run(fmt.Sprint("recipe=", relaunch), func(t *testing.T) {
 			f := deferredRelaunchFixture(t)
+			diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+			diagnostic.paths = []string{f.store.Path()}
+			defer diagnostic.beforeCleanup()
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
