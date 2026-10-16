@@ -298,9 +298,12 @@ func (f *processClaudeFixture) turn(t *testing.T, id, prompt string) {
 		t.Fatal(err)
 	}
 }
-func (f *processClaudeFixture) proof(t *testing.T) claudeProcessProof {
+func (f *processClaudeFixture) proof(t *testing.T, prepared ...func() bool) claudeProcessProof {
 	t.Helper()
 	s := f.wait(t, func(s processhost.Snapshot) bool {
+		if len(prepared) > 0 && prepared[0] != nil && !prepared[0]() {
+			return false
+		}
 		reg, _ := f.store.LoadDegradedReadOnly()
 		p, _ := reg.Pane(f.binding.Pane)
 		if p == nil || p.Status.ProcessSession == nil {
@@ -415,8 +418,8 @@ func TestClaudeProcessLeaseFailureDiagnostic(t *testing.T) {
 
 func TestClaudeProcessBindingRegistrationAndSingleControlWriter(t *testing.T) {
 	started := time.Now()
-	f := newProcessClaudeFixture(t, nil)
-	proof := f.proof(t)
+	f := newProcessClaudeFixture(t, processClaudeLeaseReadyProvider)
+	proof := f.proof(t, func() bool { return processClaudeLeaseHookWaitComplete(f.root) })
 	proofElapsed := time.Since(started)
 	reg, _ := f.store.LoadDegradedReadOnly()
 	if _, reason := coremetadata.ResolveAgentRoute(reg, f.binding.Agent); reason == "" {
