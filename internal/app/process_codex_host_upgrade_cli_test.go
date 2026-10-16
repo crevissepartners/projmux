@@ -31,7 +31,7 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 	}{
 		{"preserved", "legacy", "preserved", "codex-instructions-immutable"},
 		{"replacement-not-applied", "replacement", "not-applied", "codex-instructions-immutable"},
-		{"unavailable-not-applied", "missing", "not-applied", "instructions-unavailable"},
+		{"unavailable-not-applied", "", "not-applied", "instructions-unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := processCodexRelaunchFixture(t)
@@ -48,8 +48,17 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 				}
 			}
 			profiles := profile.NewDefaultStore(paths)
-			beforeDigest := writeCodexProfile(t, profiles, "upgrade", "provider = \"codex\"\nmodel = \"stub-model\"\neffort = \"low\"\ninstructions = \"legacy\"\n")
-			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "upgrade", "--", "finished work"))
+			initialProfile := "provider = \"codex\"\nmodel = \"stub-model\"\neffort = \"low\"\n"
+			args := f.args("--provider", aiModeCodex, "--profile", "upgrade")
+			if tc.instructions == "" {
+				// Keep the profile valid when the independently recorded flag's
+				// instructions later disappear from this disposable store.
+				args = append(args, "--instructions", "legacy")
+			} else {
+				initialProfile += "instructions = \"legacy\"\n"
+			}
+			beforeDigest := writeCodexProfile(t, profiles, "upgrade", initialProfile)
+			first := startResumeCLIInvocation(t, ctx, f, append(args, "--", "finished work"))
 			awaitDetachedInitialConversation(t, ctx, f, first.ref)
 			before := mustRegistry(t, f)
 			a, _ := before.Agent(strings.TrimPrefix(first.ref, "uid:"))
@@ -65,7 +74,20 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			detachedResumeCLI(t, ctx, f, "agent", "stop", first.ref)
 			first.shutdown(t)
 			assertCodexUpgradeStopped(t, ctx, f, old, oldActivation)
-			afterDigest := writeCodexProfile(t, profiles, "upgrade", "provider = \"codex\"\nmodel = \"current-model\"\neffort = \"high\"\ninstructions = \""+tc.instructions+"\"\n")
+			currentProfile := "provider = \"codex\"\nmodel = \"current-model\"\neffort = \"high\"\n"
+			if tc.instructions != "" {
+				currentProfile += "instructions = \"" + tc.instructions + "\"\n"
+			}
+			afterDigest := writeCodexProfile(t, profiles, "upgrade", currentProfile)
+			if tc.instructions == "" {
+				if err := personas.Delete("legacy"); err != nil {
+					t.Fatal(err)
+				}
+				loaded, _, err := profiles.Resolve("upgrade")
+				if err != nil || loaded.Digest != afterDigest {
+					t.Fatalf("unavailable instructions invalidated current profile: %v", err)
+				}
+			}
 			if afterDigest == beforeDigest {
 				t.Fatal("current profile did not change")
 			}
@@ -99,6 +121,9 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			}
 			if tc.instructions == "replacement" && (e.Value == nil || *e.Value != "legacy" || e.RequestedValue == nil || *e.RequestedValue != "replacement") {
 				t.Fatalf("lost immutable/current distinction: %+v", e)
+			}
+			if tc.instructions == "" && (e.Value != nil || e.RequestedValue == nil || *e.RequestedValue != "legacy") {
+				t.Fatalf("unavailable instructions invented an applied value or lost the request: %+v", e)
 			}
 			for _, setting := range []string{"agent-guidance", "project-guidance", "link-rules"} {
 				e := lifecycleEntry(t, receipt.SettingsApplication, setting)
