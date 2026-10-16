@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -77,7 +78,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					}
 				}
 				initial := await(func(p core.Pane) bool {
-					return p.Status.ProcessSession != nil && p.Status.ProcessSession.ConnectionID != "" && p.Status.ProcessSession.TurnID == ""
+					return p.Status.ProcessSession != nil && p.Status.ProcessSession.ConnectionID != "" && (p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") && p.Status.ProcessSession.TurnID == ""
 				})
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: created.Binding})
 				if err != nil || !stopped.Stopped || stopped.Termination == nil {
@@ -117,7 +118,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					t.Fatalf("resume result %+v", resumed)
 				}
 				born := await(func(p core.Pane) bool {
-					return p.Status.Activation.Process != nil && p.Status.ProcessSession.Binding.Generation == resumed.Binding.Generation && p.Status.ProcessSession.ConnectionID != "" && p.Status.ProcessSession.TurnID == ""
+					return p.Status.Activation.Process != nil && p.Status.ProcessSession.Binding.Generation == resumed.Binding.Generation && p.Status.ProcessSession.ConnectionID != "" && (p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") && p.Status.ProcessSession.TurnID == ""
 				})
 				if born.Status.ProcessSession.SessionID != initial.Status.ProcessSession.SessionID || born.Status.ProcessSession.ThreadID != initial.Status.ProcessSession.ThreadID {
 					t.Fatal("conversation replaced")
@@ -138,7 +139,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 						t.Fatalf("claim %+v", claim)
 					}
 					stop, e := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: claim.Binding})
-					if e != nil || !stop.ClaimReleased || stop.Termination != nil {
+					if e != nil || !stop.ClaimReleased || !reflect.DeepEqual(stop.Termination, stopped.Termination) {
 						t.Fatalf("claim Stop: %+v %v", stop, e)
 					}
 					reg, e := storage.LoadReadOnly()
@@ -151,6 +152,19 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					}
 				})
 				t.Run("first peer birth", func(t *testing.T) {
+					source, e := c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:" + f.project, Window: "uid:" + f.window, Provider: provider, Profile: "none", Model: "stub-model", Effort: "low", Host: "process", Detach: true, Name: "peer-source", Payload: []string{"source dialogue"}})
+					if e != nil {
+						t.Fatal(e)
+					}
+					sourceRef := "uid:" + source.Agent.Metadata.UID
+					defer func() {
+						clean, done := context.WithTimeout(context.Background(), 15*time.Second)
+						defer done()
+						if _, e := c.StopAgent(clean, core.StopAgentRequest{Ref: sourceRef, Binding: source.Binding}); e != nil {
+							t.Error(e)
+						}
+					}()
+
 					claim, e := c.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: ref, Detach: true, WaitForPeer: true, Binding: resumed.Binding})
 					if e != nil {
 						t.Fatal(e)
@@ -158,12 +172,12 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					if !claim.ClaimWaiting {
 						t.Fatal("missing claim handshake")
 					}
-					receipt, e := c.SendMessage(ctx, projmux.SendMessageRequest{Source: ref, Target: ref, Text: "peer payload"})
+					receipt, e := c.SendMessage(ctx, projmux.SendMessageRequest{Source: sourceRef, Target: ref, Text: "peer payload"})
 					if e != nil {
 						t.Fatalf("first peer %+v %v", receipt, e)
 					}
 					born := await(func(p core.Pane) bool {
-						return p.Status.Activation.Process != nil && p.Status.ProcessSession.Binding.Generation != resumed.Binding.Generation && p.Status.ProcessSession.ConnectionID != "" && p.Status.ProcessSession.TurnID == ""
+						return p.Status.Activation.Process != nil && p.Status.ProcessSession.Binding.Generation != resumed.Binding.Generation && p.Status.ProcessSession.ConnectionID != "" && (p.Status.ProcessSession.SessionID != "" || p.Status.ProcessSession.ThreadID != "") && p.Status.ProcessSession.TurnID == ""
 					})
 					if born.Status.ProcessSession.SessionID != initial.Status.ProcessSession.SessionID || born.Status.ProcessSession.ThreadID != initial.Status.ProcessSession.ThreadID {
 						t.Fatal("peer birth lost conversation")
