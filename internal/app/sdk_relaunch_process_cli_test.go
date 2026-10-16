@@ -141,7 +141,7 @@ func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				if _, e = c.WriteProfile(context.Background(), "sdk-relaunch", []byte(fmt.Sprintf("provider = %q\nmodel = %q\neffort = %q\n", provider, "stub-model", "low"))); e != nil {
+				if _, e = c.WriteProfile(context.Background(), "sdk-relaunch", fmt.Appendf(nil, "provider = %q\nmodel = %q\neffort = %q\n", provider, "stub-model", "low")); e != nil {
 					t.Fatal(e)
 				}
 				for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
