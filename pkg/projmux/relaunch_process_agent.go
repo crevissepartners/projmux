@@ -148,6 +148,9 @@ func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentR
 		_ = unregisterCopy(m.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &out.Binding)
 	}
 	out.ClaimWaiting = len(reply.Claim) != 0
+	if out.ConversationID == "" {
+		out.ConversationID = target.Status.SessionRef.ConversationID()
+	}
 	if out.Outcome == "would-restart" || out.Outcome == "would-resume" {
 		out.DryRun = q.DryRun
 	}

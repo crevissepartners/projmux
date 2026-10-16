@@ -53,7 +53,8 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 	if request.host == "tmux" {
 		session.timer.Stop()
 	}
-	c.hostTransferResult = &agentHostTransferResult{}
+	planned.Result.DryRun = request.dryRun
+	c.hostTransferResult = &agentHostTransferResult{Result: planned.Result}
 	if err := c.dispatchRelaunch(reg, target, request, io.Discard, io.Discard); err != nil {
 		return encodeDetachedRelaunchError(session.encoder, session.identity, processhost.Binding{}, &c.hostTransferResult.Result, err)
 	}
