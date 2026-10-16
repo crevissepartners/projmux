@@ -359,7 +359,11 @@ func TestAgentMessageSendFlagSetCannotNameAnOrigin(t *testing.T) {
 	// Inspect every real send producer and require evidence in each service
 	// file so extraction cannot silently make the negative audit vacuous.
 	total := 0
-	for _, path := range []string{"agent_message.go", "../services/agentmessages/send.go", "../services/agentmessages/deferred.go"} {
+	for _, path := range []string{
+		"agent_message.go", "process_agent_deferred_send.go",
+		"codex_process_message.go", "agent_message_qualification.go", "claude_reply_tool.go",
+		"../services/agentmessages/send.go", "../services/agentmessages/deferred.go",
+	} {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -394,7 +398,7 @@ func TestAgentMessageSendFlagSetCannotNameAnOrigin(t *testing.T) {
 			return true
 		})
 
-		if path != "agent_message.go" && envelopes == 0 {
+		if path != "agent_message.go" && path != "process_agent_deferred_send.go" && envelopes == 0 {
 			t.Fatalf("audit found no Envelope literal in %s, so it proves nothing", path)
 		}
 		total += envelopes
