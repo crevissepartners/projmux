@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,5 +275,98 @@ func TestSDKDetachedProcessResumeIdentityDeadlinePreservesFailure(t *testing.T) 
 	after, readErr := os.ReadFile(storage.Path())
 	if readErr != nil || !bytes.Equal(before, after) {
 		t.Fatal("identity timeout changed Registry", readErr)
+	}
+}
+
+func TestSDKDetachedProcessResumeCancellationSettlesBornGeneration(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, provider)
+			c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, done := context.WithTimeout(context.Background(), 35*time.Second)
+			defer done()
+			created, err := c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:" + f.project, Window: "uid:" + f.window, Provider: provider, Profile: "none", Model: "stub-model", Effort: "low", Host: "process", Detach: true, Payload: []string{"initial"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := "uid:" + created.Agent.Metadata.UID
+			t.Cleanup(func() {
+				clean, finish := context.WithTimeout(context.Background(), 15*time.Second)
+				defer finish()
+				if _, e := c.StopAgent(clean, core.StopAgentRequest{Ref: ref}); e != nil {
+					t.Error(e)
+					_ = os.WriteFile(filepath.Join(f.root, firstInputCleanupPending), []byte("resume cancellation cleanup unconfirmed"), 0600)
+				}
+			})
+			processCLIUntil(t, ctx, func() bool {
+				r, e := c.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: ref})
+				if e != nil {
+					t.Fatal(e)
+				}
+				return r.(core.Agent).Status.SessionRef != nil
+			})
+			if stopped, e := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: created.Binding}); e != nil || !stopped.Stopped {
+				t.Fatalf("initial Stop %+v %v", stopped, e)
+			}
+			// Birth succeeds, but provider initialization waits for owner cancellation.
+			python, e := exec.LookPath("python3")
+			if e != nil {
+				t.Fatal(e)
+			}
+			script := fmt.Sprintf("#!/bin/sh\nexec %q -u -c 'import sys; sys.stdin.buffer.read()'\n", python)
+			if e = os.WriteFile(filepath.Join(f.root, provider), []byte(script), 0700); e != nil {
+				t.Fatal(e)
+			}
+			startup, cancel := context.WithCancel(ctx)
+			defer cancel()
+			type outcome struct {
+				result core.ResumeAgentResult
+				err    error
+			}
+			returned := make(chan outcome, 1)
+			go func() {
+				r, e := c.ResumeAgent(startup, core.ResumeAgentRequest{Ref: ref, Detach: true, Binding: created.Binding, Prompt: "resume"})
+				returned <- outcome{r, e}
+			}()
+			var activation m.ProcessActivation
+			processCLIUntil(t, ctx, func() bool {
+				reg, e := f.store.LoadReadOnly()
+				if e != nil {
+					t.Fatal(e)
+				}
+				pane, _ := reg.Pane(created.Binding.PaneUID)
+				if pane.Status.Activation.Process == nil || pane.Status.ProcessSession.Binding.Generation == created.Binding.Generation {
+					return false
+				}
+				activation = *pane.Status.Activation.Process
+				return true
+			})
+			cancel()
+			var out outcome
+			select {
+			case out = <-returned:
+			case <-ctx.Done():
+				t.Fatal("born startup cancellation did not settle")
+			}
+			var detail *projmux.ResumeProcessError
+			if !errors.Is(out.err, context.Canceled) || !errors.As(out.err, &detail) || out.result.Binding.Generation != activation.Binding.Generation || detail.Binding != out.result.Binding {
+				t.Fatalf("startup cause/binding lost: result=%+v detail=%+v error=%v", out.result.Binding, detail, out.err)
+			}
+			if strings.Contains(out.err.Error(), "cleanup-unconfirmed") {
+				t.Fatalf("actual retired startup reported unknown cleanup: %v", out.err)
+			}
+			reg, e := f.store.LoadReadOnly()
+			if e != nil {
+				t.Fatal(e)
+			}
+			agent, _ := reg.Agent(created.Agent.Metadata.UID)
+			pane, _ := reg.Pane(created.Binding.PaneUID)
+			if agent.Status.Phase != m.PhaseOffline || !m.MatchesProcessWait(activation.Binding, pane.Status.LastTermination) || !m.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination) || !processActivationAbsent(activation, localipc.Process) {
+				t.Fatal("born cancellation lost exact actual Wait/retirement")
+			}
+		})
 	}
 }
