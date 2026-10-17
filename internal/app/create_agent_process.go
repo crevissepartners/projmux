@@ -858,6 +858,7 @@ func (c *createCommand) runProcessAgentCLI(flags resourceCreateFlags, stdout, st
 	if err = c.writeProcessCreateResult(stdout, stderr, mode, result); err != nil {
 		return c.failProcessCreate(&result, err)
 	}
+	recoverQuestionOutbox([]string{"create", "agent"})
 	return waitCreatedProcessAgent(ctx, cancel, &result, control, processStdinEOFTrigger, stderr)
 }
 

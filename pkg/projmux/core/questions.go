@@ -23,17 +23,21 @@ type QuestionList struct {
 
 // QuestionView is one question record.
 type QuestionView struct {
-	ID          string            `json:"id"`
-	State       QuestionState     `json:"state"`
-	Disposition string            `json:"disposition,omitempty"`
-	CreatedAt   time.Time         `json:"createdAt"`
-	Deadline    time.Time         `json:"deadline"`
-	UpdatedAt   time.Time         `json:"updatedAt"`
-	Prompts     []QuestionPrompt  `json:"prompts"`
-	Answers     map[string]string `json:"answers,omitempty"`
-	Delivery    string            `json:"delivery,omitempty"`
-	CanAnswer   bool              `json:"canAnswer"`
-	CanDecline  bool              `json:"canDecline"`
+	ID             string            `json:"id"`
+	State          QuestionState     `json:"state"`
+	Disposition    string            `json:"disposition,omitempty"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	Deadline       time.Time         `json:"deadline"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+	Prompts        []QuestionPrompt  `json:"prompts"`
+	Answers        map[string]string `json:"answers,omitempty"`
+	OutcomeUnknown bool              `json:"outcomeUnknown,omitempty"`
+	Outcome        string            `json:"outcome,omitempty"`
+	ResultDeadline time.Time         `json:"resultDeadline,omitzero"`
+	ResultReason   string            `json:"resultReason,omitempty"`
+	Delivery       string            `json:"delivery,omitempty"`
+	CanAnswer      bool              `json:"canAnswer"`
+	CanDecline     bool              `json:"canDecline"`
 }
 
 // QuestionPrompt is one question of a record, numbered the way `answer`

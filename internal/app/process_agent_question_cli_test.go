@@ -262,3 +262,164 @@ func TestExactProcessSecretTypedActualCLI(t *testing.T) {
 		})
 	}
 }
+
+// The copied CLI and protocol fixture prove immediate return, unblocked peer
+// delivery, durable expiry, and a single outbox owner. This is not an actual
+// provider acceptance run.
+func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
+	f := newProcessCreateCLI(t)
+	// This fixture completes each peer-triggered turn. The shared default
+	// fixture deliberately opens a synchronous AskUserQuestion on every peer;
+	// that target hold is covered separately and would block this result test.
+	providerPath := filepath.Join(f.root, "provider.py")
+	provider, err := os.ReadFile(providerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider = bytes.Replace(provider, []byte("emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()"), []byte("emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();emit({'type':'result','subtype':'success','session_id':'process-session'});continue"), 1)
+	if err = os.WriteFile(providerPath, provider, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.binary, f.args("--", "initial task")...)
+	input, _ := cmd.StdinPipe()
+	output, _ := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if e := cmd.Start(); e != nil {
+		t.Fatal(e)
+	}
+	waited := false
+	defer func() {
+		_ = input.Close()
+		if !waited {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	line, e := bufio.NewReader(output).ReadString('\n')
+	if e != nil {
+		t.Fatal(e, stderr.String())
+	}
+	ref := strings.Fields(line)[1]
+	uid := strings.TrimPrefix(ref, "uid:")
+	paths, _ := config.DefaultPathsFromEnv()
+	st := agentquestion.NewStore(paths.StateDir).CLIAsyncStore()
+	// Seed a waiting record so the independently owned helper can be waited for
+	// by this fixture; ask's short-lived duplicate must not create another timer.
+	seed, e := st.Create(uid, json.RawMessage(`[{"question":"Owner seed?","options":[{"label":"yes"}]}]`), time.Hour)
+	if e != nil {
+		t.Fatal(e)
+	}
+	readyR, readyW, _ := os.Pipe()
+	defer readyR.Close()
+	owner := exec.CommandContext(ctx, f.binary, "internal", "agent-question-outbox")
+	owner.ExtraFiles = []*os.File{readyW}
+	owner.Env = questionOutboxEnvironment(os.Environ())
+	var ownerErr bytes.Buffer
+	owner.Stderr = &ownerErr
+	if e = owner.Start(); e != nil {
+		t.Fatal(e)
+	}
+	_ = readyW.Close()
+	ownerWaited := false
+	defer func() {
+		if !ownerWaited {
+			_ = owner.Process.Kill()
+			_ = owner.Wait()
+		}
+	}()
+	var ready [1]byte
+	if _, e = readyR.Read(ready[:]); e != nil || ready[0] != '1' {
+		t.Fatal(e)
+	}
+	ask := exec.CommandContext(ctx, f.binary, "agent", "question", "ask", ref, "--questions", `[{"question":"Continue work?","options":[{"label":"yes (Recommended)"}]}]`, "--expires-in", "10s", "-o", "json")
+	raw, e := ask.CombinedOutput()
+	if e != nil {
+		t.Fatal(string(raw), e)
+	}
+	var asked agentquestion.Record
+	if e = json.Unmarshal(raw, &asked); e != nil || asked.Delivery != "async-message" {
+		t.Fatalf("ask %s %v", raw, e)
+	}
+	// Peer delivery proceeds while the question is waiting, with no answer.
+	var peer []byte
+	processCLIUntil(t, ctx, func() bool {
+		peer, e = exec.CommandContext(ctx, f.binary, "agent", "message", "send", ref, "--source", ref, "--message-ref", "message-open-question-peer", "--", "peer while question open").CombinedOutput()
+		return e == nil
+	})
+	processCLIUntil(t, ctx, func() bool {
+		peer, e = exec.CommandContext(ctx, f.binary, "agent", "message", "status", "message-open-question-peer", "-o", "json").CombinedOutput()
+		return e == nil && bytes.Contains(peer, []byte(`"state":"delivered"`))
+	})
+	if waiting, _, e := st.Get(asked.ID); e != nil || waiting.State != agentquestion.StateWaiting {
+		t.Fatal("peer did not arrive during open question", waiting, e)
+	}
+	expired := false
+	defer func() {
+		if t.Failed() {
+			r, _, err := st.Get(asked.ID)
+			t.Logf("expiry record=%+v error=%v owner=%s provider=%s", r, err, ownerErr.String(), stderr.String())
+		}
+	}()
+	processCLIUntil(t, ctx, func() bool {
+		r, found, e := st.Get(asked.ID)
+		expired = found && r.State == agentquestion.StateExpired && r.ResultReason == "expired" && r.Outcome == "delivered"
+		return e == nil && expired
+	})
+	declineRaw, err := exec.CommandContext(ctx, f.binary, "agent", "question", "ask", ref, "--questions", `[{"question":"Decline this?","options":[{"label":"yes"}]}]`).CombinedOutput()
+	if err != nil {
+		t.Fatal(string(declineRaw), err)
+	}
+	declined := agentquestion.Record{ID: strings.TrimSpace(string(declineRaw))}
+	if !agentquestion.ValidID(declined.ID) {
+		t.Fatalf("plain ask output is not one ID: %q", declineRaw)
+	}
+	saved, found, err := st.Get(declined.ID)
+	if err != nil || !found || saved.Deadline.Sub(saved.CreatedAt) != 24*time.Hour {
+		t.Fatal("default lifetime", saved, err)
+	}
+	if raw, e = exec.CommandContext(ctx, f.binary, "agent", "question", "answer", ref, seed.ID, "--index", "1=1").CombinedOutput(); e != nil {
+		t.Fatal(string(raw), e)
+	}
+	if raw, e = exec.CommandContext(ctx, f.binary, "agent", "question", "decline", ref, declined.ID).CombinedOutput(); e != nil {
+		t.Fatal(string(raw), e)
+	}
+	if e = owner.Wait(); e != nil {
+		ownerWaited = true
+		t.Fatal(e, ownerErr.String())
+	}
+	ownerWaited = true
+	// Actual Wait of both owned processes, and released owner election, are the
+	// cleanup evidence; no fixture daemon survives its private HOME.
+	release, owned, e := st.LockOwner()
+	if e != nil || !owned {
+		t.Fatalf("owner leak %v %v", owned, e)
+	}
+	release()
+	_ = input.Close()
+	if e = cmd.Wait(); e != nil {
+		waited = true
+		t.Fatal(e, stderr.String())
+	}
+	waited = true
+	records, e := st.List(uid)
+	if e != nil || len(records) != 3 {
+		t.Fatal(records, e)
+	}
+	wire, err := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{seed.ID, asked.ID, declined.ID, "Owner seed?", "answered", "expired", "declined"} {
+		if !bytes.Contains(wire, []byte(text)) {
+			t.Fatalf("provider fixture did not receive result %q", text)
+		}
+	}
+	for _, r := range records {
+		if r.Pending() {
+			t.Fatal("unsettled fixture outbox", r)
+		}
+	}
+}

@@ -67,6 +67,7 @@ func (c *agentCommand) runProcessResumeCLI(agent coremetadata.Agent, flags resou
 	for _, notice := range notices {
 		notice.writeForMode(stderr, mode)
 	}
+	c.recoverQuestionOwner()
 	return result.ownedWait(syncChanged, syncControls, syncAttention).run(ctx, cancel, processStdinEOFTrigger, stderr)
 }
 

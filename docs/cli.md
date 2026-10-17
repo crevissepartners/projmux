@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 252 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 253 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -140,6 +140,7 @@ projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-js
 projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]
 projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent question ask <agent-ref> --questions <JSON-array> [--expires-in <duration>] [-o json]
 projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
 projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent question decline <agent-ref> <question-id> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
@@ -170,7 +171,7 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent status`
 
@@ -845,6 +846,7 @@ Allowed effects:
 ```
 projmux agent question enable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent question ask <agent-ref> --questions <JSON-array> [--expires-in <duration>] [-o json]
 projmux agent question list <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o json]
 projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]... [--index <n>=<k>]... [--text <n>=<text>]... [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent question decline <agent-ref> <question-id> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
@@ -856,11 +858,12 @@ Subcommands:
 | --- | --- |
 | [`projmux agent question enable`](#projmux-agent-question-enable) | Deprecated compatibility command; questions follow the global setting; no effect |
 | [`projmux agent question disable`](#projmux-agent-question-disable) | Deprecated compatibility command; questions follow the global setting; no effect |
+| [`projmux agent question ask`](#projmux-agent-question-ask) | Record an asynchronous question and return immediately; results arrive as peer messages |
 | [`projmux agent question list`](#projmux-agent-question-list) | List one exact Claude or Codex Agent's waiting and recent questions |
 | [`projmux agent question answer`](#projmux-agent-question-answer) | Answer one waiting question by option label, option number, or explicit free text |
-| [`projmux agent question decline`](#projmux-agent-question-decline) | Decline the whole async Codex question set and submit an operator non-answer notice |
+| [`projmux agent question decline`](#projmux-agent-question-decline) | Decline a CLI async or native async Codex question set |
 
-Canonical spelling: `projmux agent question enable`, `projmux agent question disable`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`
+Canonical spelling: `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`
 
 #### `projmux agent question enable`
 
@@ -903,6 +906,29 @@ Allowed effects:
 ```
 projmux agent question disable <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
+
+#### `projmux agent question ask`
+
+Record an asynchronous question and return immediately; results arrive as peer messages
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent question ask <agent-ref> --questions <JSON-array> [--expires-in <duration>] [-o json]
+```
+
+Output modes (`-o`): `json`
 
 #### `projmux agent question list`
 
@@ -950,7 +976,7 @@ projmux agent question answer <agent-ref> <question-id> [--option <n>=<label>]..
 
 #### `projmux agent question decline`
 
-Decline the whole async Codex question set and submit an operator non-answer notice
+Decline a CLI async or native async Codex question set
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 

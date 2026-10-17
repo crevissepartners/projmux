@@ -425,6 +425,7 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		}
 	}
 	writeRelaunchLifecycleNotices(stderr, request)
+	c.recoverQuestionOwner()
 	return runProcessRelaunchOwner(ctx, cancel, &owned, sync, processStdinEOFTrigger)
 }
 
