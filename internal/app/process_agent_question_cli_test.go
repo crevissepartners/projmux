@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
 // Initial create payload is the only input trigger. All provider processes,
@@ -334,6 +336,24 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	if _, e = readyR.Read(ready[:]); e != nil || ready[0] != '1' {
 		t.Fatal(e)
 	}
+	// A waiting seed keeps this owner live for the Linux/macOS full-argv
+	// discovery control. Missing/truncated ps output must not mean absence.
+	ownerIdentity, _, e := localipc.Process(owner.Process.Pid)
+	if e != nil {
+		t.Fatal(e)
+	}
+	initial, e := asyncQuestionOutboxIdentities(ctx, f.binary)
+	if e != nil {
+		t.Fatal(e)
+	}
+	ownerFound := false
+	for _, identity := range initial {
+		ownerFound = ownerFound || identity == ownerIdentity
+	}
+	if !ownerFound {
+		t.Fatal("ready outbox owner missing from full-argv discovery", ownerIdentity)
+	}
+	t.Logf("ready outbox full-argv control identity=%+v", ownerIdentity)
 	ask := exec.CommandContext(ctx, f.binary, "agent", "question", "ask", ref, "--questions", `[{"question":"Continue work?","options":[{"label":"yes (Recommended)"}]}]`, "--expires-in", "10s", "-o", "json")
 	raw, e := ask.CombinedOutput()
 	if e != nil {
@@ -391,19 +411,26 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 		t.Fatal(e, ownerErr.String())
 	}
 	ownerWaited = true
-	// Actual Wait of both owned processes, and released owner election, are the
-	// cleanup evidence; no fixture daemon survives its private HOME.
-	release, owned, e := st.LockOwner()
-	if e != nil || !owned {
-		t.Fatalf("owner leak %v %v", owned, e)
-	}
-	release()
+	// Close the last spawn-capable caller, including its return-time recovery.
+	// All short-lived question commands have also actually Waited; each helper
+	// launch returns only after admission. No new launch remains behind this
+	// fixture boundary. Non-owned helpers below are observed, never Waited.
 	_ = input.Close()
 	if e = cmd.Wait(); e != nil {
 		waited = true
 		t.Fatal(e, stderr.String())
 	}
 	waited = true
+	late := asyncQuestionLateHolder(t, paths.StateDir, st.Path())
+	known := append([]coremetadata.ProcessIdentity(nil), initial...)
+	if late != nil {
+		known = append(known, *late)
+	}
+	release, owned, e := asyncQuestionWaitOutboxRetirement(t, ctx, st, f.binary, known, late)
+	if e != nil || !owned {
+		t.Fatalf("owner leak %v %v", owned, e)
+	}
+	release()
 	records, e := st.List(uid)
 	if e != nil || len(records) != 3 {
 		t.Fatal(records, e)
@@ -420,6 +447,484 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	for _, r := range records {
 		if r.Pending() {
 			t.Fatal("unsettled fixture outbox", r)
+		}
+	}
+}
+
+type asyncQuestionHolderReady struct {
+	Identity  coremetadata.ProcessIdentity `json:"identity"`
+	StorePath string                       `json:"storePath"`
+	LockPath  string                       `json:"lockPath"`
+}
+
+// This controlled holder models the admitted late helper's lock interval. It
+// does not prove that any historical CI failure followed this exact sequence.
+func TestCLIAsyncQuestionLateOwnerRetirement(t *testing.T) {
+	if root := os.Getenv("PMX_TEST_QUESTION_HOLDER"); root != "" {
+		// TestMain restores liveguard's default XDG paths on every re-exec.
+		// Use the explicit fixture input instead of those default locations.
+		stateDir := os.Getenv("PMX_TEST_QUESTION_STATE_DIR")
+		if stateDir == "" || !filepath.IsAbs(stateDir) {
+			t.Fatal("controlled holder requires an absolute fixture state directory")
+		}
+		store := agentquestion.NewStore(stateDir).CLIAsyncStore()
+		release, owned, err := store.LockOwner()
+		if err != nil || !owned {
+			t.Fatalf("late holder lock %v %v", owned, err)
+		}
+		held := true
+		defer func() {
+			if held {
+				release()
+			}
+		}()
+		identity, _, err := localipc.Process(os.Getpid())
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(asyncQuestionHolderReady{Identity: identity, StorePath: store.Path(), LockPath: store.Path() + ".owner"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		asyncQuestionMarker(t, root, "ready", raw)
+		ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+		defer cancel()
+		processCLIUntil(t, ctx, func() bool {
+			_, err := os.Stat(filepath.Join(root, "release"))
+			return err == nil
+		})
+		release()
+		held = false
+		asyncQuestionMarker(t, root, "unlocked", nil)
+		processCLIUntil(t, ctx, func() bool {
+			_, err := os.Stat(filepath.Join(root, "retire"))
+			return err == nil
+		})
+		return
+	}
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("copied product binary required")
+	}
+	for _, stuck := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stuck=%v", stuck), func(t *testing.T) {
+			root := t.TempDir()
+			binary, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, binary, "-test.run=^TestCLIAsyncQuestionActualCLIIsolated$", "-test.v")
+			child.WaitDelay = time.Second
+			child.Env = append(os.Environ(), "PMX_TEST_QUESTION_RETIREMENT="+root)
+			type result struct {
+				out []byte
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				out, err := child.CombinedOutput() // actual Wait of the original body
+				done <- result{out, err}
+			}()
+			waited := false
+			// Run before defer cancel: a parent Fatal must release the fixture
+			// barriers and consume the one actual Wait result, too.
+			defer func() {
+				if !waited {
+					for _, name := range []string{"release", "retire"} {
+						if err := os.WriteFile(filepath.Join(root, name), nil, 0600); err != nil {
+							t.Errorf("parent cleanup %s: %v", name, err)
+						}
+					}
+					select {
+					case r := <-done:
+						waited = true
+						t.Logf("parent cleanup original body actual Wait=%v\n%s", r.err, r.out)
+					case <-time.After(5 * time.Second):
+						cancel()
+						select {
+						case r := <-done:
+							waited = true
+							t.Errorf("parent cleanup required cancellation; actual Wait=%v\n%s", r.err, r.out)
+						case <-time.After(5 * time.Second):
+							t.Error("parent cleanup original body actual Wait not observed")
+						}
+					}
+				}
+				// This grandchild is not ours to Wait. Observe its recorded birth
+				// retiring in the kernel; never turn a read error into absence.
+				raw, err := os.ReadFile(filepath.Join(root, "ready"))
+				if os.IsNotExist(err) {
+					t.Log("holder identity was not published; no grandchild absence claim")
+					return
+				}
+				var ready asyncQuestionHolderReady
+				decodeErr := json.Unmarshal(raw, &ready)
+				identity := ready.Identity
+				if err != nil || decodeErr != nil || identity.PID <= 0 || identity.Start == "" {
+					t.Errorf("parent cleanup holder identity unreadable: %v", err)
+					return
+				}
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					current, _, err := localipc.Process(identity.PID)
+					if err == localipc.ErrProcessAbsent || err == nil && current != identity {
+						t.Logf("parent cleanup holder kernel retirement=%+v (not Wait)", identity)
+						return
+					}
+					if err != nil || !time.Now().Before(deadline) {
+						t.Errorf("parent cleanup holder retirement unproven: identity=%+v current=%+v error=%v", identity, current, err)
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}()
+			observed := false
+			for {
+				select {
+				case r := <-done:
+					waited = true
+					if raw, err := os.ReadFile(filepath.Join(root, "observed")); err == nil {
+						observed = string(raw) == "false <nil>"
+					}
+					// The child also performs release/Wait on its owned holder.
+					t.Logf("original body actual Wait=%v\n%s", r.err, r.out)
+					if !observed || !bytes.Contains(r.out, []byte("late holder identity=")) {
+						t.Fatal("late lock ordering was not observed")
+					}
+					if stuck {
+						if r.err == nil || !bytes.Contains(r.out, []byte("owner leak false <nil>")) {
+							t.Fatal("persistent owner lock was not rejected")
+						}
+					} else {
+						if r.err != nil {
+							t.Fatal("late owner retirement rejected by original body")
+						}
+						if _, err := os.Stat(filepath.Join(root, "retirement-blocked")); err != nil {
+							t.Fatal("lock release alone bypassed helper retirement")
+						}
+					}
+					return
+				case <-time.After(10 * time.Millisecond):
+					if raw, err := os.ReadFile(filepath.Join(root, "observed")); err == nil {
+						observed = string(raw) == "false <nil>"
+						if !stuck {
+							asyncQuestionMarker(t, root, "release", nil)
+							// The holder then stays alive without the lock. Only an
+							// observed retirement barrier may let it exit.
+							if _, err := os.Stat(filepath.Join(root, "retirement-blocked")); err == nil {
+								asyncQuestionMarker(t, root, "retire", nil)
+							}
+						}
+					}
+				case <-ctx.Done():
+					t.Fatal("original body did not finish before parent deadline")
+				}
+			}
+		})
+	}
+}
+
+func asyncQuestionMarker(t *testing.T, root, name string, data []byte) {
+	t.Helper()
+	file, err := os.CreateTemp(root, name+"-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(file.Name(), filepath.Join(root, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func asyncQuestionLateHolder(t *testing.T, stateDir, storePath string) *coremetadata.ProcessIdentity {
+	t.Helper()
+	root := os.Getenv("PMX_TEST_QUESTION_RETIREMENT")
+	if root == "" {
+		return nil
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(binary, "-test.run=^TestCLIAsyncQuestionLateOwnerRetirement$", "-test.v")
+	if stateDir == "" || !filepath.IsAbs(stateDir) || !filepath.IsAbs(storePath) {
+		t.Fatal("late holder requires absolute fixture state/store paths")
+	}
+	cmd.Env = append(os.Environ(), "PMX_TEST_QUESTION_HOLDER="+root, "PMX_TEST_QUESTION_STATE_DIR="+stateDir)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Own this child, release it on all failure paths, and actually reap it.
+	t.Cleanup(func() {
+		for _, name := range []string{"release", "retire"} {
+			if err := os.WriteFile(filepath.Join(root, name), nil, 0600); err != nil {
+				t.Errorf("controlled holder cleanup %s: %v", name, err)
+			}
+		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			t.Logf("controlled holder actual Wait=%v\n%s", err, output.String())
+			if err != nil {
+				t.Error("controlled holder failed")
+			}
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			err := <-done
+			t.Errorf("controlled holder cleanup required kill; actual Wait=%v", err)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var ready asyncQuestionHolderReady
+	processCLIUntil(t, ctx, func() bool {
+		raw, err := os.ReadFile(filepath.Join(root, "ready"))
+		return err == nil && json.Unmarshal(raw, &ready) == nil
+	})
+	if ready.StorePath != storePath || ready.LockPath != storePath+".owner" {
+		t.Fatalf("late holder namespace mismatch: ready=%+v expected store=%s lock=%s", ready, storePath, storePath+".owner")
+	}
+	identity := ready.Identity
+	current, _, err := localipc.Process(cmd.Process.Pid)
+	if err != nil || current != identity || identity.PID != cmd.Process.Pid {
+		t.Fatalf("late holder identity mismatch %+v %+v %v", identity, current, err)
+	}
+	t.Logf("late holder identity=%+v store=%s lock=%s after first owner actual Wait", identity, ready.StorePath, ready.LockPath)
+	return &identity
+}
+
+func asyncQuestionLockObserved(t *testing.T, owned bool, err error) {
+	t.Helper()
+	if root := os.Getenv("PMX_TEST_QUESTION_RETIREMENT"); root != "" && !owned && err == nil {
+		asyncQuestionMarker(t, root, "observed", fmt.Appendf(nil, "%v %v", owned, err))
+	}
+}
+
+// asyncQuestionOutboxPIDs reads the same wide command column on Linux/macOS.
+// The live seed-owner control verifies the fixed full argv on the host. This
+// inventory is scoped to a unique copied binary and closed launch boundary;
+// it makes no claim about unrelated helpers or their historical existence.
+func asyncQuestionOutboxPIDs(ctx context.Context, binary string) (map[int]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "ps", "-axww", "-o", "pid=", "-o", "command=")
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("outbox full-argv inventory: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || raw[len(raw)-1] != '\n' {
+		return nil, fmt.Errorf("outbox full-argv inventory empty or incomplete")
+	}
+	expected := binary + " internal agent-question-outbox"
+	found := map[int]bool{}
+	for row := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+		row = strings.TrimSpace(row)
+		fields := strings.Fields(row)
+		if len(fields) < 2 {
+			return nil, fmt.Errorf("outbox inventory row lacks PID/command")
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			return nil, fmt.Errorf("outbox inventory PID invalid")
+		}
+		command := strings.TrimSpace(row[len(fields[0]):])
+		if command == expected {
+			if found[pid] {
+				return nil, fmt.Errorf("outbox inventory duplicate PID %d", pid)
+			}
+			found[pid] = true
+		} else if strings.HasPrefix(expected, command) || strings.HasPrefix(command, expected) {
+			return nil, fmt.Errorf("outbox argv incomplete or ambiguous for PID %d", pid)
+		}
+	}
+	return found, nil
+}
+
+// Confirm argv around kernel birth reads. A terminal/zombie identity reported
+// absent by localipc is kernel inactivity, not PID removal or an actual Wait.
+func asyncQuestionOutboxIdentities(ctx context.Context, binary string) ([]coremetadata.ProcessIdentity, error) {
+	for {
+		first, err := asyncQuestionOutboxPIDs(ctx, binary)
+		if err != nil {
+			return nil, err
+		}
+		identities := map[int]coremetadata.ProcessIdentity{}
+		for pid := range first {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			identity, _, err := localipc.Process(pid)
+			if err == localipc.ErrProcessAbsent {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("outbox identity PID %d: %w", pid, err)
+			}
+			identities[pid] = identity
+		}
+		second, err := asyncQuestionOutboxPIDs(ctx, binary)
+		if err != nil {
+			return nil, err
+		}
+		changed := false
+		for pid := range second {
+			changed = changed || !first[pid]
+		}
+		if changed {
+			continue // discover the new candidate within the same original ctx
+		}
+		var result []coremetadata.ProcessIdentity
+		for pid, identity := range identities {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			current, _, err := localipc.Process(pid)
+			if err == localipc.ErrProcessAbsent {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("outbox identity recheck PID %d: %w", pid, err)
+			}
+			if current != identity || !second[pid] {
+				return nil, fmt.Errorf("outbox argv/birth changed for PID %d", pid)
+			}
+			result = append(result, identity)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+}
+
+func asyncQuestionIdentityActive(ctx context.Context, identity coremetadata.ProcessIdentity) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	current, _, err := localipc.Process(identity.PID)
+	if ended := ctx.Err(); ended != nil {
+		return false, ended
+	}
+	if err == localipc.ErrProcessAbsent {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return current == identity, nil
+}
+
+func asyncQuestionWaitOutboxRetirement(t *testing.T, ctx context.Context, st *agentquestion.CLIAsyncStore, binary string, known []coremetadata.ProcessIdentity, late *coremetadata.ProcessIdentity) (func(), bool, error) {
+	t.Helper()
+	identities, err := asyncQuestionOutboxIdentities(ctx, binary)
+	if err != nil {
+		return nil, false, err
+	}
+	known = append(known, identities...)
+	t.Logf("closed launch boundary outbox identities=%+v; known=%+v", identities, known)
+	active := func() (bool, error) {
+		for _, identity := range known {
+			alive, err := asyncQuestionIdentityActive(ctx, identity)
+			if err != nil || alive {
+				return alive, err
+			}
+		}
+		return false, nil
+	}
+	deadline := func() (func(), bool, error) {
+		t.Logf("outbox retirement deadline: %v; known=%+v", ctx.Err(), known)
+		return nil, false, nil // preserve the original owner leak false,nil FAIL
+	}
+	for {
+		if ctx.Err() != nil {
+			return deadline()
+		}
+		release, owned, err := st.LockOwner()
+		asyncQuestionLockObserved(t, owned, err)
+		if err != nil {
+			return nil, false, err
+		}
+		if owned {
+			alive, err := active()
+			if err != nil {
+				release()
+				if ctx.Err() != nil {
+					return deadline()
+				}
+				return nil, false, err
+			}
+			if !alive {
+				// A completion candidate must pass one more full discovery. Add
+				// newly seen identities and wait again instead of assuming empty.
+				latest, err := asyncQuestionOutboxIdentities(ctx, binary)
+				if err != nil {
+					release()
+					if ctx.Err() != nil {
+						return deadline()
+					}
+					return nil, false, err
+				}
+				for _, identity := range latest {
+					found := false
+					for _, previous := range known {
+						found = found || identity == previous
+					}
+					if !found {
+						known = append(known, identity)
+						t.Logf("final scan discovered outbox identity=%+v", identity)
+					}
+				}
+				alive, err = active()
+				if err != nil || ctx.Err() != nil {
+					release()
+					if ctx.Err() != nil {
+						return deadline()
+					}
+					return nil, false, err
+				}
+				if !alive {
+					t.Logf("known outbox identities kernel-inactive (not Wait): %+v", known)
+					return release, true, nil
+				}
+			}
+			retirementBlocked := false
+			if late != nil {
+				alive, err := asyncQuestionIdentityActive(ctx, *late)
+				if err != nil {
+					release()
+					if ctx.Err() != nil {
+						return deadline()
+					}
+					return nil, false, err
+				}
+				retirementBlocked = alive
+			}
+			release()
+			if retirementBlocked {
+				// The probe succeeded while this exact holder was alive. Release
+				// before publishing: even a marker Fatal must not retain our lock.
+				asyncQuestionMarker(t, os.Getenv("PMX_TEST_QUESTION_RETIREMENT"), "retirement-blocked", nil)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return deadline()
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }
