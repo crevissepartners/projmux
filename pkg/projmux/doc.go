@@ -93,6 +93,10 @@
 //
 // Profile types live in core. ListProfiles returns the CLI table cells verbatim,
 // including "-" blanks, and optionally resolves one explicit Project name/uid:.
+// ParseProfile checks supplied TOML without reading storage and returns typed
+// ProfileSpec values. PreviewProfile applies storage admission without writes
+// or reservations; a later WriteProfile repeats the checks. Both return no
+// partial result on errors and honor context cancellation.
 // ReadProfile preserves raw TOML bytes. WriteProfile keeps the existing validation,
 // scope immutability, role claims, size limit and private permissions. DeleteProfile
 // requires confirm=true (CLI --yes); it performs no running-Agent usage check.

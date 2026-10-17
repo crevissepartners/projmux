@@ -147,6 +147,8 @@ func outcomeReason(class CommandClass, err error, registry *CommandOutcomeReason
 //     write.
 //   - Global guidance read/validate are strict no-write editing operations,
 //     including candidate, filesystem and usage failures.
+//   - Profile parse/preview are strict write-free operations, including
+//     validation and I/O failures.
 func JournalForbidden(args []string) bool {
 	if len(args) >= 3 && args[0] == "agent" && args[1] == "guidance" && (args[2] == "read" || args[2] == "validate") {
 		return true
@@ -155,7 +157,8 @@ func JournalForbidden(args []string) bool {
 		return true
 	}
 	class := Classify(args)
-	return class.Command == "doctor" || (class.Command == "diagnostics" && class.Subcommand == "report")
+	return class.Command == "doctor" || (class.Command == "diagnostics" && class.Subcommand == "report") ||
+		(class.Command == "profile" && (class.Subcommand == "parse" || class.Subcommand == "preview"))
 }
 
 func retiredCLINoWrite(args []string) bool {

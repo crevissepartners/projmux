@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/services/profiles"
 )
 
-// profileCommand implements `projmux profile list|show|set|delete`.
+// profileCommand implements `projmux profile list|show|parse|preview|set|delete`.
 //
 // A profile is a file, not a Registry resource, so like `instructions` it is a
 // noun group of its own. Every path, name rule, size limit, validation, and
@@ -62,6 +63,10 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runList(rest, stdout, stderr)
 	case "show":
 		return c.runShow(rest, stdout, stderr)
+	case "parse":
+		return c.runInspect("profile parse", rest, stdout, stderr)
+	case "preview":
+		return c.runInspect("profile preview", rest, stdout, stderr)
 	case "set":
 		return c.runSet(rest, stdout, stderr)
 	case "delete":
@@ -216,4 +221,69 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 	}
 	_, err = fmt.Fprintf(stdout, "deleted profile %s\n", name)
 	return err
+}
+
+// runInspect keeps input bounded and checks a preview name before reading stdin.
+func (c *profileCommand) runInspect(spelling string, args []string, stdout, stderr io.Writer) error {
+	preview := spelling == "profile preview"
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	setRouteUsage(fs)
+	file := fs.String("file", "", "read the profile from this file; - reads stdin")
+	operands, err := parseWithPositionals(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
+	}
+	want := 0
+	if preview {
+		want = 1
+	}
+	if len(operands) != want {
+		if preview {
+			printRouteUsage(stderr, "profile preview")
+			return usageError("profile preview requires exactly one <name>")
+		}
+		printRouteUsage(stderr, "profile parse")
+		return usageError("profile parse requires no positional arguments")
+	}
+	name := ""
+	if preview {
+		name = operands[0]
+		if err := profile.ValidateName(name); err != nil {
+			return profileRefusal(spelling, err)
+		}
+	}
+	source := c.stdin
+	if source == nil {
+		source = os.Stdin
+	}
+	if *file != "" && *file != "-" {
+		opened, err := personacmd.OpenFileUnderParent(*file)
+		if err != nil {
+			return fmt.Errorf("%s: %w", spelling, err)
+		}
+		defer opened.Close()
+		source = opened
+	}
+	content, err := profile.ReadLimited(source)
+	if err != nil {
+		var refusal *profile.Error
+		if errors.As(err, &refusal) {
+			refusal.Name = name
+		}
+		return profileRefusal(spelling, err)
+	}
+	var result any
+	if !preview {
+		result, err = c.service().ParseContent(context.Background(), content)
+	} else {
+		result, err = c.service().Preview(context.Background(), name, content)
+	}
+	if err != nil {
+		return profileRefusal(spelling, err)
+	}
+	return json.NewEncoder(stdout).Encode(result)
 }

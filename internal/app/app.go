@@ -721,6 +721,11 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	// root is gone entirely; stale unmanaged producer argv must fail before any
 	// automatic migration or other mutation.
 	switch args[0] {
+	case "profile":
+		// Inspection must leave legacy hooks untouched, even on malformed input.
+		if len(args) >= 2 && (args[1] == "parse" || args[1] == "preview") {
+			return false
+		}
 	case "ai":
 		return false
 	case "agent":

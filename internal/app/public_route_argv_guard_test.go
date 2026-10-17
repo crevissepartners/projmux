@@ -197,6 +197,7 @@ var publicRouteArgvOperandRoutes = []string{
 	"link-rules set",
 	"link-rules delete",
 	"profile show",
+	"profile preview",
 	"profile set",
 	"profile delete",
 	"pin project add",

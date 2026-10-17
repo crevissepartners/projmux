@@ -90,3 +90,30 @@ func profileRefusal(err error) error {
 	}
 	return err
 }
+
+// ParseProfile validates UTF-8, the 64 KiB limit and the current profile
+// vocabulary without reading storage or the Registry. No partial spec is returned
+// on failure. Named instructions need not exist for pure parsing.
+func (c *Client) ParseProfile(ctx context.Context, content []byte) (core.ProfileSpec, error) {
+	spec, err := c.profileService().ParseContent(ctx, content)
+	if err != nil {
+		return core.ProfileSpec{}, profileRefusal(err)
+	}
+	return profileSpec(spec), nil
+}
+
+// PreviewProfile applies WriteProfile's name, size, parse, instructions, role
+// and scope checks without writing files, migrations, locks or the Registry.
+// It reserves nothing: a later WriteProfile checks the current store again.
+func (c *Client) PreviewProfile(ctx context.Context, name string, content []byte) (core.ProfilePreview, error) {
+	p, err := c.profileService().Preview(ctx, name, content)
+	if err != nil {
+		return core.ProfilePreview{}, profileRefusal(err)
+	}
+	return core.ProfilePreview{Name: p.Name, Digest: p.Digest, Size: p.Size, Spec: profileSpec(p.Spec), DryRun: p.DryRun}, nil
+}
+
+func profileSpec(s profiles.Spec) core.ProfileSpec {
+	return core.ProfileSpec{Project: s.Project, Provider: s.Provider, Instructions: s.Instructions,
+		Model: s.Model, Effort: s.Effort, Roles: s.Roles, Permissions: core.ProfilePermissions(s.Permissions)}
+}

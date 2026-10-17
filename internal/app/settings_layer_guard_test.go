@@ -170,6 +170,8 @@ var settingsLayerGuardArgv = [][]string{
 	{"link-rules", "set", "alpha", "--file", "{tmp}/link-rules.json", "--dry-run"},
 	{"link-rules", "delete", "alpha", "--yes"},
 	{"profile", "list"},
+	{"profile", "parse", "--file", "{tmp}/profile.toml"},
+	{"profile", "preview", "candidate", "--file", "{tmp}/profile.toml"},
 	{"profile", "set", "reviewer", "--file", "{tmp}/profile.toml"},
 	{"profile", "show", "reviewer"},
 	{"profile", "delete", "reviewer", "--yes"},
