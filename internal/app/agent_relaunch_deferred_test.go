@@ -210,13 +210,16 @@ func deferredCandidate(t *testing.T, f processCreateCLI, ref string) processResu
 
 // SessionStart can write a session before stream init. Require the owned host
 // to report ready and its exact endpoint to qualify before Stop or peer use.
-func deferredReady(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
+func deferredReady(t *testing.T, ctx context.Context, f processCreateCLI, ref string, beforeObserve ...func(coremetadata.Registry)) {
 	t.Helper()
 	uid := strings.TrimPrefix(ref, "uid:")
 	d := newClaudeReadinessTrace()
 	for {
 		d.Iteration++
 		reg := mustRegistry(t, f)
+		for _, before := range beforeObserve {
+			before(reg)
+		}
 		pane, _ := processResumePane(reg, uid)
 		if d.check("pane-present", pane != nil) && d.check("session-record-present", pane.Status.ProcessSession != nil) {
 			s := pane.Status.ProcessSession
@@ -1193,7 +1196,42 @@ func TestDeferredClaudePromptRelaunchTransitionActualCLI(t *testing.T) {
 }
 
 func TestDeferredClaudeAbsentLaunchReservationRaceActualCLI(t *testing.T) {
+	testDeferredClaudeAbsentLaunchReservationRaceActualCLI(t, false)
+}
+
+func TestDeferredClaudeAbsentLaunchReservationRaceHostReadDeadlineActualCLI(t *testing.T) {
+	product := os.Getenv("PMX_TEST_CLAUDE_REGRESSION_CLI")
+	if product == "" {
+		if os.Getenv("PMX_TEST_CLI") != "" {
+			t.Fatal("missing tagged regression CLI; refusing ordinary CLI fallback")
+		}
+		t.Skip("set PMX_TEST_CLAUDE_REGRESSION_CLI to the tagged copied CLI")
+	}
+	t.Setenv("PMX_TEST_CLI", product)
+	testDeferredClaudeAbsentLaunchReservationRaceActualCLI(t, true)
+}
+
+func testDeferredClaudeAbsentLaunchReservationRaceActualCLI(t *testing.T, regression bool) {
 	f := deferredRelaunchFixture(t)
+	var control string
+	if regression {
+		control = filepath.Join(f.root, "regression")
+		if err := os.Mkdir(control, 0700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PMX_TEST_CLAUDE_REGRESSION_CONTROL", control)
+		// Provider environments drop PMX_ variables; export the private control
+		// from this fixture wrapper, as in the existing detached regression.
+		wrapper := filepath.Join(f.root, "claude")
+		raw, err := os.ReadFile(wrapper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = bytes.Replace(raw, []byte("#!/bin/sh\n"), fmt.Appendf(nil, "#!/bin/sh\nexport PMX_TEST_CLAUDE_REGRESSION_CONTROL=%q\n", control), 1)
+		if err := os.WriteFile(wrapper, raw, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--profile", "none", "--", "initial"))
@@ -1269,7 +1307,33 @@ func TestDeferredClaudeAbsentLaunchReservationRaceActualCLI(t *testing.T) {
 		t.Fatal("saved launch missing after refusal", err)
 	}
 	resumed := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "race recovery"})
-	deferredReady(t, ctx, f, first.ref)
+	var beforeObserve []func(coremetadata.Registry)
+	armed := false
+	if regression {
+		beforeObserve = append(beforeObserve, func(reg coremetadata.Registry) {
+			if armed {
+				return
+			}
+			pane, ambiguous := processResumePane(reg, uid)
+			if ambiguous || pane == nil || pane.Status.Activation.Process == nil || pane.Status.ProcessSession == nil {
+				return
+			}
+			activation := pane.Status.Activation.Process
+			current, provider, valid := reg.CurrentProcessActivation(activation.Binding)
+			if !valid || provider != aiModeClaude || pane.Status.ProcessSession.Binding != activation.Binding || pane.Status.ProcessSession.SessionID != candidate.Record.SessionID {
+				return
+			}
+			// Reuse this iteration's Registry snapshot: no extra read, RPC,
+			// poll, or timeout. The existing host gate proves Ready selection.
+			proof := claudeProcessProof{Binding: processSchemaBinding(activation.Binding), Process: current.Child, HostProcess: current.HostProcess, Session: pane.Status.ProcessSession.SessionID}
+			exerciseClaudeHostReadDeadlineCLI(t, ctx, f, proof, control)
+			armed = true
+		})
+	}
+	deferredReady(t, ctx, f, first.ref, beforeObserve...)
+	if regression && !armed {
+		t.Fatal("native host read deadline barrier was not completed")
+	}
 	resumed.shutdown(t)
 	if retained, err := c.readDeferredLaunch(uid); err != nil || retained != nil {
 		t.Fatal("race refusal left an unusable deferred launch", err)

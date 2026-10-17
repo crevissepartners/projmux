@@ -68,6 +68,21 @@ for a shorter critical path; runner time and wall time must be measured separate
   missing receipts and non-exclusive decisions fail the regression. Ordinary
   builds contain no control environment/filesystem reads or waiting, and the
   tagged build without the control variable follows the original transport.
+  The deferred Claude absent-launch reservation race also runs its original
+  scenario body with the tagged CLI. After final resume admission, a one-shot
+  hook uses a Registry snapshot from the original `deferredReady` loop once
+  the current activation and frozen session match. It reuses the same native
+  deadline and clear-or-retain completion barrier before the original readiness
+  evaluation. The hook adds no RPC, Registry polling loop or timeout; ordinary
+  calls have no hook. All original readiness predicates, their evaluation order
+  and the 40-second context remain unchanged.
+  The controlled case also requires the barrier to complete; readiness alone
+  cannot pass a run that never injected the deadline.
+  `TestDeferredClaudeAbsentLaunchReservationRaceActualCLI` keeps its ordinary
+  execution; `TestDeferredClaudeAbsentLaunchReservationRaceHostReadDeadlineActualCLI`
+  adds the controlled case. Measure that new test's elapsed time from its Go
+  JSON terminal event separately: the runner's `regression_test_seconds`
+  summary currently counts the detached regression only.
   This covers an observed failure mechanism without establishing the cause of
   earlier CI failures. A native host read deadline remains not-ready and cannot
   start a registration writer; only an already-Ready helper's idle retirement
