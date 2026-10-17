@@ -112,8 +112,8 @@ func decodeSettings(content []byte) (Settings, error) {
 
 func (s Settings) validate() error {
 	for _, name := range s.DisabledFragments {
-		if name == "" || strings.ContainsAny(name, "/\\\x00") || !strings.HasSuffix(name, ".md") {
-			return fmt.Errorf("invalid guidance fragment basename %q", name)
+		if err := ValidateFragmentName(name); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -122,6 +122,13 @@ func (s Settings) validate() error {
 // SaveSettings atomically writes private (0600) explicit policy, without
 // changing the user file or fragment files. Invalid settings change nothing.
 func (s Store) SaveSettings(settings Settings) error {
+	if err := settings.validate(); err != nil {
+		return err
+	}
+	return s.withPolicyLock(func() error { return s.saveSettings(settings) })
+}
+
+func (s Store) saveSettings(settings Settings) error {
 	if err := settings.validate(); err != nil {
 		return err
 	}
@@ -138,6 +145,14 @@ func (s Store) SaveSettings(settings Settings) error {
 	}
 	if err := writeAtomic(s.SettingsPath(), content, state.PrivateFileMode); err != nil {
 		return fmt.Errorf("write agent guidance settings: %w", err)
+	}
+	return syncDirectory(s.configDir)
+}
+
+// ValidateFragmentName accepts only a direct case-sensitive Markdown basename.
+func ValidateFragmentName(name string) error {
+	if name == "" || strings.ContainsAny(name, "/\\\x00") || !strings.HasSuffix(name, ".md") {
+		return fmt.Errorf("invalid guidance fragment basename %q", name)
 	}
 	return nil
 }

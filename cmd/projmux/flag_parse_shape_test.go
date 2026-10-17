@@ -159,6 +159,7 @@ var flagParseShapeExclusions = map[string]flagParseShapeExclusion{
 	"help":                 {run: true, reason: "the root help route prints the root help for any token (exit 0)"},
 	"agent":                {run: true, reason: flagParseShapeVerbDispatch},
 	"agent approval":       {run: true, reason: flagParseShapeVerbDispatch},
+	"agent guidance":       {run: true, reason: flagParseShapeVerbDispatch},
 	"agent integrate":      {run: true, reason: flagParseShapeOperand},
 	"agent message":        {run: true, reason: flagParseShapeVerbDispatch},
 	"agent message send":   {run: true, reason: flagParseShapeOperand},

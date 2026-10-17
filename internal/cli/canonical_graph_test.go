@@ -15,7 +15,8 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when the built-in profile was removed: the `profile
+// The baseline last moved when host-global agent guidance show/enable/disable
+// joined the graph. Before that, the built-in profile was removed: the `profile
 // list` and `profile show` summaries stopped naming built-in profiles. Before
 // that, it moved when `agent relaunch` became the one way to change
 // an Agent's settings: its summary names another profile, instructions, model,
@@ -112,8 +113,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Adds the nonblocking CLI question route and expands explicit decline.
-	const want = "9b451a913d1f384f1ca2f35df764764c22c404380be7f38055236224cf4cda0e"
+	// Adds guidance inspection and policy routes alongside nonblocking questions.
+	const want = "3d8ec725c0adade43fc4c219cb963b6c317fcd4d62bac4461c4deaf303e76b1e"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

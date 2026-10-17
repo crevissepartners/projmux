@@ -45,12 +45,20 @@ func (l *agentGuidanceResumeLauncher) PlanAgentGuidance(provider string, recorde
 	return l.planner.PlanAgentGuidance(provider, recorded)
 }
 
-// turnAgentGuidanceOff writes a whitespace-only guidance file into planner's
-// home, for a test about something other than the guidance that must keep the
-// argv it had before the guidance existed.
+// turnAgentGuidanceOff prepares explicit off policy and completes first-use
+// migration in the fixture. Tests about other launch layers then observe only
+// their own notices; blank user files are no longer an off control once first
+// Load has materialized explicit policy.
 func turnAgentGuidanceOff(t *testing.T, planner *aiCommand) {
 	t.Helper()
-	writeAgentGuidance(t, linkRulesPaths(t, planner), []byte(" \n"))
+	store := agentguidance.NewDefaultStore(linkRulesPaths(t, planner))
+	if err := store.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	guidance, err := store.Load()
+	if err != nil || !guidance.Off() {
+		t.Fatalf("prepare guidance off: %v", err)
+	}
 }
 
 func writeAgentGuidance(t *testing.T, paths config.Paths, text []byte) {

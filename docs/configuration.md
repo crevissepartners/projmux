@@ -1730,15 +1730,48 @@ The config directory defaults to
 `disabledFragments` skips only those fragment basenames; absent fragment names
 are allowed. Unknown keys, invalid names and malformed JSON are errors. There
 is no switch to disable just the built-in text. Settings are stored atomically
-with private permissions by the guidance settings API. There is no CLI editor
-for this policy yet.
+with private permissions. Use the host-global CLI without an Agent selector:
+
+- `projmux agent guidance show` lists ordered sources, paths, effective on/off
+  states and the final body. `--process` includes process-host context;
+  `-o json` emits `disabled`, `disabledFragments`, `parts` (source, name, optional
+  path, present, enabled), `text` and `digest`. Missing user input is shown too.
+- `projmux agent guidance disable` / `enable` changes the whole switch and
+  preserves fragment settings and all user/fragment file bytes.
+- `projmux agent guidance disable 20-example.md` / `enable 20-example.md`
+  changes only that fragment's mask, even while whole guidance is off. Names
+  must be direct, case-sensitive `*.md` basenames; absent names are allowed.
+
+Policy/file errors return a nonzero exit; malformed CLI arguments return exit 2.
+These commands require neither tmux nor a running provider.
 
 For compatibility, **without an explicit JSON settings file**, an existing
 empty or whitespace-only `agent-guidance.md` still turns all guidance off.
 With explicit enabled settings (including `{}`), a blank user file merely adds
 nothing. To add your own guidance, write it in `agent-guidance.md`; remove that
-file to remove your additions. Existing user content is not migrated or edited
-automatically by assembly.
+file to remove your additions.
+
+The first load or inspection migrates legacy user guidance once. It removes
+only the longest exact historical built-in Default prefix and complete,
+non-nested standalone `<!-- projmux-web:artifacts:begin -->` /
+`<!-- projmux-web:artifacts:end -->` blocks. All other bytes remain, including
+edited/unknown prefixes, incomplete markers and text outside managed blocks.
+The original file is retained as `agent-guidance.md.bak` with its permissions;
+a conflicting backup is preserved and migration fails without overwriting it.
+A blank legacy file becomes explicit `disabled: true`; existing explicit
+whole/fragment settings survive. Migration records its prepared/completed
+receipt separately in private `agent-guidance-migration.json` and retries safely
+after interrupted writes. Policy retains its existing two-key format so older
+readers can still read it. Keep the separate receipt when editing policy.
+Concurrent first loads serialize on `.agent-guidance.lock`.
+
+A one-time stderr diagnostic states what was removed, what was retained and
+that user guidance now **appends** instead of replacing the built-in default.
+Completion is persisted before emitting it, so an abrupt exit at that point
+can suppress the diagnostic rather than repeat it. To recover the old content,
+copy the backup to a separate file first, then edit the user file as desired;
+keep the completed receipt to prevent another migration. This does not create
+or update any app-owned fragment; apps manage their own fragments separately.
 
 - The guidance, the instructions, optional Project common instructions and the
   Project's label link rules reach Claude

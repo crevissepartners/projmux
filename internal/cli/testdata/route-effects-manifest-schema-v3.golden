@@ -1,5 +1,9 @@
 schema=v3
 route=agent identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent guidance identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent guidance show identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent guidance enable identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent guidance disable identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=agent status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent topic identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 route=agent stop identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=exact-one domain-effect=null

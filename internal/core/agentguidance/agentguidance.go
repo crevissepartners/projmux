@@ -93,9 +93,10 @@ const (
 // Guidance is the guidance a launch uses. Text and Digest are empty when
 // Source is SourceOff.
 type Guidance struct {
-	Text   []byte
-	Source Source
-	Digest string
+	MigrationNotice string
+	Text            []byte
+	Source          Source
+	Digest          string
 }
 
 // Off reports that there is no guidance to give.
@@ -122,8 +123,9 @@ func ValidateDigest(digest string) error {
 
 // Store reads and writes the guidance file and its snapshots.
 type Store struct {
-	configDir   string
-	snapshotDir string
+	configDir     string
+	snapshotDir   string
+	migrationStep func(string) error // failure injection, package tests only
 }
 
 // NewStore builds a store over configDir/agent-guidance.md and

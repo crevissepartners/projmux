@@ -62,6 +62,7 @@ var settingsLayerGuardArgv = [][]string{
 	{"create", "claude", "-p", "alpha"},
 	{"create", "antigravity", "-p", "alpha"},
 
+	{"agent", "guidance", "show", "-o", "json"},
 	{"agent", "status", "get", "alpha-agent"},
 	{"agent", "topic", "get", "alpha-agent"},
 	{"agent", "stop", "alpha-agent"},
