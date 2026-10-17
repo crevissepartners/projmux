@@ -1,4 +1,45 @@
-# Go SDK deletion preflight
+# Go SDK
+
+## Host system samples
+
+`Client.SampleSystem(ctx)` returns `core.SystemSample` with `Supported` and
+nullable integer `CPUPercent`/`MemoryPercent` (0–100). It uses the existing
+[statusbar host sampler](configuration.md#live-system-resources): Linux/WSL
+procfs, or macOS Mach statistics and `hw.memsize` when built with cgo. macOS
+without cgo is unsupported. WSL reports the Linux guest/VM view. These values
+describe the host, without attribution to a Project, Window, Pane or Agent.
+No metrics process or provider API is called.
+
+```go
+client, err := projmux.NewClient(projmux.Options{StateDir: "/absolute/projmux-state"})
+if err != nil { return err }
+sample, err := client.SampleSystem(ctx)
+if err != nil { return err }
+if sample.Supported && sample.MemoryPercent != nil {
+    fmt.Println(*sample.MemoryPercent)
+}
+```
+
+Sampling **updates the CPU delta cache**, so this is not an effect-free read.
+The only write destination is `live-resources-sample.json` under the explicit
+`Options.StateDir`, or the HOME/XDG state directory captured by `NewClient`.
+Clients sharing that directory also share the statusbar's CPU reference; a
+sample can change the next caller's delta interval. References older than 30
+seconds are replaced without a CPU percentage. The first sample, invalid or
+reset counters, or unavailable inputs can also yield nil. Memory availability
+is independent of CPU availability. `Supported=false` means the platform has
+no sampler, with both percentages nil; `Supported=true` does not guarantee
+either percentage is available. Cache failures retain the sampler's best
+effort behavior and are not returned as errors.
+
+An already-canceled context prevents sampling and cache writes. Cancellation
+after the synchronous sampler starts does not undo its effects. Each returned
+pointer belongs to the caller. Sampling neither reads nor changes statusbar
+enablement and does not collect usage history; explicit SDK sampling works
+independently of the Resources display setting. Existing CLI/statusbar behavior
+is unchanged.
+
+## Deletion preflight
 
 See [Agent deletion protection](registry.md#agent-deletion-protection).
 
