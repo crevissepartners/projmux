@@ -1022,7 +1022,9 @@ func exerciseClaudeHostReadDeadlineCLI(t *testing.T, ctx context.Context, f proc
 // a registration writer. This endpoint sends no response; the real unchanged
 // five-second read deadline supplies the error (no injected timeout result).
 func TestClaudeHostReadDeadlineRemainsNotReadyAndStartsNoWriter(t *testing.T) {
-	root, err := os.MkdirTemp(os.TempDir(), "pc-")
+	// Keep this Unix endpoint within the platform bound even when the unit
+	// shard supplies a deeply nested private TMPDIR. Do not change TMPDIR.
+	root, err := os.MkdirTemp("/tmp", "pc-")
 	if err != nil {
 		t.Fatal(err)
 	}
