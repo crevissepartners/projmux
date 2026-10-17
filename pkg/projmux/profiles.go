@@ -95,7 +95,7 @@ func profileRefusal(err error) error {
 // vocabulary without reading storage or the Registry. No partial spec is returned
 // on failure. Named instructions need not exist for pure parsing.
 func (c *Client) ParseProfile(ctx context.Context, content []byte) (core.ProfileSpec, error) {
-	spec, err := c.profileService().Parse(ctx, content)
+	spec, err := c.profileService().ParseContent(ctx, content)
 	if err != nil {
 		return core.ProfileSpec{}, profileRefusal(err)
 	}

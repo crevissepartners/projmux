@@ -17,7 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/services/profiles"
 )
 
-// profileCommand implements `projmux profile list|show|set|delete`.
+// profileCommand implements `projmux profile list|show|parse|preview|set|delete`.
 //
 // A profile is a file, not a Registry resource, so like `instructions` it is a
 // noun group of its own. Every path, name rule, size limit, validation, and
@@ -63,8 +63,10 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runList(rest, stdout, stderr)
 	case "show":
 		return c.runShow(rest, stdout, stderr)
-	case "parse", "preview":
-		return c.runInspect(args[0], rest, stdout, stderr)
+	case "parse":
+		return c.runInspect("profile parse", rest, stdout, stderr)
+	case "preview":
+		return c.runInspect("profile preview", rest, stdout, stderr)
 	case "set":
 		return c.runSet(rest, stdout, stderr)
 	case "delete":
@@ -222,26 +224,33 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 }
 
 // runInspect keeps input bounded and checks a preview name before reading stdin.
-func (c *profileCommand) runInspect(verb string, args []string, stdout, stderr io.Writer) error {
-	spelling := "profile " + verb
+func (c *profileCommand) runInspect(spelling string, args []string, stdout, stderr io.Writer) error {
+	preview := spelling == "profile preview"
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
 	file := fs.String("file", "", "read the profile from this file; - reads stdin")
-	operands, err := personacmd.ParseArgs(fs, args)
+	operands, err := parseWithPositionals(fs, args)
 	if err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return flagParseError(err)
 	}
 	want := 0
-	if verb == "preview" {
+	if preview {
 		want = 1
 	}
 	if len(operands) != want {
-		printRouteUsage(stderr, spelling)
-		return usageError(spelling + " requires " + map[string]string{"parse": "no positional arguments", "preview": "exactly one <name>"}[verb])
+		if preview {
+			printRouteUsage(stderr, "profile preview")
+			return usageError("profile preview requires exactly one <name>")
+		}
+		printRouteUsage(stderr, "profile parse")
+		return usageError("profile parse requires no positional arguments")
 	}
 	name := ""
-	if verb == "preview" {
+	if preview {
 		name = operands[0]
 		if err := profile.ValidateName(name); err != nil {
 			return profileRefusal(spelling, err)
@@ -268,8 +277,8 @@ func (c *profileCommand) runInspect(verb string, args []string, stdout, stderr i
 		return profileRefusal(spelling, err)
 	}
 	var result any
-	if verb == "parse" {
-		result, err = c.service().Parse(context.Background(), content)
+	if !preview {
+		result, err = c.service().ParseContent(context.Background(), content)
 	} else {
 		result, err = c.service().Preview(context.Background(), name, content)
 	}

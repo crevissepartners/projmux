@@ -12,7 +12,7 @@ import (
 
 func TestParseNeverResolvesPaths(t *testing.T) {
 	service := Service{Paths: func() (config.Paths, error) { t.Fatal("parse resolved storage"); return config.Paths{}, nil }, RegistryPaths: func() (config.Paths, error) { t.Fatal("parse resolved Registry"); return config.Paths{}, nil }}
-	if _, err := service.Parse(context.Background(), []byte("instructions=\"missing\"")); err != nil {
+	if _, err := service.ParseContent(context.Background(), []byte("instructions=\"missing\"")); err != nil {
 		t.Fatal(err)
 	}
 }

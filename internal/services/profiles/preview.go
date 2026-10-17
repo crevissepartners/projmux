@@ -43,8 +43,8 @@ func projectSpec(spec profile.Spec) Spec {
 			Allow: append([]string{}, spec.Permissions.Allow...), Deny: append([]string{}, spec.Permissions.Deny...)}}
 }
 
-// Parse validates only the supplied bytes. It never resolves storage paths.
-func (s Service) Parse(ctx context.Context, content []byte) (Spec, error) {
+// ParseContent validates only the supplied bytes. It never resolves storage paths.
+func (s Service) ParseContent(ctx context.Context, content []byte) (Spec, error) {
 	if err := ctx.Err(); err != nil {
 		return Spec{}, err
 	}

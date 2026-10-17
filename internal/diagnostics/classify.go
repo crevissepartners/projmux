@@ -67,7 +67,7 @@ var commandRules = map[string]commandRule{
 	"notification":    {subcommands: stringSet("ack", "reconcile")},
 	"open":            {subcommands: stringSet("project")},
 	"persona":         {subcommands: stringSet("list", "show", "edit", "set", "delete")},
-	"profile":         {subcommands: stringSet("list", "show", "set", "delete")},
+	"profile":         {subcommands: stringSet("list", "show", "parse", "preview", "set", "delete")},
 	"link-rules":      {subcommands: stringSet("show", "set", "delete"), changing: stringSet("set", "delete")},
 	"rebind":          {subcommands: stringSet("project")},
 	"reconcile":       {subcommands: stringSet("resources", "registry")},
