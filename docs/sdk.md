@@ -1,5 +1,34 @@
 # Go SDK
 
+## Host-global Agent guidance
+
+`ReadAgentGuidance(ctx)` returns `core.AgentGuidanceFile`: user-file presence,
+text, byte count, digest, revision, limit, path, and built-in `DefaultText` /
+`DefaultDigest`. It performs no migration or writes.
+`ValidateAgentGuidance(ctx, content)` returns `core.AgentGuidanceValidation`,
+including both effective assembly sizes and the revision of current inputs,
+without creating directories, locks, receipts, policy, or snapshots.
+
+Pass that revision to `WriteAgentGuidance(ctx, content, revision)` or
+`ResetAgentGuidance(ctx, revision)`. Writes recheck current inputs and candidate
+validation under the shared policy lock. A changed user file, policy, or active
+fragment input produces `CodeAgentGuidanceStale`; read/validate again.
+`CodeAgentGuidanceInvalid`, `CodeAgentGuidanceTooLarge`, and
+`CodeAgentGuidanceUnreadable` classify other editing failures. Refusals retain
+the underlying error through `errors.Is` / `errors.As`; context cancellation
+is returned as a context error. External editors ignoring the lock are outside
+the concurrency guarantee. Reset retains the existing multi-file limitation:
+user removal can succeed before policy restoration fails.
+
+`InspectAgentGuidance(ctx, process)` and
+`SetAgentGuidanceEnabled(ctx, fragment, enabled)` correspond to existing CLI
+show/enable/disable behavior. Inspection includes first-use migration. Its
+Go-only `Source` metadata reports the existing assembly classification
+(`default`, `file`, or `off`) and is omitted from JSON. An empty
+fragment selects the whole switch; a basename selects its fragment mask.
+See [guidance editing](configuration.md#editing-host-global-agent-guidance)
+for JSON fields, the UTF-8/NUL and 64 KiB limits, and policy preservation.
+
 ## Host system samples
 
 `Client.SampleSystem(ctx)` returns `core.SystemSample` with `Supported` and

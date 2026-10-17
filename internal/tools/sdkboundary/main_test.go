@@ -69,6 +69,8 @@ func TestImplementationAllowlist(t *testing.T) {
 		{module + "/internal/app/personacmd", false, false},
 		{module + "/internal/web/fixture", false, false},
 		{module + "/internal/core/future", false, false},
+		{module + "/internal/services/agentguidance", false, true},
+		{module + "/internal/services/agentguidance/escape", false, false},
 		{module + "/internal/services/instructions/escape", false, false},
 		{"example.com/other", false, false},
 	} {

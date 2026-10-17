@@ -29,6 +29,7 @@ type Inspection struct {
 	Text              string   `json:"text"`
 	Digest            string   `json:"digest"`
 	MigrationNotice   string   `json:"-"`
+	Source            Source   `json:"-"`
 }
 
 // Inspect performs first-use migration and observes policy and input names
@@ -54,6 +55,7 @@ func (s Store) Inspect(process bool) (view Inspection, err error) {
 			view.DisabledFragments = []string{}
 		}
 		view.Text, view.Digest = string(guidance.Text), guidance.Digest
+		view.Source = guidance.Source
 		view.Parts = []Part{{Source: "default", Name: "built-in", Present: true, Enabled: !view.Disabled}}
 		entries, err := os.ReadDir(filepath.Join(s.configDir, FragmentsDirName))
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {

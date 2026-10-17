@@ -145,7 +145,12 @@ func outcomeReason(class CommandClass, err error, registry *CommandOutcomeReason
 //   - Doctor and the support report own a strict no-write contract, including
 //     invalid flag invocations. Their read-only work never becomes a journal
 //     write.
+//   - Global guidance read/validate are strict no-write editing operations,
+//     including candidate, filesystem and usage failures.
 func JournalForbidden(args []string) bool {
+	if len(args) >= 3 && args[0] == "agent" && args[1] == "guidance" && (args[2] == "read" || args[2] == "validate") {
+		return true
+	}
 	if retiredCLINoWrite(args) {
 		return true
 	}
