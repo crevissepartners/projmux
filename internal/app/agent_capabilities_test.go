@@ -442,3 +442,46 @@ func TestClaudeCoordinationLeaseProbeRecoveryIsNotTheUnqualifiedOne(t *testing.T
 		t.Fatalf("the unqualified recovery does not say what happens with no reply-only profile: %q", unqualified.Recovery)
 	}
 }
+
+func TestAgentCapabilitiesProcessWaitMatchesRegistryReadiness(t *testing.T) {
+	for _, provider := range []string{aiModeCodex, aiModeClaude} {
+		t.Run(provider, func(t *testing.T) {
+			for _, current := range []bool{true, false} {
+				registry, uid := processWaitCLIRegistry(t, provider)
+				if !current {
+					pane, _ := registry.Pane(registry.Agents[0].Status.PaneRef)
+					pane.Status.Activation = coremetadata.PaneActivation{}
+				}
+				before := registry.Clone()
+				reads := 0
+				command := &agentCommand{loadRegistry: func() (coremetadata.Registry, error) { reads++; return registry.Clone(), nil }}
+				var stdout, stderr bytes.Buffer
+				if err := command.Run([]string{"capabilities", "uid:" + uid, "-o", "json"}, &stdout, &stderr); err != nil {
+					t.Fatal(err)
+				}
+				var projection agentCapabilityProjection
+				if err := json.Unmarshal(stdout.Bytes(), &projection); err != nil {
+					t.Fatal(err)
+				}
+				if reads != 1 || stderr.Len() != 0 || !reflect.DeepEqual(registry, before) {
+					t.Fatal("capabilities read effects")
+				}
+				if projection.Runtime == nil || projection.Runtime.Ready != current || projection.Runtime.LiveVerified || projection.Runtime.Evidence != "registry" || projection.Runtime.PaneRuntimeID != "" || strings.Contains(stdout.String(), `"paneRuntimeID"`) {
+					t.Fatalf("process runtime: %+v", projection.Runtime)
+				}
+				found := false
+				for _, entry := range projection.Capabilities {
+					if entry.Action == "wait.idle" {
+						found = true
+						if entry.Available == nil || *entry.Available != current || entry.Evidence != "registry" {
+							t.Fatalf("wait projection: %+v", entry)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("wait capability missing")
+				}
+			}
+		})
+	}
+}
