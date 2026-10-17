@@ -1221,6 +1221,100 @@ func TestDeferredPeerWakeLatencyActualCLI(t *testing.T) {
 	}
 }
 
+// deferredReplyPublicationBarrier intercepts the fixture's actual open, before
+// its write, for either publication layout. It never runs in the ordinary case.
+func deferredReplyPublicationBarrier(control string) string {
+	return fmt.Sprintf(`import builtins, time
+_reply_open=builtins.open
+def _reply_barrier_open(path,*args,**kwargs):
+ f=_reply_open(path,*args,**kwargs)
+ if os.path.basename(path) in ('reply-exit','reply-exit.tmp'):
+  ready_path=os.path.join(%q,'opened')
+  with _reply_open(ready_path+'.tmp','w') as ready:ready.write(path)
+  os.replace(ready_path+'.tmp',ready_path)
+  deadline=time.monotonic()+10
+  while not os.path.exists(os.path.join(%q,'release')):
+   if time.monotonic()>=deadline:
+    f.close()
+    raise RuntimeError('reply publication barrier not released')
+   time.sleep(.01)
+ return f
+builtins.open=_reply_barrier_open
+`, control, control)
+}
+
+func TestDeferredReplyCompletionPublicationActualCLI(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, nonzero := range []bool{false, true} {
+		t.Run(fmt.Sprintf("nonzero=%t", nonzero), func(t *testing.T) {
+			control := t.TempDir()
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			binary, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.CommandContext(ctx, binary, "-test.v", "-test.run=^TestDeferredExplicitReplyActualCLI$/^claude$")
+			cmd.Env = append(os.Environ(), "PMX_TEST_REPLY_PUBLICATION_CONTROL="+control, fmt.Sprintf("PMX_TEST_REPLY_NONZERO=%t", nonzero))
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := false
+			release := func() {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(control, "release"), nil, 0600); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() {
+				release()
+				if !waited {
+					_ = cmd.Wait()
+				}
+				cancel()
+			})
+			processCLIUntil(t, ctx, func() bool {
+				_, err := os.Stat(filepath.Join(control, "opened"))
+				return err == nil
+			})
+			opened, err := os.ReadFile(filepath.Join(control, "opened"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			final := filepath.Join(filepath.Dir(string(opened)), "reply-exit")
+			exit, readErr := os.ReadFile(final)
+			if readErr == nil {
+				// On the old layout, let the original reader capture the empty
+				// value before releasing the writer. Its original assertion fails.
+				processCLIUntil(t, ctx, func() bool {
+					_, err := os.Stat(filepath.Join(control, "observed"))
+					return err == nil
+				})
+			} else if !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatal(readErr)
+			}
+			release()
+			waitErr := cmd.Wait()
+			waited = true
+			t.Logf("original body actual Wait=%v; opened=%s final-before-release=%q err=%v\n%s", waitErr, filepath.Base(string(opened)), exit, readErr, output.String())
+			if readErr == nil {
+				t.Fatalf("completion path published before write: %q; original body Wait=%v", exit, waitErr)
+			}
+			if nonzero {
+				var status *exec.ExitError
+				if !errors.As(waitErr, &status) || status.ExitCode() != 1 || !strings.Contains(output.String(), "provider reply exit 7:") {
+					t.Fatalf("nonzero reply was not rejected by the original assertion: %v\n%s", waitErr, output.String())
+				}
+			} else if waitErr != nil || !strings.Contains(output.String(), "--- PASS: TestDeferredExplicitReplyActualCLI/claude") {
+				t.Fatalf("original body did not pass: %v\n%s", waitErr, output.String())
+			}
+		})
+	}
+}
+
 func TestDeferredExplicitReplyActualCLI(t *testing.T) {
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
@@ -1239,10 +1333,19 @@ func TestDeferredExplicitReplyActualCLI(t *testing.T) {
     binding=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])
     with open(os.path.join(root,'reply-receipt'),'w') as output:
      p=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+original['source']['agentUID'],'--source','uid:'+binding['Agent'],'--reply-to',original['messageRef'],'--message-ref','deferred-reply','--','reply peer'],stdout=output,stderr=subprocess.STDOUT)
-    open(os.path.join(root,'reply-exit'),'w').write(str(p.returncode))
+    with open(os.path.join(root,'reply-exit.tmp'),'w') as completion:
+     completion.write(str(p.returncode))
+    os.replace(os.path.join(root,'reply-exit.tmp'),os.path.join(root,'reply-exit'))
    threading.Thread(target=deferred_reply,daemon=True).start()
 `
+				if os.Getenv("PMX_TEST_REPLY_NONZERO") == "true" {
+					reply = strings.Replace(reply, "stdout=output,stderr=subprocess.STDOUT)\n", "stdout=output,stderr=subprocess.STDOUT)\n    p=subprocess.run([sys.executable,'-c','import sys;sys.exit(7)'])\n", 1)
+				}
 				script := "import time\n" + strings.Replace(string(raw), "  continue\n  inp=", reply+"  continue\n  inp=", 1)
+				if control := os.Getenv("PMX_TEST_REPLY_PUBLICATION_CONTROL"); control != "" {
+					// os is needed before installing the fixture-only open wrapper.
+					script = "import os\n" + deferredReplyPublicationBarrier(control) + script
+				}
 				if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -1277,6 +1380,15 @@ func TestDeferredExplicitReplyActualCLI(t *testing.T) {
 				for {
 					exit, readErr := os.ReadFile(filepath.Join(f.root, "reply-exit"))
 					if readErr == nil {
+						if control := os.Getenv("PMX_TEST_REPLY_PUBLICATION_CONTROL"); control != "" {
+							if e := os.WriteFile(filepath.Join(control, "observed"), exit, 0600); e != nil {
+								t.Fatal(e)
+							}
+							processCLIUntil(t, ctx, func() bool {
+								_, e := os.Stat(filepath.Join(control, "release"))
+								return e == nil
+							})
+						}
 						out, err = os.ReadFile(filepath.Join(f.root, "reply-receipt"))
 						if string(exit) != "0" {
 							t.Fatalf("provider reply exit %s: %s", exit, out)
