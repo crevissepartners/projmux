@@ -852,3 +852,34 @@ unchanged; raw bytes remain available through `ReadProfile`.
 These operations cover profile TOML and local storage admission. Bundle JSON,
 bundled instructions, overwrite decisions, permission expansion confirmation
 and atomic bundle import are outside this API.
+
+### Project guidance editing
+
+`ReadProjectGuidance(ctx, projectRef)`, `ValidateProjectGuidance(ctx, projectRef,
+content)`, `WriteProjectGuidance(ctx, projectRef, content, revision)` and
+`DeleteProjectGuidance(ctx, projectRef, revision)` share the CLI's `agent guidance
+read/validate/set --project <ref>` and `delete --project <ref>` service. A ref is an
+explicit registered Project name or `uid:` ref; inactive Projects are supported.
+An empty ref is refused. These methods read Registry through the same degraded,
+read-only resource loader: a graph-invalid Registry can still select its Project,
+while malformed, unsupported and lost Registry state is refused without repair.
+
+`core.ProjectGuidanceFile` carries `projectUID`, `path`, `present`, raw `text`,
+`bytes`, `digest`, `revision` and `maxBytes` (65536). The separate `source`,
+`effectiveText` and `effectiveDigest` retain the existing Project guidance load
+meaning: absent, empty and whitespace-only files are off. Raw bytes still
+identify each stored state. Existing NUL is returned unchanged; invalid UTF-8
+reads are refused with `agent-guidance-unreadable`. Validate a valid candidate to
+obtain the current revision and replace invalid existing UTF-8 without reading it
+as text. Candidates must be UTF-8 without NUL and fit the byte limit.
+
+`core.ProjectGuidanceValidation` returns candidate text, bytes, digest, maxBytes,
+projectUID and the current target revision. Read and validate create no locks,
+directories, migration receipts or snapshots. A revision identifies the selected
+Project UID, raw bytes and presence. Write and delete require it; stale inputs
+return `agent-guidance-stale`. Both recheck under the shared guidance writer lock
+and preserve global user guidance, policy and fragments. Writes use the existing
+atomic save and permission policy. Deleting an absent file with its current
+revision succeeds. Context cancellation or deadline before writer admission is
+preserved without changing guidance; an admitted atomic mutation finishes.
+External editors that ignore the lock are outside this concurrency guarantee.

@@ -1,4 +1,4 @@
-// Package agentguidance shares host-global guidance operations between CLI and SDK.
+// Package agentguidance shares global and explicit Project guidance operations between CLI and SDK.
 package agentguidance
 
 import (
@@ -8,7 +8,10 @@ import (
 	guidance "github.com/crevissepartners/projmux/internal/core/agentguidance"
 )
 
-type Service struct{ Paths func() (config.Paths, error) }
+type Service struct {
+	Paths         func() (config.Paths, error)
+	RegistryPaths func() (config.Paths, error)
+}
 
 func (s Service) store(ctx context.Context) (guidance.Store, error) {
 	if err := ctx.Err(); err != nil {

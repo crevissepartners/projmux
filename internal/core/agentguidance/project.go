@@ -80,10 +80,14 @@ func (s ProjectStore) Load(uid string) (Guidance, error) {
 	if len(content) > MaxSize {
 		return Guidance{}, fmt.Errorf("project guidance %s exceeds %d bytes", path, MaxSize)
 	}
+	return projectEffective(content), nil
+}
+
+func projectEffective(content []byte) Guidance {
 	if len(bytes.TrimSpace(content)) == 0 {
-		return Guidance{Source: SourceOff}, nil
+		return Guidance{Source: SourceOff}
 	}
-	return Guidance{Text: content, Source: SourceFile, Digest: Digest(content)}, nil
+	return Guidance{Text: content, Source: SourceFile, Digest: Digest(content)}
 }
 
 // Save atomically writes verbatim bytes, preserving a regular file's mode.

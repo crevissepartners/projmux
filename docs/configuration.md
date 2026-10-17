@@ -1821,7 +1821,29 @@ Each Project can add common instructions in
 `<config dir>/project-guidance/<project-uid>.md`. The UID keeps the file attached
 to the same Project when its name or root changes. Missing or whitespace-only
 files add nothing; other content is used verbatim, up to 64 KiB. There is no
-editing CLI or automatic cleanup when a Project is deleted.
+automatic cleanup when a Project is deleted.
+
+Manage the file with `agent guidance read --project <ref>`,
+`validate --project <ref> --file <path|->`,
+`set --project <ref> --file <path|-> --if-match <revision>`, and
+`delete --project <ref> --if-match <revision>`. Each supports `-o json`.
+`-p` is an alias for `--project`. The explicit ref is a registered Project name or `uid:` ref; inactive Projects
+are allowed. Empty `--project` is a usage error and never falls back to global
+guidance. `reset` is global-only; `delete` requires `--project`.
+
+Read returns raw presence, text, bytes and digest, the selected `projectUID`,
+and separate `source`, `effectiveText` and `effectiveDigest` from the existing
+load semantics. Thus an empty or whitespace-only file remains visible as raw
+content while its effective source is off. Invalid existing UTF-8 is refused on
+read; validate a valid candidate to obtain a revision that can replace it.
+New candidates must be UTF-8 without NUL and at most 65536 bytes.
+
+Read and validate do not create locks or other files. Set and delete require
+the current revision and recheck it under the shared writer lock; stale state
+is refused as `agent-guidance-stale`. The revision binds the Project UID,
+file presence and exact bytes. These operations preserve global user guidance,
+policy and fragments, and never write or repair Registry. See the
+[SDK contract](sdk.md#project-guidance-editing) for typed results and cancellation.
 
 Claude tmux and process launches receive one file in this order: global agent
 guidance → persona instructions → Project common instructions → Project label
