@@ -215,7 +215,7 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux agent guidance read`](#projmux-agent-guidance-read) | Read raw guidance and effective defaults without migration or writes |
-| [`projmux agent guidance validate`](#projmux-agent-guidance-validate) | Validate a candidate and both assembly limits without writes |
+| [`projmux agent guidance validate`](#projmux-agent-guidance-validate) | Validate a candidate without writes; check assembly limits for global guidance |
 | [`projmux agent guidance set`](#projmux-agent-guidance-set) | Atomically replace global user or Project guidance if the revision matches |
 | [`projmux agent guidance reset`](#projmux-agent-guidance-reset) | Remove user guidance and restore the whole switch if the revision matches |
 | [`projmux agent guidance delete`](#projmux-agent-guidance-delete) | Delete explicit Project guidance if its revision matches |
@@ -250,7 +250,7 @@ Output modes (`-o`): `json`
 
 #### `projmux agent guidance validate`
 
-Validate a candidate and both assembly limits without writes
+Validate a candidate without writes; check assembly limits for global guidance
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
