@@ -44,6 +44,19 @@ func (s Store) loadCurrent(process bool) (Guidance, error) {
 			return Guidance{}, err
 		}
 	}
+	return assembleGuidance(settings, explicit, user, exists, process, func(appendPart func([]byte) error) error {
+		if root == nil {
+			return nil
+		}
+		return appendFragments(root, settings, appendPart)
+	})
+}
+
+// assembleGuidance is shared by launch assembly and side-effect-free candidate validation.
+func assembleGuidance(settings Settings, explicit bool, user []byte, exists, process bool, fragments func(func([]byte) error) error) (Guidance, error) {
+	if settings.Disabled {
+		return Guidance{Source: SourceOff}, nil
+	}
 	if !explicit && exists && len(bytes.TrimSpace(user)) == 0 {
 		return Guidance{Source: SourceOff}, nil
 	}
@@ -64,10 +77,8 @@ func (s Store) loadCurrent(process bool) (Guidance, error) {
 		source = SourceFile
 		return nil
 	}
-	if root != nil {
-		if err := appendFragments(root, settings, appendPart); err != nil {
-			return Guidance{}, err
-		}
+	if err := fragments(appendPart); err != nil {
+		return Guidance{}, err
 	}
 	if len(bytes.TrimSpace(user)) != 0 {
 		if err := appendPart(user); err != nil {

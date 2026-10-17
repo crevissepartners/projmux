@@ -55,6 +55,7 @@ Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.GetUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetUsageHistory	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.InspectAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.InterruptTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.ListAccounts	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.ListAgentSessions	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
@@ -70,6 +71,7 @@ Client.MessageStatus	Public SDK Client.MessageStatus entrypoint; external consum
 Client.Models	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 Client.ObserveRuntime	Public v0 runtime SDK entrypoint retained for external modules; checked by runtime parity, cancellation, field coverage and external consumer tests.
 Client.PreflightDelete	Public v0 deletion-protection preflight for external frontends before provider Stop; covered by protected SDK surface and host admission race tests.
+Client.ReadAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
@@ -77,17 +79,21 @@ Client.RegisterAccount	Public v0 provider account catalog SDK entrypoint or refu
 Client.RelaunchAgent	Public v0 exact tmux Agent relaunch entrypoint; shared CLI/SDK plan, native fixture, failure recovery and external consumer tests cover this path.
 Client.RemoveAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+Client.ResetAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SampleSystem	Public v0 host system sampler facade; retained for external consumers and covered by producer parity, path isolation, cancellation and caller ownership fixtures.
 Client.SendMessage	Public SDK Client.SendMessage entrypoint; external consumers submit explicit untrusted peer coordination.
+Client.SetAgentGuidanceEnabled	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.StartTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.SteerTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.StopAgent	Public v0 process Stop API; exercised by exact-generation retirement, cancellation, explicit roots and external consumer tests.
 Client.StopProject	Public v0 Project stop SDK entrypoint; SDK/CLI parity, exact socket/PID/UID guards and external consumer tests.
 Client.UnregisterProject	Public v0 Project unregister entrypoint; verified by external consumer and CLI parity tests.
+Client.ValidateAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.Version	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+Client.WriteAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.WriteInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.WriteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.WriteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
@@ -104,6 +110,7 @@ Client.createProjection	Public v0 shell Window/Pane creation SDK entrypoint or i
 Client.createWindow	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.deleteProcess	SDK process Agent Delete adapter retained for external consumer and shared CLI/SDK admission parity.
 Client.deleteWithRunner	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
+Client.guidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.peerMessages	Client.SendMessage and Client.MessageStatus construct the same frozen-path execution service through this adapter.
 Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
@@ -359,9 +366,11 @@ StartDefaultThread	The default-endpoint start wrapper is retained for installed 
 StopProject	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Store.Delete	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Dir	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
+Store.Inspect	Legacy guidance Background wrapper retained for existing internal consumers; SDK callers use InspectContext for admission cancellation.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
+Store.SetEnabled	Legacy guidance Background policy wrapper retained for existing internal consumers; SDK callers use SetEnabledContext for admission cancellation.
 Store.Write	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 StringAuditFinding.IsCandidate	Candidate predicate of the governance string audit retained with the guard that classifies shipped literals.
 SurfaceSites	Closed unshown-result site inventory; the C-1 committed-result sweep fails until every site is recorded by a registered call site.
@@ -447,6 +456,7 @@ guardPrivateRoot	Test-only guard helper retained behind the shared guard API tha
 guardReclaimKilledRoots	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardRootMakerParent	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guardSweepHelperRoots	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
+guidanceRefusal	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.

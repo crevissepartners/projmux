@@ -49,6 +49,7 @@ var resumableAgentPhases = mutationruntime.ResumableAgentPhases
 // `resume` is the one route with logic of its own, because it is the only way
 // an existing Agent is ever reused: `create agent` always mints a new uid.
 type agentCommand struct {
+	guidanceInput io.Reader // nil uses invocation stdin for guidance --file -
 	// Set only on a per-call copy by the private typed host-transfer adapter.
 	hostTransferContext context.Context
 	hostTransferResult  *agentHostTransferResult

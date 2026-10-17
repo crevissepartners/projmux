@@ -191,6 +191,12 @@ func (s Store) Disable() error {
 // Reset removes the user file and resets the whole-guidance switch. Fragment
 // settings are preserved; fragments still supplement the built-in default.
 func (s Store) Reset() error {
+	return s.reset(s.SaveSettings)
+}
+
+func (s Store) resetLocked() error { return s.reset(s.saveSettings) }
+
+func (s Store) reset(saveSettings func(Settings) error) error {
 	settings, explicit, err := s.LoadSettings()
 	if err != nil {
 		return err
@@ -217,7 +223,7 @@ func (s Store) Reset() error {
 	}
 	if explicit {
 		settings.Disabled = false
-		if err := s.SaveSettings(settings); err != nil {
+		if err := saveSettings(settings); err != nil {
 			return err
 		}
 	}

@@ -1879,3 +1879,52 @@ These are intended for debugging or local policy, not routine setup:
 | `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` | Override the Settings/default collapse window for duplicate AI desktop notifications keyed on the pane-local AI notification key. The Settings value and default apply only when this env is unset or not a positive integer. |
 | `PROJMUX_CODEX_TITLE_WATCH_INTERVAL` | Title-watch loop pacing for Codex panes. |
 | `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` | Reply-detection settle-loop pacing for Codex panes. |
+
+### Editing host-global Agent guidance
+
+`projmux agent guidance read -o json` reads the user addition without migration
+or writes, including diagnostics journaling on failure. It returns `path`, `present`, `text`, `bytes`, `digest`, `revision`,
+`maxBytes` (65536), `defaultText`, and `defaultDigest`. Missing and empty files
+are distinct (`present=false` versus `true`). Built-in defaults are available
+without reading an implementation package.
+
+An existing file with invalid UTF-8 is refused as `agent-guidance-unreadable`
+without changing it. Validate a valid replacement and use its revision with
+set to repair that file. Existing NUL bytes round-trip through read unchanged;
+new candidates still reject NUL.
+
+Validate and save a candidate using a file or standard input:
+
+```sh
+projmux agent guidance validate --file ./guidance.md -o json
+projmux agent guidance set --file ./guidance.md --if-match <revision> -o json
+projmux agent guidance reset --if-match <revision> -o json
+```
+
+Use `--file -` for stdin. Validation returns candidate `text`, `bytes`, `digest`,
+`revision`, `maxBytes`, `assembledBytes`, and `processAssembledBytes`. Candidates
+must be UTF-8 without NUL, at most 64 KiB, and fit both effective tmux and process
+assemblies under the current whole/fragment policy. Validation creates no config
+directory, lock, migration receipt, policy, snapshot, or diagnostics journal,
+including on candidate, filesystem, or usage errors.
+
+Pass the opaque revision from read or validate to set/reset. It identifies the
+current user bytes and existence, policy, and fragment inputs affecting assembly.
+A change rejects the write with `agent-guidance-stale`; read/validate again.
+Saving checks the revision and revalidates inside the policy writer lock. It
+replaces only the user file atomically, retains its permissions (new files are
+0600), and preserves whole/fragment policy. Application writers share this lock;
+external editors that ignore it are outside the concurrency guarantee.
+
+Reset removes the user file and restores the whole-guidance switch, retaining
+fragment masks. It retains the existing reset limitation: removal and policy
+update are separate operations, so a policy failure can follow successful
+removal. Neither operation changes already running Agents. Existing
+`show`, `enable`, and `disable` keep their behavior, including show's migration.
+
+New editing failures include `agent-guidance-invalid`, `agent-guidance-too-large`,
+`agent-guidance-unreadable`, and `agent-guidance-stale`. CLI diagnostics include
+the reason token and cause; the SDK exposes these as typed `Refusal` codes.
+The typed SDK methods are `ReadAgentGuidance`, `ValidateAgentGuidance`,
+`WriteAgentGuidance`, `ResetAgentGuidance`, `InspectAgentGuidance`, and
+`SetAgentGuidanceEnabled`, with result types in `pkg/projmux/core`.

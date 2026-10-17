@@ -2,6 +2,7 @@ package agentguidance
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -58,14 +59,24 @@ func (m *migrationReceipt) validate() error {
 // across Store values and processes. Closing the descriptor releases flock;
 // the persistent inode must never be removed while another caller may wait.
 func (s Store) withPolicyLock(fn func() error) error {
+	return s.withPolicyLockContext(context.Background(), fn)
+}
+
+func (s Store) withPolicyLockContext(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := state.EnsurePrivateDir(s.configDir); err != nil {
 		return err
 	}
-	held, err := state.AcquireFileLock(filepath.Join(s.configDir, ".agent-guidance.lock"), 5*time.Second, nil)
+	held, err := state.AcquireFileLockContext(ctx, filepath.Join(s.configDir, ".agent-guidance.lock"), 5*time.Second, nil)
 	if err != nil {
 		return err
 	}
 	defer held.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn()
 }
 
