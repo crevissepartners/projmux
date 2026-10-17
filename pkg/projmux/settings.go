@@ -25,10 +25,11 @@ func (c *Client) GetConfig(ctx context.Context, key core.ConfigKey) (core.Config
 }
 
 // SetConfig writes the same files as config providers/locale/agent-questions/
-// agent-approvals/agent-host. Cancellation before admission writes nothing. Policy writes
+// agent-approvals/agent-host and the central resources, mode and visibility routes.
+// Cancellation before admission writes nothing. Policy writes
 // finish once admitted; the two policy files are not a multi-file transaction.
 func (c *Client) SetConfig(ctx context.Context, u core.ConfigUpdate) (core.ConfigValue, error) {
-	v, err := (settings.Service{Paths: c.instructions.Paths}).Set(ctx, settings.Update{Key: string(u.Key), Provider: u.Provider, Enabled: u.Enabled, Locale: u.Locale, Answering: u.Answering, Window: u.Window, DefaultHost: u.DefaultHost})
+	v, err := (settings.Service{Paths: c.instructions.Paths}).Set(ctx, settings.Update{Key: string(u.Key), Provider: u.Provider, Enabled: u.Enabled, Locale: u.Locale, Answering: u.Answering, Window: u.Window, DefaultHost: u.DefaultHost, Resources: u.Resources, DefaultMode: u.DefaultMode, Visibility: u.Visibility})
 	if err != nil {
 		return core.ConfigValue{}, settingsRefusal(err)
 	}
@@ -36,6 +37,16 @@ func (c *Client) SetConfig(ctx context.Context, u core.ConfigUpdate) (core.Confi
 }
 func publicConfig(v settings.Value) core.ConfigValue {
 	out := core.ConfigValue{Key: core.ConfigKey(v.Key), Locale: v.Locale, Source: v.Source, Answering: v.Answering, Window: v.Window, DefaultHost: v.DefaultHost}
+	if v.Resources != nil {
+		out.Resources = &core.ConfigToggleState{Effective: v.Resources.Effective, Saved: v.Resources.Saved, Source: v.Resources.Source, Invalid: v.Resources.Invalid}
+	}
+	if v.Visibility != nil {
+		out.Visibility = make([]core.ConfigVisibilityState, len(v.Visibility))
+		for i, v := range v.Visibility {
+			out.Visibility[i] = core.ConfigVisibilityState(v)
+		}
+	}
+	out.DefaultMode = v.DefaultMode
 	if v.Providers != nil {
 		out.Providers = make([]core.ProviderState, len(v.Providers))
 		for i, p := range v.Providers {
@@ -55,6 +66,9 @@ func settingsRefusal(err error) error {
 // Translate only generated input prefixes; quoted caller values stay intact.
 func settingsInputMessage(message string) string {
 	for _, p := range []struct{ cli, sdk string }{
+		{"config resources --set", "ConfigUpdate.Resources"},
+		{"config ai-default-mode --set", "ConfigUpdate.DefaultMode"},
+		{"config statusbar-visibility --set", "ConfigUpdate.Visibility"},
 		{"config agent-host --default", "ConfigUpdate.DefaultHost"},
 		{"config providers --enable", "ConfigUpdate.Provider"},
 		{"config providers --disable", "ConfigUpdate.Provider"},

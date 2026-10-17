@@ -53,7 +53,8 @@ func aiEnabledAgentsContains(values []config.AIAgentProvider, provider config.AI
 
 // The central settings are the settings every front (TUI, web, CLI) shares:
 // `[ui] locale` in config.toml, the agent-question-answering file, and the
-// agent-question-window-seconds file. These functions read, validate, and
+// agent-question-window-seconds file, plus the resource, AI mode and status
+// bar defaults files. These functions read, validate, and
 // store them from the home and env resolvers alone; they never read a front
 // (TUI) layer setting. A front adds only its own display on top, such as
 // output lines or a tmux display-message.
@@ -292,7 +293,12 @@ type ProviderState struct {
 	ID      string
 	Enabled bool
 }
+type ToggleState struct{ Effective, Saved, Source, Invalid string }
+type VisibilityState struct{ Key, Effective, Saved, Source, Invalid string }
 type Value struct {
+	Resources   *ToggleState      `json:",omitempty"`
+	DefaultMode string            `json:",omitempty"`
+	Visibility  []VisibilityState `json:",omitempty"`
 	Key         string
 	Providers   []ProviderState
 	Locale      string
@@ -302,6 +308,9 @@ type Value struct {
 	DefaultHost string
 }
 type Update struct {
+	Resources   *string
+	DefaultMode *string
+	Visibility  map[string]string
 	Key         string
 	Provider    string
 	Enabled     bool
@@ -314,6 +323,13 @@ type Update struct {
 func (s Service) Get(ctx context.Context, key string) (Value, error) {
 	if err := ctx.Err(); err != nil {
 		return Value{}, err
+	}
+	if centralFacadeKey(key) {
+		p, err := s.Paths()
+		if err != nil {
+			return Value{}, err
+		}
+		return readCentralFacade(p, key)
 	}
 	p, err := s.Paths()
 	if err != nil {
@@ -375,6 +391,9 @@ func readValue(p config.Paths, key string) (Value, error) {
 func (s Service) Set(ctx context.Context, u Update) (Value, error) {
 	if err := ctx.Err(); err != nil {
 		return Value{}, err
+	}
+	if centralFacadeKey(u.Key) {
+		return s.setCentralFacade(ctx, u)
 	}
 	// Validate every supplied policy value before the first write.
 	var question config.AgentQuestionAnswering

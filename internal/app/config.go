@@ -8,7 +8,7 @@ import (
 )
 
 // configSubcommands lists the public config-domain routes, in help order.
-var configSubcommands = []string{"edit", "providers", "accounts", "locale", "agent-questions", "agent-approvals", "agent-host", "render", "apply"}
+var configSubcommands = []string{"edit", "providers", "accounts", "locale", "agent-questions", "agent-approvals", "agent-host", "resources", "ai-default-mode", "statusbar-visibility", "render", "apply"}
 
 // configRenderArtifacts lists the two generated artifacts `config render` can
 // print, in help order.
@@ -103,6 +103,12 @@ func (c *configCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runAgentHost(rest, stdout, stderr)
 	case "agent-approvals":
 		return c.runAgentApprovals(rest, stdout, stderr)
+	case "resources":
+		return c.runCentralSetting("config resources", rest, stdout, stderr)
+	case "ai-default-mode":
+		return c.runCentralSetting("config ai-default-mode", rest, stdout, stderr)
+	case "statusbar-visibility":
+		return c.runCentralSetting("config statusbar-visibility", rest, stdout, stderr)
 	case "render":
 		return c.runRender(rest, stdout, stderr)
 	case "apply":
