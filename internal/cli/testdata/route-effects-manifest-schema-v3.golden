@@ -69,6 +69,9 @@ route=config locale identity=unchanged address=unchanged topology=unchanged desi
 route=config agent-questions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=config agent-approvals identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=config agent-host identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config resources identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config ai-default-mode identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config statusbar-visibility identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=config render identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=config render standalone identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=config render app identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null

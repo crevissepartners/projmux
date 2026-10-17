@@ -1401,7 +1401,7 @@ var routes = []Route{
 				Name:       "statusbar-visibility",
 				Summary:    "Read or patch central status bar visibility; returns JSON",
 				Usage:      []string{"projmux config statusbar-visibility [--key <leaf> --set <on|off>]"},
-				Notes:      []string{"Reads all 12 central leaves in key order. --key and --set must appear together. Leaf keys: notifications-hud, agent-usage-hud, project, working-directory, git, clock, agent-usage-provider-claude, agent-usage-provider-codex, agent-usage-window-claude-5h, agent-usage-window-claude-weekly, agent-usage-window-codex-5h, agent-usage-window-codex-weekly. Defaults on except codex-5h off. settings-launcher is TUI only and refused. Patches preserve other values and unknown stored fields; concurrent writers are not serialized. TUI and web overrides still win; neither is written. JSON reports effective, saved, source (default/central), and invalid with existing loader semantics."},
+				Notes:      []string{"Reads all 12 central leaves in key order. --key and --set must appear together. Leaf keys: notifications-hud, agent-usage-hud, project, working-directory, git, clock, agent-usage-provider-claude, agent-usage-provider-codex, agent-usage-window-claude-5h, agent-usage-window-claude-weekly, agent-usage-window-codex-5h, agent-usage-window-codex-weekly. Defaults on except codex-5h off. settings-launcher is TUI only and refused. Patches preserve other values and unknown stored fields; concurrent writers are not serialized. Front overrides still win; their settings are not written. JSON reports effective, saved, source (default/central), and invalid with existing loader semantics."},
 				Canonical:  []string{"config statusbar-visibility"},
 			},
 			{
