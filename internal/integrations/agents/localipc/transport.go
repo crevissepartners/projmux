@@ -28,7 +28,10 @@ const (
 var (
 	ErrFrameTooLarge  = errors.New("bounded frame is too large")
 	ErrFrameMalformed = errors.New("bounded frame is malformed")
-	ErrSocketReplaced = errors.New("private endpoint identity changed")
+	// ErrFrameReadDeadline identifies only a native read deadline. It never
+	// implies that a partial frame was valid or that an endpoint was replaced.
+	ErrFrameReadDeadline = errors.New("bounded frame read failed")
+	ErrSocketReplaced    = errors.New("private endpoint identity changed")
 )
 
 // SocketIdentity is the stable kernel identity of one owned Unix socket.
@@ -177,6 +180,9 @@ func ReadJSON(reader io.Reader, value any) error {
 	payload, err := io.ReadAll(io.LimitReader(reader, MaxFrameBytes+1))
 	if len(payload) > MaxFrameBytes {
 		return ErrFrameTooLarge
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return ErrFrameReadDeadline
 	}
 	if err != nil {
 		return errors.New("bounded frame read failed")

@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/testutil/socketreuse"
 )
@@ -272,5 +275,86 @@ func TestKernelProcessAbsenceIsDistinctFromUnreadableIdentity(t *testing.T) {
 	// Linux and Darwin kernel PID limits are below this positive PID.
 	if _, _, err := Process(1 << 30); !errors.Is(err, ErrProcessAbsent) {
 		t.Fatal("missing PID did not prove absence", err)
+	}
+}
+
+// A Reader can return bytes and an error together, including at the frame bound.
+type terminalFrameReader struct {
+	*bytes.Reader
+	err error
+}
+
+func (r terminalFrameReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if r.Reader.Len() == 0 {
+		return n, r.err
+	}
+	return n, err
+}
+
+type frameSyntheticTimeout struct{}
+
+func (frameSyntheticTimeout) Error() string   { return "synthetic timeout" }
+func (frameSyntheticTimeout) Timeout() bool   { return true }
+func (frameSyntheticTimeout) Temporary() bool { return true }
+
+func TestBoundedJSONReadDeadlineClassificationAndPriority(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload string
+		err, want     error
+	}{
+		{"deadline", "", os.ErrDeadlineExceeded, ErrFrameReadDeadline},
+		{"partial deadline", `{"value":`, os.ErrDeadlineExceeded, ErrFrameReadDeadline},
+		{"complete deadline", `{"value":"must not decode"}`, os.ErrDeadlineExceeded, ErrFrameReadDeadline},
+		{"oversize before deadline", strings.Repeat("x", MaxFrameBytes+1), os.ErrDeadlineExceeded, ErrFrameTooLarge},
+		{"malformed", `{"value":`, io.EOF, ErrFrameMalformed},
+		{"other error", "", io.ErrUnexpectedEOF, nil},
+		{"timeout interface alone", "", frameSyntheticTimeout{}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := struct{ Value string }{Value: "unchanged"}
+			err := ReadJSON(terminalFrameReader{bytes.NewReader([]byte(tc.payload)), tc.err}, &got)
+			if err == nil || (tc.want != nil && !errors.Is(err, tc.want)) {
+				t.Fatalf("read error=%v want=%v", err, tc.want)
+			}
+			if tc.want == ErrFrameReadDeadline && err.Error() != "bounded frame read failed" {
+				t.Fatalf("native deadline changed the existing read-error text: %v", err)
+			}
+			if tc.want == nil && (errors.Is(err, ErrFrameReadDeadline) || errors.Is(err, os.ErrDeadlineExceeded)) {
+				t.Fatalf("unrelated error classified as native deadline: %v", err)
+			}
+			if got.Value != "unchanged" {
+				t.Fatal("failed read decoded a value")
+			}
+		})
+	}
+}
+
+func TestBoundedJSONNativeReadDeadlinePreservesPartialFrame(t *testing.T) {
+	for _, payload := range []string{"", `{"value":`} {
+		t.Run(fmt.Sprintf("bytes-%d", len(payload)), func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			done, writerDone := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(writerDone)
+				defer server.Close()
+				if payload != "" {
+					_, _ = server.Write([]byte(payload))
+				}
+				<-done
+			}()
+			if err := client.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			var got any
+			err := ReadJSON(client, &got)
+			close(done)
+			server.Close()
+			<-writerDone
+			if !errors.Is(err, ErrFrameReadDeadline) || got != nil {
+				t.Fatalf("native deadline: value=%v error=%v", got, err)
+			}
+		})
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,6 +188,21 @@ func TestDefaultHostProcessChildSurvivesParentProviderGroupCLI(t *testing.T) {
 	testProcessChildSurvivesParentProviderGroupCLI(t, true)
 }
 
+// The regression uses the same scenario body and assertions as the original four.
+func TestDetachedClaudeChildSurvivesHostReadDeadlineCLI(t *testing.T) {
+	product := os.Getenv("PMX_TEST_CLAUDE_REGRESSION_CLI")
+	if product == "" {
+		if os.Getenv("PMX_TEST_CLI") != "" {
+			t.Fatal("missing tagged regression CLI; refusing ordinary CLI fallback")
+		}
+		t.Skip("set PMX_TEST_CLAUDE_REGRESSION_CLI to the tagged copied CLI")
+	}
+	t.Setenv("PMX_TEST_CLI", product)
+	t.Run("claude/terminated", func(t *testing.T) {
+		testProcessChildSurvivesParentProviderScenarioCLI(t, false, "claude", syscall.SIGTERM, true)
+	})
+}
+
 func testProcessChildSurvivesParentProviderGroupCLI(t *testing.T, inferred bool) {
 	for _, scenario := range []struct {
 		provider string
@@ -193,147 +210,183 @@ func testProcessChildSurvivesParentProviderGroupCLI(t *testing.T, inferred bool)
 	}{{"claude", syscall.SIGTERM}, {"codex", syscall.SIGTERM}, {"claude", syscall.SIGHUP}, {"codex", syscall.SIGHUP}} {
 		provider := scenario.provider
 		t.Run(provider+"/"+scenario.signal.String(), func(t *testing.T) {
-			var f processCreateCLI
-			if provider == "codex" {
-				f = newProcessCodexCreateCLI(t).processCreateCLI
-				prepareProcessCodexPeerCLI(t, f)
-			} else {
-				f = newProcessCreateCLI(t)
-			}
-			diagnostic := newClaudeAuthorityFailureDiagnostics(t)
-			if provider == "claude" {
-				diagnostic.paths = []string{f.store.Path()}
-			}
-			defer diagnostic.beforeCleanup()
-			script := filepath.Join(f.root, "provider.py")
-			raw, err := os.ReadFile(script)
-			if err != nil {
-				t.Fatal(err)
-			}
-			text := strings.Replace(string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'", 1)
-			branch := "elif prompt=='nested-detached':\n   result=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'create','agent','--host','process','--detach','--project','uid:" + f.project + "','--window','uid:" + f.window + "','--provider','" + provider + "','--profile','none','--name','detached-child','--model','stub-model','--effort','low','--','child initial task'],input='',text=True,capture_output=True)\n   result_path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'detached-result')\n   with open(result_path+'.tmp','w') as result_file:result_file.write(str(result.returncode)+'\\n'+result.stdout+result.stderr)\n   os.replace(result_path+'.tmp',result_path)\n  elif prompt=='register-again':"
-			if inferred {
-				path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
-				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte("process"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				branch = strings.Replace(branch, "'--host','process','--detach',", "", 1)
-			}
-			if err = os.WriteFile(script, []byte(strings.Replace(text, "elif prompt=='register-again':", branch, 1)), 0600); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-			defer cancel()
-			parent := exec.CommandContext(ctx, f.binary, f.args("--", "nested-detached")...)
-			input, err := parent.StdinPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			output, err := parent.StdoutPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			var parentErrors bytes.Buffer
-			parent.Stderr = &parentErrors
-			if err = parent.Start(); err != nil {
-				t.Fatal(err)
-			}
-			waited := false
-			defer func() {
-				input.Close()
-				if !waited {
-					parent.Process.Kill()
-					parent.Wait()
-				}
-			}()
-			defer diagnostic.beforeCleanup()
-			line, err := bufio.NewReader(output).ReadString('\n')
-			if err != nil {
-				t.Fatalf("parent startup: %v %s", err, parentErrors.String())
-			}
-			parentRef := strings.Fields(line)[1]
-			processCLIUntil(t, ctx, func() bool {
-				raw, err := os.ReadFile(filepath.Join(f.root, "detached-result"))
-				if err != nil {
-					return false
-				}
-				if !bytes.HasPrefix(raw, []byte("0\n")) {
-					t.Fatalf("nested detached create: %s", raw)
-				}
-				return true
-			})
-			reg, err := f.store.LoadReadOnly()
-			if err != nil {
-				t.Fatal(err)
-			}
-			var child *coremetadata.Agent
-			for i := range reg.Agents {
-				if reg.Agents[i].Metadata.Name == "detached-child" {
-					copy := reg.Agents[i].Clone()
-					child = &copy
-					break
-				}
-			}
-			if child == nil {
-				t.Fatal("detached child missing")
-			}
-			ref := "uid:" + child.Metadata.UID
-			t.Cleanup(func() {
-				cleanup, stop := context.WithTimeout(context.Background(), 12*time.Second)
-				defer stop()
-				_, _ = exec.CommandContext(cleanup, f.binary, "agent", "stop", ref).CombinedOutput()
-			})
-			parentAgent, _ := reg.Agent(strings.TrimPrefix(parentRef, "uid:"))
-			parentPane, _ := reg.Pane(parentAgent.Status.PaneRef)
-			parentActivation := *parentPane.Status.Activation.Process
-			childPane, _ := reg.Pane(child.Status.PaneRef)
-			childBinding := childPane.Status.ProcessSession.Binding
-			if child.Metadata.Annotations[coremetadata.AnnotationCreatorAgent] != parentAgent.Metadata.UID || child.Metadata.Annotations[coremetadata.AnnotationCreatorBasis] != coremetadata.CreatorBasisProcessChain {
-				t.Fatalf("caller creator lineage lost: %v", child.Metadata.Annotations)
-			}
-			// Prove source readiness before ending the parent group. The assertion
-			// after group death still requires the same child's real control.
-			if scenario.provider == "claude" {
-				processCLIUntil(t, ctx, func() bool {
-					current, err := f.store.LoadReadOnly()
-					if err != nil {
-						return false
-					}
-					_, ready := discoverProcessClaudeProof(f.store.Path(), current, child.Metadata.UID)
-					return ready
-				})
-			}
-			// Only this fixture-created provider's own group is targeted.
-			if err = syscall.Kill(-parentActivation.Child.PID, scenario.signal); err != nil {
-				t.Fatal(err)
-			}
-			_ = parent.Wait()
-			waited = true
-			_ = input.Close()
-			processCLIUntil(t, ctx, func() bool { return processActivationAbsent(parentActivation, localipc.Process) })
-			if err = syscall.Kill(-parentActivation.Child.PID, 0); !errors.Is(err, syscall.ESRCH) {
-				t.Fatalf("parent provider group still present: %v", err)
-			}
-			out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", ref, "--source", ref, "--", "independent child response").CombinedOutput()
-			if err != nil || !bytes.Contains(out, []byte("delivered")) {
-				t.Fatalf("coordination after parent group exit: %v %s", err, out)
-			}
-			reg, err = f.store.LoadReadOnly()
-			if err != nil {
-				t.Fatal(err)
-			}
-			current, _ := reg.Pane(childPane.Metadata.UID)
-			if current.Status.ProcessSession.Binding != childBinding || current.Status.Activation.Process == nil {
-				t.Fatal("parent group exit replaced or retired detached child")
-			}
-			out, err = exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
-			if err != nil {
-				t.Fatalf("child stop: %v %s", err, out)
-			}
+			testProcessChildSurvivesParentProviderScenarioCLI(t, inferred, provider, scenario.signal, false)
 		})
+	}
+}
+
+func testProcessChildSurvivesParentProviderScenarioCLI(t *testing.T, inferred bool, provider string, signal syscall.Signal, regression bool) {
+	var f processCreateCLI
+	if provider == "codex" {
+		f = newProcessCodexCreateCLI(t).processCreateCLI
+		prepareProcessCodexPeerCLI(t, f)
+	} else {
+		f = newProcessCreateCLI(t)
+	}
+	var control string
+	var regressionProof claudeProcessProof
+	if regression {
+		control = filepath.Join(f.root, "regression")
+		if err := os.Mkdir(control, 0700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PMX_TEST_CLAUDE_REGRESSION_CONTROL", control)
+		// The provider allowlist deliberately drops PMX_ variables. The fixture's
+		// private wrapper exports this one test control, just like its copied CLI.
+		wrapper := filepath.Join(f.root, "claude")
+		raw, err := os.ReadFile(wrapper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = bytes.Replace(raw, []byte("#!/bin/sh\n"), fmt.Appendf(nil, "#!/bin/sh\nexport PMX_TEST_CLAUDE_REGRESSION_CONTROL=%q\n", control), 1)
+		if err := os.WriteFile(wrapper, raw, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	diagnostic := newClaudeAuthorityFailureDiagnostics(t)
+	if provider == "claude" {
+		diagnostic.paths = []string{f.store.Path()}
+	}
+	defer diagnostic.beforeCleanup()
+	script := filepath.Join(f.root, "provider.py")
+	raw, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'", 1)
+	branch := "elif prompt=='nested-detached':\n   result=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'create','agent','--host','process','--detach','--project','uid:" + f.project + "','--window','uid:" + f.window + "','--provider','" + provider + "','--profile','none','--name','detached-child','--model','stub-model','--effort','low','--','child initial task'],input='',text=True,capture_output=True)\n   result_path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'detached-result')\n   with open(result_path+'.tmp','w') as result_file:result_file.write(str(result.returncode)+'\\n'+result.stdout+result.stderr)\n   os.replace(result_path+'.tmp',result_path)\n  elif prompt=='register-again':"
+	if inferred {
+		path := filepath.Join(f.root, "config", "projmux", "agent-default-host")
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("process"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		branch = strings.Replace(branch, "'--host','process','--detach',", "", 1)
+	}
+	if err = os.WriteFile(script, []byte(strings.Replace(text, "elif prompt=='register-again':", branch, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	parent := exec.CommandContext(ctx, f.binary, f.args("--", "nested-detached")...)
+	input, err := parent.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := parent.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parentErrors bytes.Buffer
+	parent.Stderr = &parentErrors
+	if err = parent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		input.Close()
+		if !waited {
+			parent.Process.Kill()
+			parent.Wait()
+		}
+	}()
+	defer diagnostic.beforeCleanup()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatalf("parent startup: %v %s", err, parentErrors.String())
+	}
+	parentRef := strings.Fields(line)[1]
+	processCLIUntil(t, ctx, func() bool {
+		raw, err := os.ReadFile(filepath.Join(f.root, "detached-result"))
+		if err != nil {
+			return false
+		}
+		if !bytes.HasPrefix(raw, []byte("0\n")) {
+			t.Fatalf("nested detached create: %s", raw)
+		}
+		return true
+	})
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var child *coremetadata.Agent
+	for i := range reg.Agents {
+		if reg.Agents[i].Metadata.Name == "detached-child" {
+			copy := reg.Agents[i].Clone()
+			child = &copy
+			break
+		}
+	}
+	if child == nil {
+		t.Fatal("detached child missing")
+	}
+	ref := "uid:" + child.Metadata.UID
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 12*time.Second)
+		defer stop()
+		out, err := exec.CommandContext(cleanup, f.binary, "agent", "stop", ref).CombinedOutput()
+		if regression {
+			t.Logf("regression cleanup child stop: err=%v output=%s", err, out)
+		}
+	})
+	parentAgent, _ := reg.Agent(strings.TrimPrefix(parentRef, "uid:"))
+	parentPane, _ := reg.Pane(parentAgent.Status.PaneRef)
+	parentActivation := *parentPane.Status.Activation.Process
+	childPane, _ := reg.Pane(child.Status.PaneRef)
+	childBinding := childPane.Status.ProcessSession.Binding
+	if child.Metadata.Annotations[coremetadata.AnnotationCreatorAgent] != parentAgent.Metadata.UID || child.Metadata.Annotations[coremetadata.AnnotationCreatorBasis] != coremetadata.CreatorBasisProcessChain {
+		t.Fatalf("caller creator lineage lost: %v", child.Metadata.Annotations)
+	}
+	// Prove source readiness before ending the parent group. The assertion
+	// after group death still requires the same child's real control.
+	if provider == "claude" {
+		processCLIUntil(t, ctx, func() bool {
+			current, err := f.store.LoadReadOnly()
+			if err != nil {
+				return false
+			}
+			proof, ready := discoverProcessClaudeProof(f.store.Path(), current, child.Metadata.UID)
+			if regression && ready {
+				regressionProof = proof
+			}
+			return ready
+		})
+	}
+	// Only this fixture-created provider's own group is targeted.
+	if err = syscall.Kill(-parentActivation.Child.PID, signal); err != nil {
+		t.Fatal(err)
+	}
+	parentWaitErr := parent.Wait()
+	if regression {
+		t.Logf("regression original parent Wait: %v", parentWaitErr)
+	}
+	waited = true
+	_ = input.Close()
+	processCLIUntil(t, ctx, func() bool { return processActivationAbsent(parentActivation, localipc.Process) })
+	if err = syscall.Kill(-parentActivation.Child.PID, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("parent provider group still present: %v", err)
+	}
+	if regression {
+		exerciseClaudeHostReadDeadlineCLI(t, ctx, f, regressionProof, control)
+	}
+	out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", ref, "--source", ref, "--", "independent child response").CombinedOutput()
+	if err != nil || !bytes.Contains(out, []byte("delivered")) {
+		t.Fatalf("coordination after parent group exit: %v %s", err, out)
+	}
+	reg, err = f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _ := reg.Pane(childPane.Metadata.UID)
+	if current.Status.ProcessSession.Binding != childBinding || current.Status.Activation.Process == nil {
+		t.Fatal("parent group exit replaced or retired detached child")
+	}
+	out, err = exec.CommandContext(ctx, f.binary, "agent", "stop", ref).CombinedOutput()
+	if err != nil {
+		t.Fatalf("child stop: %v %s", err, out)
 	}
 }
 
@@ -836,5 +889,226 @@ func TestPromptlessClaudeDefaultHostMatchesExplicitDetachedCLI(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// Receipt types are local to the test so the ordinary test binary can drive
+// the tagged CLI without compiling any product-side gate into normal builds.
+type claudeDeadlineSelection struct {
+	Digest          string
+	BinarySHA256    string
+	Host            coremetadata.ProcessIdentity
+	Provider        coremetadata.ProcessIdentity
+	Helper          coremetadata.ProcessIdentity
+	AuthoritySHA256 string
+}
+
+func claudeDeadlineHash(value any) string {
+	raw, _ := json.Marshal(value)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func exerciseClaudeHostReadDeadlineCLI(t *testing.T, ctx context.Context, f processCreateCLI, proof claudeProcessProof, control string) {
+	t.Helper()
+	raw, err := os.ReadFile(f.binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binarySum := sha256.Sum256(raw)
+	binarySHA := hex.EncodeToString(binarySum[:])
+	digest := claudeDeadlineHash([4]any{proof.Binding, proof.Process, proof.HostProcess, proof.Session})
+	write := func(name string, value any) {
+		t.Helper()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.OpenFile(filepath.Join(control, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = file.Write(raw)
+		closeErr := file.Close()
+		if err != nil || closeErr != nil {
+			t.Fatalf("control write: %v %v", err, closeErr)
+		}
+	}
+	read := func(name string, value any) bool {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(control, name))
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		// O_EXCL receipts can be observed between create and write; retry empties.
+		if len(raw) == 0 {
+			return false
+		}
+		if err := json.Unmarshal(raw, value); err != nil {
+			t.Fatalf("invalid %s: %v", name, err)
+		}
+		return true
+	}
+	write("arm.json", struct {
+		Digest, BinarySHA256 string
+		Until                time.Time
+	}{digest, binarySHA, time.Now().Add(25 * time.Second)})
+	var selected claudeDeadlineSelection
+	processCLIUntil(t, ctx, func() bool { return read("selected.json", &selected) })
+	if selected.Digest != digest || selected.BinarySHA256 != binarySHA || selected.Host != proof.HostProcess || selected.Provider != proof.Process || selected.Helper.PID == 0 || selected.AuthoritySHA256 == "" {
+		t.Fatal("host selection does not match the exact child proof and tagged executable")
+	}
+	var native struct {
+		Selection   claudeDeadlineSelection
+		ObserverPID int
+		Kind        string
+	}
+	processCLIUntil(t, ctx, func() bool { return read("native.json", &native) })
+	if native.Selection != selected || native.ObserverPID != selected.Helper.PID || native.Kind != "deadline" {
+		t.Fatal("native deadline helper identity mismatch")
+	}
+	write("release.json", selected)
+	var released claudeDeadlineSelection
+	processCLIUntil(t, ctx, func() bool { return read("released.json", &released) })
+	if released != selected {
+		t.Fatal("host release identity mismatch")
+	}
+	var boundary claudeDeadlineSelection
+	kind := ""
+	processCLIUntil(t, ctx, func() bool {
+		var cleared, retained claudeDeadlineSelection
+		hasClear := read("cleared.json", &cleared)
+		hasRetain := read("retained.json", &retained)
+		if hasClear && hasRetain {
+			t.Fatal("both clear and retain decisions for one deadline")
+		}
+		if hasClear {
+			kind, boundary = "cleared.json", cleared
+		}
+		if hasRetain {
+			kind, boundary = "retained.json", retained
+		}
+		return hasClear || hasRetain
+	})
+	if boundary != selected {
+		t.Fatal("post-ready decision identity mismatch")
+	}
+	var client struct {
+		Digest, BinarySHA256 string
+		PID                  int
+	}
+	processCLIUntil(t, ctx, func() bool { return read("client-done.json", &client) })
+	if client.Digest != digest || client.BinarySHA256 != binarySHA || client.PID != selected.Helper.PID {
+		t.Fatal("ReadJSON observer does not match selected helper")
+	}
+	// Re-read both decisions after the original reader and held host have
+	// completed. A later exact childStop clear belongs to teardown, not this boundary.
+	var clear, retain claudeDeadlineSelection
+	if read("cleared.json", &clear) && read("retained.json", &retain) {
+		t.Fatal("non-exclusive completed deadline decision")
+	}
+	if _, err := os.Stat(filepath.Join(control, "ambiguous.json")); !os.IsNotExist(err) {
+		t.Fatal("ambiguous host response reader")
+	}
+	selectedJSON, _ := json.Marshal(selected)
+	t.Logf("regression exact identities: %s", selectedJSON)
+	t.Logf("same tagged CLI cmd/owner/provider/helper; native 5s deadline; decision=%s host=%d provider=%d helper=%d sha256=%s", kind, selected.Host.PID, selected.Provider.PID, selected.Helper.PID, binarySHA)
+}
+
+// The ordinary binary must still reject an unobserved host without starting
+// a registration writer. This endpoint sends no response; the real unchanged
+// five-second read deadline supplies the error (no injected timeout result).
+func TestClaudeHostReadDeadlineRemainsNotReadyAndStartsNoWriter(t *testing.T) {
+	// Keep this Unix endpoint within the platform bound even when the unit
+	// shard supplies a deeply nested private TMPDIR. Do not change TMPDIR.
+	root, err := os.MkdirTemp("/tmp", "pc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	listener, err := localipc.Listen(filepath.Join(root, "host.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	self, _, err := localipc.Process(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := claudeProcessProof{Socket: listener.Path, HostSocket: listener.Identity(), HostProcess: self, Process: self, Session: "fixture"}
+	for _, action := range []string{"observe", "ready", "register", "route"} {
+		t.Run(action, func(t *testing.T) {
+			accepted, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(finished)
+				conn, err := listener.Unix.AcceptUnix()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				var request claudeProcessCheck
+				if localipc.ReadJSON(conn, &request) != nil {
+					return
+				}
+				close(accepted)
+				<-release
+			}()
+			defer func() {
+				close(release)
+				listener.Unix.SetDeadline(time.Now())
+				<-finished
+				listener.Unix.SetDeadline(time.Time{})
+			}()
+			switch action {
+			case "observe":
+				if state := observeClaudeProcessHost(proof, false); state != claudeProcessHostReadDeadlineUnknown {
+					t.Fatalf("outcome=%v", state)
+				}
+			case "ready":
+				if checkClaudeProcessHost(proof, false) {
+					t.Fatal("unknown host reported ready")
+				}
+			case "register":
+				writes := 0
+				reason := registerClaudeEndpoint(claudeEndpointBootstrap{ProcessProof: &proof}, func(claudeEndpointBootstrap) error { writes++; return nil })
+				if reason == "" || writes != 0 {
+					t.Fatalf("unknown host admitted writer: reason=%v writes=%d", reason, writes)
+				}
+			case "route":
+				route, reason := claudeRegistrationRoute(claudeEndpointBootstrap{ProcessProof: &proof})
+				if reason == "" || route != nil {
+					t.Fatal("unknown host gained route")
+				}
+			}
+			select {
+			case <-accepted:
+			default:
+				t.Fatal("native deadline did not follow a complete original request")
+			}
+		})
+	}
+}
+
+func TestClaudeHostReadDeadlineOutcomeIsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want claudeProcessHostCheckOutcome
+	}{
+		{nil, claudeProcessHostCurrent},
+		{localipc.ErrFrameReadDeadline, claudeProcessHostReadDeadlineUnknown},
+		{fmt.Errorf("wrapped: %w", localipc.ErrFrameReadDeadline), claudeProcessHostReadDeadlineUnknown},
+		{os.ErrDeadlineExceeded, claudeProcessHostRejected},
+		{context.DeadlineExceeded, claudeProcessHostRejected},
+		{localipc.ErrFrameMalformed, claudeProcessHostRejected},
+		{localipc.ErrFrameTooLarge, claudeProcessHostRejected},
+		{localipc.ErrSocketReplaced, claudeProcessHostRejected},
+		{errors.New("other error"), claudeProcessHostRejected},
+	} {
+		if got := classifyClaudeProcessHostCheck(tc.err); got != tc.want {
+			t.Fatalf("error=%v got=%v want=%v", tc.err, got, tc.want)
+		}
 	}
 }

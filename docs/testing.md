@@ -55,6 +55,27 @@ for a shorter critical path; runner time and wall time must be measured separate
   and any failure fail the target. Verbose PASS lines and a final count summary
   prove execution. The Linux `Process Host CLI Tests` job runs this target
   behind aggregate `Test`, separately from the five required job names.
+  The runner additionally builds a CLI with the private
+  `projmux_process_cli_regression` tag and supplies it through
+  `PMX_TEST_CLAUDE_REGRESSION_CLI`. The detached Claude SIGTERM read-deadline
+  regression uses the original parent signal/Wait, single delivered send,
+  unchanged binding, and exact child stop assertions. It holds one validated
+  Ready helper's plain host-check response until the existing five-second
+  native read deadline, releases it, and waits for the exact helper's completed
+  clear-or-retain decision before continuing that same body. The control uses
+  private `PMX_TEST_CLAUDE_REGRESSION_CONTROL` receipts pinned to the proof,
+  executable, host, provider and helper; mismatched or overlapping readers,
+  missing receipts and non-exclusive decisions fail the regression. Ordinary
+  builds contain no control environment/filesystem reads or waiting, and the
+  tagged build without the control variable follows the original transport.
+  This covers an observed failure mechanism without establishing the cause of
+  earlier CI failures. A native host read deadline remains not-ready and cannot
+  start a registration writer; only an already-Ready helper's idle retirement
+  is deferred. Persistent deadlines can therefore keep an idle helper alive
+  longer; confirmed refusals and replacements still retire it. Transport tests
+  also cover partial frames, oversize precedence and unrelated timeout errors.
+  The summary reports the additional tagged build and regression test seconds
+  separately; test selection remains discovered from the current sources.
   Build has a 180-second bound and precompilation has a 120-second bound.
   Go package tests have a 420-second timeout; the test subprocess has 480
   seconds to preserve Go timeout diagnostics. The job has 15 minutes.

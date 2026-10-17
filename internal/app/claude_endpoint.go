@@ -836,26 +836,29 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 	if routeReason != "" || !coordinationTarget.Matches(expectedRoute) {
 		return diagnostics.ClaudeRegistrationRouteMismatch
 	}
-	identityCurrent := func() bool {
-		if bootstrap.ProcessProof != nil && !checkClaudeProcessHost(*bootstrap.ProcessProof, false) {
-			return false
+	identityState := func() claudeProcessHostCheckOutcome {
+		if bootstrap.ProcessProof != nil {
+			if state := observeClaudeProcessHost(*bootstrap.ProcessProof, false); state != claudeProcessHostCurrent {
+				return state
+			}
 		}
 		if observed, err := claudeadapter.InspectSocket(leasePath); err != nil || observed != leaseIdentity {
-			return false
+			return claudeProcessHostRejected
 		}
 		if observed, err := localipc.InspectOwnedSocket(coordinationListener.Path); err != nil || observed != coordinationIdentity {
-			return false
+			return claudeProcessHostRejected
 		}
 		actual, _, err := claudeadapter.Process(bootstrap.Registration.Authority.Process.PID)
 		if err != nil || actual != bootstrap.Registration.Authority.Process {
-			return false
+			return claudeProcessHostRejected
 		}
 		observed, err := claudeadapter.InspectSocket(bootstrap.Socket)
 		if err != nil || observed != socketIdentity {
-			return false
+			return claudeProcessHostRejected
 		}
-		return true
+		return claudeProcessHostCurrent
 	}
+	identityCurrent := func() bool { return identityState() == claudeProcessHostCurrent }
 	registryCurrent := func() bool {
 		reg, err := store.LoadDegradedReadOnly()
 		if err != nil {
@@ -911,8 +914,18 @@ func serveClaudeRegistration(ctx context.Context, bootstrap claudeEndpointBootst
 		if ctx.Err() != nil {
 			return diagnostics.ClaudeRegistrationEndedContextDone
 		}
-		if !idleRegistry.current(identityCurrent, registryCurrent) {
-			return diagnostics.ClaudeRegistrationEndedNotCurrent
+		// Only this post-Ready idle evaluation may retain an unknown helper.
+		// Readiness and delivery continue to use the strict current closure.
+		state := claudeProcessHostRejected
+		if !idleRegistry.current(func() bool {
+			state = identityState()
+			return state == claudeProcessHostCurrent
+		}, registryCurrent) {
+			if state != claudeProcessHostReadDeadlineUnknown {
+				return diagnostics.ClaudeRegistrationEndedNotCurrent
+			}
+			// No successful Registry check is cached and no RPC is retried.
+			observeClaudeHelperRetainedForRegression(bootstrap)
 		}
 		_ = listener.SetDeadline(time.Now().Add(claudeEndpointPollInterval))
 		connection, err := listener.AcceptUnix()
