@@ -65,14 +65,15 @@ func TestCentralSettingsAuthoritySweep(t *testing.T) {
 }
 func TestCentralSettingsCLIParity(t *testing.T) {
 	c, cmd, _ := settingsClient(t, t.TempDir())
+	on, shell := "on", "shell"
 	for _, tc := range []struct {
 		route string
 		key   core.ConfigKey
 		args  []string
 		u     core.ConfigUpdate
 	}{
-		{"resources", core.ConfigStatusbarResources, []string{"--set", "on"}, core.ConfigUpdate{Resources: new("on")}},
-		{"ai-default-mode", core.ConfigAIDefaultMode, []string{"--set", "shell"}, core.ConfigUpdate{DefaultMode: new("shell")}},
+		{"resources", core.ConfigStatusbarResources, []string{"--set", "on"}, core.ConfigUpdate{Resources: &on}},
+		{"ai-default-mode", core.ConfigAIDefaultMode, []string{"--set", "shell"}, core.ConfigUpdate{DefaultMode: &shell}},
 		{"statusbar-visibility", core.ConfigStatusbarVisibility, []string{"--key", "clock", "--set", "off"}, core.ConfigUpdate{Visibility: map[string]string{"clock": "off"}}},
 	} {
 		for _, write := range []bool{false, true} {
