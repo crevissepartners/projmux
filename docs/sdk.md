@@ -231,6 +231,52 @@ and cancellation before admission writes nothing. This API uses the client's
 explicit ConfigDir and the same `agent-default-host` file as the CLI and Settings.
 It stores the preference only; SDK creation keeps its existing tmux contract.
 
+## Central resources, mode and visibility
+
+`GetConfig` and `SetConfig` also accept these additive keys:
+
+| Key | Read field | Update field | Default |
+| --- | --- | --- | --- |
+| `core.ConfigStatusbarResources` (`statusbar.resources`) | `Resources *core.ConfigToggleState` | `Resources *string` (`on`/`off`) | `off` |
+| `core.ConfigAIDefaultMode` (`ai.defaultMode`) | `DefaultMode string` | `DefaultMode *string` | `selective` |
+| `core.ConfigStatusbarVisibility` (`statusbar.visibility`) | `Visibility []core.ConfigVisibilityState` | `Visibility map[string]string` patch | `on`, except Codex 5h `off` |
+
+Modes are `claude`, `codex`, `antigravity`, `selective`, `resume`, and `shell`
+(case sensitive). Nil pointers and an empty visibility patch preserve storage.
+Toggle states contain `Effective`, `Saved`, `Source`, and `Invalid`; visibility
+states also contain `Key`, sorted ascending. Resources source is `default` or
+`saved`; visibility source is `default` or `central`. Existing loader semantics
+apply: invalid resource text appears in `Invalid`, while invalid central
+visibility values are omitted by the loader and read as built-in defaults.
+The three new read fields use `omitempty`, preserving existing five-key JSON.
+
+Central visibility keys are `notifications-hud`, `agent-usage-hud`, `project`,
+`working-directory`, `git`, `clock`, `agent-usage-provider-claude`,
+`agent-usage-provider-codex`, `agent-usage-window-claude-5h`,
+`agent-usage-window-claude-weekly`, `agent-usage-window-codex-5h`, and
+`agent-usage-window-codex-weekly`. `settings-launcher` is TUI only and refused.
+A patch validates every leaf and value before one atomic replacement of
+`statusbar-defaults.json`. It preserves unspecified leaves, invalid untouched
+values, and unknown stored fields. Concurrent writers are not serialized;
+there is no compare-and-swap guarantee.
+
+These methods use only the client's explicit central ConfigDir. Invalid
+keys/leaves return `CodeConfigKeyInvalid`; invalid values return
+`CodeConfigValueInvalid`. Invalid input or cancellation before write admission
+preserves bytes, mode and mtime in explicit ConfigDir/StateDir. Admitted atomic
+writes finish without interrupting the replacement. They do not read or write
+TUI leaves or `web.toml`, reload tmux, start providers, or change the Registry.
+Valid TUI/web overrides continue to take priority over central visibility.
+
+The CLI routes are `config resources [--set <on|off>]`,
+`config ai-default-mode [--set <mode>]`, and
+`config statusbar-visibility [--key <leaf> --set <on|off>]`. Each read or write
+returns its key's JSON projection (`key` plus `resources`, `defaultMode`, or
+`visibility`); state field names are lowercase and arrays are never null.
+The CLI preserves its existing bootstrap migration and error journal policy;
+it does not promise that the entire HOME remains unwritten. Invalid CLI inputs
+exit 2. Existing five-key CLI output is unchanged.
+
 ## Process Agent stop
 
 `Client.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:..."})` stops one process

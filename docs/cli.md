@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 263 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 266 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -1545,6 +1545,9 @@ projmux config accounts list [-o json]
 projmux config accounts remove <name|uid:account-…> [-o json]
 projmux config locale [--set <value>]
 projmux config agent-host [--default <tmux|process>]
+projmux config resources [--set <on|off>]
+projmux config ai-default-mode [--set <mode>]
+projmux config statusbar-visibility [--key <leaf> --set <on|off>]
 projmux config agent-questions [--answering <claude|projmux>] [--window <seconds|unlimited>]
 projmux config agent-approvals [--answering <claude|projmux>] [--window <seconds>]
 projmux config render standalone|app [--bin <path>]
@@ -1562,10 +1565,13 @@ Subcommands:
 | [`projmux config agent-questions`](#projmux-config-agent-questions) | Show how Claude and Codex agent questions are answered and how long they wait; --answering or --window changes them |
 | [`projmux config agent-approvals`](#projmux-config-agent-approvals) | Show how agent permission requests are answered and how long a captured one waits; --answering or --window changes them |
 | [`projmux config agent-host`](#projmux-config-agent-host) | Show the central default agent host; --default stores tmux or process |
+| [`projmux config resources`](#projmux-config-resources) | Read or change central resource sampling; returns JSON |
+| [`projmux config ai-default-mode`](#projmux-config-ai-default-mode) | Read or change the central default AI window mode; returns JSON |
+| [`projmux config statusbar-visibility`](#projmux-config-statusbar-visibility) | Read or patch central status bar visibility; returns JSON |
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
-Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config accounts add`, `projmux config accounts list`, `projmux config accounts remove`, `projmux config locale`, `projmux config agent-questions`, `projmux config agent-approvals`, `projmux config agent-host`, `projmux config render`, `projmux config apply`
+Canonical spelling: `projmux config edit`, `projmux config providers`, `projmux config accounts add`, `projmux config accounts list`, `projmux config accounts remove`, `projmux config locale`, `projmux config agent-questions`, `projmux config agent-approvals`, `projmux config agent-host`, `projmux config resources`, `projmux config ai-default-mode`, `projmux config statusbar-visibility`, `projmux config render`, `projmux config apply`
 
 ### `projmux config edit`
 
@@ -1811,6 +1817,75 @@ projmux config agent-host [--default <tmux|process>]
 ```
 
 Reads and writes agent-default-host in the central config directory. Unset or invalid stored values read as tmux. Prints `default <host>` after a read or save. Public CLI new Agents follow this value when --host is omitted; process selects detached startup. Explicit --host wins, and explicit process retains foreground ownership.
+
+### `projmux config resources`
+
+Read or change central resource sampling; returns JSON
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config resources [--set <on|off>]
+```
+
+Reads and writes live-resources only; default off. JSON resources reports effective, saved, source (default/saved), and invalid. Does not start sampling or reload tmux.
+
+### `projmux config ai-default-mode`
+
+Read or change the central default AI window mode; returns JSON
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config ai-default-mode [--set <mode>]
+```
+
+Modes: claude, codex, antigravity, selective, resume, shell. Default selective. Front overrides still win; saving does not launch a provider.
+
+### `projmux config statusbar-visibility`
+
+Read or patch central status bar visibility; returns JSON
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux config statusbar-visibility [--key <leaf> --set <on|off>]
+```
+
+Reads all 12 central leaves in key order. --key and --set must appear together. Leaf keys: notifications-hud, agent-usage-hud, project, working-directory, git, clock, agent-usage-provider-claude, agent-usage-provider-codex, agent-usage-window-claude-5h, agent-usage-window-claude-weekly, agent-usage-window-codex-5h, agent-usage-window-codex-weekly. Defaults on except codex-5h off. settings-launcher is TUI only and refused. Patches preserve other values and unknown stored fields; concurrent writers are not serialized. Front overrides still win; their settings are not written. JSON reports effective, saved, source (default/central), and invalid with existing loader semantics.
 
 ### `projmux config render`
 

@@ -22,8 +22,8 @@ import (
 //
 // `config apply` fills the central file once from the valid TUI values (see
 // internal/app), so the central defaults start out equal to what the TUI shows.
-// Nothing else writes it yet, and it never follows later TUI edits: the two
-// copies may drift apart.
+// The public settings facade can patch central leaves independently. It never
+// follows later TUI edits: the two copies may drift apart.
 const (
 	StatusbarDefaultsFileName = "statusbar-defaults.json"
 	// StatusbarDefaultsSeedStateFileName records under StateDir that the
