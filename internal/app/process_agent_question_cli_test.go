@@ -707,7 +707,7 @@ func asyncQuestionLateHolder(t *testing.T, stateDir, storePath string) *coremeta
 func asyncQuestionLockObserved(t *testing.T, owned bool, err error) {
 	t.Helper()
 	if root := os.Getenv("PMX_TEST_QUESTION_RETIREMENT"); root != "" && !owned && err == nil {
-		asyncQuestionMarker(t, root, "observed", []byte(fmt.Sprintf("%v %v", owned, err)))
+		asyncQuestionMarker(t, root, "observed", fmt.Appendf(nil, "%v %v", owned, err))
 	}
 }
 
@@ -732,7 +732,7 @@ func asyncQuestionOutboxPIDs(ctx context.Context, binary string) (map[int]bool, 
 	}
 	expected := binary + " internal agent-question-outbox"
 	found := map[int]bool{}
-	for _, row := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for row := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		row = strings.TrimSpace(row)
 		fields := strings.Fields(row)
 		if len(fields) < 2 {
