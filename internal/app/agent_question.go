@@ -146,8 +146,8 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 		return agentQuestionRequest{}, usageError(fmt.Sprintf("%s: unsupported output %q; want json", request.spelling, output))
 	}
 	if request.action == "ask" {
-		if _, err := agentquestion.ParseQuestions(json.RawMessage(request.questions)); err != nil {
-			return agentQuestionRequest{}, usageError("agent question ask: invalid --questions")
+		if _, err := agentquestion.ParseCLIAsyncQuestions(json.RawMessage(request.questions)); err != nil {
+			return agentQuestionRequest{}, usageError(fmt.Sprintf("agent question ask: invalid --questions: %v", err))
 		}
 		if request.expiresIn <= 0 || request.expiresIn > 7*24*time.Hour {
 			return agentQuestionRequest{}, usageError("agent question ask: --expires-in must be positive and at most 168h")

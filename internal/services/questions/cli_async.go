@@ -29,6 +29,9 @@ func (c Service) resolveCLI(ctx context.Context, req Request, agent metadata.Age
 	fail := func(code string, err error) (bool, AnswerResult, error) {
 		return true, result, &Failure{Code: code, Message: code, Cause: err}
 	}
+	if _, err := agentquestion.ParseCLIAsyncQuestions(r.Questions); err != nil {
+		return fail(questionReasonSecretNativeOnly, err)
+	}
 	if r.State != agentquestion.StateWaiting {
 		code := questionReasonNotPending
 		if r.State == agentquestion.StateExpired {

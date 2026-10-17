@@ -321,3 +321,48 @@ func TestCLIAsyncReservationsCoverAcceptedReceiptGrowth(t *testing.T) {
 		}
 	}
 }
+
+// CLI questions have no native masked-answer surface. The shared parser also
+// carries Codex metadata, which must not silently enable secret persistence.
+func TestCLIAsyncSecretMetadataFailsClosed(t *testing.T) {
+	secret := json.RawMessage(`[{"question":"Token?","options":[{"label":"other"}],"isSecret":true}]`)
+	t.Run("existing-result", func(t *testing.T) {
+		r := CLIAsyncRecord{Record: Record{ID: "question-0000000000000001", Questions: secret, Answers: map[string]string{"Token?": "private-fixture-value"}}}
+		if _, err := r.Messages(); !errors.Is(err, ErrInvalidQuestions) {
+			t.Fatalf("secret peer payload admitted: %v", err)
+		}
+	})
+	t.Run("admission", func(t *testing.T) {
+		st := NewStore(t.TempDir()).CLIAsyncStore()
+		if _, err := st.Create("agent-a", secret, time.Hour); !errors.Is(err, ErrInvalidQuestions) {
+			t.Fatalf("secret CLI question admitted: %v", err)
+		}
+		if _, err := os.Stat(st.Path()); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("refused secret admission wrote a store: %v", err)
+		}
+	})
+	t.Run("existing-waiting", func(t *testing.T) {
+		st := NewStore(t.TempDir()).CLIAsyncStore()
+		r, err := st.Create("agent-a", json.RawMessage(`[{"question":"Token?","options":[{"label":"other"}]}]`), time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = st.update(func(d *cliAsyncDisk, _ time.Time) error { d.Records[0].Questions = secret; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := os.ReadFile(st.Path())
+		if _, err = st.Resolve(r.ID, r.AgentUID, map[string]string{"Token?": "private-fixture-value"}, ""); !errors.Is(err, ErrInvalidQuestions) {
+			t.Fatalf("secret answer persisted: %v", err)
+		}
+		after, _ := os.ReadFile(st.Path())
+		if string(before) != string(after) {
+			t.Fatal("refused secret answer changed durable record")
+		}
+		if _, err = st.Resolve(r.ID, r.AgentUID, nil, "declined"); !errors.Is(err, ErrCLISecretNativeOnly) {
+			t.Fatal("secret decline admitted", err)
+		}
+		if got, _, _ := st.Get(r.ID); got.Pending() {
+			t.Fatal("unsupported secret record owns delivery work")
+		}
+	})
+}

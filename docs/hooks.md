@@ -1544,6 +1544,11 @@ nonpositive or greater-than-seven-day duration fails before recording anything.
 The default lifetime is 24 hours. Question arrays use AskUserQuestion's
 `question`, `header`, `options`, and `multiSelect` fields; recommended labels are
 preserved verbatim. The existing question-size and count bounds apply.
+CLI questions have no masked native input surface: `isSecret: true` is refused
+with `question-secret-native-only` before recording or starting an owner.
+Existing CLI records with secret metadata cannot be answered, declined, or
+dispatched as peer results; their answers are hidden from list JSON. Native
+provider secret-question behavior is unchanged.
 
 `agent question list`, `answer`, and `decline`, and the corresponding SDK
 operations, include these questions with `delivery: "async-message"`. They remain

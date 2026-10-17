@@ -1,10 +1,13 @@
 package questions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
+	"os"
 	"testing"
 	"time"
 )
@@ -57,5 +60,40 @@ func TestCLIAsyncOfflineListAnswerDecline(t *testing.T) {
 				t.Fatal("duplicate answer accepted")
 			}
 		})
+	}
+}
+
+func TestCLIAsyncExistingSecretQuestionRefusesPublicAnswer(t *testing.T) {
+	st := agentquestion.NewStore(t.TempDir())
+	a := m.Agent{Metadata: m.ObjectMeta{UID: "agent-a", Name: "a"}, Spec: m.AgentSpec{Provider: "claude"}, Status: m.AgentStatus{Phase: m.PhaseOffline}}
+	r, err := st.CLIAsyncStore().Create(a.Metadata.UID, json.RawMessage(`[{"question":"Token?","options":[{"label":"other"}]}]`), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(st.CLIAsyncStore().Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(`"question":"Token?"`), []byte(`"question":"Token?","isSecret":true`), 1)
+	if err = os.WriteFile(st.CLIAsyncStore().Path(), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	svc := Service{OpenStore: func() (*agentquestion.Store, error) { return st, nil }, LoadRegistry: func() (m.Registry, error) { return m.Registry{Agents: []m.Agent{a}}, nil }}
+	_, err = svc.Answer(context.Background(), Request{Spelling: "agent question answer", QuestionID: r.ID, Texts: []string{"1=private-fixture-value"}}, a)
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Code != questionReasonSecretNativeOnly {
+		t.Fatalf("secret public answer admitted: %v", err)
+	}
+	_, err = svc.Decline(context.Background(), Request{Spelling: "agent question decline", QuestionID: r.ID}, a)
+	if !errors.As(err, &failure) || failure.Code != questionReasonSecretNativeOnly {
+		t.Fatalf("secret public decline admitted: %v", err)
+	}
+	after, _ := os.ReadFile(st.CLIAsyncStore().Path())
+	if !bytes.Equal(raw, after) {
+		t.Fatal("refused secret answer changed store")
+	}
+	list, err := svc.List(context.Background(), a)
+	if err != nil || len(list.Questions) != 1 || (list.Questions[0].CanAnswer || list.Questions[0].CanDecline) {
+		t.Fatalf("secret answer advertised: %+v %v", list, err)
 	}
 }

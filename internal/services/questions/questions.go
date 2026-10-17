@@ -243,6 +243,11 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 			}
 			if question.IsSecret {
 				delete(view.Answers, question.ID)
+				if record.Delivery == "async-message" {
+					delete(view.Answers, question.Question)
+					view.CanAnswer, view.CanDecline = false, false
+					view.Disposition = "secret-native-only"
+				}
 			}
 			view.Prompts = append(view.Prompts, prompt)
 		}

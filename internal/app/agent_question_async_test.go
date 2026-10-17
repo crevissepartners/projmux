@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -36,10 +38,13 @@ func TestCLIAsyncAskAdmissionDoesNotChangeInteraction(t *testing.T) {
 		t.Fatal("ask changed provider interaction")
 	}
 	// Invalid input must neither record nor launch a process.
-	for _, args := range [][]string{{"--questions", "[]"}, {"--questions", questionTestQuestions, "--expires-in", "0s"}, {"--questions", questionTestQuestions, "--expires-in", "169h"}} {
+	for _, args := range [][]string{{"--questions", "[]"}, {"--questions", `[{"question":"Token?","options":[{"label":"other"}],"isSecret":true}]`}, {"--questions", questionTestQuestions, "--expires-in", "0s"}, {"--questions", questionTestQuestions, "--expires-in", "169h"}} {
 		_, _, e = runRoute(t, f.command, append([]string{"question", "ask", "uid:" + questionTestAgent}, args...)...)
 		if e == nil {
 			t.Fatal("invalid ask accepted")
+		}
+		if strings.Contains(args[1], `"isSecret":true`) && !strings.Contains(e.Error(), "question-secret-native-only") {
+			t.Fatal("secret refusal lacks its public reason", e)
 		}
 	}
 	rs, _ := f.store.CLIAsyncStore().List("")
@@ -427,5 +432,52 @@ func TestCLIAsyncTmuxClaudePeerResultFixture(t *testing.T) {
 	env := peer.envelopes[0]
 	if env.Source.AgentUID != r.AgentUID || env.Target.AgentUID != r.AgentUID || env.Operator() || !strings.Contains(env.Payload, `"Pick?":"yes"`) {
 		t.Fatal("Claude result changed peer authority or answer", env)
+	}
+}
+
+func TestCLIAsyncExistingSecretOutboxDoesNotDispatch(t *testing.T) {
+	f := newQuestionFixture(t, false)
+	st := f.store.CLIAsyncStore()
+	r, err := st.Create(questionTestAgent, json.RawMessage(`[{"question":"Token?","options":[{"label":"other"}]}]`), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.Resolve(r.ID, r.AgentUID, map[string]string{"Token?": "private-fixture-value"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(`"question":"Token?"`), []byte(`"question":"Token?","isSecret":true`), 1)
+	if err = os.WriteFile(st.Path(), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runRoute(t, f.command, "question", "list", "uid:"+questionTestAgent, "-o", "json")
+	if err != nil || strings.Contains(out, "private-fixture-value") {
+		t.Fatal("CLI JSON secret answer", err)
+	}
+	loads := 0
+	f.command.loadRegistry = func() (metadata.Registry, error) {
+		loads++
+		return metadata.Registry{}, errors.New("secret must never reach delivery admission")
+	}
+	if err = f.command.dispatchQuestionOutbox(context.Background(), st); err != nil || loads != 0 {
+		t.Fatal("secret dispatch admitted", loads, err)
+	}
+	after, _ := os.ReadFile(st.Path())
+	if !bytes.Equal(raw, after) {
+		t.Fatal("secret dispatch changed record")
+	}
+	release, owned, err := st.LockOwner()
+	if err != nil || !owned {
+		t.Fatal(owned, err)
+	}
+	idle, err := st.ReleaseIfIdle(release)
+	if !idle {
+		release()
+	}
+	if err != nil || !idle {
+		t.Fatal("secret keeps outbox owner alive", idle, err)
 	}
 }

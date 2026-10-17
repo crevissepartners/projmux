@@ -21,6 +21,24 @@ import (
 // receipts remain in the message store. Pending records reserve this space.
 const MaxCLIReceiptBytes = 2 << 10
 
+// ErrCLISecretNativeOnly rejects metadata that requires a masked native surface.
+var ErrCLISecretNativeOnly = fmt.Errorf("%w: question-secret-native-only", ErrInvalidQuestions)
+
+// ParseCLIAsyncQuestions keeps the ordinary AskUserQuestion shape without
+// silently admitting the shared parser's native secret extension.
+func ParseCLIAsyncQuestions(raw json.RawMessage) ([]Question, error) {
+	qs, err := ParseQuestions(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, q := range qs {
+		if q.IsSecret {
+			return nil, ErrCLISecretNativeOnly
+		}
+	}
+	return qs, nil
+}
+
 var errCLIAsyncUnchanged = errors.New("unchanged CLI question")
 
 // CLIAsyncStore is independent of both strict legacy readers. Its question
@@ -111,7 +129,7 @@ func (s *CLIAsyncStore) read() (cliAsyncDisk, error) {
 			} else if len(r.Answers) != 0 || (r.ResultReason != "expired" && r.ResultReason != "declined") {
 				return d, ErrMalformedStore
 			}
-			bodies, e := r.Messages()
+			bodies, e := r.messages()
 			if e != nil || len(bodies) != len(r.Parts) {
 				return d, ErrMalformedStore
 			}
@@ -203,6 +221,12 @@ func (s *CLIAsyncStore) Get(id string) (CLIAsyncRecord, bool, error) {
 	return CLIAsyncRecord{}, false, e
 }
 func (r CLIAsyncRecord) Pending() bool {
+	// Unsupported records from an earlier writer are visible but cannot own
+	// expiry/delivery work or block ordinary results behind a permanent refusal.
+	if _, err := ParseCLIAsyncQuestions(r.Questions); errors.Is(err, ErrCLISecretNativeOnly) {
+		return false
+	}
+
 	if r.Outcome == "" || r.Outcome == "pending" {
 		return true
 	}
@@ -216,7 +240,7 @@ func (r CLIAsyncRecord) Pending() bool {
 	return false
 }
 func (s *CLIAsyncStore) Create(uid string, raw json.RawMessage, duration time.Duration) (CLIAsyncRecord, error) {
-	if _, e := ParseQuestions(raw); e != nil {
+	if _, e := ParseCLIAsyncQuestions(raw); e != nil {
 		return CLIAsyncRecord{}, e
 	}
 	if uid == "" || duration <= 0 || duration > 7*24*time.Hour {
@@ -263,6 +287,9 @@ func (s *CLIAsyncStore) Resolve(id, uid string, answers map[string]string, reaso
 			r := &d.Records[i]
 			if r.ID != id || r.AgentUID != uid {
 				continue
+			}
+			if _, err := ParseCLIAsyncQuestions(r.Questions); err != nil {
+				return err
 			}
 			if r.State != StateWaiting {
 				return ErrNotPending
@@ -336,6 +363,15 @@ func (s *CLIAsyncStore) MutateResult(id string, fn func(*CLIAsyncRecord) error) 
 // Messages preserves the complete result JSON. Large JSON is reconstructed by
 // concatenating UTF-8 data fields in part order; each encoded body is <=2KiB.
 func (r CLIAsyncRecord) Messages() ([]string, error) {
+	if _, err := ParseCLIAsyncQuestions(r.Questions); err != nil {
+		return nil, err
+	}
+	return r.messages()
+}
+
+// messages validates framing for existing records, including unsupported old
+// secret metadata. Such records can be listed/redacted but are never dispatched.
+func (r CLIAsyncRecord) messages() ([]string, error) {
 	status := "answered"
 	if r.ResultReason != "" {
 		status = "no-answer"
