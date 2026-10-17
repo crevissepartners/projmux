@@ -24,7 +24,14 @@ func (c *Client) linkRulesService() service.Service {
 // ReadProjectLinkRules reads rules for an explicit Project name or uid: ref.
 // Missing rule files yield empty rules; malformed stored files are typed refusals.
 func (c *Client) ReadProjectLinkRules(ctx context.Context, projectRef string) (core.ProjectLinkRulesResult, error) {
-	out, err := c.linkRulesService().Read(ctx, projectRef)
+	return c.ReadProjectLinkRulesWithOptions(ctx, projectRef, core.ProjectLinkRulesOptions{})
+}
+
+// ReadProjectLinkRulesWithOptions is ReadProjectLinkRules with call-specific
+// Registry admission. AllowDegradedRegistry permits a uniquely identified Project
+// in a decodable Registry whose graph is invalid, without repairing Registry state.
+func (c *Client) ReadProjectLinkRulesWithOptions(ctx context.Context, projectRef string, options core.ProjectLinkRulesOptions) (core.ProjectLinkRulesResult, error) {
+	out, err := c.linkRulesService().ReadWithOptions(ctx, projectRef, service.Options{AllowDegradedRegistry: options.AllowDegradedRegistry})
 	return publicLinkRules(out), linkRulesRefusal(err, "ReadProjectLinkRules projectRef")
 }
 
@@ -32,11 +39,18 @@ func (c *Client) ReadProjectLinkRules(ctx context.Context, projectRef string) (c
 // previews without writing when dryRun is true. Pre-admission cancellation
 // writes nothing; admitted writes finish. Concurrent edits are not serialized.
 func (c *Client) WriteProjectLinkRules(ctx context.Context, projectRef string, rules core.ProjectLinkRules, dryRun bool) (core.ProjectLinkRulesResult, error) {
+	return c.WriteProjectLinkRulesWithOptions(ctx, projectRef, rules, dryRun, core.ProjectLinkRulesOptions{})
+}
+
+// WriteProjectLinkRulesWithOptions is WriteProjectLinkRules with call-specific
+// Registry admission. AllowDegradedRegistry permits a uniquely identified Project
+// in a decodable Registry whose graph is invalid, without repairing Registry state.
+func (c *Client) WriteProjectLinkRulesWithOptions(ctx context.Context, projectRef string, rules core.ProjectLinkRules, dryRun bool, options core.ProjectLinkRulesOptions) (core.ProjectLinkRulesResult, error) {
 	input := links.Rules{Jira: append([]string(nil), rules.Jira...), Repo: append([]string(nil), rules.Repo...), URLs: maps.Clone(rules.URLs)}
 	for _, link := range rules.Links {
 		input.Links = append(input.Links, links.Link{LabelKey: link.LabelKey, Template: link.Template})
 	}
-	out, err := c.linkRulesService().Write(ctx, projectRef, input, dryRun)
+	out, err := c.linkRulesService().WriteWithOptions(ctx, projectRef, input, dryRun, service.Options{AllowDegradedRegistry: options.AllowDegradedRegistry})
 	return publicLinkRules(out), linkRulesRefusal(err, "WriteProjectLinkRules projectRef")
 }
 
@@ -44,7 +58,14 @@ func (c *Client) WriteProjectLinkRules(ctx context.Context, projectRef string, r
 // already deleted. The result is the Project's empty rules and available variables.
 // It requires confirm=true, equivalent to CLI --yes; false deletes nothing.
 func (c *Client) DeleteProjectLinkRules(ctx context.Context, projectRef string, confirm bool) (core.ProjectLinkRulesResult, error) {
-	out, err := c.linkRulesService().Delete(ctx, projectRef, confirm)
+	return c.DeleteProjectLinkRulesWithOptions(ctx, projectRef, confirm, core.ProjectLinkRulesOptions{})
+}
+
+// DeleteProjectLinkRulesWithOptions is DeleteProjectLinkRules with call-specific
+// Registry admission. AllowDegradedRegistry permits a uniquely identified Project
+// in a decodable Registry whose graph is invalid, without repairing Registry state.
+func (c *Client) DeleteProjectLinkRulesWithOptions(ctx context.Context, projectRef string, confirm bool, options core.ProjectLinkRulesOptions) (core.ProjectLinkRulesResult, error) {
+	out, err := c.linkRulesService().DeleteWithOptions(ctx, projectRef, confirm, service.Options{AllowDegradedRegistry: options.AllowDegradedRegistry})
 	return publicLinkRules(out), linkRulesRefusal(err, "DeleteProjectLinkRules projectRef")
 }
 func linkRulesRefusal(err error, field string) error {

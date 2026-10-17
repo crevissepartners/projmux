@@ -883,3 +883,38 @@ atomic save and permission policy. Deleting an absent file with its current
 revision succeeds. Context cancellation or deadline before writer admission is
 preserved without changing guidance; an admitted atomic mutation finishes.
 External editors that ignore the lock are outside this concurrency guarantee.
+
+## Project link rules in a degraded Registry
+
+The existing `ReadProjectLinkRules`, `WriteProjectLinkRules`, and
+`DeleteProjectLinkRules` methods require a valid Registry. Their `WithOptions`
+variants accept a final value argument, `core.ProjectLinkRulesOptions`:
+
+```go
+options := core.ProjectLinkRulesOptions{AllowDegradedRegistry: true}
+rules, err := client.ReadProjectLinkRulesWithOptions(ctx, "uid:proj-...", options)
+preview, err := client.WriteProjectLinkRulesWithOptions(ctx, "uid:proj-...", input, true, options)
+empty, err := client.DeleteProjectLinkRulesWithOptions(ctx, "uid:proj-...", true, options)
+```
+
+Omitting the option, or setting it to false, preserves strict behavior and result
+JSON. CLI `link-rules show`, `set`, and `delete` accept the corresponding
+`--allow-degraded-registry` boolean flag. This is a per-call choice, with no
+saved setting or environment toggle.
+
+Opting in permits link rules CRUD when an unrelated resource has a dangling
+owner. Registry access stays read-only. The raw Project reference must match
+exactly one row, and its UID must occur exactly once across all Projects, before
+selector deduplication. A unique UID reference works even when another Project
+shares its name. Missing, ambiguous, invalid, malformed, unsupported, lost, and
+unreadable inputs retain the existing typed refusal codes. Rule validation,
+`dryRun`, deletion confirmation, and result fields retain their existing meaning.
+
+SDK reads, target resolution, validation, dry runs, and cancellation before
+mutation admission leave the explicit Config/State paths unchanged, including
+Registry and target/non-target rules bytes, directory modes, and modification
+times. After admission, existing writer semantics apply: I/O errors or permission
+repair can leave partial effects such as created directories. These methods add
+no rollback or concurrency guarantee. CLI bootstrap, diagnostics journaling, and
+legacy migration retain their existing policy; the CLI does not promise an
+unchanged entire HOME directory.

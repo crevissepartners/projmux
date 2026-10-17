@@ -75,7 +75,12 @@ type Service struct {
 	RegistryPaths func() (config.Paths, error)
 }
 
-func (s Service) target(ctx context.Context, projectRef string) (links.Store, links.Project, error) {
+// Options selects Registry admission for this call only. The zero value is strict.
+type Options struct {
+	AllowDegradedRegistry bool
+}
+
+func (s Service) target(ctx context.Context, projectRef string, options Options) (links.Store, links.Project, error) {
 	if err := ctx.Err(); err != nil {
 		return links.Store{}, links.Project{}, err
 	}
@@ -87,11 +92,21 @@ func (s Service) target(ctx context.Context, projectRef string) (links.Store, li
 	if err != nil {
 		return links.Store{}, links.Project{}, &ProjectError{err}
 	}
-	registry, err := storemetadata.NewDefaultStore(paths).LoadReadOnly()
+	store := storemetadata.NewDefaultStore(paths)
+	load := store.LoadReadOnly
+	if options.AllowDegradedRegistry {
+		load = store.LoadDegradedReadOnly
+	}
+	registry, err := load()
 	if err != nil {
 		return links.Store{}, links.Project{}, &ProjectError{&resources.Failure{Code: "registry-unavailable", Cause: err}}
 	}
 	query := selector.Query{Project: &ref}
+	if options.AllowDegradedRegistry {
+		if err := uniqueTarget(registry, ref, query); err != nil {
+			return links.Store{}, links.Project{}, &ProjectError{err}
+		}
+	}
 	resolved, err := selector.New(registry).ResolveProjects(query)
 	if err == nil {
 		err = selector.Enforce(selector.Target{Verb: selector.VerbDescribe, Kind: metadata.KindProject}, selector.DescribeSelector(query), resolved)
@@ -110,8 +125,37 @@ func (s Service) target(ctx context.Context, projectRef string) (links.Store, li
 	}
 	return links.NewDefaultStore(paths), links.ProjectOf(*found), nil
 }
+
+// uniqueTarget checks raw rows before the shared selector can deduplicate UIDs.
+// A unique name is insufficient when another row carries the selected UID.
+func uniqueTarget(registry metadata.Registry, ref selector.Ref, query selector.Query) error {
+	raw := selector.Resolution{Kind: metadata.KindProject}
+	for _, project := range registry.Projects {
+		if (ref.IsUID() && project.Metadata.UID == ref.UID) || (!ref.IsUID() && project.Metadata.Name == ref.Name) {
+			raw.Matches = append(raw.Matches, selector.Match{Kind: metadata.KindProject, UID: project.Metadata.UID, Name: project.Metadata.Name})
+		}
+	}
+	target := selector.Target{Verb: selector.VerbDescribe, Kind: metadata.KindProject}
+	if err := selector.Enforce(target, selector.DescribeSelector(query), raw); err != nil {
+		return err
+	}
+	uid := raw.Matches[0].UID
+	raw.Matches = nil
+	for _, project := range registry.Projects {
+		if project.Metadata.UID == uid {
+			raw.Matches = append(raw.Matches, selector.Match{Kind: metadata.KindProject, UID: uid, Name: project.Metadata.Name})
+		}
+	}
+	return selector.Enforce(target, selector.DescribeSelector(query), raw)
+}
+
 func (s Service) Read(ctx context.Context, ref string) (Result, error) {
-	store, target, err := s.target(ctx, ref)
+	return s.ReadWithOptions(ctx, ref, Options{})
+}
+
+// ReadWithOptions applies Registry admission options to this call only.
+func (s Service) ReadWithOptions(ctx context.Context, ref string, options Options) (Result, error) {
+	store, target, err := s.target(ctx, ref, options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -125,7 +169,12 @@ func (s Service) Read(ctx context.Context, ref string) (Result, error) {
 // Write validates before admission. Dry runs check the exact stored encoding.
 // After admission the atomic store write completes; concurrent edits are not serialized.
 func (s Service) Write(ctx context.Context, ref string, rules links.Rules, dryRun bool) (Result, error) {
-	store, target, err := s.target(ctx, ref)
+	return s.WriteWithOptions(ctx, ref, rules, dryRun, Options{})
+}
+
+// WriteWithOptions applies Registry admission options to this call only.
+func (s Service) WriteWithOptions(ctx context.Context, ref string, rules links.Rules, dryRun bool, options Options) (Result, error) {
+	store, target, err := s.target(ctx, ref, options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -145,7 +194,12 @@ func (s Service) Write(ctx context.Context, ref string, rules links.Rules, dryRu
 	return out, nil
 }
 func (s Service) Delete(ctx context.Context, ref string, confirm bool) (Result, error) {
-	store, target, err := s.target(ctx, ref)
+	return s.DeleteWithOptions(ctx, ref, confirm, Options{})
+}
+
+// DeleteWithOptions applies Registry admission options to this call only.
+func (s Service) DeleteWithOptions(ctx context.Context, ref string, confirm bool, options Options) (Result, error) {
+	store, target, err := s.target(ctx, ref, options)
 	if err != nil {
 		return Result{}, err
 	}
