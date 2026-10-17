@@ -272,39 +272,40 @@ func (s Store) checkInstructions(spec Spec) error {
 	return nil
 }
 
-// Write validates content as the profile named name and, only when it is
-// valid, replaces the user file atomically (file 0600, directory 0700). A
-// refusal writes nothing and leaves an existing file as it was. A role that
-// another profile already lists is refused, whether that profile is valid or
-// not: an invalid profile that parses still holds its roles, the way List and
-// RoleProfile count them. The profile being replaced does not count.
-func (s Store) Write(name string, content []byte) (Entry, error) {
+// Preview applies Write's admission checks without creating or changing files.
+// It does not reserve the result: a later Write validates again.
+func (s Store) Preview(name string, content []byte) (Spec, error) {
+	_, spec, err := s.validateWrite(name, content)
+	return spec, err
+}
+
+func (s Store) validateWrite(name string, content []byte) (string, Spec, error) {
 	path, err := s.Path(name)
 	if err != nil {
-		return Entry{}, err
+		return "", Spec{}, err
 	}
 	if len(content) > MaxSize {
-		return Entry{}, &Error{Reason: ReasonTooLarge, Name: name, Detail: fmt.Sprintf("is %d bytes; the limit is %d bytes", len(content), MaxSize)}
+		return "", Spec{}, &Error{Reason: ReasonTooLarge, Name: name, Detail: fmt.Sprintf("is %d bytes; the limit is %d bytes", len(content), MaxSize)}
 	}
 	spec, err := s.validate(content)
 	if err != nil {
-		return Entry{}, named(err, name)
+		return "", Spec{}, named(err, name)
 	}
 	others, err := s.collect()
 	if err != nil {
-		return Entry{}, err
+		return "", Spec{}, err
 	}
 	for _, other := range others {
 		if other.Name == name {
 			if existing, found, err := readUserFile(s.dir, name); err != nil {
-				return Entry{}, err
+				return "", Spec{}, err
 			} else if found {
 				oldProject, err := storedProjectScope(existing)
 				if err != nil {
-					return Entry{}, named(err, name)
+					return "", Spec{}, named(err, name)
 				}
 				if oldProject != spec.Project {
-					return Entry{}, &Error{Reason: ReasonScopeChanged, Name: name, Detail: fmt.Sprintf("cannot change scope from %q to %q; delete and recreate the profile", oldProject, spec.Project)}
+					return "", Spec{}, &Error{Reason: ReasonScopeChanged, Name: name, Detail: fmt.Sprintf("cannot change scope from %q to %q; delete and recreate the profile", oldProject, spec.Project)}
 				}
 			}
 			continue
@@ -317,8 +318,22 @@ func (s Store) Write(name string, content []byte) (Entry, error) {
 			if !other.Valid {
 				detail += fmt.Sprintf(" (that profile is invalid: %s)", other.Reason)
 			}
-			return Entry{}, &Error{Reason: ReasonRoleClaimed, Name: name, Detail: detail}
+			return "", Spec{}, &Error{Reason: ReasonRoleClaimed, Name: name, Detail: detail}
 		}
+	}
+	return path, spec, nil
+}
+
+// Write validates content as the profile named name and, only when it is
+// valid, replaces the user file atomically (file 0600, directory 0700). A
+// refusal writes nothing and leaves an existing file as it was. A role that
+// another profile already lists is refused, whether that profile is valid or
+// not: an invalid profile that parses still holds its roles, the way List and
+// RoleProfile count them. The profile being replaced does not count.
+func (s Store) Write(name string, content []byte) (Entry, error) {
+	path, spec, err := s.validateWrite(name, content)
+	if err != nil {
+		return Entry{}, err
 	}
 	if err := writeAtomic(path, content); err != nil {
 		return Entry{}, fmt.Errorf("write profile %q: %w", name, err)

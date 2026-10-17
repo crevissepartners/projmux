@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -62,6 +63,8 @@ func (c *profileCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runList(rest, stdout, stderr)
 	case "show":
 		return c.runShow(rest, stdout, stderr)
+	case "parse", "preview":
+		return c.runInspect(args[0], rest, stdout, stderr)
 	case "set":
 		return c.runSet(rest, stdout, stderr)
 	case "delete":
@@ -216,4 +219,62 @@ func (c *profileCommand) runDelete(args []string, stdout, stderr io.Writer) erro
 	}
 	_, err = fmt.Fprintf(stdout, "deleted profile %s\n", name)
 	return err
+}
+
+// runInspect keeps input bounded and checks a preview name before reading stdin.
+func (c *profileCommand) runInspect(verb string, args []string, stdout, stderr io.Writer) error {
+	spelling := "profile " + verb
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	setRouteUsage(fs)
+	file := fs.String("file", "", "read the profile from this file; - reads stdin")
+	operands, err := personacmd.ParseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	want := 0
+	if verb == "preview" {
+		want = 1
+	}
+	if len(operands) != want {
+		printRouteUsage(stderr, spelling)
+		return usageError(spelling + " requires " + map[string]string{"parse": "no positional arguments", "preview": "exactly one <name>"}[verb])
+	}
+	name := ""
+	if verb == "preview" {
+		name = operands[0]
+		if err := profile.ValidateName(name); err != nil {
+			return profileRefusal(spelling, err)
+		}
+	}
+	source := c.stdin
+	if source == nil {
+		source = os.Stdin
+	}
+	if *file != "" && *file != "-" {
+		opened, err := personacmd.OpenFileUnderParent(*file)
+		if err != nil {
+			return fmt.Errorf("%s: %w", spelling, err)
+		}
+		defer opened.Close()
+		source = opened
+	}
+	content, err := profile.ReadLimited(source)
+	if err != nil {
+		var refusal *profile.Error
+		if errors.As(err, &refusal) {
+			refusal.Name = name
+		}
+		return profileRefusal(spelling, err)
+	}
+	var result any
+	if verb == "parse" {
+		result, err = c.service().Parse(context.Background(), content)
+	} else {
+		result, err = c.service().Preview(context.Background(), name, content)
+	}
+	if err != nil {
+		return profileRefusal(spelling, err)
+	}
+	return json.NewEncoder(stdout).Encode(result)
 }

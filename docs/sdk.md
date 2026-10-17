@@ -777,3 +777,32 @@ automatically. The existing CLI admission and output contracts are unchanged.
 Host-lost recovery is outside this SDK relaunch contract; use the public CLI
 `agent relaunch` recovery path after inspecting the exact resources. The SDK
 refuses absent ownership evidence without replacing it with an invented Wait.
+
+## Profile parsing and previews
+
+`Client.ParseProfile(ctx, content)` checks UTF-8, the 64 KiB byte limit and
+profile TOML vocabulary, returning `core.ProfileSpec`. It does not read profile,
+instructions or Registry storage. Named instructions need not exist for parsing.
+`ProfileSpec` exposes project, provider, instructions, model, effort, roles and
+`ProfilePermissions` (sandbox, approval, allow, deny). `HasPermissions()` is true
+when any permission value is set; empty tables and lists return false. Returned
+lists encode as `[]`, and JSON fields use lower camel case.
+
+`Client.PreviewProfile(ctx, name, content)` checks a storage candidate with the
+same name, size, parse, instructions existence, role claim and immutable scope
+rules as `WriteProfile`. It returns `core.ProfilePreview` with name, raw-byte
+digest, byte size, spec and `DryRun: true`. Success reserves nothing: a later
+write repeats all checks. Preview creates no files, directories, migrations or
+locks, and does not read or change the Registry. Context cancellation returns a
+context error; invalid profiles return the existing typed `CodeProfile*`
+refusals and no partial result. I/O errors remain ordinary errors.
+
+The matching CLI commands are `projmux profile parse [--file <path>]` and
+`projmux profile preview <name> [--file <path>]`. Omitting `--file`, or using
+`--file -`, reads stdin. Both commands print typed JSON, exit 2 for invalid input
+and exit 1 for I/O failures. Existing `profile show` and `profile set` output is
+unchanged; raw bytes remain available through `ReadProfile`.
+
+These operations cover profile TOML and local storage admission. Bundle JSON,
+bundled instructions, overwrite decisions, permission expansion confirmation
+and atomic bundle import are outside this API.

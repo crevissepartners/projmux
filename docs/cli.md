@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 261 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 263 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -76,7 +76,7 @@ projmux <command> [args...]
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
 | [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux instructions`](#projmux-instructions) | canonical | List, show, edit, set, and delete Agent instruction files |
-| [`projmux profile`](#projmux-profile) | canonical | List, show, set, and delete named Agent profiles |
+| [`projmux profile`](#projmux-profile) | canonical | List, show, parse, preview, set, and delete named Agent profiles |
 | [`projmux link-rules`](#projmux-link-rules) | canonical | Show, replace, and delete one Project's label link rules |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and Agents |
@@ -3560,7 +3560,7 @@ projmux instructions delete <name> --yes
 
 ## `projmux profile`
 
-List, show, set, and delete named Agent profiles
+List, show, parse, preview, set, and delete named Agent profiles
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -3578,6 +3578,8 @@ Allowed effects:
 ```
 projmux profile list [--project <ref> | -p <ref>]
 projmux profile show <name>
+projmux profile parse [--file <path | ->]
+projmux profile preview <name> [--file <path | ->]
 projmux profile set <name> [--file <path> | -]
 projmux profile delete <name> --yes
 ```
@@ -3590,10 +3592,12 @@ Subcommands:
 | --- | --- |
 | [`projmux profile list`](#projmux-profile-list) | List every stored profile with its source, the provider, instructions, model, effort, and roles it names, its digest, validity, and Project scope |
 | [`projmux profile show`](#projmux-profile-show) | Print one profile's content exactly as stored |
+| [`projmux profile parse`](#projmux-profile-parse) | Parse profile TOML from a file or stdin as typed JSON without reading storage |
+| [`projmux profile preview`](#projmux-profile-preview) | Check a profile storage candidate from a file or stdin without writing files |
 | [`projmux profile set`](#projmux-profile-set) | Validate one profile from a file or stdin and write it only when valid |
 | [`projmux profile delete`](#projmux-profile-delete) | Delete one stored profile file |
 
-Canonical spelling: `projmux profile list`, `projmux profile show`, `projmux profile set`, `projmux profile delete`
+Canonical spelling: `projmux profile list`, `projmux profile show`, `projmux profile parse`, `projmux profile preview`, `projmux profile set`, `projmux profile delete`
 
 ### `projmux profile list`
 
@@ -3636,6 +3640,52 @@ Allowed effects:
 ```
 projmux profile show <name>
 ```
+
+### `projmux profile parse`
+
+Parse profile TOML from a file or stdin as typed JSON without reading storage
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile parse [--file <path | ->]
+```
+
+Returns project, provider, instructions, model, effort, roles and permissions as lower-camel JSON with non-null lists. Validates UTF-8, the 64 KiB byte limit and the current profile vocabulary without reading storage or the Registry. Named instructions need not exist. Omitted --file or --file - reads stdin. Invalid input exits 2 with its profile reason; I/O failures exit 1.
+
+### `projmux profile preview`
+
+Check a profile storage candidate from a file or stdin without writing files
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux profile preview <name> [--file <path | ->]
+```
+
+Returns name, digest, size, spec and dryRun=true as JSON. Checks the same name, size, parse, instructions, role and scope rules as profile set. Reserves nothing; profile set checks again. Omitted --file or --file - reads stdin. No files, directories, migrations, locks or Registry changes are made.
 
 ### `projmux profile set`
 

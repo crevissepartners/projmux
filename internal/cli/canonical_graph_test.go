@@ -15,9 +15,10 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when host-global agent guidance read/validate/set/reset
-// joined the graph. Before that, show/enable/disable joined the graph. Before
-// that, the built-in profile was removed: the `profile
+// The baseline last moved when profile parse and preview joined the graph,
+// alongside host-global agent guidance read/validate/set/reset. Before that,
+// show/enable/disable joined the graph. Before that, the built-in profile was
+// removed: the `profile
 // list` and `profile show` summaries stopped naming built-in profiles. Before
 // that, it moved when `agent relaunch` became the one way to change
 // an Agent's settings: its summary names another profile, instructions, model,
@@ -114,8 +115,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Adds side-effect-free guidance reads/validation and revision-conditional editing.
-	const want = "a90a3e0dd830198586ab91023b3e4a4dbaeeea88a74a9db13e56cbde789ffc4d"
+	// Includes guidance editing and typed profile parse/write-free preview routes.
+	const want = "c36f87725a131b114e84a4e3a8fa1b8766d7513f9d48c9a11d2849f2b32ca1ac"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
