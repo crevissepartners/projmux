@@ -10,10 +10,10 @@ func (c *aiCommand) sharedGuidance() *mutationruntime.GuidanceService {
 }
 
 func (l agentGuidanceLaunch) shared() mutationruntime.AgentGuidanceLaunch {
-	return mutationruntime.AgentGuidanceLaunch{Active: l.active, Store: l.store, Recorded: l.recorded, Digest: l.digest, SnapshotPath: l.snapshotPath, Text: l.text, SystemPromptFile: l.systemPromptFile, Unavailable: l.unavailable}
+	return mutationruntime.AgentGuidanceLaunch{MigrationNotice: l.migrationNotice, Active: l.active, Store: l.store, Recorded: l.recorded, Digest: l.digest, SnapshotPath: l.snapshotPath, Text: l.text, SystemPromptFile: l.systemPromptFile, Unavailable: l.unavailable}
 }
 func localAgentGuidanceLaunch(l mutationruntime.AgentGuidanceLaunch) agentGuidanceLaunch {
-	return agentGuidanceLaunch{active: l.Active, store: l.Store, recorded: l.Recorded, digest: l.Digest, snapshotPath: l.SnapshotPath, text: l.Text, systemPromptFile: l.SystemPromptFile, unavailable: l.Unavailable}
+	return agentGuidanceLaunch{migrationNotice: l.MigrationNotice, active: l.Active, store: l.Store, recorded: l.Recorded, digest: l.Digest, snapshotPath: l.SnapshotPath, text: l.Text, systemPromptFile: l.SystemPromptFile, unavailable: l.Unavailable}
 }
 
 func (l projectLinksLaunch) shared() mutationruntime.ProjectLinksLaunch {

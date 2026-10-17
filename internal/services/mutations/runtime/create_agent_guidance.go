@@ -41,8 +41,9 @@ const agentGuidanceReasonUnavailable = "agent-guidance-unavailable"
 // (CodexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
 type AgentGuidanceLaunch struct {
-	Active bool
-	Store  agentguidance.Store
+	MigrationNotice string
+	Active          bool
+	Store           agentguidance.Store
 	// recorded is the digest the Agent records, "" when it records none.
 	Recorded string
 	// digest, snapshotPath and text are the current guidance, all empty when
@@ -195,10 +196,20 @@ func (l AgentGuidanceLaunch) Record(registry *coremetadata.Registry, mutator cor
 // "" when there is nothing to disclose. label names the Agent the way the
 // persona notice does.
 func (l AgentGuidanceLaunch) Notice(label string) string {
-	if !l.Active || l.Unavailable == nil {
+	if !l.Active {
 		return ""
 	}
-	return AgentGuidanceNotice(label, l.Unavailable)
+	notice := l.MigrationNotice
+	if notice != "" {
+		notice = "projmux: " + notice
+	}
+	if l.Unavailable != nil {
+		if notice != "" {
+			notice += "\n"
+		}
+		notice += AgentGuidanceNotice(label, l.Unavailable)
+	}
+	return notice
 }
 
 // PlanAgentGuidance reads the current guidance and writes its
@@ -240,6 +251,7 @@ func (c *GuidanceService) LoadAgentGuidanceWith(load func(agentguidance.Store) (
 	}
 	launch.Store = agentguidance.NewDefaultStore(paths)
 	guidance, err := load(launch.Store)
+	launch.MigrationNotice = guidance.MigrationNotice
 	if err != nil {
 		launch.Unavailable = err
 		return launch

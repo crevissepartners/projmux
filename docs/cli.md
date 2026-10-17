@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 253 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 257 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -131,6 +131,9 @@ projmux agent approval list <agent-ref> [--project <ref> | -p <ref>] [--window <
 projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via <popup|cli|client>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
+projmux agent guidance show [--process] [-o json]
+projmux agent guidance enable [fragment.md]
+projmux agent guidance disable [fragment.md]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json] [--json]
 projmux agent models [--provider <claude|codex>] [-o json]
@@ -154,6 +157,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
+| [`projmux agent guidance`](#projmux-agent-guidance) | Inspect and control host-global Agent guidance |
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent stop`](#projmux-agent-stop) | Stop one exact process Agent after its provider Wait; preserve the Agent, Pane, and conversation |
@@ -171,7 +175,105 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent guidance show`, `projmux agent guidance enable`, `projmux agent guidance disable`, `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+
+### `projmux agent guidance`
+
+Inspect and control host-global Agent guidance
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent guidance show [--process] [-o json]
+projmux agent guidance enable [fragment.md]
+projmux agent guidance disable [fragment.md]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent guidance show`](#projmux-agent-guidance-show) | Show ordered guidance sources, effective states, and the final body; migrate legacy guidance once |
+| [`projmux agent guidance enable`](#projmux-agent-guidance-enable) | Enable whole guidance or one fragment basename without removing user content |
+| [`projmux agent guidance disable`](#projmux-agent-guidance-disable) | Disable whole guidance or one fragment basename while preserving other policy |
+
+Canonical spelling: `projmux agent guidance show`, `projmux agent guidance enable`, `projmux agent guidance disable`
+
+#### `projmux agent guidance show`
+
+Show ordered guidance sources, effective states, and the final body; migrate legacy guidance once
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent guidance show [--process] [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux agent guidance enable`
+
+Enable whole guidance or one fragment basename without removing user content
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent guidance enable [fragment.md]
+```
+
+#### `projmux agent guidance disable`
+
+Disable whole guidance or one fragment basename while preserving other policy
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent guidance disable [fragment.md]
+```
 
 ### `projmux agent status`
 

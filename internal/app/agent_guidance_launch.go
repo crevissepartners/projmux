@@ -46,8 +46,9 @@ var _ codexAgentGuidancePlanner = (*aiCommand)(nil)
 // (codexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
 type agentGuidanceLaunch struct {
-	active bool
-	store  agentguidance.Store
+	migrationNotice string
+	active          bool
+	store           agentguidance.Store
 	// recorded is the digest the Agent records, "" when it records none.
 	recorded string
 	// digest, snapshotPath and text are the current guidance, all empty when

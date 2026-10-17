@@ -230,7 +230,7 @@ func TestUnsupportedNativeAgentActionsRefuseBeforeRuntimeOrProviderEffects(t *te
 func TestAgentDispatchGroupsComeFromCapabilityCatalogAndFutureRoutesStayAbsent(t *testing.T) {
 	t.Parallel()
 
-	want := append(aiprovider.AgentGroups(), "capabilities", "models")
+	want := append(aiprovider.AgentGroups(), "capabilities", "models", "guidance")
 	if !reflect.DeepEqual(agentSubcommands, want) {
 		t.Fatalf("agentSubcommands = %v, want %v", agentSubcommands, want)
 	}

@@ -253,7 +253,7 @@ func TestSettingsStrictParsingAndPrivateAtomicSave(t *testing.T) {
 		t.Fatal("invalid save changed policy")
 	}
 	entries, err := os.ReadDir(store.configDir)
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 2 || entries[0].Name() != ".agent-guidance.lock" || entries[1].Name() != SettingsFileName {
 		t.Fatalf("temporary residue: %+v %v", entries, err)
 	}
 }

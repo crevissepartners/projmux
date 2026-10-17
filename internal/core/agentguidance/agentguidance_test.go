@@ -114,6 +114,8 @@ func TestLoadAppendsUserBytesAndPreservesLegacyOff(t *testing.T) {
 		t.Fatalf("Load = %+v, want the default followed by the user file verbatim", got)
 	}
 	for _, blank := range [][]byte{nil, []byte(" \n\t\r\n")} {
+		// Each legacy file predates the first migration/settings receipt.
+		store = newTestStore(t)
 		if err := store.Save(blank); err != nil {
 			t.Fatal(err)
 		}

@@ -29,7 +29,7 @@ import (
 
 // agentSubcommands is projected from the authoritative provider action catalog.
 // capabilities and models are metadata queries, not provider action cells.
-var agentSubcommands = append(aiprovider.AgentGroups(), "capabilities", "models")
+var agentSubcommands = append(aiprovider.AgentGroups(), "capabilities", "models", "guidance")
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
 var resumableAgentPhases = mutationruntime.ResumableAgentPhases
@@ -210,6 +210,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	rest := args[1:]
 	switch args[0] {
+	case "guidance":
+		return c.runGuidance(rest, stdout, stderr)
 	case "status":
 		return c.runStatus(rest, stdout, stderr)
 	case "topic":

@@ -14,7 +14,16 @@ import (
 // FragmentsDirName holds app-managed guidance fragments below ConfigDir.
 const FragmentsDirName = "agent-guidance.d"
 
-func (s Store) load(process bool) (Guidance, error) {
+func (s Store) load(process bool) (result Guidance, loadErr error) {
+	notice, err := s.migrate()
+	if err != nil {
+		return Guidance{}, err
+	}
+	defer func() { result.MigrationNotice = notice }()
+	return s.loadCurrent(process)
+}
+
+func (s Store) loadCurrent(process bool) (Guidance, error) {
 	settings, explicit, err := s.LoadSettings()
 	if err != nil {
 		return Guidance{}, err
