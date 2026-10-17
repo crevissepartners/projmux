@@ -366,9 +366,11 @@ StartDefaultThread	The default-endpoint start wrapper is retained for installed 
 StopProject	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Store.Delete	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Dir	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
+Store.Inspect	Legacy guidance Background wrapper retained for existing internal consumers; SDK callers use InspectContext for admission cancellation.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
+Store.SetEnabled	Legacy guidance Background policy wrapper retained for existing internal consumers; SDK callers use SetEnabledContext for admission cancellation.
 Store.Write	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 StringAuditFinding.IsCandidate	Candidate predicate of the governance string audit retained with the guard that classifies shipped literals.
 SurfaceSites	Closed unshown-result site inventory; the C-1 committed-result sweep fails until every site is recorded by a registered call site.

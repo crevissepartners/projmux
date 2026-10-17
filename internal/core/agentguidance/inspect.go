@@ -2,6 +2,7 @@ package agentguidance
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -35,7 +36,13 @@ type Inspection struct {
 // Inspect performs first-use migration and observes policy and input names
 // under the same lock as CLI updates. Disabled fragments are not read.
 func (s Store) Inspect(process bool) (view Inspection, err error) {
-	err = s.withPolicyLock(func() error {
+	return s.InspectContext(context.Background(), process)
+}
+
+// InspectContext preserves caller cancellation until policy lock admission.
+// Once admitted, first-use migration finishes with the existing store semantics.
+func (s Store) InspectContext(ctx context.Context, process bool) (view Inspection, err error) {
+	err = s.withPolicyLockContext(ctx, func() error {
 		notice, err := s.migrateLocked()
 		if err != nil {
 			return err
@@ -88,12 +95,17 @@ func (s Store) Inspect(process bool) (view Inspection, err error) {
 // fragment selects whole guidance. Fragment controls preserve explicit or
 // legacy whole off, and whole controls preserve the fragment mask.
 func (s Store) SetEnabled(fragment string, enabled bool) error {
+	return s.SetEnabledContext(context.Background(), fragment, enabled)
+}
+
+// SetEnabledContext preserves caller cancellation until policy lock admission.
+func (s Store) SetEnabledContext(ctx context.Context, fragment string, enabled bool) error {
 	if fragment != "" {
 		if err := ValidateFragmentName(fragment); err != nil {
 			return err
 		}
 	}
-	return s.withPolicyLock(func() error {
+	return s.withPolicyLockContext(ctx, func() error {
 		settings, explicit, err := s.LoadSettings()
 		if err != nil {
 			return err

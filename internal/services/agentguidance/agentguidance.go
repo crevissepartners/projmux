@@ -50,12 +50,12 @@ func (s Service) Inspect(ctx context.Context, process bool) (guidance.Inspection
 	if err != nil {
 		return guidance.Inspection{}, err
 	}
-	return v.Inspect(process)
+	return v.InspectContext(ctx, process)
 }
 func (s Service) SetEnabled(ctx context.Context, fragment string, enabled bool) error {
 	v, err := s.store(ctx)
 	if err != nil {
 		return err
 	}
-	return v.SetEnabled(fragment, enabled)
+	return v.SetEnabledContext(ctx, fragment, enabled)
 }

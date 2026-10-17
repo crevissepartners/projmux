@@ -74,6 +74,9 @@ func (s Store) withPolicyLockContext(ctx context.Context, fn func() error) error
 		return err
 	}
 	defer held.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn()
 }
 
