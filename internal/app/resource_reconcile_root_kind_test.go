@@ -73,6 +73,7 @@ type rootKindProjectionSite struct {
 // rootKindProjectionSites is the sweep. Sorted by file then function; the
 // exhaustiveness test re-sorts anyway, so the order here is for reading.
 var rootKindProjectionSites = []rootKindProjectionSite{
+	{File: "internal/services/projectlinks/projectlinks.go", Func: "uniqueTarget", Source: "Registry", Verdict: rootKindProjectOnly, Why: "link rules belong to one Project; checks raw Project refs and Project UID uniqueness, while ControlSessions have no Project link rules file"},
 	{File: "internal/services/projectcandidates/projectcandidates.go", Func: "Service.List", Source: "Registry", Verdict: rootKindProjectOnly, Why: "configured candidate paths and managed pins have Project roots; ControlSessions have no project root"},
 	{
 		File: "internal/core/metadata/schema.go", Func: "allResourceMeta",
@@ -443,14 +444,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        20,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 26,
+		rootKindProjectOnly: 27,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 48; got != want {
+	if got, want := len(rootKindProjectionSites), 49; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

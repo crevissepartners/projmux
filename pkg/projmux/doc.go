@@ -175,6 +175,13 @@
 // deleting. Refusal carries Code plus optional Field and Reason for invalid rules,
 // confirmation refusals or unreadable files; other storage errors
 // remain ordinary errors. Dry runs check the same encoded size as writes.
+// The WithOptions variants take a final core.ProjectLinkRulesOptions value;
+// AllowDegradedRegistry opts into read-only Registry access without whole-graph
+// validation, requiring one raw Project match and a globally unique Project UID.
+// The zero value remains strict. Reads, validation, dry runs and pre-admission
+// cancellation leave explicit paths unchanged. After admission, existing writer
+// semantics apply: I/O failures may leave partial effects, including directories
+// and permission repair. No rollback or concurrency guarantee is added.
 //
 // ListProjectCandidates reads configured paths in discovery order without writing
 // pin preferences or saved discovery memory.

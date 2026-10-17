@@ -1,5 +1,11 @@
 package core
 
+// ProjectLinkRulesOptions controls Registry admission for one link rules call.
+// The zero value requires a valid Registry. Opting in never repairs the Registry.
+type ProjectLinkRulesOptions struct {
+	AllowDegradedRegistry bool `json:"allowDegradedRegistry,omitempty"`
+}
+
 // ProjectLinkRules is the stored input format. URLs is a name-to-URL map.
 type ProjectLinkRules struct {
 	Jira  []string          `json:"jira"`

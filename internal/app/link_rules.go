@@ -44,6 +44,7 @@ func (c *linkRulesCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
 	output := fs.String("o", "text", "output format: text or json")
+	allowDegraded := fs.Bool("allow-degraded-registry", false, "allow a uniquely identified Project in a degraded Registry")
 	var file string
 	var dryRun bool
 	var yes bool
@@ -76,12 +77,13 @@ func (c *linkRulesCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		return usageError("link-rules " + verb + " requires exactly one <project-ref>")
 	}
+	options := service.Options{AllowDegradedRegistry: *allowDegraded}
 	var out service.Result
 	switch verb {
 	case "show":
-		out, err = c.service().Read(context.Background(), operands[0])
+		out, err = c.service().ReadWithOptions(context.Background(), operands[0], options)
 	case "delete":
-		out, err = c.service().Delete(context.Background(), operands[0], yes)
+		out, err = c.service().DeleteWithOptions(context.Background(), operands[0], yes, options)
 	case "set":
 		var source io.Reader = c.stdin
 		if source == nil {
@@ -103,7 +105,7 @@ func (c *linkRulesCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if decodeErr != nil {
 			return linkRulesError(decodeErr)
 		}
-		out, err = c.service().Write(context.Background(), operands[0], rules, dryRun)
+		out, err = c.service().WriteWithOptions(context.Background(), operands[0], rules, dryRun, options)
 	}
 	if err != nil {
 		return linkRulesError(err)

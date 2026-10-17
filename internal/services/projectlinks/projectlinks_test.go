@@ -188,3 +188,28 @@ func TestLinkRulesDecodeUsesStoreFormat(t *testing.T) {
 		t.Fatalf("decode %+v %v", rules, err)
 	}
 }
+
+func TestLinkRulesOptionsCancelAtAdmission(t *testing.T) {
+	for _, verb := range []string{"write", "delete"} {
+		t.Run(verb, func(t *testing.T) {
+			s, uid, paths := fixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// Resolution has completed when the separate rules store paths are requested.
+			s.Paths = func() (config.Paths, error) { cancel(); return paths, nil }
+			opts := Options{AllowDegradedRegistry: true}
+			var err error
+			if verb == "write" {
+				_, err = s.WriteWithOptions(ctx, "uid:"+uid, sampleRules(), false, opts)
+			} else {
+				_, err = s.DeleteWithOptions(ctx, "uid:"+uid, true, opts)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("admission cancellation: %v", err)
+			}
+			if _, err := os.Stat(links.NewDefaultStore(paths).Dir()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("canceled call created rules directory: %v", err)
+			}
+		})
+	}
+}

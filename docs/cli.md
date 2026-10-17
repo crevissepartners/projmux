@@ -3848,9 +3848,9 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux link-rules show <project-ref> [-o text|json]
-projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]
-projmux link-rules delete <project-ref> --yes [-o text|json]
+projmux link-rules show <project-ref> [--allow-degraded-registry] [-o text|json]
+projmux link-rules set <project-ref> [--allow-degraded-registry] [--file <path> | <path> | -] [--dry-run] [-o text|json]
+projmux link-rules delete <project-ref> [--allow-degraded-registry] --yes [-o text|json]
 ```
 
 Project refs are explicit names or uid:<project>; the Project must be registered. Set reads the stored JSON format (urls is a map), atomically replaces the whole file, and --dry-run previews the same validation without writing. Delete requires --yes and is idempotent. JSON lists are always arrays; unreadable files are refused rather than shown as empty rules.
@@ -3885,7 +3885,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux link-rules show <project-ref> [-o text|json]
+projmux link-rules show <project-ref> [--allow-degraded-registry] [-o text|json]
 ```
 
 Output modes (`-o`): `json`
@@ -3908,7 +3908,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux link-rules set <project-ref> [--file <path> | <path> | -] [--dry-run] [-o text|json]
+projmux link-rules set <project-ref> [--allow-degraded-registry] [--file <path> | <path> | -] [--dry-run] [-o text|json]
 ```
 
 Output modes (`-o`): `json`
@@ -3931,7 +3931,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux link-rules delete <project-ref> --yes [-o text|json]
+projmux link-rules delete <project-ref> [--allow-degraded-registry] --yes [-o text|json]
 ```
 
 Output modes (`-o`): `json`

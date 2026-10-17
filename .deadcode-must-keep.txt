@@ -51,6 +51,7 @@ Client.DeleteInstructions	Public v0 instruction SDK entrypoint or its typed-refu
 Client.DeleteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.DeleteProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.DeleteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.DeleteProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.DeliverTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -79,6 +80,7 @@ Client.ReadInstructions	Public v0 instruction SDK entrypoint or its typed-refusa
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.ReadProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.RegisterAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.RelaunchAgent	Public v0 exact tmux Agent relaunch entrypoint; shared CLI/SDK plan, native fixture, failure recovery and external consumer tests cover this path.
 Client.RemoveAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
@@ -103,6 +105,7 @@ Client.WriteInstructions	Public v0 instruction SDK entrypoint or its typed-refus
 Client.WriteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.WriteProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.WriteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+Client.WriteProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.agentSessionsService	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
@@ -355,9 +358,12 @@ SDKNativeSession.Resume	External SDK thread/resume client adapter; actual child 
 SDKNativeSession.observeIdentity	Exact-binding observer child starter shared by external SDK create/resume; real fixture authority and explicit routing audit cover this closure.
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 ServeSupervisor	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
+Service.Delete	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.Get	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Service.ProjectClaudeSend	Client.SendMessage preserves an exact partial receipt and uncertainty when the Claude provider result cannot be persisted; CLI adapter behavior remains unchanged.
+Service.Read	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.Send	Client.SendMessage uses this typed wrapper to preserve partial or uncertain receipts alongside errors.
+Service.Write	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.pushNative	Client.SendMessage dispatches the native Codex peer-context operation without user-turn fallback through this adapter.
 Service.pushProcessCodex	Client.SendMessage dispatches an existing exact process Codex peer-message and reloads its receipt through this adapter.
 Service.terminal	Client.SendMessage preserves known and uncertain terminal receipt projections when transport or persistence fails.

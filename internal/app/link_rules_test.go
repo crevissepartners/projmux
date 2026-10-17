@@ -173,3 +173,109 @@ func TestLinkRulesCLITerminatorPreservesDryRun(t *testing.T) {
 		t.Fatalf("flag value consumed as terminator: %v", err)
 	}
 }
+
+func TestLinkRulesCLIDegradedOptionsParity(t *testing.T) {
+	c, sdk, uid, path := linkRulesFixture(t)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryPath := storemetadata.PathFor(paths.StateDir)
+	b, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry metadata.Registry
+	if err = json.Unmarshal(b, &registry); err != nil {
+		t.Fatal(err)
+	}
+	registry.Agents = append(registry.Agents, metadata.Agent{APIVersion: metadata.APIVersion, Kind: metadata.KindAgent, Metadata: metadata.ObjectMeta{UID: "agent-aaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "dangling", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "win-aaaaaaaaaaaaaaaaaaaaaaaaaa"}}})
+	b, err = json.Marshal(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(registryPath, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"show", "set", "delete"} {
+		var strict string
+		for _, flag := range []string{"", "--allow-degraded-registry=false"} {
+			c.stdin = strings.NewReader(cliLinkRulesInput)
+			args := []string{verb, "sample", "-o", "json"}
+			if flag != "" {
+				args = append(args, flag)
+			}
+			if verb == "delete" {
+				args = append(args, "--yes")
+			}
+			out, err := runLinkRules(c, args...)
+			if err == nil || out != "" {
+				t.Fatalf("strict %s: %q %v", verb, out, err)
+			}
+			if flag == "" {
+				strict = err.Error()
+			} else if err.Error() != strict {
+				t.Fatalf("false drift: %v / %s", err, strict)
+			}
+		}
+	}
+	opts := core.ProjectLinkRulesOptions{AllowDegradedRegistry: true}
+	c.stdin = strings.NewReader(cliLinkRulesInput)
+	preview, err := runLinkRules(c, "set", "sample", "-", "--dry-run", "--allow-degraded-registry", "-o", "json")
+	if err != nil || !strings.Contains(preview, `"dryRun":true`) {
+		t.Fatalf("preview %s %v", preview, err)
+	}
+	if _, err = os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("dry run wrote")
+	}
+	c.stdin = strings.NewReader(cliLinkRulesInput)
+	saved, err := runLinkRules(c, "set", "--allow-degraded-registry", "sample", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := sdk.ReadProjectLinkRulesWithOptions(context.Background(), "uid:"+uid, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, _ := json.Marshal(got)
+	if saved != string(expected)+"\n" {
+		t.Fatalf("CLI/SDK %s / %s", saved, expected)
+	}
+	shown, err := runLinkRules(c, "show", "sample", "--allow-degraded-registry=true", "-o", "json")
+	if err != nil || shown != saved {
+		t.Fatalf("show %s %v", shown, err)
+	}
+	if _, err = runLinkRules(c, "delete", "sample", "--allow-degraded-registry"); !IsUsageError(err) || !strings.Contains(err.Error(), "requires --yes") {
+		t.Fatal(err)
+	}
+	// The terminator keeps a flag-shaped Project name literal.
+	if _, err = runLinkRules(c, "show", "--", "--allow-degraded-registry"); err == nil {
+		t.Fatal("terminator interpreted option")
+	}
+	if _, err = runLinkRules(c, "delete", "sample", "--yes", "--allow-degraded-registry"); err != nil {
+		t.Fatal(err)
+	}
+	registry.Projects = append(registry.Projects, registry.Projects[0])
+	duplicate, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(registryPath, duplicate, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"show", "set", "delete"} {
+		c.stdin = strings.NewReader(cliLinkRulesInput)
+		args := []string{verb, "uid:" + uid, "--allow-degraded-registry", "-o", "json"}
+		if verb == "delete" {
+			args = append(args, "--yes")
+		}
+		out, err := runLinkRules(c, args...)
+		if !IsUsageError(err) || out != "" {
+			t.Fatalf("duplicate %s: %q %v", verb, out, err)
+		}
+	}
+	after, err := os.ReadFile(registryPath)
+	if err != nil || !bytes.Equal(duplicate, after) {
+		t.Fatalf("registry changed: %v", err)
+	}
+}
