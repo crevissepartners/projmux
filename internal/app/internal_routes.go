@@ -93,6 +93,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	rest := args[1:]
 	switch args[0] {
+	case "agent-question-outbox":
+		return runQuestionOutbox(rest)
 	case "tmux":
 		return forwardRawArgv(c.tmux, "internal tmux", "tmux", nil, rest, stdout, stderr)
 	case "status":

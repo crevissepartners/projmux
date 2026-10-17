@@ -1524,3 +1524,72 @@ run = "$HOME/.local/bin/projmux-post-create; $HOME/.local/bin/projmux-gh-token"
 - **Lines appear with `[post-create] `, `[pre-create] `, `[post-attach] `, or
   `[send-noti] ` prefixes.** Expected; hook stdout/stderr are multiplexed into
   projmux's stderr stream.
+
+### Nonblocking CLI questions
+
+An Agent can ask without holding its provider tool call open:
+
+```sh
+projmux agent question ask uid:<own-agent-uid> \
+  --questions '[{"question":"Which build?","header":"Build","options":[{"label":"make (Recommended)","description":"Use the existing build"},{"label":"task"}],"multiSelect":false}]' \
+  --expires-in 24h
+```
+
+Use the exact Agent UID supplied at creation. The required Agent reference is an
+anchor, not caller authentication. The command records the question, confirms
+that the expiry/outbox owner started, prints its question ID, and exits 0 without
+waiting for an answer or provider turn. `-o json` prints `id`, `agentUID`,
+`delivery`, `state`, `createdAt`, and `deadline`. Invalid question JSON or a
+nonpositive or greater-than-seven-day duration fails before recording anything.
+The default lifetime is 24 hours. Question arrays use AskUserQuestion's
+`question`, `header`, `options`, and `multiSelect` fields; recommended labels are
+preserved verbatim. The existing question-size and count bounds apply.
+CLI questions have no masked native input surface: `isSecret: true` is refused
+with `question-secret-native-only` before recording or starting an owner.
+Existing CLI records with secret metadata cannot be answered, declined, or
+dispatched as peer results; their answers are hidden from list JSON. Native
+provider secret-question behavior is unchanged.
+
+`agent question list`, `answer`, and `decline`, and the corresponding SDK
+operations, include these questions with `delivery: "async-message"`. They remain
+answerable while the same Agent is offline. A CLI question does not change Agent
+interaction state, block peer messages, or consult the synchronous answering and
+window settings. Existing synchronous AskUserQuestion behavior is unchanged.
+
+Answers and non-answers are durable peer messages whose source and target are
+both the asking Agent UID. They carry peer coordination authority; an answer is
+not operator approval. The JSON payload has `kind: "projmux-question-result"`,
+`questionId`, `questions`, `status` (`answered` or `no-answer`), `answers`, and,
+for a non-answer, `reason` (`expired` or `declined`). No recommended option is
+automatically selected. Results larger than 2KiB are JSON frames with the same
+kind and question ID plus one-based `part`, `total`, and `data`. Concatenate the
+decoded `data` strings in part order to recover the complete result JSON. UTF-8
+characters are never split. Existing 4KiB message and 8KiB provider-frame limits
+are unchanged.
+
+The independent expiry/outbox process survives the creating command and provider
+stop. It elects one owner for the private `agent-questions/.cli-async/` namespace.
+An answer waits there for the same UID's current route after resume/relaunch,
+for up to 24 hours after result creation. A deleted target ends with
+`target-deleted`; a replacement Agent with the same name receives nothing.
+`outcome`, `outcomeUnknown`, `resultDeadline`, and `resultReason` in list output expose delivery
+settlement. `unknown` means a provider write cannot be disproved: never resubmit
+it automatically. Delivery summaries retain bounded status evidence and reference the canonical
+broker receipt. An existing ref must match the asking UID, peer authority and
+complete result body; a conflict is unknown and is never accepted as success.
+Delivery receipts and stable message refs prevent duplicate
+submissions. A proved non-write refusal can retry with a new durable attempt ref,
+with backoff bounded by the result deadline; uncertain writes cannot. An owner lost to host/process termination is recovered after the next successful
+`agent resume`, `create agent`, question answer or
+decline, or `config apply`. Read-only commands do not start background work.
+
+The namespace has its own total budget of 64 records and 2MiB, with 24-hour
+terminal retention. The budget includes reserved space for pending result and
+bounded receipt/retry metadata; an answer that cannot reserve its outbox is
+refused before replacing the waiting record. Waiting questions and undelivered outboxes are never evicted
+to admit a new question; capacity is refused before recording. Legacy
+`questions.json` and Codex `.async/questions.json` remain unchanged and readable
+by older binaries. Older binaries do not see the new CLI namespace. Codex native
+`delivery: "async"` questions retain their provider lifetime, original user-turn
+answer delivery, and existing secret-answer rules; CLI `async-message` results
+use peer delivery and survive provider generations.

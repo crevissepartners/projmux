@@ -112,8 +112,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Adds the explicit whole-set async Codex question decline route.
-	const want = "a7dd97608a97907b54caa663ad3e186feccdbf35abfb7aa3bedb894e32b84716"
+	// Adds the nonblocking CLI question route and expands explicit decline.
+	const want = "9b451a913d1f384f1ca2f35df764764c22c404380be7f38055236224cf4cda0e"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

@@ -131,6 +131,7 @@ type agentCommand struct {
 	// questionStore opens the AskUserQuestion answer store `agent question`
 	// reads and settles; nil refuses.
 	questionDispatcher questions.Dispatcher
+	questionAsyncStart func() error
 	questionStore      func() (*agentquestion.Store, error)
 	// questionAnswering reads the central agent-question-answering setting
 	// controls admission and list policy; existing waiting delivery survives

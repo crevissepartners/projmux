@@ -39,6 +39,7 @@ func (c *agentCommand) runDeferredResumeCLI(agent coremetadata.Agent, flags reso
 	for _, notice := range notices {
 		notice.writeForMode(stderr, mode)
 	}
+	c.recoverQuestionOwner()
 	// The claim waits for its first input under the same EOF trigger; the owned
 	// Wait below does not start it again.
 	processStartStdinEOF(ctx, cancel)

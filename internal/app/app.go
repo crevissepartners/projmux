@@ -217,6 +217,9 @@ type App struct {
 	// Production leaves them nil and the accessors below install the real ones.
 	lookupEnv         func(string) string
 	interactiveRunner tmuxRunner
+
+	// questionOutboxRecovery is the startup recovery seam; nil uses the CLI owner.
+	questionOutboxRecovery func([]string)
 }
 
 func (a *App) envLookup() func(string) string {
@@ -655,6 +658,15 @@ func (a *App) execute(args []string, stdout, stderr io.Writer) (err error) {
 		defer func() { finish(err) }()
 	}
 	args = normalizeLegacyUpdaterHandoff(args)
+	defer func() {
+		if err == nil && !cli.HelpRequested(args) && questionOutboxRecoveryRequested(args) {
+			if a.questionOutboxRecovery != nil {
+				a.questionOutboxRecovery(args)
+			} else {
+				recoverQuestionOutbox(args)
+			}
+		}
+	}()
 	// Doctor, explicit support-report collection, and every help invocation are
 	// strict source-read-only boundaries. In particular, they must not trigger
 	// the otherwise automatic legacy-hook filesystem migration before dispatch.
@@ -726,7 +738,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 		if len(args) >= 2 && (args[1] == "claude-endpoint-register" || args[1] == "claude-endpoint-helper" || (len(args) >= 4 && args[1] == "agent-hook" && args[2] == "ingest" && args[3] == "claude-hook")) {
 			return false
 		}
-		if len(args) >= 2 && (args[1] == "install-preflight" || args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == agentMessageReleaseRoute || args[1] == "claude-reply-tool" || args[1] == claudeQuestionHookRoute || args[1] == claudePermissionHookRoute || args[1] == claudeQuestionPickerRoute || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
+		if len(args) >= 2 && (args[1] == "install-preflight" || args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == agentMessageReleaseRoute || args[1] == "agent-question-outbox" || args[1] == "claude-reply-tool" || args[1] == claudeQuestionHookRoute || args[1] == claudePermissionHookRoute || args[1] == claudeQuestionPickerRoute || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
 			return false
 		}
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",

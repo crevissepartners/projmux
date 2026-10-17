@@ -81,6 +81,9 @@ func (c *agentCommand) runDetachedProcessRelaunch(reg coremetadata.Registry, tar
 		return err
 	}
 	_, err = mutationruntime.LaunchDetachedProcessRelaunch(ctx, executable, mutationruntime.ProcessDetachedRelaunchEnvelope{Relaunch: &wire, Caller: caller, RegistryPath: c.messagePaths.registryPath}, c.loadRegistry, stdout, stderr, nil, false)
+	if err == nil {
+		c.recoverQuestionOwner()
+	}
 	return c.detachedRelaunchFailure(reg, target, request, planned.processRecovery, err)
 }
 

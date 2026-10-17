@@ -102,10 +102,14 @@ type View struct {
 	Answers     map[string]string   `json:"answers,omitempty"`
 	// asking is the text form's word on whether the provider still asks a
 	// closed question; JSON readers take it from the disposition.
-	Delivery   string `json:"delivery,omitempty"`
-	CanAnswer  bool   `json:"canAnswer"`
-	CanDecline bool   `json:"canDecline"`
-	Asking     string `json:"-"`
+	OutcomeUnknown bool      `json:"outcomeUnknown,omitempty"`
+	Outcome        string    `json:"outcome,omitempty"`
+	ResultDeadline time.Time `json:"resultDeadline,omitzero"`
+	ResultReason   string    `json:"resultReason,omitempty"`
+	Delivery       string    `json:"delivery,omitempty"`
+	CanAnswer      bool      `json:"canAnswer"`
+	CanDecline     bool      `json:"canDecline"`
+	Asking         string    `json:"-"`
 }
 
 // Prompt is one question of a record, numbered the way `answer`
@@ -137,6 +141,7 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 	if err != nil {
 		return List{}, fmt.Errorf("%s: %w", request.Spelling, err)
 	}
+	cliRecords := map[string]agentquestion.CLIAsyncRecord{}
 	readRecords := func() ([]agentquestion.Record, error) {
 		legacy, err := store.List(agent.Metadata.UID)
 		if err != nil {
@@ -145,6 +150,14 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 		async, err := store.AsyncStore().List(agent.Metadata.UID)
 		if err != nil {
 			return nil, err
+		}
+		cli, err := store.CLIAsyncStore().List(agent.Metadata.UID)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range cli {
+			cliRecords[r.ID] = r
+			legacy = append(legacy, r.Record)
 		}
 		return append(legacy, async...), nil
 	}
@@ -204,7 +217,21 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 				view.State, view.Disposition = agentquestion.StateClosed, "process-stale"
 			}
 		}
-		if process && agent.Status.Phase != coremetadata.PhaseRunning {
+		if record.Delivery == "async-message" {
+			view.Outcome = cliRecords[record.ID].Outcome
+			for _, part := range cliRecords[record.ID].Parts {
+				if part.State == "unknown" {
+					view.OutcomeUnknown = true
+					break
+				}
+			}
+			view.ResultReason = cliRecords[record.ID].ResultReason
+			view.ResultDeadline = cliRecords[record.ID].ResultDeadline
+			view.Delivery = "async-message"
+			view.CanAnswer = record.State == agentquestion.StateWaiting
+			view.CanDecline = view.CanAnswer
+		}
+		if record.Delivery != "async-message" && process && agent.Status.Phase != coremetadata.PhaseRunning {
 			view.CanAnswer = false
 		}
 		for i, question := range questions {
@@ -216,6 +243,11 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 			}
 			if question.IsSecret {
 				delete(view.Answers, question.ID)
+				if record.Delivery == "async-message" {
+					delete(view.Answers, question.Question)
+					view.CanAnswer, view.CanDecline = false, false
+					view.Disposition = "secret-native-only"
+				}
 			}
 			view.Prompts = append(view.Prompts, prompt)
 		}
@@ -243,6 +275,11 @@ func (c Service) Decline(ctx context.Context, request Request, agent coremetadat
 	}
 	if len(request.Options)+len(request.Indexes)+len(request.Texts) != 0 {
 		return failure(questionReasonInvalidAnswer, agentquestion.ErrInvalidAnswer)
+	}
+	if handled, cliResult, cliErr := c.resolveCLI(ctx, request, agent, true); handled {
+		result.Delivery = "async-message"
+		result.Outcome = cliResult.Outcome
+		return result, cliErr
 	}
 	reg, err := c.LoadRegistry()
 	if err != nil {
@@ -392,6 +429,9 @@ func (c Service) Answer(ctx context.Context, request Request, agent coremetadata
 	refuse := func(reason, detail string) error { return Refuse(request.Spelling, agent, reason, detail) }
 	if !agentquestion.ValidID(request.QuestionID) {
 		return AnswerResult{}, refuse(questionReasonNotFound, fmt.Sprintf("has no question %q", request.QuestionID))
+	}
+	if handled, cliResult, cliErr := c.resolveCLI(ctx, request, agent, false); handled {
+		return cliResult, cliErr
 	}
 	reg, err := c.LoadRegistry()
 	if err != nil {

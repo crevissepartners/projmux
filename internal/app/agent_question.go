@@ -40,7 +40,7 @@ const (
 )
 
 // agentQuestionActions are the `agent question` subcommands in help order.
-var agentQuestionActions = []string{"enable", "disable", "list", "answer", "decline"}
+var agentQuestionActions = []string{"enable", "disable", "ask", "list", "answer", "decline"}
 
 // agentQuestionRequest is one parsed `agent question` argv.
 type agentQuestionRequest struct {
@@ -48,6 +48,8 @@ type agentQuestionRequest struct {
 	spelling   string
 	flags      resourceQueryFlags
 	questionID string
+	questions  string
+	expiresIn  time.Duration
 	json       bool
 	options    repeatedFlag
 	indexes    repeatedFlag
@@ -88,6 +90,8 @@ func (c *agentCommand) runQuestion(args []string, stdout, stderr io.Writer) erro
 		return c.setQuestionChannel(request, agent, true, stdout)
 	case "disable":
 		return c.setQuestionChannel(request, agent, false, stdout)
+	case "ask":
+		return c.askQuestion(request, agent, stdout)
 	case "list":
 		return c.listQuestions(request, agent, stdout)
 	case "decline":
@@ -111,9 +115,13 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 	request.flags = resourceQueryFlags{kind: coremetadata.KindAgent}
 	request.flags.register(fs)
 	var output string
-	if request.action == "list" {
+	if request.action == "list" || request.action == "ask" {
 		fs.StringVar(&output, "output", "", "result projection: json")
 		fs.StringVar(&output, "o", "", "result projection: json (alias of --output)")
+	}
+	if request.action == "ask" {
+		fs.StringVar(&request.questions, "questions", "", "AskUserQuestion JSON array")
+		fs.DurationVar(&request.expiresIn, "expires-in", 24*time.Hour, "positive question lifetime, at most 168h")
 	}
 	if request.action == "answer" {
 		fs.Var(&request.options, "option", "repeatable <question-number>=<option label>")
@@ -136,6 +144,14 @@ func parseAgentQuestionArgs(args []string, stderr io.Writer) (agentQuestionReque
 	}
 	if output != "" && output != "json" {
 		return agentQuestionRequest{}, usageError(fmt.Sprintf("%s: unsupported output %q; want json", request.spelling, output))
+	}
+	if request.action == "ask" {
+		if _, err := agentquestion.ParseCLIAsyncQuestions(json.RawMessage(request.questions)); err != nil {
+			return agentQuestionRequest{}, usageError(fmt.Sprintf("agent question ask: invalid --questions: %v", err))
+		}
+		if request.expiresIn <= 0 || request.expiresIn > 7*24*time.Hour {
+			return agentQuestionRequest{}, usageError("agent question ask: --expires-in must be positive and at most 168h")
+		}
 	}
 	request.json = output == "json"
 	request.flags.addPositionalRef(positionals[0])
@@ -189,10 +205,14 @@ type agentQuestionView struct {
 	Answers     map[string]string     `json:"answers,omitempty"`
 	// asking is the text form's word on whether the provider still asks a
 	// closed question; JSON readers take it from the disposition.
-	Delivery   string `json:"delivery,omitempty"`
-	CanAnswer  bool   `json:"canAnswer"`
-	CanDecline bool   `json:"canDecline"`
-	asking     string
+	OutcomeUnknown bool      `json:"outcomeUnknown,omitempty"`
+	Outcome        string    `json:"outcome,omitempty"`
+	ResultDeadline time.Time `json:"resultDeadline,omitzero"`
+	ResultReason   string    `json:"resultReason,omitempty"`
+	Delivery       string    `json:"delivery,omitempty"`
+	CanAnswer      bool      `json:"canAnswer"`
+	CanDecline     bool      `json:"canDecline"`
+	asking         string
 }
 
 // agentQuestionPrompt is one question of a record, numbered the way `answer`
@@ -267,6 +287,15 @@ func writeAgentQuestionList(out io.Writer, result agentQuestionList, now time.Ti
 	}
 	for _, view := range result.Questions {
 		fmt.Fprintf(&b, "%s\t%s", view.ID, view.State)
+		if view.Delivery == "async-message" {
+			fmt.Fprintf(&b, "\t%s", view.Delivery)
+			if view.OutcomeUnknown {
+				b.WriteString(" outcomeUnknown=true")
+			}
+			if view.Outcome != "" {
+				fmt.Fprintf(&b, " result=%s reason=%s", view.Outcome, view.ResultReason)
+			}
+		}
 		switch {
 		case view.asking != "":
 			fmt.Fprintf(&b, " (%s; %s)", view.Disposition, view.asking)
