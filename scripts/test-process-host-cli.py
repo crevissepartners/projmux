@@ -128,6 +128,14 @@ def main() -> None:
         shutil.copy2(built, copy)
         build_seconds = time.monotonic() - build_started
         env["PMX_TEST_CLI"] = str(copy)
+        regression_copy = root / "regression-projmux"
+        regression_started = time.monotonic()
+        subprocess.run([go, "build", "-buildvcs=false", "-tags=projmux_process_cli_regression",
+                        "-o", str(regression_copy), "./cmd/projmux"],
+                       cwd=ROOT, env=env, check=True, timeout=180)
+        regression_build_seconds = time.monotonic() - regression_started
+        env["PMX_TEST_CLAUDE_REGRESSION_CLI"] = str(regression_copy)
+        print(f"tagged regression CLI sha256={hashlib.sha256(regression_copy.read_bytes()).hexdigest()}", flush=True)
         print(f"copied CLI sha256={hashlib.sha256(copy.read_bytes()).hexdigest()}", flush=True)
         test_binary = root / "app.test"
         compile_started = time.monotonic()
@@ -183,6 +191,10 @@ def main() -> None:
         if result.stderr:
             print(result.stderr, end="", flush=True)
         report = check_results(events, expected, result.returncode)
+        report["regression_test_seconds"] = round(sum(e.get("Elapsed", 0) for e in events
+            if e.get("Test") == "TestDetachedClaudeChildSurvivesHostReadDeadlineCLI"
+            and e.get("Action") == "pass"), 3)
+        report["regression_build_seconds"] = round(regression_build_seconds, 3)
         report["build_seconds"] = round(build_seconds, 3)
         report["precompile_seconds"] = round(compile_seconds, 3)
         report["test_command_seconds"] = round(test_seconds, 3)

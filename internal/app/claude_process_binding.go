@@ -304,6 +304,7 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 	} else if s.checkHook(ctx, operation, binding, process.PID, request.Session) != nil {
 		return refused
 	}
+	registrationBefore := s.registration
 	switch operation {
 	case "input":
 		return s.input(ctx, request, peer, snap)
@@ -323,6 +324,7 @@ func (s *claudeProcessService) check(ctx context.Context, request claudeProcessC
 		copy := *s.registration
 		result.Registration = &copy
 	}
+	observeClaudeHostCheckForRegression(s, request, peer, registrationBefore, result)
 	return result
 }
 
@@ -811,7 +813,7 @@ func exchangeClaudeProcessHost(proof claudeProcessProof, request claudeProcessCh
 		return claudeProcessCheckResult{}, err
 	}
 	var result claudeProcessCheckResult
-	if err = localipc.ReadJSON(conn, &result); err != nil {
+	if err = readClaudeHostResponseForRegression(conn, &result, proof, request); err != nil {
 		return result, err
 	}
 	if !result.Valid || result.Process != proof.Process || result.Binding != proof.Binding {
@@ -820,9 +822,33 @@ func exchangeClaudeProcessHost(proof claudeProcessProof, request claudeProcessCh
 	return result, nil
 }
 
-func checkClaudeProcessHost(proof claudeProcessProof, register bool) bool {
+// A native read deadline proves neither readiness nor permanent identity loss.
+// Other errors keep their existing fail-closed retirement policy.
+type claudeProcessHostCheckOutcome uint8
+
+const (
+	claudeProcessHostRejected claudeProcessHostCheckOutcome = iota
+	claudeProcessHostCurrent
+	claudeProcessHostReadDeadlineUnknown
+)
+
+func classifyClaudeProcessHostCheck(err error) claudeProcessHostCheckOutcome {
+	if err == nil {
+		return claudeProcessHostCurrent
+	}
+	if errors.Is(err, localipc.ErrFrameReadDeadline) {
+		return claudeProcessHostReadDeadlineUnknown
+	}
+	return claudeProcessHostRejected
+}
+
+func observeClaudeProcessHost(proof claudeProcessProof, register bool) claudeProcessHostCheckOutcome {
 	_, err := exchangeClaudeProcessHost(proof, claudeProcessCheck{Binding: proof.Binding, Session: proof.Session, Register: register})
-	return err == nil
+	return classifyClaudeProcessHostCheck(err)
+}
+
+func checkClaudeProcessHost(proof claudeProcessProof, register bool) bool {
+	return observeClaudeProcessHost(proof, register) == claudeProcessHostCurrent
 }
 
 func registerClaudeProcessHelper(bootstrap claudeEndpointBootstrap, phase string) error {
