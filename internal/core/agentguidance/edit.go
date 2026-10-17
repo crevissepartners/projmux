@@ -263,7 +263,7 @@ func (s Store) WriteFile(ctx context.Context, content []byte, revision string) (
 // ResetFile retains Reset's multi-file limitation: removal can succeed before
 // resetting policy fails. Fragment masks and migration receipts are preserved.
 func (s Store) ResetFile(ctx context.Context, revision string) (out File, err error) {
-	err = s.edit(ctx, revision, nil, func(v editState) error {
+	err = s.edit(ctx, revision, nil, func(_ editState) error {
 		if err := s.resetLocked(); err != nil {
 			return editError("unreadable", err)
 		}
