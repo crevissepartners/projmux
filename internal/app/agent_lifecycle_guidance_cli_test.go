@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -342,5 +343,71 @@ func TestAgentLifecycleGuidanceClaimModesActualCLI(t *testing.T) {
 		if pane == nil || !pane.Status.Activation.IsZero() || pane.Status.ProcessSession.Binding != old.Binding {
 			t.Fatal("claim fabricated provider or generation")
 		}
+	}
+}
+
+// This observes a copied product CLI with isolated protocol providers, not
+// collaboration Agents or real provider accounts.
+func TestGuidanceFragmentsSnapshotActualCLI(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI to a copied product binary")
+	}
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := deferredResumeCLIFixture(t, provider)
+			paths, err := config.DefaultPathsFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(paths.ConfigDir, agentguidance.FragmentsDirName)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for name, content := range map[string]string{"20-second.md": "SECOND-FRAGMENT\r\n", "10-first.md": "FIRST-FRAGMENT\n"} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store := agentguidance.NewDefaultStore(paths)
+			user := []byte("# Decisions and approvals\nUSER-GUIDANCE\n")
+			if err := store.Save(user); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			defer cancel()
+			run := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "observe fragments"))
+			awaitDetachedRelaunchInitialConversation(t, ctx, f, run.ref)
+			reg := mustRegistry(t, f)
+			agent, ok := reg.Agent(strings.TrimPrefix(run.ref, "uid:"))
+			if !ok {
+				t.Fatal("created Agent missing")
+			}
+			digest := agent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]
+			path, err := store.RecordedSnapshotPath(digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			suffix := []byte("\n\nFIRST-FRAGMENT\n\n\nSECOND-FRAGMENT\r\n\n\n" + string(user))
+			if !bytes.HasPrefix(content, agentguidance.Default()) || !bytes.HasSuffix(content, suffix) || agentguidance.Digest(content) != digest {
+				t.Fatal("CLI snapshot did not preserve ordered guidance parts and digest")
+			}
+			baseEnd := len(agentguidance.Default())
+			first := bytes.Index(content, []byte("\n\nFIRST-FRAGMENT"))
+			process := bytes.Index(content, []byte("\n# Process host\n\n"))
+			if process < baseEnd || process >= first {
+				t.Fatal("process context is not between built-in guidance and fragments")
+			}
+			for _, part := range [][]byte{agentguidance.Default(), []byte("# Process host\n"), []byte("FIRST-FRAGMENT"), []byte("SECOND-FRAGMENT"), user} {
+				if bytes.Count(content, part) != 1 {
+					t.Fatal("snapshot repeated or omitted a guidance part")
+				}
+			}
+			run.shutdown(t)
+			t.Logf("copied CLI %s: built-in → process context → first fragment → second fragment → user; recorded digest matches snapshot", provider)
+		})
 	}
 }

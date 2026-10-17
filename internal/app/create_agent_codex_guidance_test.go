@@ -174,7 +174,7 @@ func TestCreateCodexAgentWithoutAGuidanceFileSendsTheDefaultAsDeveloperInstructi
 }
 
 // TestCreateCodexAgentWithAGuidanceFileSendsItsContentAndRecordsItsDigest is
-// Codex acceptance 1 with a guidance file: its content replaces the default
+// Codex acceptance 1 with a guidance file: its content follows the default
 // in the developer instructions, byte for byte, and the digest follows it.
 func TestCreateCodexAgentWithAGuidanceFileSendsItsContentAndRecordsItsDigest(t *testing.T) {
 	for _, route := range codexGuidanceRoutes {
@@ -183,12 +183,13 @@ func TestCreateCodexAgentWithAGuidanceFileSendsItsContentAndRecordsItsDigest(t *
 				writeAgentGuidance(t, paths, []byte(codexGuidanceContent))
 				writeCodexGuidancePersona(t, personas)
 			}, true)
-			want := codexGuidanceContent + projectlinks.CompositeSeparator + codexAgentIdentity(result.agent.Metadata.UID) +
+			assembled := string(agentguidance.Default()) + "\n\n" + codexGuidanceContent
+			want := assembled + projectlinks.CompositeSeparator + codexAgentIdentity(result.agent.Metadata.UID) +
 				projectlinks.CompositeSeparator + codexPersonaContent
 			if got := onlyNativeInstructions(t, result); got != want {
 				t.Fatalf("developer instructions = %q, want %q", got, want)
 			}
-			digest := agentguidance.Digest([]byte(codexGuidanceContent))
+			digest := agentguidance.Digest([]byte(assembled))
 			if got := result.agent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]; got != digest {
 				t.Fatalf("Agent annotations = %v, want guidance digest %s", result.agent.Metadata.Annotations, digest)
 			}

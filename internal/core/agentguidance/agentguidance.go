@@ -3,13 +3,11 @@
 // other agents through projmux rather than through its provider's own
 // subagents and message channels.
 //
-// The guidance is one user-edited file, <ConfigDir>/agent-guidance.md, and it
-// has three states:
-//
-//   - no file: the built-in Default text.
-//   - a file that holds only whitespace (an empty file included): off, and no
-//     guidance is given.
-//   - any other file: its bytes, verbatim, in place of the default.
+// Guidance is assembled from the built-in Default, regular *.md fragments
+// in <ConfigDir>/agent-guidance.d (bytewise filename order), then the user's
+// agent-guidance.md. Nonempty parts retain their bytes and are joined by two
+// LF bytes. agent-guidance.json controls whole-guidance and fragment disabling.
+// Without that settings file, an existing whitespace-only user file stays off.
 //
 // What a launch handed to Claude is content addressed below StateDir, like a
 // persona snapshot:
@@ -75,7 +73,7 @@ const defaultText = "# Working with other agents through projmux\n" +
 	"- When you need the user to decide or approve something, ask with your provider's question tool (Claude `AskUserQuestion`, Codex `requestUserInput`) so it reaches the user as a question they can answer directly, instead of leaving it in your reply. Put your recommended option first and say in a few words what each option does. Ask one decision per question, and check facts yourself rather than asking.\n" +
 	"- An open question pauses your turn until it is answered, and messages other agents send you meanwhile wait and can expire. If other agents depend on you to keep working, for example because you coordinate their work or their merges, write the decision request in your reply and end your turn instead of using the question tool.\n"
 
-// Default returns the built-in guidance, used when no guidance file exists.
+// Default returns a copy of the built-in guidance, the first assembly part.
 func Default() []byte {
 	return []byte(defaultText)
 }
@@ -84,11 +82,11 @@ func Default() []byte {
 type Source string
 
 const (
-	// SourceDefault is the built-in text: there is no guidance file.
+	// SourceDefault is the built-in text without nonempty fragment or user additions.
 	SourceDefault Source = "default"
-	// SourceFile is the guidance file's content.
+	// SourceFile is built-in guidance supplemented by fragments or user content.
 	SourceFile Source = "file"
-	// SourceOff is a guidance file that holds only whitespace: no guidance.
+	// SourceOff is explicit or legacy whole-guidance off.
 	SourceOff Source = "off"
 )
 
@@ -144,69 +142,25 @@ func (s Store) Path() string {
 	return filepath.Join(s.configDir, FileName)
 }
 
-// Load reads the current guidance. A missing file is the default; a file of
-// only whitespace is off; any other file is its exact bytes. A file that is
-// not a regular file, cannot be read, or is larger than MaxSize is an error:
-// the caller launches without guidance rather than with the default, because
-// the user asked for something other than the default.
+// Load assembles the current built-in, fragment and user guidance.
+// Read or size errors fail the entire assembly; callers report unavailable
+// guidance and continue launching without it.
 func (s Store) Load() (Guidance, error) {
-	root, err := os.OpenRoot(s.configDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return defaultGuidance(), nil
-	}
-	if err != nil {
-		return Guidance{}, fmt.Errorf("read agent guidance: %w", err)
-	}
-	defer root.Close()
-	info, err := root.Stat(FileName)
-	if errors.Is(err, fs.ErrNotExist) {
-		return defaultGuidance(), nil
-	}
-	if err != nil {
-		return Guidance{}, fmt.Errorf("read agent guidance: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return Guidance{}, fmt.Errorf("agent guidance %s is not a regular file", s.Path())
-	}
-	file, err := root.Open(FileName)
-	if err != nil {
-		return Guidance{}, fmt.Errorf("read agent guidance: %w", err)
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, MaxSize+1))
-	if err != nil {
-		return Guidance{}, fmt.Errorf("read agent guidance: %w", err)
-	}
-	if len(content) > MaxSize {
-		return Guidance{}, fmt.Errorf("agent guidance %s is at least %d bytes; the limit is %d", s.Path(), MaxSize+1, MaxSize)
-	}
-	if len(bytes.TrimSpace(content)) == 0 {
-		return Guidance{Source: SourceOff}, nil
-	}
-	return Guidance{Text: content, Source: SourceFile, Digest: Digest(content)}, nil
+	return s.load(false)
 }
 
-// LoadProcess adds execution context to the built-in guidance. User guidance
-// remains verbatim and an explicit off remains off.
+// LoadProcess puts process execution context at the end of the built-in
+// guidance, before fragments and the user file. Whole-guidance off stays off.
 func (s Store) LoadProcess() (Guidance, error) {
-	g, err := s.Load()
-	if err != nil || g.Source != SourceDefault {
-		return g, err
-	}
-	g.Text = append(g.Text, []byte("\n# Process host\n\n"+
-		"This agent runs in a foreground process host without a tmux pane. Use `projmux agent turn`, `projmux agent message send`, and `projmux describe` to control and inspect it. Your identity comes from the process binding; a process ID is not a pane ID.\n")...)
-	g.Digest = Digest(g.Text)
-	return g, nil
+	return s.load(true)
 }
 
-func defaultGuidance() Guidance {
-	text := Default()
-	return Guidance{Text: text, Source: SourceDefault, Digest: Digest(text)}
-}
+const processText = "\n# Process host\n\n" +
+	"This agent runs in a foreground process host without a tmux pane. Use `projmux agent turn`, `projmux agent message send`, and `projmux describe` to control and inspect it. Your identity comes from the process binding; a process ID is not a pane ID.\n"
 
 // Save replaces the guidance file with text, verbatim and atomically. Text of
-// only whitespace is saved as it is, and means off. Text larger than MaxSize
-// is refused before anything is written. An existing file keeps its mode; a
+// only whitespace is saved as it is; it means off only without explicit
+// settings. Text larger than MaxSize is refused before anything is written. An existing file keeps its mode; a
 // new one is 0600.
 func (s Store) Save(text []byte) error {
 	if len(text) > MaxSize {
@@ -222,14 +176,23 @@ func (s Store) Save(text []byte) error {
 	return nil
 }
 
-// Disable turns the guidance off by saving an empty file.
+// Disable turns all guidance off without changing user content or fragments.
 func (s Store) Disable() error {
-	return s.Save(nil)
+	settings, _, err := s.LoadSettings()
+	if err != nil {
+		return err
+	}
+	settings.Disabled = true
+	return s.SaveSettings(settings)
 }
 
-// Reset goes back to the default by removing the guidance file. A file that
-// does not exist is already reset and is not an error.
+// Reset removes the user file and resets the whole-guidance switch. Fragment
+// settings are preserved; fragments still supplement the built-in default.
 func (s Store) Reset() error {
+	settings, explicit, err := s.LoadSettings()
+	if err != nil {
+		return err
+	}
 	root, err := os.OpenRoot(s.configDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -239,17 +202,22 @@ func (s Store) Reset() error {
 	}
 	defer root.Close()
 	info, err := root.Lstat(FileName)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("reset agent guidance: %w", err)
 	}
-	if info.IsDir() {
-		return fmt.Errorf("reset agent guidance: %s is not a regular file", s.Path())
+	if err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("reset agent guidance: %s is not a regular file", s.Path())
+		}
+		if err := root.Remove(FileName); err != nil {
+			return fmt.Errorf("reset agent guidance: %w", err)
+		}
 	}
-	if err := root.Remove(FileName); err != nil {
-		return fmt.Errorf("reset agent guidance: %w", err)
+	if explicit {
+		settings.Disabled = false
+		if err := s.SaveSettings(settings); err != nil {
+			return err
+		}
 	}
 	return nil
 }

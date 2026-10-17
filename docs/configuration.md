@@ -1698,20 +1698,47 @@ message them with `projmux agent message send` instead of a message channel
 local to its provider. It also tells the Agent to ask the user for decisions
 and approvals with its provider's question tool, unless other agents depend on
 it to keep working: an open question pauses its turn and holds their messages.
-The guidance lives in one file,
-`<config dir>/agent-guidance.md` (by default
-`${XDG_CONFIG_HOME:-$HOME/.config}/projmux/agent-guidance.md`), and there is no
-CLI command that edits it.
+Guidance is assembled in this order:
 
-| File | Guidance |
-| --- | --- |
-| Missing | The built-in default text. This is the state of a new install. |
-| Only whitespace (an empty file included) | Off: nothing is added and nothing is recorded. |
-| Any other content | That content, byte for byte, in place of the default. |
+1. The current built-in default. Process-hosted Agents also receive the
+   process-host paragraph at the end of this part.
+2. Regular files directly inside `<config dir>/agent-guidance.d/` whose names
+   end in `.md` (case sensitive), sorted by bytewise filename order. Numeric
+   prefixes are optional. Symlinks, directories and other file types are ignored.
+3. Your `<config dir>/agent-guidance.md`, appended to the built-in guidance.
+   It no longer replaces the default. A missing or whitespace-only user part
+   adds nothing, subject to the legacy off rule below.
 
-To turn the guidance off, leave the file empty (`: > agent-guidance.md`). To
-use your own text, write it to the file. To go back to the default, delete
-the file. The file is at most 64 KiB.
+Each nonempty part keeps its exact bytes, with two LF bytes between parts.
+Each input and the complete assembly (including separators and process context)
+are limited to 64 KiB. Read failures, invalid settings or oversized assemblies
+make all guidance unavailable; the Agent still starts and stderr reports
+`agent-guidance-unavailable`.
+
+The config directory defaults to
+`${XDG_CONFIG_HOME:-$HOME/.config}/projmux`. Explicit policy lives in
+`agent-guidance.json`:
+
+```json
+{
+  "disabled": false,
+  "disabledFragments": ["20-example.md"]
+}
+```
+
+`disabled: true` turns off the built-in text, fragments and user text together.
+`disabledFragments` skips only those fragment basenames; absent fragment names
+are allowed. Unknown keys, invalid names and malformed JSON are errors. There
+is no switch to disable just the built-in text. Settings are stored atomically
+with private permissions by the guidance settings API. There is no CLI editor
+for this policy yet.
+
+For compatibility, **without an explicit JSON settings file**, an existing
+empty or whitespace-only `agent-guidance.md` still turns all guidance off.
+With explicit enabled settings (including `{}`), a blank user file merely adds
+nothing. To add your own guidance, write it in `agent-guidance.md`; remove that
+file to remove your additions. Existing user content is not migrated or edited
+automatically by assembly.
 
 - The guidance, the instructions, optional Project common instructions and the
   Project's label link rules reach Claude
@@ -1729,8 +1756,8 @@ the file. The file is at most 64 KiB.
   A resume-picker create always runs with the snapshot off while the guidance
   is on, since the picked conversation's recorded prompt cannot be shown to
   hold it. Guidance equal to the recorded digest changes nothing.
-- A guidance file that cannot be read, is not a regular file, or is larger
-  than 64 KiB does not stop the Agent: it starts without the guidance, one
+- A guidance assembly that cannot be read or exceeds its limits does not stop
+  the Agent: it starts without the guidance, one
   `agent-guidance-unavailable` line on stderr says so, and nothing is
   recorded.
 - A Codex Agent receives the guidance on a fresh create that starts its own
