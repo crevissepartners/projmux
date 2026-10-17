@@ -142,6 +142,15 @@ func RuntimeEligibility(registry coremetadata.Registry, agent coremetadata.Agent
 	runtime.PaneUID = pane.Metadata.UID
 	runtime.PaneRuntimeID = pane.Status.Activation.RuntimeID
 	runtime.ActivationGeneration = pane.Status.Activation.Generation
+	if pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+		if !currentProcessActivation(registry, agent, *pane) {
+			runtime.Reason = "current Pane activation identity is incomplete"
+			return runtime
+		}
+		runtime.Ready = true
+		runtime.Reason = "current Registry activation is ready; mutating commands revalidate live provider authority"
+		return runtime
+	}
 	if runtime.PaneRuntimeID == "" || runtime.ActivationGeneration == "" || pane.Status.Activation.AgentUID != agent.Metadata.UID {
 		runtime.Reason = "current Pane activation identity is incomplete"
 		return runtime
@@ -227,12 +236,30 @@ func ActivationReason(registry coremetadata.Registry, agent coremetadata.Agent) 
 		return "requires a Running Agent with a current managed Pane"
 	}
 	pane, ok := registry.Pane(agent.Status.PaneRef)
+	if ok && pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess {
+		if currentProcessActivation(registry, agent, *pane) {
+			return ""
+		}
+		return "managed Agent activation identity is incomplete"
+	}
 	if !ok || pane.Spec.Role != coremetadata.PaneRoleAgent || pane.Metadata.OwnerRef == nil ||
 		pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerRef.UID != agent.Metadata.UID ||
 		pane.Status.Activation.AgentUID != agent.Metadata.UID || pane.Status.Activation.Generation == "" || pane.Status.Activation.RuntimeID == "" {
 		return "managed Agent activation identity is incomplete"
 	}
 	return ""
+}
+
+func currentProcessActivation(registry coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane) bool {
+	if pane.Status.ProcessSession == nil {
+		return false
+	}
+	binding := pane.Status.ProcessSession.Binding
+	if binding.AgentUID != agent.Metadata.UID || binding.PaneUID != agent.Status.PaneRef {
+		return false
+	}
+	_, provider, ok := registry.CurrentProcessActivation(binding)
+	return ok && provider == agent.Spec.Provider && provider == pane.Status.ProcessSession.Provider
 }
 
 func ReviewReason(registry coremetadata.Registry, agent coremetadata.Agent) string {

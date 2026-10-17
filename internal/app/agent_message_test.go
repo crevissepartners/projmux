@@ -799,3 +799,122 @@ func mustMessageRoute(t *testing.T, registry coremetadata.Registry, agentUID str
 	}
 	return route
 }
+
+func processWaitCLIRegistry(t *testing.T, provider string) (coremetadata.Registry, string) {
+	t.Helper()
+	h := newSessionRefHarness(t, provider)
+	pane, _ := h.registry.Pane(h.paneUID)
+	agent, _ := h.registry.Agent(h.agentUID)
+	window, _ := h.registry.Window(agent.Metadata.OwnerUID())
+	// Replace only this in-memory fixture's tmux activation, then use the
+	// existing process writers. No provider or tmux runtime is started.
+	pane.Status.Activation = coremetadata.PaneActivation{}
+	binding := coremetadata.ProcessBinding{
+		HostInstanceID: "fixture-host", ProjectUID: window.Metadata.OwnerUID(),
+		WindowUID: window.Metadata.UID, AgentUID: h.agentUID, PaneUID: h.paneUID,
+		Generation: "fixture-generation", OperationID: "fixture-operation",
+	}
+	mutator := coremetadata.Mutator{Now: func() time.Time { return sessionRefObservedAt }}
+	if err := mutator.ReserveProcessBinding(h.registry, binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := mutator.RecordProcessChild(h.registry, coremetadata.ProcessActivation{
+		Binding:     binding,
+		HostProcess: coremetadata.ProcessIdentity{PID: 11, OwnerUID: 1000, Start: "fixture-host-birth"},
+		Child:       coremetadata.ProcessIdentity{PID: 12, OwnerUID: 1000, Start: "fixture-child-birth"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return h.registry.Clone(), h.agentUID
+}
+
+func TestAgentWaitProcessRegistryIdleTimeoutAndGenerationReplacement(t *testing.T) {
+	for _, provider := range []string{aiModeCodex, aiModeClaude} {
+		t.Run(provider, func(t *testing.T) {
+			cases := []struct {
+				name    string
+				kind    coremetadata.AgentInteractionKind
+				age     time.Duration
+				json    bool
+				replace bool
+			}{
+				{name: "fresh idle text", kind: coremetadata.InteractionIdle},
+				{name: "fresh idle JSON", kind: coremetadata.InteractionIdle, json: true},
+				{name: "busy", kind: coremetadata.InteractionInProgress},
+				{name: "unknown", kind: coremetadata.InteractionUnknown},
+				{name: "old idle", kind: coremetadata.InteractionIdle, age: coremetadata.AgentInteractionFreshFor + time.Second},
+				{name: "generation replacement", kind: coremetadata.InteractionInProgress, replace: true},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					registry, uid := processWaitCLIRegistry(t, provider)
+					now := sessionRefObservedAt.Add(time.Minute)
+					agent, _ := registry.Agent(uid)
+					agent.Status.Interaction = coremetadata.AgentInteraction{Kind: tc.kind, ObservedAt: now.Add(-tc.age), Source: string(coremetadata.InteractionSourceLifecycle)}
+					before := registry.Clone()
+					replacement := registry.Clone()
+					pane, _ := replacement.Pane(agent.Status.PaneRef)
+					pane.Status.Activation.Generation = "replacement-generation"
+					pane.Status.Activation.Process.Binding.Generation = "replacement-generation"
+					pane.Status.ProcessSession.Binding.Generation = "replacement-generation"
+					if err := replacement.Validate(); err != nil {
+						t.Fatal(err)
+					}
+					replacementBefore := replacement.Clone()
+					sleeps, loads := 0, 0
+					command := &agentCommand{
+						messagePaths: agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) {
+							loads++
+							if tc.replace && sleeps > 0 {
+								return replacement.Clone(), nil
+							}
+							return registry.Clone(), nil
+						}},
+						messageNow:   func() time.Time { return now },
+						messageSleep: func(_ context.Context, duration time.Duration) error { sleeps++; now = now.Add(duration); return nil },
+					}
+					args := []string{"wait", "uid:" + uid, "--timeout", "100ms"}
+					if tc.json {
+						args = append(args, "-o", "json")
+					}
+					stdout, stderr, err := runRoute(t, command, args...)
+					ready := tc.kind == coremetadata.InteractionIdle && tc.age == 0
+					if ready {
+						if err != nil || stderr != "" || sleeps != 0 || loads != 1 {
+							t.Fatalf("fresh idle stdout=%q stderr=%q sleeps=%d loads=%d err=%v", stdout, stderr, sleeps, loads, err)
+						}
+						if tc.json {
+							var got struct {
+								AgentUID    string                        `json:"agentUID"`
+								Name        string                        `json:"name"`
+								Interaction coremetadata.AgentInteraction `json:"interaction"`
+							}
+							if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+								t.Fatal(err)
+							}
+							if got.AgentUID != uid || got.Name != agent.Metadata.Name || got.Interaction != agent.Status.Interaction {
+								t.Fatalf("idle JSON: %+v", got)
+							}
+						} else if stdout != uid+"\tidle\n" {
+							t.Fatalf("idle text: %q", stdout)
+						}
+					} else {
+						want := "timed out waiting for idle"
+						if tc.replace {
+							want = "Agent activation is stale"
+						}
+						if err == nil || !strings.Contains(err.Error(), want) || stdout != "" || sleeps == 0 || loads < 2 {
+							t.Fatalf("non-idle stdout=%q sleeps=%d loads=%d err=%v", stdout, sleeps, loads, err)
+						}
+					}
+					if !reflect.DeepEqual(registry, before) || !reflect.DeepEqual(replacement, replacementBefore) {
+						t.Fatal("wait changed Registry evidence")
+					}
+				})
+			}
+		})
+	}
+}
