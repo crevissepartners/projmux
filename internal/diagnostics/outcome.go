@@ -145,7 +145,7 @@ func outcomeReason(class CommandClass, err error, registry *CommandOutcomeReason
 //   - Doctor and the support report own a strict no-write contract, including
 //     invalid flag invocations. Their read-only work never becomes a journal
 //     write.
-//   - Global guidance read/validate are strict no-write editing operations,
+//   - Global and Project guidance read/validate are strict no-write editing operations,
 //     including candidate, filesystem and usage failures.
 //   - Profile parse/preview are strict write-free operations, including
 //     validation and I/O failures.

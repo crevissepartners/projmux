@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 266 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 267 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -132,10 +132,11 @@ projmux agent approval answer <agent-ref> <request-id> (--allow | --deny) [--via
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 projmux agent guidance show [--process] [-o json]
-projmux agent guidance read [-o json]
-projmux agent guidance validate --file <path|-> [-o json]
-projmux agent guidance set --file <path|-> --if-match <revision> [-o json]
+projmux agent guidance read [--project <ref> | -p <ref>] [-o json]
+projmux agent guidance validate [--project <ref> | -p <ref>] --file <path|-> [-o json]
+projmux agent guidance set [--project <ref> | -p <ref>] --file <path|-> --if-match <revision> [-o json]
 projmux agent guidance reset --if-match <revision> [-o json]
+projmux agent guidance delete {--project <ref> | -p <ref>} --if-match <revision> [-o json]
 projmux agent guidance enable [fragment.md]
 projmux agent guidance disable [fragment.md]
 projmux agent usage [--model <codex|claude|all>] [--window <name>] [--json] [--force]
@@ -161,7 +162,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent guidance`](#projmux-agent-guidance) | Inspect and control host-global Agent guidance |
+| [`projmux agent guidance`](#projmux-agent-guidance) | Inspect and control global or explicit Project Agent guidance |
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent stop`](#projmux-agent-stop) | Stop one exact process Agent after its provider Wait; preserve the Agent, Pane, and conversation |
@@ -179,11 +180,11 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent guidance show`, `projmux agent guidance read`, `projmux agent guidance validate`, `projmux agent guidance set`, `projmux agent guidance reset`, `projmux agent guidance enable`, `projmux agent guidance disable`, `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent guidance show`, `projmux agent guidance read`, `projmux agent guidance validate`, `projmux agent guidance set`, `projmux agent guidance reset`, `projmux agent guidance delete`, `projmux agent guidance enable`, `projmux agent guidance disable`, `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent guidance`
 
-Inspect and control host-global Agent guidance
+Inspect and control global or explicit Project Agent guidance
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -199,10 +200,11 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent guidance read [-o json]
-projmux agent guidance validate --file <path|-> [-o json]
-projmux agent guidance set --file <path|-> --if-match <revision> [-o json]
+projmux agent guidance read [--project <ref> | -p <ref>] [-o json]
+projmux agent guidance validate [--project <ref> | -p <ref>] --file <path|-> [-o json]
+projmux agent guidance set [--project <ref> | -p <ref>] --file <path|-> --if-match <revision> [-o json]
 projmux agent guidance reset --if-match <revision> [-o json]
+projmux agent guidance delete {--project <ref> | -p <ref>} --if-match <revision> [-o json]
 projmux agent guidance show [--process] [-o json]
 projmux agent guidance enable [fragment.md]
 projmux agent guidance disable [fragment.md]
@@ -212,19 +214,20 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent guidance read`](#projmux-agent-guidance-read) | Read user guidance and built-in defaults without migration or writes |
+| [`projmux agent guidance read`](#projmux-agent-guidance-read) | Read raw guidance and effective defaults without migration or writes |
 | [`projmux agent guidance validate`](#projmux-agent-guidance-validate) | Validate a candidate and both assembly limits without writes |
-| [`projmux agent guidance set`](#projmux-agent-guidance-set) | Atomically replace user guidance if the input revision still matches |
+| [`projmux agent guidance set`](#projmux-agent-guidance-set) | Atomically replace global user or Project guidance if the revision matches |
 | [`projmux agent guidance reset`](#projmux-agent-guidance-reset) | Remove user guidance and restore the whole switch if the revision matches |
+| [`projmux agent guidance delete`](#projmux-agent-guidance-delete) | Delete explicit Project guidance if its revision matches |
 | [`projmux agent guidance show`](#projmux-agent-guidance-show) | Show ordered guidance sources, effective states, and the final body; migrate legacy guidance once |
 | [`projmux agent guidance enable`](#projmux-agent-guidance-enable) | Enable whole guidance or one fragment basename without removing user content |
 | [`projmux agent guidance disable`](#projmux-agent-guidance-disable) | Disable whole guidance or one fragment basename while preserving other policy |
 
-Canonical spelling: `projmux agent guidance show`, `projmux agent guidance read`, `projmux agent guidance validate`, `projmux agent guidance set`, `projmux agent guidance reset`, `projmux agent guidance enable`, `projmux agent guidance disable`
+Canonical spelling: `projmux agent guidance show`, `projmux agent guidance read`, `projmux agent guidance validate`, `projmux agent guidance set`, `projmux agent guidance reset`, `projmux agent guidance delete`, `projmux agent guidance enable`, `projmux agent guidance disable`
 
 #### `projmux agent guidance read`
 
-Read user guidance and built-in defaults without migration or writes
+Read raw guidance and effective defaults without migration or writes
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -240,7 +243,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent guidance read [-o json]
+projmux agent guidance read [--project <ref> | -p <ref>] [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -263,14 +266,14 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent guidance validate --file <path|-> [-o json]
+projmux agent guidance validate [--project <ref> | -p <ref>] --file <path|-> [-o json]
 ```
 
 Output modes (`-o`): `json`
 
 #### `projmux agent guidance set`
 
-Atomically replace user guidance if the input revision still matches
+Atomically replace global user or Project guidance if the revision matches
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -286,7 +289,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent guidance set --file <path|-> --if-match <revision> [-o json]
+projmux agent guidance set [--project <ref> | -p <ref>] --file <path|-> --if-match <revision> [-o json]
 ```
 
 Output modes (`-o`): `json`
@@ -310,6 +313,29 @@ Allowed effects:
 
 ```
 projmux agent guidance reset --if-match <revision> [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux agent guidance delete`
+
+Delete explicit Project guidance if its revision matches
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux agent guidance delete {--project <ref> | -p <ref>} --if-match <revision> [-o json]
 ```
 
 Output modes (`-o`): `json`

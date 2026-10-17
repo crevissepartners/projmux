@@ -8,24 +8,25 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	guidanceService "github.com/crevissepartners/projmux/internal/services/agentguidance"
 )
 
-// Guidance is host-global configuration, independent of an Agent selector,
+// Guidance is global or explicitly scoped to a registered Project, independent of an Agent selector,
 // provider availability or tmux. Parse every argument before opening the store.
 func (c *agentCommand) runGuidance(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("agent guidance requires show, read, validate, set, reset, enable, or disable")
+		return usageError("agent guidance requires show, read, validate, set, reset, delete, enable, or disable")
 	}
 	action := args[0]
-	if action == "read" || action == "validate" || action == "set" || action == "reset" {
+	if action == "read" || action == "validate" || action == "set" || action == "reset" || action == "delete" {
 		return c.runGuidanceEdit(args, stdout, stderr)
 	}
 	if action != "show" && action != "enable" && action != "disable" {
-		return usageError("agent guidance requires show, read, validate, set, reset, enable, or disable")
+		return usageError("agent guidance requires show, read, validate, set, reset, delete, enable, or disable")
 	}
 	fs := flag.NewFlagSet("agent guidance "+action, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -111,12 +112,16 @@ func (c *agentCommand) runGuidanceEdit(args []string, stdout, stderr io.Writer) 
 	fs := flag.NewFlagSet("agent guidance "+action, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	setRouteUsage(fs)
-	var output, file, revision string
+	var output, file, revision, project string
+	if action != "reset" {
+		fs.StringVar(&project, "project", "", "explicit registered Project name or uid: ref")
+		fs.StringVar(&project, "p", "", "alias for --project")
+	}
 	fs.StringVar(&output, "o", "", "output mode: json")
 	if action == "validate" || action == "set" {
 		fs.StringVar(&file, "file", "", "candidate path, or - for stdin")
 	}
-	if action == "set" || action == "reset" {
+	if action == "set" || action == "reset" || action == "delete" {
 		fs.StringVar(&revision, "if-match", "", "revision from read or validate")
 	}
 	rest, err := parseWithPositionals(fs, args[1:])
@@ -135,8 +140,23 @@ func (c *agentCommand) runGuidanceEdit(args []string, stdout, stderr io.Writer) 
 	if (action == "validate" || action == "set") && file == "" {
 		return usageError("agent guidance " + action + ": --file is required")
 	}
-	if (action == "set" || action == "reset") && revision == "" {
+	if (action == "set" || action == "reset" || action == "delete") && revision == "" {
 		return usageError("agent guidance " + action + ": --if-match is required")
+	}
+	projectSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "project" || f.Name == "p" {
+			projectSet = true
+		}
+	})
+	if projectSet && strings.TrimSpace(project) == "" {
+		return usageError("agent guidance " + action + ": --project requires a value")
+	}
+	if action == "reset" && projectSet {
+		return usageError("agent guidance reset does not accept --project")
+	}
+	if action == "delete" && !projectSet {
+		return usageError("agent guidance delete: --project is required")
 	}
 	var content []byte
 	if file != "" {
@@ -157,8 +177,38 @@ func (c *agentCommand) runGuidanceEdit(args []string, stdout, stderr io.Writer) 
 			return &agentguidance.EditError{Code: "agent-guidance-unreadable", Err: err}
 		}
 	}
-	service := guidanceService.Service{Paths: func() (config.Paths, error) { return configPaths(nil, c.lookupEnv) }}
+	service := guidanceService.Service{Paths: func() (config.Paths, error) { return configPaths(nil, c.lookupEnv) }, RegistryPaths: func() (config.Paths, error) { return configPaths(nil, c.lookupEnv) }}
 	ctx := context.Background()
+	if projectSet {
+		if action == "validate" {
+			v, err := service.ValidateProject(ctx, project, content)
+			if err != nil {
+				return err
+			}
+			if output == "json" {
+				return encodeGuidance(stdout, v)
+			}
+			_, err = fmt.Fprintf(stdout, "%s\t%d/%d bytes\n", v.Revision, v.Bytes, v.MaxBytes)
+			return err
+		}
+		var v agentguidance.ProjectFile
+		switch action {
+		case "read":
+			v, err = service.ReadProject(ctx, project)
+		case "set":
+			v, err = service.WriteProject(ctx, project, content, revision)
+		case "delete":
+			v, err = service.DeleteProject(ctx, project, revision)
+		}
+		if err != nil {
+			return err
+		}
+		if output == "json" {
+			return encodeGuidance(stdout, v)
+		}
+		_, err = io.WriteString(stdout, v.Text)
+		return err
+	}
 	if action == "validate" {
 		v, err := service.Validate(ctx, content)
 		if err != nil {
