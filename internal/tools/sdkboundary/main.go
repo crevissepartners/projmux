@@ -122,6 +122,7 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/integrations/agents/agentquestion",
 		module + "/internal/services/settings",
 		module + "/internal/services/usage",
+		module + "/internal/systemstatus",
 		module + "/internal/services/notifications",
 		module + "/internal/core/usage",
 		module + "/internal/core/notify",

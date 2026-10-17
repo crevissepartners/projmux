@@ -234,4 +234,10 @@
 // CreateAgent returns the committed result and CodeCreateActivationUnconfirmed
 // together. Callers must inspect both the result and error before retrying.
 
+// SampleSystem exposes the existing host statusbar CPU/memory sampler as
+// core.SystemSample. Sampling updates StateDir/live-resources-sample.json for
+// the 30-second CPU delta reference, independently of statusbar enablement.
+// It does not collect usage history. Unsupported platforms and unavailable
+// percentages are distinct; result pointers belong to the caller.
+
 package projmux

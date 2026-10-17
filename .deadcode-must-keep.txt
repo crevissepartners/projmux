@@ -79,6 +79,7 @@ Client.RemoveAccount	Public v0 provider account catalog SDK entrypoint or refusa
 Client.Rename	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
+Client.SampleSystem	Public v0 host system sampler facade; retained for external consumers and covered by producer parity, path isolation, cancellation and caller ownership fixtures.
 Client.SendMessage	Public SDK Client.SendMessage entrypoint; external consumers submit explicit untrusted peer coordination.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.StartTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
@@ -114,6 +115,7 @@ Client.relaunchProcessAgent	Public RelaunchAgent process/host closure; frozen-do
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.resumeAgentPlan	Public ResumeAgent/RelaunchAgent shared transaction closure; TestResumeAgentSDKCLIParity, TestResumeAgentSDKCLIRollback and TestRelaunchAgentSDKNativeCodexAndPostStopCancellation protect commit and recovery.
 Client.resumeProcessAgent	Public ResumeAgent detached process closure; supplemental frozen-domain/claim and external caller-exit fixtures cover identity and lifetime.
+Client.sampleSystem	Implementation of the public host system sampler facade, preserving the existing sampler and captured CPU cache destination.
 Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Client.turn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
