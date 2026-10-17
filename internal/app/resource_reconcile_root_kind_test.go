@@ -73,6 +73,7 @@ type rootKindProjectionSite struct {
 // rootKindProjectionSites is the sweep. Sorted by file then function; the
 // exhaustiveness test re-sorts anyway, so the order here is for reading.
 var rootKindProjectionSites = []rootKindProjectionSite{
+	{File: "internal/services/projectlinks/projectlinks.go", Func: "uniqueTarget", Source: "Registry", Verdict: rootKindProjectOnly, Why: "link rules belong to one Project; checks raw Project refs and Project UID uniqueness, while ControlSessions have no Project link rules file"},
 	{File: "internal/services/projectcandidates/projectcandidates.go", Func: "Service.List", Source: "Registry", Verdict: rootKindProjectOnly, Why: "configured candidate paths and managed pins have Project roots; ControlSessions have no project root"},
 	{
 		File: "internal/core/metadata/schema.go", Func: "allResourceMeta",
