@@ -13,7 +13,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
- mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // Refusal reason tokens of `agent persona attach|detach` that the persona
@@ -125,37 +125,59 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", request.spelling, resolution.Matches[0].UID)
 	}
- target := agent.Clone()
- forward := stdout
- if request.json { forward = io.Discard }
- var restart *agentRestart
- result, err := mutationruntime.RunAgentPersona(mutationruntime.AgentPersonaDependencies{
-  Request: mutationruntime.AgentPersonaRequest{Action: request.action, Spelling: request.spelling, Noun: noun, Persona: request.persona, DryRun: request.dryRun, Confirm: request.yes, Socket: request.socket.socket, SocketPath: request.socket.socketPath},
-  Registry: registry, Target: target, Interaction: target.EffectiveInteraction(c.clock()).Kind,
-  OpenStore: c.openPersonaStore,
-  Refuse: func(reason, message string, cause error) error {
-   if cause == nil { cause = agentPersonaRefusalCause(reason, request.persona, message) }
-   return usageErrorFor(message, cause)
-  },
-  Plan: func(p *mutationruntime.AgentRestartPlan, q mutationruntime.AgentSettingsRequest, refuse func(string,string) error) error {
-   restart = c.newAgentRestart(request.spelling, registry, target, p.Provider, personaTokens(noun), refuse)
-   restart.running, restart.paneUID, restart.paneName = p.Running, p.PaneUID, p.PaneName
-   err := c.plan(restart, localAgentSettingsRequest(q), request.socket)
-   *p = restart.sharedRestart()
-   return err
-  },
-  SetPersona: func(a coremetadata.Agent, want coremetadata.AgentPersonaAnnotations) error { return c.setAgentPersona(request.spelling, a, want) },
-  Execution: mutationruntime.AgentRestartExecution{
-   ValidateTransport: func() error { _, err := resolveDeleteTarget(request.spelling, request.socket, c.lookupEnv); return err },
-   Stop: func() error { return c.stopAgentPane(request.socket, restart.paneUID, forward, stderr) },
-   Observe: func() (mutationruntime.AgentRestartLiveness,error) { v,e := c.observeStoppedAgentPane(request.spelling, request.socket, target.Metadata.UID, restart.paneUID); return mutationruntime.AgentRestartLiveness(v),e },
-   Resume: func(p mutationruntime.StoppedAgentPane) error { return c.resumeStoppedAgent(target.Metadata.UID, stoppedAgentPane{uid:p.UID,name:p.Name}, agentSettingsRequest{}, forward, stderr) },
-   NewPane: func() string { if reg,e := c.loadRegistry(); e == nil { if a,ok := reg.Agent(target.Metadata.UID); ok { return a.Status.PaneRef } }; return "" },
-  },
- })
- for _, notice := range result.Notices { fmt.Fprintln(stderr, notice) }
- if err != nil { return err }
- return writeAgentPersonaResult(stdout, request, result)
+	target := agent.Clone()
+	forward := stdout
+	if request.json {
+		forward = io.Discard
+	}
+	var restart *agentRestart
+	result, err := mutationruntime.RunAgentPersona(mutationruntime.AgentPersonaDependencies{
+		Request:  mutationruntime.AgentPersonaRequest{Action: request.action, Spelling: request.spelling, Noun: noun, Persona: request.persona, DryRun: request.dryRun, Confirm: request.yes, Socket: request.socket.socket, SocketPath: request.socket.socketPath},
+		Registry: registry, Target: target, Interaction: target.EffectiveInteraction(c.clock()).Kind,
+		OpenStore: c.openPersonaStore,
+		Refuse: func(reason, message string, cause error) error {
+			if cause == nil {
+				cause = agentPersonaRefusalCause(reason, request.persona, message)
+			}
+			return usageErrorFor(message, cause)
+		},
+		Plan: func(p *mutationruntime.AgentRestartPlan, q mutationruntime.AgentSettingsRequest, refuse func(string, string) error) error {
+			restart = c.newAgentRestart(request.spelling, registry, target, p.Provider, personaTokens(noun), refuse)
+			restart.running, restart.paneUID, restart.paneName = p.Running, p.PaneUID, p.PaneName
+			err := c.plan(restart, localAgentSettingsRequest(q), request.socket)
+			*p = restart.sharedRestart()
+			return err
+		},
+		SetPersona: func(a coremetadata.Agent, want coremetadata.AgentPersonaAnnotations) error {
+			return c.setAgentPersona(request.spelling, a, want)
+		},
+		Execution: mutationruntime.AgentRestartExecution{
+			ValidateTransport: func() error { _, err := resolveDeleteTarget(request.spelling, request.socket, c.lookupEnv); return err },
+			Stop:              func() error { return c.stopAgentPane(request.socket, restart.paneUID, forward, stderr) },
+			Observe: func() (mutationruntime.AgentRestartLiveness, error) {
+				v, e := c.observeStoppedAgentPane(request.spelling, request.socket, target.Metadata.UID, restart.paneUID)
+				return mutationruntime.AgentRestartLiveness(v), e
+			},
+			Resume: func(p mutationruntime.StoppedAgentPane) error {
+				return c.resumeStoppedAgent(target.Metadata.UID, stoppedAgentPane{uid: p.UID, name: p.Name}, agentSettingsRequest{}, forward, stderr)
+			},
+			NewPane: func() string {
+				if reg, e := c.loadRegistry(); e == nil {
+					if a, ok := reg.Agent(target.Metadata.UID); ok {
+						return a.Status.PaneRef
+					}
+				}
+				return ""
+			},
+		},
+	})
+	for _, notice := range result.Notices {
+		fmt.Fprintln(stderr, notice)
+	}
+	if err != nil {
+		return err
+	}
+	return writeAgentPersonaResult(stdout, request, result)
 }
 
 // personaRefusalNoun keeps the old noun in a persona refusal reached through
@@ -170,8 +192,8 @@ func personaRefusalNoun(err error, noun string) error {
 // personaTokens are the refusal tokens of `agent instructions|persona
 // attach|detach`.
 func personaTokens(noun string) agentRestartTokens {
- v := mutationruntime.PersonaTokens(noun)
- return agentRestartTokens{busy:v.Busy,selfTarget:v.SelfTarget,noConversation:v.NoConversation,phase:v.Phase}
+	v := mutationruntime.PersonaTokens(noun)
+	return agentRestartTokens{busy: v.Busy, selfTarget: v.SelfTarget, noConversation: v.NoConversation, phase: v.Phase}
 }
 
 // parseAgentPersonaArgs parses `attach <agent-ref> <persona>` and
