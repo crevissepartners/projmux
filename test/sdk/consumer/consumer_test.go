@@ -1583,6 +1583,20 @@ func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
 		if validateErr != nil || valid != prepared.Preparation {
 			t.Fatal("public preparation", valid, validateErr)
 		}
+		// A public caller can distinguish stale proof from lifecycle failures.
+		bad := valid
+		bad.LaunchDigest += "-changed"
+		_, rejected := c.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: request.Ref, Preparation: bad})
+		var refusal *projmux.Refusal
+		if !errors.As(rejected, &refusal) || refusal.Code != projmux.CodeResumePreparationStale {
+			t.Fatal("public stale preparation refusal", rejected)
+		}
+		badRequest := request
+		badRequest.Preparation = &bad
+		failed, rejected := c.ResumeAgent(ctx, badRequest)
+		if !errors.As(rejected, &refusal) || refusal.Code != projmux.CodeResumePreparationStale || failed.Preparation != nil {
+			t.Fatal("public stale first-input refusal", failed, rejected)
+		}
 		request.Preparation = &valid
 	}
 	result, err := c.ResumeAgent(ctx, request)
