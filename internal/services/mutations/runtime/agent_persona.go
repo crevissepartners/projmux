@@ -63,7 +63,8 @@ const (
 
 const personaReasonCodexInstructionsImmutable = PersonaReasonCodexInstructionsImmutable
 
-type AgentPersonaResult struct {
+// AgentPersonaProjection is the scalar, comparable legacy CLI JSON projection.
+type AgentPersonaProjection struct {
 	Action               string                            `json:"action"`
 	DryRun               bool                              `json:"dryRun"`
 	Outcome              string                            `json:"outcome"`
@@ -82,8 +83,13 @@ type AgentPersonaResult struct {
 	Restart              bool                              `json:"restart"`
 	ConfirmationRequired bool                              `json:"confirmationRequired"`
 	Unchanged            bool                              `json:"unchanged"`
-	Notices              []string                          `json:"-"`
-	Recovery             string                            `json:"-"`
+}
+
+// AgentPersonaResult adds SDK recovery detail without changing the CLI projection.
+type AgentPersonaResult struct {
+	AgentPersonaProjection
+	Notices  []string `json:"-"`
+	Recovery string   `json:"-"`
 }
 
 func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr error) {
@@ -150,7 +156,7 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 	if request.Action == "attach" {
 		want.Persona, want.PersonaDigest = loaded.Name, loaded.Digest
 	}
-	result := AgentPersonaResult{
+	result := AgentPersonaResult{AgentPersonaProjection: AgentPersonaProjection{
 		Action: request.Action, DryRun: request.DryRun,
 		AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider,
 		Phase: target.Status.Phase, Interaction: restart.Interaction, PaneUID: paneUID,
@@ -159,7 +165,7 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 		SystemPromptSnapshot: want.SystemPromptSnapshot,
 		Restart:              running,
 		ConfirmationRequired: restart.ConfirmationRequired(),
-	}
+	}}
 	// A Running Agent already launched with exactly this persona content and
 	// the snapshot mode that honors it, whose other settings its layers
 	// resolve to what it runs, has nothing to gain from a restart.

@@ -53,7 +53,7 @@ const (
 // agentPersonaResult is the stable projection of one `agent persona attach`
 // or `detach` run. `--dry-run -o json` is what a confirmation dialog reads, so
 // the fields describe the target and the change before anything happens.
-type agentPersonaResult = mutationruntime.AgentPersonaResult
+type agentPersonaResult = mutationruntime.AgentPersonaProjection
 
 // agentPersonaRequest is one parsed `agent persona attach|detach` argv.
 type agentPersonaRequest struct {
@@ -157,7 +157,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 	if err != nil {
 		return err
 	}
-	return writeAgentPersonaResult(stdout, request, result)
+	return writeAgentPersonaResult(stdout, request, result.AgentPersonaProjection)
 }
 
 // personaRefusalNoun keeps the old noun in a persona refusal reached through
