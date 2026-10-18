@@ -495,6 +495,33 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 				if pane.Status.LastTermination == nil || pane.Status.LastTermination.Source != m.TerminationSourceReconcile || pane.Status.LastTermination.Classification != m.TerminationUnknown || pane.Status.LastTermination.ExitCode != nil {
 					t.Fatal("previous unknown lost")
 				}
+				// Observe previous-generation evidence through the public resource API,
+				// rather than relying only on the fixture's internal Registry read.
+				resource, err := client.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + binding.PaneUID})
+				if err != nil {
+					t.Fatal("public Pane observation", err)
+				}
+				publicPane, ok := resource.(core.Pane)
+				if !ok || publicPane.Status.ProcessSession == nil || publicPane.Status.ProcessSession.History == nil {
+					t.Fatal("public previous history missing", resource)
+				}
+				observed := publicPane.Status.ProcessSession
+				termination := publicPane.Status.LastTermination
+				if observed.Binding.AgentUID != binding.AgentUID || observed.Binding.PaneUID != binding.PaneUID || observed.Binding.Generation == binding.Generation || observed.History.Binding != binding || observed.History.InterruptedTurnID != old.TurnID || len(observed.History.Expired) != len(old.Pending) {
+					t.Fatal("public identity/history changed", observed)
+				}
+				if termination == nil || termination.Source != core.TerminationSourceReconcile || termination.Classification != core.TerminationUnknown || termination.Generation != binding.Generation || termination.OperationID != binding.OperationID || termination.AgentUID != binding.AgentUID || termination.PaneUID != binding.PaneUID || termination.ExitCode != nil {
+					t.Fatal("public previous unknown evidence changed", termination)
+				}
+				resource, err = client.GetResource(ctx, core.Ref{Kind: core.KindAgent, Value: ref})
+				if err != nil {
+					t.Fatal("public Agent observation", err)
+				}
+				publicAgent, ok := resource.(core.Agent)
+				if !ok || !reflect.DeepEqual(publicAgent.Status.LastTermination, termination) {
+					t.Fatal("public Agent/Pane previous evidence differs", resource)
+				}
+				t.Logf("PUBLIC_OBSERVATION provider=%s mode=%s sameAgent=true samePane=true newGeneration=true previousHistory=true interruptedTurnAndExpiredCount=true previousReconcileUnknown=true inventedExitCode=false", provider, mode)
 				detachedResumeCLI(t, ctx, f, "agent", "stop", ref)
 			})
 		}
