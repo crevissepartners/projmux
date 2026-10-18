@@ -988,6 +988,28 @@ Host-lost recovery is outside this SDK relaunch contract; use the public CLI
 `agent relaunch` recovery path after inspecting the exact resources. The SDK
 refuses absent ownership evidence without replacing it with an invented Wait.
 
+## Profile name validation
+
+`projmux.ValidateProfileName(name string) error` checks a name without a Client
+or context. It uses the existing profile name rules, preserves case, and rejects
+the reserved name `none`. It does not trim or normalize the input, check whether
+a profile exists, access the environment, files, Registry, paths or network,
+write anything, or take locks.
+
+A valid name returns nil. Invalid names return `*projmux.Refusal` with
+`CodeProfileNameInvalid` or `CodeProfileNameReserved`; `Name` and error text
+preserve the existing profile refusal.
+
+```go
+if err := projmux.ValidateProfileName(name); err != nil {
+    var refusal *projmux.Refusal
+    if errors.As(err, &refusal) {
+        fmt.Println(refusal.Code, refusal.Name)
+    }
+    return err
+}
+```
+
 ## Profile parsing and previews
 
 `Client.ParseProfile(ctx, content)` checks UTF-8, the 64 KiB byte limit and
