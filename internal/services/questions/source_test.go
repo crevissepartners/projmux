@@ -44,7 +44,7 @@ func sourceFixture(t *testing.T) (Service, *m.Registry, *agentquestion.Store, *s
 }
 func sourceRecord(t *testing.T, st *agentquestion.Store, id, delivery, uid, requestID string) agentquestion.Record {
 	t.Helper()
-	r, e := st.Create(agentquestion.Record{ID: id, Provider: "codex", AgentUID: uid, Delivery: delivery, RequestID: requestID, Generation: "old-history-generation", SessionID: "old-thread", Questions: json.RawMessage(`[{"id":"q","question":"Choose","isOther":true,"options":[]}]`), Deadline: time.Now().Add(time.Hour)})
+	r, e := st.Create(agentquestion.Record{ID: id, Provider: "codex", AgentUID: uid, Delivery: delivery, RequestID: requestID, Generation: "old-history-generation", SessionID: "old-thread", Questions: json.RawMessage(`[{"id":"q","question":"Choose","isOther":true,"options":[{"label":"yes"}]}]`), Deadline: time.Now().Add(time.Hour)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -168,7 +168,7 @@ func TestSourceReadPartialStoreErrorsAndContext(t *testing.T) {
 				r.Agents[0].Status.Phase = phase
 				sourceRecord(t, st, "question-0000000000000002", "", "agent", "")
 				sourceRecord(t, st.AsyncStore(), "question-0000000000000001", "async", "agent", "opaque")
-				cli, e := st.CLIAsyncStore().Create("agent", json.RawMessage(`[{"question":"Independent","options":[]}]`), time.Hour)
+				cli, e := st.CLIAsyncStore().Create("agent", json.RawMessage(`[{"question":"Independent","options":[{"label":"yes"}]}]`), time.Hour)
 				if e != nil {
 					t.Fatal(e)
 				}

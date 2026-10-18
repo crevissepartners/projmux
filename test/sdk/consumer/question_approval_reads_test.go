@@ -147,8 +147,8 @@ func TestExternalQuestionSourceConsumer(t *testing.T) {
 	f := newReadFixture(t, "codex", core.RuntimeProcess)
 	now := time.Now().UTC()
 	records := []map[string]any{
-		{"id": "question-0000000000000001", "agentUID": "agent", "provider": "codex", "delivery": "async", "requestID": "opaque/item:001", "generation": "history-generation", "sessionID": "history-thread", "questions": []map[string]any{{"id": "q1", "question": "Choose", "options": []any{}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
-		{"id": "question-0000000000000002", "agentUID": "other", "provider": "codex", "delivery": "async", "requestID": "other-agent-item", "questions": []map[string]any{{"question": "Other", "options": []any{}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
+		{"id": "question-0000000000000001", "agentUID": "agent", "provider": "codex", "delivery": "async", "requestID": "opaque/item:001", "generation": "history-generation", "sessionID": "history-thread", "questions": []map[string]any{{"id": "q1", "question": "Choose", "options": []any{map[string]any{"label": "yes"}}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
+		{"id": "question-0000000000000002", "agentUID": "other", "provider": "codex", "delivery": "async", "requestID": "other-agent-item", "questions": []map[string]any{{"question": "Other", "options": []any{map[string]any{"label": "yes"}}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
 	}
 	writeReadJSON(t, filepath.Join(f.state, "agent-questions", ".async", "questions.json"), map[string]any{"version": 1, "records": records})
 	c := f.client(t)
