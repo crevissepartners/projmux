@@ -170,42 +170,79 @@ func TestSDKResumeFixtureRejectsWrongProviderPath(t *testing.T) {
 	}
 }
 
-func externalAssertStubExecutions(t *testing.T, root, python string, count, currentPID int) {
+func externalAssertStubExecutions(t *testing.T, ctx context.Context, root, python, provider string, count int, current core.ProcessIdentity) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(root, "stub-executions.jsonl"))
+	python, err := filepath.EvalSymlinks(python)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != count {
-		t.Fatalf("stub call count=%d want=%d: %s", len(lines), count, raw)
+	wantCodex, wantClaude := "", ""
+	switch provider {
+	case "claude":
+		wantClaude = root + "/.claude"
+	case "codex":
+		wantCodex = root + "/.codex"
+	default:
+		t.Fatalf("unexpected fixture provider %q", provider)
 	}
-	python, err = filepath.EvalSymlinks(python)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := map[int]bool{}
-	for i, line := range lines {
-		var call struct {
-			PID             int    `json:"pid"`
-			Script          string `json:"script"`
-			Executable      string `json:"executable"`
-			CodexHome       string `json:"codexHome"`
-			ClaudeConfigDir string `json:"claudeConfigDir"`
-		}
-		if err := json.Unmarshal([]byte(line), &call); err != nil {
+	for {
+		raw, err := os.ReadFile(filepath.Join(root, "stub-executions.jsonl"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
 		}
-		if call.PID <= 0 || seen[call.PID] || call.Script != root+"/provider.py" || call.Executable != python || call.CodexHome != root+"/.codex" || call.ClaudeConfigDir != root+"/.claude" {
-			t.Fatalf("unexpected stub execution: %+v", call)
+		var lines []string
+		if len(raw) != 0 {
+			lines = strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 		}
-		seen[call.PID] = true
-		if i == count-1 && currentPID != 0 {
-			cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", currentPID))
-			if err != nil || call.PID != currentPID || !strings.Contains(string(cmdline), root+"/provider.py") {
-				t.Fatalf("actual provider PID/path mismatch: call=%+v child=%d argv=%q err=%v", call, currentPID, cmdline, err)
+		if len(lines) > count {
+			t.Fatalf("excess stub calls=%d want=%d: %s", len(lines), count, raw)
+		}
+		ready := err == nil && len(lines) == count
+		seen := map[int]bool{}
+		for i, line := range lines {
+			var call struct {
+				PID             int    `json:"pid"`
+				Script          string `json:"script"`
+				Executable      string `json:"executable"`
+				CodexHome       string `json:"codexHome"`
+				ClaudeConfigDir string `json:"claudeConfigDir"`
+			}
+			if err := json.Unmarshal([]byte(line), &call); err != nil {
+				// Only the last record still being written may need preparation time.
+				if i == len(lines)-1 && !strings.HasSuffix(string(raw), "\n") && !json.Valid([]byte(line)) {
+					ready = false
+					continue
+				}
+				t.Fatal(err)
+			}
+			if call.PID <= 0 || seen[call.PID] || call.Script != root+"/provider.py" || call.Executable != python || call.CodexHome != wantCodex || call.ClaudeConfigDir != wantClaude {
+				t.Fatalf("unexpected stub execution: %+v", call)
+			}
+			seen[call.PID] = true
+			if i == count-1 && current.PID != 0 && call.PID != current.PID {
+				t.Fatalf("stub PID=%d differs from public child %+v", call.PID, current)
 			}
 		}
-		t.Logf("STUB_EXEC count=%d pid=%d script=%s executable=%s", i+1, call.PID, call.Script, call.Executable)
+		if ready {
+			if current.PID != 0 {
+				cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", current.PID))
+				if err != nil || externalStopIdentity(t, current.PID) != current || !strings.Contains(string(cmdline), root+"/provider.py") {
+					t.Fatalf("actual provider identity/path mismatch: child=%+v argv=%q err=%v", current, cmdline, err)
+				}
+			}
+			for i, line := range lines {
+				t.Logf("STUB_EXEC count=%d record=%s", i+1, line)
+			}
+			return
+		}
+		// A zero current identity denotes the immediate child-free invariant check.
+		if current.PID == 0 {
+			t.Fatalf("stub invariant not observed immediately: count=%d want=%d raw=%q err=%v", len(lines), count, raw, err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("stub readiness: %v; count=%d want=%d raw=%q read=%v", ctx.Err(), len(lines), count, raw, err)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }

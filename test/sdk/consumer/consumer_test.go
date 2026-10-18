@@ -1252,7 +1252,6 @@ with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
 			if externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
 				t.Fatal("caller exit retired owner/provider")
 			}
-			externalAssertStubExecutions(t, lease, python, 1, activation.Child.PID)
 			for {
 				data, e := os.ReadFile(lease + "/input-observed")
 				if e == nil && string(data) == "first input" {
@@ -1267,6 +1266,7 @@ with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
+			externalAssertStubExecutions(t, ctx, lease, python, provider, 1, activation.Child)
 			sessionID := func(agent core.Agent) string {
 				if agent.Status.SessionRef == nil {
 					return ""
@@ -1337,7 +1337,7 @@ with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
 				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
 					t.Fatal("resume caller exit retired owner")
 				}
-				externalAssertStubExecutions(t, lease, python, 2, activation.Child.PID)
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 2, activation.Child)
 				// Lose only the exact fixture owner/provider, then observe the
 				// host-lost advisory through public operations and public resources.
 				previous := resumed.Binding
@@ -1354,7 +1354,7 @@ with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
 					}
 					request.Prompt, request.Preparation = "host-lost resumed input", &valid
 				}
-				externalAssertStubExecutions(t, lease, python, 2, 0)
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 2, core.ProcessIdentity{})
 				resumed, err = c.ResumeAgent(ctx, request)
 				if err != nil || !resumed.MayBeTruncated || resumed.Binding.Generation == previous.Generation {
 					t.Fatal("public host-lost advisory", resumed, err)
@@ -1368,7 +1368,7 @@ with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
 				if observed.Status.Activation.Process == nil {
 					t.Fatal("missing host-lost resumed activation")
 				}
-				externalAssertStubExecutions(t, lease, python, 3, observed.Status.Activation.Process.Child.PID)
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 3, observed.Status.Activation.Process.Child)
 				termination := observed.Status.LastTermination
 				if observed.Status.ProcessSession == nil || observed.Status.ProcessSession.History == nil || observed.Status.ProcessSession.History.Binding != previous || termination == nil || termination.Source != core.TerminationSourceReconcile || termination.Classification != core.TerminationUnknown || termination.Generation != previous.Generation || termination.OperationID != previous.OperationID || termination.ExitCode != nil {
 					t.Fatal("public host-lost previous history/unknown", observed)
@@ -1425,7 +1425,7 @@ with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
 				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
 					t.Fatal("relaunch caller exit retired owner")
 				}
-				externalAssertStubExecutions(t, lease, python, 4, activation.Child.PID)
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 4, activation.Child)
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: result.Binding})
 				stopAttempted = true
 				if err != nil || !stopped.Stopped || stopped.Termination == nil {
