@@ -46,7 +46,7 @@ func TestPersonaServiceSequenceAndRecovery(t *testing.T) {
 			if tc.phase == m.PhaseRunning {
 				agent.Status.PaneRef = "old-pane"
 			}
-			reg := m.Registry{Agents: []m.Agent{agent}, Panes: []m.Pane{{Metadata: m.ObjectMeta{UID: "old-pane", Name: "custom-pane", OwnerRef: &m.OwnerRef{Kind: m.KindAgent, UID: "agent"}}}}}
+			reg := m.Registry{Agents: []m.Agent{agent}, Panes: []m.Pane{{Metadata: m.ObjectMeta{UID: "old-pane", Name: "custom-pane", OwnerRef: &m.OwnerRef{Kind: m.KindAgent, UID: "agent"}}, Spec: m.PaneSpec{Role: m.PaneRoleAgent}}}}
 			mut := m.Mutator{}
 			if _, err := mut.SetAgentPersona(&reg, "agent", old); err != nil {
 				t.Fatal(err)
