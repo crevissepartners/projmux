@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	store "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/pkg/projmux"
@@ -67,11 +69,20 @@ func assertArchiveParity(t *testing.T, want store.Archive, got core.MessageArchi
 func TestMessageArchiveMatchesAuthorityAndOwnsResults(t *testing.T) {
 	root, c := archiveFixture(t)
 	// Neither a held lock nor a malformed Registry participates in this read.
-	for _, path := range []string{filepath.Join(root, "agent-messages", "messages.json.lock"), filepath.Join(root, "registry.json")} {
+	for _, path := range []string{filepath.Join(root, "agent-messages", "messages.json.flock"), filepath.Join(root, "registry.json")} {
 		if err := os.WriteFile(path, []byte("fixture locked or malformed"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	lock, err := os.OpenFile(filepath.Join(root, "agent-messages", "messages.json.flock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN) //nolint:errcheck -- releasing this test's owned lock.
 	before := centralTree(t, root)
 	want, err := store.ReadArchive(root)
 	if err != nil {
