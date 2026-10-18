@@ -323,6 +323,7 @@ Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as th
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
 ResolveAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ResolveAgentSettings	Public v0 tmux resume SDK fixed-path settings adapter; CLI uses the lazy injected path seam, and SDK parity and boundary tests cover this external-only closure.
+ResolvePaths	Public v0 side-effect-free HOME/XDG path resolver; retained for external SDK consumers and covered by input parity and external consumer tests.
 ResolveProcessCodexRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 ResolveProjectStopRoute	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
