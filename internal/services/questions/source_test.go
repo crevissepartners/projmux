@@ -34,7 +34,7 @@ func sourceFixture(t *testing.T) (Service, *m.Registry, *agentquestion.Store, *s
 	}
 	b := m.ProcessBinding{HostInstanceID: "host", ProjectUID: "project", WindowUID: "window", AgentUID: "agent", PaneUID: "pane", Generation: "generation", OperationID: "operation"}
 	activation := m.ProcessActivation{Binding: b, HostProcess: m.ProcessIdentity{PID: 123, OwnerUID: 1, Start: "host"}, Child: m.ProcessIdentity{PID: 124, OwnerUID: 1, Start: "child"}}
-	reg := &m.Registry{Projects: []m.Project{{Metadata: m.ObjectMeta{UID: "project"}}}, Windows: []m.Window{{Metadata: meta("window", m.KindProject, "project")}}, Agents: []m.Agent{{Metadata: meta("agent", m.KindWindow, "window"), Spec: m.AgentSpec{Provider: "codex"}, Status: m.AgentStatus{PaneRef: "pane", Phase: m.PhaseRunning, SessionRef: &m.AgentSessionRef{Provider: "codex", Codex: &m.CodexSessionRef{ThreadID: "thread"}}}}}, Panes: []m.Pane{{Metadata: meta("pane", m.KindAgent, "agent"), Spec: m.PaneSpec{Role: m.PaneRoleAgent, Runtime: m.PaneRuntimeSpec{Kind: m.RuntimeProcess}}, Status: m.PaneStatus{Activation: m.PaneActivation{Kind: m.RuntimeProcess, AgentUID: "agent", Generation: b.Generation, OperationID: b.OperationID, Process: &activation}, ProcessSession: &m.ProcessSessionRecord{Provider: "codex", Binding: b, ThreadID: "thread", ConnectionID: "connection"}}}}}
+	reg := &m.Registry{Projects: []m.Project{{Metadata: m.ObjectMeta{UID: "project"}}}, Windows: []m.Window{{Metadata: meta("window", m.KindProject, "project")}}, Agents: []m.Agent{{Metadata: meta("agent", m.KindWindow, "window"), Spec: m.AgentSpec{Provider: "codex"}, Status: m.AgentStatus{PaneRef: "pane", Phase: m.PhaseRunning, SessionRef: &m.AgentSessionRef{Provider: "codex", Codex: &m.CodexSessionRef{ThreadID: "thread"}}}}}, Panes: []m.Pane{{Metadata: meta("pane", m.KindAgent, "agent"), Spec: m.PaneSpec{Role: m.PaneRoleAgent, Runtime: m.PaneRuntimeSpec{Kind: m.RuntimeProcess}}, Status: m.PaneStatus{Activation: m.PaneActivation{Kind: m.RuntimeProcess, AgentUID: "agent", Generation: b.Generation, OperationID: b.OperationID, Process: &activation}, ProcessSession: &m.ProcessSessionRecord{Provider: "codex", Binding: b, ThreadID: "thread", ConnectionID: "operation"}}}}}
 	st := agentquestion.NewStore(t.TempDir())
 	d := &sourceDispatcher{read: func(context.Context) ([]processquestions.ExactQuestion, error) {
 		return []processquestions.ExactQuestion{{QuestionID: "question-0000000000000001", Delivery: "async", State: agentquestion.StateWaiting, CanAnswer: true}}, nil
@@ -112,6 +112,24 @@ func TestSourceReadFenceAndProgress(t *testing.T) {
 		"thread":                func(r *m.Registry) { r.Panes[0].Status.ProcessSession.ThreadID = "replacement" },
 		"connection":            func(r *m.Registry) { r.Panes[0].Status.ProcessSession.ConnectionID = "replacement" },
 		"removed":               func(r *m.Registry) { r.Agents = nil },
+		"other-session-slot":    func(r *m.Registry) { r.Panes[0].Status.ProcessSession.SessionID = "changed-unused-slot" },
+		"consistent-session": func(r *m.Registry) {
+			r.Panes[0].Status.ProcessSession.ThreadID = "replacement"
+			r.Agents[0].Status.SessionRef.Codex.ThreadID = "replacement"
+		},
+		"consistent-generation": func(r *m.Registry) {
+			p := &r.Panes[0]
+			p.Status.Activation.Generation = "next"
+			p.Status.Activation.Process.Binding.Generation = "next"
+			p.Status.ProcessSession.Binding.Generation = "next"
+		},
+		"consistent-operation": func(r *m.Registry) {
+			p := &r.Panes[0]
+			p.Status.Activation.OperationID = "next"
+			p.Status.Activation.Process.Binding.OperationID = "next"
+			p.Status.ProcessSession.Binding.OperationID = "next"
+			p.Status.ProcessSession.ConnectionID = "next"
+		},
 		"progress": func(r *m.Registry) {
 			r.Agents[0].Status.Progress.ObservedAt = time.Now()
 			r.Agents[0].Status.SessionRef.ObservedAt = time.Now()
@@ -139,10 +157,12 @@ func TestSourceReadFenceAndProgress(t *testing.T) {
 			}
 		})
 	}
-	for _, missing := range []string{"pane", "session", "activation", "owner"} {
+	for _, missing := range []string{"pane", "session", "activation", "owner", "connection-operation"} {
 		t.Run("before-"+missing, func(t *testing.T) {
 			s, r, _, d := sourceFixture(t)
 			switch missing {
+			case "connection-operation":
+				r.Panes[0].Status.ProcessSession.ConnectionID = "unrelated-operation"
 			case "pane":
 				r.Panes = nil
 			case "session":

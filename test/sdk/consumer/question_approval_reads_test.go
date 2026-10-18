@@ -148,7 +148,7 @@ func TestExternalQuestionSourceConsumer(t *testing.T) {
 	now := time.Now().UTC()
 	records := []map[string]any{
 		{"id": "question-0000000000000001", "agentUID": "agent", "provider": "codex", "delivery": "async", "requestID": "opaque/item:001", "generation": "history-generation", "sessionID": "history-thread", "questions": []map[string]any{{"id": "q1", "question": "Choose", "options": []any{map[string]any{"label": "yes"}}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
-		{"id": "question-0000000000000002", "agentUID": "other", "provider": "codex", "delivery": "async", "requestID": "other-agent-item", "questions": []map[string]any{{"question": "Other", "options": []any{map[string]any{"label": "yes"}}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
+		{"id": "question-0000000000000002", "agentUID": "other", "provider": "codex", "delivery": "async", "requestID": "other-agent-item", "questions": []map[string]any{{"id": "q2", "question": "Other", "options": []any{map[string]any{"label": "yes"}}}}, "state": "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour)},
 	}
 	writeReadJSON(t, filepath.Join(f.state, "agent-questions", ".async", "questions.json"), map[string]any{"version": 1, "records": records})
 	c := f.client(t)
@@ -261,7 +261,7 @@ func (f *readFixture) running(t *testing.T) {
 	b := core.ProcessBinding{HostInstanceID: "host", ProjectUID: "project", WindowUID: "window", AgentUID: "agent", PaneUID: "pane", Generation: "generation", OperationID: "operation"}
 	f.agent.Status.Phase = core.PhaseRunning
 	f.agent.Status.SessionRef = &core.AgentSessionRef{Provider: f.agent.Spec.Provider, ObservedAt: time.Now().UTC()}
-	record := &core.ProcessSessionRecord{Provider: f.agent.Spec.Provider, Binding: b, ConnectionID: "connection", ResumeState: core.ProcessResumeUnknown}
+	record := &core.ProcessSessionRecord{Provider: f.agent.Spec.Provider, Binding: b, ConnectionID: "operation", ResumeState: core.ProcessResumeUnknown}
 	if f.agent.Spec.Provider == "codex" {
 		record.ThreadID = "conversation"
 		f.agent.Status.SessionRef.Codex = &core.CodexSessionRef{ThreadID: "conversation"}

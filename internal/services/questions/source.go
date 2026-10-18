@@ -21,6 +21,7 @@ type questionSource struct {
 	activation                             coremetadata.PaneActivation
 	binding                                coremetadata.ProcessBinding
 	session, connection                    string
+	recordSessionID, recordThreadID        string
 }
 
 func captureQuestionSource(reg coremetadata.Registry, agent coremetadata.Agent) (questionSource, bool) {
@@ -29,7 +30,7 @@ func captureQuestionSource(reg coremetadata.Registry, agent coremetadata.Agent) 
 	}
 	pane, ok := reg.Pane(agent.Status.PaneRef)
 	window, hasWindow := reg.Window(agent.Metadata.OwnerUID())
-	if !ok || !hasWindow || agent.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerUID() != agent.Metadata.UID {
+	if !ok || !hasWindow || pane.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerUID() != agent.Metadata.UID {
 		return questionSource{}, false
 	}
 	project, hasProject := reg.Project(window.Metadata.OwnerUID())
@@ -51,6 +52,10 @@ func captureQuestionSource(reg coremetadata.Registry, agent coremetadata.Agent) 
 	}
 	out.binding = pane.Status.Activation.Process.Binding
 	record := pane.Status.ProcessSession
+	if record.ConnectionID != record.Binding.OperationID {
+		return questionSource{}, false
+	}
+	out.recordSessionID, out.recordThreadID = record.SessionID, record.ThreadID
 	out.session, out.connection = record.SessionID, record.ConnectionID
 	if agent.Spec.Provider == "codex" {
 		out.session = record.ThreadID
