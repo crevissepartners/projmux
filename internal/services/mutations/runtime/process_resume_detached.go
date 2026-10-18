@@ -98,6 +98,7 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		defer cancel()
 		var err error
 		cleanupBinding, err = awaitDetachedProcessResumeCleanup(cleanupCtx, load, wire.RegistryPath, *wire.Resume, owner, ready.Binding)
+		cleanupUnconfirmed = err != nil
 		return err
 	}
 	reply, err := l.Launch(ctx, wire, stdout, stderr)
