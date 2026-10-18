@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/services/mutations"
 )
 
 // labelKinds lists the kind spellings `label` implements, in help order, each
@@ -109,19 +111,12 @@ func (c *labelCommand) runKind(token string, kind coremetadata.Kind, args []stri
 	match := resolution.Matches[0]
 
 	set, remove := selector.LabelChangeSets(changes)
-	var (
-		meta    coremetadata.ObjectMeta
-		changed bool
-	)
-	if err := c.store.mutate(kind, []string{match.UID}, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		var err error
-		meta, changed, err = mutator.SetLabels(working, kind, match.UID, set, remove)
-		return err
-	}); err != nil {
-		return err
+	result, err := mutations.SetLabels(context.Background(), mutations.Store{Update: c.store.update, Mutator: c.store.mutator}, kind, match.UID, set, remove)
+	if err != nil {
+		return MapMetadataError(err)
 	}
 
-	_, err = fmt.Fprintln(stdout, labelResultLine(spelling, kind, meta, changed))
+	_, err = fmt.Fprintln(stdout, labelResultLine(spelling, kind, result.Metadata, result.Changed))
 	return err
 }
 
