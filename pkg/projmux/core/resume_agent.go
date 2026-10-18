@@ -11,6 +11,8 @@ type ResumeAgentRequest struct {
 	Detach, WaitForPeer bool
 	Prompt              string
 	Binding             ProcessBinding
+	// Preparation fences a prepared Claude first input. Nil preserves ordinary Resume.
+	Preparation *AgentResumePreparation
 }
 
 // ResumeAgentResult identifies the committed rebind. Resume returns immediately
@@ -24,4 +26,7 @@ type ResumeAgentResult struct {
 	Binding    ProcessBinding
 	// ClaimWaiting proves a child-free owner claim, not a new provider generation.
 	ClaimWaiting bool
+	// Preparation is nil on success. On failure it may acknowledge the unchanged
+	// plan or the same frozen plan readdressed after an exact failed child Wait.
+	Preparation *AgentResumePreparation
 }

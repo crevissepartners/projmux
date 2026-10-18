@@ -41,8 +41,9 @@ type processDetachedRequest struct {
 	ResumeContext   *mutationruntime.ProcessCreateContext `json:",omitempty"`
 }
 type processDetachedReply struct {
-	Relaunch              json.RawMessage `json:",omitempty"`
-	ErrorDetail           json.RawMessage `json:",omitempty"`
+	Preparation           *mutationruntime.ProcessResumePreparation `json:",omitempty"`
+	Relaunch              json.RawMessage                           `json:",omitempty"`
+	ErrorDetail           json.RawMessage                           `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string

@@ -32,6 +32,7 @@ type processAgentResumeOptions struct {
 	promptPartsPrepared bool // relaunch already froze its prompt-part recipe.
 	allowHostLost       bool // Explicit CLI resume and private consumers opt in.
 	claim               *deferredProcessClaim
+	preparation         *mutationruntime.ProcessResumePreparation
 }
 type processAgentResumeRequest struct{ options processAgentResumeOptions }
 type processAgentResumeResult struct {
@@ -144,6 +145,9 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	if c.rebind == nil || c.rebind.create == nil {
 		return result, errors.New("process-host-unavailable: process resume creator is not configured")
 	}
+	if err = c.checkResumePreparation(ctx, request.options.preparation); err != nil {
+		return result, err
+	}
 	creator := c.rebind.create
 	state, err := creator.store.stateDir()
 	if err != nil {
@@ -184,7 +188,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	b := processSchemaBinding(candidate.Record.Binding)
 	b.Host, b.Generation, b.Operation = operation, generation, operation
-	if err = c.reserveProcessResume(ctx, candidate, settingsPlan, b, request.options.claim, deferredLaunch); err != nil {
+	if err = c.reserveProcessResumeWithPreparation(ctx, candidate, settingsPlan, b, request.options.claim, request.options.preparation, deferredLaunch); err != nil {
 		return result, err
 	}
 	if candidate.HostLost != nil {
@@ -227,6 +231,10 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 }
 
 func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding, claim *deferredProcessClaim, prepared ...*deferredLaunchRecord) error {
+	return c.reserveProcessResumeWithPreparation(ctx, candidate, settings, binding, claim, nil, prepared...)
+}
+
+func (c *agentCommand) reserveProcessResumeWithPreparation(ctx context.Context, candidate processResumeCandidate, settings agentSettingsLaunch, binding processhost.Binding, claim *deferredProcessClaim, proof *mutationruntime.ProcessResumePreparation, prepared ...*deferredLaunchRecord) error {
 	unlock, lockErr := lockDeferredClaim(c.deferredClaimPath(binding.Agent))
 	if lockErr != nil {
 		return lockErr
@@ -243,6 +251,12 @@ func (c *agentCommand) reserveProcessResume(ctx context.Context, candidate proce
 		if current != nil {
 			return deferredRefused("prepared launch changed")
 		}
+	}
+	if err := c.checkResumePreparation(ctx, proof); err != nil {
+		return err
+	}
+	if proof != nil && (proof.Binding != candidate.Record.Binding || proof.AgentUID != binding.Agent) {
+		return preparationStale("reservation source changed")
 	}
 	if err := c.admitDeferredInput(claim); err != nil {
 		return err

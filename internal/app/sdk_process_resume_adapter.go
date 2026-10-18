@@ -22,6 +22,19 @@ func validateSDKProcessResumeWire(wire processDetachedResumeRequest) error {
 	if wire.Agent == "" || wire.Previous.AgentUID != wire.Agent || wire.Previous.PaneUID == "" || wire.Previous.Generation == "" {
 		return errors.New("process-detached-resume-binding-invalid")
 	}
+	if wire.PreparationAction != "" {
+		if wire.PreparationAction != "prepare" && wire.PreparationAction != "validate" || wire.WaitForPeer || wire.Prompt != (processResumeFirstFrame{}) || wire.Model != "" || wire.Effort != "" {
+			return usageError("agent resume: invalid preparation request")
+		}
+	} else if wire.Preparation != nil {
+		p := wire.Preparation
+		if wire.WaitForPeer || wire.Prompt.Kind != "user" || wire.Model != "" || wire.Effort != "" {
+			return usageError("agent resume: preparation requires an explicit Claude first input")
+		}
+		if p.AgentUID != wire.Agent || p.Binding != wire.Previous {
+			return preparationStale("request binding differs")
+		}
+	}
 	_, err := newProcessAgentResumeRequest(wire.options())
 	if err != nil {
 		return err

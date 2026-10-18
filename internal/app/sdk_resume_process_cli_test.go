@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	metadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
@@ -378,4 +380,187 @@ func TestSDKDetachedProcessResumeCancellationSettlesBornGeneration(t *testing.T)
 			}
 		})
 	}
+}
+
+// CLI, ordinary SDK and explicit prepared SDK use the same lost-host seed,
+// provider protocol fixtures, lifecycle engine and compared result fields.
+func TestSDKHostLostResumeParity(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("copied CLI required")
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		modes := []string{"cli", "sdk"}
+		if provider == "claude" {
+			modes = append(modes, "prepared")
+		}
+		for _, mode := range modes {
+			t.Run(provider+"/"+mode, func(t *testing.T) {
+				f := hostLostCLIProviderFixture(t, provider)
+				ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+				defer cancel()
+				ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
+				cleanupDetachedResume(t, f, ref)
+				client, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var binding core.ProcessBinding
+				if err = func() error {
+					raw, e := json.Marshal(old.Binding)
+					if e != nil {
+						return e
+					}
+					return json.Unmarshal(raw, &binding)
+				}(); err != nil {
+					t.Fatal(err)
+				}
+				req := core.ResumeAgentRequest{Ref: ref, Detach: true, Binding: binding}
+				if provider == "claude" {
+					req.Prompt = "paired first input"
+				}
+				if mode == "prepared" {
+					empty := req
+					empty.Prompt = ""
+					_, err = client.ResumeAgent(ctx, empty)
+					var refused *projmux.Refusal
+					if !errors.As(err, &refused) || refused.Code != projmux.CodeResumeRequestInvalid {
+						t.Fatal("ordinary empty-prompt admission changed", err)
+					}
+					_, err = client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding})
+					if err == nil {
+						t.Fatal("false AllowHostLost accepted lost host")
+					}
+					prepared, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding, AllowHostLost: true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if prepared.Preparation.Binding != binding || !prepared.Preparation.HostLost || prepared.Preparation.Conversation != old.SessionID {
+						t.Fatal("wrong preparation", prepared)
+					}
+					command := New().agent
+					direct, err := command.prepareOwnedClaudeResume(ctx, processAgentResumeOptions{Agent: selector.Ref{Kind: m.KindAgent, UID: old.Binding.AgentUID}, allowHostLost: true})
+					if err != nil || direct.Prepared == nil || direct.Prepared.LaunchDigest != prepared.Preparation.LaunchDigest {
+						t.Fatal("CORE/SDK preparation mismatch", err)
+					}
+					after := mustRegistry(t, f)
+					if !reflect.DeepEqual(before, after) {
+						t.Fatal("preparation changed Registry")
+					}
+					claim, err := readDeferredClaim(command.deferredClaimPath(old.Binding.AgentUID))
+					if err != nil || deferredClaimLive(claim) {
+						t.Fatal("preparation retained claim", err)
+					}
+					snapshot := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
+					valid, err := client.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: ref, Preparation: prepared.Preparation})
+					if err != nil || valid != prepared.Preparation {
+						t.Fatal("Validate", valid, err)
+					}
+					if !reflect.DeepEqual(snapshot, sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")) {
+						t.Fatal("Validate changed state")
+					}
+					again, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, Binding: binding, AllowHostLost: true})
+					if err != nil || again != prepared {
+						t.Fatal("preparation not reused", again, err)
+					}
+					req.Preparation = &prepared.Preparation
+				}
+				if mode == "cli" {
+					args := []string{"agent", "resume", ref, "--detach"}
+					if req.Prompt != "" {
+						args = append(args, "--", req.Prompt)
+					}
+					detachedResumeCLI(t, ctx, f, args...)
+				} else {
+					result, err := client.ResumeAgent(ctx, req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if result.Preparation != nil || result.Binding.AgentUID != binding.AgentUID || result.Binding.PaneUID != binding.PaneUID || result.Binding.Generation == binding.Generation {
+						t.Fatal("SDK identity/consumption", result)
+					}
+				}
+				next := awaitProcessResumeRecord(t, ctx, f, ref, func(r *m.ProcessSessionRecord) bool {
+					return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
+				})
+				if next.Binding.AgentUID != old.Binding.AgentUID || next.Binding.PaneUID != old.Binding.PaneUID || processRelaunchConversation(&next) != processRelaunchConversation(&old) || next.History == nil || next.History.Binding != old.Binding {
+					t.Fatal("paired identity/history/conversation mismatch")
+				}
+				after := mustRegistry(t, f)
+				agent, _ := after.Agent(old.Binding.AgentUID)
+				source, _ := before.Agent(old.Binding.AgentUID)
+				pane, _ := after.Pane(old.Binding.PaneUID)
+				if !reflect.DeepEqual(agent.Spec, source.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, source.Metadata.Annotations) {
+					t.Fatal("recipe changed")
+				}
+				if pane.Status.LastTermination == nil || pane.Status.LastTermination.Source != m.TerminationSourceReconcile || pane.Status.LastTermination.Classification != m.TerminationUnknown || pane.Status.LastTermination.ExitCode != nil {
+					t.Fatal("previous unknown lost")
+				}
+				detachedResumeCLI(t, ctx, f, "agent", "stop", ref)
+			})
+		}
+	}
+}
+
+func TestSDKPreparedResumeFailureRetry(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("copied CLI required")
+	}
+	f := hostLostCLIProviderFixture(t, "claude")
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	ref, _, old := recordedLostHostCLI(t, ctx, f, "claude")
+	cleanupDetachedResume(t, f, ref)
+	client, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, AllowHostLost: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(f.root, "claude")
+	original, err := os.ReadFile(wrapper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(wrapper, []byte("#!/bin/sh\nIFS= read -r frame\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: ref, Detach: true, Prompt: "failed first input", Binding: prepared.Preparation.Binding, Preparation: &prepared.Preparation})
+	if err == nil || failed.Preparation == nil || failed.Preparation.HostLost || failed.Preparation.Binding == prepared.Preparation.Binding {
+		t.Fatalf("failed child did not return same frozen retry proof: %+v %v", failed, err)
+	}
+	after := mustRegistry(t, f)
+	pane, _ := after.Pane(old.Binding.PaneUID)
+	if !m.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) || pane.Status.ProcessSession.History == nil || pane.Status.ProcessSession.History.Binding != old.Binding {
+		t.Fatal("retry proof lacks actual Wait/history")
+	}
+	if err = os.WriteFile(wrapper, original, 0700); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := client.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: ref, Preparation: *failed.Preparation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: ref, Detach: true, Prompt: "retry input exact", Binding: valid.Binding, Preparation: &valid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Preparation != nil || resumed.Binding.Generation == valid.Binding.Generation {
+		t.Fatal("retry did not consume proof")
+	}
+	next := awaitProcessResumeRecord(t, ctx, f, ref, func(r *m.ProcessSessionRecord) bool {
+		return r.Binding.Generation == resumed.Binding.Generation && r.SessionID == old.SessionID
+	})
+	if next.SessionID != old.SessionID {
+		t.Fatal("retry changed conversation")
+	}
+	wire, err := os.ReadFile(f.trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(wire, []byte("retry input exact")) != 1 {
+		t.Fatal("retry input duplicated", string(wire))
+	}
+	detachedResumeCLI(t, ctx, f, "agent", "stop", ref)
 }

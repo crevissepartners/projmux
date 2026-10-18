@@ -37,8 +37,9 @@ type ProcessCreateCommitted struct {
 }
 
 type ProcessDetachedReply struct {
-	Relaunch              json.RawMessage `json:",omitempty"`
-	ErrorDetail           json.RawMessage `json:",omitempty"`
+	Preparation           *ProcessResumePreparation `json:",omitempty"`
+	Relaunch              json.RawMessage           `json:",omitempty"`
+	ErrorDetail           json.RawMessage           `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string
@@ -52,6 +53,8 @@ type ProcessDetachedReply struct {
 // application supplies binding/control callbacks; SDK callers use the same
 // owned internal launcher, never the public create command.
 type ProcessDetachedLauncher struct {
+	// Transient runs a no-provider preparation worker as a directly reaped child.
+	Transient   bool
 	Executable  string
 	Environment []string
 	// PayloadDir is frozen for SDK calls; empty preserves the CLI temp domain.
@@ -107,7 +110,11 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	interrupt := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer interrupt()
 	// #nosec G204 -- this is the caller's own executable with fixed internal argv; private request data travels only through fd 4.
-	launcher := exec.Command(l.Executable, "internal", "process-agent-launch")
+	route := "process-agent-launch"
+	if l.Transient {
+		route = "process-agent-owner"
+	}
+	launcher := exec.Command(l.Executable, "internal", route)
 	launcher.Env = l.Environment
 	launcher.ExtraFiles = []*os.File{child, payload}
 	if err = launcher.Start(); err != nil {
@@ -150,6 +157,35 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	}
 	if err = decoder.Decode(&ready); err != nil {
 		return ready, fmt.Errorf("process-detached-startup-handshake-failed: owner pid %d: %w", identity.Owner.PID, errors.Join(err, ctx.Err()))
+	}
+	if l.Transient {
+		// This worker has no provider or claim to hand off. Reap it before returning,
+		// including on malformed replies and cancellation.
+		defer func() { _ = launcher.Process.Kill(); <-done }()
+		if ready.Error != "" {
+			return ready, errors.New(ready.Error)
+		}
+		if ready.Phase != "prepared" || ready.Owner != identity.Owner || l.Verify == nil {
+			return ready, errors.New("process-preparation-reply-invalid")
+		}
+		if err = l.Verify(ready, identity.Owner); err != nil {
+			return ready, err
+		}
+		if err = ctx.Err(); err != nil {
+			return ready, err
+		}
+		if err = encoder.Encode("commit"); err != nil {
+			return ready, err
+		}
+		var completed string
+		if err = decoder.Decode(&completed); err != nil {
+			return ready, errors.Join(err, ctx.Err())
+		}
+		if completed != "completed" {
+			return ready, errors.New("process-preparation-commit-invalid")
+		}
+		failed = false
+		return ready, nil
 	}
 	if ready.Phase == "planned" && ready.Error == "" {
 		if ready.Owner != identity.Owner || l.Admit == nil {

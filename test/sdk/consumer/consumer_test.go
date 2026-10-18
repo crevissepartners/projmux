@@ -1574,6 +1574,17 @@ func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
 		request.Prompt = "resumed input"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if os.Getenv("PMX_SDK_CREATE_PROVIDER") == "claude" {
+		prepared, prepareErr := c.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: request.Ref, Binding: request.Binding})
+		if prepareErr != nil {
+			t.Fatal(prepareErr)
+		}
+		valid, validateErr := c.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: request.Ref, Preparation: prepared.Preparation})
+		if validateErr != nil || valid != prepared.Preparation {
+			t.Fatal("public preparation", valid, validateErr)
+		}
+		request.Preparation = &valid
+	}
 	result, err := c.ResumeAgent(ctx, request)
 	cancel()
 	if err != nil {

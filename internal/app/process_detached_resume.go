@@ -29,7 +29,7 @@ import (
 type processDetachedResumeRequest mutationruntime.ProcessDetachedResumeRequest
 
 func (r processDetachedResumeRequest) options() processAgentResumeOptions {
-	return processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: r.Agent}, Model: r.Model, Effort: r.Effort, Prompt: r.Prompt, allowHostLost: !r.WaitForPeer}
+	return processAgentResumeOptions{Agent: selector.Ref{Kind: coremetadata.KindAgent, UID: r.Agent}, Model: r.Model, Effort: r.Effort, Prompt: r.Prompt, allowHostLost: !r.WaitForPeer, preparation: r.Preparation}
 }
 
 func (c *agentCommand) runDetachedProcessResume(agent coremetadata.Agent, flags resourceQueryFlags, model, effort string, dialogueOnly, peer bool, prompt []string, stdout, stderr io.Writer) error {
@@ -95,6 +95,11 @@ func claimRegistryPath(command *createCommand) string {
 
 func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder *json.Decoder, req processDetachedRequest, identity coremetadata.ProcessIdentity, c *agentCommand) error {
 	wire := *req.Resume
+	if wire.PreparationAction != "" || wire.Preparation != nil {
+		if err := validateSDKProcessResumeWire(wire); err != nil {
+			return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), err)
+		}
+	}
 	request, err := newProcessAgentResumeRequest(wire.options())
 	if err != nil {
 		return err
@@ -106,6 +111,30 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 	if candidate.Record.Binding != wire.Previous {
 		return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), processhost.ErrStale)
 	}
+	if wire.PreparationAction != "" {
+		proof, prepareErr := runResumePreparation(context.Background(), c, wire)
+		if prepareErr != nil {
+			return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), prepareErr)
+		}
+		if err = encoder.Encode(processDetachedReply{Owner: identity, Binding: processSchemaBinding(wire.Previous), Phase: "prepared", Preparation: &proof}); err != nil {
+			return err
+		}
+		var commit string
+		if err = decoder.Decode(&commit); err != nil {
+			return err
+		}
+		if commit != "commit" {
+			return errors.New("process-preparation-commit-invalid")
+		}
+		return encoder.Encode("completed")
+	}
+	var acknowledged *deferredLaunchRecord
+	if wire.Preparation != nil {
+		_, acknowledged, err = c.readResumePreparation(context.Background(), preparationOptions(*wire.Preparation), wire.Preparation)
+		if err != nil {
+			return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), err)
+		}
+	}
 	life, cancel := processForegroundLifetime()
 	defer cancel()
 	life = (processOwnerLifetime{}).withContext(life)
@@ -116,7 +145,13 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 	}
 	result, err := c.resumeProcessAgent(life, request)
 	fail := func(cause error) error {
-		return encodeDetachedResumeError(encoder, identity, result.Binding, result.fail(cause))
+		failure := result.fail(cause)
+		if wire.Preparation != nil {
+			reply := processDetachedReply{Owner: identity, Binding: result.Binding, Error: failure.Error(), ErrorCode: processResumeErrorCode(failure), Preparation: c.failedResumePreparation(wire.Preparation, acknowledged, result)}
+			_ = encoder.Encode(reply)
+			return failure
+		}
+		return encodeDetachedResumeError(encoder, identity, result.Binding, failure)
 	}
 	if err != nil {
 		return fail(err)
@@ -303,6 +338,9 @@ func awaitDetachedRequestCleanup(command *createCommand, req processDetachedRequ
 }
 
 func processResumeErrorCode(err error) string {
+	if errors.Is(err, mutationruntime.ErrResumePreparationStale) {
+		return mutationruntime.ResumePreparationStale
+	}
 	var failure *mutations.Failure
 	if errors.As(err, &failure) {
 		return string(failure.Code)

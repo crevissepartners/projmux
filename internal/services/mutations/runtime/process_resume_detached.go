@@ -19,11 +19,14 @@ import (
 // ProcessResumeFirstFrame preserves operator and peer input authority.
 type ProcessResumeFirstFrame struct{ Kind, Text string }
 type ProcessDetachedResumeRequest struct {
-	Agent         string
-	Model, Effort string
-	Prompt        ProcessResumeFirstFrame
-	WaitForPeer   bool
-	Previous      m.ProcessBinding
+	Agent             string
+	Model, Effort     string
+	Prompt            ProcessResumeFirstFrame
+	WaitForPeer       bool
+	Previous          m.ProcessBinding
+	PreparationAction string
+	AllowHostLost     bool
+	Preparation       *ProcessResumePreparation
 }
 
 type ProcessDetachedResumeEnvelope struct {
