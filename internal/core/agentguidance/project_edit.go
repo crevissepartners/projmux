@@ -99,7 +99,7 @@ func (s ProjectStore) editState(uid string) (v projectEditState, err error) {
 		return v, editError("unreadable", err)
 	}
 	if !info.Mode().IsRegular() {
-		return v, editError("unreadable", errors.New("Project guidance is not a regular file"))
+		return v, editError("unreadable", errors.New("project guidance is not a regular file"))
 	}
 	f, err := root.Open(name)
 	if err != nil {
@@ -111,7 +111,7 @@ func (s ProjectStore) editState(uid string) (v projectEditState, err error) {
 		return v, editError("unreadable", err)
 	}
 	if !before.Mode().IsRegular() || !os.SameFile(info, before) {
-		return v, editError("unreadable", errors.New("Project guidance changed while opening"))
+		return v, editError("unreadable", errors.New("project guidance changed while opening"))
 	}
 	content, err := readProjectPrefix(f)
 	if err != nil {
@@ -127,13 +127,13 @@ func (s ProjectStore) editState(uid string) (v projectEditState, err error) {
 	}
 	// Refuse an inconsistent observation without retrying or exceeding the read budget.
 	if !sameProjectFileState(before, after) || !sameProjectFileState(after, current) || int64(len(content)) != min(before.Size(), int64(MaxSize+1)) {
-		return v, editError("unreadable", errors.New("Project guidance changed while reading"))
+		return v, editError("unreadable", errors.New("project guidance changed while reading"))
 	}
 	v.Present = true
 	if before.Size() > MaxSize {
 		stat, ok := before.Sys().(*syscall.Stat_t)
 		if !ok || before.Size() != int64(int(before.Size())) {
-			return v, editError("unreadable", errors.New("Project guidance size or identity is not representable"))
+			return v, editError("unreadable", errors.New("project guidance size or identity is not representable"))
 		}
 		v.oversize = &projectOversizeState{Bytes: before.Size(), Device: uint64(stat.Dev), Inode: uint64(stat.Ino), Mtime: before.ModTime().UnixNano(), PrefixDigest: Digest(content), PrefixBytes: len(content)}
 	} else {
