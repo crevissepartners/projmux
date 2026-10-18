@@ -120,7 +120,7 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		Request:  mutationruntime.AgentPersonaRequest{Action: request.action, Spelling: request.spelling, Noun: noun, Persona: request.persona, DryRun: request.dryRun, Confirm: request.yes, Socket: request.socket.socket, SocketPath: request.socket.socketPath},
 		Registry: registry, Target: target, Interaction: target.EffectiveInteraction(c.clock()).Kind,
 		OpenStore: c.openPersonaStore,
-        Notice: func(message string) { fmt.Fprint(stderr, message) },
+		Notice:    func(message string) { fmt.Fprint(stderr, message) },
 		Refuse: func(reason, message string, cause error) error {
 			return usageErrorFor(message, cause)
 		},
