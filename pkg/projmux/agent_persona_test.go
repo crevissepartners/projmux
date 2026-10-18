@@ -212,3 +212,43 @@ func TestAgentPersonaSDKProviderConversationAndFileRefusals(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// TestAgentPersonaSDKClosedStopRecoveryDescribesRunning pins the SDK boundary
+// where the Pane is gone but a failed Stop did not commit the Registry update.
+func TestAgentPersonaSDKClosedStopRecoveryDescribesRunning(t *testing.T) {
+	c, _, p, runner := relaunchFailureFixture(t)
+	runner.mode = "closed"
+	loaded, err := persona.NewDefaultStore(c.paths).Write("reviewer", []byte("Review carefully.\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.agentPersona(context.Background(), runtime.AgentPersonaRequest{Action: "attach", Persona: "reviewer", Confirm: true}, "uid:"+p.Target.Metadata.UID, "", "", runner)
+	if err == nil {
+		t.Fatal("failed Stop followed by Running resume admission unexpectedly succeeded")
+	}
+	reg, loadErr := store.NewStore(store.PathFor(c.paths.StateDir)).LoadReadOnly()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	a, ok := reg.Agent(p.Target.Metadata.UID)
+	if !ok || a.Status.Phase != metadata.PhaseRunning || a.Metadata.Annotations[metadata.AnnotationAgentPersonaDigest] != loaded.Digest {
+		t.Fatalf("fixture must retain Running with the new persona: %+v", a)
+	}
+	if runner.stops != 1 || runner.resumes != 0 || out.NewPaneUID != "" {
+		t.Fatalf("resume admission must not launch or replay: runner=%+v result=%+v", runner, out)
+	}
+	if strings.Contains(out.Recovery, "agent resume") {
+		t.Errorf("Running Agent received an unusable plain resume recovery: %q", out.Recovery)
+	}
+	if strings.Contains(err.Error(), "is Offline") || strings.Contains(err.Error(), "needs `agent resume`") {
+		t.Errorf("Running resume admission was misreported as Offline execution failure: %v", err)
+	}
+	for _, notice := range out.Notices {
+		if strings.Contains(notice, "did not resume") || strings.Contains(notice, "the Agent is resumed") {
+			t.Errorf("resume admission refusal received an unproven execution notice: %q", notice)
+		}
+	}
+	if out.Recovery == "" || !strings.Contains(out.Recovery, p.Target.Metadata.UID) {
+		t.Errorf("missing exact Agent state inspection recovery: %q", out.Recovery)
+	}
+}
