@@ -38,22 +38,7 @@ const (
 // message is the UsageError's. It lets an in-process caller
 // read the token with errors.As instead of from the text, as *persona.Error
 // does for the persona package's own tokens.
-type agentPersonaRefusal struct {
-	Reason string
-}
-
-func (e *agentPersonaRefusal) Error() string { return e.Reason }
-
-// agentPersonaRefusalCause is the typed cause of a refusal with reason: the
-// persona package's own *persona.Error for its tokens, agentPersonaRefusal
-// for this package's.
-func agentPersonaRefusalCause(reason, name, detail string) error {
-	switch reason {
-	case personaReasonAgentBusy, personaReasonSelfTarget, personaReasonNoConversation:
-		return &agentPersonaRefusal{Reason: reason}
-	}
-	return &persona.Error{Reason: reason, Name: name, Detail: detail}
-}
+type agentPersonaRefusal = mutationruntime.AgentPersonaRefusal
 
 // Outcomes of one `agent persona` run, as the result line and the JSON
 // "outcome" field spell them.
@@ -135,10 +120,8 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		Request:  mutationruntime.AgentPersonaRequest{Action: request.action, Spelling: request.spelling, Noun: noun, Persona: request.persona, DryRun: request.dryRun, Confirm: request.yes, Socket: request.socket.socket, SocketPath: request.socket.socketPath},
 		Registry: registry, Target: target, Interaction: target.EffectiveInteraction(c.clock()).Kind,
 		OpenStore: c.openPersonaStore,
+        Notice: func(message string) { fmt.Fprint(stderr, message) },
 		Refuse: func(reason, message string, cause error) error {
-			if cause == nil {
-				cause = agentPersonaRefusalCause(reason, request.persona, message)
-			}
 			return usageErrorFor(message, cause)
 		},
 		Plan: func(p *mutationruntime.AgentRestartPlan, q mutationruntime.AgentSettingsRequest, refuse func(string, string) error) error {
@@ -171,9 +154,6 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 			},
 		},
 	})
-	for _, notice := range result.Notices {
-		fmt.Fprintln(stderr, notice)
-	}
 	if err != nil {
 		return err
 	}

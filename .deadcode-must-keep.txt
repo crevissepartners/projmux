@@ -39,6 +39,7 @@ CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available acros
 Client.AckNotifications	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.AnswerApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.AnswerQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+Client.AttachAgentPersona	Public exact Claude persona attach facade; shared persona service and SDK/CLI execution parity preserve provenance and conversation.
 Client.Bind	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Capabilities	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
@@ -54,6 +55,7 @@ Client.DeleteProjectGuidance	Public v0 Project guidance SDK entrypoint; covered 
 Client.DeleteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.DeleteProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.DeliverTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
+Client.DetachAgentPersona	Public exact Claude persona detach facade; the attach-source transaction and recovery are shared with CLI.
 Client.GetAISplitMode	Public v0 legacy TUI-first AI split mode read; parity and external consumer tests.
 Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
@@ -119,6 +121,7 @@ Client.WriteProfile	Public v0 profile SDK entrypoint or refusal adapter; exercis
 Client.WriteProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.WriteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.WriteProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
+Client.agentPersona	Public persona facade closure; admission, partial results and stop failure fixtures cover exact routing and no replay.
 Client.agentSessionsService	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
@@ -719,6 +722,8 @@ ownedStream.Read	Owned processhost Codex preparation retained for dedicated stdi
 ownedStream.Write	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
 paneTarget.shared	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
+personaResumePlan	Public persona facade resume planning closure; uses existing resume contracts without changing relaunch provenance.
+personaSDKRefusal	Public persona typed refusal closure; SDK admission and failure-state fixtures preserve causes and codes.
 pickerOptionsFromCompatPicker	Compat picker option projection retained as the test seam over the live pickercompat.PickerOptions mapping.
 preparationRefusal	Public prepared Resume typed failure adapter; external consumer stale proof and cancellation fixtures preserve errors and identity.
 prepareReaper	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
@@ -870,8 +875,3 @@ waitGroupAbsent	Darwin owned-group absence requires ESRCH after bounded observat
 windowDisplayNotConvergedNotice	CLI notice compatibility adapter to the shared rename service; retained for generated/control-root rename byte parity proofs.
 withTmuxConfigDigest	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.
-Client.AttachAgentPersona	Public exact Claude persona attach facade; shared persona service and SDK/CLI execution parity preserve provenance and conversation.
-Client.DetachAgentPersona	Public exact Claude persona detach facade; the attach-source transaction and recovery are shared with CLI.
-Client.agentPersona	Public persona facade closure; admission, partial results and stop failure fixtures cover exact routing and no replay.
-personaResumePlan	Public persona facade resume planning closure; uses existing resume contracts without changing relaunch provenance.
-personaSDKRefusal	Public persona typed refusal closure; SDK admission and failure-state fixtures preserve causes and codes.

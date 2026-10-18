@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"bytes"
 	"fmt"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
@@ -9,9 +8,21 @@ import (
 	"strings"
 )
 
+// AgentPersonaRefusal is the typed cause of restart-specific persona refusals.
+type AgentPersonaRefusal struct { Reason string }
+func (e *AgentPersonaRefusal) Error() string { return e.Reason }
+
+func personaRefusalCause(reason,name,detail string) error {
+ switch reason {
+ case personaReasonAgentBusy,personaReasonSelfTarget,personaReasonNoConversation:
+  return &AgentPersonaRefusal{Reason:reason}
+ }
+ return &persona.Error{Reason:reason,Name:name,Detail:detail}
+}
+
 type AgentPersonaRequest struct {
 	Action, Spelling, Noun, Persona, Socket, SocketPath string
-	DryRun, Confirm, JSON                               bool
+	DryRun, Confirm                                     bool
 }
 type AgentPersonaDependencies struct {
 	Request     AgentPersonaRequest
@@ -22,6 +33,8 @@ type AgentPersonaDependencies struct {
 	Refuse      func(reason, message string, cause error) error
 	Plan        func(*AgentRestartPlan, AgentSettingsRequest, func(string, string) error) error
 	SetPersona  func(coremetadata.Agent, coremetadata.AgentPersonaAnnotations) error
+	// Notice emits each diagnostic immediately for CLI stderr ordering.
+	Notice      func(string)
 	Execution   AgentRestartExecution
 }
 
@@ -77,16 +90,14 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 	registry := d.Registry
 	request := d.Request
 	noun := request.Noun
-	var stderr bytes.Buffer
-	defer func() {
-		out.Notices = strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n")
-		if stderr.Len() == 0 {
-			out.Notices = nil
-		}
-	}()
+ notice := func(format string, args ...any) {
+  message := fmt.Sprintf(format,args...)
+  out.Notices = append(out.Notices, strings.TrimSuffix(message,"\n"))
+  if d.Notice != nil { d.Notice(message) }
+ }
 	refuse := func(reason, detail string) error {
 		return d.Refuse(reason, fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.Spelling, target.Metadata.Name, detail, reason),
-			nil)
+			personaRefusalCause(reason,request.Persona,detail))
 	}
 
 	// Validation. Provider first, because the rest only means something for a
@@ -188,7 +199,7 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 			// The old session is gone, so the old annotations describe
 			// nothing that runs. Keep the new ones and resume: restoring
 			// them would bring the next resume back without the persona.
-			fmt.Fprintf(&stderr, "projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
+			notice( "projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
 				target.Metadata.Name, paneUID, err)
 			return nil
 		}
@@ -202,7 +213,7 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 		}
 		if liveness == AgentRestartUnknown {
 			out.Recovery = PersonaRerunCommand(registry, target, request)
-			fmt.Fprintf(&stderr, "projmux: could not observe whether agent/%s's managed pane %s is still alive (%v); its persona annotations were restored, and re-running the same command recovers: %s\n",
+			notice( "projmux: could not observe whether agent/%s's managed pane %s is still alive (%v); its persona annotations were restored, and re-running the same command recovers: %s\n",
 				target.Metadata.Name, paneUID, observeErr, PersonaRerunCommand(registry, target, request))
 			return fmt.Errorf("%s: closing agent/%s's managed pane failed and whether it is still alive could not be observed, so its persona annotations were restored: %w",
 				request.Spelling, target.Metadata.Name, err)
@@ -212,8 +223,8 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 	}
 	execution.ResumeFailed = func(err error) error {
 		out.Recovery = PersonaRecoveryCommand(registry, target)
-		fmt.Fprintf(&stderr, "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, DescribePersonaAnnotations(want, noun), err)
-		fmt.Fprintf(&stderr, "projmux: recover with: %s\n", PersonaRecoveryCommand(registry, target))
+		notice( "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, DescribePersonaAnnotations(want, noun), err)
+		notice( "projmux: recover with: %s\n", PersonaRecoveryCommand(registry, target))
 		return fmt.Errorf("%s: agent/%s is %s with its new persona annotations and needs `agent resume`: %w",
 			request.Spelling, target.Metadata.Name, coremetadata.PhaseOffline, err)
 	}
@@ -221,12 +232,9 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 	if err != nil {
 		return out, err
 	}
-	result.Outcome = personaOutcomeResumed
-	if running {
-		result.Outcome = personaOutcomeRestarted
-	}
-	result.NewPaneUID = newPane
-	out = result
+ out.Outcome = personaOutcomeResumed
+ if running { out.Outcome = personaOutcomeRestarted }
+ out.NewPaneUID = newPane
 	return out, nil
 }
 func PersonaRefusalNoun(err error, noun string) error {
