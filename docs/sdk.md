@@ -33,7 +33,12 @@ relative and literal tilde XDG values are treated as unset, using
 `HOME/.config/projmux` or `HOME/.local/state/projmux`. Relative HOME values and
 spaces within HOME retain the CLI's existing path semantics.
 
-With a blank HOME, two absolute XDG homes still succeed. A missing fallback
+When HomeDir successfully returns an empty or blank home with no error, two
+absolute XDG homes still succeed. With the default nil HomeDir callback, an
+unset or empty HOME causes `os.UserHomeDir` to fail before XDG inputs are read,
+even when both XDG homes are absolute. That OS error is wrapped as
+`resolve home directory: $HOME is not defined` and does not match
+`ErrHomeDirRequired`. After HomeDir succeeds, a missing fallback
 returns the existing error text `HOME or an absolute XDG_CONFIG_HOME is required`
 or `HOME or an absolute XDG_STATE_HOME is required`, matching the public
 `ErrHomeDirRequired` sentinel through `errors.Is`. Config errors take precedence,
