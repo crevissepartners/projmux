@@ -55,3 +55,31 @@ func TestDetachedResumeCleanupRecoversOnlyExactOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestPreparedResumeCleanupUnreservedLostSource(t *testing.T) {
+	for _, mode := range []string{"prepared-refusal", "ordinary", "same-owner", "other-binding"} {
+		t.Run(mode, func(t *testing.T) {
+			reg, agent, pane := stopFixture()
+			owner := m.ProcessIdentity{PID: os.Getpid(), OwnerUID: uint32(os.Getuid()), Start: "absent-owned-preparation-helper"}
+			request := ProcessDetachedResumeRequest{Agent: agent.Metadata.UID, Previous: pane.Status.ProcessSession.Binding, Preparation: &ProcessResumePreparation{Binding: pane.Status.ProcessSession.Binding}}
+			switch mode {
+			case "ordinary":
+				request.Preparation = nil
+			case "same-owner":
+				reg.Panes[0].Status.Activation.Process.HostProcess = owner
+			case "other-binding":
+				request.Previous.Generation = "other-generation"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			_, err := awaitDetachedProcessResumeCleanup(ctx, func() (m.Registry, error) { return reg.Clone(), nil }, filepath.Join(t.TempDir(), "registry.json"), request, owner, processhost.Binding{})
+			if mode == "prepared-refusal" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal("cleanup weakened ordinary/owner/binding proof", mode, err)
+			}
+		})
+	}
+}

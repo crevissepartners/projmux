@@ -188,7 +188,12 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	b := processSchemaBinding(candidate.Record.Binding)
 	b.Host, b.Generation, b.Operation = operation, generation, operation
-	if err = c.reserveProcessResumeWithPreparation(ctx, candidate, settingsPlan, b, request.options.claim, request.options.preparation, deferredLaunch); err != nil {
+	if request.options.preparation == nil {
+		err = c.reserveProcessResume(ctx, candidate, settingsPlan, b, request.options.claim, deferredLaunch)
+	} else {
+		err = c.reserveProcessResumeWithPreparation(ctx, candidate, settingsPlan, b, request.options.claim, request.options.preparation, deferredLaunch)
+	}
+	if err != nil {
 		return result, err
 	}
 	if candidate.HostLost != nil {

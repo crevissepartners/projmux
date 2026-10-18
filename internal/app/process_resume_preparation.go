@@ -27,6 +27,11 @@ func (c *agentCommand) readResumePreparation(ctx context.Context, opts processAg
 	if err := ctx.Err(); err != nil {
 		return zero, nil, err
 	}
+	// A supplied HostLost bit is evidence to compare, not admission authority.
+	// Read the current candidate without reconciling, then compare the whole proof.
+	if expected != nil {
+		opts.allowHostLost = true
+	}
 	request, err := newProcessAgentResumeRequest(opts)
 	if err != nil {
 		return zero, nil, err
@@ -79,7 +84,7 @@ func (c *agentCommand) failedResumePreparation(p *mutationruntime.ProcessResumeP
 	if p == nil || before == nil {
 		return nil
 	}
-	if proof, _, err := c.readResumePreparation(context.Background(), preparationOptions(*p), p); err == nil {
+	if proof, _, err := c.readResumePreparation(context.Background(), preparationOptions(*p), p); err == nil && result.hasNoChild() {
 		return &proof
 	}
 	proof, record, err := c.readResumePreparation(context.Background(), processAgentResumeOptions{Agent: selector.Ref{Kind: m.KindAgent, UID: p.AgentUID}}, nil)

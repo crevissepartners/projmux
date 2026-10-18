@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -23,6 +25,21 @@ func TestSDKPreparedResumeValidationReadOnly(t *testing.T) {
 			p, record, err := c.readResumePreparation(context.Background(), opts, nil)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if change == "file" {
+				path := filepath.Join(os.Getenv("HOME"), "proof-snapshot")
+				if err = os.WriteFile(path, []byte("frozen"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				record.Command.Args = append(record.Command.Args, "--append-system-prompt-file", path)
+				record.Files, err = deferredLaunchFiles(record.Command.Args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = writeDeferredState(c.deferredStatePath("deferred-launches", a.Binding.AgentUID), record); err != nil {
+					t.Fatal(err)
+				}
+				p = preparedResumeProjectionMust(t, c, opts)
 			}
 			switch change {
 			case "digest":
@@ -43,7 +60,6 @@ func TestSDKPreparedResumeValidationReadOnly(t *testing.T) {
 					}
 					break
 				}
-				p.LaunchDigest = "also-stale"
 			case "owner-live":
 				c.processIdentity = func(pid int) (m.ProcessIdentity, int, error) {
 					if pid == a.HostProcess.PID {
@@ -77,11 +93,14 @@ func TestSDKPreparedResumeRechecksProof(t *testing.T) {
 	if _, err := c.prepareOwnedClaudeResume(context.Background(), opts); err != nil {
 		t.Fatal(err)
 	}
-	p, _, err := c.readResumePreparation(context.Background(), opts, nil)
+	p, record, err := c.readResumePreparation(context.Background(), opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.LaunchDigest = "caller-was-validated-before-plan-changed"
+	record.Model = "plan-changed-after-successful-validation"
+	if err = writeDeferredState(c.deferredStatePath("deferred-launches", a.Binding.AgentUID), record); err != nil {
+		t.Fatal(err)
+	}
 	wire := processDetachedResumeRequest{Agent: a.Binding.AgentUID, Previous: a.Binding, Prompt: processResumeFirstFrame{Kind: "user", Text: "must not send"}, Preparation: &p}
 	before := sdkCreateDirectorySnapshot(t, os.Getenv("HOME"))
 	owner, caller := net.Pipe()
@@ -145,7 +164,7 @@ func TestSDKPreparedResumeReservationRechecksProof(t *testing.T) {
 }
 
 func TestSDKPreparedResumeFailureDoesNotInventProof(t *testing.T) {
-	for _, change := range []string{"unchanged", "unknown", "replacement", "missing", "recipe"} {
+	for _, change := range []string{"unchanged", "unknown", "replacement", "missing", "recipe", "unknown-start"} {
 		t.Run(change, func(t *testing.T) {
 			c, opts, store, a := hostLostPreparedFixture(t)
 			if _, err := c.prepareOwnedClaudeResume(context.Background(), opts); err != nil {
@@ -181,7 +200,12 @@ func TestSDKPreparedResumeFailureDoesNotInventProof(t *testing.T) {
 				}
 			}
 			before := sdkCreateDirectorySnapshot(t, os.Getenv("HOME"))
-			got := c.failedResumePreparation(&p, record, processAgentResumeResult{})
+			failed := processAgentResumeResult{}
+			if change == "unknown-start" {
+				failed.Handle = unknownPreparedStart{}
+				failed.Binding = processSchemaBinding(a.Binding)
+			}
+			got := c.failedResumePreparation(&p, record, failed)
 			if change == "unchanged" {
 				if got == nil || *got != p {
 					t.Fatal("unchanged valid proof lost", got)
@@ -194,4 +218,19 @@ func TestSDKPreparedResumeFailureDoesNotInventProof(t *testing.T) {
 			}
 		})
 	}
+}
+
+func preparedResumeProjectionMust(t *testing.T, c *agentCommand, opts processAgentResumeOptions) mutationruntime.ProcessResumePreparation {
+	t.Helper()
+	p, _, err := c.readResumePreparation(context.Background(), opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+type unknownPreparedStart struct{ processOwnedHandle }
+
+func (unknownPreparedStart) Observe(processhost.Binding) (processhost.Snapshot, error) {
+	return processhost.Snapshot{}, errors.New("startup identity unknown")
 }

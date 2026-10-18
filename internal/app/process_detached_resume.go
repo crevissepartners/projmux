@@ -112,22 +112,39 @@ func runProcessDetachedResumeOwner(conn net.Conn, encoder *json.Encoder, decoder
 		return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), processhost.ErrStale)
 	}
 	if wire.PreparationAction != "" {
-		proof, prepareErr := runResumePreparation(context.Background(), c, wire)
+		life, cancel := processForegroundLifetime()
+		defer cancel()
+		committed := make(chan error, 1)
+		go func() {
+			var commit string
+			e := decoder.Decode(&commit)
+			if e == nil && commit != "commit" {
+				e = errors.New("process-preparation-commit-invalid")
+			}
+			if e != nil {
+				cancel()
+			}
+			committed <- e
+		}()
+		proof, prepareErr := runResumePreparation(life, c, wire)
 		if prepareErr != nil {
 			return encodeDetachedResumeError(encoder, identity, processSchemaBinding(wire.Previous), prepareErr)
+		}
+		if err = life.Err(); err != nil {
+			return err
 		}
 		if err = encoder.Encode(processDetachedReply{Owner: identity, Binding: processSchemaBinding(wire.Previous), Phase: "prepared", Preparation: &proof}); err != nil {
 			return err
 		}
-		var commit string
-		if err = decoder.Decode(&commit); err != nil {
+		if err = <-committed; err != nil {
 			return err
 		}
-		if commit != "commit" {
-			return errors.New("process-preparation-commit-invalid")
+		if err = life.Err(); err != nil {
+			return err
 		}
 		return encoder.Encode("completed")
 	}
+
 	var acknowledged *deferredLaunchRecord
 	if wire.Preparation != nil {
 		_, acknowledged, err = c.readResumePreparation(context.Background(), preparationOptions(*wire.Preparation), wire.Preparation)

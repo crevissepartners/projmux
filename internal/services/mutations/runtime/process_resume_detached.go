@@ -157,7 +157,10 @@ func awaitDetachedProcessResumeCleanup(ctx context.Context, load func() (m.Regis
 					binding = processResumeHostBinding(b)
 				}
 				settled := agent.Status.Phase == m.PhaseOffline && ((b == request.Previous && pane.Status.Activation.IsZero()) || (b == processCreateSchemaBinding(binding) && m.MatchesProcessWait(b, pane.Status.LastTermination) && m.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)))
-				if settled && ProcessIdentityAbsent(owner, localipc.Process) {
+				// A supplied-proof refusal can leave the original lost-host Running
+				// record untouched. This request never owned that previous activation.
+				unreserved := request.Preparation != nil && b == request.Previous && (pane.Status.Activation.Process == nil || pane.Status.Activation.Process.HostProcess != owner)
+				if (settled || unreserved) && ProcessIdentityAbsent(owner, localipc.Process) {
 					return binding, nil
 				}
 			}

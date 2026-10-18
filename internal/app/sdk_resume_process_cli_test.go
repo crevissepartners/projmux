@@ -564,3 +564,180 @@ func TestSDKPreparedResumeFailureRetry(t *testing.T) {
 	}
 	detachedResumeCLI(t, ctx, f, "agent", "stop", ref)
 }
+
+// Cancellation before preparation can acquire its existing claim guard must
+// reap the actual helper, including before its first response. No SDK-only
+// preflight assertion can satisfy this test.
+func TestSDKPreparedResumeCancellationReapsHelper(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("copied CLI required")
+	}
+	if _, err := os.Stat("/proc/self"); err != nil {
+		t.Skip("procfs required for exact helper birth")
+	}
+	f := hostLostCLIProviderFixture(t, "claude")
+	lifetime, finish := context.WithTimeout(context.Background(), 20*time.Second)
+	defer finish()
+	ref, _, old := recordedLostHostCLI(t, lifetime, f, "claude")
+	client, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := New().agent
+	unlock, err := lockDeferredClaim(command.deferredClaimPath(old.Binding.AgentUID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	before, err := os.ReadFile(f.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(lifetime)
+	defer cancel()
+	completed := make(chan error, 1)
+	go func() {
+		_, e := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, AllowHostLost: true})
+		completed <- e
+	}()
+	var helper m.ProcessIdentity
+	processCLIUntil(t, lifetime, func() bool {
+		entries, e := os.ReadDir("/proc")
+		if e != nil {
+			t.Fatal(e)
+		}
+		for _, entry := range entries {
+			exe, e := os.Readlink(filepath.Join("/proc", entry.Name(), "exe"))
+			if e != nil || exe != f.binary {
+				continue
+			}
+			var pid int
+			if _, e = fmt.Sscan(entry.Name(), &pid); e != nil {
+				continue
+			}
+			id, parent, e := localipc.Process(pid)
+			if e == nil && parent == os.Getpid() {
+				descriptors, e := os.ReadDir(filepath.Join("/proc", entry.Name(), "fd"))
+				if e != nil {
+					continue
+				}
+				guardOpened := false
+				for _, fd := range descriptors {
+					target, e := os.Readlink(filepath.Join("/proc", entry.Name(), "fd", fd.Name()))
+					if e == nil && target == command.deferredClaimPath(old.Binding.AgentUID)+".lock" {
+						guardOpened = true
+						break
+					}
+				}
+				if !guardOpened {
+					continue
+				}
+				helper = id
+				return true
+			}
+		}
+		return false
+	})
+	cancel()
+	select {
+	case err = <-completed:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-lifetime.Done():
+		t.Fatal("cancelled preparation helper was not reaped")
+	}
+	if _, _, err = localipc.Process(helper.PID); !errors.Is(err, localipc.ErrProcessAbsent) {
+		t.Fatal("helper remains after cancelled API call", helper.PID, err)
+	}
+	after, err := os.ReadFile(f.store.Path())
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("cancelled preparation changed Registry", err)
+	}
+	if record, e := command.readDeferredLaunch(old.Binding.AgentUID); e != nil || record != nil {
+		t.Fatal("cancelled preparation wrote a plan", e)
+	}
+	claim, err := readDeferredClaim(command.deferredClaimPath(old.Binding.AgentUID))
+	if err != nil || deferredClaimLive(claim) {
+		t.Fatal("cancelled preparation retained a claim", err)
+	}
+}
+
+func TestSDKPreparedResumeRefusals(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("copied CLI required")
+	}
+	f := hostLostCLIProviderFixture(t, "claude")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ref, _, _ := recordedLostHostCLI(t, ctx, f, "claude")
+	client, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: ref, AllowHostLost: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []string{"digest", "pane", "conversation", "binding", "host-lost", "missing", "request-binding", "wait-for-peer", "override"} {
+		t.Run(change, func(t *testing.T) {
+			p := prepared.Preparation
+			req := core.ResumeAgentRequest{Ref: ref, Detach: true, Prompt: "must not deliver", Binding: p.Binding, Preparation: &p}
+			want := projmux.CodeResumePreparationStale
+			var restore func()
+			switch change {
+			case "digest":
+				p.LaunchDigest = "changed"
+			case "pane":
+				p.PaneUID = "wrong-pane"
+			case "conversation":
+				p.Conversation = "other-session"
+			case "binding":
+				p.Binding.Generation = "other-generation"
+			case "host-lost":
+				p.HostLost = false
+			case "missing":
+				command := New().agent
+				path := command.deferredStatePath("deferred-launches", p.AgentUID)
+				raw, e := os.ReadFile(path)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if e = os.Remove(path); e != nil {
+					t.Fatal(e)
+				}
+				restore = func() {
+					if e := os.WriteFile(path, raw, 0600); e != nil {
+						t.Error(e)
+					}
+				}
+				defer restore()
+			case "request-binding":
+				req.Binding.Generation = "stale-request"
+				want = projmux.CodeResumePlanInvalid
+			case "wait-for-peer":
+				req.WaitForPeer = true
+				want = projmux.CodeResumeRequestInvalid
+			case "override":
+				req.Model = "different-model"
+				want = projmux.CodeResumeRequestInvalid
+			}
+			before := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
+			if change != "request-binding" && change != "wait-for-peer" && change != "override" {
+				_, e := client.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: ref, Preparation: p})
+				var refused *projmux.Refusal
+				if !errors.As(e, &refused) || refused.Code != projmux.CodeResumePreparationStale {
+					t.Fatalf("Validate %s: %v", change, e)
+				}
+			}
+			result, e := client.ResumeAgent(ctx, req)
+			var refused *projmux.Refusal
+			if !errors.As(e, &refused) || refused.Code != want || result.Preparation != nil {
+				t.Fatalf("Resume %s returned %+v %v; want %s", change, result, e, want)
+			}
+			if !reflect.DeepEqual(before, sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")) {
+				t.Fatal("refusal changed Registry/sidecar/claim")
+			}
+		})
+	}
+}

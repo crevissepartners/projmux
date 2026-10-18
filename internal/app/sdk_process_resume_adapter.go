@@ -26,6 +26,12 @@ func validateSDKProcessResumeWire(wire processDetachedResumeRequest) error {
 		if wire.PreparationAction != "prepare" && wire.PreparationAction != "validate" || wire.WaitForPeer || wire.Prompt != (processResumeFirstFrame{}) || wire.Model != "" || wire.Effort != "" {
 			return usageError("agent resume: invalid preparation request")
 		}
+		if wire.PreparationAction == "prepare" && wire.Preparation != nil {
+			return usageError("agent resume: prepare does not accept an acknowledged proof")
+		}
+		if wire.PreparationAction == "validate" && wire.Preparation == nil {
+			return preparationStale("preparation required")
+		}
 	} else if wire.Preparation != nil {
 		p := wire.Preparation
 		if wire.WaitForPeer || wire.Prompt.Kind != "user" || wire.Model != "" || wire.Effort != "" {

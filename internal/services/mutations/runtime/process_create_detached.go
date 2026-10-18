@@ -123,17 +123,28 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	_ = child.Close()
 	done := make(chan error, 1)
 	go func() { done <- launcher.Wait() }()
+	launcherReaped := false
+	if l.Transient {
+		defer func() {
+			if !launcherReaped {
+				_ = launcher.Process.Kill()
+				<-done
+			}
+		}()
+	}
 	decoder := json.NewDecoder(io.LimitReader(conn, ProcessDetachedWireLimit))
 	encoder := json.NewEncoder(conn)
 	var identity ProcessDetachedReply
 	if err = decoder.Decode(&identity); err != nil {
 		_ = launcher.Process.Kill()
 		<-done
+		launcherReaped = true
 		return ready, processDetachedIdentityFailure(ctx, deadline, err)
 	}
 	if !identity.Owner.Valid() || int64(identity.Owner.OwnerUID) != int64(os.Getuid()) {
 		_ = launcher.Process.Kill()
 		<-done
+		launcherReaped = true
 		return ready, errors.New("process-detached-owner-identity-invalid")
 	}
 	ready.Owner = identity.Owner
@@ -153,6 +164,7 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	if identityErr != nil || kernelOwner != identity.Owner {
 		_ = launcher.Process.Kill()
 		<-done
+		launcherReaped = true
 		return ready, errors.New("process-detached-owner-identity-unconfirmed")
 	}
 	if err = decoder.Decode(&ready); err != nil {
@@ -161,7 +173,6 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	if l.Transient {
 		// This worker has no provider or claim to hand off. Reap it before returning,
 		// including on malformed replies and cancellation.
-		defer func() { _ = launcher.Process.Kill(); <-done }()
 		if ready.Error != "" {
 			return ready, errors.New(ready.Error)
 		}
@@ -183,6 +194,15 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 		}
 		if completed != "completed" {
 			return ready, errors.New("process-preparation-commit-invalid")
+		}
+		select {
+		case err = <-done:
+			launcherReaped = true
+			if err != nil {
+				return ready, err
+			}
+		case <-ctx.Done():
+			return ready, ctx.Err()
 		}
 		failed = false
 		return ready, nil
