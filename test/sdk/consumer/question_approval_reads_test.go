@@ -207,7 +207,7 @@ func TestExternalControlSessionQuestionSource(t *testing.T) {
 	writeReadJSON(t, filepath.Join(f.state, "agent-questions", ".async", "questions.json"), map[string]any{
 		"version": 1, "records": []any{map[string]any{
 			"id": "question-0000000000000001", "agentUID": "agent", "provider": "codex", "delivery": "async", "requestID": "opaque/control:01",
-			"questions": []any{map[string]any{"question": "Choose", "options": []any{map[string]any{"label": "yes"}}}},
+			"questions": []any{map[string]any{"id": "q1", "question": "Choose", "options": []any{map[string]any{"label": "yes"}}}},
 			"state":     "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour),
 		}},
 	})
