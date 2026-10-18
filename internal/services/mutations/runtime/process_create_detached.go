@@ -110,11 +110,11 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	}
 	interrupt := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer interrupt()
-	// #nosec G204 -- this is the caller's own executable with fixed internal argv; private request data travels only through fd 4.
 	route := "process-agent-launch"
 	if l.Transient {
 		route = "process-agent-owner"
 	}
+	// #nosec G204 -- this is the caller's own executable with fixed internal argv; private request data travels only through fd 4.
 	launcher := exec.Command(l.Executable, "internal", route)
 	launcher.Env = l.Environment
 	launcher.ExtraFiles = []*os.File{child, payload}

@@ -2,9 +2,11 @@ package consumer_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -122,5 +124,88 @@ func externalLoseResumeFixture(t *testing.T, ctx context.Context, root string, a
 			case <-time.After(10 * time.Millisecond):
 			}
 		}
+	}
+}
+
+// Refuse before constructing a client: its process context freezes these inputs.
+// No fallback PATH or installed-provider negative probe is allowed in this fixture.
+func externalFixtureProviderCheck(root, provider string) error {
+	if provider != "claude" && provider != "codex" {
+		return fmt.Errorf("unexpected fixture provider %q", provider)
+	}
+	want := filepath.Join(root, provider)
+	found, err := exec.LookPath(provider)
+	if err != nil || found != want {
+		return fmt.Errorf("fixture provider lookup: got %q (%v), want %q", found, err, want)
+	}
+	info, err := os.Lstat(found)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return fmt.Errorf("fixture provider must be an owned executable file: %q", found)
+	}
+	if os.Getenv("PATH") != root || os.Getenv("CODEX_HOME") != root+"/.codex" || os.Getenv("CLAUDE_CONFIG_DIR") != root+"/.claude" {
+		return fmt.Errorf("fixture lookup/auth roots differ from owned root %q", root)
+	}
+	return nil
+}
+
+func TestSDKResumeFixtureRejectsWrongProviderPath(t *testing.T) {
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			root, decoy := t.TempDir(), t.TempDir()
+			marker := filepath.Join(decoy, "spawned")
+			// The decoy is owned by this test. Rejection must happen without exec.
+			if err := os.WriteFile(filepath.Join(decoy, provider), []byte(fmt.Sprintf("#!/bin/sh\nprintf spawned > %q\n", marker)), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", decoy)
+			t.Setenv("CODEX_HOME", root+"/.codex")
+			t.Setenv("CLAUDE_CONFIG_DIR", root+"/.claude")
+			if err := externalFixtureProviderCheck(root, provider); err == nil {
+				t.Fatal("wrong provider path accepted before client construction")
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("decoy ran or marker check failed: %v", err)
+			}
+		})
+	}
+}
+
+func externalAssertStubExecutions(t *testing.T, root, python string, count, currentPID int) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "stub-executions.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != count {
+		t.Fatalf("stub call count=%d want=%d: %s", len(lines), count, raw)
+	}
+	python, err = filepath.EvalSymlinks(python)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int]bool{}
+	for i, line := range lines {
+		var call struct {
+			PID             int    `json:"pid"`
+			Script          string `json:"script"`
+			Executable      string `json:"executable"`
+			CodexHome       string `json:"codexHome"`
+			ClaudeConfigDir string `json:"claudeConfigDir"`
+		}
+		if err := json.Unmarshal([]byte(line), &call); err != nil {
+			t.Fatal(err)
+		}
+		if call.PID <= 0 || seen[call.PID] || call.Script != root+"/provider.py" || call.Executable != python || call.CodexHome != root+"/.codex" || call.ClaudeConfigDir != root+"/.claude" {
+			t.Fatalf("unexpected stub execution: %+v", call)
+		}
+		seen[call.PID] = true
+		if i == count-1 && currentPID != 0 {
+			cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", currentPID))
+			if err != nil || call.PID != currentPID || !strings.Contains(string(cmdline), root+"/provider.py") {
+				t.Fatalf("actual provider PID/path mismatch: call=%+v child=%d argv=%q err=%v", call, currentPID, cmdline, err)
+			}
+		}
+		t.Logf("STUB_EXEC count=%d pid=%d script=%s executable=%s", i+1, call.PID, call.Script, call.Executable)
 	}
 }
