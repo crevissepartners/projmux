@@ -3,8 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +84,80 @@ func TestPreparedResumeCleanupUnreservedLostSource(t *testing.T) {
 				}
 			} else if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatal("cleanup weakened ordinary/owner/binding proof", mode, err)
+			}
+		})
+	}
+}
+
+// Exercise the real private-descriptor launcher and the same error/proof wire
+// consumed by SDK Resume. The owned fixture helper returns a proof-bearing
+// error; only the cleanup observation differs between the two cases.
+func TestPreparedResumeUnconfirmedCleanupDropsWireProof(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fixture identity uses Linux procfs")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 fixture unavailable")
+	}
+	for _, confirmed := range []bool{true, false} {
+		t.Run(fmt.Sprint(confirmed), func(t *testing.T) {
+			root := t.TempDir()
+			script := filepath.Join(root, "helper.py")
+			executable := filepath.Join(root, "launcher")
+			source := `import os,sys,json,socket,signal
+if os.fork(): os._exit(0)
+os.setsid()
+s=socket.socket(fileno=3)
+with os.fdopen(4) as payload: req=json.load(payload)
+pid=os.getpid()
+raw=open('/proc/self/stat').read(); fields=raw[raw.rfind(')')+2:].split()
+owner={'pid':pid,'ownerUID':os.getuid(),'start':'linux:'+open('/proc/sys/kernel/random/boot_id').read().strip()+':'+fields[19]}
+p=req['Resume']['Preparation'];b=p['Binding']
+wire={'Host':b['hostInstanceID'],'Project':b['projectUID'],'Window':b['windowUID'],'Agent':b['agentUID'],'Pane':b['paneUID'],'Generation':b['generation'],'Operation':b['operationID']}
+s.sendall((json.dumps({'Owner':owner})+'\n').encode())
+s.sendall((json.dumps({'Owner':owner,'Binding':wire,'Error':'fixture failed first input','ErrorCode':'process-resume-refused','Preparation':p})+'\n').encode())
+# Keep the exact owner alive for the caller's identity proof. EOF or the
+# launcher's guarded SIGTERM retires only this fixture helper.
+while s.recv(1024): pass
+`
+			if err = os.WriteFile(script, []byte(source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(executable, []byte(fmt.Sprintf("#!/bin/sh\nexec %q -u %q\n", python, script)), 0700); err != nil {
+				t.Fatal(err)
+			}
+			reg, agent, pane := stopFixture()
+			b := pane.Status.ProcessSession.Binding
+			proof := ProcessResumePreparation{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, Binding: b, Conversation: "frozen-conversation", LaunchDigest: "frozen-digest", HostLost: true}
+			request := ProcessDetachedResumeRequest{Agent: agent.Metadata.UID, Previous: b, Preparation: &proof, Prompt: ProcessResumeFirstFrame{Kind: "user", Text: "explicit input"}}
+			calls := 0
+			load := func() (m.Registry, error) {
+				calls++
+				if !confirmed {
+					return m.Registry{}, errors.New("fixture cleanup state unavailable")
+				}
+				return reg.Clone(), nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			reply, err := LaunchDetachedProcessResume(ctx, executable, ProcessDetachedResumeEnvelope{Resume: &request, RegistryPath: filepath.Join(root, "registry.json")}, load, io.Discard, io.Discard)
+			if reply.Owner.Valid() {
+				defer SignalDetachedProcessOwner(reply.Owner)
+			}
+			var failure *ProcessResumeFailure
+			if !errors.As(err, &failure) || failure.Code != "process-resume-refused" || reply.Error != "fixture failed first input" || calls == 0 {
+				t.Fatalf("did not exercise proof-bearing owner failure and cleanup: reply=%+v err=%v loads=%d", reply, err, calls)
+			}
+			if confirmed {
+				if reply.Preparation == nil || *reply.Preparation != proof || strings.Contains(err.Error(), "cleanup-unconfirmed") {
+					t.Fatalf("confirmed failure lost proof: %+v %v", reply, err)
+				}
+			} else if reply.Preparation != nil || !strings.Contains(err.Error(), "cleanup-unconfirmed") {
+				t.Fatalf("unconfirmed cleanup leaked retry proof: %+v %v", reply, err)
+			}
+			if _, _, e := localipc.Process(reply.Owner.PID); !errors.Is(e, localipc.ErrProcessAbsent) {
+				t.Fatal("fixture helper remained", e)
 			}
 		})
 	}
