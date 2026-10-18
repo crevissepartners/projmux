@@ -1351,6 +1351,15 @@ for line in sys.stdin:
 					t.Fatal("public host-lost previous history/unknown", observed)
 				}
 				t.Logf("PUBLIC_ADVISORY provider=%s ordinary=false hostLost=true previousHistory=true previousUnknown=true inventedExitCode=false", provider)
+				handoff := resumed
+				handoff.Projection = core.ResourceList{}
+				raw, err = json.Marshal(handoff)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(lease+"/resume-result.json", raw, 0600); err != nil {
+					t.Fatal(err)
+				}
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: resumed.Binding})
 				stopAttempted = true
 				if err != nil || !stopped.Stopped || stopped.Termination == nil || stopped.Binding != resumed.Binding {
