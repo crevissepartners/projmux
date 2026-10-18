@@ -1,5 +1,45 @@
 # Go SDK
 
+## Config and state paths
+
+`ResolvePaths(ResolvePathsOptions{})` returns `Paths{ConfigDir, StateDir}`
+using the CLI's HOME/XDG resolver, without constructing a Client. Both paths
+include the `projmux` suffix. It reads no files (including locale, profiles,
+guidance or Registry), creates no directories, changes no environment variables,
+and contacts no tmux server or provider. Existence and write access are not
+checked. Effects inside caller-supplied callbacks belong to the caller.
+
+```go
+paths, err := projmux.ResolvePaths(projmux.ResolvePathsOptions{})
+if errors.Is(err, projmux.ErrHomeDirRequired) {
+    // Ask the operator to provide HOME or the missing absolute XDG home.
+    return err
+}
+if err != nil { return err }
+settingsPath := filepath.Join(paths.ConfigDir, "web.toml")
+```
+
+`HomeDir func() (string, error)` and `LookupEnv func(string) string` callbacks
+allow explicit inputs. Each nil callback independently uses `os.UserHomeDir`
+or `os.Getenv`; a callback returning an empty string does not request a fallback.
+`ResolvePathsOptions.HomeDir` is unrelated to `Options.HomeDir`, which controls
+session naming only.
+
+Resolution calls HomeDir first. If it fails, the error is wrapped as
+`resolve home directory: %w` and no environment callback runs. Otherwise it
+collects `XDG_CONFIG_HOME`, then `XDG_STATE_HOME`, before resolving config and
+then state. Absolute XDG values are whitespace-trimmed and cleaned. Blank,
+relative and literal tilde XDG values are treated as unset, using
+`HOME/.config/projmux` or `HOME/.local/state/projmux`. Relative HOME values and
+spaces within HOME retain the CLI's existing path semantics.
+
+With a blank HOME, two absolute XDG homes still succeed. A missing fallback
+returns the existing error text `HOME or an absolute XDG_CONFIG_HOME is required`
+or `HOME or an absolute XDG_STATE_HOME is required`, matching the public
+`ErrHomeDirRequired` sentinel through `errors.Is`. Config errors take precedence,
+but both environment callbacks have already run. Every error returns zero Paths;
+wrapped callback errors retain their original cause.
+
 ## Host-global Agent guidance
 
 `ReadAgentGuidance(ctx)` returns `core.AgentGuidanceFile`: user-file presence,

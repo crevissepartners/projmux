@@ -12,6 +12,10 @@
 // the same internal service and retain the existing personas/<name>.md format,
 // case-sensitive names, 64 KiB limit and private filesystem permissions.
 //
+// ResolvePaths returns the CLI-compatible config/state directories without file
+// access or environment changes. Its callbacks default to OS inputs;
+// ErrHomeDirRequired matches missing HOME fallback errors under errors.Is.
+//
 // NewClient(Options{}) captures HOME/XDG_CONFIG_HOME/XDG_STATE_HOME defaults
 // exactly as the CLI does. Options{ConfigDir: "/absolute/path/projmux"} instead
 // overrides that configuration directory. StateDir overrides the captured
