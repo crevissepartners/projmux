@@ -124,7 +124,7 @@ while s.recv(1024): pass
 			if err = os.WriteFile(script, []byte(source), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err = os.WriteFile(executable, []byte(fmt.Sprintf("#!/bin/sh\nexec %q -u %q\n", python, script)), 0700); err != nil {
+			if err = os.WriteFile(executable, fmt.Appendf(nil, "#!/bin/sh\nexec %q -u %q\n", python, script), 0700); err != nil {
 				t.Fatal(err)
 			}
 			reg, agent, pane := stopFixture()
