@@ -870,3 +870,8 @@ waitGroupAbsent	Darwin owned-group absence requires ESRCH after bounded observat
 windowDisplayNotConvergedNotice	CLI notice compatibility adapter to the shared rename service; retained for generated/control-root rename byte parity proofs.
 withTmuxConfigDigest	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.
+Client.AttachAgentPersona	Public exact Claude persona attach facade; shared persona service and SDK/CLI execution parity preserve provenance and conversation.
+Client.DetachAgentPersona	Public exact Claude persona detach facade; the attach-source transaction and recovery are shared with CLI.
+Client.agentPersona	Public persona facade closure; admission, partial results and stop failure fixtures cover exact routing and no replay.
+personaResumePlan	Public persona facade resume planning closure; uses existing resume contracts without changing relaunch provenance.
+personaSDKRefusal	Public persona typed refusal closure; SDK admission and failure-state fixtures preserve causes and codes.

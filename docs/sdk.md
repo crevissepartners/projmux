@@ -1379,3 +1379,29 @@ are returned. A context canceled before admission reads nothing. Returned slices
 and optional time pointers are caller-owned. This method writes no state, opens
 no transcripts and contacts neither tmux nor the network; it does not aggregate
 usage or change the existing Agent and Project session APIs.
+
+### Agent persona attach and detach
+
+`AttachAgentPersona(ctx, core.AttachAgentPersonaRequest{Ref: "uid:…", Persona: "reviewer"})`
+and `DetachAgentPersona(ctx, core.DetachAgentPersonaRequest{Ref: "uid:…"})` share
+`agent persona attach|detach` policy and execution. They support Claude tmux
+Agents and keep the Agent identity and existing conversation. Both record the
+instructions source as `attach` and turn the system prompt snapshot off.
+`RelaunchAgent` continues to record the `relaunch` source.
+
+Supply an exact UID or a name with explicit Project/Window scope. The SDK has no
+ambient caller Pane; the CLI additionally refuses its own Pane. `SocketPath` is
+an absolute tmux socket path; an empty value uses the Client's explicit route.
+`DryRun` writes no snapshots or Registry/runtime state. `Confirm` permits
+interrupting a busy or unknown interaction. Running Agents already using the
+same persona digest and resolved settings return `unchanged`.
+
+Always inspect `AgentPersonaResult` even when an error is returned. It preserves
+the CLI plan projection and supplies `Notices` and `Recovery` for failed stops
+and resumes. A failed stop restores the previous persona unless the old Pane is
+known closed. A failed resume keeps the new annotations for a plain Agent
+resume; no operation is automatically retried. Errors support
+`errors.As(err, &refusal)` with persona reason codes, existing selector/Registry
+codes, and `process-relaunch-unsupported`. Cancellation before admission retains
+`errors.Is`; after admission, stop and recovery complete independently of it.
+Session authorization and consumer mutation locks remain with the caller.

@@ -293,4 +293,8 @@
 // CORE duplicate merging and stable time order. The result owns its slices and
 // optional timestamps, counts corrupt lines and uses an empty array for missing
 // history. No transcripts, writes, tmux, network or usage aggregation are involved.
+//
+// AttachAgentPersona and DetachAgentPersona share the CLI persona transaction
+// for an explicitly selected Claude tmux Agent, preserving the conversation and
+// attach provenance. Inspect the returned plan, Notices and Recovery on errors.
 package projmux
