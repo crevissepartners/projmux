@@ -1091,3 +1091,38 @@ repair can leave partial effects such as created directories. These methods add
 no rollback or concurrency guarantee. CLI bootstrap, diagnostics journaling, and
 legacy migration retain their existing policy; the CLI does not promise an
 unchanged entire HOME directory.
+
+### Agent deletion protection label
+
+`SetAgentProtection` changes only `projmux.io/protected` on one existing Agent.
+Use an explicit `uid:` ref, or a single name with explicit `Project`/`Window`
+scope; the SDK never infers a target from an active Pane, cwd or environment.
+Both Project and ControlSession descendants and tmux/process Agents are supported.
+
+```go
+result, err := client.SetAgentProtection(ctx, core.SetAgentProtectionRequest{
+    Ref: "uid:agent-example",
+    Protected: true,
+})
+// Set Protected: false to remove the key.
+```
+
+True writes the value `true`; false removes the key even if its old value is a
+legacy value. Other labels, fields and relationships remain unchanged. `Agent`
+is the projection from the same Registry commit; `Changed` is false on repeats.
+The shared CLI label service performs the locked existence check and CORE write,
+without CLI subprocesses, tmux or provider calls.
+
+Handle `*projmux.Refusal` with `errors.As`: `CodeSelectorInvalid`,
+`CodeSelectorAmbiguous`, `CodeResourceNotFound` and `CodeRegistryUnavailable`
+distinguish selector and storage failures. A target that disappears before the
+locked write returns `CodeResourceNotFound`. Cancellation before the locked write
+preserves `errors.Is(err, context.Canceled)`/`context.DeadlineExceeded`; once the
+write starts, the existing Store transaction completes.
+
+Protection is still evaluated by the existing delete policy: presence of the
+reserved key, including legacy values, protects deletion. After removing it,
+call `PreflightDelete` again before any deletion effects. Profiles may still
+protect an Agent. Setting the label grants no deletion permission. Web session
+authorization and the consumer's `agent.protection` mutation lock remain the
+consumer's responsibility; this method supplies neither.

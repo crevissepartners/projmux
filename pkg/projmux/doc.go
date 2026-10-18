@@ -190,6 +190,16 @@
 // ListProjectCandidates reads configured paths in discovery order without writing
 // pin preferences or saved discovery memory.
 //
+// SetAgentProtection changes only one Agent's reserved protection label through
+// the shared CLI label transaction. Ref is mandatory: uid: or a name in explicit
+// Project/Window scope, including ControlSession descendants. True writes true;
+// false removes the key, including legacy values. The result owns the Agent
+// projection from the same commit and Changed reports actual label-map change.
+// No runtime is contacted. Session authorization and consumer mutation locks
+// remain with the caller. Existing delete protection and PreflightDelete apply.
+// Selector/storage errors use Refusal; cancellation before the locked write
+// preserves errors.Is. Once writing begins, the Store transaction completes.
+//
 // Rename changes one explicitly selected Project, Window, Pane or Agent.
 // Ref and optional Project/Window scopes never infer an active target. Encode
 // its singular Projection and Receipt with the same JSON encoding as above.
