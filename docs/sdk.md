@@ -913,15 +913,37 @@ while malformed, unsupported and lost Registry state is refused without repair.
 `bytes`, `digest`, `revision` and `maxBytes` (65536). The separate `source`,
 `effectiveText` and `effectiveDigest` retain the existing Project guidance load
 meaning: absent, empty and whitespace-only files are off. Raw bytes still
-identify each stored state. Existing NUL is returned unchanged; invalid UTF-8
+identify each stored state within the limit. Existing NUL is returned unchanged; invalid UTF-8
 reads are refused with `agent-guidance-unreadable`. Validate a valid candidate to
 obtain the current revision and replace invalid existing UTF-8 without reading it
 as text. Candidates must be UTF-8 without NUL and fit the byte limit.
 
+Existing oversized **Project** files return metadata with `oversize: true`,
+`bytes` equal to the actual file size, `prefixBytes` equal to 65537 and
+`prefixDigest` equal to the SHA-256 of those leading bytes. Total file reads are
+bounded to 65537 bytes per state observation. `text`, `digest`, `source`,
+`effectiveText` and `effectiveDigest` are empty; no partial body is returned or
+used as effective guidance, and oversized bodies are not fully UTF-8 checked.
+CLI `agent guidance read --project <ref> -o json` returns the same metadata;
+plain reads retain `agent-guidance-too-large` with empty stdout. Global guidance
+editing retains its existing oversized-file refusal.
+
+The oversized file's revision binds the selected UID, presence, actual size,
+file identity (device/inode), mtime and prefix digest. Inconsistent stat
+observations return `agent-guidance-unreadable` without retrying. Use the revision
+from read or validate to replace the file with a candidate within the limit, or
+to delete it. A changed size, identity, mtime or prefix yields
+`agent-guidance-stale`. A suffix-only edit that restores size, mtime and identity
+is outside this bounded fingerprint guarantee. Recovery clears `oversize`,
+`prefixDigest` and `prefixBytes`; normal raw revisions remain unchanged.
+These three additive fields are always present in Project JSON (false/empty/zero
+for normal files), which affects exact JSON comparisons and unkeyed Go struct
+literals.
+
 `core.ProjectGuidanceValidation` returns candidate text, bytes, digest, maxBytes,
 projectUID and the current target revision. Read and validate create no locks,
 directories, migration receipts or snapshots. A revision identifies the selected
-Project UID, raw bytes and presence. Write and delete require it; stale inputs
+Project UID, raw bytes and presence (or the bounded fingerprint above). Write and delete require it; stale inputs
 return `agent-guidance-stale`. Both recheck under the shared guidance writer lock
 and preserve global user guidance, policy and fragments. Writes use the existing
 atomic save and permission policy. Deleting an absent file with its current

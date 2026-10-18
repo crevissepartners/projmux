@@ -15,7 +15,8 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when profile parse and preview joined the graph,
+// The baseline last moved when guidance read documented Project oversize recovery
+// metadata. Previously, profile parse and preview joined the graph,
 // alongside host-global agent guidance read/validate/set/reset. Before that,
 // show/enable/disable joined the graph. Before that, the built-in profile was
 // removed: the `profile
@@ -115,8 +116,8 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	// Includes guidance editing and typed profile parse/write-free preview routes.
-	const want = "e6a318364a296b078d5fc0cd600c2ff7d7bbfd177f4c8876f31dbb435bace113"
+	// Includes the Project guidance oversize recovery metadata summary.
+	const want = "f866093b916b83adc3eea0c1248fb167bf211ddde78da0a08910c57ecbfb59a3"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

@@ -44,8 +44,11 @@ type AgentGuidanceInspection struct {
 }
 
 // ProjectGuidanceFile keeps exact stored bytes separate from Load's effective guidance.
-// Revision identifies the selected UID, presence and raw bytes.
+// Revision identifies UID, presence and raw bytes, or an oversize bounded fingerprint.
 type ProjectGuidanceFile struct {
+	Oversize        bool   `json:"oversize"`
+	PrefixDigest    string `json:"prefixDigest"`
+	PrefixBytes     int    `json:"prefixBytes"`
 	Path            string `json:"path"`
 	Present         bool   `json:"present"`
 	Text            string `json:"text"`

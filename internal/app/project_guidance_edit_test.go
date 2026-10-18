@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/agentguidance"
 	"github.com/crevissepartners/projmux/internal/core/metadata"
 	storemetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/pkg/projmux"
@@ -105,6 +106,60 @@ func TestProjectGuidanceEditingCLISDKParity(t *testing.T) {
 	if err != nil || read.Present || !reflect.DeepEqual(cli, read) {
 		t.Fatal("delete parity", err)
 	}
+
+	// SDK and JSON expose bounded metadata; plain reads keep the too-large refusal.
+	store := agentguidance.NewDefaultProjectStore(paths)
+	path, err := store.Path(read.ProjectUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int{agentguidance.MaxSize + 1, agentguidance.MaxSize * 16} {
+		for _, action := range []string{"set", "delete"} {
+			// Binary prefix demonstrates that oversize content is never decoded as text.
+			content := bytes.Repeat([]byte{0xff}, size)
+			if err := os.WriteFile(path, content, 0600); err != nil {
+				t.Fatal(err)
+			}
+			current, err := sdk.ReadProjectGuidance(ctx, "sample")
+			if err != nil || !current.Oversize || current.Bytes != size || current.PrefixBytes != agentguidance.MaxSize+1 || current.PrefixDigest != agentguidance.Digest(content[:agentguidance.MaxSize+1]) || current.Text != "" || current.Digest != "" || current.Source != "" || current.EffectiveText != "" || current.EffectiveDigest != "" {
+				t.Fatalf("oversize SDK %+v %v", current, err)
+			}
+			raw, err = run("", "read", "-p", "sample", "-o", "json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal([]byte(raw), &cli); err != nil || cli != current {
+				t.Fatalf("oversize JSON %+v %v", cli, err)
+			}
+			raw, err = run("", "read", "-p", "sample")
+			if raw != "" || err == nil || !strings.Contains(err.Error(), "agent-guidance-too-large") {
+				t.Fatalf("plain read %q %v", raw, err)
+			}
+			validation, err := sdk.ValidateProjectGuidance(ctx, "sample", []byte("recovered"))
+			if err != nil || validation.Revision != current.Revision {
+				t.Fatalf("oversize validate %+v %v", validation, err)
+			}
+			args := []string{action, "--project", "sample", "--if-match", current.Revision, "-o", "json"}
+			if action == "set" {
+				args = append(args, "--file", "-")
+			}
+			raw, err = run("recovered", args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal([]byte(raw), &cli); err != nil {
+				t.Fatal(err)
+			}
+			after, err := sdk.ReadProjectGuidance(ctx, "sample")
+			if err != nil || after != cli || after.Oversize || after.PrefixDigest != "" || after.PrefixBytes != 0 || after.Present != (action == "set") {
+				t.Fatalf("recovered %+v %v", after, err)
+			}
+			if action == "set" && after.Text != "recovered" {
+				t.Fatal("missing replacement")
+			}
+		}
+	}
+
 }
 func TestProjectGuidanceCLIExplicitTargetNoFallback(t *testing.T) {
 	for _, args := range [][]string{
