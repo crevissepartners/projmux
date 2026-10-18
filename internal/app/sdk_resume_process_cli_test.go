@@ -399,6 +399,14 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 				defer cancel()
 				ref, before, old := recordedLostHostCLI(t, ctx, f, provider)
+				// Preserve nonempty prior input/control evidence in every paired lane.
+				old.TurnID = "interrupted-fixture-turn"
+				old.Pending = []m.ProcessRecordedControl{{ID: "expired-fixture-question", Kind: "question", ConnectionID: old.ConnectionID, SessionID: processRelaunchConversation(&old), TurnID: old.TurnID}}
+				seed, _ := before.Pane(old.Binding.PaneUID)
+				seed.Status.ProcessSession = old.Clone()
+				if _, _, err := f.store.UpdateConvergent(func(reg *m.Registry) error { *reg = before.Clone(); return nil }); err != nil {
+					t.Fatal(err)
+				}
 				cleanupDetachedResume(t, f, ref)
 				client, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
 				if err != nil {
@@ -512,7 +520,15 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 				}
 				observed := publicPane.Status.ProcessSession
 				termination := publicPane.Status.LastTermination
-				if observed.Binding.AgentUID != binding.AgentUID || observed.Binding.PaneUID != binding.PaneUID || observed.Binding.Generation == binding.Generation || observed.History.Binding != binding || observed.History.InterruptedTurnID != old.TurnID || len(observed.History.Expired) != len(old.Pending) {
+				var expectedExpired []core.ProcessRecordedControl
+				rawExpired, err := json.Marshal(old.Pending)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = json.Unmarshal(rawExpired, &expectedExpired); err != nil {
+					t.Fatal(err)
+				}
+				if observed.Binding.AgentUID != binding.AgentUID || observed.Binding.PaneUID != binding.PaneUID || observed.Binding.Generation == binding.Generation || observed.History.Binding != binding || observed.History.InterruptedTurnID != old.TurnID || !reflect.DeepEqual(observed.History.Expired, expectedExpired) {
 					t.Fatal("public identity/history changed", observed)
 				}
 				if termination == nil || termination.Source != core.TerminationSourceReconcile || termination.Classification != core.TerminationUnknown || termination.Generation != binding.Generation || termination.OperationID != binding.OperationID || termination.AgentUID != binding.AgentUID || termination.PaneUID != binding.PaneUID || termination.ExitCode != nil {
@@ -526,7 +542,7 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 				if !ok || !reflect.DeepEqual(publicAgent.Status.LastTermination, termination) {
 					t.Fatal("public Agent/Pane previous evidence differs", resource)
 				}
-				t.Logf("PUBLIC_OBSERVATION provider=%s mode=%s sameAgent=true samePane=true newGeneration=true previousHistory=true interruptedTurnAndExpiredCount=true previousReconcileUnknown=true inventedExitCode=false", provider, mode)
+				t.Logf("PUBLIC_OBSERVATION provider=%s mode=%s sameAgent=true samePane=true newGeneration=true previousHistory=true interruptedTurnAndExpiredValues=true previousReconcileUnknown=true inventedExitCode=false", provider, mode)
 				detachedResumeCLI(t, ctx, f, "agent", "stop", ref)
 			})
 		}
