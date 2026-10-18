@@ -79,6 +79,9 @@ func hostSocket(provider, registryPath, pane, generation string) string {
 // ExactQuestion contains only question display data, never a writable
 // provider token. Policy is captured at admission; Delivery names its transport.
 type ExactQuestion struct {
+	// ItemID is populated only by the opt-in SDK source projection from saved
+	// async RequestID. Host reads leave it empty; it is never a control token.
+	ItemID     string                   `json:"itemId,omitempty"`
 	QuestionID string                   `json:"questionID"`
 	Policy     string                   `json:"policy"`
 	Delivery   string                   `json:"delivery"`

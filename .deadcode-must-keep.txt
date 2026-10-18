@@ -62,12 +62,14 @@ Client.InterruptTurn	Public v0 exact turn SDK entrypoint or its external-only ex
 Client.ListAccounts	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.ListAgentSessions	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 Client.ListApprovals	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
+Client.ListApprovalsWithOptions	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Client.ListInstructions	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
 Client.ListNotifications	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.ListProfiles	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ListProjectCandidates	Public v0 read-only project candidate SDK entrypoint; covered by discovery order, Registry refusal and CLI parity tests.
 Client.ListProjectSessions	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 Client.ListQuestions	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+Client.ListQuestionsWithOptions	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.MessageStatus	Public SDK Client.MessageStatus entrypoint; external consumers follow original receipts without replay.
 Client.Models	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
@@ -361,6 +363,8 @@ SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the 
 ServeSupervisor	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Service.Delete	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.Get	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Service.ListFileOnly	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
+Service.ListWithSource	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Service.ProjectClaudeSend	Client.SendMessage preserves an exact partial receipt and uncertainty when the Claude provider result cannot be persisted; CLI adapter behavior remains unchanged.
 Service.Read	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.Send	Client.SendMessage uses this typed wrapper to preserve partial or uncertain receipts alongside errors.

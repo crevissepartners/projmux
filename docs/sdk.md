@@ -448,7 +448,79 @@ provider/control/transport reason codes; context errors remain ordinary errors.
 These methods invoke shared execution directly, without a CLI subprocess,
 provider creation, Stop, resume or daemon changes.
 
+## File-only approval reads
+
+```go
+list, err := client.ListApprovalsWithOptions(ctx, "uid:agent-…",
+    core.ApprovalListOptions{FileOnly: true})
+if err != nil {
+    return err
+}
+switch list.ReadMode {
+case core.ApprovalReadModeStored:
+    // Claude's saved waiting requests, with the existing answering and ToolInput DTO.
+case core.ApprovalReadModeSingleRead:
+    // This provider needs a separate ListApprovals call if live reads are wanted.
+}
+```
+
+`FileOnly` selects the Agent from a degraded read-only Registry snapshot. It
+never observes a runtime, invokes tmux or a provider/host RPC, acquires a
+mutation lock, reconciles or writes the Registry, or starts a provider. Every
+normalized non-Claude provider receives `single-read` success metadata with
+its own Provider and AgentUID and an empty requests array. An empty array alone
+is not a provider classification. Opening the saved source can fail before
+classification; Claude store errors are returned without live fallback.
+`stored` preserves the existing waiting-only, effective-expiration projection,
+answering policy and ToolInput display fields. Reads leave source bytes,
+permissions and modification times unchanged.
+
+`ListApprovals` and `ListApprovalsWithOptions` with zero options retain their
+existing live/store selection, refusal codes and JSON bytes. Their optional
+`readMode` field is omitted. No new refusal token is introduced.
+
 ## Agent questions
+
+For captured source metadata, opt in explicitly:
+
+```go
+list, err := client.ListQuestionsWithOptions(ctx, "uid:agent-…",
+    core.QuestionListOptions{IncludeSource: true})
+```
+
+The envelope's optional `provider`, `runtime` (`core.RuntimeKind`), and `phase`
+(`core.AgentPhase`) describe the exact recorded Agent and its owned Pane.
+`session` is present only for a running process whose captured conversation
+passed the before/after fence: Claude session ID or Codex thread ID. These
+values describe this read; they are not control credentials or a guarantee
+about subsequent reads. Missing ownership or an unidentified running
+conversation is refused with `CodeQuestionStale`. Agent/Pane ownership,
+activation, binding, generation, operation, provider, phase, conversation and
+connection changes discard the entire result with that code. Progress,
+observation timestamps and ordinary turn updates do not change source identity.
+
+Optional `QuestionView.ItemID` and `ExactQuestion.ItemID` (`itemId` in JSON)
+come exclusively from the same Agent's async record's opaque RequestID.
+History keeps its recorded ID across generations. Exact async views use a
+same-Agent, same-QuestionID saved record after source fencing. Native questions,
+CLI async-message questions, absent records/IDs and other Agents supply no
+item ID; values returned by a custom dispatcher cannot inject one.
+
+Process history has `CanAnswer=false`; use `ExactQuestions` for current native
+and async host state. Stopped process reads omit session and exact questions,
+preserve partial/empty saved history even on saved-source errors, and never
+query the host. Running process reads query the existing host with the supplied
+context; a successful exact read remains available even if saved history is
+unreadable. CLI async-message records keep their independent Agent-UID policy
+and answerability; failure to read that namespace fails the single read. If
+opening the saved source failed, no CLI namespace read is attempted. No provider
+is started. This API does not batch reads or set a polling timeout; callers own
+batch deadlines, concurrency limits and per-Agent unavailable reporting.
+
+`ListQuestions` and zero options preserve the original behavior, error order
+and JSON bytes, with source fields and item IDs omitted. This is an explicit
+existing-host read option, not a file-only question API.
+
 
 `Client.ListQuestions(ctx, "uid:agent-…")` reads the CLI's redacted question
 projection. Use its opaque question ID and `CanAnswer`, including the captured
