@@ -281,12 +281,14 @@ func TestSourceReadNeverTrustsDispatcherItemIDs(t *testing.T) {
 	sourceRecord(t, st.AsyncStore(), own, "async", "agent", "authoritative/opaque")
 	sourceRecord(t, st.AsyncStore(), other, "async", "other-agent", "foreign-item")
 	sourceRecord(t, st, "question-0000000000000005", "", "agent", "legacy-item")
+	sourceRecord(t, st.AsyncStore(), "question-0000000000000006", "async", "agent", "")
 	d.read = func(context.Context) ([]processquestions.ExactQuestion, error) {
 		return []processquestions.ExactQuestion{
 			{QuestionID: own, Delivery: "async", ItemID: "host-injected"},
 			{QuestionID: other, Delivery: "async", ItemID: "host-injected"},
 			{QuestionID: absent, Delivery: "async", ItemID: "host-injected"},
 			{QuestionID: native, Delivery: "native", ItemID: "host-injected"},
+			{QuestionID: "question-0000000000000006", Delivery: "async", ItemID: "host-injected"},
 		}, nil
 	}
 	plain, e := s.List(context.Background(), r.Agents[0])
@@ -310,5 +312,54 @@ func TestSourceReadNeverTrustsDispatcherItemIDs(t *testing.T) {
 		if q.ItemID != want {
 			t.Fatal("source trusted host/foreign ItemID", q)
 		}
+	}
+}
+
+func TestSourceReadHostFailureDeadlineAndRegistryFailure(t *testing.T) {
+	for _, kind := range []string{"host-error", "deadline", "registry-after"} {
+		t.Run(kind, func(t *testing.T) {
+			s, r, _, d := sourceFixture(t)
+			ctx := context.Background()
+			if kind == "deadline" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
+				defer cancel()
+			}
+			reads := 0
+			s.LoadRegistry = func() (m.Registry, error) {
+				reads++
+				if kind == "registry-after" && reads > 1 {
+					return m.Registry{}, errors.New("registry unreadable")
+				}
+				return r.Clone(), nil
+			}
+			d.read = func(got context.Context) ([]processquestions.ExactQuestion, error) {
+				switch kind {
+				case "host-error":
+					return nil, errors.New("host unavailable")
+				case "deadline":
+					if got != ctx {
+						t.Fatal("context replaced")
+					}
+					<-got.Done()
+					return nil, got.Err()
+				}
+				return []processquestions.ExactQuestion{{QuestionID: "must-discard"}}, nil
+			}
+			list, e := s.ListWithSource(ctx, r.Agents[0])
+			if kind == "deadline" {
+				if !errors.Is(e, context.DeadlineExceeded) {
+					t.Fatal(e)
+				}
+			} else {
+				var f *Failure
+				if !errors.As(e, &f) || f.Code != "question-stale" {
+					t.Fatal(e)
+				}
+			}
+			if list.AgentUID != "" || len(list.ExactQuestions) != 0 || d.calls != 1 {
+				t.Fatal("failed read returned a result", list, d.calls)
+			}
+		})
 	}
 }
