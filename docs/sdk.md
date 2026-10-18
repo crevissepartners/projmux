@@ -973,6 +973,37 @@ These operations cover profile TOML and local storage admission. Bundle JSON,
 bundled instructions, overwrite decisions, permission expansion confirmation
 and atomic bundle import are outside this API.
 
+### Replacing a profile and restoring its original
+
+`Client.RecreateProfile(ctx, name, content, true)` replaces an existing profile
+and permits a project scope change. It returns the existing
+`core.ProfileWriteResult`. Confirmation is required. Cancellation, name validation,
+confirmation, the new content's 64 KiB limit and writable path resolution precede
+snapshot admission. The original must exist, fit the limit and pass pure parsing;
+named instructions and role claims need not currently be usable.
+
+The store prepares a same-directory snapshot before calling its existing Delete
+and Write operations. New content receives every existing Write validation. If
+Write fails, the store restores only the original bytes captured by that call,
+without checking instructions or role claims again. A successful restoration
+returns the original Write error and a zero result; the original file mode is preserved, including 0600 and 0640.
+This intentionally changes the former web recovery behavior, which normalized
+nonstandard original modes to 0600. A successful replacement uses Write's 0600 mode. Cancellation after admission
+does not interrupt restoration. A readable in-directory symlink follows the
+existing store behavior: Delete removes the link itself and restoration produces
+a regular file, leaving its former target untouched.
+
+If restoration also fails, `*projmux.Refusal` has
+`CodeProfileRestoreFailed` (`profile-restore-failed`). Its message identifies the
+profile, says the original was not restored and gives the retained snapshot path.
+Both replacement and restoration causes remain traversable with `errors.Is` and
+`errors.As`; the replacement's typed refusal is available below `Refusal.Unwrap()`.
+Inspect the profile and retained snapshot before recovering or retrying. This is
+not a successful replacement or a claim that nothing changed. The API accepts no
+caller-supplied restoration bytes, path or mode. It does not provide crash
+recovery or serialize concurrent external edits. Existing Write, Delete and
+Preview behavior is unchanged; this operation adds no CLI command.
+
 ### Project guidance editing
 
 `ReadProjectGuidance(ctx, projectRef)`, `ValidateProjectGuidance(ctx, projectRef,

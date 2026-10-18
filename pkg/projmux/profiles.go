@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	CodeProfileRestoreFailed        Code = "profile-restore-failed"
 	CodeProfileNameInvalid          Code = "profile-name-invalid"
 	CodeProfileNameReserved         Code = "profile-name-reserved"
 	CodeProfileNotFound             Code = "profile-not-found"
@@ -76,6 +77,10 @@ func profileRefusal(err error) error {
 	if err == nil {
 		return nil
 	}
+	var restoration *profile.RestoreError
+	if errors.As(err, &restoration) {
+		return &Refusal{Code: CodeProfileRestoreFailed, Name: restoration.Name, message: restoration.Error(), cause: errors.Join(profileRefusal(restoration.WriteError), restoration.WriteError, restoration.RestoreError)}
+	}
 	var p *profile.Error
 	if errors.As(err, &p) {
 		return &Refusal{Code: Code(profile.ReasonOf(err)), Name: p.Name, message: err.Error()}
@@ -116,4 +121,20 @@ func (c *Client) PreviewProfile(ctx context.Context, name string, content []byte
 func profileSpec(s profiles.Spec) core.ProfileSpec {
 	return core.ProfileSpec{Project: s.Project, Provider: s.Provider, Instructions: s.Instructions,
 		Model: s.Model, Effort: s.Effort, Roles: s.Roles, Permissions: core.ProfilePermissions(s.Permissions)}
+}
+
+// RecreateProfile replaces an existing profile, allowing its project scope to
+// change. It requires confirm=true. Failed replacement restores this call's
+// original bytes and file mode without revalidating instructions or role claims.
+// CodeProfileRestoreFailed reports a failed restoration and a retained snapshot.
+func (c *Client) RecreateProfile(ctx context.Context, name string, content []byte, confirm bool) (core.ProfileWriteResult, error) {
+	p, err := c.profileService().Recreate(ctx, name, content, confirm)
+	if err != nil {
+		var confirmation *profiles.ConfirmationError
+		if errors.As(err, &confirmation) {
+			return core.ProfileWriteResult{}, &Refusal{Code: CodeProfileConfirmationRequired, Name: name, message: fmt.Sprintf("RecreateProfile confirm must be true for %q; nothing was changed", name)}
+		}
+		return core.ProfileWriteResult{}, profileRefusal(err)
+	}
+	return core.ProfileWriteResult{Name: p.Name, Path: p.Path, Digest: p.Digest, Size: p.Size}, nil
 }
