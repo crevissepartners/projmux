@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.2](https://github.com/crevissepartners/projmux/compare/v0.17.1...v0.17.2) (2026-10-18)
+
+
+### Features
+
+* **config:** expose central resource mode and visibility settings ([#1613](https://github.com/crevissepartners/projmux/issues/1613)) ([8843911](https://github.com/crevissepartners/projmux/commit/8843911b8ae88dab6c4af05b9948c3a3caf496a4))
+* **guidance:** expose global guidance editing through CLI and SDK ([#1610](https://github.com/crevissepartners/projmux/issues/1610)) ([db09005](https://github.com/crevissepartners/projmux/commit/db09005b438c8a340f6bf3b34a9cb63a7703cfcb))
+* **guidance:** expose project guidance management through CLI and SDK ([#1614](https://github.com/crevissepartners/projmux/issues/1614)) ([6a87a49](https://github.com/crevissepartners/projmux/commit/6a87a49ac04f04c3f1ea47d4525ffa9dee6d05a7))
+* **links:** add explicit degraded registry options to link rules ([#1616](https://github.com/crevissepartners/projmux/issues/1616)) ([ffb3213](https://github.com/crevissepartners/projmux/commit/ffb3213cfc5eab7d1078742150a592ee1af6dd26))
+* **profiles:** expose typed parsing and write-free previews ([#1612](https://github.com/crevissepartners/projmux/issues/1612)) ([c56b378](https://github.com/crevissepartners/projmux/commit/c56b378336f42793cecb2bf9dc92b9d6331f7b7e))
+
 ## [0.17.1](https://github.com/crevissepartners/projmux/compare/v0.17.0...v0.17.1) (2026-10-17)
 
 
