@@ -26,7 +26,9 @@ func SetLabels(ctx context.Context, s Store, kind metadata.Kind, uid string, set
 	if s.Update == nil || s.Mutator == nil {
 		return result, Classify(fmt.Errorf("resource registry store is not configured"))
 	}
+	callbackEntered := false
 	committed, err := s.Update(func(working *metadata.Registry) error {
+		callbackEntered = true
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -38,6 +40,14 @@ func SetLabels(ctx context.Context, s Store, kind metadata.Kind, uid string, set
 		return err
 	})
 	if err != nil {
+		// Store admission can time out before our callback sees cancellation.
+		// Once the callback has entered, retain its outcome and any write I/O
+		// error instead of replacing them with a later cancellation.
+		if !callbackEntered {
+			if cancelErr := ctx.Err(); cancelErr != nil {
+				return LabelResult{}, cancelErr
+			}
+		}
 		return LabelResult{}, Classify(err)
 	}
 	result.Registry = committed.Clone()
