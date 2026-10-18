@@ -147,7 +147,7 @@ func (c Service) ListWithSource(ctx context.Context, agent coremetadata.Agent) (
 			records = append(records, r.Record)
 		}
 	}
-	c.projectRecords(&list, agent, process, records, cliRecords)
+	c.projectRecords(&list, agent, process, records, cliRecords, true)
 	// Only records actually read from the async namespace supply opaque item IDs.
 	ids := map[string]string{}
 	for _, r := range asyncRecords {

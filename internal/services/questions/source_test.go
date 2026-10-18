@@ -363,3 +363,96 @@ func TestSourceReadHostFailureDeadlineAndRegistryFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceReadPreservesSavedHistoryState(t *testing.T) {
+	for _, phase := range []m.AgentPhase{m.PhaseOffline, m.PhaseRunning} {
+		t.Run(string(phase), func(t *testing.T) {
+			s, reg, st, d := sourceFixture(t)
+			reg.Agents[0].Status.Phase = phase
+			record := sourceRecord(t, st.AsyncStore(), "question-0000000000000001", "async", "agent", "opaque-history")
+			d.read = func(context.Context) ([]processquestions.ExactQuestion, error) { return nil, nil }
+			before, e := os.ReadFile(st.AsyncStore().Path())
+			if e != nil {
+				t.Fatal(e)
+			}
+			source, e := s.ListWithSource(context.Background(), reg.Agents[0])
+			if e != nil {
+				t.Fatal(e)
+			}
+			if len(source.Questions) != 1 {
+				t.Fatal(source)
+			}
+			q := source.Questions[0]
+			if q.State != record.State || q.Disposition != record.Disposition || q.State != agentquestion.StateWaiting || q.CanAnswer || q.CanDecline || q.ItemID != "opaque-history" {
+				t.Fatalf("unmatched history changed stored state: %+v", q)
+			}
+			plain, e := s.List(context.Background(), reg.Agents[0])
+			if e != nil {
+				t.Fatal(e)
+			}
+			if len(plain.Questions) != 1 || plain.Questions[0].State != agentquestion.StateClosed || plain.Questions[0].Disposition != "process-stale" {
+				t.Fatalf("default stale projection changed: %+v", plain)
+			}
+			after, e := os.ReadFile(st.AsyncStore().Path())
+			if e != nil {
+				t.Fatal(e)
+			}
+			if string(before) != string(after) {
+				t.Fatal("projection changed stored bytes")
+			}
+			closed, e := st.AsyncStore().Close(record.ID, agentquestion.CloseReasonTurnEnded)
+			if e != nil {
+				t.Fatal(e)
+			}
+			source, e = s.ListWithSource(context.Background(), reg.Agents[0])
+			if e != nil {
+				t.Fatal(e)
+			}
+			if source.Questions[0].State != closed.State || source.Questions[0].Disposition != closed.Disposition || closed.State != agentquestion.StateClosed {
+				t.Fatal("actual stored transition was hidden", source)
+			}
+			if phase == m.PhaseOffline && d.calls != 0 {
+				t.Fatal("stopped history queried host", d.calls)
+			}
+		})
+	}
+}
+
+func TestSourceReadKeepsMatchedExactProjection(t *testing.T) {
+	s, reg, st, d := sourceFixture(t)
+	record := sourceRecord(t, st.AsyncStore(), "question-0000000000000001", "async", "agent", "opaque-history")
+	for _, state := range []agentquestion.State{agentquestion.StateClosed, agentquestion.StateWaiting} {
+		d.read = func(context.Context) ([]processquestions.ExactQuestion, error) {
+			return []processquestions.ExactQuestion{{QuestionID: record.ID, Delivery: "async", State: state, CanAnswer: state == agentquestion.StateWaiting}}, nil
+		}
+		plain, e := s.List(context.Background(), reg.Agents[0])
+		if e != nil {
+			t.Fatal(e)
+		}
+		source, e := s.ListWithSource(context.Background(), reg.Agents[0])
+		if e != nil {
+			t.Fatal(e)
+		}
+		if len(source.ExactQuestions) != 1 || source.ExactQuestions[0].State != state || source.ExactQuestions[0].CanAnswer != (state == agentquestion.StateWaiting) {
+			t.Fatal("exact refresh was changed", source)
+		}
+		source.Provider, source.Runtime, source.Phase, source.Session = "", "", "", ""
+		for i := range source.Questions {
+			source.Questions[i].ItemID = ""
+		}
+		for i := range source.ExactQuestions {
+			source.ExactQuestions[i].ItemID = ""
+		}
+		a, e := json.Marshal(plain)
+		if e != nil {
+			t.Fatal(e)
+		}
+		b, e := json.Marshal(source)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if string(a) != string(b) {
+			t.Fatalf("matched projection differs beyond source metadata: %s / %s", a, b)
+		}
+	}
+}

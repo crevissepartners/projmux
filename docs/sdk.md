@@ -507,7 +507,10 @@ CLI async-message questions, absent records/IDs and other Agents supply no
 item ID; values returned by a custom dispatcher cannot inject one.
 
 Process history has `CanAnswer=false`; use `ExactQuestions` for current native
-and async host state. Stopped process reads omit session and exact questions,
+and async host state. Opt-in unmatched history preserves its saved State and
+Disposition: an unavailable delivery does not turn a waiting question into
+closed/process-stale. Actual saved transitions and same-ID exact projections
+retain their existing meaning. Stopped process reads omit session and exact questions,
 preserve partial/empty saved history even on saved-source errors, and never
 query the host. Running process reads query the existing host with the supplied
 context; a successful exact read remains available even if saved history is

@@ -158,6 +158,9 @@ func TestExternalQuestionSourceConsumer(t *testing.T) {
 	if e != nil || list.Provider != "codex" || list.Runtime != core.RuntimeProcess || list.Phase != core.PhaseOffline || list.Session != "" || len(list.Questions) != 1 || list.Questions[0].ItemID != "opaque/item:001" || list.Questions[0].CanAnswer {
 		t.Fatalf("source consumer %+v %v", list, e)
 	}
+	if list.Questions[0].State != core.QuestionWaiting || list.Questions[0].Disposition != "" {
+		t.Fatal("opt-in closed an unanswered saved history", list)
+	}
 	old, e := c.ListQuestions(ctx, "uid:agent")
 	if e != nil {
 		t.Fatal(e)
@@ -167,6 +170,9 @@ func TestExternalQuestionSourceConsumer(t *testing.T) {
 		t.Fatal(e)
 	}
 	assertSameJSON(t, old, zero)
+	if old.Questions[0].State != core.QuestionClosed || old.Questions[0].Disposition != "process-stale" {
+		t.Fatal("default/zero stale projection changed", old, zero)
+	}
 	if old.Provider != "" || old.Runtime != "" || old.Phase != "" || old.Session != "" || old.Questions[0].ItemID != "" {
 		t.Fatal("default populated source metadata", old)
 	}

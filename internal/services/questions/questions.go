@@ -199,14 +199,16 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 			return List{}, err
 		}
 	}
-	c.projectRecords(&result, agent, process, records, cliRecords)
+	c.projectRecords(&result, agent, process, records, cliRecords, false)
 
 	return result, nil
 }
 
 // projectRecords is the shared display projection. Retrieval and error order
 // stay with each caller; the default List path retains its existing policy.
-func (c Service) projectRecords(result *List, agent coremetadata.Agent, process bool, records []agentquestion.Record, cliRecords map[string]agentquestion.CLIAsyncRecord) {
+// Source reads preserve unmatched saved history: lack of current delivery is a
+// capability limit, not evidence that the question itself was closed.
+func (c Service) projectRecords(result *List, agent coremetadata.Agent, process bool, records []agentquestion.Record, cliRecords map[string]agentquestion.CLIAsyncRecord, preserveUnmatchedHistory bool) {
 	for _, record := range records {
 		questions, err := record.ParsedQuestions()
 		if err != nil {
@@ -231,7 +233,7 @@ func (c Service) projectRecords(result *List, agent coremetadata.Agent, process 
 					break
 				}
 			}
-			if !current && view.State == agentquestion.StateWaiting {
+			if !preserveUnmatchedHistory && !current && view.State == agentquestion.StateWaiting {
 				view.State, view.Disposition = agentquestion.StateClosed, "process-stale"
 			}
 		}
