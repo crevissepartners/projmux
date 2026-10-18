@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -12,10 +13,16 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
-func TestAgentProtectionPublicConsumer(t *testing.T) {
+func TestAgentProtectionPublicConsumerNoRuntime(t *testing.T) {
+	trace := protectionRuntimeTrap(t)
+	defer func() {
+		if raw, err := os.ReadFile(trace); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("unexpected SDK runtime/CLI calls: %q %v", raw, err)
+		}
+	}()
 	state := t.TempDir()
 	// Fixture setup only. Consumers mutate resources exclusively through Client.
-	const fixture = `{"schemaVersion":5,"controlSessions":[{"apiVersion":"projmux.io/v1alpha1","kind":"ControlSession","metadata":{"uid":"ctl-test","name":"test"},"spec":{"session":"test"}}],"windows":[{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-test","name":"test","ownerRef":{"kind":"ControlSession","uid":"ctl-test"}},"spec":{"anchorPaneRef":"pane-test"}}],"panes":[{"apiVersion":"projmux.io/v1alpha1","kind":"Pane","metadata":{"uid":"pane-test","name":"shell","ownerRef":{"kind":"Window","uid":"win-test"}},"spec":{"role":"shell"}}],"agents":[{"apiVersion":"projmux.io/v1alpha1","kind":"Agent","metadata":{"uid":"agent-test","name":"reader","ownerRef":{"kind":"Window","uid":"win-test"},"labels":{"other":"kept"}},"spec":{"provider":"codex"},"status":{"phase":"Offline"}}],"nameReservations":[{"kind":"ControlSession","name":"test","uid":"ctl-test"},{"scope":"ctl-test","kind":"Window","name":"test","uid":"win-test"},{"scope":"win-test","kind":"Pane","name":"shell","uid":"pane-test"},{"scope":"ctl-test","kind":"Agent","name":"reader","uid":"agent-test"}]}`
+	const fixture = `{"schemaVersion":5,"controlSessions":[{"apiVersion":"projmux.io/v1alpha1","kind":"ControlSession","metadata":{"uid":"ctl-test","name":"test"},"spec":{"session":"test"}}],"windows":[{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-test","name":"test","ownerRef":{"kind":"ControlSession","uid":"ctl-test"}},"spec":{"anchorPaneRef":"pane-test"}}],"panes":[{"apiVersion":"projmux.io/v1alpha1","kind":"Pane","metadata":{"uid":"pane-test","name":"shell","ownerRef":{"kind":"Window","uid":"win-test"}},"spec":{"role":"shell"}}],"agents":[{"apiVersion":"projmux.io/v1alpha1","kind":"Agent","metadata":{"uid":"agent-test","name":"reader","ownerRef":{"kind":"Window","uid":"win-test"},"labels":{"other":"kept"}},"spec":{"provider":"codex"},"status":{"phase":"Offline"}}],"nameReservations":[{"kind":"ControlSession","name":"test","uid":"ctl-test"},{"scope":"ctl-test","kind":"Window","name":"test","uid":"win-test"},{"scope":"ctl-test","kind":"Pane","name":"shell","uid":"pane-test"},{"scope":"ctl-test","kind":"Agent","name":"reader","uid":"agent-test"}]}`
 	dir := filepath.Join(state, "metadata")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -71,4 +78,26 @@ func TestAgentProtectionPublicConsumer(t *testing.T) {
 	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeResourceNotFound {
 		t.Fatal(err)
 	}
+}
+
+// PATH traps make even a read-only tmux/provider/CLI subprocess observable.
+func protectionRuntimeTrap(t *testing.T) string {
+	t.Helper()
+	bin := t.TempDir()
+	trace := filepath.Join(bin, "calls")
+	t.Setenv("PROTECTION_TEST_TRACE", trace)
+	t.Setenv("PATH", bin)
+	for _, name := range []string{"tmux", "projmux", "claude", "codex", "antigravity"} {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte(`#!/bin/sh
+printf 'runtime call\n' >> "$PROTECTION_TEST_TRACE"
+exit 91
+`), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if found, err := exec.LookPath(name); err != nil || found != path {
+			t.Fatalf("trap unavailable: %s %v", found, err)
+		}
+	}
+	return trace
 }

@@ -3,6 +3,9 @@ package mutations
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -122,5 +125,44 @@ func TestLabelsLegacyIdempotenceSnapshotAndDeletePreflight(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLabelsDoNotInvokeRuntime(t *testing.T) {
+	bin := t.TempDir()
+	trace := filepath.Join(bin, "calls")
+	t.Setenv("PATH", bin)
+	t.Setenv("PROTECTION_TEST_TRACE", trace)
+	for _, name := range []string{"tmux", "projmux", "claude", "codex", "antigravity"} {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte(`#!/bin/sh
+printf 'runtime call\n' >> "$PROTECTION_TEST_TRACE"
+exit 91
+`), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if found, err := exec.LookPath(name); err != nil || found != path {
+			t.Fatalf("trap unavailable: %s %v", found, err)
+		}
+	}
+	reg := metadata.Registry{Agents: []metadata.Agent{{Metadata: metadata.ObjectMeta{UID: "agent-one", Name: "one"}}}}
+	s := Store{Mutator: func() metadata.Mutator { return metadata.Mutator{} }, Update: func(fn func(*metadata.Registry) error) (metadata.Registry, error) {
+		err := fn(&reg)
+		return reg.Clone(), err
+	}}
+	for _, protect := range []bool{true, false} {
+		var set map[string]string
+		var remove []string
+		if protect {
+			set = map[string]string{metadata.LabelProtected: "true"}
+		} else {
+			remove = []string{metadata.LabelProtected}
+		}
+		if _, err := SetLabels(context.Background(), s, metadata.KindAgent, "agent-one", set, remove); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if raw, err := os.ReadFile(trace); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("service invoked runtime: %q %v", raw, err)
 	}
 }

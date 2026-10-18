@@ -12,6 +12,7 @@ import (
 	"time"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/services/resources"
 	"github.com/crevissepartners/projmux/pkg/projmux"
@@ -53,7 +54,7 @@ func TestAgentProtectionSDKCLIParity(t *testing.T) {
 						sdkState, _, client := renameState(t, reg)
 						cliState, s, _ := renameState(t, reg)
 						req := core.SetAgentProtectionRequest{Ref: "uid:" + uid, Protected: protect}
-						// A runtime call would fail the test. Selection must ignore inherited state.
+						// Preserve the CLI observation seam while selection ignores inherited state.
 						t.Setenv("TMUX", "/bad/socket,999,1")
 						t.Setenv("TMUX_PANE", "%999")
 						t.Setenv("__PROJMUX_RUNTIME_ANCHOR_PANE", "foreign")
@@ -109,8 +110,8 @@ func TestAgentProtectionSDKCLIParity(t *testing.T) {
 								t.Fatalf("CLI presentation: %q %q", stdout.String(), stderr.String())
 							}
 						}
-						if calls != 0 {
-							t.Fatalf("runtime calls=%d", calls)
+						if calls != 2 {
+							t.Fatalf("CLI runtime observations=%d, want one per invocation", calls)
 						}
 					})
 				}
@@ -131,7 +132,7 @@ func TestAgentProtectionSDKSelectorsAndRefusals(t *testing.T) {
 		{req: core.SetAgentProtectionRequest{Ref: "codex", Window: "uid:win-home"}, uid: "agt-home"},
 		{req: core.SetAgentProtectionRequest{}, code: projmux.CodeSelectorInvalid},
 		{req: core.SetAgentProtectionRequest{Ref: "uid:"}, code: projmux.CodeSelectorInvalid},
-		{req: core.SetAgentProtectionRequest{Ref: "bad name", Project: "alpha"}, code: projmux.CodeSelectorInvalid},
+		{req: core.SetAgentProtectionRequest{Ref: "bad name", Project: "alpha"}, code: projmux.CodeResourceNotFound},
 		{req: core.SetAgentProtectionRequest{Ref: "codex"}, code: projmux.CodeSelectorInvalid},
 		{req: core.SetAgentProtectionRequest{Ref: "codex", Window: "main"}, code: projmux.CodeSelectorAmbiguous},
 		{req: core.SetAgentProtectionRequest{Ref: "uid:absent"}, code: projmux.CodeResourceNotFound},
@@ -139,7 +140,7 @@ func TestAgentProtectionSDKSelectorsAndRefusals(t *testing.T) {
 		{req: core.SetAgentProtectionRequest{Ref: "uid:agt-alpha-codex", Window: "uid:win-home"}, code: projmux.CodeResourceNotFound},
 	} {
 		t.Run(tc.req.Ref+"/"+tc.req.Project+"/"+tc.req.Window, func(t *testing.T) {
-			state, _, client := renameState(t, reg)
+			state, storage, client := renameState(t, reg)
 			before, err := os.ReadFile(store.PathFor(state))
 			if err != nil {
 				t.Fatal(err)
@@ -154,6 +155,27 @@ func TestAgentProtectionSDKSelectorsAndRefusals(t *testing.T) {
 				after, _ := os.ReadFile(store.PathFor(state))
 				if !bytes.Equal(before, after) {
 					t.Fatal("refusal mutated Registry")
+				}
+				if tc.req.Ref == "bad name" {
+					// Classify the CLI selector failure before its presentation adapter,
+					// then require the actual command to preserve the same refusal text.
+					flags := resourceQueryFlags{kind: metadata.KindAgent, projects: []string{tc.req.Project}}
+					flags.addPositionalRef(tc.req.Ref)
+					_, selectionErr := flags.resolve(selector.VerbLabel, false, reg)
+					var failed *resources.Failure
+					if !errors.As(resources.Classify(selectionErr), &failed) || failed.Code != string(refusal.Code) {
+						t.Fatalf("CLI/SDK refusal classification differs: %v / %v", selectionErr, err)
+					}
+					command := &labelCommand{store: storage}
+					var stdout, stderr bytes.Buffer
+					cliErr := command.Run([]string{"agent", tc.req.Ref, "--project", tc.req.Project, metadata.LabelProtected + "=true"}, &stdout, &stderr)
+					if cliErr == nil || cliErr.Error() != selectionErr.Error() || stdout.Len() != 0 {
+						t.Fatalf("CLI refusal: %v / %q", cliErr, stdout.String())
+					}
+					after, _ = os.ReadFile(store.PathFor(state))
+					if !bytes.Equal(before, after) {
+						t.Fatal("CLI refusal mutated Registry")
+					}
 				}
 			} else if err != nil || got.Agent.Metadata.UID != tc.uid {
 				t.Fatalf("%+v %v", got, err)
