@@ -185,3 +185,37 @@ func (s Service) Delete(ctx context.Context, name string, confirm bool) error {
 	}
 	return store.Delete(name)
 }
+
+// Recreate replaces one existing profile after preparing its original snapshot.
+// Cancellation is checked before admission; rollback finishes once admitted.
+func (s Service) Recreate(ctx context.Context, name string, content []byte, confirm bool) (WriteResult, error) {
+	if err := ctx.Err(); err != nil {
+		return WriteResult{}, err
+	}
+	if err := profile.ValidateName(name); err != nil {
+		return WriteResult{}, err
+	}
+	if !confirm {
+		return WriteResult{}, &ConfirmationError{Name: name}
+	}
+	content, err := profile.ReadLimited(bytes.NewReader(content))
+	if err != nil {
+		var refusal *profile.Error
+		if errors.As(err, &refusal) {
+			refusal.Name = name
+		}
+		return WriteResult{}, err
+	}
+	store, err := s.store(false)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return WriteResult{}, err
+	}
+	entry, err := store.Recreate(name, content)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	return WriteResult{Name: entry.Name, Path: entry.Path, Digest: entry.Digest, Size: int64(len(content))}, nil
+}
