@@ -11,8 +11,19 @@ const (
 	QuestionClosed   QuestionState = "closed"
 )
 
+// QuestionListOptions opts into captured source metadata. The zero value keeps
+// ListQuestions behavior, including its JSON representation and error ordering.
+type QuestionListOptions struct {
+	IncludeSource bool
+}
+
 // QuestionList is the `agent question list -o json` projection.
 type QuestionList struct {
+	Provider string      `json:"provider,omitempty"`
+	Runtime  RuntimeKind `json:"runtime,omitempty"`
+	Phase    AgentPhase  `json:"phase,omitempty"`
+	// Session identifies the captured running process conversation, not authority.
+	Session        string          `json:"session,omitempty"`
 	AgentUID       string          `json:"agentUID"`
 	AgentName      string          `json:"agentName"`
 	Channel        string          `json:"channel"`
@@ -23,6 +34,7 @@ type QuestionList struct {
 
 // QuestionView is one question record.
 type QuestionView struct {
+	ItemID         string            `json:"itemId,omitempty"`
 	ID             string            `json:"id"`
 	State          QuestionState     `json:"state"`
 	Disposition    string            `json:"disposition,omitempty"`
@@ -62,6 +74,7 @@ type QuestionOption struct {
 
 // ExactQuestion is redacted display data for an existing process host question.
 type ExactQuestion struct {
+	ItemID     string             `json:"itemId,omitempty"`
 	QuestionID string             `json:"questionID"`
 	Policy     string             `json:"policy"`
 	Delivery   string             `json:"delivery"`

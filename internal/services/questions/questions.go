@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,6 +83,10 @@ const (
 
 // List is the `agent question list -o json` projection.
 type List struct {
+	Provider       string                           `json:"provider,omitempty"`
+	Runtime        coremetadata.RuntimeKind         `json:"runtime,omitempty"`
+	Phase          coremetadata.AgentPhase          `json:"phase,omitempty"`
+	Session        string                           `json:"session,omitempty"`
 	AgentUID       string                           `json:"agentUID"`
 	AgentName      string                           `json:"agentName"`
 	Channel        string                           `json:"channel"`
@@ -92,6 +97,7 @@ type List struct {
 
 // View is one question record.
 type View struct {
+	ItemID      string              `json:"itemId,omitempty"`
 	ID          string              `json:"id"`
 	State       agentquestion.State `json:"state"`
 	Disposition string              `json:"disposition,omitempty"`
@@ -181,6 +187,10 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 	}
 	if process && agent.Status.Phase == coremetadata.PhaseRunning {
 		result.ExactQuestions, err = c.Dispatcher.ReadExactProcessQuestions(ctx, agent.Metadata.UID)
+		result.ExactQuestions = slices.Clone(result.ExactQuestions)
+		for i := range result.ExactQuestions {
+			result.ExactQuestions[i].ItemID = ""
+		}
 		if err != nil {
 			return List{}, err
 		}
@@ -189,6 +199,16 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 			return List{}, err
 		}
 	}
+	c.projectRecords(&result, agent, process, records, cliRecords, false)
+
+	return result, nil
+}
+
+// projectRecords is the shared display projection. Retrieval and error order
+// stay with each caller; the default List path retains its existing policy.
+// Source reads preserve unmatched saved history: lack of current delivery is a
+// capability limit, not evidence that the question itself was closed.
+func (c Service) projectRecords(result *List, agent coremetadata.Agent, process bool, records []agentquestion.Record, cliRecords map[string]agentquestion.CLIAsyncRecord, preserveUnmatchedHistory bool) {
 	for _, record := range records {
 		questions, err := record.ParsedQuestions()
 		if err != nil {
@@ -213,7 +233,7 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 					break
 				}
 			}
-			if !current && view.State == agentquestion.StateWaiting {
+			if !preserveUnmatchedHistory && !current && view.State == agentquestion.StateWaiting {
 				view.State, view.Disposition = agentquestion.StateClosed, "process-stale"
 			}
 		}
@@ -253,7 +273,6 @@ func (c Service) List(ctx context.Context, agent coremetadata.Agent) (List, erro
 		}
 		result.Questions = append(result.Questions, view)
 	}
-	return result, nil
 }
 
 // Decline submits an explicit operator non-answer notice for a complete async

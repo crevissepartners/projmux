@@ -122,6 +122,39 @@ func (c *Client) ListApprovals(ctx context.Context, agentRef string) (core.Appro
 	return out, err
 }
 
+// ListApprovalsWithOptions can classify a saved read without observing a
+// runtime. FileOnly returns stored Claude requests or single-read metadata for
+// every other provider; it never automatically falls back to native control.
+func (c *Client) ListApprovalsWithOptions(ctx context.Context, agentRef string, options core.ApprovalListOptions) (core.ApprovalList, error) {
+	if !options.FileOnly {
+		return c.ListApprovals(ctx, agentRef)
+	}
+	if err := ctx.Err(); err != nil {
+		return core.ApprovalList{}, err
+	}
+	if c.pathsErr != nil {
+		return core.ApprovalList{}, resourceRefusal(c.pathsErr)
+	}
+	reg, err := resources.Load(c.paths)
+	if err != nil {
+		return core.ApprovalList{}, resourceRefusal(err)
+	}
+	agent, err := questions.ResolveAgent(reg, agentRef)
+	if err != nil {
+		return core.ApprovalList{}, resourceRefusal(selectorInputError(err, "ListApprovals agentRef"))
+	}
+	result, err := c.approvalService().ListFileOnly(ctx, agent)
+	if err != nil {
+		return core.ApprovalList{}, approvalRefusal(err)
+	}
+	var out core.ApprovalList
+	b, err := json.Marshal(result)
+	if err == nil {
+		err = json.Unmarshal(b, &out)
+	}
+	return out, err
+}
+
 // AnswerApproval allows or denies one request once, with the CLI's channel default
 // and validation. Audit precedes native transmission. Delivery is never retried.
 func (c *Client) AnswerApproval(ctx context.Context, input AnswerApprovalRequest) (core.ApprovalReceipt, error) {

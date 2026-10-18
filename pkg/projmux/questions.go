@@ -120,6 +120,29 @@ func (c *Client) ListQuestions(ctx context.Context, agentRef string) (core.Quest
 	return out, err
 }
 
+// ListQuestionsWithOptions optionally returns source metadata captured around
+// this single read. Running process reads use the existing host and discard the
+// result with CodeQuestionStale if its identity or conversation changes.
+func (c *Client) ListQuestionsWithOptions(ctx context.Context, agentRef string, options core.QuestionListOptions) (core.QuestionList, error) {
+	if !options.IncludeSource {
+		return c.ListQuestions(ctx, agentRef)
+	}
+	agent, err := c.questionAgent(ctx, agentRef, "agent question list", "ListQuestions agentRef")
+	if err != nil {
+		return core.QuestionList{}, err
+	}
+	result, err := c.questionService().ListWithSource(ctx, agent)
+	if err != nil {
+		return core.QuestionList{}, questionRefusal(err)
+	}
+	var out core.QuestionList
+	b, err := json.Marshal(result)
+	if err == nil {
+		err = json.Unmarshal(b, &out)
+	}
+	return out, err
+}
+
 // AnswerQuestion follows the existing store or exact process dispatcher path.
 // Secret questions require the provider's native surface and are refused here.
 // A canceled context before admission changes nothing. An accepted write is

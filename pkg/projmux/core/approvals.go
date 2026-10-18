@@ -10,8 +10,22 @@ type ApprovalState string
 
 // OfferedDecision is a provider-supplied decision. Review accepts only an offered value.
 type OfferedDecision string
+
+// ApprovalListOptions selects a read that never contacts a provider or runtime.
+type ApprovalListOptions struct{ FileOnly bool }
+
+// ApprovalReadMode explicitly classifies a file-only read.
+type ApprovalReadMode string
+
+const (
+	ApprovalReadModeStored     ApprovalReadMode = "stored"
+	ApprovalReadModeSingleRead ApprovalReadMode = "single-read"
+)
+
 type ApprovalList struct {
-	// Provider is claude or codex; it tells which fields a record carries.
+	ReadMode ApprovalReadMode `json:"readMode,omitempty"`
+	// Provider is normalized. File-only reads classify every non-Claude provider
+	// as single-read without querying it.
 	Provider  string            `json:"provider"`
 	AgentUID  string            `json:"agentUID"`
 	AgentName string            `json:"agentName"`

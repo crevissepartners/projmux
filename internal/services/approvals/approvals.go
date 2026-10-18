@@ -42,6 +42,7 @@ const (
 )
 
 type List struct {
+	ReadMode string `json:"readMode,omitempty"`
 	// Provider is claude or codex; it tells which fields a record carries.
 	Provider  string   `json:"provider"`
 	AgentUID  string   `json:"agentUID"`
@@ -235,6 +236,10 @@ func (c Service) ListStore(ctx context.Context, agent coremetadata.Agent) (List,
 	if err != nil {
 		return List{}, fmt.Errorf("agent approval list: %w", err)
 	}
+	return c.listStore(agent, store)
+}
+
+func (c Service) listStore(agent coremetadata.Agent, store *agentapproval.Store) (List, error) {
 	records, err := store.List(agent.Metadata.UID)
 	if err != nil {
 		return List{}, fmt.Errorf("agent approval list: %w", err)
@@ -247,6 +252,35 @@ func (c Service) ListStore(ctx context.Context, agent coremetadata.Agent) (List,
 	}
 	return out, nil
 }
+
+// ListFileOnly opens the saved source before classification, matching the
+// consumer's source error precedence. It never invokes Control.
+func (c Service) ListFileOnly(ctx context.Context, agent coremetadata.Agent) (List, error) {
+	if err := ctx.Err(); err != nil {
+		return List{}, err
+	}
+	store, err := c.OpenStore()
+	if err != nil {
+		return List{}, fmt.Errorf("agent approval list: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return List{}, err
+	}
+	provider := coremetadata.NormalizeProvider(agent.Spec.Provider)
+	if provider != "claude" {
+		return List{Provider: provider, AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, ReadMode: "single-read", Requests: []Record{}}, nil
+	}
+	result, err := c.listStore(agent, store)
+	if err != nil {
+		return List{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return List{}, err
+	}
+	result.ReadMode = "stored"
+	return result, nil
+}
+
 func (c Service) AnswerStore(ctx context.Context, r Request, agent coremetadata.Agent) (AnswerResult, error) {
 	if err := ctx.Err(); err != nil {
 		return AnswerResult{}, err
