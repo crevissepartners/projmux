@@ -861,6 +861,50 @@ route unavailability and delivery failures. Context cancellation remains availab
 through `errors.Is`. Qualification, provider creation, user turn input and
 operator authentication are separate APIs and are not added by peer messaging.
 
+### Read-only message archives
+
+`Client.ReadMessageArchive(ctx)` returns `core.MessageArchive`: live `Records`
+with full `Payload`, reclaim-log `History` without bodies, and `Skipped` for
+malformed or ref-less history lines (blank lines do not count).
+
+Payload access: **권한: 같은 사용자의 StateDir 읽기, 비밀 처리 없음**.
+Live bodies are exposed without redaction or secret filtering. Consumers decide
+where they may display or forward them; this API adds no network endpoint.
+
+The Client uses only its captured `StateDir`, including an explicit absolute
+`Options.StateDir` override. It directly shares CORE's archive reader and store
+validation, without Registry, provider or tmux observation. Missing files are
+empty; read or store validation errors keep their original text and wrapped
+causes and return no partial archive. Legacy store conversion happens in memory,
+without migration writes. Unknown history keys and known fields from higher
+history schemas retain the existing reader's meaning.
+
+Live records preserve message/conversation/reply refs, full routes, origin and
+all `MessageDelivery` fields, including reason and outcome uncertainty.
+`PayloadBytes` is the UTF-8 byte length. History preserves schema version, refs,
+state, acceptance time, payload length/digest, origin and both full or narrow
+routes. An empty digest means it was not recorded. `Operator` on both shapes
+comes from CORE's existing origin judgment; callers need not copy that policy.
+
+Order and duplicates remain store → history.jsonl → history.jsonl.1, including
+messages present in both live and history or repeated across generations.
+Deduplication, sorting, graph aggregation and relay decisions belong to the
+consumer. Slices are caller-owned, preserve nil/empty shape, and cannot change
+later calls. Reads create nothing and take no lock. A store read observes one
+complete renamed version, but there is no atomic snapshot across the three files.
+
+`Client.MessageArchiveFiles(ctx)` returns a caller-owned slice of exactly these
+three paths under `StateDir/agent-messages`, in the same order: `messages.json`,
+`history.jsonl`, `history.jsonl.1`. It opens and stats nothing and works even
+when contents are missing or corrupt. Consumers can stat size and mtime for
+change detection; the SDK does not replace file timestamps with the current time.
+
+Both methods check cancellation before admission and after a successful
+synchronous read or path projection. They cannot interrupt an ongoing file read;
+a reader error takes precedence over cancellation during that read. Cancellation
+returns a context error and no partial result. Existing `SendMessage` and
+`MessageStatus` behavior is unchanged.
+
 ### Detached process Agent resume
 
 `Client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:agent-…",

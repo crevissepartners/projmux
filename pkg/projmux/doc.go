@@ -265,4 +265,11 @@
 // It does not collect usage history. Unsupported platforms and unavailable
 // percentages are distinct; result pointers belong to the caller.
 
+// ReadMessageArchive supplies retained live bodies and reclaim-log history
+// through the existing read-only CORE reader; MessageArchiveFiles supplies its
+// three paths without opening or statting files. Both use captured StateDir,
+// create nothing, preserve caller ownership and check cancellation before and
+// after successful synchronous work. Cross-file reads are not an atomic snapshot.
+// Payload access: 권한: 같은 사용자의 StateDir 읽기, 비밀 처리 없음.
+// Full live Payload text is exposed without redaction or secret filtering.
 package projmux
