@@ -92,6 +92,7 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		return VerifyDetachedProcessCreateBinding(reg, ready.Binding, owner)
 	}
 	var cleanupBinding processhost.Binding
+	cleanupUnconfirmed := false
 	l.Cleanup = func(owner m.ProcessIdentity, ready ProcessDetachedReply) error {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), ProcessAgentStopTimeout)
 		defer cancel()
@@ -104,6 +105,9 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		reply.Binding = cleanupBinding
 	}
 	if err != nil {
+		if cleanupUnconfirmed || reply.Error == "" {
+			reply.Preparation = nil
+		}
 		code := reply.ErrorCode
 		if code == "" {
 			code = "resume-execution-failed"
