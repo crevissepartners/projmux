@@ -148,7 +148,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if resumed.Binding.AgentUID != created.Binding.AgentUID || resumed.Binding.PaneUID != created.Binding.PaneUID || resumed.Binding.Generation == created.Binding.Generation || resumed.ClaimWaiting || resumed.PaneID != "" || len(resumed.Projection.Items) != 1 {
+				if resumed.Binding.AgentUID != created.Binding.AgentUID || resumed.Binding.PaneUID != created.Binding.PaneUID || resumed.Binding.Generation == created.Binding.Generation || resumed.ClaimWaiting || resumed.MayBeTruncated || resumed.PaneID != "" || len(resumed.Projection.Items) != 1 {
 					t.Fatalf("resume result %+v", resumed)
 				}
 				born := await(func(p core.Pane) bool {
@@ -169,7 +169,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
-					if !claim.ClaimWaiting || claim.Binding != resumed.Binding {
+					if !claim.ClaimWaiting || claim.MayBeTruncated || claim.Binding != resumed.Binding {
 						t.Fatalf("claim %+v", claim)
 					}
 					stop, e := c.StopAgent(ctx, core.StopAgentRequest{Ref: ref, Binding: claim.Binding})
@@ -219,7 +219,7 @@ func TestSDKDetachedProcessResumeFrozenDomainsAndClaims(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
-					if !claim.ClaimWaiting {
+					if !claim.ClaimWaiting || claim.MayBeTruncated {
 						t.Fatal("missing claim handshake")
 					}
 					receipt, e := c.SendMessage(ctx, projmux.SendMessageRequest{Source: sourceRef, Target: ref, Text: "peer payload"})
@@ -469,15 +469,20 @@ func TestSDKHostLostResumeParity(t *testing.T) {
 					if req.Prompt != "" {
 						args = append(args, "--", req.Prompt)
 					}
-					detachedResumeCLI(t, ctx, f, args...)
+					output := detachedResumeCLI(t, ctx, f, args...)
+					if !strings.Contains(string(output), "previous generation: reconcile/unknown; last turn may have been truncated") {
+						t.Fatal("CLI previous truncation advisory missing", string(output))
+					}
+					t.Logf("TRUNCATION provider=%s mode=cli advisory=true", provider)
 				} else {
 					result, err := client.ResumeAgent(ctx, req)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if result.Preparation != nil || result.Binding.AgentUID != binding.AgentUID || result.Binding.PaneUID != binding.PaneUID || result.Binding.Generation == binding.Generation {
+					if !result.MayBeTruncated || result.Preparation != nil || result.Binding.AgentUID != binding.AgentUID || result.Binding.PaneUID != binding.PaneUID || result.Binding.Generation == binding.Generation {
 						t.Fatal("SDK identity/consumption", result)
 					}
+					t.Logf("TRUNCATION provider=%s mode=%s advisory=%t", provider, mode, result.MayBeTruncated)
 				}
 				next := awaitProcessResumeRecord(t, ctx, f, ref, func(r *m.ProcessSessionRecord) bool {
 					return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
@@ -554,7 +559,7 @@ func TestSDKPreparedResumeFailureRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: ref, Detach: true, Prompt: "failed first input", Binding: prepared.Preparation.Binding, Preparation: &prepared.Preparation})
-	if err == nil || failed.Preparation == nil || failed.Preparation.HostLost || failed.Preparation.Binding == prepared.Preparation.Binding {
+	if err == nil || failed.MayBeTruncated || failed.Preparation == nil || failed.Preparation.HostLost || failed.Preparation.Binding == prepared.Preparation.Binding {
 		t.Fatalf("failed child did not return same frozen retry proof: %+v %v", failed, err)
 	}
 	after := mustRegistry(t, f)
@@ -573,7 +578,7 @@ func TestSDKPreparedResumeFailureRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.Preparation != nil || resumed.Binding.Generation == valid.Binding.Generation {
+	if resumed.MayBeTruncated || resumed.Preparation != nil || resumed.Binding.Generation == valid.Binding.Generation {
 		t.Fatal("retry did not consume proof")
 	}
 	next := awaitProcessResumeRecord(t, ctx, f, ref, func(r *m.ProcessSessionRecord) bool {
@@ -759,7 +764,7 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 			}
 			result, e := client.ResumeAgent(ctx, req)
 			var refused *projmux.Refusal
-			if !errors.As(e, &refused) || refused.Code != want || result.Preparation != nil {
+			if !errors.As(e, &refused) || refused.Code != want || result.Preparation != nil || result.MayBeTruncated {
 				t.Fatalf("Resume %s returned %+v %v; want %s", change, result, e, want)
 			}
 			if !reflect.DeepEqual(before, sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")) {

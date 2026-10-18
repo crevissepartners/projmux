@@ -1133,7 +1133,7 @@ func TestExternalSDKDetachedProcessCreateCallerExit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			c, err := projmux.NewClient(projmux.Options{HomeDir: lease, ConfigDir: lease + "/deep/custom-settings", StateDir: lease + "/deep/custom-records"})
+			c, err := projmux.NewClient(projmux.Options{HomeDir: lease, ConfigDir: lease + "/deep/custom-settings", StateDir: lease + "/deep/custom-records", ProjmuxExecutable: binary})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1305,7 +1305,7 @@ for line in sys.stdin:
 				if err = json.Unmarshal(raw, &resumed); err != nil {
 					t.Fatal(err)
 				}
-				if resumed.Binding.AgentUID != result.Binding.AgentUID || resumed.Binding.PaneUID != result.Binding.PaneUID || resumed.Binding.Generation == result.Binding.Generation || resumed.ClaimWaiting || resumed.PaneID != "" || sessionID(resumed.Agent) != beforeCID {
+				if resumed.Binding.AgentUID != result.Binding.AgentUID || resumed.Binding.PaneUID != result.Binding.PaneUID || resumed.Binding.Generation == result.Binding.Generation || resumed.ClaimWaiting || resumed.MayBeTruncated || resumed.PaneID != "" || sessionID(resumed.Agent) != beforeCID {
 					t.Fatalf("resume identity: %+v", resumed)
 				}
 				result.Binding = resumed.Binding
@@ -1320,6 +1320,37 @@ for line in sys.stdin:
 				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
 					t.Fatal("resume caller exit retired owner")
 				}
+				// Lose only the exact fixture owner/provider, then observe the
+				// host-lost advisory through public operations and public resources.
+				previous := resumed.Binding
+				externalLoseResumeFixture(t, ctx, lease, *activation)
+				request := core.ResumeAgentRequest{Ref: "uid:" + agent.Metadata.UID, Detach: true, Binding: previous}
+				if provider == "claude" {
+					prepared, e := c.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: request.Ref, Binding: previous, AllowHostLost: true})
+					if e != nil {
+						t.Fatal(e)
+					}
+					valid, e := c.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: request.Ref, Preparation: prepared.Preparation})
+					if e != nil {
+						t.Fatal(e)
+					}
+					request.Prompt, request.Preparation = "host-lost resumed input", &valid
+				}
+				resumed, err = c.ResumeAgent(ctx, request)
+				if err != nil || !resumed.MayBeTruncated || resumed.Binding.Generation == previous.Generation {
+					t.Fatal("public host-lost advisory", resumed, err)
+				}
+				result.Binding = resumed.Binding
+				resource, err = c.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + resumed.Binding.PaneUID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				observed := resource.(core.Pane)
+				termination := observed.Status.LastTermination
+				if observed.Status.ProcessSession == nil || observed.Status.ProcessSession.History == nil || observed.Status.ProcessSession.History.Binding != previous || termination == nil || termination.Source != core.TerminationSourceReconcile || termination.Classification != core.TerminationUnknown || termination.Generation != previous.Generation || termination.OperationID != previous.OperationID || termination.ExitCode != nil {
+					t.Fatal("public host-lost previous history/unknown", observed)
+				}
+				t.Logf("PUBLIC_ADVISORY provider=%s ordinary=false hostLost=true previousHistory=true previousUnknown=true inventedExitCode=false", provider)
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: resumed.Binding})
 				stopAttempted = true
 				if err != nil || !stopped.Stopped || stopped.Termination == nil || stopped.Binding != resumed.Binding {
@@ -1594,7 +1625,7 @@ func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
 		badRequest := request
 		badRequest.Preparation = &bad
 		failed, rejected := c.ResumeAgent(ctx, badRequest)
-		if !errors.As(rejected, &refusal) || refusal.Code != projmux.CodeResumePreparationStale || failed.Preparation != nil {
+		if !errors.As(rejected, &refusal) || refusal.Code != projmux.CodeResumePreparationStale || failed.Preparation != nil || failed.MayBeTruncated {
 			t.Fatal("public stale first-input refusal", failed, rejected)
 		}
 		request.Preparation = &valid

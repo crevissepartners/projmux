@@ -30,10 +30,11 @@ type ProcessDetachedCreateRequest struct {
 }
 
 type ProcessCreateCommitted struct {
-	Agent   coremetadata.Agent
-	Pane    coremetadata.Pane
-	Receipt receipt.OperationReceipt
-	Notices []string
+	MayBeTruncated bool `json:",omitempty"`
+	Agent          coremetadata.Agent
+	Pane           coremetadata.Pane
+	Receipt        receipt.OperationReceipt
+	Notices        []string
 }
 
 type ProcessDetachedReply struct {

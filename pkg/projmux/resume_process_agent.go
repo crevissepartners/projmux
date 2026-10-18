@@ -111,5 +111,8 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 		}
 		return result, resumeRefusal(err)
 	}
+	if reply.Result != nil && !result.ClaimWaiting {
+		result.MayBeTruncated = reply.Result.MayBeTruncated
+	}
 	return result, nil
 }

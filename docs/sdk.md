@@ -1244,3 +1244,14 @@ The consumer decides whether to acknowledge a returned proof, validate it again
 and submit another explicit input. Existing `ResumeProcessError` recovery
 identity and cancellation/cleanup errors remain available through `errors.As`.
 Success establishes the detached resume; it does not promise a provider reply.
+
+Successful process `ResumeAgent` returns `MayBeTruncated` from the independent
+owner's existing CORE `Previous.MayBeTruncated` value. True advises that prior
+input may have been cut off; it proves neither actual truncation nor actual
+Wait. Host-lost ordinary Resume with nil `Preparation` also returns this new
+boolean. Failures, tmux, claim waiting and CORE results without that advisory
+return false. Preparation proof does not determine the advisory, and existing
+Notices and CLI output are unchanged. Read the prior generation's
+`LastTermination` (`reconcile` / `unknown`, no invented exit code) and
+`ProcessSession.History` through `GetResource` on its Pane; the Agent exposes
+the same termination evidence.

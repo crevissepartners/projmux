@@ -26,6 +26,11 @@ type ResumeAgentResult struct {
 	Binding    ProcessBinding
 	// ClaimWaiting proves a child-free owner claim, not a new provider generation.
 	ClaimWaiting bool
+	// MayBeTruncated copies the successful process Resume owner's existing CORE
+	// Previous.MayBeTruncated advisory. True means prior input may have been cut
+	// off; it proves neither actual truncation nor a recorded Wait. It is false
+	// for failures, tmux, claim waiting and CORE results without that advisory.
+	MayBeTruncated bool
 	// Preparation is nil on success. On failure it may acknowledge the unchanged
 	// plan or the same frozen plan readdressed after an exact failed child Wait.
 	Preparation *AgentResumePreparation

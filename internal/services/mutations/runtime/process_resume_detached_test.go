@@ -145,6 +145,9 @@ while s.recv(1024): pass
 			if reply.Owner.Valid() {
 				defer SignalDetachedProcessOwner(reply.Owner)
 			}
+			if reply.Result != nil && reply.Result.MayBeTruncated {
+				t.Fatal("failed cleanup returned a successful truncation advisory")
+			}
 			var failure *ProcessResumeFailure
 			if !errors.As(err, &failure) || failure.Code != "process-resume-refused" || reply.Error != "fixture failed first input" || calls == 0 {
 				t.Fatalf("did not exercise proof-bearing owner failure and cleanup: reply=%+v err=%v loads=%d", reply, err, calls)
