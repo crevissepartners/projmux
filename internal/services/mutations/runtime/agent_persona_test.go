@@ -232,3 +232,81 @@ func TestPersonaServiceReadOnlyDispositionAndBusy(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonaServiceResumeFailureObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		observed *AgentPersonaResumeObservation
+		resume   bool
+	}{
+		{name: "CLI-legacy", resume: true},
+		{name: "confirmed-offline", observed: &AgentPersonaResumeObservation{PhaseKnown: true, Phase: m.PhaseOffline}, resume: true},
+		{name: "running-admission", observed: &AgentPersonaResumeObservation{PhaseKnown: true, Phase: m.PhaseRunning}},
+		{name: "unobserved", observed: &AgentPersonaResumeObservation{}},
+		{name: "postcommit-running", observed: &AgentPersonaResumeObservation{PhaseKnown: true, Phase: m.PhaseRunning, NewPaneUID: "committed-pane"}},
+		{name: "postcommit-now-offline", observed: &AgentPersonaResumeObservation{PhaseKnown: true, Phase: m.PhaseOffline, NewPaneUID: "committed-pane"}},
+		{name: "postcommit-unobserved", observed: &AgentPersonaResumeObservation{NewPaneUID: "committed-pane"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storage := persona.NewDefaultStore(config.Paths{ConfigDir: t.TempDir(), StateDir: t.TempDir()})
+			loaded, err := storage.Write("reviewer", []byte("Review carefully.\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := m.Agent{Metadata: m.ObjectMeta{UID: "agent", Name: "worker"}, Spec: m.AgentSpec{Provider: "claude"}, Status: m.AgentStatus{Phase: m.PhaseOffline, SessionRef: &m.AgentSessionRef{Provider: "claude", Claude: &m.ClaudeSessionRef{SessionID: "conversation"}}}}
+			reg := m.Registry{Agents: []m.Agent{a}}
+			cause := errors.New("resume boundary failed")
+			calls := 0
+			var emitted []string
+			d := AgentPersonaDependencies{
+				Request: AgentPersonaRequest{Action: "attach", Spelling: "agent persona attach", Noun: "persona", Persona: "reviewer", SocketPath: "/fixture/socket"}, Registry: reg, Target: a,
+				OpenStore: func() (persona.Store, error) { return storage, nil },
+				Refuse:    func(_, message string, err error) error { return fmt.Errorf("%s: %w", message, err) },
+				Plan:      func(*AgentRestartPlan, AgentSettingsRequest, func(string, string) error) error { return nil },
+				SetPersona: func(a m.Agent, want m.AgentPersonaAnnotations) error {
+					return SetPlannedAgentPersona("persona", &reg, m.Mutator{}, a, want)
+				},
+				Notice: func(s string) { emitted = append(emitted, strings.TrimSuffix(s, "\n")) },
+				Execution: AgentRestartExecution{
+					Resume: func(StoppedAgentPane) error { calls++; return cause },
+					NewPane: func() string {
+						t.Fatal("failed execution must not use the success-only Pane callback")
+						return ""
+					},
+				},
+			}
+			if tc.observed != nil {
+				d.ObserveResumeFailure = func() AgentPersonaResumeObservation { return *tc.observed }
+			}
+			out, err := RunAgentPersona(d)
+			if !errors.Is(err, cause) || calls != 1 || !reflect.DeepEqual(emitted, out.Notices) {
+				t.Fatalf("lost cause, notice order, or replayed: %+v %v calls=%d", out, err, calls)
+			}
+			if reg.Agents[0].Status.Phase != m.PhaseOffline || m.PersonaAnnotationsOf(reg.Agents[0]).PersonaDigest != loaded.Digest {
+				t.Fatal("error classification changed lifecycle state or lost the new annotation")
+			}
+			if tc.observed == nil {
+				want := "agent persona attach: agent/worker is Offline with its new persona annotations and needs `agent resume`: resume boundary failed"
+				if err.Error() != want || out.Recovery != "projmux agent resume uid:agent" || len(out.Notices) != 2 || out.Notices[0] != "projmux: agent/worker records persona reviewer ("+loaded.Digest+") but did not resume: resume boundary failed" || out.Notices[1] != "projmux: recover with: projmux agent resume uid:agent" {
+					t.Fatalf("CLI legacy presentation changed: %+v %v", out, err)
+				}
+				return
+			}
+			if out.NewPaneUID != tc.observed.NewPaneUID {
+				t.Fatal("known partial Pane was lost")
+			}
+			if strings.Contains(out.Recovery, "agent resume") != tc.resume {
+				t.Fatalf("invalid resume recovery for observed state: %+v", out)
+			}
+			if !strings.Contains(out.Recovery, "/fixture/socket") || !strings.Contains(out.Recovery, "uid:agent") {
+				t.Fatalf("recovery lost exact target/route: %+v", out)
+			}
+			if !tc.resume && (!strings.Contains(out.Recovery, "projmux describe agent") || strings.Contains(err.Error(), "is Offline") || strings.Contains(strings.Join(out.Notices, "\n"), "did not resume")) {
+				t.Fatalf("unverified resume was misclassified: %+v %v", out, err)
+			}
+			if tc.observed.NewPaneUID != "" && !strings.Contains(out.Recovery, "uid:"+tc.observed.NewPaneUID) {
+				t.Fatal("inspection lost the partial Pane")
+			}
+		})
+	}
+}

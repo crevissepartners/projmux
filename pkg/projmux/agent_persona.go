@@ -43,6 +43,13 @@ func (c *Client) DetachAgentPersona(ctx context.Context, req core.DetachAgentPer
 	return c.agentPersona(ctx, runtime.AgentPersonaRequest{Action: "detach", DryRun: req.DryRun, Confirm: req.Confirm, SocketPath: req.SocketPath}, req.Ref, req.Project, req.Window, tmux.ExecRunner{})
 }
 func (c *Client) agentPersona(ctx context.Context, q runtime.AgentPersonaRequest, ref, project, window string, runner runtime.TmuxCommandRunner) (core.AgentPersonaResult, error) {
+	// The production path always calls the existing resume transaction. The
+	// persona-private boundary lets tests return its committed partial result
+	// alongside a later receipt error without changing the shared resume seam.
+	return c.agentPersonaWithResume(ctx, q, ref, project, window, runner, c.resumeAgentPlan)
+}
+
+func (c *Client) agentPersonaWithResume(ctx context.Context, q runtime.AgentPersonaRequest, ref, project, window string, runner runtime.TmuxCommandRunner, resume func(context.Context, runtime.AgentResumePlan, string, runtime.TmuxCommandRunner) (core.ResumeAgentResult, error)) (core.AgentPersonaResult, error) {
 	var out core.AgentPersonaResult
 	if err := ctx.Err(); err != nil {
 		return out, err
@@ -128,6 +135,16 @@ func (c *Client) agentPersona(ctx context.Context, q runtime.AgentPersonaRequest
 			})
 			return mutations.Classify(err)
 		},
+		ObserveResumeFailure: func() runtime.AgentPersonaResumeObservation {
+			observed := runtime.AgentPersonaResumeObservation{NewPaneUID: resumed.Agent.Status.PaneRef}
+			fresh, err := resources.Load(c.paths)
+			if err == nil {
+				if a, ok := fresh.Agent(target.Metadata.UID); ok {
+					observed.PhaseKnown, observed.Phase = true, a.Status.Phase
+				}
+			}
+			return observed
+		},
 		Execution: runtime.AgentRestartExecution{
 			ValidateTransport: func() error { _, err := runtime.ResolveDeleteTarget(q.Spelling, "", q.SocketPath, nil); return err },
 			BeforeStop: func() error {
@@ -165,7 +182,7 @@ func (c *Client) agentPersona(ctx context.Context, q runtime.AgentPersonaRequest
 					return err
 				}
 				plan.StoppedPane = stopped
-				resumed, err = c.resumeAgentPlan(admitted, plan, q.SocketPath, runner)
+				resumed, err = resume(admitted, plan, q.SocketPath, runner)
 				return err
 			},
 			NewPane: func() string { return resumed.Agent.Status.PaneRef },

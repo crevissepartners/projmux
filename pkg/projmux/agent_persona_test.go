@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	store "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	runtime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -133,6 +135,7 @@ func TestAgentPersonaSDKResumeFailureRetainsAttachAndRecovery(t *testing.T) {
 	// resume mutation, so the real transaction must retain the attached persona.
 	runner.stopCause = nil
 	runner.mode = "closed"
+	runner.resumeReadFailure = true
 	if _, e := persona.NewDefaultStore(c.paths).Write("reviewer", []byte("Review carefully.\n")); e != nil {
 		t.Fatal(e)
 	}
@@ -140,9 +143,9 @@ func TestAgentPersonaSDKResumeFailureRetainsAttachAndRecovery(t *testing.T) {
 	if e == nil || result.Recovery == "" || result.NewPaneUID != "" || result.NewPersona != "reviewer" {
 		t.Fatalf("%+v %v", result, e)
 	}
-	reg, e := store.NewStore(store.PathFor(c.paths.StateDir)).LoadReadOnly()
-	if e != nil {
-		t.Fatal(e)
+	reg, loadErr := store.NewStore(store.PathFor(c.paths.StateDir)).LoadReadOnly()
+	if loadErr != nil {
+		t.Fatal(loadErr)
 	}
 	a, _ := reg.Agent(p.Target.Metadata.UID)
 	if a.Status.Phase != metadata.PhaseOffline || a.Metadata.Annotations[metadata.AnnotationAgentInstructionsSource] != metadata.SettingSourceAttach || a.Metadata.Annotations[metadata.AnnotationAgentPersona] != "reviewer" {
@@ -150,6 +153,9 @@ func TestAgentPersonaSDKResumeFailureRetainsAttachAndRecovery(t *testing.T) {
 	}
 	if runner.stops != 1 {
 		t.Fatal("stop replayed")
+	}
+	if !errors.Is(e, runner.observeCause) || !strings.HasPrefix(result.Recovery, "projmux agent resume uid:"+p.Target.Metadata.UID) || !strings.Contains(result.Recovery, " --socket-path "+runner.socket) {
+		t.Fatalf("Offline recovery lost the cause or exact route: %+v %v", result, e)
 	}
 }
 
@@ -250,5 +256,147 @@ func TestAgentPersonaSDKClosedStopRecoveryDescribesRunning(t *testing.T) {
 	}
 	if out.Recovery == "" || !strings.Contains(out.Recovery, p.Target.Metadata.UID) {
 		t.Errorf("missing exact Agent state inspection recovery: %q", out.Recovery)
+	}
+}
+
+// The supervisor and provider are inert shell fixtures. This proves a real SDK
+// resume transaction commit, not provider birth, receipt I/O internals, or a reply.
+func TestAgentPersonaSDKPostcommitRecovery(t *testing.T) {
+	for _, unreadable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "running", true: "unobserved"}[unreadable], func(t *testing.T) {
+			if _, err := exec.LookPath("tmux"); err != nil {
+				t.Fatal("fixture requires tmux:", err)
+			}
+			root := t.TempDir()
+			home, config, state := filepath.Join(root, "home"), filepath.Join(root, "config", "projmux"), filepath.Join(root, "state", "projmux")
+			workspace, bin, socketDir := filepath.Join(root, "workspace"), filepath.Join(home, "bin"), filepath.Join(root, "socket")
+			for _, path := range []string{workspace, bin, socketDir} {
+				if err := os.MkdirAll(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if key == "TMUX" || key == "TMUX_PANE" || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_") {
+					t.Setenv(key, "")
+					if err := os.Unsetenv(key); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Dir(config))
+			t.Setenv("XDG_STATE_HOME", filepath.Dir(state))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+			t.Setenv("XDG_RUNTIME_DIR", filepath.Join(root, "run"))
+			t.Setenv("SHELL", "/bin/sh")
+			t.Setenv("PATH", bin+":/usr/bin:/bin")
+			for _, name := range []string{"projmux", "claude"} {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexec /bin/sh\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			socket := filepath.Join(socketDir, "s")
+			if info, err := os.Stat(socketDir); err != nil || !info.IsDir() || !filepath.IsAbs(socket) {
+				t.Fatal("fixture socket directory must already exist")
+			}
+			run := func(args ...string) {
+				t.Helper()
+				out, err := (tmux.ExecRunner{}).Run(context.Background(), "tmux", append([]string{"-S", socket}, args...)...)
+				if err != nil {
+					t.Fatalf("fixture tmux %v: %v %s", args, err, out)
+				}
+			}
+			t.Cleanup(func() {
+				if out, err := (tmux.ExecRunner{}).Run(context.Background(), "tmux", "-S", socket, "kill-server"); err != nil {
+					t.Errorf("fixture socket cleanup: %v %s", err, out)
+				}
+			})
+			run("-f", "/dev/null", "new-session", "-d", "-s", "control", "-n", "control", "/bin/sh")
+			run("set-option", "-g", "@projmux_app", "1")
+			run("set-option", "-g", "@projmux_socket_name", "projmux")
+			c, err := NewClient(Options{HomeDir: home, ConfigDir: config, StateDir: state, SocketPath: socket, DefaultShell: "/bin/sh", ProjmuxExecutable: filepath.Join(bin, "projmux")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.agentEnvironment = map[string]string{"PATH": bin}
+			project, err := c.CreateProject(context.Background(), core.CreateProjectRequest{Root: workspace, Name: "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			registryStore := store.NewStore(store.PathFor(state))
+			var uid string
+			if _, err := registryStore.Update(func(reg *metadata.Registry) error {
+				windows := reg.WindowsOf(project.Project.Metadata.UID)
+				if len(windows) == 0 {
+					return errors.New("fixture project has no Window")
+				}
+				a, err := store.DefaultMutator().CreateAgent(reg, windows[0].Metadata.UID, metadata.CreateAgentOptions{Name: "worker", Provider: "claude", Workspace: metadata.AgentWorkspace{CWD: workspace}})
+				if err != nil {
+					return err
+				}
+				uid = a.Metadata.UID
+				row, _ := reg.Agent(uid)
+				row.Status.Phase = metadata.PhaseOffline // fixture seed, before the operation
+				_, _, err = store.DefaultMutator().RecordAgentSessionRef(reg, uid, metadata.AgentSessionObservation{Provider: "claude", SessionID: "11111111-2222-4333-8444-555555555555"})
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := persona.NewDefaultStore(c.paths).Write("reviewer", []byte("Review carefully.\n")); err != nil {
+				t.Fatal(err)
+			}
+			cause := errors.New("injected receipt read failure after real resume commit")
+			calls := 0
+			var partial core.ResumeAgentResult
+			var committedBytes []byte
+			out, err := c.agentPersonaWithResume(context.Background(), runtime.AgentPersonaRequest{Action: "attach", Persona: "reviewer", Confirm: true}, "uid:"+uid, "", "", tmux.ExecRunner{}, func(ctx context.Context, plan runtime.AgentResumePlan, socket string, runner runtime.TmuxCommandRunner) (core.ResumeAgentResult, error) {
+				calls++
+				var err error
+				partial, err = c.resumeAgentPlan(ctx, plan, socket, runner)
+				if err != nil {
+					t.Fatalf("real transaction must commit before error injection: %v", err)
+				}
+				if partial.Agent.Status.Phase != core.PhaseRunning || partial.Agent.Status.PaneRef == "" || partial.PaneID == "" {
+					t.Fatalf("real commit missing from partial result: %+v", partial)
+				}
+				committedBytes, err = os.ReadFile(store.PathFor(state))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if unreadable {
+					if err := os.WriteFile(store.PathFor(state), []byte("invalid fixture receipt state"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				partial.Notices = append(partial.Notices, "fixture committed resume notice")
+				return partial, cause
+			})
+			if !errors.Is(err, cause) || calls != 1 || out.NewPaneUID != partial.Agent.Status.PaneRef || out.NewPaneUID == "" {
+				t.Fatalf("lost commit/cause or replayed: calls=%d result=%+v error=%v", calls, out, err)
+			}
+			if strings.Contains(out.Recovery, "agent resume") || !strings.Contains(out.Recovery, uid) || !strings.Contains(out.Recovery, out.NewPaneUID) || !strings.Contains(out.Recovery, socket) {
+				t.Fatalf("partial commit needs exact state inspection: %+v", out)
+			}
+			if strings.Contains(err.Error(), "is Offline") || strings.Contains(strings.Join(out.Notices, "\n"), "did not resume") || !strings.Contains(strings.Join(out.Notices, "\n"), "fixture committed resume notice") {
+				t.Fatalf("partial commit misclassified or notice lost: %+v %v", out, err)
+			}
+			if unreadable {
+				if !strings.Contains(strings.Join(out.Notices, "\n"), "unobserved") {
+					t.Fatal("unreadable fresh state was reported as known")
+				}
+				if err := os.WriteFile(store.PathFor(state), committedBytes, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reg, loadErr := registryStore.LoadReadOnly()
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			a, _ := reg.Agent(uid)
+			if a.Status.Phase != metadata.PhaseRunning || a.Status.PaneRef != out.NewPaneUID || a.Metadata.Annotations[metadata.AnnotationAgentPersona] != "reviewer" {
+				t.Fatalf("error handling changed the committed state: %+v", a)
+			}
+		})
 	}
 }

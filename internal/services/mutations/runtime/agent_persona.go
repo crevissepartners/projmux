@@ -37,6 +37,16 @@ type AgentPersonaDependencies struct {
 	// Notice emits each diagnostic immediately for CLI stderr ordering.
 	Notice    func(string)
 	Execution AgentRestartExecution
+	// ObserveResumeFailure supplies fresh SDK state and any already returned
+	// Pane. Nil retains the legacy CLI's narrower resume-error presentation.
+	ObserveResumeFailure func() AgentPersonaResumeObservation
+}
+
+// AgentPersonaResumeObservation contains facts, not a retry or a phase change.
+type AgentPersonaResumeObservation struct {
+	PhaseKnown bool
+	Phase      coremetadata.AgentPhase
+	NewPaneUID string
 }
 
 const (
@@ -208,8 +218,13 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 			// The old session is gone, so the old annotations describe
 			// nothing that runs. Keep the new ones and resume: restoring
 			// them would bring the next resume back without the persona.
-			notice("projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
-				target.Metadata.Name, paneUID, err)
+			if d.ObserveResumeFailure == nil {
+				notice("projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
+					target.Metadata.Name, paneUID, err)
+			} else {
+				notice("projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed; its new persona is kept and resume admission will be attempted: %v\n",
+					target.Metadata.Name, paneUID, err)
+			}
 			return nil
 		}
 		// The Agent may still run its old provider session, so its
@@ -231,6 +246,28 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 			request.Spelling, target.Metadata.Name, err)
 	}
 	execution.ResumeFailed = func(err error) error {
+		if d.ObserveResumeFailure != nil {
+			observed := d.ObserveResumeFailure()
+			out.NewPaneUID = observed.NewPaneUID
+			if observed.PhaseKnown && observed.Phase == coremetadata.PhaseOffline && observed.NewPaneUID == "" {
+				out.Recovery = PersonaRecoveryCommand(registry, target) + personaSocketFlag(request)
+				notice("projmux: agent/%s records %s and was observed Offline after the persona operation: %v\n", target.Metadata.Name, DescribePersonaAnnotations(want, noun), err)
+				notice("projmux: recover with: %s\n", out.Recovery)
+				return fmt.Errorf("%s: agent/%s was observed Offline with its new persona annotations; recover with %s: %w", request.Spelling, target.Metadata.Name, out.Recovery, err)
+			}
+			pane := observed.NewPaneUID
+			if pane == "" {
+				pane = paneUID
+			}
+			out.Recovery = personaInspectionCommand(registry, target, pane, request)
+			phase := "unobserved"
+			if observed.PhaseKnown {
+				phase = string(observed.Phase)
+			}
+			notice("projmux: agent/%s records %s; its observed phase is %s and resume completion could not be verified: %v\n", target.Metadata.Name, DescribePersonaAnnotations(want, noun), phase, err)
+			notice("projmux: inspect state with: %s\n", out.Recovery)
+			return fmt.Errorf("%s: agent/%s resume completion could not be verified; inspect state with %s: %w", request.Spelling, target.Metadata.Name, out.Recovery, err)
+		}
 		out.Recovery = PersonaRecoveryCommand(registry, target)
 		notice("projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, DescribePersonaAnnotations(want, noun), err)
 		notice("projmux: recover with: %s\n", PersonaRecoveryCommand(registry, target))
@@ -247,6 +284,27 @@ func RunAgentPersona(d AgentPersonaDependencies) (out AgentPersonaResult, retErr
 	}
 	out.NewPaneUID = newPane
 	return out, nil
+}
+
+func personaSocketFlag(request AgentPersonaRequest) string {
+	if request.SocketPath != "" {
+		return " --socket-path " + personaCommandWord(request.SocketPath)
+	}
+	if request.Socket != "" {
+		return " --socket " + personaCommandWord(request.Socket)
+	}
+	return ""
+}
+
+func personaInspectionCommand(registry coremetadata.Registry, agent coremetadata.Agent, pane string, request AgentPersonaRequest) string {
+	command := "projmux describe agent " + personaAgentRef(registry, agent)
+	if pane != "" {
+		command += "; projmux describe pane " + selector.UIDPrefix + pane
+	}
+	if request.SocketPath != "" {
+		command += "; tmux -S " + personaCommandWord(request.SocketPath) + " list-panes -a"
+	}
+	return command
 }
 func PersonaRefusalNoun(err error, noun string) error {
 	if noun == persona.DeprecatedNoun {
