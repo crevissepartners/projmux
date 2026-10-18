@@ -30,7 +30,7 @@ func TestAgentProtectionPublicConsumer(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, protect := range []bool{true, false} {
-		for attempt := 0; attempt < 2; attempt++ {
+		for attempt := range 2 {
 			var result core.SetAgentProtectionResult
 			result, err = c.SetAgentProtection(ctx, core.SetAgentProtectionRequest{Ref: "reader", Window: "uid:win-test", Protected: protect})
 			if err != nil || result.Changed != (attempt == 0) {

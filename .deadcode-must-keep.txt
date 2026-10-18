@@ -93,8 +93,8 @@ Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only c
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SampleSystem	Public v0 host system sampler facade; retained for external consumers and covered by producer parity, path isolation, cancellation and caller ownership fixtures.
 Client.SendMessage	Public SDK Client.SendMessage entrypoint; external consumers submit explicit untrusted peer coordination.
-Client.SetAgentProtection	Public v0 exact Agent protection label facade; verified by CLI/SDK parity, locked transaction refusals and public-only consumers.
 Client.SetAgentGuidanceEnabled	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
+Client.SetAgentProtection	Public v0 exact Agent protection label facade; verified by CLI/SDK parity, locked transaction refusals and public-only consumers.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.StartTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.SteerTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.

@@ -63,7 +63,7 @@ func TestAgentProtectionSDKCLIParity(t *testing.T) {
 						if protect {
 							operand = metadata.LabelProtected + "=true"
 						}
-						for attempt := 0; attempt < 2; attempt++ {
+						for attempt := range 2 {
 							before := projectRegistry(t, sdkState)
 							got, err := client.SetAgentProtection(context.Background(), req)
 							if err != nil {
