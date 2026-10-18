@@ -6,15 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"unicode/utf8"
 )
 
 // ProjectFile keeps exact stored bytes separate from Load's effective guidance.
-// Revision identifies the selected UID, presence and raw bytes.
+// Revision identifies UID, presence and raw bytes, or an oversize bounded fingerprint.
 type ProjectFile struct {
+	Oversize        bool   `json:"oversize"`
+	PrefixDigest    string `json:"prefixDigest"`
+	PrefixBytes     int    `json:"prefixBytes"`
 	Path            string `json:"path"`
 	Present         bool   `json:"present"`
 	Text            string `json:"text"`
@@ -39,14 +44,36 @@ type ProjectValidation struct {
 }
 
 type projectEditState struct {
-	UID     string
-	Present bool
-	Content []byte
+	UID      string
+	Present  bool
+	Content  []byte
+	oversize *projectOversizeState
+}
+
+// Only oversize revisions include stat identity; normal raw revisions stay stable.
+type projectOversizeState struct {
+	Bytes        int64
+	Device       uint64
+	Inode        uint64
+	Mtime        int64
+	PrefixDigest string
+	PrefixBytes  int
 }
 
 func (v projectEditState) revision() string {
-	v.Content = append([]byte{}, v.Content...)
-	b, _ := json.Marshal(v)
+	if v.oversize != nil {
+		b, _ := json.Marshal(struct {
+			UID      string
+			Present  bool
+			Oversize *projectOversizeState
+		}{v.UID, v.Present, v.oversize})
+		return Digest(b)
+	}
+	b, _ := json.Marshal(struct {
+		UID     string
+		Present bool
+		Content []byte
+	}{v.UID, v.Present, append([]byte{}, v.Content...)})
 	return Digest(b)
 }
 func (s ProjectStore) editState(uid string) (v projectEditState, err error) {
@@ -63,11 +90,70 @@ func (s ProjectStore) editState(uid string) (v projectEditState, err error) {
 		return v, editError("unreadable", err)
 	}
 	defer root.Close()
-	v.Content, v.Present, err = editPartRead(root, filepath.Base(path))
-	return v, err
+	name := filepath.Base(path)
+	info, err := root.Stat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return v, nil
+	}
+	if err != nil {
+		return v, editError("unreadable", err)
+	}
+	if !info.Mode().IsRegular() {
+		return v, editError("unreadable", errors.New("Project guidance is not a regular file"))
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return v, editError("unreadable", err)
+	}
+	defer f.Close()
+	before, err := f.Stat()
+	if err != nil {
+		return v, editError("unreadable", err)
+	}
+	if !before.Mode().IsRegular() || !os.SameFile(info, before) {
+		return v, editError("unreadable", errors.New("Project guidance changed while opening"))
+	}
+	content, err := readProjectPrefix(f)
+	if err != nil {
+		return v, editError("unreadable", err)
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return v, editError("unreadable", err)
+	}
+	current, err := root.Stat(name)
+	if err != nil {
+		return v, editError("unreadable", err)
+	}
+	// Refuse an inconsistent observation without retrying or exceeding the read budget.
+	if !sameProjectFileState(before, after) || !sameProjectFileState(after, current) || int64(len(content)) != min(before.Size(), int64(MaxSize+1)) {
+		return v, editError("unreadable", errors.New("Project guidance changed while reading"))
+	}
+	v.Present = true
+	if before.Size() > MaxSize {
+		stat, ok := before.Sys().(*syscall.Stat_t)
+		if !ok || before.Size() != int64(int(before.Size())) {
+			return v, editError("unreadable", errors.New("Project guidance size or identity is not representable"))
+		}
+		v.oversize = &projectOversizeState{Bytes: before.Size(), Device: uint64(stat.Dev), Inode: uint64(stat.Ino), Mtime: before.ModTime().UnixNano(), PrefixDigest: Digest(content), PrefixBytes: len(content)}
+	} else {
+		v.Content = content
+	}
+	return v, nil
+}
+
+// readProjectPrefix bounds total file reads, including the oversize sentinel byte.
+func readProjectPrefix(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, MaxSize+1))
+}
+func sameProjectFileState(a, b fs.FileInfo) bool {
+	return b.Mode().IsRegular() && os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 func (s ProjectStore) fileView(v projectEditState) ProjectFile {
 	path, _ := s.Path(v.UID)
+	if v.oversize != nil {
+		return ProjectFile{Path: path, Present: v.Present, Oversize: true, Bytes: int(v.oversize.Bytes), PrefixDigest: v.oversize.PrefixDigest, PrefixBytes: v.oversize.PrefixBytes, Revision: v.revision(), MaxBytes: MaxSize, ProjectUID: v.UID}
+	}
 	effective := projectEffective(v.Content)
 	return ProjectFile{Path: path, Present: v.Present, Text: string(v.Content), Bytes: len(v.Content), Digest: Digest(v.Content), Revision: v.revision(), MaxBytes: MaxSize, ProjectUID: v.UID, Source: string(effective.Source), EffectiveText: string(effective.Text), EffectiveDigest: effective.Digest}
 }
@@ -120,7 +206,7 @@ func (s ProjectStore) WriteFile(ctx context.Context, uid string, content []byte,
 		if err := s.Save(uid, content); err != nil {
 			return editError("unreadable", err)
 		}
-		v.Content, v.Present = content, true
+		v.Content, v.Present, v.oversize = content, true, nil
 		out = s.fileView(v)
 		return nil
 	})
@@ -134,7 +220,7 @@ func (s ProjectStore) DeleteFile(ctx context.Context, uid, revision string) (out
 		if err := s.Delete(uid); err != nil {
 			return editError("unreadable", err)
 		}
-		v.Content, v.Present = nil, false
+		v.Content, v.Present, v.oversize = nil, false, nil
 		out = s.fileView(v)
 		return nil
 	})

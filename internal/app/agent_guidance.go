@@ -206,6 +206,9 @@ func (c *agentCommand) runGuidanceEdit(args []string, stdout, stderr io.Writer) 
 		if output == "json" {
 			return encodeGuidance(stdout, v)
 		}
+		if v.Oversize {
+			return &agentguidance.EditError{Code: "agent-guidance-too-large", Err: fmt.Errorf("Project guidance exceeds %d bytes; use -o json for recovery metadata", v.MaxBytes)}
+		}
 		_, err = io.WriteString(stdout, v.Text)
 		return err
 	}

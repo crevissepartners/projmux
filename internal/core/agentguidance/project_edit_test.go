@@ -3,10 +3,13 @@ package agentguidance
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func projectEditCode(t *testing.T, err error, want string) {
@@ -134,7 +137,7 @@ func TestProjectEditingRevisionAndPreservation(t *testing.T) {
 	}
 }
 func TestProjectEditingRejectsEscapesAndNonRegular(t *testing.T) {
-	for _, kind := range []string{"directory", "symlink", "oversize"} {
+	for _, kind := range []string{"directory", "symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			s := NewProjectStore(filepath.Join(root, "config"), filepath.Join(root, "state"))
@@ -153,10 +156,6 @@ func TestProjectEditingRejectsEscapesAndNonRegular(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(outside, p); err != nil {
-					t.Fatal(err)
-				}
-			case "oversize":
-				if err := os.WriteFile(p, bytes.Repeat([]byte("x"), MaxSize+1), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -212,5 +211,218 @@ func TestProjectEditingAtomicSaveFailurePreservesInputs(t *testing.T) {
 	entries, err := os.ReadDir(parent)
 	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
 		t.Fatalf("atomic failure left partial file %v %v", entries, err)
+	}
+}
+
+// Existing oversize files must yield a revision usable for public recovery.
+func TestProjectEditingOversizeRecovery(t *testing.T) {
+	ctx := context.Background()
+	for _, size := range []int{MaxSize + 1, MaxSize * 16} {
+		for _, action := range []string{"write", "delete"} {
+			t.Run(fmt.Sprintf("%d/%s", size, action), func(t *testing.T) {
+				root := t.TempDir()
+				s := NewProjectStore(filepath.Join(root, "config"), filepath.Join(root, "state"))
+				path, _ := s.Path(projectTestUID)
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0640); err != nil {
+					t.Fatal(err)
+				}
+				current, err := s.ReadFile(ctx, projectTestUID)
+				if err != nil {
+					t.Fatalf("oversize metadata read must permit recovery: %v", err)
+				}
+				if !current.Oversize || current.PrefixBytes != MaxSize+1 || current.PrefixDigest != Digest(bytes.Repeat([]byte("x"), MaxSize+1)) {
+					t.Fatalf("prefix: %+v", current)
+				}
+				if !current.Present || current.Bytes != size || current.Revision == "" || current.Text != "" || current.Digest != "" || current.Source != "" || current.EffectiveText != "" || current.EffectiveDigest != "" {
+					t.Fatalf("metadata: %+v", current)
+				}
+				validated, err := s.ValidateFile(ctx, projectTestUID, nil)
+				if err != nil || validated.Revision != current.Revision {
+					t.Fatalf("validate: %+v %v", validated, err)
+				}
+				var out ProjectFile
+				if action == "write" {
+					out, err = s.WriteFile(ctx, projectTestUID, []byte("recovered"), current.Revision)
+				} else {
+					out, err = s.DeleteFile(ctx, projectTestUID, current.Revision)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := s.ReadFile(ctx, projectTestUID)
+				if out.Oversize || out.PrefixDigest != "" || out.PrefixBytes != 0 {
+					t.Fatalf("recovery retained prefix: %+v", out)
+				}
+				if err != nil || out != after || out.Revision == current.Revision {
+					t.Fatalf("result %+v read %+v %v", out, after, err)
+				}
+				b, err := os.ReadFile(path)
+				if action == "write" {
+					if err != nil || string(b) != "recovered" {
+						t.Fatalf("stored %q %v", b, err)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("delete: %v", err)
+				}
+				_, err = s.DeleteFile(ctx, projectTestUID, current.Revision)
+				projectEditCode(t, err, "stale")
+			})
+		}
+	}
+}
+
+func TestProjectEditingOversizeStaleAndCandidateRefusals(t *testing.T) {
+	ctx := context.Background()
+	for _, change := range []string{"prefix", "tail", "truncate", "replace", "wrong-revision", "wrong-uid"} {
+		t.Run(change, func(t *testing.T) {
+			root := t.TempDir()
+			s := NewProjectStore(filepath.Join(root, "config"), filepath.Join(root, "state"))
+			path, _ := s.Path(projectTestUID)
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			original := bytes.Repeat([]byte("x"), MaxSize*4)
+			if err := os.WriteFile(path, original, 0640); err != nil {
+				t.Fatal(err)
+			}
+			before, err := s.ReadFile(ctx, projectTestUID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, candidate := range [][]byte{bytes.Repeat([]byte("x"), MaxSize+1), {0xff}, []byte("bad\x00")} {
+				code := "invalid"
+				if len(candidate) > MaxSize {
+					code = "too-large"
+				}
+				_, err = s.ValidateFile(ctx, projectTestUID, candidate)
+				projectEditCode(t, err, code)
+				_, err = s.WriteFile(ctx, projectTestUID, candidate, before.Revision)
+				projectEditCode(t, err, code)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision := before.Revision
+			target := projectTestUID
+			switch change {
+			case "prefix", "tail":
+				f, err := os.OpenFile(path, os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				offset := int64(0)
+				if change == "tail" {
+					offset = MaxSize + 2
+				}
+				_, err = f.WriteAt([]byte("y"), offset)
+				closeErr := f.Close()
+				if err != nil || closeErr != nil {
+					t.Fatalf("edit %v %v", err, closeErr)
+				}
+				// Explicit mtime advance avoids filesystem clock-resolution assumptions.
+				if err := os.Chtimes(path, info.ModTime(), info.ModTime().Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			case "truncate":
+				if err := os.Truncate(path, MaxSize*2); err != nil {
+					t.Fatal(err)
+				}
+			case "replace":
+				next := path + ".next"
+				if err := os.WriteFile(next, original, 0640); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(next, info.ModTime(), info.ModTime()); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(next, path); err != nil {
+					t.Fatal(err)
+				}
+			case "wrong-revision":
+				revision = "wrong"
+			case "wrong-uid":
+				target = "proj-aaaaaaaaaaaaaaaaaaaaaaaaaq"
+			}
+			preserved, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.WriteFile(ctx, target, []byte("candidate"), revision)
+			projectEditCode(t, err, "stale")
+			_, err = s.DeleteFile(ctx, target, revision)
+			projectEditCode(t, err, "stale")
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(preserved, after) {
+				t.Fatal("refusal changed file", err)
+			}
+			entries, err := os.ReadDir(filepath.Dir(path))
+			if err != nil || len(entries) != 1 {
+				t.Fatal("refusal left residue", err)
+			}
+		})
+	}
+}
+
+type projectCountingReader struct{ read int }
+
+func (r *projectCountingReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0xff
+	}
+	r.read += len(p)
+	return len(p), nil
+}
+func TestProjectEditingReadBudget(t *testing.T) {
+	r := &projectCountingReader{}
+	prefix, err := readProjectPrefix(r)
+	if err != nil || len(prefix) != MaxSize+1 || r.read != MaxSize+1 {
+		t.Fatalf("read %d bytes, returned %d: %v", r.read, len(prefix), err)
+	}
+}
+
+func TestProjectEditingNormalRevisionAndGlobalParity(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	s := NewProjectStore(config, filepath.Join(root, "state"))
+	for _, content := range [][]byte{nil, {}, []byte("exact\r\n"), bytes.Repeat([]byte("x"), MaxSize)} {
+		if err := s.Save(projectTestUID, content); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.ReadFile(ctx, projectTestUID)
+		legacy, _ := json.Marshal(struct {
+			UID     string
+			Present bool
+			Content []byte
+		}{projectTestUID, true, append([]byte{}, content...)})
+		if err != nil || got.Revision != Digest(legacy) || got.Oversize || got.PrefixBytes != 0 || got.PrefixDigest != "" {
+			t.Fatalf("normal revision %+v %v", got, err)
+		}
+	}
+	// Global user/settings/fragment oversize refusal remains unchanged.
+	for _, name := range []string{FileName, SettingsFileName, filepath.Join(FragmentsDirName, "part.md")} {
+		t.Run(name, func(t *testing.T) {
+			globalConfig := filepath.Join(t.TempDir(), "config")
+			p := filepath.Join(globalConfig, name)
+			if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, bytes.Repeat([]byte("x"), MaxSize+1), 0600); err != nil {
+				t.Fatal(err)
+			}
+			global := Store{configDir: globalConfig}
+			_, err := global.ReadFile(ctx)
+			projectEditCode(t, err, "too-large")
+			_, err = global.ValidateFile(ctx, nil)
+			projectEditCode(t, err, "too-large")
+			_, err = global.WriteFile(ctx, []byte("new"), "revision")
+			projectEditCode(t, err, "too-large")
+			_, err = global.ResetFile(ctx, "revision")
+			projectEditCode(t, err, "too-large")
+		})
 	}
 }
