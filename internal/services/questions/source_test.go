@@ -50,6 +50,89 @@ func sourceRecord(t *testing.T, st *agentquestion.Store, id, delivery, uid, requ
 	}
 	return r
 }
+
+func TestSourceReadControlSessionRoot(t *testing.T) {
+	s, r, st, d := sourceFixture(t)
+	r.Projects = nil
+	r.ControlSessions = []m.ControlSession{{Metadata: m.ObjectMeta{UID: "control"}}}
+	r.Windows[0].Metadata.OwnerRef = &m.OwnerRef{Kind: m.KindControlSession, UID: "control"}
+	r.Panes[0].Spec.Runtime.Kind = m.RuntimeTmux
+	r.Panes[0].Status = m.PaneStatus{}
+	sourceRecord(t, st, "question-0000000000000002", "", "agent", "")
+	list, err := s.ListWithSource(context.Background(), r.Agents[0])
+	if err != nil || list.Provider != "codex" || list.Runtime != m.RuntimeTmux || list.Session != "" || len(list.Questions) != 1 {
+		t.Fatalf("normal control root unavailable: %+v %v", list, err)
+	}
+	old, err := s.List(context.Background(), r.Agents[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	list.Provider, list.Runtime, list.Phase = "", "", ""
+	a, _ := json.Marshal(list)
+	b, _ := json.Marshal(old)
+	if string(a) != string(b) || d.calls != 0 {
+		t.Fatalf("control projection/default or host changed: %s / %s calls=%d", a, b, d.calls)
+	}
+}
+
+func TestSourceReadRootFence(t *testing.T) {
+	for _, kind := range []m.Kind{m.KindProject, m.KindControlSession} {
+		for _, change := range []string{"kind", "uid", "delete", "missing-before"} {
+			t.Run(string(kind)+"/"+change, func(t *testing.T) {
+				s, r, st, d := sourceFixture(t)
+				r.Panes[0].Spec.Runtime.Kind = m.RuntimeTmux
+				r.Panes[0].Status = m.PaneStatus{}
+				if kind == m.KindControlSession {
+					r.Projects = nil
+					r.ControlSessions = []m.ControlSession{{Metadata: m.ObjectMeta{UID: "project"}}}
+					r.Windows[0].Metadata.OwnerRef.Kind = kind
+				}
+				sourceRecord(t, st, "question-0000000000000002", "", "agent", "")
+				mutate := func() {
+					switch change {
+					case "kind":
+						// Both snapshots are valid and retain the same root UID.
+						if kind == m.KindProject {
+							r.Projects = nil
+							r.ControlSessions = []m.ControlSession{{Metadata: m.ObjectMeta{UID: "project"}}}
+							r.Windows[0].Metadata.OwnerRef.Kind = m.KindControlSession
+						} else {
+							r.ControlSessions = nil
+							r.Projects = []m.Project{{Metadata: m.ObjectMeta{UID: "project"}}}
+							r.Windows[0].Metadata.OwnerRef.Kind = m.KindProject
+						}
+					case "uid":
+						if kind == m.KindProject {
+							r.Projects = append(r.Projects, m.Project{Metadata: m.ObjectMeta{UID: "replacement"}})
+						} else {
+							r.ControlSessions = append(r.ControlSessions, m.ControlSession{Metadata: m.ObjectMeta{UID: "replacement"}})
+						}
+						r.Windows[0].Metadata.OwnerRef.UID = "replacement"
+					default:
+						r.Projects, r.ControlSessions = nil, nil
+					}
+				}
+				opened := false
+				if change == "missing-before" {
+					mutate()
+				}
+				s.OpenStore = func() (*agentquestion.Store, error) {
+					opened = true
+					mutate()
+					return st, nil
+				}
+				list, err := s.ListWithSource(context.Background(), r.Agents[0])
+				var failure *Failure
+				if !errors.As(err, &failure) || failure.Code != "question-stale" || list.AgentUID != "" || len(list.Questions) != 0 || list.Provider != "" || d.calls != 0 {
+					t.Fatalf("root change leaked partial source: %+v %v calls=%d", list, err, d.calls)
+				}
+				if opened != (change != "missing-before") {
+					t.Fatal("root admission/store read ordering changed", opened)
+				}
+			})
+		}
+	}
+}
 func TestSourceReadOpaqueIDsAndIndependentCLI(t *testing.T) {
 	s, r, st, d := sourceFixture(t)
 	sourceRecord(t, st.AsyncStore(), "question-0000000000000001", "async", "agent", "opaque/item:01")

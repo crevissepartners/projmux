@@ -15,13 +15,14 @@ import (
 // questionSource deliberately excludes progress, turn state and observation
 // times: those can change during a read without changing its conversation.
 type questionSource struct {
-	agent, window, project, pane, provider string
-	runtime                                coremetadata.RuntimeKind
-	phase                                  coremetadata.AgentPhase
-	activation                             coremetadata.PaneActivation
-	binding                                coremetadata.ProcessBinding
-	session, connection                    string
-	recordSessionID, recordThreadID        string
+	agent, window, root, pane, provider string
+	rootKind                            coremetadata.Kind
+	runtime                             coremetadata.RuntimeKind
+	phase                               coremetadata.AgentPhase
+	activation                          coremetadata.PaneActivation
+	binding                             coremetadata.ProcessBinding
+	session, connection                 string
+	recordSessionID, recordThreadID     string
 }
 
 func captureQuestionSource(reg coremetadata.Registry, agent coremetadata.Agent) (questionSource, bool) {
@@ -33,11 +34,23 @@ func captureQuestionSource(reg coremetadata.Registry, agent coremetadata.Agent) 
 	if !ok || !hasWindow || pane.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerUID() != agent.Metadata.UID {
 		return questionSource{}, false
 	}
-	project, hasProject := reg.Project(window.Metadata.OwnerUID())
-	if !hasProject || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject {
+	if window.Metadata.OwnerRef == nil {
 		return questionSource{}, false
 	}
-	out := questionSource{agent: agent.Metadata.UID, window: window.Metadata.UID, project: project.Metadata.UID, pane: pane.Metadata.UID, provider: agent.Spec.Provider, runtime: pane.Spec.Runtime.EffectiveKind(), phase: agent.Status.Phase}
+	root := *window.Metadata.OwnerRef
+	switch root.Kind {
+	case coremetadata.KindProject:
+		if _, ok := reg.Project(root.UID); !ok {
+			return questionSource{}, false
+		}
+	case coremetadata.KindControlSession:
+		if _, ok := reg.ControlSession(root.UID); !ok {
+			return questionSource{}, false
+		}
+	default:
+		return questionSource{}, false
+	}
+	out := questionSource{agent: agent.Metadata.UID, window: window.Metadata.UID, root: root.UID, rootKind: root.Kind, pane: pane.Metadata.UID, provider: agent.Spec.Provider, runtime: pane.Spec.Runtime.EffectiveKind(), phase: agent.Status.Phase}
 	// Compare activation identity for every runtime; no runtime observation occurs.
 	out.activation = coremetadata.PaneActivation{Kind: pane.Status.Activation.Kind, Generation: pane.Status.Activation.Generation, RuntimeID: pane.Status.Activation.RuntimeID, AgentUID: pane.Status.Activation.AgentUID, OperationID: pane.Status.Activation.OperationID}
 	if pane.Status.Activation.Process != nil {

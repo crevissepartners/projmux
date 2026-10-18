@@ -191,6 +191,50 @@ func TestExternalQuestionSourceConsumer(t *testing.T) {
 	}
 }
 
+func TestExternalControlSessionQuestionSource(t *testing.T) {
+	f := newReadFixture(t, "codex", core.RuntimeTmux)
+	f.window.Metadata.OwnerRef = &core.OwnerRef{Kind: core.KindControlSession, UID: "control"}
+	writeReadJSON(t, f.path, map[string]any{
+		"apiVersion": "projmux.io/v1alpha1", "schemaVersion": 5,
+		"controlSessions": []any{map[string]any{
+			"apiVersion": "projmux.io/v1alpha1", "kind": "ControlSession",
+			"metadata": map[string]any{"uid": "control", "name": "home"},
+			"spec":     map[string]any{"session": "home"},
+		}},
+		"windows": []core.Window{f.window}, "agents": []core.Agent{f.agent}, "panes": []core.Pane{f.pane},
+	})
+	now := time.Now().UTC()
+	writeReadJSON(t, filepath.Join(f.state, "agent-questions", ".async", "questions.json"), map[string]any{
+		"version": 1, "records": []any{map[string]any{
+			"id": "question-0000000000000001", "agentUID": "agent", "provider": "codex", "delivery": "async", "requestID": "opaque/control:01",
+			"questions": []any{map[string]any{"question": "Choose", "options": []any{map[string]any{"label": "yes"}}}},
+			"state":     "waiting", "createdAt": now, "updatedAt": now, "deadline": now.Add(time.Hour),
+		}},
+	})
+	c := f.client(t)
+	before := readTree(t, f.root)
+	ctx := context.Background()
+	list, err := c.ListQuestionsWithOptions(ctx, "uid:agent", core.QuestionListOptions{IncludeSource: true})
+	if err != nil || list.Provider != "codex" || list.Runtime != core.RuntimeTmux || list.Phase != core.PhaseOffline || list.Session != "" || len(list.Questions) != 1 || list.Questions[0].ItemID != "opaque/control:01" {
+		t.Fatalf("normal control root unavailable: %+v %v", list, err)
+	}
+	old, err := c.ListQuestions(ctx, "uid:agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero, err := c.ListQuestionsWithOptions(ctx, "uid:agent", core.QuestionListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSameJSON(t, old, zero)
+	if old.Provider != "" || old.Runtime != "" || old.Phase != "" || old.Session != "" || len(old.Questions) != 1 || old.Questions[0].ItemID != "" {
+		t.Fatal("default/zero source metadata changed", old)
+	}
+	if f.questions.calls != 0 || !reflect.DeepEqual(before, readTree(t, f.root)) {
+		t.Fatal("control source read had runtime or file effects")
+	}
+}
+
 func TestExternalFileOnlyApprovalConsumer(t *testing.T) {
 	for _, provider := range []string{"claude", "codex", "antigravity"} {
 		for _, runtime := range []core.RuntimeKind{core.RuntimeTmux, core.RuntimeProcess} {
