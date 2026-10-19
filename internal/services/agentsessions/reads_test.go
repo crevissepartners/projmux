@@ -112,3 +112,28 @@ func TestProjectEmptyRefPreservesCLIAdmission(t *testing.T) {
 		t.Fatalf("CLI empty ref: %v want=%v loads=%d states=%d", err, want, loads, states)
 	}
 }
+
+func TestRecordedNeverLoadsRegistryAndHonorsAdmission(t *testing.T) {
+	states := 0
+	service := Service{
+		LoadRegistry: func() (metadata.Registry, error) {
+			t.Fatal("recorded read loaded Registry")
+			return metadata.Registry{}, nil
+		},
+		StateDir: func() (string, error) { states++; return filepath.Join(t.TempDir(), "absent"), nil },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.ListRecorded(ctx); !errors.Is(err, context.Canceled) || states != 0 {
+		t.Fatalf("canceled admission: %v, states=%d", err, states)
+	}
+	result, err := service.ListRecorded(context.Background())
+	if err != nil || result.Sessions == nil || len(result.Sessions) != 0 || states != 1 {
+		t.Fatalf("recorded: %+v %v states=%d", result, err, states)
+	}
+	sentinel := errors.New("state path error")
+	service.StateDir = func() (string, error) { return "", sentinel }
+	if _, err := service.ListRecorded(context.Background()); !errors.Is(err, sentinel) {
+		t.Fatal(err)
+	}
+}

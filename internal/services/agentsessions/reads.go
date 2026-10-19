@@ -1,4 +1,4 @@
-// Package agentsessions shares the two public, read-only session history routes.
+// Package agentsessions shares the public, read-only session history routes.
 // It reads Registry and append-only history only; it never opens transcripts.
 package agentsessions
 
