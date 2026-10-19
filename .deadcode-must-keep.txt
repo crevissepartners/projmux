@@ -571,6 +571,7 @@ readKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retain
 readPersonaSnapshot	Existing instructions-message or profile-project fixture calls this path/scope adapter; production resume now uses the shared implementation directly.
 reapGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 refusal	Public v0 instruction SDK entrypoint or its typed-refusal adapter, retained for external modules; exercised by test/sdk/consumer with GOWORK=off.
+registrySnapshotRows	Public Registry snapshot row projection adapter; retained with ReadRegistrySnapshot and covered by stored-row parity, nested ownership, and external consumer tests.
 relaunchCodexPolicy	Public RelaunchAgent native policy preflight closure; TestRelaunchAgentSDKNativeCodexAndPostStopCancellation consumes it before Stop and existing Codex relaunch policy fixtures protect refusal semantics.
 relaunchCodexProbe	Public RelaunchAgent native settings capability probe closure; TestRelaunchAgentSDKNativeCodexAndPostStopCancellation checks preStop refusal/cancellation and TestRelaunchNativeProbeCancellationRetainsContext preserves cause.
 relaunchRecovery	Public RelaunchAgent partial-failure recovery closure; TestRelaunchLayerConflictAndExactRecovery and TestRelaunchAgentSDKNativeCodexAndPostStopCancellation pin exact reset/socket and postStop failure recovery.
@@ -581,7 +582,6 @@ renameCommand.withoutActiveTarget	Caller-controlled contextual target opt-out; g
 renameMirrorRefusal	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameQuery	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameRefusal	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
-registrySnapshotRows	Public Registry snapshot row projection adapter; retained with ReadRegistrySnapshot and covered by stored-row parity, nested ownership, and external consumer tests.
 renameSocket.FindPaneTargetForUID	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameSocket.FindSessionForProjectUID	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameSocket.RenamePane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
