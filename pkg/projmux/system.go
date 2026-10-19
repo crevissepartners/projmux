@@ -7,6 +7,15 @@ import (
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
+// ResourcesSupported reports whether this build supports statusbar host resources.
+// It needs no Client or configuration paths and does not sample metrics, update
+// the CPU cache, read or write files, or contact a runtime or provider.
+// Linux and macOS with cgo are supported; macOS without cgo is unsupported.
+// This does not report the saved or effective statusbar resources setting.
+func ResourcesSupported() bool {
+	return systemstatus.Supported()
+}
+
 // SampleSystem samples the existing statusbar host CPU and memory values.
 // It updates the CPU delta cache in the client's captured StateDir, using the
 // same 30-second reference lifetime as the statusbar. This is not an effect-free
