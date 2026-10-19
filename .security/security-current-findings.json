@@ -5,14 +5,14 @@
   "scanners": {
     "gosec": {
       "finding_count": 115,
-      "fingerprint_count": 94,
-      "finding_identity_sha256": "10b92da51fb5ae4bdb2d5b1e244c0cdce2c01e4d341c1897c79fbbd71d9d9aa6",
+      "fingerprint_count": 96,
+      "finding_identity_sha256": "329235834ae9f4900945aeb931bbf26080664210cd52e5973080a555df1e8e2e",
       "baseline_sha256": "4437b99f6b6881289414ea38e94be5e5ad0ec4b8d623f56b3ec4b9285c44ae3c"
     },
     "staticcheck": {
-      "finding_count": 23,
-      "fingerprint_count": 22,
-      "finding_identity_sha256": "dd18a0af955c9693c10ab1fa7332a86690a642d24e38845b46bbf17f9e44b99f",
+      "finding_count": 24,
+      "fingerprint_count": 23,
+      "finding_identity_sha256": "2d721708c7e99783934c6901f8a51f82b9bd858b1cb455c6b3b06492b09cd2fa",
       "baseline_sha256": "b0d756bc8fbbc883f73cd2dee5e10b5b460e573d1b7cd36fb464875abada43a7"
     }
   }
