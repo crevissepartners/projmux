@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
 )
 
 func TestCurrentProjectSessionQuotesPaneCWDAsOneLiteralShellArgv(t *testing.T) {
@@ -528,7 +527,6 @@ func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
 		}
 	}
 }
-
 
 func TestKeymapQuotedInternalIDMergesAndDroppedLegacyIDIgnored(t *testing.T) {
 	t.Parallel()

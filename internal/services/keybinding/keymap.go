@@ -51,8 +51,8 @@ const (
 const keymapSchemaVersionKey = "schema_version"
 
 type KeymapLoader struct {
- // Path is an exact captured keymap path resolver; nil preserves CLI resolution.
- Path func() (string,error)
+	// Path is an exact captured keymap path resolver; nil preserves CLI resolution.
+	Path      func() (string, error)
 	HomeDir   func() (string, error)
 	LookupEnv func(string) string
 	ReadFile  func(string) ([]byte, error)
@@ -74,8 +74,12 @@ func LoadMergedKeyBindingCatalog(loader KeymapLoader) ([]KeyBindingAction, bool,
 		return DefaultKeyBindingCatalog(), false, nil
 	}
 	var path string
- var err error
- if loader.Path != nil {path,err=loader.Path()} else {path,err=KeymapPath(loader.HomeDir, loader.LookupEnv)}
+	var err error
+	if loader.Path != nil {
+		path, err = loader.Path()
+	} else {
+		path, err = KeymapPath(loader.HomeDir, loader.LookupEnv)
+	}
 	if err != nil {
 		return nil, false, err
 	}

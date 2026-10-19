@@ -1,9 +1,9 @@
 package app
 
 import (
-"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"context"
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/integrations/mux"

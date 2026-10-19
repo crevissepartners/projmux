@@ -1,7 +1,8 @@
 package tmuxconfig
+
 import (
-"path/filepath"
-"strings"
+	"path/filepath"
+	"strings"
 )
 
 func NonEmpty(value, fallback string) string {
@@ -21,4 +22,5 @@ func DefaultInteractiveShell(lookupEnv func(string) string) string {
 	}
 	return shell
 }
+
 const fallbackInteractiveShell = "/bin/sh"

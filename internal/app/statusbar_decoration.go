@@ -1,7 +1,7 @@
 package app
 
 import (
- "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"net/url"
 	"strings"
 

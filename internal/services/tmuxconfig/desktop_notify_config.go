@@ -51,4 +51,8 @@ func LoadDesktopNotifyModeForTmuxConfig(homeDir func() (string, error), lookupEn
 }
 
 type DesktopNotifyMode string
-const ( DesktopNotifyModeNone DesktopNotifyMode = "none"; DesktopNotifyModeNotify DesktopNotifyMode = "notify" )
+
+const (
+	DesktopNotifyModeNone   DesktopNotifyMode = "none"
+	DesktopNotifyModeNotify DesktopNotifyMode = "notify"
+)

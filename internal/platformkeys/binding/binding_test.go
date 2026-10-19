@@ -50,4 +50,3 @@ func TestParseBindingsDeduplicatesPhysicalChord(t *testing.T) {
 		t.Fatalf("ParseBindings() = %#v, want %#v", got, want)
 	}
 }
-

@@ -1,12 +1,12 @@
 package app
 
 import (
- "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"io"
 	"os"
 	"os/exec"
@@ -1223,7 +1223,7 @@ func (c *shellCommand) resolveBinary(override string) (string, error) {
 }
 
 func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
- return tmuxconfig.WriteShellAppConfig(path,binaryPath,tmuxconfig.Generation{HomeDir:c.homeDir,LookupEnv:c.lookupEnv,ResolvePaths:configPaths,ReadFile:c.readFile},c.writeFile)
+	return tmuxconfig.WriteShellAppConfig(path, binaryPath, tmuxconfig.Generation{HomeDir: c.homeDir, LookupEnv: c.lookupEnv, ResolvePaths: configPaths, ReadFile: c.readFile}, c.writeFile)
 }
 
 // appConfigThemeSource resolves the global user theme for the shell-start writer,

@@ -1,5 +1,11 @@
 package keybinding
-import ("strings"; "testing"; "github.com/crevissepartners/projmux/internal/cli")
+
+import (
+	"github.com/crevissepartners/projmux/internal/cli"
+	"strings"
+	"testing"
+)
+
 func TestGeneratedSplitBindingsNeverInvokeRetiredAIRoot(t *testing.T) {
 	t.Parallel()
 
@@ -15,4 +21,3 @@ func TestGeneratedSplitBindingsNeverInvokeRetiredAIRoot(t *testing.T) {
 		}
 	}
 }
-

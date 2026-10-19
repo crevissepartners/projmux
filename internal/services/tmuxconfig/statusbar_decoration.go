@@ -1,9 +1,10 @@
 package tmuxconfig
+
 import (
-"os"
-"strings"
-"github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/theme"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/theme"
+	"os"
+	"strings"
 )
 
 func StatusbarDecorationSetFromGlobal(mode config.StatusbarDecoration) StatusbarDecorationSet {
@@ -93,6 +94,7 @@ func StatusbarCwdSegmentFormat(roles theme.RenderRoles) string {
 func StatusbarCwdDecoratorFormat(roles theme.RenderRoles) string {
 	return "#{?#{==:#{" + StatusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + StatusbarDecorationTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + StatusbarDecorationTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}},#{?#{==:#{" + StatusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + StatusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}}}"
 }
+
 const (
 	StatusbarDecorationTmuxOption       = "@projmux_statusbar_decoration"
 	StatusbarDecorationCwdTmuxOption    = "@projmux_statusbar_decoration_cwd"
@@ -113,4 +115,3 @@ type StatusbarDecorationSet struct {
 	Git    config.StatusbarDecoration
 	Notify config.StatusbarDecoration
 }
-

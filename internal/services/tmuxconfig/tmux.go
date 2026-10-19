@@ -1,13 +1,14 @@
 package tmuxconfig
+
 import (
-"crypto/sha256"
-"encoding/hex"
-"strconv"
-"strings"
-"github.com/crevissepartners/projmux/internal/services/keybinding"
-"github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/core/aibadge"
-"github.com/crevissepartners/projmux/internal/theme"
+	"crypto/sha256"
+	"encoding/hex"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/services/keybinding"
+	"github.com/crevissepartners/projmux/internal/theme"
+	"strconv"
+	"strings"
 )
 
 func TmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecoration) string {
@@ -629,6 +630,7 @@ func TmuxMenuPromptCommand(binaryPath string, action keybinding.KeyBindingAction
 	head := strings.TrimSpace("command-prompt "+action.TmuxPromptArgs) + " "
 	return head + strings.ReplaceAll(strings.TrimPrefix(rendered, head), "#", "##")
 }
+
 const StatusbarSettingsIcon = ""
 
 const StatusbarNotifyMaxWidth = 80

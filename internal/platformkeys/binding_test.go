@@ -1,5 +1,10 @@
 package platformkeys
-import ("reflect";"testing")
+
+import (
+	"reflect"
+	"testing"
+)
+
 func TestCaptureBindingsIncludeCustomOptionAndControlChords(t *testing.T) {
 	bindings := captureBindings()
 	for _, chord := range []string{"M-a", "M-S-a", "M-1", "M-Left", "C-r", "C-M-F12"} {

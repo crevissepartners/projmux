@@ -1,4 +1,5 @@
 package tmuxconfig
+
 type ControllerTriggerReason string
 
 const (
@@ -35,4 +36,3 @@ func ControllerTriggerReasons() []ControllerTriggerReason {
 		ControllerTriggerWindowUnlinked,
 	}
 }
-

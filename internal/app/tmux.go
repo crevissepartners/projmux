@@ -1,12 +1,12 @@
 package app
 
 import (
- "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"io"
 	"maps"
 	"os"
@@ -1496,7 +1496,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 			return "", fmt.Errorf("resolve tmux app config path: %w", err)
 		}
 	}
- return tmuxconfig.WriteTmuxAppConfig(config,binaryPath,tmuxconfig.Generation{HomeDir:c.homeDir,LookupEnv:c.lookupEnv,ResolvePaths:configPaths,ReadFile:c.readFile},c.writeFile)
+	return tmuxconfig.WriteTmuxAppConfig(config, binaryPath, tmuxconfig.Generation{HomeDir: c.homeDir, LookupEnv: c.lookupEnv, ResolvePaths: configPaths, ReadFile: c.readFile}, c.writeFile)
 }
 
 func (c *tmuxCommand) loadKeyBindingCatalog() ([]keybinding.KeyBindingAction, bool, error) {

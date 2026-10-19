@@ -224,24 +224,24 @@ func TestRunShellSourceSitesAreClosed(t *testing.T) {
 	// a subpackage still emits from internal/app's generated config.
 	var names []string
 	for _, root := range []string{".", "../services/keybinding", "../services/tmuxconfig"} {
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if entry.Name() == "testdata" {
-				return filepath.SkipDir
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if entry.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+				names = append(names, filepath.ToSlash(path))
 			}
 			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk package dir: %v", err)
 		}
-		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-			names = append(names, filepath.ToSlash(path))
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk package dir: %v", err)
-	}
 	}
 	names = append(names, mutationRuntimeSourceFiles(t)...)
 	sites := runShellSourceSites()

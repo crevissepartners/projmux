@@ -1,7 +1,7 @@
 package tmuxconfig
-import (
-"github.com/crevissepartners/projmux/internal/config"
 
+import (
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func DefaultStatusbarHUDVisibilitySet() StatusbarHUDVisibilitySet {
@@ -68,6 +68,7 @@ func LoadStatusbarHUDVisibilitySet(homeDir func() (string, error), lookupEnv fun
 		AgentUsage:    LoadStatusbarHUDVisibilityState(homeDir, lookupEnv, StatusbarHUDAgentUsage, resolvePaths).Effective,
 	}
 }
+
 type StatusbarHUDComponent string
 
 const (
@@ -79,4 +80,3 @@ type StatusbarHUDVisibilitySet struct {
 	Notifications config.StatusbarVisibility
 	AgentUsage    config.StatusbarVisibility
 }
-

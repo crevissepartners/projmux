@@ -1,8 +1,9 @@
 package tmuxconfig
+
 import (
-"github.com/crevissepartners/projmux/internal/config"
-"strings"
-"github.com/crevissepartners/projmux/internal/theme"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/theme"
+	"strings"
 )
 
 func DefaultStatusbarRowOneVisibilitySet() StatusbarRowOneVisibilitySet {
@@ -117,6 +118,7 @@ func StatusbarRowOneRightFormat(bin string, roles theme.RenderRoles, liveResourc
 	}
 	return b.String()
 }
+
 type StatusbarRowOneComponent string
 
 const (
@@ -142,4 +144,3 @@ type StatusbarRowOneVisibilitySet struct {
 	Clock            config.StatusbarVisibility
 	SettingsLauncher config.StatusbarVisibility
 }
-

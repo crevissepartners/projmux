@@ -1,9 +1,10 @@
 package tmuxconfig
+
 import (
-"github.com/crevissepartners/projmux/internal/services/keybinding"
-"github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/integrations/hooks"
-"github.com/crevissepartners/projmux/internal/theme"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/services/keybinding"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 func FallbackRenderThemeSource() RenderThemeSource {
@@ -83,4 +84,5 @@ func (s RenderThemeSource) TmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveRes
 	}
 	return TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, s.effective)
 }
-type RenderThemeSource struct { effective theme.EffectiveTheme }
+
+type RenderThemeSource struct{ effective theme.EffectiveTheme }

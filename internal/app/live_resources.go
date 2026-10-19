@@ -1,8 +1,8 @@
 package app
 
 import (
-"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
@@ -27,7 +27,7 @@ const (
 )
 
 func loadLiveResourcesMode(homeDir func() (string, error), lookupEnv func(string) string) config.LiveResourcesMode {
-return tmuxconfig.LoadLiveResourcesMode(homeDir, lookupEnv, configPaths)
+	return tmuxconfig.LoadLiveResourcesMode(homeDir, lookupEnv, configPaths)
 }
 
 func formatLiveResourcesStatus(metrics systemstatus.Metrics) string {

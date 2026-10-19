@@ -1,33 +1,38 @@
 package tmuxconfig
+
 import (
- "bytes"
- "errors"
- "fmt"
- "os"
- "path/filepath"
- "strings"
- "github.com/crevissepartners/projmux/internal/services/keybinding"
+	"bytes"
+	"errors"
+	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/keybinding"
+	"os"
+	"path/filepath"
+	"strings"
 )
+
 // Generation supplies the existing loader seams; ResolvePaths can return exact
 // captured Paths without reconstructing a parent XDG directory.
 type Generation struct {
- HomeDir func() (string,error)
- LookupEnv func(string) string
- ResolvePaths PathsResolver
- ReadFile func(string) ([]byte,error)
- KeymapPaths func() (string,error)
+	HomeDir      func() (string, error)
+	LookupEnv    func(string) string
+	ResolvePaths PathsResolver
+	ReadFile     func(string) ([]byte, error)
+	KeymapPaths  func() (string, error)
 }
-func (g Generation) loadKeyBindingCatalog() ([]keybinding.KeyBindingAction,bool,error) {
- return keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{HomeDir:g.HomeDir,LookupEnv:g.LookupEnv,ReadFile:g.ReadFile,Path:g.KeymapPaths})
+
+func (g Generation) loadKeyBindingCatalog() ([]keybinding.KeyBindingAction, bool, error) {
+	return keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{HomeDir: g.HomeDir, LookupEnv: g.LookupEnv, ReadFile: g.ReadFile, Path: g.KeymapPaths})
 }
 func (g Generation) appConfigThemeSource() RenderThemeSource {
- source,err:=ConfigRenderThemeSource(g.HomeDir,g.LookupEnv,"",g.ResolvePaths)
- if err!=nil {return FallbackRenderThemeSource()}
- return source
+	source, err := ConfigRenderThemeSource(g.HomeDir, g.LookupEnv, "", g.ResolvePaths)
+	if err != nil {
+		return FallbackRenderThemeSource()
+	}
+	return source
 }
 func (g Generation) defaultShell() string { return DefaultInteractiveShell(g.LookupEnv) }
 
-func WriteTmuxAppConfig(config,binaryPath string,g Generation,writeFile func(string,[]byte,os.FileMode)error) (string,error) {
+func WriteTmuxAppConfig(config, binaryPath string, g Generation, writeFile func(string, []byte, os.FileMode) error) (string, error) {
 	if writeFile == nil {
 		return "", errors.New("configure tmux install-app writer: file writer is not configured")
 	}
@@ -54,7 +59,7 @@ func WriteTmuxAppConfig(config,binaryPath string,g Generation,writeFile func(str
 	return config, nil
 }
 
-func WriteShellAppConfig(path,binaryPath string,g Generation,writeFile func(string,[]byte,os.FileMode)error) error {
+func WriteShellAppConfig(path, binaryPath string, g Generation, writeFile func(string, []byte, os.FileMode) error) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("shell app config path is required")
 	}

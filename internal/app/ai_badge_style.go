@@ -1,8 +1,8 @@
 package app
 
 import (
-"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"os"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -11,7 +11,7 @@ import (
 const aiBadgeStyleTmuxOption = tmuxconfig.AiBadgeStyleTmuxOption
 
 func loadAIBadgeStyle(homeDir func() (string, error), lookupEnv func(string) string) config.AIBadgeStyle {
-return tmuxconfig.LoadAIBadgeStyle(homeDir, lookupEnv, configPaths)
+	return tmuxconfig.LoadAIBadgeStyle(homeDir, lookupEnv, configPaths)
 }
 
 func aiBadgeConfigPaths(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error) {

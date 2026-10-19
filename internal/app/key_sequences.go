@@ -1,5 +1,10 @@
 package app
-import ("github.com/crevissepartners/projmux/internal/app/keybinding"; "github.com/crevissepartners/projmux/internal/services/tmuxconfig")
+
+import (
+	"github.com/crevissepartners/projmux/internal/app/keybinding"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
+)
+
 func keySequenceTableName(prefix []string) string {
 	return tmuxconfig.KeySequenceTableName(prefix)
 }
@@ -18,4 +23,9 @@ func tmuxSequenceBindLines(binaryPath string, actions []keybinding.KeyBindingAct
 func keyBindingSequenceTransportChords(actions []keybinding.KeyBindingAction) []string {
 	return tmuxconfig.KeyBindingSequenceTransportChords(actions)
 }
-const (tmuxSequenceTablesOption = tmuxconfig.TmuxSequenceTablesOption; tmuxSequenceRootsOption = tmuxconfig.TmuxSequenceRootsOption; tmuxSequenceTablePrefix = tmuxconfig.TmuxSequenceTablePrefix)
+
+const (
+	tmuxSequenceTablesOption = tmuxconfig.TmuxSequenceTablesOption
+	tmuxSequenceRootsOption  = tmuxconfig.TmuxSequenceRootsOption
+	tmuxSequenceTablePrefix  = tmuxconfig.TmuxSequenceTablePrefix
+)

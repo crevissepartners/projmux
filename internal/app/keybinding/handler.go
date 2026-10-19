@@ -1,8 +1,8 @@
 package keybinding
 
 import (
- "strings"
- "github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/cli"
+	"strings"
 )
 
 // keyBindingActionHandler pins the exact shipped handler one key action
@@ -95,4 +95,3 @@ func condenseTmuxHandlerBody(body string) string {
 	}
 	return strings.TrimSpace(condensed[:max]) + " ..."
 }
-

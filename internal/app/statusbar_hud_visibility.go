@@ -1,8 +1,8 @@
 package app
 
 import (
- "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"

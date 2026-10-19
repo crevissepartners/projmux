@@ -1,6 +1,10 @@
 package tmuxconfig
-import ("github.com/crevissepartners/projmux/internal/config"
-"github.com/crevissepartners/projmux/internal/systemstatus")
+
+import (
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/systemstatus"
+)
+
 func LoadLiveResourcesMode(homeDir func() (string, error), lookupEnv func(string) string, resolvePaths PathsResolver) config.LiveResourcesMode {
 	if !systemstatus.Supported() {
 		return config.LiveResourcesOff

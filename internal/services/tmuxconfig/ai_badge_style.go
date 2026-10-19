@@ -1,5 +1,9 @@
 package tmuxconfig
-import ("github.com/crevissepartners/projmux/internal/config")
+
+import (
+	"github.com/crevissepartners/projmux/internal/config"
+)
+
 func LoadAIBadgeStyle(homeDir func() (string, error), lookupEnv func(string) string, resolvePaths PathsResolver) config.AIBadgeStyle {
 	if homeDir == nil {
 		return config.AIBadgeStyleDot

@@ -1,11 +1,12 @@
 package tmuxconfig
+
 import (
-"crypto/sha256"
-"encoding/hex"
-"sort"
-"strings"
-"github.com/crevissepartners/projmux/internal/services/keybinding"
-platformkeys "github.com/crevissepartners/projmux/internal/platformkeys/binding"
+	"crypto/sha256"
+	"encoding/hex"
+	platformkeys "github.com/crevissepartners/projmux/internal/platformkeys/binding"
+	"github.com/crevissepartners/projmux/internal/services/keybinding"
+	"sort"
+	"strings"
 )
 
 func compileKeySequenceTrie(actions []keybinding.KeyBindingAction) *keySequenceTrieNode {
@@ -140,6 +141,7 @@ func KeyBindingSequenceTransportChords(actions []keybinding.KeyBindingAction) []
 	}
 	return keybinding.UniqueNonEmptyStrings(chords)
 }
+
 const (
 	TmuxSequenceTablesOption = "@projmux_sequence_tables"
 	TmuxSequenceRootsOption  = "@projmux_sequence_roots"
@@ -151,4 +153,3 @@ type keySequenceTrieNode struct {
 	children map[string]*keySequenceTrieNode
 	action   *keybinding.KeyBindingAction
 }
-
