@@ -269,7 +269,12 @@ func TestAgentPersonaSDKPostcommitRecovery(t *testing.T) {
 			}
 			root := t.TempDir()
 			home, config, state := filepath.Join(root, "home"), filepath.Join(root, "config", "projmux"), filepath.Join(root, "state", "projmux")
-			workspace, bin, socketDir := filepath.Join(root, "workspace"), filepath.Join(home, "bin"), filepath.Join(root, "socket")
+			workspace, bin := filepath.Join(root, "workspace"), filepath.Join(home, "bin")
+			// Unix socket paths must stay short even under CI's long TMPDIR.
+			socketDir, err := os.MkdirTemp("/tmp", "pmx-w6igsw6z-")
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, path := range []string{workspace, bin, socketDir} {
 				if err := os.MkdirAll(path, 0700); err != nil {
 					t.Fatal(err)
@@ -310,6 +315,10 @@ func TestAgentPersonaSDKPostcommitRecovery(t *testing.T) {
 			t.Cleanup(func() {
 				if out, err := (tmux.ExecRunner{}).Run(context.Background(), "tmux", "-S", socket, "kill-server"); err != nil {
 					t.Errorf("fixture socket cleanup: %v %s", err, out)
+					return // Preserve the private root if server retirement is uncertain.
+				}
+				if err := os.RemoveAll(socketDir); err != nil {
+					t.Errorf("fixture socket root cleanup: %v", err)
 				}
 			})
 			run("-f", "/dev/null", "new-session", "-d", "-s", "control", "-n", "control", "/bin/sh")
