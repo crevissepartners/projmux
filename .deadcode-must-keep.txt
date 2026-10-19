@@ -122,6 +122,7 @@ Client.WriteProjectGuidance	Public v0 Project guidance SDK entrypoint; covered b
 Client.WriteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.WriteProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.agentPersona	Public persona facade closure; admission, partial results and stop failure fixtures cover exact routing and no replay.
+Client.agentPersonaWithResume	Public persona SDK execution closure; real resume commit partial-result fixtures preserve Pane, cause and no replay.
 Client.agentSessionsService	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
