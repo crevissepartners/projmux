@@ -38,6 +38,7 @@ import (
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -2159,36 +2160,23 @@ func aiProviderEnableCommand(provider string) string {
 // default when it holds a valid mode, else the central new AI window mode,
 // else selective. A missing, empty, or invalid TUI value falls through to
 // the central file.
-func (c *aiCommand) getMode() string {
-	// Without a config home there is no saved TUI value to read.
-	if path, err := c.configFile(); err == nil {
-		config.NoteFrontRead(config.TmuxAISplitModeFileName, path)
-		if content, err := os.ReadFile(filepath.Clean(path)); err == nil {
-			if mode, ok := config.ValidAINewWindowMode(string(content)); ok {
-				return mode
-			}
+func (c *aiCommand) aiSplitModeSettings() settings.AISplitMode {
+	return settings.AISplitMode{Paths: func() (config.Paths, error) {
+		path, err := c.configFile()
+		if err != nil {
+			return config.Paths{}, err
 		}
-	}
-	if mode, saved, _ := loadCentralAINewWindowMode(c.homeDir, c.lookupEnv); saved {
-		return mode
-	}
-	return aiModeSelective
+		return config.Paths{ConfigDir: filepath.Dir(path)}, nil
+	}, Display: c.displayMessage}
+}
+
+func (c *aiCommand) getMode() string {
+	return c.aiSplitModeSettings().Get().Mode
 }
 
 func (c *aiCommand) setMode(mode string) error {
-	mode = normalizeAIMode(mode)
-	path, err := c.configFile()
-	if err != nil {
-		return fmt.Errorf("save AI split default: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, []byte(mode+"\n"), 0o644); err != nil {
-		return err
-	}
-	_ = c.displayMessage("ai split default: " + mode)
-	return nil
+	_, err := c.aiSplitModeSettings().Set(mode)
+	return err
 }
 
 // configFile is the saved AI split launch default, under the same config
@@ -2567,13 +2555,7 @@ func (c *aiCommand) missingAgentRunnerMessage(mode string) string {
 }
 
 func (c *aiCommand) displayMessage(message string) error {
-	if strings.TrimSpace(message) == "" {
-		return nil
-	}
-	if strings.TrimSpace(c.env("TMUX")) == "" {
-		return nil
-	}
-	return c.run("tmux", "display-message", message)
+	return settings.DisplayAISplitModeMessage(message, c.env, c.run)
 }
 
 func (c *aiCommand) binaryPath() (string, error) {
@@ -3850,10 +3832,7 @@ func validAIMode(mode string) (string, bool) {
 }
 
 func normalizeAIMode(mode string) string {
-	if valid, ok := validAIMode(mode); ok {
-		return valid
-	}
-	return aiModeSelective
+	return settings.NormalizeAISplitMode(mode)
 }
 
 func runExternalCommand(ctx context.Context, name string, args ...string) error {

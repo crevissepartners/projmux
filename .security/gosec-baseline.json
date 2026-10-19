@@ -334,7 +334,7 @@
     },
     {
       "rule": "G301",
-      "path": "internal/app/ai.go",
+      "path": "internal/services/settings/ai_split_mode.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
       "max_count": 1
@@ -845,7 +845,7 @@
     },
     {
       "rule": "G306",
-      "path": "internal/app/ai.go",
+      "path": "internal/services/settings/ai_split_mode.go",
       "message": "Expect WriteFile permissions to be 0600 or less",
       "source": "if err := os.WriteFile(path, []byte(mode+\"\\n\"), 0o644); err != nil {",
       "max_count": 1
