@@ -86,8 +86,8 @@ Client.ReadMessageArchive	Public SDK entrypoint for read-only retained live and 
 Client.ReadProfile	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ReadProjectGuidance	Public v0 Project guidance SDK entrypoint; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ReadProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
-Client.ReadRegistrySnapshot	Public v0 effect-free Registry snapshot entrypoint; covered by duplicate-row parity, ownership, zero-effect, single-read and external consumer tests.
 Client.ReadProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
+Client.ReadRegistrySnapshot	Public v0 effect-free Registry snapshot entrypoint; covered by duplicate-row parity, ownership, zero-effect, single-read and external consumer tests.
 Client.RecreateProfile	Public v0 bounded profile replacement entrypoint; retained for external consumers and covered by original restoration, admission and error-cause tests.
 Client.RegisterAccount	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 Client.RelaunchAgent	Public v0 exact tmux Agent relaunch entrypoint; shared CLI/SDK plan, native fixture, failure recovery and external consumer tests cover this path.
@@ -581,6 +581,7 @@ renameCommand.withoutActiveTarget	Caller-controlled contextual target opt-out; g
 renameMirrorRefusal	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameQuery	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameRefusal	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
+registrySnapshotRows	Public Registry snapshot row projection adapter; retained with ReadRegistrySnapshot and covered by stored-row parity, nested ownership, and external consumer tests.
 renameSocket.FindPaneTargetForUID	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameSocket.FindSessionForProjectUID	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 renameSocket.RenamePane	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
