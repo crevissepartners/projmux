@@ -202,7 +202,7 @@ func TestRegistrySnapshotRowsParityAndOwnership(t *testing.T) {
 	got.Windows[0].Status.Conditions[0].Type = "changed"
 	got.Agents[0].Metadata.Annotations["projmux.io/profile"] = "changed"
 	got.Agents[0].Metadata.OwnerRef.UID = "changed"
-	got.Agents[0].Status.Conditions[0].Type = "changed"
+	got.Agents[0].Spec.Workspace.AdditionalWritableRoots[0] = "changed"
 	got.Agents[0].Status.SessionRef.Codex.Endpoint.StateDomainID = "changed"
 	fresh, e := registrySnapshotRows(r)
 	if e != nil {

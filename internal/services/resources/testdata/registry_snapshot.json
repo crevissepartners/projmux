@@ -147,17 +147,14 @@
       "spec": {
         "provider": "codex",
         "workspace": {
-          "cwd": "/direct-b"
+          "cwd": "/direct-b",
+          "additionalWritableRoots": [
+            "/extra/direct-b"
+          ]
         }
       },
       "status": {
         "phase": "Offline",
-        "conditions": [
-          {
-            "type": "fixture",
-            "status": "True"
-          }
-        ],
         "sessionRef": {
           "provider": "codex",
           "codex": {
@@ -187,17 +184,14 @@
       "spec": {
         "provider": "codex",
         "workspace": {
-          "cwd": "/window-a"
+          "cwd": "/window-a",
+          "additionalWritableRoots": [
+            "/extra/window-a"
+          ]
         }
       },
       "status": {
         "phase": "Offline",
-        "conditions": [
-          {
-            "type": "fixture",
-            "status": "True"
-          }
-        ],
         "sessionRef": {
           "provider": "codex",
           "codex": {
@@ -227,17 +221,14 @@
       "spec": {
         "provider": "codex",
         "workspace": {
-          "cwd": "/direct-a"
+          "cwd": "/direct-a",
+          "additionalWritableRoots": [
+            "/extra/direct-a"
+          ]
         }
       },
       "status": {
         "phase": "Offline",
-        "conditions": [
-          {
-            "type": "fixture",
-            "status": "True"
-          }
-        ],
         "sessionRef": {
           "provider": "codex",
           "codex": {
@@ -267,17 +258,14 @@
       "spec": {
         "provider": "codex",
         "workspace": {
-          "cwd": "/orphan"
+          "cwd": "/orphan",
+          "additionalWritableRoots": [
+            "/extra/orphan"
+          ]
         }
       },
       "status": {
         "phase": "Offline",
-        "conditions": [
-          {
-            "type": "fixture",
-            "status": "True"
-          }
-        ],
         "sessionRef": {
           "provider": "codex",
           "codex": {

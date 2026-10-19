@@ -42,7 +42,7 @@ func TestLoadRegistrySnapshotRawDuplicates(t *testing.T) {
 	if !ok || w.Metadata.Name != "first-window" || w.Metadata.OwnerUID() != "proj-a" {
 		t.Fatalf("window first match: %+v", w)
 	}
-	if r.Agents[0].Status.SessionRef.Codex.Endpoint.StateDomainID != "domain" || r.Projects[0].Metadata.Labels["nested"] != "original" {
+	if r.Agents[0].Status.SessionRef.Codex.Endpoint.StateDomainID != "domain" || r.Projects[0].Metadata.Labels["nested"] != "original" || r.Agents[0].Spec.Workspace.AdditionalWritableRoots[0] != "/extra/direct-b" {
 		t.Fatal("nested values lost")
 	}
 }
