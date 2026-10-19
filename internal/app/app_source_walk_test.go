@@ -33,35 +33,50 @@ func appTestFiles(t testing.TB) []string {
 	return appGoFiles(t, func(name string) bool { return strings.HasSuffix(name, "_test.go") })
 }
 
-// appGoFiles walks internal/app/** and keeps the .go files whose base name
-// keep accepts. It skips what the go tool skips: testdata, and directories
-// whose name starts with "." or "_".
-func appGoFiles(t testing.TB, keep func(name string) bool) []string {
+// appGoFiles keeps the .go files whose base name keep accepts. With no
+// roots it walks internal/app/**, skips go-tool excluded directories, and
+// sorts the relative slash paths. Explicit roots include all directories
+// and retain root argument order, WalkDir order, and slash input paths.
+func appGoFiles(t testing.TB, keep func(name string) bool, roots ...string) []string {
 	t.Helper()
+	explicitRoots := len(roots) != 0
+	if !explicitRoots {
+		roots = []string{"."}
+	}
 	var paths []string
-	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := entry.Name()
-		if entry.IsDir() {
-			if path != "." && (name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
-				return filepath.SkipDir
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			name := entry.Name()
+			if entry.IsDir() {
+				if !explicitRoots && path != root && (name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(name, ".go") && keep(name) {
+				paths = append(paths, filepath.ToSlash(path))
 			}
 			return nil
+		})
+		if err != nil {
+			if !explicitRoots {
+				t.Fatalf("walk internal/app: %v", err)
+			}
+			t.Fatalf("walk Go source root %s: %v", root, err)
 		}
-		if strings.HasSuffix(name, ".go") && keep(name) {
-			paths = append(paths, filepath.ToSlash(path))
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk internal/app: %v", err)
 	}
 	if len(paths) == 0 {
-		t.Fatal("walk internal/app found no Go files")
+		if !explicitRoots {
+			t.Fatal("walk internal/app found no Go files")
+		}
+		t.Fatal("walk explicit source roots found no Go files")
 	}
-	slices.Sort(paths)
+	if !explicitRoots {
+		slices.Sort(paths)
+	}
 	return paths
 }
 
