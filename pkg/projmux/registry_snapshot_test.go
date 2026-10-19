@@ -135,10 +135,12 @@ func snapshotPublicUsers(r core.RegistrySnapshot, project string) ([]snapshotUse
 		} else {
 			for _, w := range r.Windows {
 				if w.Metadata.UID == uid {
+					windowOwner := ""
 					if w.Metadata.OwnerRef != nil {
-						if p, ok := firstProject(w.Metadata.OwnerRef.UID); ok {
-							owner = p.Metadata.UID
-						}
+						windowOwner = w.Metadata.OwnerRef.UID
+					}
+					if p, ok := firstProject(windowOwner); ok {
+						owner = p.Metadata.UID
 					}
 					break
 				}
