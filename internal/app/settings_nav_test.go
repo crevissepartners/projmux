@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -472,9 +473,7 @@ func settingsTestCollectConstExpressions(file *ast.File, expressions map[string]
 func settingsTestResolveStringConstants(expressions map[string]ast.Expr, dependencies map[string]string) map[string]string {
 	values := map[string]string{}
 	scope := map[string]string{}
-	for name, value := range dependencies {
-		scope[name] = value
-	}
+	maps.Copy(scope, dependencies)
 	for changed := true; changed; {
 		changed = false
 		for name, expression := range expressions {
