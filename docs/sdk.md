@@ -1399,8 +1399,10 @@ same persona digest and resolved settings return `unchanged`.
 Always inspect `AgentPersonaResult` even when an error is returned. It preserves
 the CLI plan projection and supplies `Notices` and `Recovery` for failed stops
 and resumes. A failed stop restores the previous persona unless the old Pane is
-known closed. A failed resume keeps the new annotations for a plain Agent
-resume; no operation is automatically retried. Errors support
+known closed. Resume errors keep the new annotations, known new Pane and original cause.
+Recovery suggests resume only for confirmed Offline with no known new Pane;
+Running, unobserved or partial results require exact Agent/Pane/socket state inspection.
+No operation is automatically retried. Errors support
 `errors.As(err, &refusal)` with persona reason codes, existing selector/Registry
 codes, and `process-relaunch-unsupported`. Cancellation before admission retains
 `errors.Is`; after admission, stop and recovery complete independently of it.
