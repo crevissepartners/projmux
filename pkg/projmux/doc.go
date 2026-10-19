@@ -15,6 +15,10 @@
 // ResolvePaths returns the CLI-compatible config/state directories without file
 // access or environment changes. Its callbacks default to OS inputs;
 // ErrHomeDirRequired matches missing HOME fallback errors under errors.Is.
+// SettingsDirectories returns profiles/personas paths beneath an already resolved
+// config directory using filepath.Join lexical cleaning only. It performs no
+// environment, filesystem, Registry or tmux access and does not check existence
+// or permissions, expand variables or make relative inputs absolute.
 //
 // NewClient(Options{}) captures HOME/XDG_CONFIG_HOME/XDG_STATE_HOME defaults
 // exactly as the CLI does. Options{ConfigDir: "/absolute/path/projmux"} instead
