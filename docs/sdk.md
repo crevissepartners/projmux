@@ -45,6 +45,15 @@ or `HOME or an absolute XDG_STATE_HOME is required`, matching the public
 but both environment callbacks have already run. Every error returns zero Paths;
 wrapped callback errors retain their original cause.
 
+`SettingsDirectories(configDir)` returns `(profilesDir, personasDir)` beneath an
+already resolved projmux configuration directory, for example
+`projmux.SettingsDirectories(paths.ConfigDir)`. It uses the CLI's profile and
+persona directory names and `filepath.Join` lexical cleaning. Empty and relative
+inputs remain relative; environment variables and tilde are not expanded.
+The function accesses no environment, files, Registry, tmux or providers and
+creates nothing, including when the directories are missing. It does not check
+existence or access permissions or make paths absolute.
+
 ## Host-global Agent guidance
 
 `ReadAgentGuidance(ctx)` returns `core.AgentGuidanceFile`: user-file presence,

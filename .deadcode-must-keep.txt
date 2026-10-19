@@ -390,6 +390,7 @@ Service.pushNative	Client.SendMessage dispatches the native Codex peer-context o
 Service.pushProcessCodex	Client.SendMessage dispatches an existing exact process Codex peer-message and reloads its receipt through this adapter.
 Service.terminal	Client.SendMessage preserves known and uncertain terminal receipt projections when transport or persistence fails.
 SettingItems	Read-only projection of the settings layer declaration retained as the test seam the settings layer guard seeds every front file from.
+SettingsDirectories	Public v0 pure profile/persona directory paths; retained for external SDK consumers and covered by input, no-effect and external consumer tests.
 SharedOutputModes	Closed shared -o catalog retained as the test seam that pins catalog closure and contract ordering.
 SkipIfReplacementCollapses	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
