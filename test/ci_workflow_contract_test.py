@@ -632,6 +632,13 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
         cls.runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.runner)
 
+    def setUp(self):
+        # No real signal handler or OS process is changed by these fake contracts.
+        for name in ("signal", "getsignal"):
+            replacement = patch.object(self.runner.signal, name)
+            replacement.start()
+            self.addCleanup(replacement.stop)
+
     def exercise(self, mutation=None, seconds=10):
         import contextlib
         import io
@@ -674,7 +681,7 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
                 os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}), contextlib.redirect_stdout(output):
                 try:
                     runner.main()
-                except (ValueError, subprocess.TimeoutExpired, runner.BatchCleanupError) as exc:
+                except (ValueError, subprocess.TimeoutExpired, runner.BatchCleanupError, KeyboardInterrupt) as exc:
                     error = exc
             return calls, output.getvalue(), summary.read_text() if summary.exists() else "", error
 
@@ -794,8 +801,11 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
         process = Mock(pid=424242, returncode=None)
         process.communicate.side_effect = PermissionError("fake owned-child communication failure")
         with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
-            runner.os, "getpgrp", return_value=999):
-            with self.assertRaises(runner.BatchCleanupError):
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner, "group_exists", return_value=False), patch.object(
+            runner.os, "killpg"), patch.object(runner.time, "sleep"), patch.object(
+            runner.time, "monotonic", side_effect=iter(range(100))):
+            with self.assertRaises(PermissionError):
                 runner.run_batch(["fake"], timeout=480)
         def permission_failure(events, command):
             raise PermissionError("fake cleanup unavailable")
@@ -823,6 +833,105 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
             with self.assertRaises(runner.BatchCleanupError):
                 runner.run_batch(["fake"], timeout=480)
         self.assertEqual(signals, [runner.signal.SIGTERM, runner.signal.SIGKILL])
+
+
+    def cancellation_case(self, original, *, repeated=False, clear=True, cleanup_first=False):
+        import contextlib
+        import io
+        from unittest.mock import Mock
+        runner = self.runner
+        process = Mock(pid=424242, returncode=None)
+        calls, handlers, alive = [], [], [True]
+        old_handler = object()
+        current_handler = [old_handler]
+        cleanup_interrupt = KeyboardInterrupt("during cleanup")
+        def set_handler(signum, handler):
+            handlers.append(handler)
+            previous = current_handler[0]
+            current_handler[0] = handler
+            return previous
+        def communicate(*, timeout):
+            calls.append("wait")
+            if len(calls) == 1:
+                if not cleanup_first:
+                    raise original
+                process.returncode = 0
+                return "", ""
+            if repeated and calls.count("wait") == 2:
+                raise cleanup_interrupt
+            process.returncode = -15
+            return "", ""
+        def killpg(group, sig):
+            self.assertEqual(group, 424242)
+            calls.append(sig.name)
+            if cleanup_first:
+                current_handler[0](runner.signal.SIGINT, None)
+            if clear:
+                alive[0] = False
+        process.communicate.side_effect = communicate
+        ticks = iter(index / 10 for index in range(1000))
+        caught, output = None, io.StringIO()
+        with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner.os, "killpg", side_effect=killpg), patch.object(
+            runner, "group_exists", side_effect=lambda group: alive[0]), patch.object(
+            runner.signal, "getsignal", return_value=old_handler), patch.object(
+            runner.signal, "signal", side_effect=set_handler), patch.object(
+            runner.time, "monotonic", side_effect=lambda: next(ticks)), patch.object(
+            runner.time, "sleep"), contextlib.redirect_stdout(output):
+            try:
+                runner.run_batch(["fake"], timeout=480)
+            except BaseException as exc:
+                caught = exc
+        return caught, calls, handlers, old_handler, output.getvalue(), process
+
+    def test_cancel_preserves_exception_and_retires_owned_child(self):
+        for original in (KeyboardInterrupt("first"), ValueError("first")):
+            with self.subTest(kind=type(original).__name__):
+                caught, calls, handlers, previous, output, process = self.cancellation_case(original)
+                self.assertIs(caught, original)
+                self.assertEqual(calls, ["wait", "SIGTERM", "wait"])
+                self.assertEqual(handlers[-1], previous)
+                self.assertIsNotNone(caught.__traceback__)
+                self.assertEqual(process.returncode, -15)
+                self.assertIn('"group_clear": true', output)
+
+    def test_cancel_during_cleanup_preserves_first_and_deadline(self):
+        original = KeyboardInterrupt("original")
+        caught, calls, handlers, previous, output, process = self.cancellation_case(original, repeated=True)
+        self.assertIs(caught, original)
+        self.assertGreaterEqual(calls.count("wait"), 3)
+        self.assertEqual(handlers[-1], previous)
+        self.assertIsNotNone(process.returncode)
+        self.assertIn('"group_clear": true', output)
+
+    def test_first_sigint_during_cleanup_is_not_success(self):
+        caught, calls, handlers, previous, output, process = self.cancellation_case(None, cleanup_first=True)
+        self.assertIsInstance(caught, KeyboardInterrupt)
+        self.assertEqual(handlers[-1], previous)
+        self.assertIn('"group_clear": true', output)
+
+    def test_cancel_with_uncertain_cleanup_preserves_cause_and_stops_main(self):
+        original = KeyboardInterrupt("original")
+        caught, calls, handlers, previous, output, process = self.cancellation_case(original, clear=False)
+        self.assertIs(caught, original)
+        self.assertIsInstance(caught.__cause__, self.runner.BatchCleanupError)
+        self.assertIn('"group_clear": false', output)
+        self.assertEqual(handlers[-1], previous)
+        def cancel(events, command):
+            raise original
+        calls, _, _, error = self.exercise(cancel)
+        self.assertIs(error, original)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+
+    def test_original_value_error_with_uncertain_cleanup_stops_main(self):
+        original = ValueError("fake command error")
+        def uncertain(events, command):
+            raise original from self.runner.BatchCleanupError("fake cleanup uncertain")
+        calls, _, summary, error = self.exercise(uncertain)
+        self.assertIsInstance(error, self.runner.BatchCleanupError)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+        self.assertIn("FAIL", summary)
 
 
 class CIWorkflowContractTest(unittest.TestCase):

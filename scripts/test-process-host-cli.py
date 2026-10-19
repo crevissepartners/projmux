@@ -105,52 +105,104 @@ def group_exists(group: int) -> bool:
     return True
 
 
+def retire_batch(process: subprocess.Popen) -> tuple[dict, KeyboardInterrupt | None]:
+    """Retire only this child's new group, without extending cleanup on Ctrl-C."""
+    group = process.pid
+    if group <= 1 or group == os.getpgrp():
+        raise BatchCleanupError("refusing unowned process group")
+    started = time.monotonic()
+    interrupted = None
+    signals, errors = [], []
+    clear = False
+
+    def remember_interrupt(signum=None, frame=None):
+        nonlocal interrupted
+        if interrupted is None:
+            interrupted = KeyboardInterrupt()
+
+    previous = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, remember_interrupt)
+    try:
+        for index, sig in enumerate((signal.SIGTERM, signal.SIGKILL), 1):
+            deadline = started + index * 5
+            signaled = False
+            while time.monotonic() < deadline:
+                try:
+                    if process.returncode is not None and not group_exists(group):
+                        clear = True
+                        break
+                    if not signaled:
+                        try:
+                            os.killpg(group, sig)
+                            signals.append(sig.name)
+                        except ProcessLookupError:
+                            pass
+                        signaled = True
+                    try:
+                        process.communicate(timeout=max(0.001, deadline - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        break
+                    if process.returncode is not None and not group_exists(group):
+                        clear = True
+                        break
+                    time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+                except KeyboardInterrupt as exc:
+                    # Also handles synchronous injected exceptions; real SIGINT
+                    # is recorded by the temporary handler instead of unwinding.
+                    if interrupted is None:
+                        interrupted = exc
+                except OSError as exc:
+                    errors.append(str(exc))
+                    break
+            if clear:
+                break
+        if not clear:
+            try:
+                clear = process.returncode is not None and not group_exists(group)
+            except OSError as exc:
+                errors.append(str(exc))
+        receipt = {"pid": process.pid, "group": group, "wait_returncode": process.returncode,
+                   "group_clear": clear, "signals": signals, "errors": errors,
+                   "cleanup_seconds": round(time.monotonic() - started, 3)}
+        print("process CLI batch cleanup: " + json.dumps(receipt), flush=True)
+        return receipt, interrupted
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def run_batch(command: list[str], *, timeout: int, **kwargs) -> subprocess.CompletedProcess:
     # setsid happens before exec; this Popen owns exactly the new pid/pgid.
     process = subprocess.Popen(command, start_new_session=True, **kwargs)
-    expired = None
+    original, traceback, cleanup_error, interrupted = None, None, None, None
+    stdout, stderr = None, None
     try:
-        group = process.pid
-        if group <= 1 or group == os.getpgrp():
-            raise BatchCleanupError("refusing unowned process group")
-        expired = None
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException as exc:
+        original, traceback = exc, exc.__traceback__
+    finally:
         try:
-            stdout, stderr = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            expired = exc
-            stdout, stderr = exc.stdout, exc.stderr
-        # Even a normally exited go command must not leave a group behind before
-        # the next batch. Detached sessions remain the fixtures' cleanup contract.
-        cleanup_started = time.monotonic()
-        signals = []
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            if process.returncode is not None and not group_exists(group):
-                break
-            deadline = time.monotonic() + 5
-            try:
-                os.killpg(group, sig)
-                signals.append(sig.name)
-            except ProcessLookupError:
-                pass
-            try:
-                process.communicate(timeout=max(0.001, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                pass
-            while group_exists(group) and time.monotonic() < deadline:
-                time.sleep(0.05)
-        clear = process.returncode is not None and not group_exists(group)
-        receipt = {"pid": process.pid, "group": group, "wait_returncode": process.returncode,
-                   "group_clear": clear, "signals": signals,
-                   "cleanup_seconds": round(time.monotonic() - cleanup_started, 3)}
-        print("process CLI batch cleanup: " + json.dumps(receipt), flush=True)
-        if not clear:
-            raise BatchCleanupError("process CLI batch cleanup unresolved: " + json.dumps(receipt), expired)
-        if expired is not None:
-            raise expired
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-    except OSError as exc:
-        raise BatchCleanupError(
-            f"process CLI batch ownership/cleanup uncertain: pid={process.pid}: {exc}", expired) from exc
+            receipt, interrupted = retire_batch(process)
+            if not receipt["group_clear"]:
+                cleanup_error = BatchCleanupError("process CLI batch cleanup unresolved: " + json.dumps(receipt),
+                    original if isinstance(original, subprocess.TimeoutExpired) else None)
+        except Exception as exc:
+            cleanup_error = BatchCleanupError(f"process CLI batch cleanup uncertain: pid={process.pid}: {exc}",
+                original if isinstance(original, subprocess.TimeoutExpired) else None)
+    # An initial cancellation wins over a later cleanup interruption/failure.
+    # A first cancellation during cleanup must not turn into a successful batch.
+    if original is not None and not isinstance(original, subprocess.TimeoutExpired):
+        if cleanup_error is not None:
+            raise original.with_traceback(traceback) from cleanup_error
+        raise original.with_traceback(traceback)
+    if interrupted is not None:
+        if cleanup_error is not None:
+            raise interrupted from cleanup_error
+        raise interrupted
+    if cleanup_error is not None:
+        raise cleanup_error
+    if original is not None:
+        raise original.with_traceback(traceback)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 
@@ -330,6 +382,8 @@ def main() -> None:
                 cleanup_failure = BatchCleanupError("batch ownership/cleanup uncertain: " + str(exc))
             except ValueError as exc:
                 status, error = 1, str(exc)
+                if isinstance(exc.__cause__, BatchCleanupError):
+                    cleanup_failure = exc.__cause__
             seconds = time.monotonic() - test_started
             batch = strict_report(events, names, status)
             package_pass = any("Test" not in e and e.get("Action") == "pass" for e in events)

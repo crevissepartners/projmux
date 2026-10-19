@@ -113,6 +113,11 @@ for a shorter critical path; runner time and wall time must be measured separate
   five seconds). Uncertain retirement stops further batches and fails the target.
   This cleanup uses the watchdog's existing setup/cleanup headroom. Detached
   sessions remain the individual fixtures' cleanup responsibility.
+  Cancellation and exception exits use the same bounded retirement before the
+  original exception is propagated. During cleanup, further SIGINTs are recorded
+  without restarting its deadline; the original handler is restored afterward.
+  A first cancellation during cleanup also fails the invocation. Cleanup
+  uncertainty remains diagnostic evidence and never permits another batch.
   To run it manually, use `make test-process-host-cli` (or
   `make test-process-host-cli GO=/path/to/go` for a local toolchain matching
   go.mod). The real-tmux window rename test remains in its existing unit and
