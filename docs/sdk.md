@@ -1192,3 +1192,66 @@ call `PreflightDelete` again before any deletion effects. Profiles may still
 protect an Agent. Setting the label grants no deletion permission. Web session
 authorization and the consumer's `agent.protection` mutation lock remain the
 consumer's responsibility; this method supplies neither.
+
+### Prepared Claude process resumes
+
+`PrepareAgentResume` explicitly freezes the existing process Claude resume
+recipe without starting a provider, retaining an owner or acquiring a claim.
+`AllowHostLost: true` enables the existing absent-host checks; its default is
+false. A nonzero `Binding` fences the observed generation. Codex continues to
+use ordinary detached `ResumeAgent` with an empty prompt.
+
+```go
+prepared, err := client.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{
+    Ref: agentRef, Binding: observedBinding, AllowHostLost: true,
+})
+if err != nil {
+    return err
+}
+proof, err := client.ValidateAgentResumePreparation(ctx,
+    core.ValidateAgentResumePreparationRequest{
+        Ref: agentRef, Preparation: prepared.Preparation,
+    })
+if err != nil {
+    return err
+}
+result, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{
+    Ref: agentRef, Detach: true, Prompt: userInput,
+    Binding: proof.Binding, Preparation: &proof,
+})
+```
+
+The proof is observed evidence, **not authorization or a writer grant**.
+Session authorization, mutation locks and acknowledgement storage remain the
+consumer's responsibility. Validation only reads the existing plan, source and
+snapshot digests; it does not reconcile a plan. It cannot replace the independent
+owner's proof check under the claim guard before reservation. A missing,
+modified or replaced proof is a `Refusal` with `CodeResumePreparationStale`.
+A stale explicit request `Binding` remains `CodeResumePlanInvalid`; unsupported
+providers or input combinations remain `CodeResumeRequestInvalid`.
+
+Supplying `Preparation` requires process Claude, `Detach: true`, a nonempty
+user `Prompt`, `WaitForPeer: false` and no model or effort override. A nil
+`Preparation` preserves ordinary Resume, including its existing host-lost
+admission and Claude prompt requirement. Preparing without input is distinct
+from `WaitForPeer`, which retains its existing claim and retirement contract.
+
+On success `result.Preparation` is nil. On failure it may contain the still
+valid original proof, or the same frozen recipe readdressed by the existing
+engine after an exactly reaped failed child with actual Wait. Unknown ownership,
+replacement and changed recipes return no retry proof. No input is replayed.
+The consumer decides whether to acknowledge a returned proof, validate it again
+and submit another explicit input. Existing `ResumeProcessError` recovery
+identity and cancellation/cleanup errors remain available through `errors.As`.
+Success establishes the detached resume; it does not promise a provider reply.
+
+Successful process `ResumeAgent` returns `MayBeTruncated` from the independent
+owner's existing CORE `Previous.MayBeTruncated` value. True advises that prior
+input may have been cut off; it proves neither actual truncation nor actual
+Wait. Host-lost ordinary Resume with nil `Preparation` also returns this new
+boolean. Failures, tmux, claim waiting and CORE results without that advisory
+return false. Preparation proof does not determine the advisory, and existing
+Notices and CLI output are unchanged. Read the prior generation's
+`LastTermination` (`reconcile` / `unknown`, no invented exit code) and
+`ProcessSession.History` through `GetResource` on its Pane; the Agent exposes
+the same termination evidence.

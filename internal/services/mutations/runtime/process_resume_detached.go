@@ -19,11 +19,14 @@ import (
 // ProcessResumeFirstFrame preserves operator and peer input authority.
 type ProcessResumeFirstFrame struct{ Kind, Text string }
 type ProcessDetachedResumeRequest struct {
-	Agent         string
-	Model, Effort string
-	Prompt        ProcessResumeFirstFrame
-	WaitForPeer   bool
-	Previous      m.ProcessBinding
+	Agent             string
+	Model, Effort     string
+	Prompt            ProcessResumeFirstFrame
+	WaitForPeer       bool
+	Previous          m.ProcessBinding
+	PreparationAction string
+	AllowHostLost     bool
+	Preparation       *ProcessResumePreparation
 }
 
 type ProcessDetachedResumeEnvelope struct {
@@ -89,11 +92,13 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		return VerifyDetachedProcessCreateBinding(reg, ready.Binding, owner)
 	}
 	var cleanupBinding processhost.Binding
+	cleanupUnconfirmed := false
 	l.Cleanup = func(owner m.ProcessIdentity, ready ProcessDetachedReply) error {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), ProcessAgentStopTimeout)
 		defer cancel()
 		var err error
 		cleanupBinding, err = awaitDetachedProcessResumeCleanup(cleanupCtx, load, wire.RegistryPath, *wire.Resume, owner, ready.Binding)
+		cleanupUnconfirmed = err != nil
 		return err
 	}
 	reply, err := l.Launch(ctx, wire, stdout, stderr)
@@ -101,6 +106,9 @@ func LaunchDetachedProcessResume(ctx context.Context, executable string, wire Pr
 		reply.Binding = cleanupBinding
 	}
 	if err != nil {
+		if cleanupUnconfirmed || reply.Error == "" {
+			reply.Preparation = nil
+		}
 		code := reply.ErrorCode
 		if code == "" {
 			code = "resume-execution-failed"
@@ -154,7 +162,10 @@ func awaitDetachedProcessResumeCleanup(ctx context.Context, load func() (m.Regis
 					binding = processResumeHostBinding(b)
 				}
 				settled := agent.Status.Phase == m.PhaseOffline && ((b == request.Previous && pane.Status.Activation.IsZero()) || (b == processCreateSchemaBinding(binding) && m.MatchesProcessWait(b, pane.Status.LastTermination) && m.SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)))
-				if settled && ProcessIdentityAbsent(owner, localipc.Process) {
+				// A supplied-proof refusal can leave the original lost-host Running
+				// record untouched. This request never owned that previous activation.
+				unreserved := request.Preparation != nil && b == request.Previous && (pane.Status.Activation.Process == nil || pane.Status.Activation.Process.HostProcess != owner)
+				if (settled || unreserved) && ProcessIdentityAbsent(owner, localipc.Process) {
 					return binding, nil
 				}
 			}

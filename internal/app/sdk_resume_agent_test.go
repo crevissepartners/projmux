@@ -130,7 +130,7 @@ func TestResumeAgentSDKCLIParity(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if result.Agent.Metadata.UID != uid || result.Agent.Status.PaneRef == "" || result.PaneID == "" || result.Receipt.Effects.Identity != core.IdentityReused {
+					if result.MayBeTruncated || result.Agent.Metadata.UID != uid || result.Agent.Status.PaneRef == "" || result.PaneID == "" || result.Receipt.Effects.Identity != core.IdentityReused {
 						t.Fatalf("missing rebind result: %+v", result)
 					}
 					receipt = sdkJSON(t, result.Receipt)

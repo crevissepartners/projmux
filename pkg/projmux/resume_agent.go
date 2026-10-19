@@ -75,7 +75,7 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 			return c.resumeProcessAgent(ctx, req, *agent, reg)
 		}
 	}
-	if req.Detach || req.WaitForPeer || req.Prompt != "" || req.Binding != (core.ProcessBinding{}) {
+	if req.Detach || req.WaitForPeer || req.Prompt != "" || req.Binding != (core.ProcessBinding{}) || req.Preparation != nil {
 		return result, &Refusal{Code: CodeResumeRequestInvalid, message: "ResumeAgentRequest process inputs require a process Agent"}
 	}
 	fields := mutationruntime.AgentInputFields{Prefix: "ResumeAgentRequest"}

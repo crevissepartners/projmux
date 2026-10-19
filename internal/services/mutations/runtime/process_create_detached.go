@@ -30,15 +30,17 @@ type ProcessDetachedCreateRequest struct {
 }
 
 type ProcessCreateCommitted struct {
-	Agent   coremetadata.Agent
-	Pane    coremetadata.Pane
-	Receipt receipt.OperationReceipt
-	Notices []string
+	MayBeTruncated bool `json:",omitempty"`
+	Agent          coremetadata.Agent
+	Pane           coremetadata.Pane
+	Receipt        receipt.OperationReceipt
+	Notices        []string
 }
 
 type ProcessDetachedReply struct {
-	Relaunch              json.RawMessage `json:",omitempty"`
-	ErrorDetail           json.RawMessage `json:",omitempty"`
+	Preparation           *ProcessResumePreparation `json:",omitempty"`
+	Relaunch              json.RawMessage           `json:",omitempty"`
+	ErrorDetail           json.RawMessage           `json:",omitempty"`
 	Owner                 coremetadata.ProcessIdentity
 	Binding               processhost.Binding
 	Stdout, Stderr, Error string
@@ -52,6 +54,8 @@ type ProcessDetachedReply struct {
 // application supplies binding/control callbacks; SDK callers use the same
 // owned internal launcher, never the public create command.
 type ProcessDetachedLauncher struct {
+	// Transient runs a no-provider preparation worker as a directly reaped child.
+	Transient   bool
 	Executable  string
 	Environment []string
 	// PayloadDir is frozen for SDK calls; empty preserves the CLI temp domain.
@@ -106,8 +110,12 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	}
 	interrupt := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer interrupt()
+	route := "process-agent-launch"
+	if l.Transient {
+		route = "process-agent-owner"
+	}
 	// #nosec G204 -- this is the caller's own executable with fixed internal argv; private request data travels only through fd 4.
-	launcher := exec.Command(l.Executable, "internal", "process-agent-launch")
+	launcher := exec.Command(l.Executable, "internal", route)
 	launcher.Env = l.Environment
 	launcher.ExtraFiles = []*os.File{child, payload}
 	if err = launcher.Start(); err != nil {
@@ -116,17 +124,28 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	_ = child.Close()
 	done := make(chan error, 1)
 	go func() { done <- launcher.Wait() }()
+	launcherReaped := false
+	if l.Transient {
+		defer func() {
+			if !launcherReaped {
+				_ = launcher.Process.Kill()
+				<-done
+			}
+		}()
+	}
 	decoder := json.NewDecoder(io.LimitReader(conn, ProcessDetachedWireLimit))
 	encoder := json.NewEncoder(conn)
 	var identity ProcessDetachedReply
 	if err = decoder.Decode(&identity); err != nil {
 		_ = launcher.Process.Kill()
 		<-done
+		launcherReaped = true
 		return ready, processDetachedIdentityFailure(ctx, deadline, err)
 	}
 	if !identity.Owner.Valid() || int64(identity.Owner.OwnerUID) != int64(os.Getuid()) {
 		_ = launcher.Process.Kill()
 		<-done
+		launcherReaped = true
 		return ready, errors.New("process-detached-owner-identity-invalid")
 	}
 	ready.Owner = identity.Owner
@@ -146,10 +165,48 @@ func (l ProcessDetachedLauncher) Launch(ctx context.Context, request any, stdout
 	if identityErr != nil || kernelOwner != identity.Owner {
 		_ = launcher.Process.Kill()
 		<-done
+		launcherReaped = true
 		return ready, errors.New("process-detached-owner-identity-unconfirmed")
 	}
 	if err = decoder.Decode(&ready); err != nil {
 		return ready, fmt.Errorf("process-detached-startup-handshake-failed: owner pid %d: %w", identity.Owner.PID, errors.Join(err, ctx.Err()))
+	}
+	if l.Transient {
+		// This worker has no provider or claim to hand off. Reap it before returning,
+		// including on malformed replies and cancellation.
+		if ready.Error != "" {
+			return ready, errors.New(ready.Error)
+		}
+		if ready.Phase != "prepared" || ready.Owner != identity.Owner || l.Verify == nil {
+			return ready, errors.New("process-preparation-reply-invalid")
+		}
+		if err = l.Verify(ready, identity.Owner); err != nil {
+			return ready, err
+		}
+		if err = ctx.Err(); err != nil {
+			return ready, err
+		}
+		if err = encoder.Encode("commit"); err != nil {
+			return ready, err
+		}
+		var completed string
+		if err = decoder.Decode(&completed); err != nil {
+			return ready, errors.Join(err, ctx.Err())
+		}
+		if completed != "completed" {
+			return ready, errors.New("process-preparation-commit-invalid")
+		}
+		select {
+		case err = <-done:
+			launcherReaped = true
+			if err != nil {
+				return ready, err
+			}
+		case <-ctx.Done():
+			return ready, ctx.Err()
+		}
+		failed = false
+		return ready, nil
 	}
 	if ready.Phase == "planned" && ready.Error == "" {
 		if ready.Owner != identity.Owner || l.Admit == nil {

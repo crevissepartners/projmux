@@ -47,6 +47,9 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 	if agent.Spec.Provider == "claude" && !req.WaitForPeer && strings.TrimSpace(req.Prompt) == "" {
 		return result, &Refusal{Code: CodeResumeRequestInvalid, message: "agent resume: process Claude requires -- <prompt>; stream-json emits init only after the first user frame"}
 	}
+	if req.Preparation != nil && (req.WaitForPeer || req.Model != "" || req.Effort != "" || strings.TrimSpace(req.Prompt) == "") {
+		return result, &Refusal{Code: CodeResumeRequestInvalid, message: "prepared resume requires an explicit Claude first input without settings overrides"}
+	}
 	previous := pane.Status.ProcessSession.Binding
 	var observed core.ProcessBinding
 	if err := unregisterCopy(previous, &observed); err != nil {
@@ -56,6 +59,19 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 		return result, &Refusal{Code: CodeResumePlanInvalid, AgentUID: agent.Metadata.UID, message: "process resume binding changed", cause: processhost.ErrStale}
 	}
 	wire := mutationruntime.ProcessDetachedResumeRequest{Agent: agent.Metadata.UID, Model: req.Model, Effort: req.Effort, WaitForPeer: req.WaitForPeer, Previous: previous}
+	if req.Preparation != nil {
+		p := req.Preparation
+		if agent.Spec.Provider != "claude" {
+			return result, &Refusal{Code: CodeResumeRequestInvalid, message: "preparation requires process Claude"}
+		}
+		if p.AgentUID != agent.Metadata.UID || p.Binding != observed {
+			return result, &Refusal{Code: CodeResumePreparationStale, AgentUID: agent.Metadata.UID, message: "process-resume-preparation-stale: request binding differs"}
+		}
+		wire.Preparation = &mutationruntime.ProcessResumePreparation{}
+		if err := unregisterCopy(p, wire.Preparation); err != nil {
+			return result, err
+		}
+	}
 	if req.Prompt != "" {
 		wire.Prompt = mutationruntime.ProcessResumeFirstFrame{Kind: "user", Text: req.Prompt}
 	}
@@ -64,6 +80,12 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 		_ = unregisterCopy(m.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &result.Binding)
 	}
 	result.ClaimWaiting = len(reply.Claim) != 0
+	if req.Preparation != nil && err != nil && reply.Error != "" && reply.Preparation != nil {
+		result.Preparation = &core.AgentResumePreparation{}
+		if copyErr := unregisterCopy(reply.Preparation, result.Preparation); copyErr != nil {
+			return result, copyErr
+		}
+	}
 	if reply.Result != nil {
 		if copyErr := unregisterCopy(reply.Result.Agent, &result.Agent); copyErr != nil {
 			return result, copyErr
@@ -88,6 +110,9 @@ func (c *Client) resumeProcessAgent(ctx context.Context, req core.ResumeAgentReq
 			return result, &Refusal{Code: detail.Code, AgentUID: agent.Metadata.UID, message: err.Error(), cause: detail}
 		}
 		return result, resumeRefusal(err)
+	}
+	if reply.Result != nil && !result.ClaimWaiting {
+		result.MayBeTruncated = reply.Result.MayBeTruncated
 	}
 	return result, nil
 }

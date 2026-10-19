@@ -1079,6 +1079,9 @@ s.close()
 func TestExternalSDKDetachedProcessCreateCallerExit(t *testing.T) {
 	if root := os.Getenv("PMX_SDK_CREATE_CHILD"); root != "" {
 		provider := os.Getenv("PMX_SDK_CREATE_PROVIDER")
+		if err := externalFixtureProviderCheck(root, provider); err != nil {
+			t.Fatal(err)
+		}
 		c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: root + "/deep/custom-settings", StateDir: root + "/deep/custom-records", ProjmuxExecutable: os.Getenv("PMX_SDK_CREATE_BINARY")})
 		if err != nil {
 			t.Fatal(err)
@@ -1088,7 +1091,7 @@ func TestExternalSDKDetachedProcessCreateCallerExit(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Change only this fixture caller's ambient inputs after construction.
-		for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", "CODEX_HOME"} {
+		for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
 			if err = os.Setenv(key, root+"/poison"); err != nil {
 				t.Fatal(err)
 			}
@@ -1133,10 +1136,7 @@ func TestExternalSDKDetachedProcessCreateCallerExit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			c, err := projmux.NewClient(projmux.Options{HomeDir: lease, ConfigDir: lease + "/deep/custom-settings", StateDir: lease + "/deep/custom-records"})
-			if err != nil {
-				t.Fatal(err)
-			}
+			var c *projmux.Client
 			var result core.CreateAgentResult
 			cleaned := false
 			stopAttempted := false
@@ -1187,6 +1187,11 @@ for line in sys.stdin:
   emit({'method':'turn/completed','params':{'threadId':'sdk-create-thread','turn':{'id':'turn-1','status':'completed'}}})
 `
 			}
+			// Record the actual stub process before handling either provider protocol.
+			script = `import os,sys,json
+with open(os.environ['HOME']+'/stub-executions.jsonl','a') as f:
+ f.write(json.dumps({'pid':os.getpid(),'script':os.path.realpath(__file__),'executable':os.path.realpath(sys.executable),'codexHome':os.environ.get('CODEX_HOME'),'claudeConfigDir':os.environ.get('CLAUDE_CONFIG_DIR')})+'\n')
+` + script
 			script = strings.ReplaceAll(script, "os.environ['PMX_SDK_CREATE_BINARY']", fmt.Sprintf("%q", binary))
 			if err = os.WriteFile(lease+"/provider.py", []byte(script), 0600); err != nil {
 				t.Fatal(err)
@@ -1198,6 +1203,17 @@ for line in sys.stdin:
 			if err = os.Mkdir(lease+"/tmux", 0700); err != nil {
 				t.Fatal(err)
 			}
+			// Freeze fixture-only lookup and explicit auth roots before client construction.
+			t.Setenv("PATH", lease)
+			t.Setenv("CODEX_HOME", lease+"/.codex")
+			t.Setenv("CLAUDE_CONFIG_DIR", lease+"/.claude")
+			if err = externalFixtureProviderCheck(lease, provider); err != nil {
+				t.Fatal(err)
+			}
+			c, err = projmux.NewClient(projmux.Options{HomeDir: lease, ConfigDir: lease + "/deep/custom-settings", StateDir: lease + "/deep/custom-records", ProjmuxExecutable: binary})
+			if err != nil {
+				t.Fatal(err)
+			}
 			env := []string{}
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
@@ -1206,7 +1222,7 @@ for line in sys.stdin:
 				}
 				env = append(env, entry)
 			}
-			env = append(env, "HOME="+lease, "PATH="+lease+":"+os.Getenv("PATH"), "CODEX_HOME="+lease+"/.codex", "CLAUDE_CONFIG_DIR="+lease+"/.claude", "TMUX_TMPDIR="+lease+"/tmux", "XDG_CONFIG_HOME="+lease+"/ambient-config", "XDG_STATE_HOME="+lease+"/ambient-state", "PMX_SDK_CREATE_CHILD="+lease, "PMX_SDK_CREATE_PROVIDER="+provider, "PMX_SDK_CREATE_BINARY="+binary)
+			env = append(env, "HOME="+lease, "PATH="+lease, "CODEX_HOME="+lease+"/.codex", "CLAUDE_CONFIG_DIR="+lease+"/.claude", "TMUX_TMPDIR="+lease+"/tmux", "XDG_CONFIG_HOME="+lease+"/ambient-config", "XDG_STATE_HOME="+lease+"/ambient-state", "PMX_SDK_CREATE_CHILD="+lease, "PMX_SDK_CREATE_PROVIDER="+provider, "PMX_SDK_CREATE_BINARY="+binary)
 			caller := exec.Command(os.Args[0], "-test.run=^TestExternalSDKDetachedProcessCreateCallerExit$")
 			caller.Env = env
 			if out, err := caller.CombinedOutput(); err != nil {
@@ -1250,6 +1266,7 @@ for line in sys.stdin:
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
+			externalAssertStubExecutions(t, ctx, lease, python, provider, 1, activation.Child)
 			sessionID := func(agent core.Agent) string {
 				if agent.Status.SessionRef == nil {
 					return ""
@@ -1305,7 +1322,7 @@ for line in sys.stdin:
 				if err = json.Unmarshal(raw, &resumed); err != nil {
 					t.Fatal(err)
 				}
-				if resumed.Binding.AgentUID != result.Binding.AgentUID || resumed.Binding.PaneUID != result.Binding.PaneUID || resumed.Binding.Generation == result.Binding.Generation || resumed.ClaimWaiting || resumed.PaneID != "" || sessionID(resumed.Agent) != beforeCID {
+				if resumed.Binding.AgentUID != result.Binding.AgentUID || resumed.Binding.PaneUID != result.Binding.PaneUID || resumed.Binding.Generation == result.Binding.Generation || resumed.ClaimWaiting || resumed.MayBeTruncated || resumed.PaneID != "" || sessionID(resumed.Agent) != beforeCID {
 					t.Fatalf("resume identity: %+v", resumed)
 				}
 				result.Binding = resumed.Binding
@@ -1319,6 +1336,52 @@ for line in sys.stdin:
 				activation := resource.(core.Pane).Status.Activation.Process
 				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
 					t.Fatal("resume caller exit retired owner")
+				}
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 2, activation.Child)
+				// Lose only the exact fixture owner/provider, then observe the
+				// host-lost advisory through public operations and public resources.
+				previous := resumed.Binding
+				externalLoseResumeFixture(t, ctx, lease, *activation)
+				request := core.ResumeAgentRequest{Ref: "uid:" + agent.Metadata.UID, Detach: true, Binding: previous}
+				if provider == "claude" {
+					prepared, e := c.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: request.Ref, Binding: previous, AllowHostLost: true})
+					if e != nil {
+						t.Fatal(e)
+					}
+					valid, e := c.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: request.Ref, Preparation: prepared.Preparation})
+					if e != nil {
+						t.Fatal(e)
+					}
+					request.Prompt, request.Preparation = "host-lost resumed input", &valid
+				}
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 2, core.ProcessIdentity{})
+				resumed, err = c.ResumeAgent(ctx, request)
+				if err != nil || !resumed.MayBeTruncated || resumed.Binding.Generation == previous.Generation {
+					t.Fatal("public host-lost advisory", resumed, err)
+				}
+				result.Binding = resumed.Binding
+				resource, err = c.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + resumed.Binding.PaneUID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				observed := resource.(core.Pane)
+				if observed.Status.Activation.Process == nil {
+					t.Fatal("missing host-lost resumed activation")
+				}
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 3, observed.Status.Activation.Process.Child)
+				termination := observed.Status.LastTermination
+				if observed.Status.ProcessSession == nil || observed.Status.ProcessSession.History == nil || observed.Status.ProcessSession.History.Binding != previous || termination == nil || termination.Source != core.TerminationSourceReconcile || termination.Classification != core.TerminationUnknown || termination.Generation != previous.Generation || termination.OperationID != previous.OperationID || termination.ExitCode != nil {
+					t.Fatal("public host-lost previous history/unknown", observed)
+				}
+				t.Logf("PUBLIC_ADVISORY provider=%s ordinary=false hostLost=true previousHistory=true previousUnknown=true inventedExitCode=false", provider)
+				handoff := resumed
+				handoff.Projection = core.ResourceList{}
+				raw, err = json.Marshal(handoff)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(lease+"/resume-result.json", raw, 0600); err != nil {
+					t.Fatal(err)
 				}
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: resumed.Binding})
 				stopAttempted = true
@@ -1362,6 +1425,7 @@ for line in sys.stdin:
 				if activation == nil || externalStopIdentity(t, activation.HostProcess.PID) != activation.HostProcess || externalStopIdentity(t, activation.Child.PID) != activation.Child {
 					t.Fatal("relaunch caller exit retired owner")
 				}
+				externalAssertStubExecutions(t, ctx, lease, python, provider, 4, activation.Child)
 				stopped, err := c.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:" + agent.Metadata.UID, Binding: result.Binding})
 				stopAttempted = true
 				if err != nil || !stopped.Stopped || stopped.Termination == nil {
@@ -1560,6 +1624,9 @@ func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
 	if err = json.Unmarshal(raw, &previous); err != nil {
 		t.Fatal(err)
 	}
+	if err := externalFixtureProviderCheck(root, os.Getenv("PMX_SDK_CREATE_PROVIDER")); err != nil {
+		t.Fatal(err)
+	}
 	c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: root + "/deep/custom-settings", StateDir: root + "/deep/custom-records", ProjmuxExecutable: os.Getenv("PMX_SDK_CREATE_BINARY")})
 	if err != nil {
 		t.Fatal(err)
@@ -1574,6 +1641,31 @@ func TestExternalSDKDetachedProcessResumeCallerExit(t *testing.T) {
 		request.Prompt = "resumed input"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if os.Getenv("PMX_SDK_CREATE_PROVIDER") == "claude" {
+		prepared, prepareErr := c.PrepareAgentResume(ctx, core.PrepareAgentResumeRequest{Ref: request.Ref, Binding: request.Binding})
+		if prepareErr != nil {
+			t.Fatal(prepareErr)
+		}
+		valid, validateErr := c.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: request.Ref, Preparation: prepared.Preparation})
+		if validateErr != nil || valid != prepared.Preparation {
+			t.Fatal("public preparation", valid, validateErr)
+		}
+		// A public caller can distinguish stale proof from lifecycle failures.
+		bad := valid
+		bad.LaunchDigest += "-changed"
+		_, rejected := c.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: request.Ref, Preparation: bad})
+		var refusal *projmux.Refusal
+		if !errors.As(rejected, &refusal) || refusal.Code != projmux.CodeResumePreparationStale {
+			t.Fatal("public stale preparation refusal", rejected)
+		}
+		badRequest := request
+		badRequest.Preparation = &bad
+		failed, rejected := c.ResumeAgent(ctx, badRequest)
+		if !errors.As(rejected, &refusal) || refusal.Code != projmux.CodeResumePreparationStale || failed.Preparation != nil || failed.MayBeTruncated {
+			t.Fatal("public stale first-input refusal", failed, rejected)
+		}
+		request.Preparation = &valid
+	}
 	result, err := c.ResumeAgent(ctx, request)
 	cancel()
 	if err != nil {
@@ -1600,6 +1692,9 @@ func TestExternalSDKDetachedProcessRelaunchCallerExit(t *testing.T) {
 	}
 	var previous core.ResumeAgentResult
 	if err = json.Unmarshal(raw, &previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := externalFixtureProviderCheck(root, os.Getenv("PMX_SDK_CREATE_PROVIDER")); err != nil {
 		t.Fatal(err)
 	}
 	c, err := projmux.NewClient(projmux.Options{HomeDir: root, ConfigDir: root + "/deep/custom-settings", StateDir: root + "/deep/custom-records", ProjmuxExecutable: os.Getenv("PMX_SDK_CREATE_BINARY")})
