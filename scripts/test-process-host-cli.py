@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -86,6 +87,65 @@ def check_results(events: list[dict], expected: list[str], returncode: int) -> d
     if not expected or returncode or skipped or failed or missing or not packages:
         raise ValueError(f"process CLI evidence rejected: {json.dumps(report)}; exit={returncode}")
     return report
+
+
+class BatchCleanupError(RuntimeError):
+    """Refuse another batch when its predecessor's group is not retired."""
+
+    def __init__(self, message: str, expired: subprocess.TimeoutExpired | None = None):
+        super().__init__(message)
+        self.expired = expired
+
+
+def group_exists(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def run_batch(command: list[str], *, timeout: int, **kwargs) -> subprocess.CompletedProcess:
+    # setsid happens before exec; this Popen owns exactly the new pid/pgid.
+    process = subprocess.Popen(command, start_new_session=True, **kwargs)
+    group = process.pid
+    if group <= 1 or group == os.getpgrp():
+        raise BatchCleanupError("refusing unowned process group")
+    expired = None
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        expired = exc
+        stdout, stderr = exc.stdout, exc.stderr
+    # Even a normally exited go command must not leave a group behind before
+    # the next batch. Detached sessions remain the fixtures' cleanup contract.
+    cleanup_started = time.monotonic()
+    signals = []
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if process.returncode is not None and not group_exists(group):
+            break
+        deadline = time.monotonic() + 5
+        try:
+            os.killpg(group, sig)
+            signals.append(sig.name)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=max(0.001, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+        while group_exists(group) and time.monotonic() < deadline:
+            time.sleep(0.05)
+    clear = process.returncode is not None and not group_exists(group)
+    receipt = {"pid": process.pid, "group": group, "wait_returncode": process.returncode,
+               "group_clear": clear, "signals": signals,
+               "cleanup_seconds": round(time.monotonic() - cleanup_started, 3)}
+    print("process CLI batch cleanup: " + json.dumps(receipt), flush=True)
+    if not clear:
+        raise BatchCleanupError("process CLI batch cleanup unresolved: " + json.dumps(receipt), expired)
+    if expired is not None:
+        raise expired
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def strict_report(events: list[dict], expected: list[str], returncode: int) -> dict:
@@ -222,6 +282,7 @@ def main() -> None:
         print("process CLI inventory: " + json.dumps({
             "selected": expected, "batches": batches}), flush=True)
         reports, all_events, timeouts = [], [], []
+        cleanup_failure = None
         for index, names in enumerate(batches, 1):
             if not names:
                 continue
@@ -229,7 +290,7 @@ def main() -> None:
             test_started = time.monotonic()
             events, status, error = [], 0, None
             try:
-                result = subprocess.run([go, "test", "-json", "-count=1", "-cpu=1",
+                result = run_batch([go, "test", "-json", "-count=1", "-cpu=1",
                                          "-timeout=420s", "-run", selector, "./internal/app"],
                                         cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, timeout=480)
@@ -251,7 +312,17 @@ def main() -> None:
                     "test_command_seconds": round(time.monotonic() - test_started, 3),
                     "elapsed_seconds": round(time.monotonic() - started, 3),
                     "events": timeout_events(expired.stdout, names)}))
-            except (ValueError, OSError) as exc:
+            except BatchCleanupError as exc:
+                status, error, cleanup_failure = 1, str(exc), exc
+                if exc.expired is not None:
+                    timeouts.append((exc.expired, {"batch": index,
+                        "test_command_seconds": round(time.monotonic() - test_started, 3),
+                        "elapsed_seconds": round(time.monotonic() - started, 3),
+                        "events": timeout_events(exc.expired.stdout, names)}))
+            except OSError as exc:
+                status, error = 1, str(exc)
+                cleanup_failure = BatchCleanupError("batch ownership/cleanup uncertain: " + str(exc))
+            except ValueError as exc:
                 status, error = 1, str(exc)
             seconds = time.monotonic() - test_started
             batch = strict_report(events, names, status)
@@ -266,6 +337,8 @@ def main() -> None:
             if seconds > 315:
                 print(f"::warning::Process CLI batch {index} exceeded 75% of its 420s budget: "
                       f"elapsed={seconds:.3f}s headroom={420 - seconds:.3f}s", flush=True)
+            if cleanup_failure is not None:
+                break
         report = strict_report(all_events, expected, int(any(b["rejected"] for b in reports)))
         report.update(batches=reports, regression_test_seconds=round(sum(e.get("Elapsed", 0) for e in all_events
             if e.get("Test") == "TestDetachedClaudeChildSurvivesHostReadDeadlineCLI"
@@ -279,6 +352,8 @@ def main() -> None:
         print(("process CLI failed summary: " if failed else "process CLI summary: ") + json.dumps(report), flush=True)
         for _, evidence in timeouts:
             print("process CLI timeout evidence: " + json.dumps(evidence), flush=True)
+        if cleanup_failure is not None:
+            raise cleanup_failure
         if timeouts:
             raise timeouts[0][0]
         if failed:

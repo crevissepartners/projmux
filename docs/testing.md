@@ -107,6 +107,12 @@ for a shorter critical path; runner time and wall time must be measured separate
   Above 75% utilization (315 seconds), an Actions warning and summary warning
   flag shrinking headroom without changing test failure semantics. Outer timeouts
   retain bounded partial test metadata and elapsed time for the affected batch.
+  Each test command owns a new process session/group. Before advancing, the
+  runner requires the direct Go child's actual Wait and an empty owned group;
+  remaining group members receive TERM (up to five seconds), then KILL (up to
+  five seconds). Uncertain retirement stops further batches and fails the target.
+  This cleanup uses the watchdog's existing setup/cleanup headroom. Detached
+  sessions remain the individual fixtures' cleanup responsibility.
   To run it manually, use `make test-process-host-cli` (or
   `make test-process-host-cli GO=/path/to/go` for a local toolchain matching
   go.mod). The real-tmux window rename test remains in its existing unit and

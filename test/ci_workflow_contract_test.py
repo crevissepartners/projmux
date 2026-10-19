@@ -669,11 +669,12 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
             with patch.object(runner, "selected_tests", return_value=expected), patch.object(
                 runner, "isolated_env", return_value={"GOMAXPROCS": "1"}), patch.object(
                 runner.subprocess, "run", side_effect=invoke), patch.object(
+                runner, "run_batch", side_effect=invoke), patch.object(
                 runner.time, "monotonic", side_effect=lambda: clock[0]), patch.dict(
                 os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}), contextlib.redirect_stdout(output):
                 try:
                     runner.main()
-                except (ValueError, subprocess.TimeoutExpired) as exc:
+                except (ValueError, subprocess.TimeoutExpired, runner.BatchCleanupError) as exc:
                     error = exc
             return calls, output.getvalue(), summary.read_text() if summary.exists() else "", error
 
@@ -741,6 +742,71 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
                 self.assertEqual("::warning::" in output, warning)
                 self.assertEqual("WARNING" in summary, warning)
                 self.assertIn("75%", summary)
+
+
+    def test_cleanup_uncertain_prevents_the_next_batch(self):
+        def unresolved(events, command):
+            raise self.runner.BatchCleanupError("owned group unresolved")
+        calls, output, summary, error = self.exercise(unresolved)
+        self.assertIsInstance(error, self.runner.BatchCleanupError)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+        self.assertIn("FAIL", summary)
+        self.assertIn("TestFixture1", summary)
+
+    def test_owned_group_timeout_cleanup_waits_before_returning(self):
+        import contextlib
+        import io
+        from unittest.mock import Mock
+
+        runner = self.runner
+        command = ["go", "test", "-json", "-timeout=420s"]
+        expired = subprocess.TimeoutExpired(command, 480, output=b"partial")
+        process = Mock(pid=424242, returncode=None)
+        order = []
+        def communicate(*, timeout):
+            order.append(("communicate", timeout))
+            if len(order) == 1:
+                raise expired
+            process.returncode = -15
+            return "", ""
+        process.communicate.side_effect = communicate
+        alive = [True]
+        def killpg(group, sig):
+            self.assertEqual(group, 424242)
+            order.append(("signal", sig))
+            alive[0] = False
+        with patch.object(runner.subprocess, "Popen", return_value=process) as popen, patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner.os, "killpg", side_effect=killpg), patch.object(
+            runner, "group_exists", side_effect=lambda group: alive[0]), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                runner.run_batch(command, timeout=480, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertIs(caught.exception, expired)
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertEqual([row[0] for row in order], ["communicate", "signal", "communicate"])
+        self.assertEqual(order[1][1], runner.signal.SIGTERM)
+        self.assertLessEqual(order[2][1], 5)
+        self.assertIsNotNone(process.returncode)
+
+    def test_group_still_alive_after_kill_fails_closed(self):
+        import contextlib
+        import io
+        from unittest.mock import Mock
+
+        runner = self.runner
+        process = Mock(pid=424242, returncode=None)
+        process.communicate.side_effect = subprocess.TimeoutExpired("fake", 480)
+        signals = []
+        ticks = iter(range(100))
+        with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner.os, "killpg", side_effect=lambda group, sig: signals.append(sig)), patch.object(
+            runner, "group_exists", return_value=True), patch.object(
+            runner.time, "monotonic", side_effect=lambda: next(ticks)), patch.object(
+            runner.time, "sleep"), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(runner.BatchCleanupError):
+                runner.run_batch(["fake"], timeout=480)
+        self.assertEqual(signals, [runner.signal.SIGTERM, runner.signal.SIGKILL])
 
 
 class CIWorkflowContractTest(unittest.TestCase):
