@@ -15,6 +15,7 @@ type KeymapStore = shared.KeymapStore
 type keyBindingActionSemantics = shared.KeyBindingActionSemantics
 type keyBindingScope = shared.KeyBindingScope
 type keymapMigrationPlan = shared.KeymapMigrationPlan
+
 const CanonicalCreateTargetClientEnv = shared.CanonicalCreateTargetClientEnv
 const GeneratedRenameHeredocDelimiter = shared.GeneratedRenameHeredocDelimiter
 const GeneratedRenameResponseSentinel = shared.GeneratedRenameResponseSentinel
