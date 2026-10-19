@@ -351,6 +351,7 @@ OperatorOrigin	The operator-origin constructor is the one sanctioned way to buil
 Pane.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 PaneActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+ParseBinding	Native binding parser compatibility entrypoint retained after pure parser extraction; exercised by TestCaptureBindingsIncludeCustomOptionAndControlChords.
 ParseKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 Placeholders	Project link rule API of internal/core/projectlinks, retained for the web backend that lists the placeholders a template may use; no in-tree caller until that backend lands.
