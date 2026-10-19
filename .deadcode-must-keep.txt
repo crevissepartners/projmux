@@ -381,6 +381,7 @@ ServeSupervisor	Owned processhost preparation seam retained for real-process and
 Service.Delete	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
 Service.Get	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Service.ListFileOnly	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
+Service.ListRecorded	Public v0 recorded session history SDK closure reached by Client.ListRecordedSessions; covered by CORE parity, Registry-independent admission and external consumer tests.
 Service.ListWithSource	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Service.ProjectClaudeSend	Client.SendMessage preserves an exact partial receipt and uncertainty when the Claude provider result cannot be persisted; CLI adapter behavior remains unchanged.
 Service.Read	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
