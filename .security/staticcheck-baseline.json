@@ -22,6 +22,11 @@
       "rule": "ST1005",
       "scope": "internal/services/mutations/runtime/materialize_shared.go: two relocated Pane split inventory diagnostics",
       "reason": "Relocated from internal/app/materialize.go with the shared replacement materializer. Diagnostic source and maximum count remain unchanged; only the owner path changed."
+    },
+    {
+      "rule": "U1000",
+      "scope": "internal/app/statusbar_row_one_visibility.go statusbarRowOneVisibilitySet.visible",
+      "reason": "Private app compatibility method used by the unchanged locked WEB TestWebFrontSettingPatchWritesOnlyWebToml; retain exactly one finding after removing the 38 unused private compatibility declarations selected for removal."
     }
   ],
   "entries": [
@@ -97,13 +102,6 @@
     },
     {
       "rule": "ST1005",
-      "path": "internal/services/mutations/runtime/materialize_shared.go",
-      "message": "error strings should not be capitalized",
-      "source": "return errors.New(\"Pane inventory drifted before split\")",
-      "max_count": 2
-    },
-    {
-      "rule": "ST1005",
       "path": "internal/app/settings_keybindings.go",
       "message": "error strings should not be capitalized",
       "source": "routeErr = errors.New(\"Settings live reload has no exact physical socket\")",
@@ -152,6 +150,13 @@
       "max_count": 1
     },
     {
+      "rule": "ST1005",
+      "path": "internal/services/mutations/runtime/materialize_shared.go",
+      "message": "error strings should not be capitalized",
+      "source": "return errors.New(\"Pane inventory drifted before split\")",
+      "max_count": 2
+    },
+    {
       "rule": "ST1008",
       "path": "internal/app/hookcmd/hook.go",
       "message": "error should be returned as the last argument",
@@ -170,6 +175,13 @@
       "path": "internal/app/notify_test.go",
       "message": "type recordingNotifyPicker is unused",
       "source": "type recordingNotifyPicker struct {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/statusbar_row_one_visibility.go",
+      "message": "func statusbarRowOneVisibilitySet.visible is unused",
+      "source": "func (s statusbarRowOneVisibilitySet) visible(component statusbarRowOneComponent) bool {",
       "max_count": 1
     },
     {

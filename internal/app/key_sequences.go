@@ -8,9 +8,6 @@ import (
 func keySequenceTableName(prefix []string) string {
 	return tmuxconfig.KeySequenceTableName(prefix)
 }
-func keySequenceGeneratedState(actions []keybinding.KeyBindingAction) (roots, tables []string) {
-	return tmuxconfig.KeySequenceGeneratedState(actions)
-}
 func tmuxSequenceStateLines(actions []keybinding.KeyBindingAction) []string {
 	return tmuxconfig.TmuxSequenceStateLines(actions)
 }

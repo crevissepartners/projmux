@@ -37,10 +37,6 @@ func (s statusbarRowOneVisibilitySet) isDefault() bool {
 	return tmuxconfig.StatusbarRowOneVisibilitySet(s).IsDefault()
 }
 
-func (s statusbarRowOneVisibilitySet) mode(component statusbarRowOneComponent) config.StatusbarVisibility {
-	return tmuxconfig.StatusbarRowOneVisibilitySet(s).Mode(tmuxconfig.StatusbarRowOneComponent(component))
-}
-
 func (s statusbarRowOneVisibilitySet) visible(component statusbarRowOneComponent) bool {
 	return tmuxconfig.StatusbarRowOneVisibilitySet(s).Visible(tmuxconfig.StatusbarRowOneComponent(component))
 }

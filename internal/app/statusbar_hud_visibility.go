@@ -36,18 +36,6 @@ func (s statusbarHUDVisibilitySet) isDefault() bool {
 	return tmuxconfig.StatusbarHUDVisibilitySet(s).IsDefault()
 }
 
-func (s statusbarHUDVisibilitySet) mode(component statusbarHUDComponent) config.StatusbarVisibility {
-	return tmuxconfig.StatusbarHUDVisibilitySet(s).Mode(tmuxconfig.StatusbarHUDComponent(component))
-}
-
-func (s statusbarHUDVisibilitySet) visible(component statusbarHUDComponent) bool {
-	return tmuxconfig.StatusbarHUDVisibilitySet(s).Visible(tmuxconfig.StatusbarHUDComponent(component))
-}
-
-func (s statusbarHUDVisibilitySet) anyVisible() bool {
-	return tmuxconfig.StatusbarHUDVisibilitySet(s).AnyVisible()
-}
-
 func statusbarHUDVisibilityPath(paths config.Paths, component statusbarHUDComponent) (string, bool) {
 	return tmuxconfig.StatusbarHUDVisibilityPath(paths, tmuxconfig.StatusbarHUDComponent(component))
 }

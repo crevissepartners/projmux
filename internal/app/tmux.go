@@ -25,18 +25,12 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 // tmux 256-color tone tokens shared with the projmux picker chip primitives.
 // Both surfaces source from the same palette so the popup tab chip strip
 // stays visually congruent with the tmux window-status row.
 const (
-	tmuxWindowInactiveBg = projmuxpicker.TmuxWindowInactiveBg
-	tmuxWindowInactiveFg = projmuxpicker.TmuxWindowInactiveFg
-	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
-	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
-	tmuxWindowTitleWidth = 10
 	// paneLabelOption is the pane-name transport mirror. The canonical
 	// spelling lives in internal/integrations/tmuxopts so the mirror, the
 	// replay adapter, and the generated tmux config cannot drift apart.
@@ -2517,10 +2511,6 @@ func statusbarSettingsButton(label string, roles theme.RenderRoles) string {
 	return tmuxconfig.StatusbarSettingsButton(label, roles)
 }
 
-func statusbarSettingsButtonBody(label string) string {
-	return tmuxconfig.StatusbarSettingsButtonBody(label)
-}
-
 // statusbarSessionLeftFormat renders the status-left session segment for both
 // the standalone and app configs. The displayed name is computed by the unified
 // project-identity resolver via `status project`, so the segment shows the same
@@ -2571,11 +2561,6 @@ const statusbarNotifyMinWidth = tmuxconfig.StatusbarNotifyMinWidth
 // gets at least the cells it used to get.
 const statusbarUsageMinWidth = tmuxconfig.StatusbarUsageMinWidth
 
-// statusbarNotifySurplusFromWidth is the row width at which notify starts
-// growing past its reservation: usage's floor plus notify's floor. Below it the
-// row cannot host both, and notify stays at its reservation.
-const statusbarNotifySurplusFromWidth = tmuxconfig.StatusbarNotifySurplusFromWidth
-
 // statusbarEvenSplitMaxWidth is the width below which even notify's reservation
 // would take more than half the row. Such a row is split evenly instead, which
 // keeps both budgets non-zero — `--max-width 0` means "no truncation" to both
@@ -2597,19 +2582,6 @@ const statusbarNotifySurplusCapWidth = tmuxconfig.StatusbarNotifySurplusCapWidth
 // next `status-interval` tick, which is why the segments repaint at their new
 // budgets as soon as the terminal is resized.
 const statusbarClientWidthFormat = tmuxconfig.StatusbarClientWidthFormat
-
-// statusbarClientWidthLessThan builds `#{?#{e|<:client_width,n},then,otherwise}`.
-//
-// The numeric comparison must go through the `e|` modifier. tmux's bare
-// `#{<:a,b}` / `#{>:a,b}` are STRING comparisons — verified on tmux 3.6, where
-// `#{>:191,80}` is 0 and `#{>:9,10}` is 1 — so a bare comparison here would
-// silently never fire. The `<` form is also the fail-safe direction: tmux treats
-// an unevaluable condition as false, so a tmux that cannot evaluate any of these
-// comparisons walks every false branch and lands on the literal 80, which is the
-// historical reservation.
-func statusbarClientWidthLessThan(n int, then, otherwise string) string {
-	return tmuxconfig.StatusbarClientWidthLessThan(n, then, otherwise)
-}
 
 // statusbarNotifyBudgetFormat expands to the notify segment's cell budget:
 //
@@ -2712,10 +2684,6 @@ func statusbarWindowLineFormat() string {
 	return tmuxconfig.StatusbarWindowLineFormat()
 }
 
-func statusbarWindowTitleFormat() string {
-	return tmuxconfig.StatusbarWindowTitleFormat()
-}
-
 // tmuxVisiblePaneLabelFormat is the canonical Projmux visible naming rule for
 // panes and app window tabs. User labels are independent from AI topics and
 // raw titles, so they lead the shared visible identity priority.
@@ -2733,14 +2701,6 @@ func tmuxStyledVisiblePaneLabelFormatFor(styleFg string) string {
 	return tmuxconfig.TmuxStyledVisiblePaneLabelFormatFor(styleFg)
 }
 
-func tmuxStyledAITopicFormat(topic, styleFg string) string {
-	return tmuxconfig.TmuxStyledAITopicFormat(topic, styleFg)
-}
-
-func tmuxLeadModeTopicMatchFormat(topic string) string {
-	return tmuxconfig.TmuxLeadModeTopicMatchFormat(topic)
-}
-
 func tmuxShellPaneLabelFormat() string {
 	return tmuxconfig.TmuxShellPaneLabelFormat()
 }
@@ -2751,14 +2711,6 @@ func tmuxPaneBorderFormat() string {
 
 func tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle config.AIBadgeStyle, roles theme.RenderRoles) string {
 	return tmuxconfig.TmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle, roles)
-}
-
-func tmuxAIBadgeMarker(kind string, badgeStyle config.AIBadgeStyle) string {
-	return tmuxconfig.TmuxAIBadgeMarker(kind, badgeStyle)
-}
-
-func tmuxCenteredWindowNameFormat(width int) string {
-	return tmuxconfig.TmuxCenteredWindowNameFormat(width)
 }
 
 func tmuxWindowStatusFormats(binaryPath string, effective theme.EffectiveTheme) (string, string) {
@@ -2773,10 +2725,6 @@ func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusba
 	return tmuxconfig.TmuxStandaloneConfigWithKeymapTheme(binaryPath, tmuxconfig.StatusbarDecorationSet(decorations), catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	return tmuxconfig.TmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, catalog, keymapPresent, effective)
-}
-
 func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxconfig.TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, effective)
 }
@@ -2787,10 +2735,6 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 
 func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxconfig.TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, desktopNotifyMode, liveResourcesMode, tmuxconfig.StatusbarHUDVisibilitySet(hudVisibility), tmuxconfig.StatusbarRowOneVisibilitySet(rowOneVisibility), catalog, keymapPresent, effective)
-}
-
-func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	return tmuxconfig.TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, desktopNotifyMode, liveResourcesMode, tmuxconfig.StatusbarHUDVisibilitySet(hudVisibility), tmuxconfig.StatusbarRowOneVisibilitySet(rowOneVisibility), catalog, keymapPresent, effective)
 }
 
 // tmuxPaneExitHookBody is the shared layout half of the two pane-exit hooks.
@@ -2810,45 +2754,6 @@ func tmuxPaneExitHookBody(bin string, reason controllerTriggerReason) string {
 	return tmuxconfig.TmuxPaneExitHookBody(bin, reason)
 }
 
-func tmuxWindowUnlinkedHookBody(bin string) string {
-	return tmuxconfig.TmuxWindowUnlinkedHookBody(bin)
-}
-
-// controllerTriggerHookCommand renders the one trigger invocation every
-// generated lifecycle hook uses.
-//
-// The formats are tmux's own and are expanded by tmux before the shell sees
-// them. `#{socket_path}` always identifies the firing server. Create hooks use
-// current `#{session_id}` for the create-operation lease; pane-exited uses only
-// `#{hook_pane}`; window-unlinked uses exact `#{hook_session}` and
-// `#{hook_window}` for the object being removed.
-func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) string {
-	return tmuxconfig.ControllerTriggerHookCommand(bin, reason)
-}
-
-// tmuxRuntimeCreatedHookBody is synchronous on purpose: after-new-window and
-// after-split-window are the lifecycle boundary, and the next implicit read must
-// not race the binding write. MirrorWindow's set-option/rename-window and
-// MirrorPane's set-option do not fire either creation hook, so convergence
-// cannot recursively trigger itself.
-//
-// Synchronous is safe under a burst precisely because the trigger holds an
-// at-most-one lease: the first hook converges and every hook that arrives during
-// that pass records its event and returns immediately instead of queuing behind
-// the registry lock.
-// The `|| true` is not cosmetic. This is the one lifecycle hook that runs in
-// the foreground, and it fires on after-new-window/after-split-window -- the
-// moment a pane appears in front of the operator. tmux paints a foreground
-// job's "returned N" line in a view-mode screen over that pane, so without the
-// guard a refused convergence would present itself as a broken new pane.
-func tmuxRuntimeCreatedHookBody(bin string) string {
-	return tmuxconfig.TmuxRuntimeCreatedHookBody(bin)
-}
-
-func tmuxRecentWindowRecordHookLines(bin string) []string {
-	return tmuxconfig.TmuxRecentWindowRecordHookLines(bin)
-}
-
 func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarDecoration) string {
 	return tmuxconfig.TmuxAppConfig(binaryPath, defaultShell, decoration)
 }
@@ -2859,10 +2764,6 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 
 func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	return tmuxconfig.TmuxAppConfigWithKeymapTheme(binaryPath, defaultShell, tmuxconfig.StatusbarDecorationSet(decorations), catalog, keymapPresent, effective)
-}
-
-func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	return tmuxconfig.TmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, catalog, keymapPresent, effective)
 }
 
 func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
@@ -2877,43 +2778,12 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	return tmuxconfig.TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, desktopNotifyMode, liveResourcesMode, tmuxconfig.StatusbarHUDVisibilitySet(hudVisibility), tmuxconfig.StatusbarRowOneVisibilitySet(rowOneVisibility), catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keybinding.KeyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	return tmuxconfig.TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, tmuxconfig.StatusbarDecorationSet(decorations), badgeStyle, desktopNotifyMode, liveResourcesMode, tmuxconfig.StatusbarHUDVisibilitySet(hudVisibility), tmuxconfig.StatusbarRowOneVisibilitySet(rowOneVisibility), catalog, keymapPresent, effective)
-}
-
 func withTmuxConfigDigest(body string) string {
 	return tmuxconfig.WithTmuxConfigDigest(body)
 }
 
 func tmuxAppKeyBindings(binaryPath string, catalog []keybinding.KeyBindingAction, keymapPresent bool) []string {
 	return tmuxconfig.TmuxAppKeyBindings(binaryPath, catalog, keymapPresent)
-}
-
-// tmuxStatusbarKeyBindings emits the bindings that wire the projmux statusbar
-// click dispatcher to both mouse clicks and the `prefix s {letter}` chord.
-//
-// Note: `MouseDown1Status` fires for *any* line of a multi-line status bar,
-// and `#{mouse_status_range}` returns whichever user-defined range we wrapped
-// under the cursor — so a single bind covers both lines.
-//
-// The click command passes only `#{mouse_status_range}` and `#{client_tty}`.
-// tmux has no format variable for the clicked window (no `mouse_*` format
-// names it); the clicked window is only reachable through tmux's *internal*
-// mouse target (`-t =`), which does not survive a `run-shell` subprocess. A
-// click on the window list fires `MouseDown1Status` with
-// `#{mouse_status_range}` set to the bare string `"window"`, so we
-// short-circuit that case to a native `select-window -t =` inside the same
-// tmux command chain via `if-shell -F`, and only fall through to `run-shell`
-// for everything else. The Go dispatcher keeps the `window|<idx>` index path
-// (`isWindowListRangeToken`) as defense in depth; empty and unknown ranges
-// are no-ops there.
-//
-// The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
-// keyboard users get the same handlers as mouse clickers without re-defining
-// each handler twice. The hardcoded `r` sibling is usage-specific: it calls
-// the throttled refresh subcommand before reopening the same popup.
-func tmuxStatusbarKeyBindings(binaryPath string) []string {
-	return tmuxconfig.TmuxStatusbarKeyBindings(binaryPath)
 }
 
 // tmuxPaneContextMenuBindings emits the right-click (MouseDown3Pane) pane
@@ -2948,74 +2818,6 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 // quoting flat; blocks require tmux 3.0+ and doctor already enforces 3.4+.
 func tmuxPaneContextMenuBindings(binaryPath string) []string {
 	return tmuxconfig.TmuxPaneContextMenuBindings(binaryPath)
-}
-
-// tmuxPaneMenuAction is one managed Pane menu intent on the exact Pane the menu
-// targets. tmux expands a menu item's command against the display-menu target
-// when the menu opens, so `#{pane_id}` is the clicked Pane for a mouse menu and
-// the current Pane for a keyboard one.
-func tmuxPaneMenuAction(bin, action string) string {
-	return tmuxconfig.TmuxPaneMenuAction(bin, action)
-}
-
-// tmuxPaneMenuKill is the Kill item of every generated Pane menu. The Pane's
-// identity mirror decides the branch: a mirrored Pane reaches the Pane menu
-// Kill route (canonical delete pane), and a Pane without the mirror runs tmux's
-// own stock `kill-pane` menu item, executed by tmux. The menu selection is the
-// confirmation, exactly as it is for tmux's stock item.
-func tmuxPaneMenuKill(bin string) string {
-	return tmuxconfig.TmuxPaneMenuKill(bin)
-}
-
-// tmux 3.6's stock menu Kill item bodies. They are the only raw kill a generated
-// menu may carry, and only as the mirror-absent branch of its Kill item.
-const (
-	tmuxStockMenuKillPane   = tmuxconfig.TmuxStockMenuKillPane
-	tmuxStockMenuKillWindow = tmuxconfig.TmuxStockMenuKillWindow
-)
-
-// managedMenuWindowDeleteRoute is the Window menu Kill route. It is the same
-// canonical Window intent a confirmed managed `prefix &` reaches, without the
-// confirmation: selecting Kill in a menu is the confirmation.
-const managedMenuWindowDeleteRoute = tmuxconfig.ManagedMenuWindowDeleteRoute
-
-// tmuxManagedStockMenuBindings replaces tmux 3.6's stock Window menus
-// (`prefix <`, MouseDown3Status, M-MouseDown3Status) and the two stock Pane
-// menus it leaves outside MouseDown3Pane (`prefix >`, M-MouseDown3Pane). They
-// are app-config only, like the managed close keys: the standalone snippet runs
-// on every server the operator starts and keeps tmux's stock menus.
-//
-// Each binding keeps tmux's title, position, target, item names, key shortcuts
-// and dim conditions. Only the items that change topology or identity change:
-// Kill branches on the identity mirror, Rename, New At End and both Splits
-// state typed intents, and Respawn and New After are removed because the
-// resource model has no managed intent that preserves their contract. Swap,
-// Mark, Zoom and the copy-mode items are presentation and stay stock.
-//
-// Targeting. A mouse menu opens with `-t =` and a keyboard menu without it.
-// tmux format-expands every item command against that display-menu target when
-// the menu opens, so `#{@projmux_window_uid}`, `#{pane_id}` and `#{client_tty}`
-// inside an item already name the clicked Window's active Pane (or the clicked
-// Pane) and the client that clicked; no item needs its own `-t =`. The one
-// exception is a `command-prompt` template: an expanded `%N` Pane handle there
-// is a prompt-response placeholder, so Rename defers its template's formats to
-// the prompt's own run time (see tmuxMenuPromptCommand).
-func tmuxManagedStockMenuBindings(binaryPath string) []string {
-	return tmuxconfig.TmuxManagedStockMenuBindings(binaryPath)
-}
-
-// tmuxMenuPromptCommand embeds a prompt-run-projmux catalog action as a menu
-// item command. The catalog renderer's bytes are kept; only the prompt template
-// has its `#` doubled. tmux expands a menu item when the menu opens, and an
-// expanded Pane handle such as `%1` inside a command-prompt template is the
-// placeholder for the first prompt response: measured on tmux 3.6, the rename
-// anchor became the typed name. Doubling defers the template's formats to the
-// run-shell the prompt starts, which still runs against the menu target, so the
-// command tmux finally runs is the catalog key binding's command byte for byte.
-// The prompt arguments (the initial `#{window_name}`) keep expanding at menu
-// open, where they name the clicked Window rather than the current one.
-func tmuxMenuPromptCommand(binaryPath string, action keybinding.KeyBindingAction) string {
-	return tmuxconfig.TmuxMenuPromptCommand(binaryPath, action)
 }
 
 func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd string, env map[string]string) string {

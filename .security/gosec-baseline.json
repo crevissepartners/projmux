@@ -35,7 +35,7 @@
     },
     {
       "rule": "G304",
-      "scope": "internal/app/keybinding/keymap_migration.go keymap schema migration",
+      "scope": "internal/services/keybinding/keymap_migration.go keymap schema migration",
       "reason": "the keymap path is derived from the resolved XDG/HOME config paths, not from CLI input; reads go through the bounded regular-file/supported-symlink policy and the backup open is O_EXCL"
     },
     {
@@ -71,13 +71,6 @@
       "path": "internal/theme/resolve.go",
       "message": "Potential hardcoded credentials",
       "source": "TokenStatusBackground ColorToken = \"status_background\"",
-      "max_count": 1
-    },
-    {
-      "rule": "G104",
-      "path": "internal/app/keybinding/keymap.go",
-      "message": "Errors unhandled",
-      "source": "tmp.Close()",
       "max_count": 1
     },
     {
@@ -142,6 +135,13 @@
       "message": "Errors unhandled",
       "source": "tmp.Close()",
       "max_count": 2
+    },
+    {
+      "rule": "G104",
+      "path": "internal/services/keybinding/keymap.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
     },
     {
       "rule": "G110",
@@ -334,24 +334,10 @@
     },
     {
       "rule": "G301",
-      "path": "internal/services/settings/ai_split_mode.go",
-      "message": "Expect directory permissions to be 0750 or less",
-      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
-      "max_count": 1
-    },
-    {
-      "rule": "G301",
       "path": "internal/app/hookcmd/hook.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
       "max_count": 2
-    },
-    {
-      "rule": "G301",
-      "path": "internal/app/keybinding/keymap.go",
-      "message": "Expect directory permissions to be 0750 or less",
-      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
-      "max_count": 1
     },
     {
       "rule": "G301",
@@ -372,7 +358,7 @@
       "path": "internal/app/shell.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
-      "max_count": 3
+      "max_count": 2
     },
     {
       "rule": "G301",
@@ -386,7 +372,7 @@
       "path": "internal/app/tmux.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {",
-      "max_count": 2
+      "max_count": 1
     },
     {
       "rule": "G301",
@@ -463,6 +449,34 @@
       "path": "internal/integrations/hooks/project_config.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/services/keybinding/keymap.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/services/settings/ai_split_mode.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/services/tmuxconfig/writer.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/services/tmuxconfig/writer.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
       "max_count": 1
     },
     {
@@ -589,27 +603,6 @@
       "path": "internal/app/hookmaker.go",
       "message": "Potential file inclusion via variable",
       "source": "data, err := os.ReadFile(path)",
-      "max_count": 1
-    },
-    {
-      "rule": "G304",
-      "path": "internal/app/keybinding/keymap_migration.go",
-      "message": "Potential file inclusion via variable",
-      "source": "existing, readErr := os.ReadFile(path)",
-      "max_count": 1
-    },
-    {
-      "rule": "G304",
-      "path": "internal/app/keybinding/keymap_migration.go",
-      "message": "Potential file inclusion via variable",
-      "source": "file, err := os.Open(path)",
-      "max_count": 1
-    },
-    {
-      "rule": "G304",
-      "path": "internal/app/keybinding/keymap_migration.go",
-      "message": "Potential file inclusion via variable",
-      "source": "file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, defaultKeymapFileMode)",
       "max_count": 1
     },
     {
@@ -838,16 +831,30 @@
     },
     {
       "rule": "G304",
-      "path": "internal/ui/picker/backend.go",
+      "path": "internal/services/keybinding/keymap_migration.go",
       "message": "Potential file inclusion via variable",
-      "source": "file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)",
+      "source": "existing, readErr := os.ReadFile(path)",
       "max_count": 1
     },
     {
-      "rule": "G306",
-      "path": "internal/services/settings/ai_split_mode.go",
-      "message": "Expect WriteFile permissions to be 0600 or less",
-      "source": "if err := os.WriteFile(path, []byte(mode+\"\\n\"), 0o644); err != nil {",
+      "rule": "G304",
+      "path": "internal/services/keybinding/keymap_migration.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/services/keybinding/keymap_migration.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, defaultKeymapFileMode)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)",
       "max_count": 1
     },
     {
@@ -869,6 +876,13 @@
       "path": "internal/app/tmux.go",
       "message": "Expect WriteFile permissions to be 0600 or less",
       "source": "if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+\"\\n\"+popupCtx.OriginSession+\"\\n\"), 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G306",
+      "path": "internal/services/settings/ai_split_mode.go",
+      "message": "Expect WriteFile permissions to be 0600 or less",
+      "source": "if err := os.WriteFile(path, []byte(mode+\"\\n\"), 0o644); err != nil {",
       "max_count": 1
     },
     {

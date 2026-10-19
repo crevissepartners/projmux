@@ -628,7 +628,6 @@ codexProcessMessages.send	Internal dedicated Codex process binding/control/recei
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
-controllerTriggerHookCommand	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 controllerTriggerReasons	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 copyCreateDuration	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
 copyUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -670,7 +669,6 @@ guardSweepHelperRoots	Test-only guard helper retained behind the shared guard AP
 guidanceRefusal	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 keyBindingSequenceTransportChords	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-keySequenceGeneratedState	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 keySequenceRetireCommandsWithPrefix	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 keySequenceTableName	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
@@ -805,23 +803,18 @@ sessionReadRefusal	Public v0 Agent/Project session history SDK closure, consumed
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
 settingsInputMessage	SDK input-only error prefix renderer; called by the public SetConfig path and covered by SDK settings refusal parity.
 settingsRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
-shellCommand.appConfigThemeSource	Original shell theme and default-shell projection retained for the existing shell-generation regression assertions.
 shellCommand.defaultShell	Original shell theme and default-shell projection retained for the existing shell-generation regression assertions.
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
 statusbarAuxLineFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarAuxLineFormatWithVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarClientWidthLessThan	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarCwdDecoratorFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarCwdSegmentFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarDecorationTargetFile	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarDecorationTmuxOptionForTarget	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarHUDVisibilityPath	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarHUDVisibilitySet.anyVisible	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarHUDVisibilitySet.isDefault	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarHUDVisibilitySet.mode	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarHUDVisibilitySet.visible	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarNotifyBudgetFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowCount	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowCountOption	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
@@ -830,37 +823,24 @@ statusbarRowOneProjectFormat	Original app rendering adapter retained for indepen
 statusbarRowOneRightFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowOneVisibilityPath	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowOneVisibilitySet.isDefault	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarRowOneVisibilitySet.mode	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowOneVisibilitySet.visible	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarSessionLeftFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarSettingsButton	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarSettingsButtonBody	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarUsageBudgetFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarWindowLineFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-statusbarWindowTitleFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 stopAgentRefusal	Typed SDK Stop failure adapter preserves causes and exact recovery evidence without changing CLI refusal text.
 stopGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
-tmuxAIBadgeMarker	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
 tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxAppKeyBindings	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
-tmuxCenteredWindowNameFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxLeadModeTopicMatchFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxManagedStockMenuBindings	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxMenuPromptCommand	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxPaneBorderFormat	Default badge-style entry point of tmuxPaneBorderFormatWithAIBadgeStyle retained as the pane border format seam.
 tmuxPaneBorderFormatWithAIBadgeStyle	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxPaneContextMenuBindings	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxPaneExitHookBody	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxPaneMenuAction	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxPaneMenuKill	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxRecentWindowRecordHookLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
-tmuxRuntimeCreatedHookBody	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxSequenceBindLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxSequenceStateLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxShellPaneLabelFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
@@ -868,14 +848,10 @@ tmuxStandaloneConfig	Default-keymap entry point of tmuxStandaloneConfigWithKeyma
 tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxStatusbarKeyBindings	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxStyledAITopicFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxStyledVisiblePaneLabelFormat	Default-theme entry point of tmuxStyledVisiblePaneLabelFormatFor retained as the visible pane label format seam.
 tmuxStyledVisiblePaneLabelFormatFor	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxVisiblePaneLabelFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxWindowStatusFormats	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
-tmuxWindowUnlinkedHookBody	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 turnRefusal	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 turnRunner.Run	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 unregisterCopy	Public v0 Project unregister JSON projection conversion; verified by Registry, receipt and record parity.

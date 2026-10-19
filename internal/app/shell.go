@@ -1225,21 +1225,6 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	return tmuxconfig.WriteShellAppConfig(path, binaryPath, tmuxconfig.Generation{HomeDir: c.homeDir, LookupEnv: c.lookupEnv, ResolvePaths: configPaths, ReadFile: c.readFile}, c.writeFile)
 }
 
-// appConfigThemeSource resolves the global user theme for the shell-start writer,
-// mirroring tmuxCommand.appConfigThemeSource: an explicit global `[theme]`
-// repaints the generated tmux chrome on `projmux shell` start instead of
-// clobbering a themed config with the built-in fallback. It degrades to the
-// fallback when the global config cannot be read so shell start never fails on a
-// missing or malformed user config. Theme is global-only, so no project path
-// participates.
-func (c *shellCommand) appConfigThemeSource() renderThemeSource {
-	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
-	if err != nil {
-		return fallbackRenderThemeSource()
-	}
-	return source
-}
-
 func (c *shellCommand) defaultShell() string {
 	return defaultInteractiveShell(c.lookupEnv)
 }

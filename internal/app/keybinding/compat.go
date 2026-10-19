@@ -12,13 +12,9 @@ type KeymapLoader = shared.KeymapLoader
 type KeymapMigrationResult = shared.KeymapMigrationResult
 type KeymapOverride = shared.KeymapOverride
 type KeymapStore = shared.KeymapStore
-type keyBindingActionKind = shared.KeyBindingActionKind
 type keyBindingActionSemantics = shared.KeyBindingActionSemantics
 type keyBindingScope = shared.KeyBindingScope
-type keyBindingTier = shared.KeyBindingTier
 type keymapMigrationPlan = shared.KeymapMigrationPlan
-type tmuxBindingKind = shared.TmuxBindingKind
-
 const CanonicalCreateTargetClientEnv = shared.CanonicalCreateTargetClientEnv
 const GeneratedRenameHeredocDelimiter = shared.GeneratedRenameHeredocDelimiter
 const GeneratedRenameResponseSentinel = shared.GeneratedRenameResponseSentinel
