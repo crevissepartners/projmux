@@ -1,8 +1,8 @@
 package app
 
 import (
+ "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -10,112 +10,52 @@ import (
 )
 
 const (
-	statusbarDecorationTmuxOption       = "@projmux_statusbar_decoration"
-	statusbarDecorationCwdTmuxOption    = "@projmux_statusbar_decoration_cwd"
-	statusbarDecorationGitTmuxOption    = "@projmux_statusbar_decoration_git"
-	statusbarDecorationNotifyTmuxOption = "@projmux_statusbar_decoration_notify"
+	statusbarDecorationTmuxOption       = tmuxconfig.StatusbarDecorationTmuxOption
+	statusbarDecorationCwdTmuxOption    = tmuxconfig.StatusbarDecorationCwdTmuxOption
+	statusbarDecorationGitTmuxOption    = tmuxconfig.StatusbarDecorationGitTmuxOption
+	statusbarDecorationNotifyTmuxOption = tmuxconfig.StatusbarDecorationNotifyTmuxOption
 )
 
-type statusbarDecorationTarget string
+type statusbarDecorationTarget tmuxconfig.StatusbarDecorationTarget
 
 const (
-	statusbarDecorationTargetCwd    statusbarDecorationTarget = "cwd"
-	statusbarDecorationTargetGit    statusbarDecorationTarget = "git"
-	statusbarDecorationTargetNotify statusbarDecorationTarget = "notify"
+	statusbarDecorationTargetCwd    statusbarDecorationTarget = statusbarDecorationTarget(tmuxconfig.StatusbarDecorationTargetCwd)
+	statusbarDecorationTargetGit    statusbarDecorationTarget = statusbarDecorationTarget(tmuxconfig.StatusbarDecorationTargetGit)
+	statusbarDecorationTargetNotify statusbarDecorationTarget = statusbarDecorationTarget(tmuxconfig.StatusbarDecorationTargetNotify)
 )
 
-type statusbarDecorationSet struct {
-	Cwd    config.StatusbarDecoration
-	Git    config.StatusbarDecoration
-	Notify config.StatusbarDecoration
-}
+type statusbarDecorationSet tmuxconfig.StatusbarDecorationSet
 
 func statusbarDecorationSetFromGlobal(mode config.StatusbarDecoration) statusbarDecorationSet {
-	mode = config.NormalizeStatusbarDecoration(string(mode))
-	return statusbarDecorationSet{Cwd: mode, Git: mode, Notify: mode}
+	return statusbarDecorationSet(tmuxconfig.StatusbarDecorationSetFromGlobal(mode))
 }
 
 func loadStatusbarDecoration(homeDir func() (string, error), lookupEnv func(string) string) config.StatusbarDecoration {
-	if homeDir == nil {
-		return config.StatusbarDecorationOff
-	}
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.StatusbarDecorationOff
-	}
-	mode, err := config.LoadStatusbarDecorationFile(paths.StatusbarDecorationFile())
-	if err != nil {
-		return config.StatusbarDecorationOff
-	}
-	return mode
+	return tmuxconfig.LoadStatusbarDecoration(homeDir, lookupEnv, configPaths)
 }
 
 func loadStatusbarDecorationSet(homeDir func() (string, error), lookupEnv func(string) string) statusbarDecorationSet {
-	global := loadStatusbarDecoration(homeDir, lookupEnv)
-	return statusbarDecorationSet{
-		Cwd:    loadStatusbarDecorationForTarget(homeDir, lookupEnv, statusbarDecorationTargetCwd, global),
-		Git:    loadStatusbarDecorationForTarget(homeDir, lookupEnv, statusbarDecorationTargetGit, global),
-		Notify: loadStatusbarDecorationForTarget(homeDir, lookupEnv, statusbarDecorationTargetNotify, global),
-	}
+	return statusbarDecorationSet(tmuxconfig.LoadStatusbarDecorationSet(homeDir, lookupEnv, configPaths))
 }
 
 func loadStatusbarDecorationForTarget(homeDir func() (string, error), lookupEnv func(string) string, target statusbarDecorationTarget, fallback config.StatusbarDecoration) config.StatusbarDecoration {
-	if homeDir == nil {
-		return fallback
-	}
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return fallback
-	}
-	path := statusbarDecorationTargetFile(paths, target)
-	if strings.TrimSpace(path) == "" {
-		return fallback
-	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return fallback
-		}
-		return fallback
-	}
-	mode, err := config.LoadStatusbarDecorationFile(path)
-	if err != nil {
-		return fallback
-	}
-	return mode
+	return tmuxconfig.LoadStatusbarDecorationForTarget(homeDir, lookupEnv, tmuxconfig.StatusbarDecorationTarget(target), fallback, configPaths)
 }
 
 func statusbarDecorationTargetFile(paths config.Paths, target statusbarDecorationTarget) string {
-	switch target {
-	case statusbarDecorationTargetCwd:
-		return paths.StatusbarDecorationCwdFile()
-	case statusbarDecorationTargetGit:
-		return paths.StatusbarDecorationGitFile()
-	case statusbarDecorationTargetNotify:
-		return paths.StatusbarDecorationNotifyFile()
-	default:
-		return ""
-	}
+	return tmuxconfig.StatusbarDecorationTargetFile(paths, tmuxconfig.StatusbarDecorationTarget(target))
 }
 
 func statusbarDecorationTmuxOptionForTarget(target statusbarDecorationTarget) string {
-	switch target {
-	case statusbarDecorationTargetCwd:
-		return statusbarDecorationCwdTmuxOption
-	case statusbarDecorationTargetGit:
-		return statusbarDecorationGitTmuxOption
-	case statusbarDecorationTargetNotify:
-		return statusbarDecorationNotifyTmuxOption
-	default:
-		return statusbarDecorationTmuxOption
-	}
+	return tmuxconfig.StatusbarDecorationTmuxOptionForTarget(tmuxconfig.StatusbarDecorationTarget(target))
 }
 
 func statusbarCwdSegmentFormat(roles theme.RenderRoles) string {
-	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat(roles) + "#[fg=" + roles.StatusTextSecondary + "]#{=-28/...:pane_current_path}#[norange]"
+	return tmuxconfig.StatusbarCwdSegmentFormat(roles)
 }
 
 func statusbarCwdDecoratorFormat(roles theme.RenderRoles) string {
-	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}}}"
+	return tmuxconfig.StatusbarCwdDecoratorFormat(roles)
 }
 
 type gitRemoteProvider string

@@ -1,6 +1,7 @@
 package app
 
 import (
+ "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"fmt"
 	"strings"
 
@@ -8,17 +9,14 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
-type statusbarHUDComponent string
+type statusbarHUDComponent tmuxconfig.StatusbarHUDComponent
 
 const (
-	statusbarHUDNotifications statusbarHUDComponent = "notifications-hud"
-	statusbarHUDAgentUsage    statusbarHUDComponent = "agent-usage-hud"
+	statusbarHUDNotifications statusbarHUDComponent = statusbarHUDComponent(tmuxconfig.StatusbarHUDNotifications)
+	statusbarHUDAgentUsage    statusbarHUDComponent = statusbarHUDComponent(tmuxconfig.StatusbarHUDAgentUsage)
 )
 
-type statusbarHUDVisibilitySet struct {
-	Notifications config.StatusbarVisibility
-	AgentUsage    config.StatusbarVisibility
-}
+type statusbarHUDVisibilitySet tmuxconfig.StatusbarHUDVisibilitySet
 
 type agentUsageVisibilityLeaf struct {
 	provider string
@@ -31,68 +29,35 @@ const (
 )
 
 func defaultStatusbarHUDVisibilitySet() statusbarHUDVisibilitySet {
-	return statusbarHUDVisibilitySet{
-		Notifications: config.StatusbarVisibilityOn,
-		AgentUsage:    config.StatusbarVisibilityOn,
-	}
+	return statusbarHUDVisibilitySet(tmuxconfig.DefaultStatusbarHUDVisibilitySet())
 }
 
 func (s statusbarHUDVisibilitySet) isDefault() bool {
-	return s.mode(statusbarHUDNotifications) == config.StatusbarVisibilityOn &&
-		s.mode(statusbarHUDAgentUsage) == config.StatusbarVisibilityOn
+	return tmuxconfig.StatusbarHUDVisibilitySet(s).IsDefault()
 }
 
 func (s statusbarHUDVisibilitySet) mode(component statusbarHUDComponent) config.StatusbarVisibility {
-	switch component {
-	case statusbarHUDNotifications:
-		return config.NormalizeStatusbarVisibility(string(s.Notifications))
-	case statusbarHUDAgentUsage:
-		return config.NormalizeStatusbarVisibility(string(s.AgentUsage))
-	default:
-		return config.StatusbarVisibilityOn
-	}
+	return tmuxconfig.StatusbarHUDVisibilitySet(s).Mode(tmuxconfig.StatusbarHUDComponent(component))
 }
 
 func (s statusbarHUDVisibilitySet) visible(component statusbarHUDComponent) bool {
-	return s.mode(component) == config.StatusbarVisibilityOn
+	return tmuxconfig.StatusbarHUDVisibilitySet(s).Visible(tmuxconfig.StatusbarHUDComponent(component))
 }
 
 func (s statusbarHUDVisibilitySet) anyVisible() bool {
-	return s.visible(statusbarHUDNotifications) || s.visible(statusbarHUDAgentUsage)
+	return tmuxconfig.StatusbarHUDVisibilitySet(s).AnyVisible()
 }
 
 func statusbarHUDVisibilityPath(paths config.Paths, component statusbarHUDComponent) (string, bool) {
-	switch component {
-	case statusbarHUDNotifications:
-		return paths.StatusbarNotificationsHUDVisibilityFile(), true
-	case statusbarHUDAgentUsage:
-		return paths.StatusbarAgentUsageHUDVisibilityFile(), true
-	default:
-		return "", false
-	}
+	return tmuxconfig.StatusbarHUDVisibilityPath(paths, tmuxconfig.StatusbarHUDComponent(component))
 }
 
 func loadStatusbarHUDVisibilityState(homeDir func() (string, error), lookupEnv func(string) string, component statusbarHUDComponent) config.StatusbarVisibilityState {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	path, ok := statusbarHUDVisibilityPath(paths, component)
-	if !ok {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	state, err := config.LoadLayeredStatusbarVisibility(path, paths.StatusbarDefaultsFile(), config.StatusbarVisibilityOn)
-	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	return state
+	return tmuxconfig.LoadStatusbarHUDVisibilityState(homeDir, lookupEnv, tmuxconfig.StatusbarHUDComponent(component), configPaths)
 }
 
 func loadStatusbarHUDVisibilitySet(homeDir func() (string, error), lookupEnv func(string) string) statusbarHUDVisibilitySet {
-	return statusbarHUDVisibilitySet{
-		Notifications: loadStatusbarHUDVisibilityState(homeDir, lookupEnv, statusbarHUDNotifications).Effective,
-		AgentUsage:    loadStatusbarHUDVisibilityState(homeDir, lookupEnv, statusbarHUDAgentUsage).Effective,
-	}
+	return statusbarHUDVisibilitySet(tmuxconfig.LoadStatusbarHUDVisibilitySet(homeDir, lookupEnv, configPaths))
 }
 
 func statusbarHUDComponentName(component statusbarHUDComponent) string {

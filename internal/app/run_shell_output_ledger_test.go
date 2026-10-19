@@ -223,7 +223,8 @@ func TestRunShellSourceSitesAreClosed(t *testing.T) {
 	// The sweep covers the package and its subpackages: a producer moved into
 	// a subpackage still emits from internal/app's generated config.
 	var names []string
-	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
+	for _, root := range []string{".", "../services/keybinding", "../services/tmuxconfig"} {
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -240,6 +241,7 @@ func TestRunShellSourceSitesAreClosed(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walk package dir: %v", err)
+	}
 	}
 	names = append(names, mutationRuntimeSourceFiles(t)...)
 	sites := runShellSourceSites()

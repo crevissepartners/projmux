@@ -1,6 +1,7 @@
 package app
 
 import (
+ "github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"context"
 	"errors"
 	"fmt"
@@ -58,41 +59,35 @@ import (
 // scope: pane-exited may use its exact hook Pane, while kill and coalesced paths
 // must re-observe the whole host. A reason never supplies a termination
 // classification or bypasses the shared convergence body.
-type controllerTriggerReason string
+type controllerTriggerReason = tmuxconfig.ControllerTriggerReason
 
 const (
 	// controllerTriggerConfigApply is the generated-config reload boundary. It
 	// is the one producer with no hook session, because the reload is what
 	// installs the hooks.
-	controllerTriggerConfigApply controllerTriggerReason = "config-apply"
+	controllerTriggerConfigApply controllerTriggerReason = tmuxconfig.ControllerTriggerConfigApply
 	// controllerTriggerRuntimeCreated is tmux's after-new-window and
 	// after-split-window.
-	controllerTriggerRuntimeCreated controllerTriggerReason = "runtime-created"
+	controllerTriggerRuntimeCreated controllerTriggerReason = tmuxconfig.ControllerTriggerRuntimeCreated
 	// controllerTriggerPaneExited is tmux's pane-exited. It carries exact
 	// #{hook_pane}; its owner Window's exact live $N/@N binding is persisted by
 	// observation because current-context hook formats can name a survivor.
-	controllerTriggerPaneExited controllerTriggerReason = "pane-exited"
+	controllerTriggerPaneExited controllerTriggerReason = tmuxconfig.ControllerTriggerPaneExited
 	// controllerTriggerPaneKilled is tmux's after-kill-pane. That hook cannot
 	// name the dead Pane, so it retains the whole-host reobservation.
-	controllerTriggerPaneKilled controllerTriggerReason = "pane-killed"
+	controllerTriggerPaneKilled controllerTriggerReason = tmuxconfig.ControllerTriggerPaneKilled
 	// controllerTriggerWindowUnlinked is tmux's window-unlinked. A standalone
 	// firing with exact #{hook_window} is explicit Window termination evidence;
 	// the absence pass remains whole-host because the dead window no longer has
 	// a queryable Registry mirror.
-	controllerTriggerWindowUnlinked controllerTriggerReason = "window-unlinked"
+	controllerTriggerWindowUnlinked controllerTriggerReason = tmuxconfig.ControllerTriggerWindowUnlinked
 )
 
 // controllerTriggerReasons returns the closed reason set in declaration order.
 // The generated hook bodies and the route parser share it, so a reason cannot be
 // spelled in a config that the binary refuses to parse.
 func controllerTriggerReasons() []controllerTriggerReason {
-	return []controllerTriggerReason{
-		controllerTriggerConfigApply,
-		controllerTriggerRuntimeCreated,
-		controllerTriggerPaneExited,
-		controllerTriggerPaneKilled,
-		controllerTriggerWindowUnlinked,
-	}
+	return tmuxconfig.ControllerTriggerReasons()
 }
 
 func parseControllerTriggerReason(raw string) (controllerTriggerReason, error) {
