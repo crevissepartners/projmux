@@ -176,6 +176,11 @@
 // Options.DefaultShell overrides the CLI-compatible shell input. Neither
 // changes the environment or the configuration/state path defaults.
 //
+// ResolveProjectLabelLink resolves an actual label key/value from supplied public
+// rules and Project data using CORE placeholder, escaping and URL acceptance rules.
+// It returns ("", false) for missing/no-link inputs, leaves inputs unchanged and
+// accesses no files, environment, Registry, tmux or providers. It needs no Client.
+//
 // ReadProjectLinkRules, WriteProjectLinkRules and DeleteProjectLinkRules require an
 // explicit registered Project name or uid: ref and never contact tmux or providers.
 // The store format is ConfigDir/project-links/<uid>.json; result JSON includes

@@ -1169,6 +1169,23 @@ revision succeeds. Context cancellation or deadline before writer admission is
 preserved without changing guidance; an admitted atomic mutation finishes.
 External editors that ignore the lock are outside this concurrency guarantee.
 
+## Resolve an actual Project label link
+
+`projmux.ResolveProjectLabelLink(rules core.ProjectLinkRules, project core.Project,
+key, value string) (string, bool)` uses CORE's resolver for actual label values:
+
+```go
+url, linked := projmux.ResolveProjectLabelLink(rules, project, "pr", "725")
+```
+
+It returns `(URL, true)` on success and `("", false)` for missing rules or
+variables, empty values, or expansions CORE rejects. Label values and Project
+UID/name/labels are path-escaped; URL placeholders lose trailing slashes.
+The function is deterministic, leaves its inputs unchanged, and accesses no
+files, environment, Registry, tmux or providers. It needs no Client, does not
+load or validate stored rules, and does not open the URL. Existing link-rule
+CRUD and result DTOs retain their behavior.
+
 ## Project link rules in a degraded Registry
 
 The existing `ReadProjectLinkRules`, `WriteProjectLinkRules`, and
