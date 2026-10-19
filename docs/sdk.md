@@ -1301,3 +1301,38 @@ Notices and CLI output are unchanged. Read the prior generation's
 `LastTermination` (`reconcile` / `unknown`, no invented exit code) and
 `ProcessSession.History` through `GetResource` on its Pane; the Agent exposes
 the same termination evidence.
+
+## Stored Registry snapshot without observation
+
+`Client.ReadRegistrySnapshot(ctx)` returns one caller-owned
+`core.RegistrySnapshot` with non-nil `Projects`, `Windows`, and `Agents` slices.
+It reads the captured Registry once through the CLI's degraded read-only loader.
+It preserves stored values, row order, duplicate UIDs, Offline Agents, and
+nested data. It adds no runtime context or ownership resolution. Consumers
+that follow owner references should use the first matching Project or Window
+in these slices and process Agent rows directly, without deduplicating by UID.
+
+```go
+snapshot, err := client.ReadRegistrySnapshot(ctx)
+if err != nil {
+    return err
+}
+for _, agent := range snapshot.Agents {
+    fmt.Println(agent.Metadata.UID, agent.Metadata.Name)
+}
+```
+
+This call performs no tmux observation, provider contact, locking, writing,
+migration save, or permission repair. Its envelope has only `projects`,
+`windows`, and `agents`; it exposes no Registry schema, path, Pane, or
+ControlSession collection. The existing public resource values include their
+stored status fields, which are returned unchanged and may be stale.
+`ListResources`, `GetResource`, and `ObserveRuntime` retain their existing
+observation behavior.
+
+First use returns empty slices without creating state. Initialized missing or
+empty state, malformed JSON, unsupported schema, and file read failures keep
+the existing `CodeRegistryUnavailable` refusal and detail. Decodeable invalid
+graphs remain readable. Cancellation is checked before captured path errors
+and before returning success. A loader or projection failure wins over
+cancellation during that work; cancellation does not interrupt file I/O.
