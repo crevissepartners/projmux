@@ -624,13 +624,132 @@ for package in packages:
             "e2e-traceback-guard-contract", "test-e2e-reliability", "test-e2e-residual-policy", "test-e2e-shards"})
 
 
+class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "process_cli_budget", ROOT / "scripts/test-process-host-cli.py")
+        cls.runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.runner)
+
+    def exercise(self, mutation=None, seconds=10):
+        import contextlib
+        import io
+
+        runner = self.runner
+        expected = [f"TestFixture{index}" for index in range(7)]
+        calls, clock = [], [0.0]
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            summary = Path(temporary) / "summary.md"
+
+            def invoke(command, **kwargs):
+                if command[1] == "build" or "-c" in command:
+                    calls.append(("compile" if "-c" in command else "build", command))
+                    Path(command[command.index("-o") + 1]).write_bytes(b"fake binary")
+                    return subprocess.CompletedProcess(command, 0)
+                names = command[command.index("-run") + 1][2:-2].split("|")
+                calls.append(("test", names))
+                self.assertEqual(kwargs["timeout"], 480)
+                self.assertIn("-timeout=420s", command)
+                self.assertIn("-cpu=1", command)
+                self.assertIn("-count=1", command)
+                self.assertEqual(kwargs["env"]["GOMAXPROCS"], "1")
+                clock[0] += seconds
+                events = [{"Action": action, "Test": name}
+                          for name in names for action in ("run", "pass")]
+                events.append({"Action": "pass"})
+                status = 0
+                if mutation and len([c for c in calls if c[0] == "test"]) == 1:
+                    events, status = mutation(events, command)
+                return subprocess.CompletedProcess(command, status,
+                    stdout="\n".join(json.dumps(e) for e in events), stderr="")
+
+            error = None
+            with patch.object(runner, "selected_tests", return_value=expected), patch.object(
+                runner, "isolated_env", return_value={"GOMAXPROCS": "1"}), patch.object(
+                runner.subprocess, "run", side_effect=invoke), patch.object(
+                runner.time, "monotonic", side_effect=lambda: clock[0]), patch.dict(
+                os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}), contextlib.redirect_stdout(output):
+                try:
+                    runner.main()
+                except (ValueError, subprocess.TimeoutExpired) as exc:
+                    error = exc
+            return calls, output.getvalue(), summary.read_text() if summary.exists() else "", error
+
+    def test_dynamic_inventory_runs_in_two_sequential_disjoint_budgets(self):
+        calls, output, summary, error = self.exercise()
+        self.assertIsNone(error)
+        self.assertEqual([c[0] for c in calls], ["build", "build", "compile", "test", "test"])
+        self.assertEqual([c[1] for c in calls if c[0] == "test"],
+                         [["TestFixture0", "TestFixture2", "TestFixture4", "TestFixture6"],
+                          ["TestFixture1", "TestFixture3", "TestFixture5"]])
+        report = json.loads(output.split("process CLI summary: ")[1])
+        self.assertEqual(report["selected"], 7)
+        self.assertEqual(report["passed"], 7)
+        for field in ("skip", "fail", "missing", "duplicate", "unexpected", "missing_run"):
+            self.assertEqual(report[field], [])
+        self.assertEqual(len(report["batches"]), 2)
+        for batch in report["batches"]:
+            self.assertEqual(batch["limit_seconds"], 420)
+            self.assertEqual(batch["test_command_seconds"], 10)
+            self.assertEqual(batch["headroom_seconds"], 410)
+        self.assertIn("Process Host CLI", summary)
+        self.assertIn("headroom", summary)
+
+    def test_rejects_bad_evidence_but_executes_other_batch_once(self):
+        mutations = {
+            "duplicate pass": lambda es, cmd: (es + [es[1]], 0),
+            "duplicate run": lambda es, cmd: (es + [es[0]], 0),
+            "missing pass": lambda es, cmd: ([e for e in es if e != es[1]], 0),
+            "missing run": lambda es, cmd: ([e for e in es if e != es[0]], 0),
+            "skip subtest": lambda es, cmd: (es + [{"Action": "skip", "Test": "TestFixture0/sub"}], 0),
+            "fail": lambda es, cmd: (es + [{"Action": "fail", "Test": "TestFixture0"}], 0),
+            "exit": lambda es, cmd: (es, 1),
+            "unexpected": lambda es, cmd: (es + [{"Action": "pass", "Test": "TestOutside"}], 0),
+            "wrong batch": lambda es, cmd: (es + [{"Action": "run", "Test": "TestFixture1"}], 0),
+            "missing package": lambda es, cmd: (es[:-1], 0),
+        }
+        for name, mutation in mutations.items():
+            with self.subTest(name=name):
+                calls, output, summary, error = self.exercise(mutation)
+                self.assertIsInstance(error, ValueError)
+                self.assertEqual(len([c for c in calls if c[0] == "test"]), 2)
+                self.assertIn("FAIL", summary)
+
+    def test_outer_timeout_preserves_partial_evidence_and_runs_other_batch(self):
+        sentinel = "private-provider-output"
+        def expire(events, command):
+            partial = json.dumps({"Action": "run", "Test": "TestFixture0/" + sentinel,
+                                  "Output": sentinel}) + "\n{"
+            raise subprocess.TimeoutExpired(command, 480, output=partial.encode(), stderr=sentinel)
+        calls, output, summary, error = self.exercise(expire, seconds=480)
+        self.assertIsInstance(error, subprocess.TimeoutExpired)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 2)
+        self.assertNotIn(sentinel, output + summary)
+        evidence = json.loads(output.split("process CLI timeout evidence: ")[1])
+        self.assertEqual(evidence["batch"], 1)
+        self.assertEqual(evidence["events"], [{"test": "TestFixture0", "action": "run"}])
+        self.assertIn("FAIL", summary)
+        self.assertIn("480", summary)
+
+    def test_warning_at_over_75_percent_does_not_change_test_status(self):
+        for seconds, warning in ((315, False), (316, True)):
+            with self.subTest(seconds=seconds):
+                _, output, summary, error = self.exercise(seconds=seconds)
+                self.assertIsNone(error)
+                self.assertEqual("::warning::" in output, warning)
+                self.assertEqual("WARNING" in summary, warning)
+                self.assertIn("75%", summary)
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_process_cli_job_runs_the_make_target_and_gates_test(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         job = workflow_job(workflow, "process-host-cli")
         self.assertIn("    name: Process Host CLI Tests", job)
         self.assertIn("    runs-on: ubuntu-latest", job)
-        self.assertIn("    timeout-minutes: 15", job)
+        self.assertIn("    timeout-minutes: 30", job)
         self.assertIn("go-version-file: go.mod", job)
         self.assertNotIn("continue-on-error:", job)
         self.assertNotRegex(job, r"(?m)^\s+if:")
