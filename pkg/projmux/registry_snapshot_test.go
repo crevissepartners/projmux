@@ -80,10 +80,13 @@ func snapshotTree(t *testing.T, root string) map[string]snapshotFile {
 	return out
 }
 
-// The reference loop matches the old private display algorithm: first Project
-// and Window matches, followed by the Agent rows themselves (never a UID map).
-func snapshotOldUsers(r metadata.Registry, project string) ([]string, bool) {
-	out := []string{}
+// The reference loop is the old profileProjectUsers/AgentProjectUID display
+// algorithm: Project lookup precedes Window lookup regardless of OwnerRef.Kind,
+// and a dangling Window-to-Project chain resolves to empty.
+type snapshotUser struct{ UID, Name, Project string }
+
+func snapshotOldUsers(r metadata.Registry, project string) ([]snapshotUser, bool) {
+	out := []snapshotUser{}
 	if project == "" {
 		return out, true
 	}
@@ -92,52 +95,57 @@ func snapshotOldUsers(r metadata.Registry, project string) ([]string, bool) {
 	}
 	for _, a := range r.Agents {
 		owner := ""
-		if a.Metadata.OwnerRef != nil {
-			if a.Metadata.OwnerRef.Kind == metadata.KindProject {
-				owner = a.Metadata.OwnerUID()
-			} else if w, ok := r.Window(a.Metadata.OwnerUID()); ok {
-				owner = w.Metadata.OwnerUID()
+		if p, ok := r.Project(a.Metadata.OwnerUID()); ok {
+			owner = p.Metadata.UID
+		} else if w, ok := r.Window(a.Metadata.OwnerUID()); ok {
+			if p, ok := r.Project(w.Metadata.OwnerUID()); ok {
+				owner = p.Metadata.UID
 			}
 		}
-		if a.Metadata.Annotations["projmux.io/profile"] == "shared" && owner != project {
-			out = append(out, a.Metadata.Name)
+		if a.Metadata.Annotations[metadata.AnnotationAgentProfile] == "shared" && owner != project {
+			out = append(out, snapshotUser{a.Metadata.UID, a.Metadata.Name, owner})
 		}
 	}
 	return out, true
 }
-func snapshotPublicUsers(r core.RegistrySnapshot, project string) ([]string, bool) {
-	out := []string{}
+func snapshotPublicUsers(r core.RegistrySnapshot, project string) ([]snapshotUser, bool) {
+	out := []snapshotUser{}
 	if project == "" {
 		return out, true
 	}
-	found := false
-	for _, p := range r.Projects {
-		if p.Metadata.UID == project {
-			found = true
-			break
+	firstProject := func(uid string) (core.Project, bool) {
+		for _, p := range r.Projects {
+			if p.Metadata.UID == uid {
+				return p, true
+			}
 		}
+		return core.Project{}, false
 	}
-	if !found {
+	if _, ok := firstProject(project); !ok {
 		return out, false
 	}
 	for _, a := range r.Agents {
 		owner := ""
+		uid := ""
 		if a.Metadata.OwnerRef != nil {
-			if a.Metadata.OwnerRef.Kind == core.KindProject {
-				owner = a.Metadata.OwnerRef.UID
-			} else {
-				for _, w := range r.Windows {
-					if w.Metadata.UID == a.Metadata.OwnerRef.UID {
-						if w.Metadata.OwnerRef != nil {
-							owner = w.Metadata.OwnerRef.UID
+			uid = a.Metadata.OwnerRef.UID
+		}
+		if p, ok := firstProject(uid); ok {
+			owner = p.Metadata.UID
+		} else {
+			for _, w := range r.Windows {
+				if w.Metadata.UID == uid {
+					if w.Metadata.OwnerRef != nil {
+						if p, ok := firstProject(w.Metadata.OwnerRef.UID); ok {
+							owner = p.Metadata.UID
 						}
-						break
 					}
+					break
 				}
 			}
 		}
 		if a.Metadata.Annotations["projmux.io/profile"] == "shared" && owner != project {
-			out = append(out, a.Metadata.Name)
+			out = append(out, snapshotUser{a.Metadata.UID, a.Metadata.Name, owner})
 		}
 	}
 	return out, true
@@ -166,8 +174,26 @@ func TestRegistrySnapshotRowsParityAndOwnership(t *testing.T) {
 			t.Fatalf("users %s: %v/%v vs %v/%v", project, a, ok, b, bok)
 		}
 	}
-	if users, _ := snapshotPublicUsers(got, "proj-a"); !reflect.DeepEqual(users, []string{"direct-b", "orphan"}) {
+	if users, _ := snapshotPublicUsers(got, "proj-a"); !reflect.DeepEqual(users, []snapshotUser{{"agent-duplicate", "direct-b", "proj-b"}, {"agent-duplicate", "orphan", ""}}) {
 		t.Fatal(users)
+	}
+	// Degraded graphs may carry mismatched kinds or a dangling Project.
+	for _, kind := range []metadata.Kind{metadata.KindWindow, metadata.KindProject} {
+		altered := r.Clone()
+		altered.Agents[0].Metadata.OwnerRef = &metadata.OwnerRef{Kind: kind, UID: "proj-a"}
+		altered.Windows[0].Metadata.OwnerRef.UID = "proj-missing"
+		altered.Agents[3].Metadata.OwnerRef = &metadata.OwnerRef{Kind: metadata.KindProject, UID: "proj-missing"}
+		projected, err := registrySnapshotRows(altered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, project := range []string{"proj-a", "proj-b", "missing"} {
+			old, ok := snapshotOldUsers(altered, project)
+			current, found := snapshotPublicUsers(projected, project)
+			if ok != found || !reflect.DeepEqual(old, current) {
+				t.Fatalf("degraded owner parity: %v/%v vs %v/%v", old, ok, current, found)
+			}
+		}
 	}
 	got.Projects[0].Metadata.Labels["nested"] = "changed"
 	got.Projects[0].Status.Session.Name = "changed"
