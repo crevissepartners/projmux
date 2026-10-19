@@ -357,3 +357,56 @@ func TestReadRegistrySnapshotErrorOrder(t *testing.T) {
 		t.Fatal("invalid path accepted")
 	}
 }
+
+func TestRegistrySnapshotOwnerLookupBoundaryParity(t *testing.T) {
+	// Degraded input can retain empty UIDs. A nil owner means lookup UID "",
+	// not an early return: the first empty-UID Window may still lead to a Project.
+	for _, tc := range []struct {
+		name         string
+		owner        *metadata.OwnerRef
+		emptyProject bool
+		windows      []metadata.Window
+		want         string
+	}{
+		{name: "nil-owner-empty-window", windows: []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "", OwnerRef: &metadata.OwnerRef{Kind: metadata.KindWindow, UID: "proj-a"}}}}, want: "proj-a"},
+		{name: "empty-owner-empty-window", owner: &metadata.OwnerRef{Kind: metadata.KindProject, UID: ""}, windows: []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "", OwnerRef: &metadata.OwnerRef{UID: "proj-a"}}}}, want: "proj-a"},
+		{name: "empty-window-first-match", windows: []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "", OwnerRef: &metadata.OwnerRef{UID: "proj-a"}}}, {Metadata: metadata.ObjectMeta{UID: "", OwnerRef: &metadata.OwnerRef{UID: "proj-b"}}}}, want: "proj-a"},
+		{name: "empty-project-precedes-window", emptyProject: true, windows: []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "", OwnerRef: &metadata.OwnerRef{UID: "proj-a"}}}}, want: ""},
+		{name: "nil-window-owner", owner: &metadata.OwnerRef{UID: "window"}, emptyProject: true, windows: []metadata.Window{{Metadata: metadata.ObjectMeta{UID: "window"}}}, want: ""},
+		{name: "nil-owner-without-match", want: ""},
+		{name: "dangling-project", owner: &metadata.OwnerRef{Kind: metadata.KindProject, UID: "missing"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := metadata.NewRegistry()
+			for _, uid := range []string{"proj-target", "proj-a", "proj-b"} {
+				r.Projects = append(r.Projects, metadata.Project{Metadata: metadata.ObjectMeta{UID: uid}})
+			}
+			if tc.emptyProject {
+				r.Projects = append(r.Projects, metadata.Project{Metadata: metadata.ObjectMeta{UID: ""}})
+			}
+			r.Windows = tc.windows
+			r.Agents = []metadata.Agent{{Metadata: metadata.ObjectMeta{UID: "agent", Name: "boundary", OwnerRef: tc.owner, Annotations: map[string]string{metadata.AnnotationAgentProfile: "shared"}}}}
+			// Go through the actual loader as well as direct projection: the decoder's
+			// degraded-input behavior is part of this parity, not just a synthetic DTO.
+			raw, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, _ := snapshotClient(t, raw)
+			loaded, err := resources.Load(c.paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := c.ReadRegistrySnapshot(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, ok := snapshotOldUsers(loaded, "proj-target")
+			current, found := snapshotPublicUsers(got, "proj-target")
+			want := []snapshotUser{{"agent", "boundary", tc.want}}
+			if !ok || !found || !reflect.DeepEqual(old, want) || !reflect.DeepEqual(current, want) {
+				t.Fatalf("boundary parity: old=%+v public=%+v want=%+v", old, current, want)
+			}
+		})
+	}
+}
