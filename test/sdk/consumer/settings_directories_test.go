@@ -9,7 +9,7 @@ import (
 
 func TestExternalSettingsDirectoriesConsumer(t *testing.T) {
 	paths, err := projmux.ResolvePaths(projmux.ResolvePathsOptions{
-		HomeDir: func() (string, error) { return "/home/sdk", nil },
+		HomeDir:   func() (string, error) { return "/home/sdk", nil },
 		LookupEnv: func(string) string { return "" },
 	})
 	if err != nil {
