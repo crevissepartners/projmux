@@ -14,6 +14,7 @@ import (
 func TestSessionHistoryPublicFieldCoverage(t *testing.T) {
 	for _, pair := range [][2]reflect.Type{
 		{reflect.TypeFor[agentsessions.AgentResult](), reflect.TypeFor[core.AgentSessionsList]()},
+		{reflect.TypeFor[agentsessions.RecordedResult](), reflect.TypeFor[core.RecordedSessionsList]()},
 		{reflect.TypeFor[agentsessions.ProjectResult](), reflect.TypeFor[core.ProjectSessionsList]()},
 	} {
 		compareResourceShape(t, pair[0], pair[1], map[[2]reflect.Type]bool{})

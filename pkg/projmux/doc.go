@@ -286,4 +286,11 @@
 // after successful synchronous work. Cross-file reads are not an atomic snapshot.
 // Payload access: 권한: 같은 사용자의 StateDir 읽기, 비밀 처리 없음.
 // Full live Payload text is exposed without redaction or secret filtering.
+//
+// ListRecordedSessions reads the complete persisted session history, including
+// deleted Agents and missing Projects, without reading Registry or adding its
+// current sessions. Agents follow first appearance in the file; each Agent uses
+// CORE duplicate merging and stable time order. The result owns its slices and
+// optional timestamps, counts corrupt lines and uses an empty array for missing
+// history. No transcripts, writes, tmux, network or usage aggregation are involved.
 package projmux

@@ -80,3 +80,10 @@ type ProjectSessionAgent struct {
 	InRegistry bool                    `json:"inRegistry"`
 	Basis      SessionAffiliationBasis `json:"basis"`
 }
+
+// RecordedSessionsList is the complete persisted history, without current
+// Registry sessions. Sessions is an empty array when no history exists.
+type RecordedSessionsList struct {
+	Sessions     []AgentSession `json:"sessions"`
+	CorruptLines int            `json:"corruptLines"`
+}

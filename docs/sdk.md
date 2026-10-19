@@ -1362,3 +1362,20 @@ the existing `CodeRegistryUnavailable` refusal and detail. Decodeable invalid
 graphs remain readable. Cancellation is checked before captured path errors
 and before returning success. A loader or projection failure wins over
 cancellation during that work; cancellation does not interrupt file I/O.
+
+### Complete recorded session history
+
+`Client.ListRecordedSessions(ctx)` returns `core.RecordedSessionsList` with
+`Sessions []core.AgentSession` and `CorruptLines int`. It reads the complete
+history in the captured StateDir, including deleted Agents and missing Projects,
+without reading the Registry or adding current sessions. Missing or corrupt
+Registry state does not prevent this read. Agents follow their first appearance
+in the file; each Agent's rows use CORE duplicate merging and stable time order.
+Skipped nonempty lines are counted across the whole file. No provider filter,
+pagination or arbitrary row limit is applied.
+
+Missing history returns `sessions: []`. Path resolution and history read errors
+are returned. A context canceled before admission reads nothing. Returned slices
+and optional time pointers are caller-owned. This method writes no state, opens
+no transcripts and contacts neither tmux nor the network; it does not aggregate
+usage or change the existing Agent and Project session APIs.
