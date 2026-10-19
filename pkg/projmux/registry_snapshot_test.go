@@ -156,6 +156,10 @@ func TestRegistrySnapshotRowsParityAndOwnership(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	storedBefore, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, e := registrySnapshotRows(r)
 	if e != nil {
 		t.Fatal(e)
@@ -215,6 +219,13 @@ func TestRegistrySnapshotRowsParityAndOwnership(t *testing.T) {
 	}
 	if r.Projects[0].Metadata.Labels["nested"] != "original" || r.Projects[0].Status.Session.Name != "first-a" || r.Projects[0].Status.Conditions[0].Type != "fixture" || r.Windows[0].Metadata.OwnerUID() != "proj-a" || r.Windows[0].Status.Conditions[0].Type != "fixture" {
 		t.Fatal("project/window nested aliases")
+	}
+	storedAfter, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(storedBefore) != string(storedAfter) {
+		t.Fatal("returned data aliases loaded Registry")
 	}
 	// Projection failures remain ordinary errors, rather than Registry refusals.
 	r.Projects[0].Metadata.CreatedAt = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
