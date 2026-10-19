@@ -336,6 +336,7 @@ ResolveAgentSettings	Public v0 tmux resume SDK fixed-path settings adapter; CLI 
 ResolvePaths	Public v0 side-effect-free HOME/XDG path resolver; retained for external SDK consumers and covered by input parity and external consumer tests.
 ResolveProcessCodexRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 ResolveProjectStopRoute	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
+ResourcesSupported	Public v0 build resource support information; effect-free direct authority facade covered by build-tag and isolated external consumer tests.
 RestoreError.Error	Bounded profile restoration failure reports both causes and the retained original snapshot to public SDK callers; covered by restoration fault tests.
 RestoreError.Unwrap	Bounded profile restoration failure preserves replacement and restoration cause identity; covered by core and public facade errors.Is/As tests.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.

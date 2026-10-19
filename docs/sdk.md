@@ -74,6 +74,22 @@ fragment selects the whole switch; a basename selects its fragment mask.
 See [guidance editing](configuration.md#editing-host-global-agent-guidance)
 for JSON fields, the UTF-8/NUL and 64 KiB limits, and policy preservation.
 
+## Host resource support
+
+`projmux.ResourcesSupported() bool` reports whether the current build supports
+statusbar host resources: Linux (including WSL) and macOS with cgo return `true`;
+macOS without cgo returns `false`. No Client, context, or configuration path is
+needed, and there is no error or refusal result.
+
+```go
+supported := projmux.ResourcesSupported()
+```
+
+This call does not sample metrics, update the CPU cache, read or write files,
+or contact a runtime, CLI, or provider. It does not read or change the saved or
+effective resources setting; `GetConfig(ConfigStatusbarResources)` retains its
+existing central configuration meaning.
+
 ## Host system samples
 
 `Client.SampleSystem(ctx)` returns `core.SystemSample` with `Supported` and
