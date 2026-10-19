@@ -68,8 +68,8 @@ Client.ListInstructions	Public v0 instruction SDK entrypoint or its typed-refusa
 Client.ListNotifications	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.ListProfiles	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.ListProjectCandidates	Public v0 read-only project candidate SDK entrypoint; covered by discovery order, Registry refusal and CLI parity tests.
-Client.ListRecordedSessions	Public v0 complete recorded session history SDK, consumed by TestExternalRecordedSessionsConsumer and covered by CORE parity and read admission tests; no Registry or writer API.
 Client.ListProjectSessions	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
+Client.ListRecordedSessions	Public v0 complete recorded session history SDK, consumed by TestExternalRecordedSessionsConsumer and covered by CORE parity and read admission tests; no Registry or writer API.
 Client.ListQuestions	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.ListQuestionsWithOptions	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
