@@ -62,8 +62,10 @@ type Options struct {
 
 // Client executes public instruction, profile, resource registration and read operations. It owns no background work and needs
 // no Close. Its paths are immutable; methods may be called concurrently. Writes
-// are atomic, but multi-call transactions and concurrent profile edits are not
-// serialized (the same limits apply to separate CLI processes).
+// are atomic except for the legacy setter described below. Multi-call transactions
+// and concurrent profile edits are not serialized (the same limits apply to separate CLI processes).
+// GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
+// SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).
 type Client struct {
 	processCreateContext mutationruntime.ProcessCreateContext
 	createRecorder       CreateRecorder

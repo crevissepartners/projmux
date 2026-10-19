@@ -53,6 +53,7 @@ Client.DeleteProjectGuidance	Public v0 Project guidance SDK entrypoint; covered 
 Client.DeleteProjectLinkRules	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.DeleteProjectLinkRulesWithOptions	Public per-call degraded Registry link rules SDK entrypoint; covered by strict parity, raw target uniqueness, no-effects admission, and external consumer tests.
 Client.DeliverTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
+Client.GetAISplitMode	Public v0 legacy TUI-first AI split mode read; parity and external consumer tests.
 Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.GetUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -96,6 +97,7 @@ Client.ResumeAgent	Public v0 tmux Agent resume entrypoint or its external-only c
 Client.ReviewApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.SampleSystem	Public v0 host system sampler facade; retained for external consumers and covered by producer parity, path isolation, cancellation and caller ownership fixtures.
 Client.SendMessage	Public SDK Client.SendMessage entrypoint; external consumers submit explicit untrusted peer coordination.
+Client.SetAISplitMode	Public v0 legacy AI split mode plain-write setter; parity, refusal and external consumer tests.
 Client.SetAgentGuidanceEnabled	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.SetAgentProtection	Public v0 exact Agent protection label facade; verified by CLI/SDK parity, locked transaction refusals and public-only consumers.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -174,6 +176,7 @@ DirectEndpoint.Health	Test-only installed qualification API retained for canonic
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
 DirectEndpoint.markClosed	Test-only installed qualification helper retained for single-consumer bounded direct exit finalization proof.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+DisplayCurrentAISplitModeMessage	Legacy SDK AI split mode display adapter; called after a successful plain write and covered by current-environment parity tests.
 Dispositions	Closed CLI route disposition catalog retained as the test seam that pins exactly one disposition per canonical route.
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
@@ -494,6 +497,7 @@ isolatedEnvironment	Test-only installed qualification helper retained for CODEX_
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 linkRulesRefusal	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+loadCentralAINewWindowMode	Legacy app central AI mode loader proof seam; retained for missing-home and central file error regression tests after shared TUI execution extraction.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).

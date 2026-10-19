@@ -28,7 +28,9 @@
 // methods read the Registry without creating or repairing it, and take bounded
 // tmux observations for context. They never control provider processes.
 //
-// Pass a non-nil context to every operation. Cancellation is checked before
+// GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
+// SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).
+// Pass a non-nil context to every context-taking operation. Cancellation is checked before
 // admission; a mutation already admitted finishes its atomic store operation.
 // Delete removes explicitly selected tmux Windows, Panes and Agents through
 // the CLI's deletion planner, exact socket/PID/UID guards, durable intent, rollback and Registry

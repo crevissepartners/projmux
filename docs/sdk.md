@@ -338,6 +338,36 @@ The CLI preserves its existing bootstrap migration and error journal policy;
 it does not promise that the entire HOME remains unwritten. Invalid CLI inputs
 exit 2. Existing five-key CLI output is unchanged.
 
+## Legacy AI split mode
+
+`Client.GetAISplitMode() core.AISplitModeState` reads the first valid TUI
+`tmux-ai-split-mode`, then central `ai-new-window-mode`, then `selective`.
+`Source` is `tui`, `central`, or `default`. Missing, empty, invalid, unreadable
+files and path resolution failures retain that fallback behavior. Paths remain
+the client's captured ConfigDir; reads retain TUI front-read tracking.
+
+`Client.SetAISplitMode(mode string) (core.AISplitModeState, error)` trims
+and validates the existing case-sensitive modes before I/O. Invalid input returns
+`CodeConfigValueInvalid`. It writes the TUI file with a trailing newline and
+returns the saved mode with `Source="tui"`. Save errors return
+`CodeAISplitModeSaveFailed` (`ai-split-mode-save-failed`), retaining the
+original error text and context unchanged, with the I/O cause available through
+`errors.Is`/`errors.As`. Path-resolution failures retain the legacy
+`save AI split default` context; mkdir/write failures retain their PathError text.
+
+GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
+SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).
+Unlike context-taking atomic APIs, these opt-in methods preserve the old
+synchronous settings behavior. An interrupted write may leave partial content;
+there is no atomic replacement or multi-call transaction guarantee.
+
+Only after a successful save, the setter reads current `TMUX`, `TMUX_PANE`, and
+`PATH` for the legacy best-effort `tmux -u display-message` with inherited stdio.
+An empty `TMUX` suppresses display; display failures do not undo storage success.
+It uses the ambient tmux context, independently of Options.SocketPath.
+The existing central `GetConfig`/`SetConfig` paths, cancellation and atomic
+semantics are unchanged. This API defines no HTTP error mapping.
+
 ## Process Agent stop
 
 `Client.StopAgent(ctx, core.StopAgentRequest{Ref: "uid:..."})` stops one process
