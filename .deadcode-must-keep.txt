@@ -17,6 +17,7 @@ AgentWorkspace.IsZero	Public v0 resource SDK entrypoint or its JSON/selection ad
 AggregateTeardownEvents	Pure multi-event teardown authority is called by the product path and retained for lifecycle decision proofs.
 All	Closed provider-registry projection retained as the test seam that pins the live aiprovider registry create-shortcut and picker-order contract.
 AnswerExactProcessQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+ApplyKeymapMigration	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ApprovalRequest.OfferedDecisions	Public v0 approval SDK accessor for the native provider decision list; external consumers use it to supply ReviewApproval without parsing opaque request identities.
 ArchiveFiles	Read-only archive path projection retained for callers that observe every archive generation.
 AuditGoStringLiteralsInDir	Directory walker of the hardcoded-string governance audit; its subject is the live repository source, so the guard is test-entered by design rather than a retired product path.
@@ -164,6 +165,9 @@ CodexHandle.Wait	Owned processhost Codex preparation retained for dedicated stdi
 CodexProcessRouteEvidence.Provider	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 CodexProcessRouteEvidence.sameAuthority	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 CommandOutcomeReasons.Register	Internal caller-owned closed outcome reason registration seam; verified by class isolation, concurrent lookup/registration, copied inventories, failure atomicity and Store reader roundtrip tests.
+ConfigRenderThemeSource	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+ControllerTriggerHookCommand	Closed controller reason vocabulary and generated hook projection retained for hook spelling and lifecycle renderer regression assertions.
+ControllerTriggerReasons	Closed controller reason vocabulary and generated hook projection retained for hook spelling and lifecycle renderer regression assertions.
 CoordinationEligible	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
 CreateProcessError.Error	Public detached CreateAgent refusal cause exposes startup failure text with exact binding and owner; exercised by typed rollback fixtures.
 CreateProcessError.Unwrap	Public detached CreateAgent refusal cause preserves errors.Is/errors.As recovery through the startup cause; exercised by cancellation and typed rollback fixtures.
@@ -171,8 +175,14 @@ CurrentProtocol	The build's local IPC version window accessor is retained as the
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
 DecideTeardownEvent	The pure teardown decision API is called by the product path and retained for lifecycle authority proofs.
 DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
+DefaultInteractiveShell	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+DefaultKeyBindingCatalog	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 DefaultOpener	The original default stdio-proxy broker opener remains a compatibility seam while bounded lifecycle routing uses direct witnessed Unix attachment.
 DefaultProbes	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
+DefaultStatusbarHUDVisibilitySet	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+DefaultStatusbarRowOneVisibilitySet	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+DesktopNotifyConfigValue	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+DesktopNotifyModeFromConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
 DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
@@ -180,6 +190,8 @@ DirectEndpoint.markClosed	Test-only installed qualification helper retained for 
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
 DisplayCurrentAISplitModeMessage	Legacy SDK AI split mode display adapter; called after a successful plain write and covered by current-environment parity tests.
 Dispositions	Closed CLI route disposition catalog retained as the test seam that pins exactly one disposition per canonical route.
+EffectiveThemeFromConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+EffectiveThemeFromConfigNoting	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 EqualTeardownPlans	Serialization-free teardown plan comparison retained as the comparison primitive of the live teardown aggregation property tests.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 ExecuteDetachedProcessCreate	Public Client.CreateAgent detached execution closure shares the owned launcher and app callbacks; exercised by public-only consumer and CLI parity fixtures.
@@ -188,7 +200,10 @@ ExecuteDetachedProcessResume	Public ResumeAgent detached startup closure shares 
 ExecuteProcessResumePreparation	Public SDK child-free preparation executor using a directly reaped transient helper; lifecycle, cancellation and external consumer fixtures cover captured routing.
 ExplicitSocketRenamer	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
 FallbackProvenance	Read-only HUD provenance projection retained for callers of the usage snapshot seam.
+FallbackRenderThemeSource	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+FilterKeyBindingActions	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 FindProjectStopTarget	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
+FirstNonEmptyString	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
 Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
 Fixture.Ledger	Test-only installed qualification API retained for semantic ambient non-mutation proof.
@@ -254,6 +269,26 @@ IsolatedPane.Alive	Test-only installed qualification API retained for exact pane
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
 IsolatedPane.ID	Test-only installed qualification API retained for content-free exact Pane evidence.
 IsolatedPane.run	Test-only installed qualification helper retained for inherited tmux identity stripping on every command.
+KeyBindingActionAliases	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingActionByID	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingActionCategory	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingActionSemanticsFor	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingCatalogForScope	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingCatalogForScopeFrom	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingDisplayName	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingEditable	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingEffectivePlainChords	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingEffectiveSequences	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingProtectedActionReason	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingSequenceTransportChords	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeyBindingSurfaceLabel	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeySequenceGeneratedState	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+KeySequenceRetireCommandsWithPrefix	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+KeySequenceTableName	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+KeymapBindingKeyForAction	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeymapMigrationConflict.String	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeymapMigrationPlan.Blocked	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+KeymapPath	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 Kinds	Closed Registry kind set retained as the test seam that pins kind-set closure and cardinality matrix coverage.
 Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
 Ledger.AssertNoAmbientMutation	Test-only installed qualification API retained for zero ambient mutation proof.
@@ -263,11 +298,26 @@ Ledger.DistinctOperations	Test-only installed qualification API retained for con
 Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
 Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
 ListLinesWithScrollbar	Default-rows entry point of ListLinesWithScrollbarRows retained as the scrollbar thumb geometry seam.
+LoadAIBadgeStyle	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadDesktopNotifyModeForTmuxConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadKeymapForEdit	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+LoadLiveResourcesMode	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadMergedKeyBindingCatalog	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+LoadSavedDesktopNotifyMode	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarDecoration	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarDecorationForTarget	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarDecorationSet	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarHUDVisibilitySet	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarHUDVisibilityState	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarRowOneVisibilitySet	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+LoadStatusbarRowOneVisibilityState	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 Localizer.Styled	Styled-fragment lookup retained as the test seam that pins the kind-mismatch error of the live catalog lookup.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 Matrix	Whole cardinality table copy retained as the test seam that pins the declared verb-kind cells and their canonical route adoption.
 MeasureSameTickReplacement	Test-only host probe retained: socket-replacement tests skip only where a same-path replacement shares the original socket identity.
+MergeKeymapOverrides	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
+MigrateKeymapForWrite	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 MigrateRegistry	Ambient-environment entry point of MigrateRegistryWithEnvironment retained as the registry schema migration seam.
 MutationLockRecorder.Record	Internal caller-declared mutation lock measurement seam; concurrent, boundary, closed-policy and best-effort tests preserve its contract.
@@ -281,6 +331,7 @@ NewMutationLockRecorder	Internal caller-declared mutation lock aggregation const
 NewProcessAgentDeleter	Explicit Registry-root constructor retained for public SDK process Agent deletion without ambient environment reads.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
 NewReader	Runtime SDK production reader wiring retained for external ObserveRuntime consumers; covered by CLI parity and external consumer tests.
+NewRenderThemeSource	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
 NewSDKCreate	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 NewState	Recent-window state constructor retained as the test seam over the live normalizeEntries MRU contract.
@@ -289,6 +340,10 @@ NewWithConfig	Credential and endpoint injection constructor retained as the only
 NewWithRoot	Rollout-root injection constructor retained as the only seam that pins the live rollout parser without probing the installed Codex.
 NextPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 NextWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
+NonEmpty	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+NormalizeKeymapAuthoringChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+NormalizeKeymapSequence	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+NormalizeKeymapTypedChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 Observe	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ObserveFrontReads	Test hook of the settings layer seam; the settings layer guard installs it to count front-layer reads per public route, and production never installs an observer.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
@@ -296,9 +351,13 @@ OperatorOrigin	The operator-origin constructor is the one sanctioned way to buil
 Pane.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 PaneActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 PaneRuntimeSpec.EffectiveKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+ParseBinding	Native binding parser compatibility entrypoint retained after pure parser extraction; exercised by TestCaptureBindingsIncludeCustomOptionAndControlChords.
+ParseKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 PickerChromeStringAuditOptions	Picker-chrome profile of the governance string audit; it scopes the live guard that keeps picker chrome inside the catalog.
 Placeholders	Project link rule API of internal/core/projectlinks, retained for the web backend that lists the placeholders a template may use; no in-tree caller until that backend lands.
+PlanKeymapMigration	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 PlanProjectCascadeDelete	Project cascade-delete planner retained as the decision proof for external-asset preservation and new-UID reopen.
+PopupToggleActionIDForMode	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 PreviewDelete	Public v0 Project unregister plan projection; verified by CLI dry-run parity and public shape tests.
 PreviousPane	Direction-bound entry point of cyclePane retained as the test seam for the preview cursor semantics Store.CyclePaneSelection ships.
 PreviousWindow	Direction-bound entry point of cycleWindow retained as the test seam for the preview cursor semantics Store.CycleWindowSelection ships.
@@ -332,10 +391,24 @@ Registry.rebuildMissingReservations	v0-to-v1 name reservation rebuild retained a
 RelaunchProcessError.Error	Public relaunch startup failure diagnostics preserve exact owner and binding for external recovery.
 RelaunchProcessError.Unwrap	Public relaunch startup cause preserves errors.Is/errors.As; cancellation and exact-witness negative fixtures cover unknown versus proven identity.
 RenderBar	Uncolored HUD bar renderer retained as the test seam that pins the BarFillCount fill math shared with RenderColoredBar.
+RenderKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 RenderSwitchPreview	Default badge-style entry point of RenderSwitchPreviewWithAIBadgeStyle retained as the switch preview golden seam.
+RenderThemeSource.TmuxAppConfig	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxStandaloneConfig	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderThemeSource.TmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Resolved-theme rendering projection retained for complete app and standalone generated-byte regression assertions.
+RenderTmuxBindingBody	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 Renderer.ContentLayout	Untitled entry point of ContentLayoutWithTitle retained as the frame inner-width seam.
 Renderer.RenderFrame	Untitled entry point of RenderFrameWithTitle retained as the frame geometry and CRLF golden seam.
 RequireActive	Test-only guard API retained: every test package that links the Registry store, a tmux runner, or provider exec code runs behind it.
+ReservedKeymapAuthoringBase	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ResetKeymapBinding	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ResetKeymapKeys	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ResetKeymapSequences	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ResolveAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 ResolveAgentSettings	Public v0 tmux resume SDK fixed-path settings adapter; CLI uses the lazy injected path seam, and SDK parity and boundary tests cover this external-only closure.
 ResolvePaths	Public v0 side-effect-free HOME/XDG path resolver; retained for external SDK consumers and covered by input parity and external consumer tests.
@@ -354,6 +427,7 @@ ResumeLaunchService.PlanAgentResume	Public v0 tmux Agent resume entrypoint or it
 ResumeProcessError.Error	Public ResumeAgent recovery cause preserves diagnostics with exact binding and owner through typed startup failures.
 ResumeProcessError.Unwrap	Public ResumeAgent recovery cause preserves errors.Is/errors.As across detached startup and cleanup failure.
 ResumeReceipt	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
+RollbackKeymapMigration	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 RouteLocalFieldProjections	Closed route-local field projection catalog retained as the test seam that keeps -o cwd out of the shared enum.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 Run	Recorder-free CLI bootstrap retained as the test seam over the live App.Run dispatch that RunWithLifecycleDiagnostics ships.
@@ -376,6 +450,8 @@ SDKNativeSession.Plan	Native attachment command renderer used by external SDK cr
 SDKNativeSession.Resolve	External SDK native resume endpoint resolver; shared retired domain/socket barrier tests and same-thread child fixture cover admission.
 SDKNativeSession.Resume	External SDK thread/resume client adapter; actual child settings/profile parity and refusal rollback fixture cover this path.
 SDKNativeSession.observeIdentity	Exact-binding observer child starter shared by external SDK create/resume; real fixture authority and explicit routing audit cover this closure.
+SaveKeymapKeys	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+SaveKeymapSequences	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 SelectedLine	Default-theme entry point of SelectedLineWithTheme retained as the selected-row gutter seam.
 ServeSupervisor	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 Service.Delete	Strict Project link rules service compatibility entrypoint; retained for existing internal consumers and exercised by service contract tests.
@@ -398,6 +474,35 @@ SkipIfReplacementCollapses	Test-only host probe retained: socket-replacement tes
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 Snapshot.Termination	Owned processhost preparation seam retained for real-process and Claude stream fixture proof before public activation.
 StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
+StatusbarAuxLineFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarAuxLineFormatWithVisibility	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarClientWidthLessThan	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarCwdDecoratorFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarCwdSegmentFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarDecorationSetFromGlobal	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarDecorationTargetFile	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarDecorationTmuxOptionForTarget	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarHUDVisibilityPath	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarHUDVisibilitySet.AnyVisible	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarHUDVisibilitySet.IsDefault	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarHUDVisibilitySet.Mode	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarHUDVisibilitySet.Visible	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarNotifyBudgetFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowCount	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowCountOption	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowFormatLines	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowOneProjectFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowOneRightFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowOneVisibilityPath	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowOneVisibilitySet.IsDefault	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowOneVisibilitySet.Mode	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarRowOneVisibilitySet.Visible	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarSessionLeftFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarSettingsButton	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarSettingsButtonBody	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarUsageBudgetFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarWindowLineFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
+StatusbarWindowTitleFormat	Status-bar visibility, decoration or row-format projection retained for independent default, fallback and generated-byte regression assertions.
 StopProject	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Store.Delete	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
 Store.Dir	Project link rule API of internal/core/projectlinks, retained for the web backend that edits and resolves per-Project label links; no in-tree caller until that backend lands.
@@ -416,7 +521,59 @@ TeardownEventKinds	Closed teardown event vocabulary retained as the test seam th
 TeardownObservations	The closed teardown-observation catalog is called by the product path and retained for authority proofs.
 TerminationEvidence.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Text.Locale	Resolved-locale accessor retained as the test seam that pins the live catalog fallback resolution.
+TmuxAIBadgeMarker	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxAppConfigWithKeymap	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppConfigWithKeymapTheme	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppConfigWithKeymapThemeAndAIBadgeStyle	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxAppKeyBindings	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxBindLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxCenteredWindowNameFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxConfigQuote	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxLeadModeTopicMatchFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxManagedStockMenuBindings	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxMenuPromptCommand	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxMergedUnbindLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxPaneBorderFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxPaneBorderFormatWithAIBadgeStyle	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxPaneContextMenuBindings	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxPaneExitHookBody	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxPaneMenuAction	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxPaneMenuKill	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxRecentWindowRecordHookLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxRetiredKeyUnbindLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxRuntimeCreatedHookBody	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxSequenceBindLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxSequenceStateLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxShellPaneLabelFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxShellQuote	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxStandaloneConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxStandaloneConfigWithKeymap	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStandaloneConfigWithKeymapTheme	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStatusbarKeyBindings	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+TmuxStockPrefixRestoreLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxStyledAITopicFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxStyledVisiblePaneLabelFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxStyledVisiblePaneLabelFormatFor	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxUnbindLines	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxVisiblePaneLabelFormat	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxWindowStatusFormats	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+TmuxWindowUnlinkedHookBody	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 UIDKind	UID prefix reader retained as the test seam that pins the live uidPrefixes mint-and-read contract.
+UniqueNonEmptyStrings	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+ValidateKeymapAuthoringChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ValidateKeymapAuthoringSequence	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ValidateKeymapChord	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+ValidateKeymapConflicts	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
 ValidateProfileName	Public pure profile name validation SDK entrypoint; covered by core parity, no-access and external consumer calls.
 VerifyDetachedProcessCreate	Public detached SDK startup verifier closure binds typed committed resources to the exact owner and generation; exercised by stale/ambiguous/wrong-owner guards.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
@@ -425,6 +582,11 @@ WindowForPane	Public v0 rename SDK entrypoint or exact-socket adapter; retained 
 WithCodexCatalogThreadReader	Thread-reader injection option retained as the only seam that pins Session State thread resolution without an installed Codex.
 WithFileReader	File-reader injection option retained as the only seam that pins client snapshot reads without touching the real filesystem.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
+WithTmuxConfigDigest	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+WriteKeymapFile	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+WriteKeymapMigrationPreflight	Internal keymap/catalog compatibility entrypoint retained for migration, authoring and independent binding-schema regression assertions.
+WriteShellAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
+WriteTmuxAppConfig	Internal configuration-generation compatibility entrypoint retained for original complete-render, shell-input and writer-effect regression assertions.
 accountRefusal	Public v0 provider account catalog SDK entrypoint or refusal adapter retained for external consumers; covered by CLI/SDK parity, public field coverage, and GOWORK=off consumer fixtures.
 agentCommand.callProcessForegroundAction	Existing typed process foreground caller retained for private WEB64 consumer compatibility and isolated process receipt parity tests; no additional delivery policy.
 agentCommand.callProcessUserDelivery	Planned private web_process_user_input.go:deliverProcessUserInput foreign-owned Codex user-input consumer retains this typed caller to obtain actual Mode/Operation/TurnID once, without replay or fallback; explicit public Turn intent stays unchanged.
@@ -466,6 +628,7 @@ codexProcessMessages.send	Internal dedicated Codex process binding/control/recei
 committedResultDisplaySites	Closed committed-result call-site ledger; the C-1 source sweep fails until a new post-commit result line is registered and classified here.
 committedResultSweepFiles	Source files the C-1 committed-result sweep reads; it is the declared scope of that sweep, not a product path.
 committedResultSweepTokens	Closed set of ways the interactive adapter layer puts a line on a client; it is what makes the C-1 sweep decidable.
+controllerTriggerReasons	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 copyCreateDuration	Optional public SDK create outcome adapter, reachable from external consumers rather than the CLI binary; covered by external consumer, timing ownership, concurrency and real tmux rollback/lock-release tests.
 copyUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 createCommand.ensureAnchorPane	Existing process runtime wiring fixture calls this CLI adapter to verify rejection of a process split anchor; the shared execution now owns production resume calls.
@@ -475,10 +638,16 @@ createFirstResult	Public v0 tmux Agent creation closure or preserved CLI catalog
 createReceipt	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 createRefusal	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 decodeHistory	Per-generation reclaim log decoder reached only through ReadArchive, retained with it so the skipped-line accounting stays under test.
+defaultInteractiveShell	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+defaultStatusbarHUDVisibilitySet	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+defaultStatusbarRowOneVisibilitySet	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 defaultUsageDir	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 deleteQuery	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 deleteRefusal	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
 deleteTmuxOnly	Public v0 Window, Pane and Agent deletion SDK entrypoint or its exact selection/refusal adapter; verified by SDK/CLI parity, injected guards/rollback, public field coverage and external consumer tests.
+desktopNotifyConfigValue	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+desktopNotifyModeFromConfig	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+effectiveThemeFromConfigNoting	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 exchangeCodex	Client.SendMessage and MessageStatus validate or dispatch through the exact owned process Codex peer socket.
 executeWindowRenameSteps	Public v0 rename SDK entrypoint or exact-socket adapter; retained for external consumers and verified by SDK/CLI Registry, receipt, tmux parity and authority refusal tests.
@@ -499,14 +668,28 @@ guardRootMakerParent	Test-only guard helper retained behind the shared guard API
 guardSweepHelperRoots	Test-only guard helper retained behind the shared guard API that every test package linking the Registry store, a tmux runner, or provider exec code runs behind.
 guidanceRefusal	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
+keyBindingSequenceTransportChords	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+keySequenceRetireCommandsWithPrefix	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+keySequenceTableName	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 linkRulesRefusal	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
+loadAIBadgeStyle	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 loadCentralAINewWindowMode	Legacy app central AI mode loader proof seam; retained for missing-home and central file error regression tests after shared TUI execution extraction.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).
 loadCentralStatusbarRowOneVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
+loadDesktopNotifyModeForTmuxConfig	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadLiveResourcesMode	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadSavedDesktopNotifyMode	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarDecoration	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarDecorationForTarget	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarDecorationSet	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarHUDVisibilitySet	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarHUDVisibilityState	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarRowOneVisibilitySet	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+loadStatusbarRowOneVisibilityState	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 messageRefusal	Client.SendMessage/MessageStatus retain typed public refusal codes and wrapped causes through this adapter.
 mutationQuery	Shared explicit-ref query adapter for public v0 Rename and Delete SDK methods; verified by input-value preservation and CLI selection parity tests.
 nativeAppendPartialNextItemLines	Default-theme entry point of nativeAppendPartialNextItemLinesWithTheme retained as the partial multiline item seam.
@@ -522,6 +705,7 @@ newClientWithEnv	Environment injection constructor retained as the only seam tha
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 newProcessAttentionStore	Internal process attention seam retained for generation/store/consumer fixture proof before foreground activation; remove this entry when that caller ships.
+nonEmpty	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 normalizeProviderToken	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 notificationRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 notifyCommand.buildNotifyLiveReport	Fallback-locale entry point of buildNotifyLiveReportLocale retained as the notify row classification seam.
@@ -619,17 +803,55 @@ sessionReadRefusal	Public v0 Agent/Project session history SDK closure, consumed
 settingsCommand.rootEntries	Fallback-locale entry point of the settings root entry builder retained as the axis metadata seam.
 settingsInputMessage	SDK input-only error prefix renderer; called by the public SetConfig path and covered by SDK settings refusal parity.
 settingsRefusal	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+shellCommand.defaultShell	Original shell theme and default-shell projection retained for the existing shell-generation regression assertions.
 shellJoin	Shell argv joiner behind the retained ResumeAdapter.ResumeCommand renderer.
 shellQuote	Shell quoting helper behind the retained ResumeAdapter.ResumeCommand renderer.
 sortNameReservations	Stable reservation ordering used by the retained rebuildMissingReservations migration proof.
+statusbarAuxLineFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarAuxLineFormatWithVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarCwdDecoratorFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarCwdSegmentFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarDecorationTargetFile	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarDecorationTmuxOptionForTarget	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarHUDVisibilityPath	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarHUDVisibilitySet.isDefault	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarNotifyBudgetFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowCount	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowCountOption	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowFormatLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowOneProjectFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowOneRightFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowOneVisibilityPath	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowOneVisibilitySet.isDefault	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarRowOneVisibilitySet.visible	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarSessionLeftFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarSettingsButton	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarUsageBudgetFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarWindowLineFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 stopAgentRefusal	Typed SDK Stop failure adapter preserves causes and exact recovery evidence without changing CLI refusal text.
 stopGroup	Internal processhost implementation retained for owned-process and bounded Claude protocol fixture proof before public activation.
 tmuxAppConfig	Default-keymap entry point of tmuxAppConfigWithKeymap retained as the generated managed config golden seam.
+tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxAppKeyBindings	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
 tmuxPaneBorderFormat	Default badge-style entry point of tmuxPaneBorderFormatWithAIBadgeStyle retained as the pane border format seam.
+tmuxPaneBorderFormatWithAIBadgeStyle	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxPaneContextMenuBindings	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxPaneExitHookBody	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
+tmuxSequenceBindLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxSequenceStateLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxShellPaneLabelFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxStandaloneConfig	Default-keymap entry point of tmuxStandaloneConfigWithKeymap retained as the standalone config golden seam.
+tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 tmuxStyledVisiblePaneLabelFormat	Default-theme entry point of tmuxStyledVisiblePaneLabelFormatFor retained as the visible pane label format seam.
+tmuxStyledVisiblePaneLabelFormatFor	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxVisiblePaneLabelFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+tmuxWindowStatusFormats	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 turnRefusal	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 turnRunner.Run	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 unregisterCopy	Public v0 Project unregister JSON projection conversion; verified by Registry, receipt and record parity.
@@ -646,4 +868,5 @@ waitForProcessExit	Test-only installed qualification helper retained for indepen
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
 waitGroupAbsent	Darwin owned-group absence requires ESRCH after bounded observation, retained with processhost lifecycle proof.
 windowDisplayNotConvergedNotice	CLI notice compatibility adapter to the shared rename service; retained for generated/control-root rename byte parity proofs.
+withTmuxConfigDigest	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.

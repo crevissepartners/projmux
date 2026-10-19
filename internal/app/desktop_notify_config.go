@@ -1,42 +1,22 @@
 package app
 
 import (
-	"os"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func desktopNotifyModeFromConfig(mode config.DesktopNotifyMode) desktopNotifyMode {
-	if config.NormalizeDesktopNotifyMode(string(mode)) == config.DesktopNotifyModeOff {
-		return desktopNotifyModeNone
-	}
-	return desktopNotifyModeNotify
+	return desktopNotifyMode(tmuxconfig.DesktopNotifyModeFromConfig(mode))
 }
 
 func desktopNotifyConfigValue(mode desktopNotifyMode) config.DesktopNotifyMode {
-	if mode == desktopNotifyModeNone {
-		return config.DesktopNotifyModeOff
-	}
-	return config.DesktopNotifyModeNotify
+	return tmuxconfig.DesktopNotifyConfigValue(tmuxconfig.DesktopNotifyMode(mode))
 }
 
 func loadSavedDesktopNotifyMode(homeDir func() (string, error), lookupEnv func(string) string) (desktopNotifyMode, bool) {
-	if homeDir == nil {
-		return desktopNotifyModeNotify, false
-	}
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return desktopNotifyModeNotify, false
-	}
-	path := paths.DesktopNotifyModeFile()
-	if _, err := os.Stat(path); err != nil {
-		return desktopNotifyModeNotify, false
-	}
-	mode, err := config.LoadDesktopNotifyModeFile(path)
-	if err != nil {
-		return desktopNotifyModeNotify, false
-	}
-	return desktopNotifyModeFromConfig(mode), true
+	mode, ok := tmuxconfig.LoadSavedDesktopNotifyMode(homeDir, lookupEnv, configPaths)
+	return desktopNotifyMode(mode), ok
 }
 
 // loadDesktopNotifyModeForTmuxConfig picks the value written into the
@@ -44,8 +24,5 @@ func loadSavedDesktopNotifyMode(homeDir func() (string, error), lookupEnv func(s
 // is normalized through the two-state model, and an absent saved value takes
 // the platform-neutral `notify` default (WSL + Windows Terminal included).
 func loadDesktopNotifyModeForTmuxConfig(homeDir func() (string, error), lookupEnv func(string) string) config.DesktopNotifyMode {
-	if mode, ok := loadSavedDesktopNotifyMode(homeDir, lookupEnv); ok {
-		return desktopNotifyConfigValue(mode)
-	}
-	return config.DefaultDesktopNotifyMode
+	return tmuxconfig.LoadDesktopNotifyModeForTmuxConfig(homeDir, lookupEnv, configPaths)
 }

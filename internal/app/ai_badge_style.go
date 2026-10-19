@@ -2,26 +2,16 @@ package app
 
 import (
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"os"
 
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
-const aiBadgeStyleTmuxOption = "@projmux_ai_badge_style"
+const aiBadgeStyleTmuxOption = tmuxconfig.AiBadgeStyleTmuxOption
 
 func loadAIBadgeStyle(homeDir func() (string, error), lookupEnv func(string) string) config.AIBadgeStyle {
-	if homeDir == nil {
-		return config.AIBadgeStyleDot
-	}
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.AIBadgeStyleDot
-	}
-	mode, err := config.LoadAIBadgeStyleFile(paths.AIBadgeStyleFile())
-	if err != nil {
-		return config.AIBadgeStyleDot
-	}
-	return mode
+	return tmuxconfig.LoadAIBadgeStyle(homeDir, lookupEnv, configPaths)
 }
 
 func aiBadgeConfigPaths(homeDir func() (string, error), lookupEnv func(string) string) (config.Paths, error) {

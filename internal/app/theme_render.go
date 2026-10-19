@@ -3,7 +3,7 @@ package app
 import (
 	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/config"
-	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -56,16 +56,7 @@ func effectiveThemeFromConfig(homeDir func() (string, error), lookupEnv func(str
 // effectiveThemeFromConfigNoting reads the global `[theme]`, reporting the
 // read through note (config.NoteFrontRead or config.NotePickerDisplayRead).
 func effectiveThemeFromConfigNoting(note func(name, path string), homeDir func() (string, error), lookupEnv func(string) string) (theme.EffectiveTheme, error) {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return theme.EffectiveTheme{}, err
-	}
-	note(config.SettingConfigTheme, paths.GlobalConfigFile())
-	globalCfg, err := hooks.LoadProjectConfigFile(paths.GlobalConfigFile())
-	if err != nil {
-		return theme.EffectiveTheme{}, err
-	}
-	return theme.ResolveTheme(globalCfg.Theme), nil
+	return tmuxconfig.EffectiveThemeFromConfigNoting(note, homeDir, lookupEnv, configPaths)
 }
 
 func (s renderThemeSource) pickerOptions(options intpicker.Options) intpicker.Options {

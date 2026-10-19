@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"io"
 	"os"
 	"os/exec"
@@ -17,7 +18,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/hookcmd"
-	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -1222,42 +1222,7 @@ func (c *shellCommand) resolveBinary(override string) (string, error) {
 }
 
 func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
-	if strings.TrimSpace(path) == "" {
-		return errors.New("shell app config path is required")
-	}
-	if c.writeFile == nil {
-		return errors.New("configure shell app config writer: file writer is not configured")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create shell app config directory: %w", err)
-	}
-	keyBindings, keymapPresent, err := keybinding.LoadMergedKeyBindingCatalog(keybinding.KeymapLoader{
-		HomeDir:   c.homeDir,
-		LookupEnv: c.lookupEnv,
-		ReadFile:  c.readFile,
-	})
-	if err != nil {
-		return err
-	}
-	if err := c.writeFile(path, []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), loadStatusbarRowOneVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
-		return fmt.Errorf("write shell app config: %w", err)
-	}
-	return nil
-}
-
-// appConfigThemeSource resolves the global user theme for the shell-start writer,
-// mirroring tmuxCommand.appConfigThemeSource: an explicit global `[theme]`
-// repaints the generated tmux chrome on `projmux shell` start instead of
-// clobbering a themed config with the built-in fallback. It degrades to the
-// fallback when the global config cannot be read so shell start never fails on a
-// missing or malformed user config. Theme is global-only, so no project path
-// participates.
-func (c *shellCommand) appConfigThemeSource() renderThemeSource {
-	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
-	if err != nil {
-		return fallbackRenderThemeSource()
-	}
-	return source
+	return tmuxconfig.WriteShellAppConfig(path, binaryPath, tmuxconfig.Generation{HomeDir: c.homeDir, LookupEnv: c.lookupEnv, ResolvePaths: configPaths, ReadFile: c.readFile}, c.writeFile)
 }
 
 func (c *shellCommand) defaultShell() string {
@@ -1365,23 +1330,13 @@ func withoutEnv(env []string, name string) []string {
 }
 
 func nonEmpty(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
+	return tmuxconfig.NonEmpty(value, fallback)
 }
 
 const fallbackInteractiveShell = "/bin/sh"
 
 func defaultInteractiveShell(lookupEnv func(string) string) string {
-	if lookupEnv == nil {
-		return fallbackInteractiveShell
-	}
-	shell := strings.TrimSpace(lookupEnv("SHELL"))
-	if shell == "" || !filepath.IsAbs(shell) || strings.ContainsAny(shell, "\x00\r\n") {
-		return fallbackInteractiveShell
-	}
-	return shell
+	return tmuxconfig.DefaultInteractiveShell(lookupEnv)
 }
 
 func posixCommandShell(lookupEnv func(string) string) string {

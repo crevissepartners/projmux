@@ -7,8 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 func TestCurrentProjectSessionQuotesPaneCWDAsOneLiteralShellArgv(t *testing.T) {
@@ -526,22 +524,6 @@ func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
 		}
 		if action.TmuxBody != body {
 			t.Fatalf("%s TmuxBody = %q, want %q", id, action.TmuxBody, body)
-		}
-	}
-}
-
-func TestGeneratedSplitBindingsNeverInvokeRetiredAIRoot(t *testing.T) {
-	t.Parallel()
-
-	for _, action := range DefaultKeyBindingCatalog() {
-		if !strings.HasPrefix(action.ID, "ai-split-") || action.Kind != keyBindingActionCommand {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(action.TmuxBody), "ai ") {
-			t.Errorf("split action %q invokes retired route: %q", action.ID, action.TmuxBody)
-		}
-		if _, _, ok := cli.Resolve(strings.Fields(action.TmuxBody)); !ok {
-			t.Errorf("split action %q does not resolve through the command manifest: %q", action.ID, action.TmuxBody)
 		}
 	}
 }

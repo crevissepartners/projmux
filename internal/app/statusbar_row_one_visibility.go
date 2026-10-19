@@ -2,20 +2,21 @@ package app
 
 import (
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
-type statusbarRowOneComponent string
+type statusbarRowOneComponent tmuxconfig.StatusbarRowOneComponent
 
 const (
-	statusbarRowOneProject          statusbarRowOneComponent = "project"
-	statusbarRowOneWorkingDirectory statusbarRowOneComponent = "working-directory"
-	statusbarRowOneGit              statusbarRowOneComponent = "git"
-	statusbarRowOneClock            statusbarRowOneComponent = "clock"
-	statusbarRowOneSettingsLauncher statusbarRowOneComponent = "settings-launcher"
+	statusbarRowOneProject          statusbarRowOneComponent = statusbarRowOneComponent(tmuxconfig.StatusbarRowOneProject)
+	statusbarRowOneWorkingDirectory statusbarRowOneComponent = statusbarRowOneComponent(tmuxconfig.StatusbarRowOneWorkingDirectory)
+	statusbarRowOneGit              statusbarRowOneComponent = statusbarRowOneComponent(tmuxconfig.StatusbarRowOneGit)
+	statusbarRowOneClock            statusbarRowOneComponent = statusbarRowOneComponent(tmuxconfig.StatusbarRowOneClock)
+	statusbarRowOneSettingsLauncher statusbarRowOneComponent = statusbarRowOneComponent(tmuxconfig.StatusbarRowOneSettingsLauncher)
 )
 
 var statusbarRowOneComponents = []statusbarRowOneComponent{
@@ -26,97 +27,30 @@ var statusbarRowOneComponents = []statusbarRowOneComponent{
 	statusbarRowOneSettingsLauncher,
 }
 
-type statusbarRowOneVisibilitySet struct {
-	Project          config.StatusbarVisibility
-	WorkingDirectory config.StatusbarVisibility
-	Git              config.StatusbarVisibility
-	Clock            config.StatusbarVisibility
-	SettingsLauncher config.StatusbarVisibility
-}
+type statusbarRowOneVisibilitySet tmuxconfig.StatusbarRowOneVisibilitySet
 
 func defaultStatusbarRowOneVisibilitySet() statusbarRowOneVisibilitySet {
-	return statusbarRowOneVisibilitySet{
-		Project:          config.StatusbarVisibilityOn,
-		WorkingDirectory: config.StatusbarVisibilityOn,
-		Git:              config.StatusbarVisibilityOn,
-		Clock:            config.StatusbarVisibilityOn,
-		SettingsLauncher: config.StatusbarVisibilityOn,
-	}
+	return statusbarRowOneVisibilitySet(tmuxconfig.DefaultStatusbarRowOneVisibilitySet())
 }
 
 func (s statusbarRowOneVisibilitySet) isDefault() bool {
-	for _, component := range statusbarRowOneComponents {
-		if !s.visible(component) {
-			return false
-		}
-	}
-	return true
-}
-
-func (s statusbarRowOneVisibilitySet) mode(component statusbarRowOneComponent) config.StatusbarVisibility {
-	var mode config.StatusbarVisibility
-	switch component {
-	case statusbarRowOneProject:
-		mode = s.Project
-	case statusbarRowOneWorkingDirectory:
-		mode = s.WorkingDirectory
-	case statusbarRowOneGit:
-		mode = s.Git
-	case statusbarRowOneClock:
-		mode = s.Clock
-	case statusbarRowOneSettingsLauncher:
-		mode = s.SettingsLauncher
-	default:
-		return config.StatusbarVisibilityOn
-	}
-	return config.NormalizeStatusbarVisibility(string(mode))
+	return tmuxconfig.StatusbarRowOneVisibilitySet(s).IsDefault()
 }
 
 func (s statusbarRowOneVisibilitySet) visible(component statusbarRowOneComponent) bool {
-	return s.mode(component) == config.StatusbarVisibilityOn
+	return tmuxconfig.StatusbarRowOneVisibilitySet(s).Visible(tmuxconfig.StatusbarRowOneComponent(component))
 }
 
 func statusbarRowOneVisibilityPath(paths config.Paths, component statusbarRowOneComponent) (string, bool) {
-	switch component {
-	case statusbarRowOneProject:
-		return paths.StatusbarProjectVisibilityFile(), true
-	case statusbarRowOneWorkingDirectory:
-		return paths.StatusbarWorkingDirectoryVisibilityFile(), true
-	case statusbarRowOneGit:
-		return paths.StatusbarGitVisibilityFile(), true
-	case statusbarRowOneClock:
-		return paths.StatusbarClockVisibilityFile(), true
-	case statusbarRowOneSettingsLauncher:
-		return paths.StatusbarSettingsLauncherVisibilityFile(), true
-	default:
-		return "", false
-	}
+	return tmuxconfig.StatusbarRowOneVisibilityPath(paths, tmuxconfig.StatusbarRowOneComponent(component))
 }
 
 func loadStatusbarRowOneVisibilityState(homeDir func() (string, error), lookupEnv func(string) string, component statusbarRowOneComponent) config.StatusbarVisibilityState {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	path, ok := statusbarRowOneVisibilityPath(paths, component)
-	if !ok {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	state, err := config.LoadLayeredStatusbarVisibility(path, paths.StatusbarDefaultsFile(), config.StatusbarVisibilityOn)
-	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	return state
+	return tmuxconfig.LoadStatusbarRowOneVisibilityState(homeDir, lookupEnv, tmuxconfig.StatusbarRowOneComponent(component), configPaths)
 }
 
 func loadStatusbarRowOneVisibilitySet(homeDir func() (string, error), lookupEnv func(string) string) statusbarRowOneVisibilitySet {
-	return statusbarRowOneVisibilitySet{
-		Project:          loadStatusbarRowOneVisibilityState(homeDir, lookupEnv, statusbarRowOneProject).Effective,
-		WorkingDirectory: loadStatusbarRowOneVisibilityState(homeDir, lookupEnv, statusbarRowOneWorkingDirectory).Effective,
-		Git:              loadStatusbarRowOneVisibilityState(homeDir, lookupEnv, statusbarRowOneGit).Effective,
-		Clock:            loadStatusbarRowOneVisibilityState(homeDir, lookupEnv, statusbarRowOneClock).Effective,
-		SettingsLauncher: loadStatusbarRowOneVisibilityState(homeDir, lookupEnv, statusbarRowOneSettingsLauncher).Effective,
-	}
+	return statusbarRowOneVisibilitySet(tmuxconfig.LoadStatusbarRowOneVisibilitySet(homeDir, lookupEnv, configPaths))
 }
 
 func statusbarRowOneComponentName(component statusbarRowOneComponent) string {
@@ -178,32 +112,12 @@ func (c *settingsCommand) setStatusbarRowOneVisibility(component statusbarRowOne
 }
 
 func statusbarRowOneProjectFormat(bin string, roles theme.RenderRoles, visibility statusbarRowOneVisibilitySet) string {
-	if !visibility.visible(statusbarRowOneProject) {
-		return ""
-	}
-	return statusbarSessionLeftFormat(bin, roles)
+	return tmuxconfig.StatusbarRowOneProjectFormat(bin, roles, tmuxconfig.StatusbarRowOneVisibilitySet(visibility))
 }
 
 // statusbarRowOneRightFormat assembles only enabled Projmux-owned segments.
 // Each optional segment owns its range and padding, so removing it cannot leave
 // an empty click range or a separator that belonged to the hidden component.
 func statusbarRowOneRightFormat(bin string, roles theme.RenderRoles, liveResourcesMode config.LiveResourcesMode, visibility statusbarRowOneVisibilitySet, settingsLabel string) string {
-	var b strings.Builder
-	if visibility.visible(statusbarRowOneWorkingDirectory) {
-		b.WriteString(statusbarCwdSegmentFormat(roles))
-		b.WriteString("#[fg=" + roles.DividerFg + "]  ")
-	}
-	if visibility.visible(statusbarRowOneGit) {
-		b.WriteString("#[range=user|git]#(" + bin + " internal status git)#[norange]")
-	}
-	if config.NormalizeLiveResourcesMode(string(liveResourcesMode)) == config.LiveResourcesOn {
-		b.WriteString("#[range=user|resources]#(" + bin + " internal status resources)#[norange]")
-	}
-	if visibility.visible(statusbarRowOneClock) {
-		b.WriteString("#[fg=" + roles.StatusTextSecondary + "]   %Y-%m-%d %H:%M ")
-	}
-	if visibility.visible(statusbarRowOneSettingsLauncher) {
-		b.WriteString(statusbarSettingsButton(settingsLabel, roles))
-	}
-	return b.String()
+	return tmuxconfig.StatusbarRowOneRightFormat(bin, roles, liveResourcesMode, tmuxconfig.StatusbarRowOneVisibilitySet(visibility), settingsLabel)
 }

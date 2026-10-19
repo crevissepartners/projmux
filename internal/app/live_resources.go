@@ -2,13 +2,14 @@ package app
 
 import (
 	"fmt"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
 
-const liveResourcesTmuxOption = "@projmux_live_resources"
+const liveResourcesTmuxOption = tmuxconfig.LiveResourcesTmuxOption
 
 const (
 	liveResourceCPUWarningAt    = 70
@@ -26,18 +27,7 @@ const (
 )
 
 func loadLiveResourcesMode(homeDir func() (string, error), lookupEnv func(string) string) config.LiveResourcesMode {
-	if !systemstatus.Supported() {
-		return config.LiveResourcesOff
-	}
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.LiveResourcesOff
-	}
-	mode, err := config.LoadLiveResourcesFile(paths.LiveResourcesFile())
-	if err != nil {
-		return config.LiveResourcesOff
-	}
-	return mode
+	return tmuxconfig.LoadLiveResourcesMode(homeDir, lookupEnv, configPaths)
 }
 
 func formatLiveResourcesStatus(metrics systemstatus.Metrics) string {

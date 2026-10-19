@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -388,10 +389,12 @@ func settingsTestStringExpression(expression ast.Expr, constants map[string]stri
 }
 
 // settingsTestSubpackageConstants resolves the string constants declared in
-// the non-test sources of one internal/app subpackage.
+// the non-test sources of one internal/app subpackage, including aliases to
+// the closed set of moved keybinding constant sources.
 func settingsTestSubpackageConstants(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	expressions := map[string]ast.Expr{}
+	sharedImport := false
 	for _, name := range appSourceFiles(t) {
 		if path.Dir(name) != dir {
 			continue
@@ -400,38 +403,115 @@ func settingsTestSubpackageConstants(t *testing.T, dir string) map[string]string
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.CONST {
+		for _, spec := range file.Imports {
+			if spec.Name == nil || spec.Name.Name != "shared" {
 				continue
 			}
-			for _, spec := range gen.Specs {
-				valueSpec := spec.(*ast.ValueSpec)
-				for i, ident := range valueSpec.Names {
-					if i < len(valueSpec.Values) {
-						expressions[ident.Name] = valueSpec.Values[i]
-					}
+			importPath, err := strconv.Unquote(spec.Path.Value)
+			if err != nil || importPath != "github.com/crevissepartners/projmux/internal/services/keybinding" {
+				t.Fatalf("%s: shared alias does not name the keybinding constant authority", name)
+			}
+			sharedImport = true
+		}
+		settingsTestCollectConstExpressions(file, expressions)
+	}
+	dependencies := map[string]string{}
+	if dir == "keybinding" {
+		if !sharedImport {
+			t.Fatal("app keybinding sources do not import the shared constant authority")
+		}
+		sharedExpressions := map[string]ast.Expr{}
+		for _, name := range []string{
+			"../services/keybinding/keybinding_catalog.go",
+			"../services/keybinding/keymap.go",
+			"../services/keybinding/keymap_manifest.go",
+			"../services/keybinding/keymap_migration.go",
+		} {
+			file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+			if err != nil {
+				t.Fatalf("parse %s: %v", name, err)
+			}
+			if file.Name.Name != "keybinding" {
+				t.Fatalf("%s: unexpected constant authority package %s", name, file.Name.Name)
+			}
+			settingsTestCollectConstExpressions(file, sharedExpressions)
+		}
+		sharedValues := settingsTestResolveStringConstants(sharedExpressions, nil)
+		if len(sharedValues) == 0 {
+			t.Fatal("no string constants resolved in the shared keybinding authority")
+		}
+		for name, value := range sharedValues {
+			dependencies["shared."+name] = value
+		}
+	}
+	values := settingsTestResolveStringConstants(expressions, dependencies)
+	if len(values) == 0 {
+		t.Fatalf("no string constants resolved in %s; the label sweep would not see them", dir)
+	}
+	return values
+}
+
+func settingsTestCollectConstExpressions(file *ast.File, expressions map[string]ast.Expr) {
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			valueSpec := spec.(*ast.ValueSpec)
+			for i, ident := range valueSpec.Names {
+				if i < len(valueSpec.Values) {
+					expressions[ident.Name] = valueSpec.Values[i]
 				}
 			}
 		}
 	}
+}
+
+// Dependencies participate in expression resolution but are never returned as
+// constants declared by the package being inspected.
+func settingsTestResolveStringConstants(expressions map[string]ast.Expr, dependencies map[string]string) map[string]string {
 	values := map[string]string{}
+	scope := map[string]string{}
+	maps.Copy(scope, dependencies)
 	for changed := true; changed; {
 		changed = false
 		for name, expression := range expressions {
 			if _, ok := values[name]; ok {
 				continue
 			}
-			if value, ok := settingsTestStringExpression(expression, values); ok {
+			if value, ok := settingsTestStringExpression(expression, scope); ok {
 				values[name] = value
+				scope[name] = value
 				changed = true
 			}
 		}
 	}
-	if len(values) == 0 {
-		t.Fatalf("no string constants resolved in %s; the label sweep would not see them", dir)
-	}
 	return values
+}
+
+func TestSettingsSubpackageConstantsFollowSharedAliases(t *testing.T) {
+	t.Parallel()
+	values := settingsTestSubpackageConstants(t, "keybinding")
+	for name, want := range map[string]string{
+		"KeyBindingCategoryLaunch":      keybinding.KeyBindingCategoryLaunch,
+		"KeyBindingCategoryLaunchLabel": keybinding.KeyBindingCategoryLaunchLabel,
+		"KeyBindingCategoryInputLabel":  keybinding.KeyBindingCategoryInputLabel,
+		"PaneRenameActionID":            keybinding.PaneRenameActionID,
+		"KeymapReservedAuthoringReason": keybinding.KeymapReservedAuthoringReason,
+	} {
+		if got, ok := values[name]; !ok || got != want {
+			t.Errorf("AST constant %s = %q (present %t), compiled value %q", name, got, ok, want)
+		}
+	}
+	for name := range values {
+		if strings.HasPrefix(name, "shared.") {
+			t.Errorf("shared dependency %s leaked as an app declaration", name)
+		}
+	}
+	if _, ok := values["keyBindingTierGuaranteedLaunchDefault"]; ok {
+		t.Error("shared-only constant leaked as an app declaration")
+	}
 }
 
 func settingsTestCallName(expr ast.Expr) string {

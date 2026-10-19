@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -62,7 +63,7 @@ const (
 
 	// desktopNotifyModeTmuxOption is the mode user-option that Settings
 	// writes. Written values are only `off` / `notify`.
-	desktopNotifyModeTmuxOption = "@projmux_desktop_notify_mode"
+	desktopNotifyModeTmuxOption = tmuxconfig.DesktopNotifyModeTmuxOption
 
 	// desktopNotifyModeEnv is the mode env override. Same values as the
 	// tmux option, case insensitive.

@@ -12,7 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/layout"
-	"github.com/crevissepartners/projmux/internal/platformkeys"
+	platformkeys "github.com/crevissepartners/projmux/internal/platformkeys/binding"
 )
 
 type KeymapOverride struct {
@@ -51,6 +51,8 @@ const (
 const keymapSchemaVersionKey = "schema_version"
 
 type KeymapLoader struct {
+	// Path is an exact captured keymap path resolver; nil preserves CLI resolution.
+	Path      func() (string, error)
 	HomeDir   func() (string, error)
 	LookupEnv func(string) string
 	ReadFile  func(string) ([]byte, error)
@@ -68,10 +70,16 @@ type KeymapStore struct {
 }
 
 func LoadMergedKeyBindingCatalog(loader KeymapLoader) ([]KeyBindingAction, bool, error) {
-	if loader.HomeDir == nil {
+	if loader.HomeDir == nil && loader.Path == nil {
 		return DefaultKeyBindingCatalog(), false, nil
 	}
-	path, err := KeymapPath(loader.HomeDir, loader.LookupEnv)
+	var path string
+	var err error
+	if loader.Path != nil {
+		path, err = loader.Path()
+	} else {
+		path, err = KeymapPath(loader.HomeDir, loader.LookupEnv)
+	}
 	if err != nil {
 		return nil, false, err
 	}

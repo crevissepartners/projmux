@@ -59,7 +59,7 @@ func (c keymapMigrationConflict) String() string {
 // Producing one writes nothing, by construction: nothing in this file's plan
 // path opens a file for writing. `config render`, `update --dry-run` and the
 // diagnostics routes all stop here.
-type keymapMigrationPlan struct {
+type KeymapMigrationPlan struct {
 	// Path is the keymap file the plan was computed from.
 	Path string
 	// Present is false when there is no keymap file at all. A fresh install has
@@ -88,11 +88,11 @@ type keymapMigrationPlan struct {
 }
 
 // Blocked reports whether the plan must not be applied.
-func (p keymapMigrationPlan) Blocked() bool { return len(p.Conflicts) > 0 }
+func (p KeymapMigrationPlan) Blocked() bool { return len(p.Conflicts) > 0 }
 
 // KeymapMigrationResult is what an apply actually did.
 type KeymapMigrationResult struct {
-	Plan keymapMigrationPlan
+	Plan KeymapMigrationPlan
 	// Migrated is false when the plan was already satisfied and no bytes were
 	// written.
 	Migrated bool
@@ -107,8 +107,8 @@ type KeymapMigrationResult struct {
 // resolves aliases and validates the *whole* merged chord table before deciding
 // anything, so a file that would not merge cleanly is rejected here rather than
 // halfway through a rewrite.
-func PlanKeymapMigration(store KeymapStore) (keymapMigrationPlan, error) {
-	plan := keymapMigrationPlan{ToVersion: KeymapSchemaVersion}
+func PlanKeymapMigration(store KeymapStore) (KeymapMigrationPlan, error) {
+	plan := KeymapMigrationPlan{ToVersion: KeymapSchemaVersion}
 	if store.HomeDir == nil {
 		return plan, nil
 	}
@@ -431,7 +431,7 @@ func sortedKeymapBindingIDs(keymap KeymapFile) []string {
 // A caller must not apply generated or live tmux config until this returns
 // without error. Everything downstream of a keymap rewrite assumes the file on
 // disk is the one that was verified.
-func ApplyKeymapMigration(store KeymapStore, plan keymapMigrationPlan) (KeymapMigrationResult, error) {
+func ApplyKeymapMigration(store KeymapStore, plan KeymapMigrationPlan) (KeymapMigrationResult, error) {
 	result := KeymapMigrationResult{Plan: plan}
 	if plan.Blocked() {
 		return result, keymapMigrationConflictError(plan)
@@ -485,7 +485,7 @@ func ApplyKeymapMigration(store KeymapStore, plan keymapMigrationPlan) (KeymapMi
 
 // verifyKeymapMigrationOnDisk re-reads the replaced keymap and proves it still
 // merges to the bindings the plan promised.
-func verifyKeymapMigrationOnDisk(store KeymapStore, plan keymapMigrationPlan) error {
+func verifyKeymapMigrationOnDisk(store KeymapStore, plan KeymapMigrationPlan) error {
 	raw, err := readKeymapForMigration(store, plan.Path)
 	if err != nil {
 		return fmt.Errorf("verify migrated keymap: %w", err)
@@ -509,7 +509,7 @@ func verifyKeymapMigrationOnDisk(store KeymapStore, plan keymapMigrationPlan) er
 // This is the acceptance the user actually cares about: custom keys, an empty
 // `keys = []` unbind, a transport-dependent default plus its aliases and a
 // legacy `plain`/`prefix` pair must all behave the same after the rewrite.
-func verifyKeymapMigrationParity(plan keymapMigrationPlan) error {
+func verifyKeymapMigrationParity(plan KeymapMigrationPlan) error {
 	before, err := MergeKeymapOverrides(DefaultKeyBindingCatalog(), plan.original)
 	if err != nil {
 		return fmt.Errorf("verify keymap migration: read current bindings: %w", err)
@@ -551,7 +551,7 @@ func verifyKeymapMigrationParity(plan keymapMigrationPlan) error {
 // The temp write is what makes this more than an in-memory check: it exercises
 // the real parser against real bytes on the real filesystem, so an encoding bug
 // that only shows up after a write is caught while the original is still intact.
-func verifyKeymapMigrationRoundTrip(plan keymapMigrationPlan) error {
+func verifyKeymapMigrationRoundTrip(plan KeymapMigrationPlan) error {
 	dir := filepath.Dir(plan.Path)
 	tmp, err := os.CreateTemp(dir, "keymap-verify-*.toml")
 	if err != nil {
@@ -611,7 +611,7 @@ func verifyKeymapMigrationRoundTrip(plan keymapMigrationPlan) error {
 // same backup: a retried migration reuses it instead of piling up copies, and a
 // *different* original can never overwrite a backup that belongs to another one.
 // Creation is exclusive for the same reason.
-func writeKeymapMigrationBackup(store KeymapStore, plan keymapMigrationPlan) (string, error) {
+func writeKeymapMigrationBackup(store KeymapStore, plan KeymapMigrationPlan) (string, error) {
 	backupGeneration := plan.ToVersion
 	if plan.FromVersion == keymapSchemaVersionV0 {
 		// Keep the established v0 backup name stable for rollback tooling.
@@ -692,7 +692,7 @@ func RollbackKeymapMigration(store KeymapStore, backupPath string) error {
 
 // keymapMigrationConflictError renders a blocked plan as the error every entry
 // point reports.
-func keymapMigrationConflictError(plan keymapMigrationPlan) error {
+func keymapMigrationConflictError(plan KeymapMigrationPlan) error {
 	lines := make([]string, 0, len(plan.Conflicts)+1)
 	lines = append(lines, fmt.Sprintf(
 		"keymap %s has %d conflicting binding table(s); no keymap or tmux config was changed",
@@ -723,7 +723,7 @@ func MigrateKeymapForWrite(store KeymapStore) (KeymapMigrationResult, error) {
 // It writes to the caller's diagnostic stream, never to stdout of a route whose
 // stdout is a generated artifact: `config render` must stay byte-identical to
 // the printer it forwards to.
-func WriteKeymapMigrationPreflight(w io.Writer, plan keymapMigrationPlan) {
+func WriteKeymapMigrationPreflight(w io.Writer, plan KeymapMigrationPlan) {
 	if w == nil || !plan.Present {
 		return
 	}
