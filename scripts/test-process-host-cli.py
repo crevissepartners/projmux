@@ -108,44 +108,50 @@ def group_exists(group: int) -> bool:
 def run_batch(command: list[str], *, timeout: int, **kwargs) -> subprocess.CompletedProcess:
     # setsid happens before exec; this Popen owns exactly the new pid/pgid.
     process = subprocess.Popen(command, start_new_session=True, **kwargs)
-    group = process.pid
-    if group <= 1 or group == os.getpgrp():
-        raise BatchCleanupError("refusing unowned process group")
     expired = None
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        expired = exc
-        stdout, stderr = exc.stdout, exc.stderr
-    # Even a normally exited go command must not leave a group behind before
-    # the next batch. Detached sessions remain the fixtures' cleanup contract.
-    cleanup_started = time.monotonic()
-    signals = []
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        if process.returncode is not None and not group_exists(group):
-            break
-        deadline = time.monotonic() + 5
+        group = process.pid
+        if group <= 1 or group == os.getpgrp():
+            raise BatchCleanupError("refusing unowned process group")
+        expired = None
         try:
-            os.killpg(group, sig)
-            signals.append(sig.name)
-        except ProcessLookupError:
-            pass
-        try:
-            process.communicate(timeout=max(0.001, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            pass
-        while group_exists(group) and time.monotonic() < deadline:
-            time.sleep(0.05)
-    clear = process.returncode is not None and not group_exists(group)
-    receipt = {"pid": process.pid, "group": group, "wait_returncode": process.returncode,
-               "group_clear": clear, "signals": signals,
-               "cleanup_seconds": round(time.monotonic() - cleanup_started, 3)}
-    print("process CLI batch cleanup: " + json.dumps(receipt), flush=True)
-    if not clear:
-        raise BatchCleanupError("process CLI batch cleanup unresolved: " + json.dumps(receipt), expired)
-    if expired is not None:
-        raise expired
-    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            expired = exc
+            stdout, stderr = exc.stdout, exc.stderr
+        # Even a normally exited go command must not leave a group behind before
+        # the next batch. Detached sessions remain the fixtures' cleanup contract.
+        cleanup_started = time.monotonic()
+        signals = []
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            if process.returncode is not None and not group_exists(group):
+                break
+            deadline = time.monotonic() + 5
+            try:
+                os.killpg(group, sig)
+                signals.append(sig.name)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=max(0.001, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+            while group_exists(group) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        clear = process.returncode is not None and not group_exists(group)
+        receipt = {"pid": process.pid, "group": group, "wait_returncode": process.returncode,
+                   "group_clear": clear, "signals": signals,
+                   "cleanup_seconds": round(time.monotonic() - cleanup_started, 3)}
+        print("process CLI batch cleanup: " + json.dumps(receipt), flush=True)
+        if not clear:
+            raise BatchCleanupError("process CLI batch cleanup unresolved: " + json.dumps(receipt), expired)
+        if expired is not None:
+            raise expired
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    except OSError as exc:
+        raise BatchCleanupError(
+            f"process CLI batch ownership/cleanup uncertain: pid={process.pid}: {exc}", expired) from exc
+
 
 
 def strict_report(events: list[dict], expected: list[str], returncode: int) -> dict:

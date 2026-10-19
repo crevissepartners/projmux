@@ -788,6 +788,22 @@ class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
         self.assertLessEqual(order[2][1], 5)
         self.assertIsNotNone(process.returncode)
 
+    def test_owned_child_oserror_is_fail_closed(self):
+        from unittest.mock import Mock
+        runner = self.runner
+        process = Mock(pid=424242, returncode=None)
+        process.communicate.side_effect = PermissionError("fake owned-child communication failure")
+        with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
+            runner.os, "getpgrp", return_value=999):
+            with self.assertRaises(runner.BatchCleanupError):
+                runner.run_batch(["fake"], timeout=480)
+        def permission_failure(events, command):
+            raise PermissionError("fake cleanup unavailable")
+        calls, _, summary, error = self.exercise(permission_failure)
+        self.assertIsInstance(error, runner.BatchCleanupError)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+        self.assertIn("FAIL", summary)
+
     def test_group_still_alive_after_kill_fails_closed(self):
         import contextlib
         import io
