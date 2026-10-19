@@ -44,6 +44,7 @@ const KeyBindingScopeStandalone = shared.KeyBindingScopeStandalone
 const KeyBindingTierNativePickerInternal = shared.KeyBindingTierNativePickerInternal
 const KeyBindingTierTransportDependent = shared.KeyBindingTierTransportDependent
 const KeymapSchemaVersion = shared.KeymapSchemaVersion
+const KeymapReservedAuthoringReason = shared.KeymapReservedAuthoringReason
 const ManagedDeletePaneGuard = shared.ManagedDeletePaneGuard
 const ManagedDeletePaneRoute = shared.ManagedDeletePaneRoute
 const ManagedDeleteWindowGuard = shared.ManagedDeleteWindowGuard
@@ -59,6 +60,34 @@ const TmuxBindingPopupToggle = shared.TmuxBindingPopupToggle
 const TmuxBindingPromptRunProjmux = shared.TmuxBindingPromptRunProjmux
 const TmuxBindingRunProjmux = shared.TmuxBindingRunProjmux
 const WindowRenameRoute = shared.WindowRenameRoute
+
+// KeyBindingCategoryOrder is the render order of the Keybindings categories.
+// Input delivery holds no keymap action; it owns the native-key toggle only.
+var KeyBindingCategoryOrder = []struct {
+	ID    string
+	Label string
+}{
+	{KeyBindingCategoryLaunch, KeyBindingCategoryLaunchLabel},
+	{KeyBindingCategoryAgentPane, KeyBindingCategoryAgentPaneLabel},
+	{KeyBindingCategoryNavigation, KeyBindingCategoryNavigationLabel},
+	{KeyBindingCategorySurfaces, KeyBindingCategorySurfacesLabel},
+	{KeyBindingCategoryInput, KeyBindingCategoryInputLabel},
+}
+
+// KeyBindingSurfaceOrder is the second navigation level inside the
+// sidebar/picker category. The surface keys are the existing catalog `Surface`
+// values; only the display labels follow the canonical resource vocabulary.
+var KeyBindingSurfaceOrder = []struct {
+	ID    string
+	Label string
+}{
+	{"Sidebar", "Project Sidebar"},
+	{"SessionPopup", "Session Picker"},
+	{"NotifySidebar", "Notification Sidebar"},
+	{"Resources", "Registry Inspector"},
+	{"RuntimeDiagnostics", "Runtime Diagnostics"},
+	{"Settings", "Settings"},
+}
 
 func DefaultKeyBindingCatalog() []KeyBindingAction { return shared.DefaultKeyBindingCatalog() }
 func KeyBindingCatalogForScope(scope keyBindingScope) []KeyBindingAction {
@@ -76,9 +105,18 @@ func KeyBindingDisplayName(action KeyBindingAction) string {
 func KeyBindingActionCategory(action KeyBindingAction) (string, bool) {
 	return shared.KeyBindingActionCategory(action)
 }
+
+// KeyBindingSurfaceLabel maps a catalog `Surface` value to its canonical
+// display label.
 func KeyBindingSurfaceLabel(surface string) (string, bool) {
-	return shared.KeyBindingSurfaceLabel(surface)
+	for _, entry := range KeyBindingSurfaceOrder {
+		if entry.ID == surface {
+			return entry.Label, true
+		}
+	}
+	return "", false
 }
+
 func KeyBindingActionAliases(action KeyBindingAction) []string {
 	return shared.KeyBindingActionAliases(action)
 }
@@ -193,3 +231,5 @@ func WriteKeymapMigrationPreflight(w io.Writer, plan keymapMigrationPlan) {
 }
 
 const TmuxPaneEnvPrefix = shared.TmuxPaneEnvPrefix
+
+const keyBindingActionCommand = shared.KeyBindingActionCommand

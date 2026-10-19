@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/hookcmd"
-	"github.com/crevissepartners/projmux/internal/app/keybinding"
 	"github.com/crevissepartners/projmux/internal/app/updatecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"

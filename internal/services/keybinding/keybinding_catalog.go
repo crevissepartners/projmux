@@ -54,6 +54,9 @@ const (
 	KeyBindingActionPickerInternal KeyBindingActionKind = "picker-internal"
 )
 
+// KeyBindingActionCommand is the command action kind used by catalog readers.
+const KeyBindingActionCommand = keyBindingActionCommand
+
 // keyBindingActionSemantics is the product meaning projected into Settings
 // and diagnostics for one canonical keybinding action record.
 type KeyBindingActionSemantics struct {
@@ -1034,34 +1037,6 @@ const (
 	KeyBindingCategoryInputLabel      = "Input delivery"
 )
 
-// KeyBindingCategoryOrder is the render order of the Keybindings categories.
-// Input delivery holds no keymap action; it owns the native-key toggle only.
-var KeyBindingCategoryOrder = []struct {
-	ID    string
-	Label string
-}{
-	{KeyBindingCategoryLaunch, KeyBindingCategoryLaunchLabel},
-	{KeyBindingCategoryAgentPane, KeyBindingCategoryAgentPaneLabel},
-	{KeyBindingCategoryNavigation, KeyBindingCategoryNavigationLabel},
-	{KeyBindingCategorySurfaces, KeyBindingCategorySurfacesLabel},
-	{KeyBindingCategoryInput, KeyBindingCategoryInputLabel},
-}
-
-// KeyBindingSurfaceOrder is the second navigation level inside the
-// sidebar/picker category. The surface keys are the existing catalog `Surface`
-// values; only the display labels follow the canonical resource vocabulary.
-var KeyBindingSurfaceOrder = []struct {
-	ID    string
-	Label string
-}{
-	{"Sidebar", "Project Sidebar"},
-	{"SessionPopup", "Session Picker"},
-	{"NotifySidebar", "Notification Sidebar"},
-	{"Resources", "Registry Inspector"},
-	{"RuntimeDiagnostics", "Runtime Diagnostics"},
-	{"Settings", "Settings"},
-}
-
 // The semantics anchor field keeps interactive splits adjacent to
 // the pane the user pressed the key in: an interactive right/down action
 // passes the current Pane as an explicit anchor, and never falls back to a
@@ -1130,17 +1105,6 @@ func KeyBindingDisplayName(action KeyBindingAction) string {
 func KeyBindingActionCategory(action KeyBindingAction) (string, bool) {
 	category := strings.TrimSpace(action.Category)
 	return category, category != ""
-}
-
-// KeyBindingSurfaceLabel maps a catalog `Surface` value to its canonical
-// display label.
-func KeyBindingSurfaceLabel(surface string) (string, bool) {
-	for _, entry := range KeyBindingSurfaceOrder {
-		if entry.ID == surface {
-			return entry.Label, true
-		}
-	}
-	return "", false
 }
 
 func humanizeKeyBindingActionID(id string) string {
