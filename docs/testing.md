@@ -92,8 +92,32 @@ for a shorter critical path; runner time and wall time must be measured separate
   The summary reports the additional tagged build and regression test seconds
   separately; test selection remains discovered from the current sources.
   Build has a 180-second bound and precompilation has a 120-second bound.
-  Go package tests have a 420-second timeout; the test subprocess has 480
-  seconds to preserve Go timeout diagnostics. The job has 15 minutes.
+  The dynamically discovered, sorted test inventory is split by even/odd index
+  into two disjoint batches, run sequentially with `-count=1 -cpu=1` and
+  `GOMAXPROCS=1`. Each batch retains its own Go 420-second timeout and Python
+  480-second subprocess bound to preserve Go timeout diagnostics. Both CLI
+  builds and precompilation run once. The job watchdog is 30 minutes: the
+  command bounds total 1440 seconds, leaving 360 seconds for setup and cleanup.
+  Each top-level test must produce exactly one RUN and PASS across the batches;
+  duplicate, unexpected or missing evidence, any Skip (including a subtest),
+  nonzero exit or failure rejects the target. A failed or timed-out first batch
+  does not prevent the second batch from running once; overall failure is retained.
+  Logs and the GitHub step summary report per-batch elapsed time, 420-second
+  limit, utilization and headroom, plus total elapsed time and inventory results.
+  Above 75% utilization (315 seconds), an Actions warning and summary warning
+  flag shrinking headroom without changing test failure semantics. Outer timeouts
+  retain bounded partial test metadata and elapsed time for the affected batch.
+  Each test command owns a new process session/group. Before advancing, the
+  runner requires the direct Go child's actual Wait and an empty owned group;
+  remaining group members receive TERM (up to five seconds), then KILL (up to
+  five seconds). Uncertain retirement stops further batches and fails the target.
+  This cleanup uses the watchdog's existing setup/cleanup headroom. Detached
+  sessions remain the individual fixtures' cleanup responsibility.
+  Cancellation and exception exits use the same bounded retirement before the
+  original exception is propagated. During cleanup, further SIGINTs are recorded
+  without restarting its deadline; the original handler is restored afterward.
+  A first cancellation during cleanup also fails the invocation. Cleanup
+  uncertainty remains diagnostic evidence and never permits another batch.
   To run it manually, use `make test-process-host-cli` (or
   `make test-process-host-cli GO=/path/to/go` for a local toolchain matching
   go.mod). The real-tmux window rename test remains in its existing unit and

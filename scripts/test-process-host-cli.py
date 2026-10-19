@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -88,6 +89,191 @@ def check_results(events: list[dict], expected: list[str], returncode: int) -> d
     return report
 
 
+class BatchCleanupError(RuntimeError):
+    """Refuse another batch when its predecessor's group is not retired."""
+
+    def __init__(self, message: str, expired: subprocess.TimeoutExpired | None = None):
+        super().__init__(message)
+        self.expired = expired
+
+
+def group_exists(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def retire_batch(process: subprocess.Popen) -> tuple[dict, KeyboardInterrupt | None]:
+    """Retire only this child's new group, without extending cleanup on Ctrl-C."""
+    group = process.pid
+    if group <= 1 or group == os.getpgrp():
+        raise BatchCleanupError("refusing unowned process group")
+    started = time.monotonic()
+    interrupted = None
+    signals, errors = [], []
+    clear = False
+
+    def remember_interrupt(signum=None, frame=None):
+        nonlocal interrupted
+        if interrupted is None:
+            interrupted = KeyboardInterrupt()
+
+    previous = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, remember_interrupt)
+    try:
+        for index, sig in enumerate((signal.SIGTERM, signal.SIGKILL), 1):
+            deadline = started + index * 5
+            signaled = False
+            while time.monotonic() < deadline:
+                try:
+                    if process.returncode is not None and not group_exists(group):
+                        clear = True
+                        break
+                    if not signaled:
+                        try:
+                            os.killpg(group, sig)
+                            signals.append(sig.name)
+                        except ProcessLookupError:
+                            pass
+                        signaled = True
+                    try:
+                        process.communicate(timeout=max(0.001, deadline - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        break
+                    if process.returncode is not None and not group_exists(group):
+                        clear = True
+                        break
+                    time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+                except KeyboardInterrupt as exc:
+                    # Also handles synchronous injected exceptions; real SIGINT
+                    # is recorded by the temporary handler instead of unwinding.
+                    if interrupted is None:
+                        interrupted = exc
+                except OSError as exc:
+                    errors.append(str(exc))
+                    break
+            if clear:
+                break
+        if not clear:
+            try:
+                clear = process.returncode is not None and not group_exists(group)
+            except OSError as exc:
+                errors.append(str(exc))
+        receipt = {"pid": process.pid, "group": group, "wait_returncode": process.returncode,
+                   "group_clear": clear, "signals": signals, "errors": errors,
+                   "cleanup_seconds": round(time.monotonic() - started, 3)}
+        print("process CLI batch cleanup: " + json.dumps(receipt), flush=True)
+        return receipt, interrupted
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def run_batch(command: list[str], *, timeout: int, **kwargs) -> subprocess.CompletedProcess:
+    # setsid happens before exec; this Popen owns exactly the new pid/pgid.
+    process = subprocess.Popen(command, start_new_session=True, **kwargs)
+    original, traceback, cleanup_error, interrupted = None, None, None, None
+    stdout, stderr = None, None
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException as exc:
+        original, traceback = exc, exc.__traceback__
+    finally:
+        try:
+            receipt, interrupted = retire_batch(process)
+            if not receipt["group_clear"]:
+                cleanup_error = BatchCleanupError("process CLI batch cleanup unresolved: " + json.dumps(receipt),
+                    original if isinstance(original, subprocess.TimeoutExpired) else None)
+        except Exception as exc:
+            cleanup_error = BatchCleanupError(f"process CLI batch cleanup uncertain: pid={process.pid}: {exc}",
+                original if isinstance(original, subprocess.TimeoutExpired) else None)
+    # An initial cancellation wins over a later cleanup interruption/failure.
+    # A first cancellation during cleanup must not turn into a successful batch.
+    if original is not None and not isinstance(original, subprocess.TimeoutExpired):
+        if cleanup_error is not None:
+            raise original.with_traceback(traceback) from cleanup_error
+        raise original.with_traceback(traceback)
+    if interrupted is not None:
+        if cleanup_error is not None:
+            raise interrupted from cleanup_error
+        raise interrupted
+    if cleanup_error is not None:
+        raise cleanup_error
+    if original is not None:
+        raise original.with_traceback(traceback)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+
+def strict_report(events: list[dict], expected: list[str], returncode: int) -> dict:
+    # Subtests may repeat run/pass events; only top-level names count toward
+    # inventory, while any subtest skip/failure still rejects the whole run.
+    runs, passes = {}, {}
+    for event in events:
+        name = event.get("Test")
+        if not isinstance(name, str) or "/" in name:
+            continue
+        counts = runs if event.get("Action") == "run" else passes if event.get("Action") == "pass" else None
+        if counts is not None:
+            counts[name] = counts.get(name, 0) + 1
+    names = set(expected)
+    return {"selected": len(expected), "passed": len(names & passes.keys()),
+            "skip": [e.get("Test", "package") for e in events if e.get("Action") == "skip"],
+            "fail": [e.get("Test", "package") for e in events if e.get("Action") == "fail"],
+            "missing": sorted(names - passes.keys()),
+            "missing_run": sorted(names - runs.keys()),
+            "duplicate": sorted(n for n in runs.keys() | passes.keys()
+                                if runs.get(n, 0) > 1 or passes.get(n, 0) > 1),
+            "unexpected": sorted((runs.keys() | passes.keys()) - names),
+            "exit": returncode}
+
+
+def rejected(report: dict) -> bool:
+    return bool(not report["selected"] or report["exit"] or any(
+        report[key] for key in ("skip", "fail", "missing", "missing_run", "duplicate", "unexpected")))
+
+
+def timeout_events(partial: bytes | str | None, expected: list[str]) -> list[dict]:
+    if isinstance(partial, bytes):
+        partial = partial[-65536:].decode(errors="replace")
+    else:
+        partial = (partial or "")[-65536:]
+    observed = []
+    for line in partial.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or not isinstance(event.get("Test"), str):
+            continue
+        name, action = event["Test"].split("/", 1)[0], event.get("Action")
+        if name in expected and isinstance(action, str) and action in {"run", "pass", "fail", "skip"}:
+            observed.append({"test": name, "action": action})
+    return observed[-16:]
+
+
+def write_summary(report: dict, failed: bool) -> None:
+    lines = ["### Process Host CLI — " + ("FAIL" if failed else "PASS"),
+             "", "75% budget warning threshold (315s of each 420s Go limit).",
+             "", "| Batch | elapsed (s) | limit (s) | utilization | headroom (s) | evidence |",
+             "| --- | --- | --- | --- | --- | --- |"]
+    for batch in report["batches"]:
+        status = "FAIL" if batch["rejected"] else "PASS"
+        if batch["budget_warning"]:
+            status += " WARNING: over 75%"
+        lines.append(f"| {batch['batch']} | {batch['test_command_seconds']} | 420 | "
+                     f"{batch['utilization_percent']}% | {batch['headroom_seconds']} | {status} |")
+    lines += ["", f"Total elapsed: {report['elapsed_seconds']}s; inventory: {report['selected']}; "
+              f"passed: {report['passed']}; skip: {report['skip']}; fail: {report['fail']}; "
+              f"missing: {report['missing']}; missing RUN: {report['missing_run']}; "
+              f"duplicate: {report['duplicate']}; unexpected: {report['unexpected']}.", ""]
+    destination = os.environ.get("GITHUB_STEP_SUMMARY")
+    if destination:
+        with open(destination, "a", encoding="utf-8") as summary:
+            summary.write("\n".join(lines))
+
+
 def isolated_env(root: Path, go: str) -> dict[str, str]:
     # Resolve cache paths before changing HOME; local runs reuse the caller's
     # cache and CI reuses setup-go's cache without changing provider homes.
@@ -147,59 +333,91 @@ def main() -> None:
         print("process CLI precompile: " + json.dumps({
             "seconds": round(compile_seconds, 3),
             "test_binary_sha256": hashlib.sha256(test_binary.read_bytes()).hexdigest()}), flush=True)
-        selector = "^(" + "|".join(expected) + ")$"
-        test_started = time.monotonic()
-        try:
-            result = subprocess.run([go, "test", "-json", "-count=1", "-cpu=1",
-                                     "-timeout=420s", "-run", selector, "./internal/app"],
-                                    cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, timeout=480)
-        except subprocess.TimeoutExpired as expired:
-            partial = expired.stdout
-            if isinstance(partial, bytes):
-                partial = partial[-65536:].decode(errors="replace")
-            elif isinstance(partial, str):
-                partial = partial[-65536:]
-            else:
-                partial = ""
-            observed = []
-            for line in partial.splitlines():
-                try:
+        batches = [expected[::2], expected[1::2]]
+        flattened = [name for batch in batches for name in batch]
+        if len(flattened) != len(set(flattened)) or sorted(flattened) != expected:
+            raise ValueError("process CLI batch inventory mismatch")
+        print("process CLI inventory: " + json.dumps({
+            "selected": expected, "batches": batches}), flush=True)
+        reports, all_events, timeouts = [], [], []
+        cleanup_failure = None
+        for index, names in enumerate(batches, 1):
+            if not names:
+                continue
+            selector = "^(" + "|".join(names) + ")$"
+            test_started = time.monotonic()
+            events, status, error = [], 0, None
+            try:
+                result = run_batch([go, "test", "-json", "-count=1", "-cpu=1",
+                                         "-timeout=420s", "-run", selector, "./internal/app"],
+                                        cwd=ROOT, env=env, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, timeout=480)
+                status = result.returncode
+                for line in result.stdout.splitlines():
                     event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(event, dict) or not isinstance(event.get("Test"), str):
-                    continue
-                test, action = event["Test"].split("/", 1)[0], event.get("Action")
-                if test in expected and isinstance(action, str) and action in {"run", "pass", "fail", "skip"}:
-                    observed.append({"test": test, "action": action})
-                    observed = observed[-16:]
-            print("process CLI timeout evidence: " + json.dumps({
-                "build_seconds": round(build_seconds, 3),
-                "precompile_seconds": round(compile_seconds, 3),
-                "test_command_seconds": round(time.monotonic() - test_started, 3),
-                "elapsed_seconds": round(time.monotonic() - started, 3),
-                "events": observed}), flush=True)
-            raise
-        test_seconds = time.monotonic() - test_started
-        events = []
-        for line in result.stdout.splitlines():
-            event = json.loads(line)
-            events.append(event)
-            if event.get("Output"):
-                print(event["Output"], end="", flush=True)
-        if result.stderr:
-            print(result.stderr, end="", flush=True)
-        report = check_results(events, expected, result.returncode)
-        report["regression_test_seconds"] = round(sum(e.get("Elapsed", 0) for e in events
+                    if not isinstance(event, dict):
+                        raise ValueError("non-object Go JSON event")
+                    events.append(event)
+                    if event.get("Output"):
+                        print(event["Output"], end="", flush=True)
+                if result.stderr:
+                    print(result.stderr, end="", flush=True)
+            except subprocess.TimeoutExpired as expired:
+                status, error = 124, "Python test command timeout"
+                timeouts.append((expired, {"batch": index,
+                    "build_seconds": round(build_seconds, 3),
+                    "precompile_seconds": round(compile_seconds, 3),
+                    "test_command_seconds": round(time.monotonic() - test_started, 3),
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                    "events": timeout_events(expired.stdout, names)}))
+            except BatchCleanupError as exc:
+                status, error, cleanup_failure = 1, str(exc), exc
+                if exc.expired is not None:
+                    timeouts.append((exc.expired, {"batch": index,
+                        "test_command_seconds": round(time.monotonic() - test_started, 3),
+                        "elapsed_seconds": round(time.monotonic() - started, 3),
+                        "events": timeout_events(exc.expired.stdout, names)}))
+            except OSError as exc:
+                status, error = 1, str(exc)
+                cleanup_failure = BatchCleanupError("batch ownership/cleanup uncertain: " + str(exc))
+            except ValueError as exc:
+                status, error = 1, str(exc)
+                if isinstance(exc.__cause__, BatchCleanupError):
+                    cleanup_failure = exc.__cause__
+            seconds = time.monotonic() - test_started
+            batch = strict_report(events, names, status)
+            package_pass = any("Test" not in e and e.get("Action") == "pass" for e in events)
+            batch.update(batch=index, test_command_seconds=round(seconds, 3), limit_seconds=420,
+                         utilization_percent=round(seconds / 420 * 100, 3),
+                         headroom_seconds=round(420 - seconds, 3), budget_warning=seconds > 315,
+                         rejected=rejected(batch) or not package_pass, error=error)
+            reports.append(batch)
+            all_events.extend(events)
+            print("process CLI batch summary: " + json.dumps(batch), flush=True)
+            if seconds > 315:
+                print(f"::warning::Process CLI batch {index} exceeded 75% of its 420s budget: "
+                      f"elapsed={seconds:.3f}s headroom={420 - seconds:.3f}s", flush=True)
+            if cleanup_failure is not None:
+                break
+        report = strict_report(all_events, expected, int(any(b["rejected"] for b in reports)))
+        report.update(batches=reports, regression_test_seconds=round(sum(e.get("Elapsed", 0) for e in all_events
             if e.get("Test") == "TestDetachedClaudeChildSurvivesHostReadDeadlineCLI"
-            and e.get("Action") == "pass"), 3)
-        report["regression_build_seconds"] = round(regression_build_seconds, 3)
-        report["build_seconds"] = round(build_seconds, 3)
-        report["precompile_seconds"] = round(compile_seconds, 3)
-        report["test_command_seconds"] = round(test_seconds, 3)
-        report["elapsed_seconds"] = round(time.monotonic() - started, 3)
-        print("process CLI summary: " + json.dumps(report), flush=True)
+            and e.get("Action") == "pass"), 3),
+            regression_build_seconds=round(regression_build_seconds, 3),
+            build_seconds=round(build_seconds, 3), precompile_seconds=round(compile_seconds, 3),
+            test_command_seconds=round(sum(b["test_command_seconds"] for b in reports), 3),
+            elapsed_seconds=round(time.monotonic() - started, 3))
+        failed = rejected(report)
+        write_summary(report, failed)
+        print(("process CLI failed summary: " if failed else "process CLI summary: ") + json.dumps(report), flush=True)
+        for _, evidence in timeouts:
+            print("process CLI timeout evidence: " + json.dumps(evidence), flush=True)
+        if cleanup_failure is not None:
+            raise cleanup_failure
+        if timeouts:
+            raise timeouts[0][0]
+        if failed:
+            raise ValueError("process CLI evidence rejected: " + json.dumps(report))
 
 
 if __name__ == "__main__":

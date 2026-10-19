@@ -624,13 +624,323 @@ for package in packages:
             "e2e-traceback-guard-contract", "test-e2e-reliability", "test-e2e-residual-policy", "test-e2e-shards"})
 
 
+class ProcessCLIBudgetRunnerContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "process_cli_budget", ROOT / "scripts/test-process-host-cli.py")
+        cls.runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.runner)
+
+    def setUp(self):
+        # No real signal handler or OS process is changed by these fake contracts.
+        for name in ("signal", "getsignal"):
+            replacement = patch.object(self.runner.signal, name)
+            replacement.start()
+            self.addCleanup(replacement.stop)
+
+    def exercise(self, mutation=None, seconds=10):
+        import contextlib
+        import io
+
+        runner = self.runner
+        expected = [f"TestFixture{index}" for index in range(7)]
+        calls, clock = [], [0.0]
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            summary = Path(temporary) / "summary.md"
+
+            def invoke(command, **kwargs):
+                if command[1] == "build" or "-c" in command:
+                    calls.append(("compile" if "-c" in command else "build", command))
+                    Path(command[command.index("-o") + 1]).write_bytes(b"fake binary")
+                    return subprocess.CompletedProcess(command, 0)
+                names = command[command.index("-run") + 1][2:-2].split("|")
+                calls.append(("test", names))
+                self.assertEqual(kwargs["timeout"], 480)
+                self.assertIn("-timeout=420s", command)
+                self.assertIn("-cpu=1", command)
+                self.assertIn("-count=1", command)
+                self.assertEqual(kwargs["env"]["GOMAXPROCS"], "1")
+                clock[0] += seconds
+                events = [{"Action": action, "Test": name}
+                          for name in names for action in ("run", "pass")]
+                events.append({"Action": "pass"})
+                status = 0
+                if mutation and len([c for c in calls if c[0] == "test"]) == 1:
+                    events, status = mutation(events, command)
+                return subprocess.CompletedProcess(command, status,
+                    stdout="\n".join(json.dumps(e) for e in events), stderr="")
+
+            error = None
+            with patch.object(runner, "selected_tests", return_value=expected), patch.object(
+                runner, "isolated_env", return_value={"GOMAXPROCS": "1"}), patch.object(
+                runner.subprocess, "run", side_effect=invoke), patch.object(
+                runner, "run_batch", side_effect=invoke), patch.object(
+                runner.time, "monotonic", side_effect=lambda: clock[0]), patch.dict(
+                os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}), contextlib.redirect_stdout(output):
+                try:
+                    runner.main()
+                except (ValueError, subprocess.TimeoutExpired, runner.BatchCleanupError, KeyboardInterrupt) as exc:
+                    error = exc
+            return calls, output.getvalue(), summary.read_text() if summary.exists() else "", error
+
+    def test_dynamic_inventory_runs_in_two_sequential_disjoint_budgets(self):
+        calls, output, summary, error = self.exercise()
+        self.assertIsNone(error)
+        self.assertEqual([c[0] for c in calls], ["build", "build", "compile", "test", "test"])
+        self.assertEqual([c[1] for c in calls if c[0] == "test"],
+                         [["TestFixture0", "TestFixture2", "TestFixture4", "TestFixture6"],
+                          ["TestFixture1", "TestFixture3", "TestFixture5"]])
+        report = json.loads(output.split("process CLI summary: ")[1])
+        self.assertEqual(report["selected"], 7)
+        self.assertEqual(report["passed"], 7)
+        for field in ("skip", "fail", "missing", "duplicate", "unexpected", "missing_run"):
+            self.assertEqual(report[field], [])
+        self.assertEqual(len(report["batches"]), 2)
+        for batch in report["batches"]:
+            self.assertEqual(batch["limit_seconds"], 420)
+            self.assertEqual(batch["test_command_seconds"], 10)
+            self.assertEqual(batch["headroom_seconds"], 410)
+        self.assertIn("Process Host CLI", summary)
+        self.assertIn("headroom", summary)
+
+    def test_rejects_bad_evidence_but_executes_other_batch_once(self):
+        mutations = {
+            "duplicate pass": lambda es, cmd: (es + [es[1]], 0),
+            "duplicate run": lambda es, cmd: (es + [es[0]], 0),
+            "missing pass": lambda es, cmd: ([e for e in es if e != es[1]], 0),
+            "missing run": lambda es, cmd: ([e for e in es if e != es[0]], 0),
+            "skip subtest": lambda es, cmd: (es + [{"Action": "skip", "Test": "TestFixture0/sub"}], 0),
+            "fail": lambda es, cmd: (es + [{"Action": "fail", "Test": "TestFixture0"}], 0),
+            "exit": lambda es, cmd: (es, 1),
+            "unexpected": lambda es, cmd: (es + [{"Action": "pass", "Test": "TestOutside"}], 0),
+            "wrong batch": lambda es, cmd: (es + [{"Action": "run", "Test": "TestFixture1"}], 0),
+            "missing package": lambda es, cmd: (es[:-1], 0),
+        }
+        for name, mutation in mutations.items():
+            with self.subTest(name=name):
+                calls, output, summary, error = self.exercise(mutation)
+                self.assertIsInstance(error, ValueError)
+                self.assertEqual(len([c for c in calls if c[0] == "test"]), 2)
+                self.assertIn("FAIL", summary)
+
+    def test_outer_timeout_preserves_partial_evidence_and_runs_other_batch(self):
+        sentinel = "private-provider-output"
+        def expire(events, command):
+            partial = json.dumps({"Action": "run", "Test": "TestFixture0/" + sentinel,
+                                  "Output": sentinel}) + "\n{"
+            raise subprocess.TimeoutExpired(command, 480, output=partial.encode(), stderr=sentinel)
+        calls, output, summary, error = self.exercise(expire, seconds=480)
+        self.assertIsInstance(error, subprocess.TimeoutExpired)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 2)
+        self.assertNotIn(sentinel, output + summary)
+        evidence = json.loads(output.split("process CLI timeout evidence: ")[1])
+        self.assertEqual(evidence["batch"], 1)
+        self.assertEqual(evidence["events"], [{"test": "TestFixture0", "action": "run"}])
+        self.assertIn("FAIL", summary)
+        self.assertIn("480", summary)
+
+    def test_warning_at_over_75_percent_does_not_change_test_status(self):
+        for seconds, warning in ((315, False), (316, True)):
+            with self.subTest(seconds=seconds):
+                _, output, summary, error = self.exercise(seconds=seconds)
+                self.assertIsNone(error)
+                self.assertEqual("::warning::" in output, warning)
+                self.assertEqual("WARNING" in summary, warning)
+                self.assertIn("75%", summary)
+
+
+    def test_cleanup_uncertain_prevents_the_next_batch(self):
+        def unresolved(events, command):
+            raise self.runner.BatchCleanupError("owned group unresolved")
+        calls, output, summary, error = self.exercise(unresolved)
+        self.assertIsInstance(error, self.runner.BatchCleanupError)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+        self.assertIn("FAIL", summary)
+        self.assertIn("TestFixture1", summary)
+
+    def test_owned_group_timeout_cleanup_waits_before_returning(self):
+        import contextlib
+        import io
+        from unittest.mock import Mock
+
+        runner = self.runner
+        command = ["go", "test", "-json", "-timeout=420s"]
+        expired = subprocess.TimeoutExpired(command, 480, output=b"partial")
+        process = Mock(pid=424242, returncode=None)
+        order = []
+        def communicate(*, timeout):
+            order.append(("communicate", timeout))
+            if len(order) == 1:
+                raise expired
+            process.returncode = -15
+            return "", ""
+        process.communicate.side_effect = communicate
+        alive = [True]
+        def killpg(group, sig):
+            self.assertEqual(group, 424242)
+            order.append(("signal", sig))
+            alive[0] = False
+        with patch.object(runner.subprocess, "Popen", return_value=process) as popen, patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner.os, "killpg", side_effect=killpg), patch.object(
+            runner, "group_exists", side_effect=lambda group: alive[0]), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                runner.run_batch(command, timeout=480, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertIs(caught.exception, expired)
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertEqual([row[0] for row in order], ["communicate", "signal", "communicate"])
+        self.assertEqual(order[1][1], runner.signal.SIGTERM)
+        self.assertLessEqual(order[2][1], 5)
+        self.assertIsNotNone(process.returncode)
+
+    def test_owned_child_oserror_is_fail_closed(self):
+        from unittest.mock import Mock
+        runner = self.runner
+        process = Mock(pid=424242, returncode=None)
+        process.communicate.side_effect = PermissionError("fake owned-child communication failure")
+        with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner, "group_exists", return_value=False), patch.object(
+            runner.os, "killpg"), patch.object(runner.time, "sleep"), patch.object(
+            runner.time, "monotonic", side_effect=iter(range(100))):
+            with self.assertRaises(PermissionError):
+                runner.run_batch(["fake"], timeout=480)
+        def permission_failure(events, command):
+            raise PermissionError("fake cleanup unavailable")
+        calls, _, summary, error = self.exercise(permission_failure)
+        self.assertIsInstance(error, runner.BatchCleanupError)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+        self.assertIn("FAIL", summary)
+
+    def test_group_still_alive_after_kill_fails_closed(self):
+        import contextlib
+        import io
+        from unittest.mock import Mock
+
+        runner = self.runner
+        process = Mock(pid=424242, returncode=None)
+        process.communicate.side_effect = subprocess.TimeoutExpired("fake", 480)
+        signals = []
+        ticks = iter(range(100))
+        with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner.os, "killpg", side_effect=lambda group, sig: signals.append(sig)), patch.object(
+            runner, "group_exists", return_value=True), patch.object(
+            runner.time, "monotonic", side_effect=lambda: next(ticks)), patch.object(
+            runner.time, "sleep"), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(runner.BatchCleanupError):
+                runner.run_batch(["fake"], timeout=480)
+        self.assertEqual(signals, [runner.signal.SIGTERM, runner.signal.SIGKILL])
+
+
+    def cancellation_case(self, original, *, repeated=False, clear=True, cleanup_first=False):
+        import contextlib
+        import io
+        from unittest.mock import Mock
+        runner = self.runner
+        process = Mock(pid=424242, returncode=None)
+        calls, handlers, alive = [], [], [True]
+        old_handler = object()
+        current_handler = [old_handler]
+        cleanup_interrupt = KeyboardInterrupt("during cleanup")
+        def set_handler(signum, handler):
+            handlers.append(handler)
+            previous = current_handler[0]
+            current_handler[0] = handler
+            return previous
+        def communicate(*, timeout):
+            calls.append("wait")
+            if len(calls) == 1:
+                if not cleanup_first:
+                    raise original
+                process.returncode = 0
+                return "", ""
+            if repeated and calls.count("wait") == 2:
+                raise cleanup_interrupt
+            process.returncode = -15
+            return "", ""
+        def killpg(group, sig):
+            self.assertEqual(group, 424242)
+            calls.append(sig.name)
+            if cleanup_first:
+                current_handler[0](runner.signal.SIGINT, None)
+            if clear:
+                alive[0] = False
+        process.communicate.side_effect = communicate
+        ticks = iter(index / 10 for index in range(1000))
+        caught, output = None, io.StringIO()
+        with patch.object(runner.subprocess, "Popen", return_value=process), patch.object(
+            runner.os, "getpgrp", return_value=999), patch.object(
+            runner.os, "killpg", side_effect=killpg), patch.object(
+            runner, "group_exists", side_effect=lambda group: alive[0]), patch.object(
+            runner.signal, "getsignal", return_value=old_handler), patch.object(
+            runner.signal, "signal", side_effect=set_handler), patch.object(
+            runner.time, "monotonic", side_effect=lambda: next(ticks)), patch.object(
+            runner.time, "sleep"), contextlib.redirect_stdout(output):
+            try:
+                runner.run_batch(["fake"], timeout=480)
+            except BaseException as exc:
+                caught = exc
+        return caught, calls, handlers, old_handler, output.getvalue(), process
+
+    def test_cancel_preserves_exception_and_retires_owned_child(self):
+        for original in (KeyboardInterrupt("first"), ValueError("first")):
+            with self.subTest(kind=type(original).__name__):
+                caught, calls, handlers, previous, output, process = self.cancellation_case(original)
+                self.assertIs(caught, original)
+                self.assertEqual(calls, ["wait", "SIGTERM", "wait"])
+                self.assertEqual(handlers[-1], previous)
+                self.assertIsNotNone(caught.__traceback__)
+                self.assertEqual(process.returncode, -15)
+                self.assertIn('"group_clear": true', output)
+
+    def test_cancel_during_cleanup_preserves_first_and_deadline(self):
+        original = KeyboardInterrupt("original")
+        caught, calls, handlers, previous, output, process = self.cancellation_case(original, repeated=True)
+        self.assertIs(caught, original)
+        self.assertGreaterEqual(calls.count("wait"), 3)
+        self.assertEqual(handlers[-1], previous)
+        self.assertIsNotNone(process.returncode)
+        self.assertIn('"group_clear": true', output)
+
+    def test_first_sigint_during_cleanup_is_not_success(self):
+        caught, calls, handlers, previous, output, process = self.cancellation_case(None, cleanup_first=True)
+        self.assertIsInstance(caught, KeyboardInterrupt)
+        self.assertEqual(handlers[-1], previous)
+        self.assertIn('"group_clear": true', output)
+
+    def test_cancel_with_uncertain_cleanup_preserves_cause_and_stops_main(self):
+        original = KeyboardInterrupt("original")
+        caught, calls, handlers, previous, output, process = self.cancellation_case(original, clear=False)
+        self.assertIs(caught, original)
+        self.assertIsInstance(caught.__cause__, self.runner.BatchCleanupError)
+        self.assertIn('"group_clear": false', output)
+        self.assertEqual(handlers[-1], previous)
+        def cancel(events, command):
+            raise original
+        calls, _, _, error = self.exercise(cancel)
+        self.assertIs(error, original)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+
+    def test_original_value_error_with_uncertain_cleanup_stops_main(self):
+        original = ValueError("fake command error")
+        def uncertain(events, command):
+            raise original from self.runner.BatchCleanupError("fake cleanup uncertain")
+        calls, _, summary, error = self.exercise(uncertain)
+        self.assertIsInstance(error, self.runner.BatchCleanupError)
+        self.assertEqual(len([c for c in calls if c[0] == "test"]), 1)
+        self.assertIn("FAIL", summary)
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_process_cli_job_runs_the_make_target_and_gates_test(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         job = workflow_job(workflow, "process-host-cli")
         self.assertIn("    name: Process Host CLI Tests", job)
         self.assertIn("    runs-on: ubuntu-latest", job)
-        self.assertIn("    timeout-minutes: 15", job)
+        self.assertIn("    timeout-minutes: 30", job)
         self.assertIn("go-version-file: go.mod", job)
         self.assertNotIn("continue-on-error:", job)
         self.assertNotRegex(job, r"(?m)^\s+if:")

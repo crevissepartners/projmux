@@ -100,7 +100,8 @@ class ProcessHostCLIRunnerTest(unittest.TestCase):
                     raise expired
                 with patch.object(runner, "selected_tests", return_value=["TestFixture"]), patch.object(
                     runner, "isolated_env", return_value={}), patch.object(
-                    runner.subprocess, "run", side_effect=invoke), contextlib.redirect_stdout(output):
+                    runner.subprocess, "run", side_effect=invoke), patch.object(
+                    runner, "run_batch", side_effect=invoke), contextlib.redirect_stdout(output):
                     with self.assertRaises(subprocess.TimeoutExpired) as caught:
                         runner.main()
                 self.assertIs(caught.exception, expired)
