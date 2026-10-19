@@ -1,0 +1,282 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 5,
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "proj-a",
+        "name": "first-a",
+        "labels": {
+          "nested": "original"
+        }
+      },
+      "spec": {
+        "root": "/first-a"
+      },
+      "status": {
+        "session": {
+          "name": "first-a",
+          "live": false
+        },
+        "conditions": [
+          {
+            "type": "fixture",
+            "status": "True"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "proj-a",
+        "name": "second-a",
+        "labels": {
+          "nested": "original"
+        }
+      },
+      "spec": {
+        "root": "/second-a"
+      },
+      "status": {
+        "session": {
+          "name": "second-a",
+          "live": false
+        },
+        "conditions": [
+          {
+            "type": "fixture",
+            "status": "True"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "proj-b",
+        "name": "b",
+        "labels": {
+          "nested": "original"
+        }
+      },
+      "spec": {
+        "root": "/b"
+      },
+      "status": {
+        "session": {
+          "name": "b",
+          "live": false
+        },
+        "conditions": [
+          {
+            "type": "fixture",
+            "status": "True"
+          }
+        ]
+      }
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "win-duplicate",
+        "name": "first-window",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "proj-a"
+        }
+      },
+      "spec": {
+        "anchorPaneRef": "pane-missing"
+      },
+      "status": {
+        "conditions": [
+          {
+            "type": "fixture",
+            "status": "True"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "win-duplicate",
+        "name": "second-window",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "proj-b"
+        }
+      },
+      "spec": {
+        "anchorPaneRef": "pane-missing"
+      },
+      "status": {
+        "conditions": [
+          {
+            "type": "fixture",
+            "status": "True"
+          }
+        ]
+      }
+    }
+  ],
+  "agents": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-duplicate",
+        "name": "direct-b",
+        "annotations": {
+          "projmux.io/profile": "shared"
+        },
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "proj-b"
+        }
+      },
+      "spec": {
+        "provider": "codex",
+        "workspace": {
+          "cwd": "/direct-b",
+          "additionalWritableRoots": [
+            "/extra/direct-b"
+          ]
+        }
+      },
+      "status": {
+        "phase": "Offline",
+        "sessionRef": {
+          "provider": "codex",
+          "codex": {
+            "threadId": "direct-b",
+            "endpoint": {
+              "stateDomainID": "domain",
+              "endpointGenerationID": "generation"
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-duplicate",
+        "name": "window-a",
+        "annotations": {
+          "projmux.io/profile": "shared"
+        },
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "win-duplicate"
+        }
+      },
+      "spec": {
+        "provider": "codex",
+        "workspace": {
+          "cwd": "/window-a",
+          "additionalWritableRoots": [
+            "/extra/window-a"
+          ]
+        }
+      },
+      "status": {
+        "phase": "Offline",
+        "sessionRef": {
+          "provider": "codex",
+          "codex": {
+            "threadId": "window-a",
+            "endpoint": {
+              "stateDomainID": "domain",
+              "endpointGenerationID": "generation"
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-duplicate",
+        "name": "direct-a",
+        "annotations": {
+          "projmux.io/profile": "shared"
+        },
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "proj-a"
+        }
+      },
+      "spec": {
+        "provider": "codex",
+        "workspace": {
+          "cwd": "/direct-a",
+          "additionalWritableRoots": [
+            "/extra/direct-a"
+          ]
+        }
+      },
+      "status": {
+        "phase": "Offline",
+        "sessionRef": {
+          "provider": "codex",
+          "codex": {
+            "threadId": "direct-a",
+            "endpoint": {
+              "stateDomainID": "domain",
+              "endpointGenerationID": "generation"
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-duplicate",
+        "name": "orphan",
+        "annotations": {
+          "projmux.io/profile": "shared"
+        },
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "win-missing"
+        }
+      },
+      "spec": {
+        "provider": "codex",
+        "workspace": {
+          "cwd": "/orphan",
+          "additionalWritableRoots": [
+            "/extra/orphan"
+          ]
+        }
+      },
+      "status": {
+        "phase": "Offline",
+        "sessionRef": {
+          "provider": "codex",
+          "codex": {
+            "threadId": "orphan",
+            "endpoint": {
+              "stateDomainID": "domain",
+              "endpointGenerationID": "generation"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
