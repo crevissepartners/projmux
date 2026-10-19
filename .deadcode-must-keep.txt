@@ -339,6 +339,7 @@ ResolveAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI qu
 ResolveAgentSettings	Public v0 tmux resume SDK fixed-path settings adapter; CLI uses the lazy injected path seam, and SDK parity and boundary tests cover this external-only closure.
 ResolvePaths	Public v0 side-effect-free HOME/XDG path resolver; retained for external SDK consumers and covered by input parity and external consumer tests.
 ResolveProcessCodexRoute	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+ResolveProjectLabelLink	Pure public SDK label link resolver; retained for external consumers, covered by CORE parity, no-effects and GOWORK=off consumer tests.
 ResolveProjectStopRoute	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 ResourcesSupported	Public v0 build resource support information; effect-free direct authority facade covered by build-tag and isolated external consumer tests.
 RestoreError.Error	Bounded profile restoration failure reports both causes and the retained original snapshot to public SDK callers; covered by restoration fault tests.
