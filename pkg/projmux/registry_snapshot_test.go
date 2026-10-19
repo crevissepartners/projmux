@@ -237,7 +237,8 @@ func TestRegistrySnapshotRowsParityAndOwnership(t *testing.T) {
 }
 func TestReadRegistrySnapshotEffectFreeAndEmpty(t *testing.T) {
 	// Poison executable discovery. Any provider/tmux process would fail and leave
-	// a marker; the transport is nil so accidental Observe cannot succeed.
+	// a marker. Keep the explicit absent-socket transport present so an accidental
+	// Observe attempts the poisoned tmux executable rather than skipping transport.
 	bin := t.TempDir()
 	marker := filepath.Join(bin, "called")
 	for _, name := range []string{"tmux", "codex", "claude", "projmux"} {
@@ -248,7 +249,9 @@ func TestReadRegistrySnapshotEffectFreeAndEmpty(t *testing.T) {
 	t.Setenv("PATH", bin)
 	for _, raw := range [][]byte{nil, {}, []byte(`{"apiVersion":"projmux.io/v1alpha1","schemaVersion":5}`), snapshotRaw(t)} {
 		c, root := snapshotClient(t, raw)
-		c.transport = nil
+		if !c.transport.Present() {
+			t.Fatal("fixture must retain an explicit socket transport")
+		}
 		before := snapshotTree(t, root)
 		got, err := c.ReadRegistrySnapshot(context.Background())
 		if err != nil {

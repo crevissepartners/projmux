@@ -26,7 +26,9 @@ func TestReadRegistrySnapshotSingleReadNoFilesystemEffects(t *testing.T) {
 	if _, err = syscall.InotifyAddWatch(fd, c.paths.StateDir+"/metadata", syscall.IN_CREATE|syscall.IN_DELETE|syscall.IN_MOVED_FROM|syscall.IN_MOVED_TO|syscall.IN_MODIFY|syscall.IN_ATTRIB); err != nil {
 		t.Fatal(err)
 	}
-	c.transport = nil
+	if !c.transport.Present() {
+		t.Fatal("fixture must retain an explicit socket transport")
+	}
 	if _, err = c.ReadRegistrySnapshot(context.Background()); err != nil {
 		t.Fatal(err)
 	}
