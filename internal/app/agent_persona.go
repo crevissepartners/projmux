@@ -13,6 +13,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/persona"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // Refusal reason tokens of `agent persona attach|detach` that the persona
@@ -37,22 +38,7 @@ const (
 // message is the UsageError's. It lets an in-process caller
 // read the token with errors.As instead of from the text, as *persona.Error
 // does for the persona package's own tokens.
-type agentPersonaRefusal struct {
-	Reason string
-}
-
-func (e *agentPersonaRefusal) Error() string { return e.Reason }
-
-// agentPersonaRefusalCause is the typed cause of a refusal with reason: the
-// persona package's own *persona.Error for its tokens, agentPersonaRefusal
-// for this package's.
-func agentPersonaRefusalCause(reason, name, detail string) error {
-	switch reason {
-	case personaReasonAgentBusy, personaReasonSelfTarget, personaReasonNoConversation:
-		return &agentPersonaRefusal{Reason: reason}
-	}
-	return &persona.Error{Reason: reason, Name: name, Detail: detail}
-}
+type agentPersonaRefusal = mutationruntime.AgentPersonaRefusal
 
 // Outcomes of one `agent persona` run, as the result line and the JSON
 // "outcome" field spell them.
@@ -67,26 +53,7 @@ const (
 // agentPersonaResult is the stable projection of one `agent persona attach`
 // or `detach` run. `--dry-run -o json` is what a confirmation dialog reads, so
 // the fields describe the target and the change before anything happens.
-type agentPersonaResult struct {
-	Action               string                            `json:"action"`
-	DryRun               bool                              `json:"dryRun"`
-	Outcome              string                            `json:"outcome"`
-	AgentUID             string                            `json:"agentUID"`
-	AgentName            string                            `json:"agentName"`
-	Provider             string                            `json:"provider"`
-	Phase                coremetadata.AgentPhase           `json:"phase"`
-	Interaction          coremetadata.AgentInteractionKind `json:"interaction"`
-	PaneUID              string                            `json:"paneUID,omitempty"`
-	NewPaneUID           string                            `json:"newPaneUID,omitempty"`
-	CurrentPersona       string                            `json:"currentPersona,omitempty"`
-	CurrentPersonaDigest string                            `json:"currentPersonaDigest,omitempty"`
-	NewPersona           string                            `json:"newPersona,omitempty"`
-	NewPersonaDigest     string                            `json:"newPersonaDigest,omitempty"`
-	SystemPromptSnapshot string                            `json:"systemPromptSnapshot"`
-	Restart              bool                              `json:"restart"`
-	ConfirmationRequired bool                              `json:"confirmationRequired"`
-	Unchanged            bool                              `json:"unchanged"`
-}
+type agentPersonaResult = mutationruntime.AgentPersonaProjection
 
 // agentPersonaRequest is one parsed `agent persona attach|detach` argv.
 type agentPersonaRequest struct {
@@ -144,141 +111,53 @@ func (c *agentCommand) runPersona(args []string, noun string, stdout, stderr io.
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", request.spelling, resolution.Matches[0].UID)
 	}
 	target := agent.Clone()
-	refuse := func(reason, detail string) error {
-		return usageErrorFor(fmt.Sprintf("%s: agent/%s %s (%s); nothing was changed", request.spelling, target.Metadata.Name, detail, reason),
-			agentPersonaRefusalCause(reason, request.persona, detail))
+	forward := stdout
+	if request.json {
+		forward = io.Discard
 	}
-
-	// Validation. Provider first, because the rest only means something for a
-	// Claude Agent.
-	provider := coremetadata.NormalizeProvider(target.Spec.Provider)
-	if provider == "" && target.Status.SessionRef != nil {
-		provider = coremetadata.NormalizeProvider(target.Status.SessionRef.Provider)
-	}
-	if provider != aiModeClaude {
-		if provider == aiModeCodex {
-			return refuse(personaReasonCodexInstructionsImmutable, "cannot change its instructions: Codex fixes developer instructions when the thread starts, and resume keeps the original message; create a new Codex Agent with a prompt to use different instructions")
-		}
-		if noun == "instructions" {
-			return refuse(persona.ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; named instructions apply only to --provider %s", target.Spec.Provider, aiModeClaude))
-		}
-		return refuse(persona.ReasonProviderUnsupported, fmt.Sprintf("is a %q Agent; a persona applies only to --provider %s", target.Spec.Provider, aiModeClaude))
-	}
-	restart := c.newAgentRestart(request.spelling, registry, target, provider, personaTokens(noun), refuse)
-	if err := restart.checkTarget(); err != nil {
-		return err
-	}
-	var loaded persona.Persona
-	if request.action == "attach" {
-		store, err := c.openPersonaStore()
-		if err != nil {
-			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
-		}
-		loaded, err = store.Load(request.persona)
-		if err != nil {
-			if persona.ReasonOf(err) != "" {
-				return usageErrorFor(fmt.Sprintf("%s: %v; nothing was changed", request.spelling, personaRefusalNoun(err, noun)), err)
-			}
-			return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
-		}
-	}
-	// The instructions this command gives are an override recorded with the
-	// source attach, `none` for a detach.
-	instructions := loaded.Name
-	if err := c.plan(restart, agentSettingsRequest{instructions: &instructions, source: coremetadata.SettingSourceAttach}, request.socket); err != nil {
-		return err
-	}
-
-	running, paneUID := restart.running, restart.paneUID
-	current := coremetadata.PersonaAnnotationsOf(target)
-	want := coremetadata.AgentPersonaAnnotations{SystemPromptSnapshot: coremetadata.SystemPromptSnapshotOff, InstructionsSource: coremetadata.SettingSourceAttach}
-	if request.action == "attach" {
-		want.Persona, want.PersonaDigest = loaded.Name, loaded.Digest
-	}
-	result := agentPersonaResult{
-		Action: request.action, DryRun: request.dryRun,
-		AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider,
-		Phase: target.Status.Phase, Interaction: restart.interaction, PaneUID: paneUID,
-		CurrentPersona: current.Persona, CurrentPersonaDigest: current.PersonaDigest,
-		NewPersona: want.Persona, NewPersonaDigest: want.PersonaDigest,
-		SystemPromptSnapshot: want.SystemPromptSnapshot,
-		Restart:              running,
-		ConfirmationRequired: restart.confirmationRequired(),
-	}
-	// A Running Agent already launched with exactly this persona content and
-	// the snapshot mode that honors it, whose other settings its layers
-	// resolve to what it runs, has nothing to gain from a restart.
-	if running && current.SameLaunch(want) && len(restart.settings.resolution.Reasons) == 0 {
-		result.Outcome, result.Unchanged, result.Restart, result.ConfirmationRequired = personaOutcomeUnchanged, true, false, false
-		result.NewPaneUID = paneUID
-		return writeAgentPersonaResult(stdout, request, result)
-	}
-	if request.dryRun {
-		result.Outcome = personaOutcomeWouldResume
-		if running {
-			result.Outcome = personaOutcomeWouldRestart
-		}
-		return writeAgentPersonaResult(stdout, request, result)
-	}
-	newPane, err := c.run(restart, agentRestartSteps{
-		yes: request.yes, socket: request.socket, json: request.json,
-		beforeStop: func() error {
-			if request.action == "attach" {
-				store, err := c.openPersonaStore()
-				if err != nil {
-					return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
+	var restart *agentRestart
+	result, err := mutationruntime.RunAgentPersona(mutationruntime.AgentPersonaDependencies{
+		Request:  mutationruntime.AgentPersonaRequest{Action: request.action, Spelling: request.spelling, Noun: noun, Persona: request.persona, DryRun: request.dryRun, Confirm: request.yes, Socket: request.socket.socket, SocketPath: request.socket.socketPath},
+		Registry: registry, Target: target, Interaction: target.EffectiveInteraction(c.clock()).Kind,
+		OpenStore: c.openPersonaStore,
+		Notice:    func(message string) { fmt.Fprint(stderr, message) },
+		Refuse: func(reason, message string, cause error) error {
+			return usageErrorFor(message, cause)
+		},
+		Plan: func(p *mutationruntime.AgentRestartPlan, q mutationruntime.AgentSettingsRequest, refuse func(string, string) error) error {
+			restart = c.newAgentRestart(request.spelling, registry, target, p.Provider, personaTokens(noun), refuse)
+			restart.running, restart.paneUID, restart.paneName = p.Running, p.PaneUID, p.PaneName
+			err := c.plan(restart, localAgentSettingsRequest(q), request.socket)
+			*p = restart.sharedRestart()
+			return err
+		},
+		SetPersona: func(a coremetadata.Agent, want coremetadata.AgentPersonaAnnotations) error {
+			return c.setAgentPersona(request.spelling, a, want)
+		},
+		Execution: mutationruntime.AgentRestartExecution{
+			ValidateTransport: func() error { _, err := resolveDeleteTarget(request.spelling, request.socket, c.lookupEnv); return err },
+			Stop:              func() error { return c.stopAgentPane(request.socket, restart.paneUID, forward, stderr) },
+			Observe: func() (mutationruntime.AgentRestartLiveness, error) {
+				v, e := c.observeStoppedAgentPane(request.spelling, request.socket, target.Metadata.UID, restart.paneUID)
+				return mutationruntime.AgentRestartLiveness(v), e
+			},
+			Resume: func(p mutationruntime.StoppedAgentPane) error {
+				return c.resumeStoppedAgent(target.Metadata.UID, stoppedAgentPane{uid: p.UID, name: p.Name}, agentSettingsRequest{}, forward, stderr)
+			},
+			NewPane: func() string {
+				if reg, e := c.loadRegistry(); e == nil {
+					if a, ok := reg.Agent(target.Metadata.UID); ok {
+						return a.Status.PaneRef
+					}
 				}
-				if _, err := store.WriteSnapshot(loaded.Content); err != nil {
-					return fmt.Errorf("%s: %w; nothing was changed", request.spelling, err)
-				}
-			}
-			return c.setAgentPersona(request.spelling, target, want)
+				return ""
+			},
 		},
-		stopFailed: func(err error, liveness personaPaneLiveness, observeErr error) error {
-			if liveness == personaPaneClosed {
-				// The old session is gone, so the old annotations describe
-				// nothing that runs. Keep the new ones and resume: restoring
-				// them would bring the next resume back without the persona.
-				fmt.Fprintf(stderr, "projmux: warning: closing agent/%s's managed pane %s reported an error, but that pane is already closed, so its new persona is kept and the Agent is resumed: %v\n",
-					target.Metadata.Name, paneUID, err)
-				return nil
-			}
-			// The Agent may still run its old provider session, so its
-			// annotations go back to what that session was launched with:
-			// leaving the new ones would make a re-run report `unchanged` for
-			// a persona the provider never received.
-			if restoreErr := c.setAgentPersona(request.spelling, target, current); restoreErr != nil {
-				return fmt.Errorf("%s: closing agent/%s's managed pane failed: %w; restoring its persona annotations also failed: %v",
-					request.spelling, target.Metadata.Name, err, restoreErr)
-			}
-			if liveness == personaPaneUnknown {
-				fmt.Fprintf(stderr, "projmux: could not observe whether agent/%s's managed pane %s is still alive (%v); its persona annotations were restored, and re-running the same command recovers: %s\n",
-					target.Metadata.Name, paneUID, observeErr, personaRerunCommand(registry, target, request))
-				return fmt.Errorf("%s: closing agent/%s's managed pane failed and whether it is still alive could not be observed, so its persona annotations were restored: %w",
-					request.spelling, target.Metadata.Name, err)
-			}
-			return fmt.Errorf("%s: closing agent/%s's managed pane failed, so its persona annotations were restored: %w",
-				request.spelling, target.Metadata.Name, err)
-		},
-		// The instructions are recorded already, so the resume reads them
-		// like every later resume will.
-		resume: agentSettingsRequest{},
-		resumeFailed: func(err error) error {
-			fmt.Fprintf(stderr, "projmux: agent/%s records %s but did not resume: %v\n", target.Metadata.Name, describePersonaAnnotations(want, noun), err)
-			fmt.Fprintf(stderr, "projmux: recover with: %s\n", personaRecoveryCommand(registry, target))
-			return fmt.Errorf("%s: agent/%s is %s with its new persona annotations and needs `agent resume`: %w",
-				request.spelling, target.Metadata.Name, coremetadata.PhaseOffline, err)
-		},
-	}, stdout, stderr)
+	})
 	if err != nil {
 		return err
 	}
-	result.Outcome = personaOutcomeResumed
-	if running {
-		result.Outcome = personaOutcomeRestarted
-	}
-	result.NewPaneUID = newPane
-	return writeAgentPersonaResult(stdout, request, result)
+	return writeAgentPersonaResult(stdout, request, result.AgentPersonaProjection)
 }
 
 // personaRefusalNoun keeps the old noun in a persona refusal reached through
@@ -293,17 +172,8 @@ func personaRefusalNoun(err error, noun string) error {
 // personaTokens are the refusal tokens of `agent instructions|persona
 // attach|detach`.
 func personaTokens(noun string) agentRestartTokens {
-	return agentRestartTokens{
-		busy: personaReasonAgentBusy, selfTarget: personaReasonSelfTarget, noConversation: personaReasonNoConversation,
-		phase: func(phase coremetadata.AgentPhase) string {
-			if noun == "instructions" {
-				return fmt.Sprintf("is %s; instructions are attached only to a %s, %s, or %s Agent",
-					phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed)
-			}
-			return fmt.Sprintf("is %s; a persona is attached only to a %s, %s, or %s Agent",
-				phase, coremetadata.PhaseRunning, coremetadata.PhaseOffline, coremetadata.PhaseFailed)
-		},
-	}
+	v := mutationruntime.PersonaTokens(noun)
+	return agentRestartTokens{busy: v.Busy, selfTarget: v.SelfTarget, noConversation: v.NoConversation, phase: v.Phase}
 }
 
 // parseAgentPersonaArgs parses `attach <agent-ref> <persona>` and
@@ -396,12 +266,7 @@ func (c *agentCommand) predictStoppedAgentResume(registry coremetadata.Registry,
 // only while the Agent is still in the phase and Pane this run planned for.
 func (c *agentCommand) setAgentPersona(spelling string, planned coremetadata.Agent, want coremetadata.AgentPersonaAnnotations) error {
 	return c.mutateAgent(planned.Metadata.UID, func(reg *coremetadata.Registry, mut coremetadata.Mutator) error {
-		agent, ok := reg.Agent(planned.Metadata.UID)
-		if !ok || agent.Status.Phase != planned.Status.Phase || agent.Status.PaneRef != planned.Status.PaneRef {
-			return fmt.Errorf("%s: agent/%s changed since this run planned it; nothing was changed, re-run it", spelling, planned.Metadata.Name)
-		}
-		_, err := mut.SetAgentPersona(reg, planned.Metadata.UID, want)
-		return err
+		return mutationruntime.SetPlannedAgentPersona(spelling, reg, mut, planned, want)
 	})
 }
 
@@ -529,27 +394,7 @@ func (c *agentCommand) resumeStoppedAgent(agentUID string, stopped stoppedAgentP
 // attach or detach whose resume failed. It names the Agent by uid inside its
 // exact Window and Project, so it resolves to the same Agent from anywhere.
 func personaRecoveryCommand(registry coremetadata.Registry, agent coremetadata.Agent) string {
-	return "projmux agent resume " + personaAgentRef(registry, agent)
-}
-
-// personaRerunCommand is the same `agent persona` invocation, for a run that
-// restored the previous annotations without knowing whether the stop closed
-// the Pane: a re-run observes the Agent afresh and finishes the change.
-func personaRerunCommand(registry coremetadata.Registry, agent coremetadata.Agent, request agentPersonaRequest) string {
-	command := "projmux " + request.spelling + " " + personaAgentRef(registry, agent)
-	if request.socket.socket != "" {
-		command += " --socket " + personaCommandWord(request.socket.socket)
-	}
-	if request.socket.socketPath != "" {
-		command += " --socket-path " + personaCommandWord(request.socket.socketPath)
-	}
-	if request.yes {
-		command += " --yes"
-	}
-	if request.action == "attach" {
-		command += " " + request.persona
-	}
-	return command
+	return mutationruntime.PersonaRecoveryCommand(registry, agent)
 }
 
 // personaAgentRef names the Agent by uid inside its exact Window and Project.
