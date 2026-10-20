@@ -145,6 +145,28 @@ allows one new attempt only when every previous attempt is known-zero. Failed
 records and the original request remain available; recovery never deletes or
 resets them.
 
+## Store capacity
+
+For each target Agent, only the latest 64 Claude delivered records by
+`acceptedAt`, with a future deadline and a different source Agent, receive
+reply protection. Self-addressed messages, including question results, receive
+no reply protection. Older records remain available until the ordinary
+terminal retention or capacity rule reclaims them. Once reclaimed, an older
+message can no longer be answered with `--reply-to`; send a new message instead.
+Codex delivered-record protection is unchanged.
+
+A pinned original or attempt, a reply-protected member, or a non-terminal
+member keeps its original/attempt group available. When an unprotected terminal
+original is reclaimed, its stored attempts move to history with it; an attempt
+is never reclaimed while its original remains. The 256-record, 2 MiB store
+limits and 24-hour terminal retention remain unchanged.
+
+If admission still fails, the error begins with
+`agent message store is at capacity` and adds `target=<Agent UID> records=<count>`
+for the largest target among the records admission cannot reclaim. Ties use
+Agent UID order. The capacity error identity and reply refusal tokens are
+unchanged.
+
 Store capacity treats the two kinds of attempt differently. A first attempt,
 one whose original has no stored attempt yet, is a new acceptance rather than a
 recovery, so a full store reclaims room for it under the same rule a new
