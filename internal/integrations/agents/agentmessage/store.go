@@ -35,10 +35,11 @@ const (
 	storeFileName      = "messages.json"
 	// tempPrefix names the file a write fills before renaming it over the
 	// store file.
-	tempPrefix        = ".messages.tmp-"
-	maxRecords        = 256
-	maxStoreBytes     = 2 << 20
-	terminalRetention = 24 * time.Hour
+	tempPrefix                 = ".messages.tmp-"
+	maxRecords                 = 256
+	maxStoreBytes              = 2 << 20
+	terminalRetention          = 24 * time.Hour
+	maxReplyProtectedPerTarget = 64
 	// defaultLockWait bounds how long the broker view queues behind another
 	// holder. A holder keeps the lock for a couple of fsyncs, and message
 	// deadlines are minutes, so this absorbs contention without blocking.
@@ -218,7 +219,7 @@ func (s *Store) putAccepted(envelope coremessage.Envelope, adapter, hold string)
 		kept, reclaimed := pruneRecords(state.Records, now)
 		state.Records = kept
 		if len(state.Records) >= maxRecords {
-			return ErrCapacity
+			return capacityError(state.Records)
 		}
 		delivery, changed := coremessage.Reduce(coremessage.Delivery{}, envelope, coremessage.Event{
 			Kind: coremessage.EventAccept, MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef,
@@ -358,7 +359,7 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 			state.Records, reclaimed = pruneRecords(state.Records, now, originalRef)
 		}
 		if len(state.Records) >= maxRecords {
-			return ErrCapacity
+			return capacityError(state.Records)
 		}
 		delivery, changed := coremessage.Reduce(coremessage.Delivery{}, envelope, coremessage.Event{Kind: coremessage.EventAccept,
 			MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: envelope.AcceptedAt})
@@ -759,7 +760,7 @@ func (s *Store) writeLocked(state diskState, history []historyRecord) error {
 	}
 	data = append(data, '\n')
 	if len(data) > maxStoreBytes || len(state.Records) > maxRecords {
-		return ErrCapacity
+		return capacityError(state.Records)
 	}
 	dir := filepath.Dir(s.path)
 	// Every write holds the store lock, which the kernel releases when its
@@ -841,56 +842,161 @@ func pruneRecords(records []Record, now time.Time, pinned ...string) ([]Record, 
 			records[i].Delivery = next
 		}
 	}
-	// A live original and its attempts form one durable idempotency boundary.
-	// Evicting a delivered/unknown reply while retaining the original would
-	// make a later fresh ref look like the first attempt after store reload.
+	// An original and its attempts form one durable idempotency boundary.
+	// Reclaim the whole connected group or keep it: removing only an attempt
+	// could authorize a duplicate reply after reload. A non-terminal or pinned
+	// member, including an independently reply-protected attempt, keeps its group.
+	protected := replyProtectedRecords(records, now, pinned...)
+	groups := replyRecordGroups(records)
+	cutoff := now.Add(-terminalRetention)
+	removed := make(map[int]string)
+	remaining := len(records)
+	for _, group := range groups {
+		old := true
+		for _, i := range group {
+			record := records[i]
+			if protected[record.Envelope.MessageRef] || !record.Delivery.State.Terminal() ||
+				record.Delivery.TerminalAt.IsZero() || !record.Delivery.TerminalAt.Before(cutoff) {
+				old = false
+				break
+			}
+		}
+		if old {
+			for _, i := range group {
+				removed[i] = reclaimRetention
+			}
+			remaining -= len(group)
+		}
+	}
+	// At capacity, visit groups by their oldest terminal member's AcceptedAt.
+	// Records outside the per-target protection set still follow the existing
+	// oldest-terminal-first policy, and are not reclaimed until room is needed.
+	sort.SliceStable(groups, func(i, j int) bool {
+		oldest := func(group []int) time.Time {
+			at := records[group[0]].Envelope.AcceptedAt
+			for _, index := range group[1:] {
+				if records[index].Envelope.AcceptedAt.Before(at) {
+					at = records[index].Envelope.AcceptedAt
+				}
+			}
+			return at
+		}
+		return oldest(groups[i]).Before(oldest(groups[j]))
+	})
+	for _, group := range groups {
+		if remaining < maxRecords {
+			break
+		}
+		eligible := true
+		for _, i := range group {
+			if removed[i] != "" || protected[records[i].Envelope.MessageRef] || !records[i].Delivery.State.Terminal() {
+				eligible = false
+				break
+			}
+		}
+		if eligible {
+			for _, i := range group {
+				removed[i] = reclaimCapacity
+			}
+			remaining -= len(group)
+		}
+	}
+	var reclaimed []reclaimedRecord
+	out := records[:0]
+	for i, record := range records {
+		if reason := removed[i]; reason != "" {
+			reclaimed = append(reclaimed, reclaimedRecord{Record: record, Reason: reason})
+		} else {
+			out = append(out, record)
+		}
+	}
+	return out, reclaimed
+}
+
+// replyProtectedRecords bounds Claude delivered-message reply correlation by
+// target Agent, independent of route generation. Self messages have no peer
+// to answer. Equal acceptance times use the immutable ref for a stable choice.
+func replyProtectedRecords(records []Record, now time.Time, pinned ...string) map[string]bool {
 	protected := make(map[string]bool)
 	for _, ref := range pinned {
 		if ref != "" {
 			protected[ref] = true
 		}
 	}
+	var candidates []Record
 	for _, record := range records {
-		if record.Envelope.Target.Provider == "claude" && record.Envelope.Deadline.After(now) && record.Delivery.State == coremessage.StateDelivered {
-			protected[record.Envelope.MessageRef] = true
+		envelope := record.Envelope
+		if envelope.Target.Provider == "claude" && envelope.Source.AgentUID != envelope.Target.AgentUID &&
+			envelope.Deadline.After(now) && record.Delivery.State == coremessage.StateDelivered {
+			candidates = append(candidates, record)
 		}
 	}
-	for _, record := range records {
-		if protected[record.Envelope.ReplyTo] {
+	sort.Slice(candidates, func(i, j int) bool {
+		a, b := candidates[i].Envelope, candidates[j].Envelope
+		if a.AcceptedAt.Equal(b.AcceptedAt) {
+			return a.MessageRef < b.MessageRef
+		}
+		return a.AcceptedAt.After(b.AcceptedAt)
+	})
+	counts := make(map[string]int)
+	for _, record := range candidates {
+		target := record.Envelope.Target.AgentUID
+		if counts[target] < maxReplyProtectedPerTarget {
 			protected[record.Envelope.MessageRef] = true
+			counts[target]++
 		}
 	}
-	cutoff := now.Add(-terminalRetention)
-	var reclaimed []reclaimedRecord
-	// out aliases records, so each reclaimed record is copied out before the
-	// kept records are compacted over its slot.
-	out := records[:0]
-	for _, record := range records {
-		if !protected[record.Envelope.MessageRef] && record.Delivery.State.Terminal() && !record.Delivery.TerminalAt.IsZero() && record.Delivery.TerminalAt.Before(cutoff) {
-			reclaimed = append(reclaimed, reclaimedRecord{Record: record, Reason: reclaimRetention})
+	return protected
+}
+
+// replyRecordGroups joins only correlations whose original is still stored.
+// Walking both directions also preserves multi-step reply chains and pins on
+// attempts, regardless of the on-disk record order.
+func replyRecordGroups(records []Record) [][]int {
+	byRef := make(map[string]int, len(records))
+	for i, record := range records {
+		byRef[record.Envelope.MessageRef] = i
+	}
+	edges := make([][]int, len(records))
+	for i, record := range records {
+		if parent, ok := byRef[record.Envelope.ReplyTo]; ok {
+			edges[i] = append(edges[i], parent)
+			edges[parent] = append(edges[parent], i)
+		}
+	}
+	seen := make([]bool, len(records))
+	var groups [][]int
+	for i := range records {
+		if seen[i] {
 			continue
 		}
-		out = append(out, record)
-	}
-	if len(out) < maxRecords {
-		return out, reclaimed
-	}
-	// At capacity, reclaim the oldest terminal records first. Non-terminal
-	// records are never silently evicted.
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Envelope.AcceptedAt.Before(out[j].Envelope.AcceptedAt) })
-	for len(out) >= maxRecords {
-		index := -1
-		for i := range out {
-			if out[i].Delivery.State.Terminal() && !protected[out[i].Envelope.MessageRef] {
-				index = i
-				break
+		seen[i] = true
+		group := []int{i}
+		for next := 0; next < len(group); next++ {
+			for _, index := range edges[group[next]] {
+				if !seen[index] {
+					seen[index] = true
+					group = append(group, index)
+				}
 			}
 		}
-		if index < 0 {
-			break
-		}
-		reclaimed = append(reclaimed, reclaimedRecord{Record: out[index], Reason: reclaimCapacity})
-		out = append(out[:index], out[index+1:]...)
+		groups = append(groups, group)
 	}
-	return out, reclaimed
+	return groups
+}
+
+// The caller supplies the records admission cannot reclaim on this path.
+// Recovery deliberately does not prune, so all its existing receipts count.
+// The diagnostic contains Agent refs and counts only, never message payloads.
+func capacityError(records []Record) error {
+	counts := make(map[string]int)
+	target, count := "", 0
+	for _, record := range records {
+		uid := record.Envelope.Target.AgentUID
+		counts[uid]++
+		if counts[uid] > count || (counts[uid] == count && uid < target) {
+			target, count = uid, counts[uid]
+		}
+	}
+	return fmt.Errorf("%w: target=%s records=%d", ErrCapacity, target, count)
 }
