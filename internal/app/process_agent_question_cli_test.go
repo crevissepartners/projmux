@@ -439,11 +439,47 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{seed.ID, asked.ID, declined.ID, "Owner seed?", "answered", "expired", "declined"} {
+	for _, text := range []string{seed.ID, asked.ID, declined.ID, "answered", "expired", "declined"} {
 		if !bytes.Contains(wire, []byte(text)) {
 			t.Fatalf("provider fixture did not receive result %q", text)
 		}
 	}
+	// Decode both JSON string layers before checking the seed's compact answer.
+	// The peer envelope remains a string inside the provider's message frame.
+	seedAnswered := false
+	for line := range bytes.SplitSeq(bytes.TrimSpace(wire), []byte("\n")) {
+		var frame struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(line, &frame); err != nil {
+			t.Fatal(err)
+		}
+		var envelope struct {
+			Payload string `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(frame.Message.Content), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			QuestionID string            `json:"questionId"`
+			Answers    map[string]string `json:"answers"`
+		}
+		if err := json.Unmarshal([]byte(envelope.Payload), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.QuestionID == seed.ID {
+			if len(result.Answers) != 1 || result.Answers["1"] != "yes" {
+				t.Fatalf("provider fixture received wrong compact seed answer: %+v", result)
+			}
+			seedAnswered = true
+		}
+	}
+	if !seedAnswered {
+		t.Fatal("provider fixture did not receive compact seed answer")
+	}
+
 	for _, r := range records {
 		if r.Pending() {
 			t.Fatal("unsettled fixture outbox", r)
