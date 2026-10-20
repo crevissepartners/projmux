@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,9 +18,13 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	message "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/agentmessages"
 )
 
 // Initial create payload is the only input trigger. All provider processes,
@@ -439,11 +445,53 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{seed.ID, asked.ID, declined.ID, "Owner seed?", "answered", "expired", "declined"} {
+	for _, text := range []string{seed.ID, asked.ID, declined.ID, "answered", "expired", "declined"} {
 		if !bytes.Contains(wire, []byte(text)) {
 			t.Fatalf("provider fixture did not receive result %q", text)
 		}
 	}
+	// Decode both JSON string layers before checking the seed's compact answer.
+	// The peer envelope remains a string inside the provider's message frame.
+	seedAnswers := 0
+	for line := range bytes.SplitSeq(bytes.TrimSpace(wire), []byte("\n")) {
+		var frame struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(line, &frame); err != nil {
+			t.Fatal(err)
+		}
+		var envelope struct {
+			Payload string `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(frame.Message.Content), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(envelope.Payload, "{") {
+			if envelope.Payload != "peer while question open" {
+				t.Fatalf("provider fixture received unexpected plain peer payload: %q", envelope.Payload)
+			}
+			continue
+		}
+		var result struct {
+			QuestionID string            `json:"questionId"`
+			Answers    map[string]string `json:"answers"`
+		}
+		if err := json.Unmarshal([]byte(envelope.Payload), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.QuestionID == seed.ID {
+			if len(result.Answers) != 1 || result.Answers["1"] != "yes" {
+				t.Fatalf("provider fixture received wrong compact seed answer: %+v", result)
+			}
+			seedAnswers++
+		}
+	}
+	if seedAnswers != 1 {
+		t.Fatalf("provider fixture received %d compact seed answers, want exactly one", seedAnswers)
+	}
+
 	for _, r := range records {
 		if r.Pending() {
 			t.Fatal("unsettled fixture outbox", r)
@@ -926,5 +974,369 @@ func asyncQuestionWaitOutboxRetirement(t *testing.T, ctx context.Context, st *ag
 			return deadline()
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+// This subprocess freezes the pre-compact owner's strict ref check. It is a
+// protocol-behavior fixture, not an actual previously released binary.
+func TestCLIAsyncQuestionOwnerUpgrade(t *testing.T) {
+	if stateDir := os.Getenv("PMX_TEST_QUESTION_OLD_OWNER"); stateDir != "" {
+		st := agentquestion.NewStore(stateDir).CLIAsyncStore()
+		release, owned, err := st.LockOwner()
+		if err != nil || !owned {
+			t.Fatal("legacy primary admission", owned, err)
+		}
+		defer release()
+		ready := os.NewFile(3, "legacy-ready")
+		if _, err = ready.Write([]byte("1")); err != nil {
+			t.Fatal(err)
+		}
+		_ = ready.Close()
+		var barrier [1]byte
+		if _, err = io.ReadFull(os.Stdin, barrier[:]); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(st.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var disk struct {
+			Records []agentquestion.CLIAsyncRecord `json:"records"`
+		}
+		if err = json.Unmarshal(raw, &disk); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range disk.Records {
+			for i, p := range r.Parts {
+				ref := fmt.Sprintf("message-%s-%d", r.ID, i+1)
+				if p.Attempt != 0 {
+					ref += fmt.Sprintf("-retry-%d", p.Attempt)
+				}
+				if p.MessageRef != ref {
+					t.Fatalf("frozen legacy reader: %v", agentquestion.ErrMalformedStore)
+				}
+			}
+		}
+		t.Fatal("frozen legacy reader unexpectedly accepted compact result")
+	}
+	f := newProcessCreateCLI(t)
+	providerPath := filepath.Join(f.root, "provider.py")
+	provider, err := os.ReadFile(providerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider = bytes.Replace(provider, []byte("emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()"), []byte("emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();emit({'type':'result','subtype':'success','session_id':'process-session'});continue"), 1)
+	if err = os.WriteFile(providerPath, provider, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	agent := exec.CommandContext(ctx, f.binary, f.args("--", "initial task")...)
+	input, err := agent.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := agent.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agentErr bytes.Buffer
+	agent.Stderr = &agentErr
+	if err = agent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = input.Close(); _ = agent.Process.Kill(); _ = agent.Wait() }()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatal(err, agentErr.String())
+	}
+	ref := strings.Fields(line)[1]
+	uid := strings.TrimPrefix(ref, "uid:")
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := agentquestion.NewStore(paths.StateDir).CLIAsyncStore()
+	// Existing unknown/accepted parts are independent of the new question.
+	raw, err := os.ReadFile("../integrations/agents/agentquestion/testdata/cli_async_legacy_results.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frozen []struct {
+		Record agentquestion.CLIAsyncRecord
+		Bodies []string
+	}
+	if err = json.Unmarshal(raw, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	uncertain := frozen[0].Record
+	uncertain.AgentUID = uid
+	uncertain.CreatedAt = now.Add(-time.Minute)
+	uncertain.UpdatedAt = now
+	uncertain.Deadline = now.Add(time.Hour)
+	uncertain.ResultDeadline = now.Add(24 * time.Hour)
+	for i := range uncertain.Parts {
+		var b bytes.Buffer
+		if err = json.Compact(&b, uncertain.Parts[i].Receipt); err != nil {
+			t.Fatal(err)
+		}
+		uncertain.Parts[i].Receipt = append(json.RawMessage(nil), b.Bytes()...)
+	}
+	accepted := uncertain
+	accepted.ID = "question-0000000000000003"
+	accepted.Outcome = "pending"
+	accepted.Parts = []agentquestion.CLIAsyncPart{{MessageRef: "message-" + accepted.ID + "-1", State: "accepted"}}
+	bodies, err := accepted.Messages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var route message.Route
+	var lastRouteReason string
+	defer func() {
+		if t.Failed() {
+			t.Logf("upgrade route preparation: %s", lastRouteReason)
+		}
+	}()
+	processCLIUntil(t, ctx, func() bool {
+		reg, err := f.store.Load()
+		if err != nil {
+			return false
+		}
+		// The public metadata resolver requires a tmux runtime. This process
+		// fixture needs the same live registration proof as process peer sends.
+		resolved, reason := resolveClaudePeerRoute(intmetadata.PathFor(paths.StateDir), reg, uid)
+		lastRouteReason = reason
+		if reason != "" {
+			return false
+		}
+		route = publicMessageRoute(resolved)
+		return route.Incarnation != ""
+	})
+	envelope := message.Envelope{Version: message.Version, MessageRef: accepted.Parts[0].MessageRef, ConversationRef: "conversation-upgrade-accepted", Source: route, Target: route, Authority: message.PeerAuthority(), Payload: bodies[0], AcceptedAt: time.Now().UTC(), Deadline: accepted.ResultDeadline}
+	messages := messagestore.NewStore(paths.StateDir)
+	canonical, _, err := messages.PutAccepted(envelope, "claude-coordination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted.Parts[0].Receipt = questionResultReceipt(agentmessages.ReceiptFor(canonical), "")
+	disk, _ := json.Marshal(struct {
+		Version int                            `json:"version"`
+		Records []agentquestion.CLIAsyncRecord `json:"records"`
+	}{1, []agentquestion.CLIAsyncRecord{uncertain, accepted}})
+	if err = os.MkdirAll(filepath.Dir(st.Path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(st.Path(), disk, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		rs, _ := st.List("")
+		for _, r := range rs {
+			_ = st.TargetDeleted(r.ID)
+		}
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		release, owned, err := asyncQuestionWaitOutboxRetirement(t, cleanup, st, f.binary, nil, nil)
+		if err != nil || !owned {
+			t.Errorf("upgrade fixture owner retirement: %v %v", owned, err)
+		} else {
+			release()
+		}
+	})
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := exec.CommandContext(ctx, self, "-test.run=^TestCLIAsyncQuestionOwnerUpgrade$", "-test.v")
+	old.Env = append(os.Environ(), "PMX_TEST_QUESTION_OLD_OWNER="+paths.StateDir)
+	barrier, err := old.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readyR.Close()
+	old.ExtraFiles = []*os.File{readyW}
+	var oldOut bytes.Buffer
+	old.Stdout = &oldOut
+	old.Stderr = &oldOut
+	if err = old.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = readyW.Close()
+	oldWaited := false
+	defer func() {
+		_ = barrier.Close()
+		if !oldWaited {
+			_ = old.Process.Kill()
+			_ = old.Wait()
+		}
+	}()
+	var ready [1]byte
+	if _, err = io.ReadFull(readyR, ready[:]); err != nil || ready[0] != '1' {
+		t.Fatal("legacy owner readiness", err)
+	}
+	seed, err := st.Create(uid, json.RawMessage(`[{"question":"Upgrade?","options":[{"label":"yes"}]}]`), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry, err := st.Create(uid, json.RawMessage(`[{"question":"Expire?","options":[{"label":"yes"}]}]`), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.CommandContext(ctx, f.binary, "agent", "question", "answer", ref, seed.ID, "--index", "1=1").CombinedOutput(); err != nil {
+		t.Fatal("new Resolve/recovery", err, string(out))
+	}
+	// Additional recovery admissions must not leave additional waiting children.
+	for range 3 {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := exec.CommandContext(ctx, f.binary, "internal", "agent-question-outbox")
+		child.Env = questionOutboxEnvironment(os.Environ())
+		child.ExtraFiles = []*os.File{w}
+		if err = child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close()
+		_, readErr := io.ReadFull(r, ready[:])
+		_ = r.Close()
+		waitErr := child.Wait()
+		if readErr != nil || waitErr != nil || ready[0] != '1' {
+			t.Fatal("duplicate admission", readErr, waitErr)
+		}
+	}
+	candidates, err := asyncQuestionOutboxIdentities(ctx, f.binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 {
+		t.Errorf("compatible handoff candidate count=%d, want exactly one", len(candidates))
+	}
+	release, owned, err := st.LockOwner()
+	if owned {
+		release()
+	}
+	if err != nil || owned {
+		t.Fatal("legacy primary released before barrier", owned, err)
+	}
+	if _, err = barrier.Write([]byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	_ = barrier.Close()
+	err = old.Wait()
+	oldWaited = true
+	if err == nil || !strings.Contains(oldOut.String(), "frozen legacy reader: "+agentquestion.ErrMalformedStore.Error()) {
+		t.Fatal("old owner did not retire on strict read", err, oldOut.String())
+	}
+	// No CLI/recovery mutation after this barrier: only the admitted successor
+	// can deliver the answer and expire the separate waiting card.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		answer, _, e1 := st.Get(seed.ID)
+		expired, _, e2 := st.Get(expiry.ID)
+		if e1 != nil || e2 != nil {
+			t.Fatal(e1, e2)
+		}
+		if answer.Outcome == "delivered" && expired.State == agentquestion.StateExpired && expired.Outcome == "delivered" {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("handoff did not continue delivery and expiry without recovery")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, _, err := st.Get(uncertain.ID)
+	if err != nil || got.Outcome != "unknown" || got.Parts[0].MessageRef != uncertain.Parts[0].MessageRef || !bytes.Equal(got.Parts[0].Receipt, uncertain.Parts[0].Receipt) {
+		t.Fatal("upgrade changed unknown evidence", err)
+	}
+	got, _, err = st.Get(accepted.ID)
+	if err != nil || got.Parts[0].State != "accepted" || got.Parts[0].MessageRef != accepted.Parts[0].MessageRef || !bytes.Equal(got.Parts[0].Receipt, accepted.Parts[0].Receipt) {
+		t.Fatal("upgrade changed accepted evidence", err)
+	}
+	wire, err := os.ReadFile(filepath.Join(f.root, "messages.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(wire, []byte(seed.ID)) || !bytes.Contains(wire, []byte(expiry.ID)) || bytes.Contains(wire, []byte(uncertain.ID)) || bytes.Contains(wire, []byte(accepted.ID)) {
+		t.Fatal("upgrade lost new result or replayed old evidence")
+	}
+	if _, _, err = messages.Apply(envelope.MessageRef, message.Event{Kind: message.EventDeliver, MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: "fixture-delivered", ObservedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCLIAsyncQuestionIdleReleaseSerializesMutation(t *testing.T) {
+	st := agentquestion.NewStore(t.TempDir()).CLIAsyncStore()
+	primary, owned, err := st.LockOwner()
+	if err != nil || !owned {
+		t.Fatal(owned, err)
+	}
+	admission, owned, err := st.LockCompatibleOwner()
+	if err != nil || !owned {
+		primary()
+		t.Fatal(owned, err)
+	}
+	defer primary()
+	defer admission()
+	primaryReleased := make(chan struct{})
+	finishRelease := make(chan struct{})
+	writerStarted := make(chan struct{})
+	writerDone := make(chan error, 1)
+	unlock := questionOutboxOwnerRelease(func() { primary(); close(primaryReleased); <-finishRelease }, admission)
+	idleDone := make(chan error, 1)
+	go func() {
+		idle, err := st.ReleaseIfIdle(unlock)
+		if err == nil && !idle {
+			err = errors.New("empty owner was not idle")
+		}
+		idleDone <- err
+	}()
+	<-primaryReleased
+	// This reproduces the gap between the two releases while the actual helper
+	// still owns the writer lock. A new mutation must not return in that gap.
+	go func() {
+		close(writerStarted)
+		_, err := st.Create("agent-a", json.RawMessage(`[{"question":"Race?","options":[{"label":"yes"}]}]`), time.Hour)
+		writerDone <- err
+	}()
+	<-writerStarted
+	release, owned, err := st.LockCompatibleOwner()
+	if owned {
+		release()
+	}
+	if err != nil || owned {
+		close(finishRelease)
+		t.Fatal("admission released before primary callback completed", owned, err)
+	}
+	select {
+	case err := <-writerDone:
+		close(finishRelease)
+		t.Fatal("mutation escaped idle writer critical section", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(finishRelease)
+	if err = <-idleDone; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	nextAdmission, owned, err := st.LockCompatibleOwner()
+	if err != nil || !owned {
+		t.Fatal("new work has no admission successor", owned, err)
+	}
+	defer nextAdmission()
+	nextPrimary, owned, err := st.LockOwner()
+	if err != nil || !owned {
+		t.Fatal("new work has no primary successor", owned, err)
+	}
+	defer nextPrimary()
+	if idle, err := st.ReleaseIfIdle(func() { t.Error("new pending question was abandoned") }); err != nil || idle {
+		t.Fatal("new mutation lost", idle, err)
 	}
 }

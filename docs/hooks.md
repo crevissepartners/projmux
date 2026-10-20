@@ -1559,16 +1559,43 @@ window settings. Existing synchronous AskUserQuestion behavior is unchanged.
 Answers and non-answers are durable peer messages whose source and target are
 both the asking Agent UID. They carry peer coordination authority; an answer is
 not operator approval. The JSON payload has `kind: "projmux-question-result"`,
-`questionId`, `questions`, `status` (`answered` or `no-answer`), `answers`, and,
-for a non-answer, `reason` (`expired` or `declined`). No recommended option is
-automatically selected. Results larger than 2KiB are JSON frames with the same
-kind and question ID plus one-based `part`, `total`, and `data`. Concatenate the
-decoded `data` strings in part order to recover the complete result JSON. UTF-8
-characters are never split. Existing 4KiB message and 8KiB provider-frame limits
-are unchanged.
+`questionId`, `status` (`answered` or `no-answer`), and either `answers` or,
+for a non-answer, `reason` (`expired` or `declined`). New results are always one
+message of at most 2048 bytes. `answers` keys are one-based question positions
+(`"1"`, `"2"`, ...), in the original question order. Questions and options are
+not repeated. No recommended option is automatically selected.
+
+If the encoded result including all answers would exceed 2048 bytes, the entire
+`answers` map is omitted and `answersFrom: "agent question list"` is included.
+No partial or truncated answer is sent. The receiving Agent should run
+`projmux agent question list uid:<asking-agent-uid> -o json`, find `questionId`,
+and read the original questions and full answers there. List output retains the
+original question-text answer keys; only the peer result uses positional keys.
+For example, a small answer arrives as:
+
+```json
+{"kind":"projmux-question-result","questionId":"question-0123456789abcdef","status":"answered","answers":{"1":"yes"}}
+```
+
+This intentionally replaces the previous result format without a parallel
+emission period: new results omit `questions` and never emit `part`, `total`, or
+`data`. Existing persisted results/outboxes retain their original bodies,
+message refs, attempts, receipts and uncertain-write handling, including
+single-body results with question-text keys and multipart frames. For those
+legacy frames only, concatenate decoded `data` strings in one-based `part`
+order to recover the old result JSON. The compact message-ref namespace keeps
+these formats distinct without changing the stored schema. Existing 4KiB
+message and 8KiB provider-frame limits are unchanged.
 
 The independent expiry/outbox process survives the creating command and provider
-stop. It elects one owner for the private `agent-questions/.cli-async/` namespace.
+stop. It elects one dispatcher for the private `agent-questions/.cli-async/`
+namespace. Startup readiness means a compact-capable owner is active or one
+compatible candidate retains responsibility for taking over an older owner.
+Concurrent starts share that admission; they do not accumulate waiting owners.
+The candidate keeps running after readiness and begins dispatch only after the
+previous owner releases the primary lock. No previous process is killed. Both
+locks are released together under the question writer lock on idle exit, so a
+concurrent question mutation cannot mistake a departing owner for its successor.
 An answer waits there for the same UID's current route after resume/relaunch,
 for up to 24 hours after result creation. A deleted target ends with
 `target-deleted`; a replacement Agent with the same name receives nothing.

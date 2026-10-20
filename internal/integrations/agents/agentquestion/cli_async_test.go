@@ -3,6 +3,7 @@ package agentquestion
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,38 +143,28 @@ func TestCLIAsyncUTF8PartsLosslessAndBudget(t *testing.T) {
 		t.Fatal(e)
 	}
 	bodies, e := r.Messages()
-	if e != nil || len(bodies) < 2 {
-		t.Fatalf("parts %d %v", len(bodies), e)
+	if e != nil || len(bodies) != 1 || len(bodies[0]) > 2048 || !utf8.ValidString(bodies[0]) {
+		t.Fatalf("compact result count=%d err=%v", len(bodies), e)
 	}
-	var joined strings.Builder
-	for i, b := range bodies {
-		if len(b) > 2048 || !utf8.ValidString(b) {
-			t.Fatalf("part %d bytes %d", i, len(b))
-		}
-		var p struct {
-			Part, Total int
-			Data        string
-			QuestionID  string `json:"questionId"`
-		}
-		if e = json.Unmarshal([]byte(b), &p); e != nil || p.Part != i+1 || p.Total != len(bodies) || p.QuestionID != r.ID {
-			t.Fatalf("part %+v %v", p, e)
-		}
-		joined.WriteString(p.Data)
-	}
-	var result struct {
-		Questions  json.RawMessage
-		Answers    map[string]string
-		QuestionID string `json:"questionId"`
-	}
-	if e = json.Unmarshal([]byte(joined.String()), &result); e != nil {
+	var result map[string]json.RawMessage
+	if e = json.Unmarshal([]byte(bodies[0]), &result); e != nil {
 		t.Fatal(e)
 	}
-	if result.QuestionID != r.ID || result.Answers[qs[0].Question] != r.Answers[qs[0].Question] {
-		t.Fatal("answer or id lost")
+	for _, field := range []string{"questions", "answers", "part", "total", "data"} {
+		if _, exists := result[field]; exists {
+			t.Fatalf("oversized result includes %s", field)
+		}
 	}
-	got, _ := ParseQuestions(result.Questions)
-	if got[0].Question != qs[0].Question {
-		t.Fatal("question lost")
+	if string(result["questionId"]) != `"`+r.ID+`"` || string(result["status"]) != `"answered"` || string(result["answersFrom"]) != `"agent question list"` {
+		t.Fatalf("missing lookup marker or identity: %s", bodies[0])
+	}
+	listed, e := st.List(r.AgentUID)
+	if e != nil || len(listed) != 1 || listed[0].Answers[qs[0].Question] != strings.Repeat("답변", 500) {
+		t.Fatalf("list lost original answer: %v", e)
+	}
+	listedQuestions, e := ParseQuestions(listed[0].Questions)
+	if e != nil || len(listedQuestions) != 1 || listedQuestions[0].Question != qs[0].Question || listedQuestions[0].Options[0].Label != "yes" {
+		t.Fatal("list lost original question", e)
 	}
 }
 
@@ -365,4 +356,186 @@ func TestCLIAsyncSecretMetadataFailsClosed(t *testing.T) {
 			t.Fatal("unsupported secret record owns delivery work")
 		}
 	})
+}
+
+func TestCLIAsyncCompactResultQuestionOrderAndBudget(t *testing.T) {
+	for _, reason := range []string{"", "declined", "expired"} {
+		t.Run(reason, func(t *testing.T) {
+			q1 := strings.Repeat("한글<&", 600)
+			raw, _ := json.Marshal([]Question{{Question: q1, Options: []Option{{Label: "yes"}}}, {Question: "Second?", Options: []Option{{Label: "no"}}}})
+			st := NewStore(t.TempDir()).CLIAsyncStore()
+			r, err := st.Create("agent-a", raw, time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			answers := map[string]string{q1: "yes", "Second?": "no"}
+			if reason != "" {
+				answers = nil
+			}
+			r, err = st.Resolve(r.ID, r.AgentUID, answers, reason)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodies, err := r.Messages()
+			if err != nil || len(bodies) != 1 || len(r.Parts) != 1 || len(bodies[0]) > 2048 {
+				t.Fatalf("result %v %v", bodies, err)
+			}
+			var result struct {
+				QuestionID string `json:"questionId"`
+				Status     string
+				Answers    map[string]string
+				Reason     string
+			}
+			if err = json.Unmarshal([]byte(bodies[0]), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.QuestionID != r.ID || result.Reason != reason {
+				t.Fatalf("identity/reason: %+v", result)
+			}
+			if reason == "" && (result.Status != "answered" || len(result.Answers) != 2 || result.Answers["1"] != "yes" || result.Answers["2"] != "no") {
+				t.Fatalf("ordered answers: %+v", result)
+			}
+			if reason != "" && (result.Status != "no-answer" || len(result.Answers) != 0) {
+				t.Fatalf("non-answer: %+v", result)
+			}
+			var fields map[string]json.RawMessage
+			if err = json.Unmarshal([]byte(bodies[0]), &fields); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"questions", "part", "total", "data", "answersFrom"} {
+				if _, exists := fields[field]; exists {
+					t.Fatalf("unexpected %s", field)
+				}
+			}
+			reloaded, found, err := st.Get(r.ID)
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			again, err := reloaded.Messages()
+			if err != nil || len(again) != 1 || again[0] != bodies[0] {
+				t.Fatal("reload changed compact body", again, err)
+			}
+		})
+	}
+}
+
+// Frozen with the pre-compact writer, including single-body and multipart
+// outboxes, retry refs, receipts and an uncertain write. Reading must not migrate
+// either the stored record or the bytes compared against the message store.
+func TestCLIAsyncLegacyPartsReadAndRetryUnchanged(t *testing.T) {
+	raw, err := os.ReadFile("testdata/cli_async_legacy_results.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Record CLIAsyncRecord
+		Bodies []string
+	}
+	if err = json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.Record.ID, func(t *testing.T) {
+			now := fixture.Record.CreatedAt
+			st := NewStore(t.TempDir()).WithClock(func() time.Time { return now }).CLIAsyncStore()
+			if err := st.update(func(d *cliAsyncDisk, _ time.Time) error { d.Records = []CLIAsyncRecord{fixture.Record}; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(st.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, found, err := st.Get(fixture.Record.ID)
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			bodies, err := got.Messages()
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, _ := json.Marshal(got)
+			want, _ := json.Marshal(fixture.Record)
+			if string(actual) != string(want) {
+				t.Fatal("reading changed legacy delivery evidence")
+			}
+			if len(bodies) != len(fixture.Bodies) {
+				t.Fatalf("legacy part count %d want %d", len(bodies), len(fixture.Bodies))
+			}
+			for i, body := range bodies {
+				if body != fixture.Bodies[i] {
+					t.Fatalf("legacy body %d changed", i)
+				}
+			}
+			after, err := os.ReadFile(st.Path())
+			if err != nil || string(before) != string(after) {
+				t.Fatal("read rewrote disk", err)
+			}
+			// A proved non-write can advance another part's attempt; the unknown
+			// first part and all other evidence must remain exactly as recorded.
+			index := len(got.Parts) - 1
+			if len(got.Parts) == 1 {
+				index = -1
+			}
+			if err = st.MutateResult(got.ID, func(r *CLIAsyncRecord) error {
+				if index >= 0 {
+					r.Parts[index].Attempt++
+					r.Parts[index].MessageRef = r.PartRef(index, r.Parts[index].Attempt)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			retried, found, err := st.Get(got.ID)
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			retryBodies, err := retried.Messages()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, body := range retryBodies {
+				if body != fixture.Bodies[i] {
+					t.Fatalf("retry changed body %d", i)
+				}
+			}
+			if index >= 0 {
+				got.Parts[index].Attempt++
+				got.Parts[index].MessageRef = "message-" + got.ID + "-" + fmt.Sprint(index+1) + "-retry-3"
+			}
+			actual, _ = json.Marshal(retried)
+			want, _ = json.Marshal(got)
+			if string(actual) != string(want) {
+				t.Fatal("retry changed other delivery evidence")
+			}
+		})
+	}
+}
+
+func TestCLIAsyncCompactEncodedByteBoundary(t *testing.T) {
+	r := CLIAsyncRecord{Record: Record{ID: "question-0000000000000001", Questions: json.RawMessage(cliQuestions), Answers: map[string]string{"Which?": "x"}}}
+	bodies, err := r.Messages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	overhead := len(bodies[0]) - 1
+	for _, size := range []int{2048, 2049} {
+		r.Answers["Which?"] = strings.Repeat("x", size-overhead)
+		bodies, err = r.Messages()
+		if err != nil || len(bodies) != 1 {
+			t.Fatal(len(bodies), err)
+		}
+		if size == 2048 {
+			if len(bodies[0]) != 2048 || !strings.Contains(bodies[0], `"answers":{"1":"`+r.Answers["Which?"]+`"}`) {
+				t.Fatal("exact budget answer was omitted")
+			}
+		} else if len(bodies[0]) > 2048 || strings.Contains(bodies[0], `"answers":`) || !strings.Contains(bodies[0], `"answersFrom":"agent question list"`) {
+			t.Fatal("over-budget answer was not replaced entirely")
+		}
+	}
+	// JSON escaping, rather than source string length, determines the budget.
+	r.Answers["Which?"] = strings.Repeat("<&", 200)
+	bodies, err = r.Messages()
+	if err != nil || len(bodies) != 1 || strings.Contains(bodies[0], `"answers":`) || !strings.Contains(bodies[0], `"answersFrom":"agent question list"`) {
+		t.Fatal("escaped answer escaped byte budget", err)
+	}
 }

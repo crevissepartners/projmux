@@ -108,21 +108,57 @@ func runQuestionOutbox(args []string) error {
 		return e
 	}
 	cli := st.CLIAsyncStore()
-	release, owned, e := cli.LockOwner()
+	admission, admitted, e := cli.LockCompatibleOwner()
 	if e != nil {
 		return e
 	}
-	if !owned {
+	if !admitted {
+		// A compatible owner already retains active or takeover responsibility.
 		_, e = ready.Write([]byte("1"))
 		return e
 	}
-	var once sync.Once
-	unlock := func() { once.Do(release) }
+	releaseAdmission := sync.OnceFunc(admission)
+	defer releaseAdmission()
+	readySent := false
+	notify := func() error {
+		if readySent {
+			return nil
+		}
+		if _, err := ready.Write([]byte("1")); err != nil {
+			return err
+		}
+		readySent = true
+		return ready.Close()
+	}
+	var release func()
+	for {
+		var owned bool
+		release, owned, e = cli.LockOwner()
+		if e != nil {
+			return e
+		}
+		if owned {
+			break
+		}
+		// Only one compatible candidate can wait behind an older/unknown
+		// primary holder. Readiness no longer discards takeover responsibility.
+		if e = notify(); e != nil {
+			return e
+		}
+		idle, err := cli.ReleaseIfIdle(releaseAdmission)
+		if errors.Is(err, agentquestion.ErrMalformedStore) {
+			return err
+		}
+		if err == nil && idle {
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	unlock := questionOutboxOwnerRelease(release, releaseAdmission)
 	defer unlock()
-	if _, e = ready.Write([]byte("1")); e != nil {
+	if e = notify(); e != nil {
 		return e
 	}
-	_ = ready.Close()
 	c := newAgentCommand()
 	for {
 		if e = c.dispatchQuestionOutbox(context.Background(), cli); e != nil {
@@ -147,6 +183,15 @@ func runQuestionOutbox(args []string) error {
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+// ReleaseIfIdle invokes this inside the question writer critical section.
+// Release primary first, then admission: a successor must take admission before
+// primary, and no new question mutation can complete while this callback runs.
+// Thus a writer cannot observe a departing admission holder after the primary
+// was released and mistakenly leave its new pending work without a successor.
+func questionOutboxOwnerRelease(primary, admission func()) func() {
+	return sync.OnceFunc(func() { primary(); admission() })
 }
 
 // dispatchQuestionOutbox uses current UID routes. Accepted refs are observed,

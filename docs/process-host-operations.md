@@ -203,6 +203,15 @@ anything changes, with a stable token as the error prefix:
 | `process-host-unavailable` | A turn, interrupt, or answer when the owner cannot be reached |
 | `process-host-unsupported-action` | A request the owner does not implement, typically because an older projmux started it; relaunch the Agent to run a current owner |
 
+A CLI asynchronous question result arrives as one peer message, identified by
+`kind: "projmux-question-result"` and `questionId`. Its `answers` keys are question
+positions starting at `"1"`. Match them to the original question order from
+`projmux agent question list <agent-ref> -o json`. If `answersFrom` is
+`"agent question list"`, all answers were omitted from the message because they
+would exceed its 2048-byte budget; read the complete answers from that list.
+Questions and options are never repeated in new result messages. See the
+[question result format and legacy outbox compatibility](hooks.md#nonblocking-cli-questions).
+
 ## Reading its state
 
 `projmux describe agent <agent-ref>` and `projmux describe pane` add these rows
