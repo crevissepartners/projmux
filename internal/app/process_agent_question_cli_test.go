@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1266,5 +1267,76 @@ func TestCLIAsyncQuestionOwnerUpgrade(t *testing.T) {
 	}
 	if _, _, err = messages.Apply(envelope.MessageRef, message.Event{Kind: message.EventDeliver, MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, Reason: "fixture-delivered", ObservedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCLIAsyncQuestionIdleReleaseSerializesMutation(t *testing.T) {
+	st := agentquestion.NewStore(t.TempDir()).CLIAsyncStore()
+	primary, owned, err := st.LockOwner()
+	if err != nil || !owned {
+		t.Fatal(owned, err)
+	}
+	admission, owned, err := st.LockCompatibleOwner()
+	if err != nil || !owned {
+		primary()
+		t.Fatal(owned, err)
+	}
+	defer primary()
+	defer admission()
+	primaryReleased := make(chan struct{})
+	finishRelease := make(chan struct{})
+	writerStarted := make(chan struct{})
+	writerDone := make(chan error, 1)
+	unlock := questionOutboxOwnerRelease(func() { primary(); close(primaryReleased); <-finishRelease }, admission)
+	idleDone := make(chan error, 1)
+	go func() {
+		idle, err := st.ReleaseIfIdle(unlock)
+		if err == nil && !idle {
+			err = errors.New("empty owner was not idle")
+		}
+		idleDone <- err
+	}()
+	<-primaryReleased
+	// This reproduces the gap between the two releases while the actual helper
+	// still owns the writer lock. A new mutation must not return in that gap.
+	go func() {
+		close(writerStarted)
+		_, err := st.Create("agent-a", json.RawMessage(`[{"question":"Race?","options":[{"label":"yes"}]}]`), time.Hour)
+		writerDone <- err
+	}()
+	<-writerStarted
+	release, owned, err := st.LockCompatibleOwner()
+	if owned {
+		release()
+	}
+	if err != nil || owned {
+		close(finishRelease)
+		t.Fatal("admission released before primary callback completed", owned, err)
+	}
+	select {
+	case err := <-writerDone:
+		close(finishRelease)
+		t.Fatal("mutation escaped idle writer critical section", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(finishRelease)
+	if err = <-idleDone; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	nextAdmission, owned, err := st.LockCompatibleOwner()
+	if err != nil || !owned {
+		t.Fatal("new work has no admission successor", owned, err)
+	}
+	defer nextAdmission()
+	nextPrimary, owned, err := st.LockOwner()
+	if err != nil || !owned {
+		t.Fatal("new work has no primary successor", owned, err)
+	}
+	defer nextPrimary()
+	if idle, err := st.ReleaseIfIdle(func() { t.Error("new pending question was abandoned") }); err != nil || idle {
+		t.Fatal("new mutation lost", idle, err)
 	}
 }

@@ -1588,7 +1588,14 @@ these formats distinct without changing the stored schema. Existing 4KiB
 message and 8KiB provider-frame limits are unchanged.
 
 The independent expiry/outbox process survives the creating command and provider
-stop. It elects one owner for the private `agent-questions/.cli-async/` namespace.
+stop. It elects one dispatcher for the private `agent-questions/.cli-async/`
+namespace. Startup readiness means a compact-capable owner is active or one
+compatible candidate retains responsibility for taking over an older owner.
+Concurrent starts share that admission; they do not accumulate waiting owners.
+The candidate keeps running after readiness and begins dispatch only after the
+previous owner releases the primary lock. No previous process is killed. Both
+locks are released together under the question writer lock on idle exit, so a
+concurrent question mutation cannot mistake a departing owner for its successor.
 An answer waits there for the same UID's current route after resume/relaunch,
 for up to 24 hours after result creation. A deleted target ends with
 `target-deleted`; a replacement Agent with the same name receives nothing.

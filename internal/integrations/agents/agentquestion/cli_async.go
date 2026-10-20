@@ -473,10 +473,21 @@ func (r CLIAsyncRecord) legacyMessages() ([]string, error) {
 // LockOwner elects one expiry/outbox process per namespace. The kernel releases
 // ownership on exit; the lock inode is retained across all generations.
 func (s *CLIAsyncStore) LockOwner() (func(), bool, error) {
+	return s.lockOwnerFile(".owner")
+}
+
+// LockCompatibleOwner admits one compact-capable owner or takeover candidate.
+// Older owners do not take this lock; the primary .owner lock still exclusively
+// controls dispatch. Keep both lock inodes across generations.
+func (s *CLIAsyncStore) LockCompatibleOwner() (func(), bool, error) {
+	return s.lockOwnerFile(".owner-compact-v1")
+}
+
+func (s *CLIAsyncStore) lockOwnerFile(suffix string) (func(), bool, error) {
 	if e := localstate.EnsurePrivateDir(filepath.Dir(s.Path())); e != nil {
 		return nil, false, e
 	}
-	f, e := os.OpenFile(s.Path()+".owner", os.O_CREATE|os.O_RDWR, 0600) // #nosec G304 -- private owner lock.
+	f, e := os.OpenFile(s.Path()+suffix, os.O_CREATE|os.O_RDWR, 0600) // #nosec G304 -- private owner lock.
 	if e != nil {
 		return nil, false, e
 	}
