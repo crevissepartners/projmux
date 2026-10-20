@@ -431,7 +431,7 @@ func TestCLIAsyncTmuxClaudePeerResultFixture(t *testing.T) {
 		t.Fatal(got, e, len(peer.envelopes))
 	}
 	env := peer.envelopes[0]
-	if env.Source.AgentUID != r.AgentUID || env.Target.AgentUID != r.AgentUID || env.Operator() || !strings.Contains(env.Payload, `"Pick?":"yes"`) {
+	if env.Source.AgentUID != r.AgentUID || env.Target.AgentUID != r.AgentUID || env.Operator() || !strings.Contains(env.Payload, `"1":"yes"`) || strings.Contains(env.Payload, `"questions":`) {
 		t.Fatal("Claude result changed peer authority or answer", env)
 	}
 }
@@ -503,6 +503,18 @@ func TestCLIAsyncLegacyOutboxRetriesOriginalBodies(t *testing.T) {
 			cmd.messageStore = messagestore.NewStore(t.TempDir())
 			cmd.messageRoute = &traceMessageRouteResolver{route: mustMessageRoute(t, resources.registry, "agt-alpha-codex")}
 			r := fixture.Record
+			// Derive expected bytes only from the frozen fixture, before the
+			// first write. json.Marshal compacts embedded RawMessage values.
+			for i := range r.Parts {
+				if len(r.Parts[i].Receipt) == 0 {
+					continue
+				}
+				var compact bytes.Buffer
+				if err := json.Compact(&compact, r.Parts[i].Receipt); err != nil {
+					t.Fatal(err)
+				}
+				r.Parts[i].Receipt = append(json.RawMessage(nil), compact.Bytes()...)
+			}
 			r.AgentUID = "agt-alpha-codex"
 			now := r.CreatedAt.Add(2 * time.Minute)
 			cmd.now = func() time.Time { return now }
