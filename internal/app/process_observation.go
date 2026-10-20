@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 	"sort"
@@ -180,7 +181,7 @@ func (r remoteProcessObserver) observeHostView(binding processhost.Binding, acti
 // an exact process Pane's current activation, or empty when it is unknown.
 type processHostRevisionLookup func(coremetadata.Registry, coremetadata.Pane) string
 
-// defaultProcessHostRevisionLookup asks the live owner within the shared
+// defaultProcessHostRevisionLookup asks the live owner within its independent
 // observation read budget. An unreachable or protocol-0 owner is unknown.
 func defaultProcessHostRevisionLookup() processHostRevisionLookup {
 	return func(registry coremetadata.Registry, pane coremetadata.Pane) string {
@@ -197,7 +198,7 @@ func defaultProcessHostRevisionLookup() processHostRevisionLookup {
 }
 
 // observeProcessHostOwner reads the observation of the owner hosting an exact
-// process Pane's current activation within the shared read budget.
+// process Pane's current activation within an independent read budget.
 func observeProcessHostOwner(registry coremetadata.Registry, registryPath string, pane coremetadata.Pane) (processHostObservation, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), processObservationReadLimit)
 	defer cancel()
@@ -270,10 +271,13 @@ func retiredProcessObservation(reg coremetadata.Registry, binding processhost.Bi
 	return processhost.Snapshot{Binding: binding, Provider: agent.Spec.Provider, State: "exited", Exit: exit}, nil
 }
 
-// A read gives all probes the same short budget; probes run independently
-// with bounded concurrency, so an unresponsive host cannot consume five seconds
-// or stop another host from being observed. Failures remain unknown.
+// Each owner gets this budget after acquiring a probe slot. Queueing behind
+// another owner does not consume it. Failures remain unknown.
 const processObservationReadLimit = 250 * time.Millisecond
+
+// Bound the whole inventory separately, including queueing. Large inventories
+// can still exhaust this cap; their unobserved declarations remain unknown.
+const processObservationTotalLimit = 2 * time.Second
 
 // Declarations are collected before probing. One unavailable host cannot erase
 // another Pane or cause a tmux lookup, and the entire observation is bounded.
@@ -282,8 +286,9 @@ func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registr
 	if err != nil {
 		return resourcegraph.ProcessInventory{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, processObservationReadLimit)
+	ctx, cancel := context.WithTimeout(ctx, processObservationTotalLimit)
 	defer cancel()
+	totalDeadline, _ := ctx.Deadline()
 	targets := []processhost.InventoryTarget{}
 	for _, pane := range registry.Panes {
 		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
@@ -301,26 +306,66 @@ func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registr
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Binding.Pane < targets[j].Binding.Pane })
 	results := make([]resourcegraph.ProcessInventory, len(targets))
+	ownerTimeouts := make([]bool, len(targets))
+	totalLimited := make([]bool, len(targets))
 	var group sync.WaitGroup
 	slots := make(chan struct{}, 8)
 	for i, target := range targets {
+		pane, ok := registry.Pane(target.Binding.Pane)
+		if ok && pane.Status.Activation.IsZero() {
+			// Exact retired Wait/Phase/Binding evidence needs no owner or
+			// network budget. Keep the same validator, even after cancellation.
+			target.Observer = remoteProcessObserver{ctx: context.Background(), registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: target.Binding}
+			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{target})
+			continue
+		}
 		group.Go(func() {
+			// Start unknown so every declaration survives an exhausted cap.
+			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{{Binding: target.Binding}})
 			select {
 			case slots <- struct{}{}:
 				defer func() { <-slots }()
 			case <-ctx.Done():
-				key := resourcegraph.ProcessKey{Host: target.Binding.Host, Pane: target.Binding.Pane, Generation: target.Binding.Generation}
-				results[i] = resourcegraph.ProcessInventory{Declared: []resourcegraph.ProcessKey{key}, Observed: []resourcegraph.ProcessObservation{{Key: key, Status: resourcegraph.StatusUnknown}}}
+				totalLimited[i] = true
 				return
 			}
+			if ctx.Err() != nil {
+				totalLimited[i] = true
+				return
+			}
+			ownerCtx, cancelOwner := context.WithTimeout(ctx, processObservationReadLimit)
+			defer cancelOwner()
+			target.Observer = remoteProcessObserver{ctx: ownerCtx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: target.Binding}
 			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{target})
+			// The socket deadline can fire just before context's timer runs.
+			// Compare the deadline as well so those timeouts leave a signal.
+			deadline, _ := ownerCtx.Deadline()
+			now := time.Now()
+			if results[i].Observed[0].Status == resourcegraph.StatusUnknown && (ownerCtx.Err() != nil || !now.Before(deadline)) {
+				if ctx.Err() != nil || !now.Before(totalDeadline) {
+					totalLimited[i] = true
+				} else {
+					ownerTimeouts[i] = true
+				}
+			}
 		})
 	}
 	group.Wait()
 	var inventory resourcegraph.ProcessInventory
-	for _, result := range results {
+	var ownerTimeoutCount, totalLimitedCount int
+	for i, result := range results {
 		inventory.Declared = append(inventory.Declared, result.Declared...)
 		inventory.Observed = append(inventory.Observed, result.Observed...)
+		if ownerTimeouts[i] {
+			ownerTimeoutCount++
+		}
+		if totalLimited[i] {
+			totalLimitedCount++
+		}
+	}
+	if ownerTimeoutCount+totalLimitedCount > 0 {
+		// Internal diagnostic only: no provider content or control authority.
+		fmt.Fprintf(os.Stderr, "process observation deadline: owner_timeouts=%d total_limited=%d\n", ownerTimeoutCount, totalLimitedCount)
 	}
 	return inventory
 }

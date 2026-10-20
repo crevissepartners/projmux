@@ -259,6 +259,20 @@ be reached and no exit was recorded, for example after the owner
 was killed with `SIGKILL`, the status is `unknown`: projmux does not guess that
 the provider stopped.
 
+Registry inventory reads probe at most eight owners concurrently. Each owner
+gets up to 250 ms after its probe starts; time waiting for a slot does not use
+that allowance. A separate two-second cap (or an earlier caller deadline)
+bounds the whole set of owner reads, including queueing. Owners left unread
+or timed out remain `unknown`, with their declarations retained. A diagnostic
+on stderr reports `process observation deadline: owner_timeouts=N total_limited=N`
+when deadlines leave owners unknown. These counts carry no provider content.
+
+A retired Pane with no activation needs no owner IPC or probe slot. Its exact
+recorded supervisor Wait, matching Agent/Pane receipts, binding, and offline
+Agent phase still determine `offline`; missing or mismatched evidence remains
+`unknown`. Reads and execution admission use the same evidence rules. The
+longer inventory cap does not grant control from stale or missing evidence.
+
 ## Installing while owners run
 
 An install never stops or replaces a running owner. `make install` lists the
