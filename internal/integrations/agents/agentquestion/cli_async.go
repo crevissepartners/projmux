@@ -360,8 +360,8 @@ func (s *CLIAsyncStore) MutateResult(id string, fn func(*CLIAsyncRecord) error) 
 	})
 }
 
-// Messages preserves the complete result JSON. Large JSON is reconstructed by
-// concatenating UTF-8 data fields in part order; each encoded body is <=2KiB.
+// Messages returns one compact result of at most 2KiB for new outboxes.
+// Persisted legacy outboxes retain their original framing and complete bodies.
 func (r CLIAsyncRecord) Messages() ([]string, error) {
 	if _, err := ParseCLIAsyncQuestions(r.Questions); err != nil {
 		return nil, err
@@ -372,6 +372,56 @@ func (r CLIAsyncRecord) Messages() ([]string, error) {
 // messages validates framing for existing records, including unsupported old
 // secret metadata. Such records can be listed/redacted but are never dispatched.
 func (r CLIAsyncRecord) messages() ([]string, error) {
+	if r.legacyResult() {
+		return r.legacyMessages()
+	}
+	status := "answered"
+	if r.ResultReason != "" {
+		status = "no-answer"
+	}
+	var answers map[string]string
+	if len(r.Answers) != 0 {
+		qs, err := ParseQuestions(r.Questions)
+		if err != nil {
+			return nil, err
+		}
+		answers = make(map[string]string, len(qs))
+		for i, q := range qs {
+			answers[fmt.Sprint(i+1)] = r.Answers[q.Question]
+		}
+	}
+	payload := struct {
+		Kind        string            `json:"kind"`
+		QuestionID  string            `json:"questionId"`
+		Status      string            `json:"status"`
+		Answers     map[string]string `json:"answers,omitempty"`
+		Reason      string            `json:"reason,omitempty"`
+		AnswersFrom string            `json:"answersFrom,omitempty"`
+	}{Kind: "projmux-question-result", QuestionID: r.ID, Status: status, Answers: answers, Reason: r.ResultReason}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 2048 {
+		payload.Answers = nil
+		payload.AnswersFrom = "agent question list"
+		raw, err = json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return []string{string(raw)}, nil
+}
+
+// The ref namespace identifies the format without changing the disk schema.
+// Every pre-compact result already has Parts, including single-body results and
+// retry refs. Never regenerate those bodies with the new answer-key convention.
+func (r CLIAsyncRecord) legacyResult() bool {
+	return len(r.Parts) != 0 && strings.HasPrefix(r.Parts[0].MessageRef, fmt.Sprintf("message-%s-1", r.ID))
+}
+
+// legacyMessages is only used to read and retry already persisted outboxes.
+func (r CLIAsyncRecord) legacyMessages() ([]string, error) {
 	status := "answered"
 	if r.ResultReason != "" {
 		status = "no-answer"
@@ -504,7 +554,11 @@ func (s *CLIAsyncStore) writeLocked(data []byte) error {
 // PartRef is stable across crashes for one bounded dispatch attempt. A new
 // attempt is allowed only after a receipt proves the previous write failed.
 func (r CLIAsyncRecord) PartRef(index int, attempt uint32) string {
-	ref := fmt.Sprintf("message-%s-%d", r.ID, index+1)
+	format := "message-%s-compact-%d"
+	if r.legacyResult() {
+		format = "message-%s-%d"
+	}
+	ref := fmt.Sprintf(format, r.ID, index+1)
 	if attempt != 0 {
 		ref += fmt.Sprintf("-retry-%d", attempt)
 	}

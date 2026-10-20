@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -109,7 +110,7 @@ func TestCLIAsyncOutboxOfflineResumeSameUIDPeerDelivery(t *testing.T) {
 	if e != nil || !found {
 		t.Fatal(e)
 	}
-	if receipt.Envelope.Target.ActivationGeneration != "generation-question-resumed" || receipt.Envelope.Source.AgentUID != r.AgentUID || receipt.Envelope.Target.AgentUID != r.AgentUID || receipt.Envelope.Operator() || !strings.Contains(receipt.Envelope.Payload, r.ID) || !strings.Contains(receipt.Envelope.Payload, `"Which?":"yes"`) {
+	if receipt.Envelope.Target.ActivationGeneration != "generation-question-resumed" || receipt.Envelope.Source.AgentUID != r.AgentUID || receipt.Envelope.Target.AgentUID != r.AgentUID || receipt.Envelope.Operator() || !strings.Contains(receipt.Envelope.Payload, r.ID) || !strings.Contains(receipt.Envelope.Payload, `"1":"yes"`) {
 		t.Fatalf("peer result %+v", receipt)
 	}
 }
@@ -479,5 +480,90 @@ func TestCLIAsyncExistingSecretOutboxDoesNotDispatch(t *testing.T) {
 	}
 	if err != nil || !idle {
 		t.Fatal("secret keeps outbox owner alive", idle, err)
+	}
+}
+
+func TestCLIAsyncLegacyOutboxRetriesOriginalBodies(t *testing.T) {
+	raw, err := os.ReadFile("../integrations/agents/agentquestion/testdata/cli_async_legacy_results.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []struct {
+		Record agentquestion.CLIAsyncRecord
+		Bodies []string
+	}
+	if err = json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.Record.ID, func(t *testing.T) {
+			cmd, resources, _ := exactControlCLICommand(t)
+			cmd.loadRegistry = func() (metadata.Registry, error) { return resources.registry.Clone(), nil }
+			cmd.messagePaths = agentMessagePaths{loadRegistry: cmd.loadRegistry}
+			cmd.messageStore = messagestore.NewStore(t.TempDir())
+			cmd.messageRoute = &traceMessageRouteResolver{route: mustMessageRoute(t, resources.registry, "agt-alpha-codex")}
+			r := fixture.Record
+			r.AgentUID = "agt-alpha-codex"
+			now := r.CreatedAt.Add(2 * time.Minute)
+			cmd.now = func() time.Time { return now }
+			cmd.messageNow = cmd.now
+			writes := 0
+			cmd.controlCall = func(context.Context, string, metadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+				writes++
+				if writes == 1 {
+					return agentControlResponse{Code: "lifecycle-busy"}, nil
+				}
+				return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
+			}
+			st := agentquestion.NewStore(t.TempDir()).WithClock(cmd.now).CLIAsyncStore()
+			disk, _ := json.Marshal(struct {
+				Version int                            `json:"version"`
+				Records []agentquestion.CLIAsyncRecord `json:"records"`
+			}{1, []agentquestion.CLIAsyncRecord{r}})
+			if err = os.MkdirAll(filepath.Dir(st.Path()), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(st.Path(), disk, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = cmd.dispatchQuestionOutbox(context.Background(), st); err != nil {
+				t.Fatal(err)
+			}
+			first, found, err := st.Get(r.ID)
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			if first.Parts[0].State != "unknown" || !bytes.Equal(first.Parts[0].Receipt, r.Parts[0].Receipt) || first.Parts[0].MessageRef != r.Parts[0].MessageRef {
+				t.Fatal("unknown evidence changed")
+			}
+			if len(r.Parts) == 1 {
+				if writes != 0 {
+					t.Fatal("unknown part was resent")
+				}
+				return
+			}
+			if first.Parts[1].Attempt != 3 || first.Parts[1].MessageRef != "message-"+r.ID+"-2-retry-3" || len(first.Parts[1].Receipt) == 0 {
+				t.Fatal("legacy retry lost ref or receipt", first.Parts[1])
+			}
+			now = now.Add(31 * time.Second)
+			for range 2 {
+				if err = cmd.dispatchQuestionOutbox(context.Background(), st); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, found, err := st.Get(r.ID)
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			if writes != len(r.Parts) || got.Outcome != "unknown" || got.Parts[0].State != "unknown" || !bytes.Equal(got.Parts[0].Receipt, r.Parts[0].Receipt) {
+				t.Fatal("legacy dispatch duplicated or lost unknown evidence", writes, got.Outcome)
+			}
+			for i := 1; i < len(got.Parts); i++ {
+				delivered, found, err := cmd.messageStore.Get(got.Parts[i].MessageRef)
+				if err != nil || !found || delivered.Envelope.Payload != fixture.Bodies[i] || got.Parts[i].State != "delivered" {
+					t.Fatalf("legacy body/ref %d changed: found=%v err=%v", i, found, err)
+				}
+			}
+		})
 	}
 }
