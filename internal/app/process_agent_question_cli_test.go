@@ -446,7 +446,7 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	}
 	// Decode both JSON string layers before checking the seed's compact answer.
 	// The peer envelope remains a string inside the provider's message frame.
-	seedAnswered := false
+	seedAnswers := 0
 	for line := range bytes.SplitSeq(bytes.TrimSpace(wire), []byte("\n")) {
 		var frame struct {
 			Message struct {
@@ -462,6 +462,12 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 		if err := json.Unmarshal([]byte(frame.Message.Content), &envelope); err != nil {
 			t.Fatal(err)
 		}
+		if !strings.HasPrefix(envelope.Payload, "{") {
+			if envelope.Payload != "peer while question open" {
+				t.Fatalf("provider fixture received unexpected plain peer payload: %q", envelope.Payload)
+			}
+			continue
+		}
 		var result struct {
 			QuestionID string            `json:"questionId"`
 			Answers    map[string]string `json:"answers"`
@@ -473,11 +479,11 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 			if len(result.Answers) != 1 || result.Answers["1"] != "yes" {
 				t.Fatalf("provider fixture received wrong compact seed answer: %+v", result)
 			}
-			seedAnswered = true
+			seedAnswers++
 		}
 	}
-	if !seedAnswered {
-		t.Fatal("provider fixture did not receive compact seed answer")
+	if seedAnswers != 1 {
+		t.Fatalf("provider fixture received %d compact seed answers, want exactly one", seedAnswers)
 	}
 
 	for _, r := range records {
