@@ -21,7 +21,7 @@ type FailureDiagnostic struct {
 
 func safeDiagnosticMethod(method string) string {
 	switch method {
-	case methodInitialize, methodInitialized, methodModelList, methodReviewStart,
+	case "thread/inject_items", methodInitialize, methodInitialized, methodModelList, methodReviewStart,
 		methodThreadList, methodThreadLoadedList, methodThreadRead, methodThreadTurnsList, methodThreadStart,
 		methodThreadResume, methodThreadSettingsUpdate, methodTurnStart, methodTurnSteer, methodTurnInterrupt,
 		methodRemoteControlStatusRead:

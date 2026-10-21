@@ -1948,34 +1948,68 @@ or badly named files refuse with the stable `persona-not-found`,
 tmux, or snapshot state.
 
 A Codex Agent can be given named instructions directly or through a Profile
-when created with a prompt
+on creation
 (`create agent --provider codex --instructions <name> -- <prompt>`, or
 `create codex --instructions <name> -- <prompt>`). This lane opens a thread of
-its own. Codex accepts the instructions when that thread starts: create sends
-the snapshot content as the thread's `developerInstructions`, and the shared app server records it once as the
-thread's `developer` message. The content goes over that connection and
-nowhere else -- never onto a command line, where `ps` would publish it -- and
-the create records the same `projmux.io/persona` and `projmux.io/persona-digest`
-annotations Claude records. From then on the thread carries the instructions: `agent resume`,
-Continue/topology replay, and a resume picked from the Codex catalog re-send
-nothing and disclose nothing, because nothing was lost.
-A conversation opened from the resume picker inherits the two stored
-instruction keys from Agents that already record it, so the new Agent reports
-the instructions its thread is running; it inherits no other launch value. A
-Codex Agent's instructions cannot be changed afterwards: the instructions are fixed when the
-thread starts. `agent relaunch` refuses a change of them with
-`codex-instructions-immutable` before writing a snapshot or Registry state or
-stopping a Pane. Codex resume replays the original developer message, even
-when a new instruction is supplied to its CLI or app server. Start a new Agent
-with a prompt to use different instructions.
+its own. The assembled common guidance, user additions, named role instructions,
+Project instructions and link rules travel privately as `baseInstructions`, never
+as prompt text on a process command line. The Agent records its named instruction
+recipe and the digest of the last confirmed managed composition. See the lifecycle
+contract below.
 
-Every other `--instructions` create refuses with
-`persona-provider-unsupported` and zero Registry, tmux, and snapshot writes:
-a Codex create with no prompt or with `--interactive-only` (its plain lane
-cannot carry private developer instructions without exposing their body in
-the process arguments), `--dialogue-reply-only`, and any other provider. The
-refusal tells the operator to create a new Agent with `-- <prompt>` and omit
-`--interactive-only`.
+### Managed Codex base instructions
+
+Native Codex process and tmux creation sends the current managed composition as
+its entire base, excluding Codex's built-in base. Resume and relaunch rebuild that
+composition while preserving the same Agent, thread and conversation history.
+Running turns do not reload guidance. Claude's instruction delivery is unchanged.
+
+If any managed component cannot be read or composed, the whole last confirmed
+managed snapshot is used and `settingsApplication` marks the instruction components
+`not-applied` with reason `managed-base-not-refreshed`. A first application with no
+confirmed managed snapshot refuses explicitly; it never falls back to Codex defaults.
+Preparing or writing a snapshot does not confirm provider delivery. The annotations
+`projmux.io/codex-managed-base-digest`, `projmux.io/codex-managed-base-mode` and
+`projmux.io/codex-managed-base-status` record the confirmed managed recipe, creation
+mode, and delivery limitation. They contain no instruction text.
+
+Codex 0.163.0 applies a resume base override when loading an unloaded thread. It
+ignores that override when the thread is already loaded. Dedicated process resumes
+use a fresh app server. A shared tmux app server can retain a thread through another
+subscriber; even a preceding loaded-list read cannot exclude a concurrent load.
+Shared-thread base application remains unconfirmed and is disclosed as not refreshed.
+Projmux does not stop the daemon or evict other subscribers to force an update.
+
+Threads created by older Projmux versions have historical developer instructions.
+They remain in the history: resume's `developerInstructions` and config overrides
+do not replace them. A changed managed recipe on such a legacy thread appends one
+superseding current managed developer context through `thread/inject_items`, without
+starting a user turn or deleting history. A new managed-base Agent does not receive
+this compatibility append on every restart. This proves context delivery, not the
+model's resolution of conflicting historical instructions.
+
+If transmission is refused, fallback resumes the same thread with its confirmed
+previous managed base only after this connection's subscription is removed and the
+thread is witnessed unloaded. Unknown transport outcomes, failed fallback, or another
+subscriber preventing retirement remain explicit failures; no fresh thread is used.
+The previous confirmed recipe is retained rather than recording the attempted one.
+
+A successful app-server response witnesses the requested delivery. It does not prove
+model behavior. Rollout `session_meta.base_instructions` can retain the original base
+even after a resume override; that record is not proof of the next request's base.
+
+The plain tmux lane, including promptless and `--interactive-only` creation,
+keeps its existing control and fanout behavior. It passes only the content-addressed
+snapshot path through Codex's `model_instructions_file` configuration. The snapshot
+is validated before launch; its private body never reaches argv. Common guidance
+off still allows role and Project instructions, and an entirely empty managed
+composition explicitly replaces the provider base with an empty composition.
+The plain preparation precedes UID allocation, so it omits the native lane's
+Agent identity paragraph. `base-file-requested` distinguishes this transport
+from a confirmed app-server base response: it records mode `base` to avoid legacy
+context injection, but does not promote the file to the confirmed fallback digest.
+A later failure before any confirmed native application explicitly refuses.
+Reply-only activation and other providers retain their existing instruction guards.
 
 An existing Claude Agent's named instructions are changed with
 `projmux agent relaunch <agent-ref> --instructions <name>` and removed with
@@ -2157,9 +2191,7 @@ adds its own: a profile that does not exist or that `profile list` marks
 invalid (the store's reason, such as `profile-not-found`) or that names another
 provider (`profile-provider-mismatch`); instructions that cannot be read
 (`persona-not-found`), named or brought by a profile or a reset; on a Codex
-Agent, any change of its instructions -- `--instructions`, a profile with other
-instructions, or a reset of them (`codex-instructions-immutable`: its thread
-keeps the developer message it started with) -- and a profile switch that
+Agent, a profile switch that
 would leave the thread on the old profile's sandbox or approval, because the
 new profile sets none where the old one set one or cannot be read
 (`relaunch-codex-permissions-kept`: a Codex resume can set a sandbox or an
@@ -2450,9 +2482,9 @@ model, effort, and instructions:
   included.
 - The instructions are passed as a snapshot of their current content, with
   the system prompt snapshot off, when their name or content changed, as
-  described above. A Codex thread keeps the developer instructions it started
-  with: its resume passes the rest and discloses the instructions it did not
-  apply (`codex-instructions-immutable`), recording nothing for them.
+  described above. Codex rebuilds the managed base at this boundary, with the
+  fallback and historical developer compatibility limits described in
+  [managed Codex instructions](#managed-codex-base-instructions).
 
 The launch records each value and source it ran with in its own transaction.
 An item without a source key predates sources; its layer is decided from its

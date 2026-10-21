@@ -408,10 +408,20 @@ new configuration only with exact supervisor Wait and the same conversation;
 ambiguous evidence requires inspection. Prompt-bearing relaunch retains its
 existing failure recovery. Claude host transfer still requires a prompt.
 
-Codex cannot replace the instructions of an existing thread. A request that
-changes those instructions is refused before Stop, as is a profile switch
-that would silently keep the previous sandbox or approval policy. The new
-writer uses `thread/resume` after the old dedicated app server exits; an
+Codex rebuilds the managed base at create, resume and relaunch. A dedicated
+process app server cold-resumes the same thread with `baseInstructions`; Codex's
+built-in base is excluded. A profile switch that would silently keep the previous
+sandbox or approval policy is still refused before Stop. An unreadable managed
+component falls back to the last confirmed complete managed snapshot, with a
+not-refreshed application result; a first application without a confirmed snapshot
+fails explicitly. A refused update can recover the previous base only after this
+connection unsubscribes and the same thread is witnessed unloaded. An uncertain
+transport outcome or a thread still held by another subscriber remains an explicit
+failure, with the confirmed snapshot retained. No replacement conversation is created.
+Historical developer instructions are preserved; a changed legacy recipe adds a
+current managed developer context to the existing history. Model conflict resolution
+is unverified. See [managed Codex instructions](cli-guide.md#managed-codex-base-instructions).
+The new writer uses `thread/resume` after the old dedicated app server exits; an
 active-writer (`-32600`) refusal does not create a replacement conversation.
 
 ## Waiting to resume on a peer message

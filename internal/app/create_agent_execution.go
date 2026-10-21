@@ -49,10 +49,8 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 		var title string
 		var argv []string
 		var err error
-		// Only Claude is given its persona on the command line. A Codex
-		// persona rides thread/start instead, so it must not reach the Claude
-		// options launcher -- which refuses every other provider outright --
-		// and the plain launch below is the one the native create replaces.
+		// Native Codex carries managed content in its base request. Plain
+		// Codex passes a private snapshot path through its dedicated launcher.
 		personaFile := flags.personaLaunch.snapshot.Path
 		if provider != aiModeClaude {
 			personaFile = ""
@@ -65,6 +63,12 @@ func (c *createCommand) planAgentPaneLaunchWithResume(provider string, workspace
 		}
 		// The agent guidance goes in front of both, in the same one file.
 		if provider == aiModeClaude && flags.agentGuidance.systemPromptFile != "" {
+			personaFile = flags.agentGuidance.systemPromptFile
+		}
+		if provider == aiModeCodex && !nativeCodexFreshCreateRequired(provider, flags) && !flags.dialogueReplyOnly {
+			if flags.agentGuidance.unavailable != nil {
+				return "", nil, agentResumeLaunch{}, flags.agentGuidance.unavailable
+			}
 			personaFile = flags.agentGuidance.systemPromptFile
 		}
 		fresh := flags.sharedAgentSettingsFlags()
@@ -202,6 +206,13 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				},
 				Annotations: func(base map[string]string) map[string]string {
 					return flags.agentGuidance.withCreateAnnotation(flags.projectLinks.withCreateAnnotation(withCreateSettingSources(flags, flags.profileLaunch.withAnnotations(withModelAnnotation(flags.model, withEffortAnnotation(flags.effort, flags.personaLaunch.withAnnotations(withDialogueReplyOnlyAnnotation(flags.dialogueReplyOnly, base))))))))
+				},
+				ManagedBase: func(uid string) (*mutationruntime.ManagedCodexBase, error) {
+					paths, err := c.processCreatePaths()
+					if err != nil {
+						return nil, err
+					}
+					return mutationruntime.PrepareManagedCodexBase(paths, uid, flags.agentGuidance.codexDeveloperInstructions(uid, flags.projectLinks.developerInstructions(flags.personaLaunch.content)), nil, errors.Join(flags.agentGuidance.unavailable, flags.projectLinks.unavailable, flags.projectLinks.project.unavailable))
 				},
 				DeveloperInstructions: func(uid string) string {
 					return flags.agentGuidance.codexDeveloperInstructions(uid, flags.projectLinks.developerInstructions(flags.personaLaunch.content))

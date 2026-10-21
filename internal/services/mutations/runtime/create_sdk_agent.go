@@ -102,9 +102,12 @@ func (p *SDKAgentPlanner) Prepare(_ coremetadata.Registry, project coremetadata.
 				base = p.Persona.Snapshot.Path
 			}
 			guidance = service.PlanAgentGuidance(provider, nil).WithCreateFile(base)
-		} else if NativeCodexFreshCreateRequired(provider, p.Settings.InteractiveOnly, p.Settings.Payload, "", "") {
+		} else if provider == "codex" {
 			links = service.PlanCodexProjectLinks(project)
 			guidance = service.PlanCodexAgentGuidance()
+			if !NativeCodexFreshCreateRequired(provider, p.Settings.InteractiveOnly, p.Settings.Payload, "", "") {
+				guidance = guidance.WithCodexBaseFile(p.Paths, links, p.Persona.Content)
+			}
 		}
 	}
 	f := p.Settings
@@ -121,6 +124,12 @@ func (p *SDKAgentPlanner) Prepare(_ coremetadata.Registry, project coremetadata.
 		}
 		if provider != "claude" {
 			personaFile = ""
+		}
+		if provider == "codex" && guidance.CodexBaseFile {
+			personaFile = guidance.SystemPromptFile
+		}
+		if provider == "codex" && guidance.Unavailable != nil {
+			return "", nil, guidance.Unavailable
 		}
 		return PlanFreshAgent(p.Launch, provider, workspace, f, personaFile)
 	}
@@ -143,6 +152,8 @@ func (p *SDKAgentPlanner) Prepare(_ coremetadata.Registry, project coremetadata.
 		base = f.ProfileLaunch.WithAnnotations(base)
 		base = WithCreateSettingSources(f, base)
 		return guidance.WithCreateAnnotation(links.WithCreateAnnotation(base))
+	}, ManagedBase: func(uid string) (*ManagedCodexBase, error) {
+		return PrepareManagedCodexBase(p.Paths, uid, guidance.CodexDeveloperInstructions(uid, links.DeveloperInstructions(p.Persona.Content)), nil, errors.Join(guidance.Unavailable, links.Unavailable, links.Project.Unavailable))
 	}, DeveloperInstructions: func(uid string) string {
 		return guidance.CodexDeveloperInstructions(uid, links.DeveloperInstructions(p.Persona.Content))
 	}, Policy: f.ProfileLaunch.CodexPolicy, Model: f.Model, Effort: f.Effort, Notices: func(name string) []string {

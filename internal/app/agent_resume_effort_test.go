@@ -646,7 +646,7 @@ func TestNativeCodexAgentResumePassesTheOverridesAtBothPlanningSites(t *testing.
 		t.Fatalf("split-window calls = %v, want one launch with the overrides", calls)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if want := plusSources(modelEffortAnnotations("gpt-6", "high"), modelEffortResume...); !maps.Equal(agent.Metadata.Annotations, want) {
+	if want := unconfirmedCodexBaseAnnotations(plusSources(modelEffortAnnotations("gpt-6", "high"), modelEffortResume...)); !maps.Equal(agent.Metadata.Annotations, want) {
 		t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
 	}
 }

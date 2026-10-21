@@ -130,7 +130,17 @@ func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest, socke
 			if r.comparesPromptParts && !plan.DialogueReplyOnly {
 				q = q.WithPromptParts(planAgentGuidanceWith(c.rebind.launcher, r.provider, r.target.Metadata.Annotations).shared(), planProjectLinksWith(c.rebind.launcher, r.provider, plan.Project, r.target.Metadata.Annotations).shared())
 			}
+			if r.provider == aiModeCodex && r.comparesPromptParts {
+				service := mutationruntime.GuidanceService{Paths: c.rebind.create.processCreatePaths}
+				q = q.WithPromptParts(service.PlanCodexAgentGuidance(), service.PlanCodexProjectLinks(plan.Project))
+			}
+			q.ManagedCodexBase = r.provider == aiModeCodex
 			v, e := c.rebind.resolveSettings(r.provider, r.target.Metadata.Annotations, localAgentSettingsRequest(q))
+			if r.provider == aiModeCodex && e == nil {
+				service := mutationruntime.GuidanceService{Paths: c.rebind.create.processCreatePaths}
+				v.managedBase, e = service.PlanManagedCodexBase(plan.Project, r.target.Metadata.UID, r.target.Metadata.Annotations, v.shared())
+			}
+
 			var se *relaunchProfileError
 			if errors.As(e, &se) {
 				e = &mutationruntime.RelaunchProfileError{Name: se.name, Reason: se.reason, Detail: se.detail}

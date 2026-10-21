@@ -56,6 +56,7 @@ type fakeNativeCreate struct {
 }
 
 type fakeNativeResume struct {
+	managed   *codexappserver.ManagedInstructions
 	route     codexNativeEndpointRoute
 	workspace coremetadata.AgentWorkspace
 	threadID  string
@@ -69,7 +70,7 @@ type orderedNativeThreadClient struct {
 	closeErr error
 }
 
-func (c *orderedNativeThreadClient) StartThreadWithModel(context.Context, string, []string, string, codexappserver.ThreadPolicy, string) (codexappserver.ThreadBinding, error) {
+func (c *orderedNativeThreadClient) StartThreadWithSettings(context.Context, string, []string, string, codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
 	*c.events = append(*c.events, "thread/start")
 	return codexappserver.ThreadBinding{ThreadID: "thread-production-order"}, nil
 }
@@ -146,7 +147,7 @@ func (f *fakeNativeThreadController) Create(_ context.Context, route codexNative
 
 func (f *fakeNativeThreadController) Resume(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string, settings codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
 	f.resumes = append(f.resumes, fakeNativeResume{
-		route: route, workspace: workspace, threadID: threadID, policy: settings.Policy, model: settings.Model, effort: settings.Effort,
+		route: route, workspace: workspace, threadID: threadID, managed: settings.ManagedInstructions, policy: settings.Policy, model: settings.Model, effort: settings.Effort,
 	})
 	return f.resumeBinding, f.resumeErr
 }
@@ -967,7 +968,7 @@ func TestNativeCodexResumeReusesStoredThreadAndCreatesZeroThreads(t *testing.T) 
 	agentCommand.rebind.create.codexNative = native
 
 	stdout, stderr, err := runRoute(t, agentCommand, "resume", "uid:agt-beta-codex")
-	if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
+	if err != nil || stdout != "agent/codex resumed\n" || withoutManagedCodexResumeNotice(t, stderr) != "" {
 		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	if len(native.creates) != 0 || len(native.resumes) != 1 || native.resumes[0].threadID != resumeFixtureConversation {

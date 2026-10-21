@@ -107,7 +107,7 @@ func TestCreateAgentSDKCLIParity(t *testing.T) {
 	for _, tc := range []struct {
 		name, provider       string
 		interactive, profile bool
-	}{{"claude", "claude", false, false}, {"codex-empty", "codex", false, false}, {"codex-interactive", "codex", true, false}, {"antigravity", "antigravity", false, false}, {"claude-profile", "claude", false, true}, {"claude-creator", "claude", false, false}, {"claude-workspace", "claude", false, false}} {
+	}{{"claude", "claude", false, false}, {"codex-empty", "codex", false, false}, {"codex-interactive", "codex", true, false}, {"codex-instructions", "codex", false, false}, {"codex-profile", "codex", true, true}, {"antigravity", "antigravity", false, false}, {"claude-profile", "claude", false, true}, {"claude-creator", "claude", false, false}, {"claude-workspace", "claude", false, false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var snapshots, receipts, projections, runtimes []string
 			for _, sdk := range []bool{false, true} {
@@ -159,11 +159,19 @@ func TestCreateAgentSDKCLIParity(t *testing.T) {
 					req.Placement = "down"
 					args = append(args, "--pane", req.Pane, "--cwd", cwd, "--add-dir", extra, "--placement", "down")
 				}
+				if tc.name == "codex-instructions" {
+					if _, err = client.WriteInstructions(context.Background(), "reviewer", []byte("Read carefully.\n")); err != nil {
+						t.Fatal(err)
+					}
+					req.Instructions = "reviewer"
+					args = append(args, "--instructions", "reviewer")
+				}
 				if tc.profile {
 					if _, err = client.WriteInstructions(context.Background(), "reviewer", []byte("Read carefully.\n")); err != nil {
 						t.Fatal(err)
 					}
-					if _, err = client.WriteProfile(context.Background(), "review", []byte("provider = \"claude\"\ninstructions = \"reviewer\"\nmodel = \"sonnet\"\neffort = \"high\"\n")); err != nil {
+					profileBody := "provider = \"" + tc.provider + "\"\ninstructions = \"reviewer\"\nmodel = \"sonnet\"\neffort = \"high\"\n"
+					if _, err = client.WriteProfile(context.Background(), "review", []byte(profileBody)); err != nil {
 						t.Fatal(err)
 					}
 					req.Profile = "review"
@@ -245,8 +253,8 @@ func TestCreateAgentSDKRefusalsBeforeTransport(t *testing.T) {
 	}{
 		{core.CreateAgentRequest{Project: "sample", Window: "w"}, projmux.CodeCreateRequestInvalid},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Payload: []string{"hello"}}, projmux.CodeCreateNativeCodexUnavailable},
-		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Instructions: "reviewer"}, projmux.CodeInstructionsProviderUnsupported},
-		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Profile: "codex-instructions"}, projmux.CodeInstructionsProviderUnsupported},
+		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "codex", Instructions: "reviewer", DialogueReplyOnly: true}, projmux.CodeInstructionsProviderUnsupported},
+		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "antigravity", Instructions: "reviewer"}, projmux.CodeInstructionsProviderUnsupported},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "antigravity", Profile: "claude"}, projmux.CodeProfileProviderMismatch},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "claude", Creator: "uid:missing"}, projmux.CodeCreateCreatorInvalid},
 		{core.CreateAgentRequest{Project: "sample", Window: "w", Provider: "claude", Effort: "bad"}, projmux.CodeCreateRequestInvalid},

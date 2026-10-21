@@ -80,17 +80,9 @@ func (c AgentInputFields) RequireLaunchOptions(spelling, provider, model, effort
 	return nil
 }
 
-// RequirePersonaLane refuses --persona on every lane that cannot carry one.
-//
-// Claude takes a persona on every create: it is a file path on the command
-// line. Codex takes one only on the native fresh lane, where the content is
-// sent to the shared endpoint as the thread's developer instructions; its
-// plain lane would have to spell the content into argv, where `ps` publishes
-// it, so it refuses instead. Every other provider, and the reply-only
-// activation with its own fixed launch, refuse as before.
-//
-// Like requireClaudeLaunchOptions it is an argv-only refusal, so it lands
-// before the persona file is read and before any snapshot is written.
+// RequirePersonaLane keeps the reply-only and other-provider guards. Codex
+// fresh creation can privately carry managed instructions over the native base
+// request or a plain TUI model_instructions_file snapshot path.
 func (c AgentInputFields) RequirePersonaLane(spelling, provider string, flags AgentSettingsFlags) error {
 	if flags.Instructions == "" {
 		return nil
@@ -109,13 +101,9 @@ func (c AgentInputFields) RequirePersonaLane(spelling, provider string, flags Ag
 	case provider == "codex" && flags.ResumeConversation != "":
 		return createUsage(fmt.Sprintf("%s %s cannot change a Codex conversation's instructions: Codex fixes them when the thread starts and resume replays the original developer message (%s); create a new Codex Agent with -- <prompt>; nothing was created",
 			spelling, c.Option(option), "codex-instructions-immutable"))
-	case provider == "codex" && NativeCodexFreshCreateRequired(provider, flags.InteractiveOnly, flags.Payload, flags.Host, flags.ResumeConversation):
-		// The native fresh lane is the only Codex create that opens a thread of
-		// its own, and thread/start is the only moment a persona can be given.
-		return nil
 	case provider == "codex":
-		return createAgentUsage(persona.ReasonProviderUnsupported, fmt.Sprintf("%s %s applies to "+c.Option("provider")+" %s only when creating a new Agent with a prompt through its native thread; add -- <prompt> and omit "+c.Option("interactive-only")+" (%s); nothing was created",
-			spelling, c.Option(option), "codex", persona.ReasonProviderUnsupported), &persona.Error{Reason: persona.ReasonProviderUnsupported, Name: flags.Instructions, Detail: "applies to " + c.Option("provider") + " codex only when creating a new Agent with a prompt through its native thread"})
+		return nil
+
 	default:
 		return createAgentUsage(persona.ReasonProviderUnsupported, fmt.Sprintf("%s %s applies only to "+c.Option("provider")+" %s and "+c.Option("provider")+" %s (%s); nothing was created",
 			spelling, c.Option(option), "claude", "codex", persona.ReasonProviderUnsupported), &persona.Error{Reason: persona.ReasonProviderUnsupported, Name: flags.Instructions, Detail: "applies only to " + c.Option("provider") + " claude and " + c.Option("provider") + " codex"})

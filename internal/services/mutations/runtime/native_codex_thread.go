@@ -7,8 +7,11 @@ import (
 )
 
 type NativeCodexCreateInput struct {
-	Workspace             metadata.AgentWorkspace
+	Workspace metadata.AgentWorkspace
+	// DeveloperInstructions retains the internal create vocabulary; the
+	// managed composition is sent as baseInstructions, never a permanent developer message.
 	DeveloperInstructions string
+	ManagedInstructions   *codexappserver.ManagedInstructions
 	Policy                codexappserver.ThreadPolicy
 	Model                 string
 	Effort                string
@@ -16,7 +19,7 @@ type NativeCodexCreateInput struct {
 	RequestKey            string
 }
 type NativeCodexThreadClient interface {
-	StartThreadWithModel(context.Context, string, []string, string, codexappserver.ThreadPolicy, string) (codexappserver.ThreadBinding, error)
+	StartThreadWithSettings(context.Context, string, []string, string, codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error)
 	StartTurnWithOptions(context.Context, string, string, string, string, string) (string, error)
 	Close() error
 }
@@ -25,6 +28,9 @@ type NativeCodexThreadClient interface {
 // An unknown RPC outcome is returned unchanged, without retry or cleanup claims.
 func CreateNativeCodexThread(ctx context.Context, input NativeCodexCreateInput, open func(context.Context, bool) (NativeCodexThreadClient, error), durable func(context.Context, metadata.AgentWorkspace, string) error) (codexappserver.ThreadBinding, error) {
 	workspace := input.Workspace
+	if input.ManagedInstructions == nil {
+		input.ManagedInstructions = &codexappserver.ManagedInstructions{Base: input.DeveloperInstructions}
+	}
 	client, err := open(ctx, len(workspace.AdditionalWritableRoots) > 0)
 	if err != nil {
 		return codexappserver.ThreadBinding{}, err
@@ -35,7 +41,7 @@ func CreateNativeCodexThread(ctx context.Context, input NativeCodexCreateInput, 
 			_ = client.Close()
 		}
 	}()
-	binding, err := client.StartThreadWithModel(ctx, workspace.CWD, workspace.AdditionalWritableRoots, input.DeveloperInstructions, input.Policy, input.Model)
+	binding, err := client.StartThreadWithSettings(ctx, workspace.CWD, workspace.AdditionalWritableRoots, "", codexappserver.ThreadSettings{Model: input.Model, Effort: input.Effort, Policy: input.Policy, ManagedInstructions: input.ManagedInstructions})
 	if err != nil {
 		return binding, err
 	}

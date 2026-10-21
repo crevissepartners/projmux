@@ -480,10 +480,10 @@ func TestProcessCodexCreateGuidanceActualCLI(t *testing.T) {
 		var request struct {
 			Method string `json:"method"`
 			Params struct {
-				DeveloperInstructions string `json:"developerInstructions"`
+				BaseInstructions string `json:"baseInstructions"`
 			} `json:"params"`
 		}
-		if json.Unmarshal(line, &request) == nil && request.Method == "thread/start" && strings.Contains(request.Params.DeveloperInstructions, processGuidanceLocation) {
+		if json.Unmarshal(line, &request) == nil && request.Method == "thread/start" && strings.Contains(request.Params.BaseInstructions, processGuidanceLocation) {
 			found = true
 		}
 	}

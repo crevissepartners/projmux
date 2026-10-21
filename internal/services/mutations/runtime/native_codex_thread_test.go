@@ -14,10 +14,10 @@ type nativeThreadFixture struct {
 	instructions, prompt, key, model, effort string
 }
 
-func (f *nativeThreadFixture) StartThreadWithModel(_ context.Context, _ string, _ []string, instructions string, _ codexappserver.ThreadPolicy, model string) (codexappserver.ThreadBinding, error) {
+func (f *nativeThreadFixture) StartThreadWithSettings(_ context.Context, _ string, _ []string, _ string, settings codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
 	f.start++
-	f.instructions = instructions
-	f.model = model
+	f.instructions = settings.ManagedInstructions.Base
+	f.model = settings.Model
 	return codexappserver.ThreadBinding{ThreadID: "thread"}, f.failure
 }
 func (f *nativeThreadFixture) StartTurnWithOptions(_ context.Context, id, prompt, key, model, effort string) (string, error) {

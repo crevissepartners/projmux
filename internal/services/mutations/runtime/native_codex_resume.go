@@ -88,6 +88,7 @@ type NativeCodexResumeExecution struct {
 	Spelling, AgentUID, ConversationID string
 	Route                              NativeCodexRoute
 	Settings                           codexappserver.ThreadSettings
+	ManagedBase                        *ManagedCodexBase
 	Resume                             func(context.Context, NativeCodexRoute, metadata.AgentWorkspace, string, codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error)
 	Plan                               func(NativeCodexRoute, metadata.AgentWorkspace, string, string, string) (string, []string, error)
 	SafeFallback                       func(error) bool
@@ -115,6 +116,12 @@ func (n *NativeCodexResumeExecution) PrepareLaunch(ctx context.Context, reg *met
 	if strings.TrimSpace(prepared.ThreadID) != strings.TrimSpace(n.ConversationID) {
 		return "", nil, NativeLaunchError(n.Spelling, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
 	}
+	if n.ManagedBase != nil {
+		n.ManagedBase.Instructions.Accepted = true
+		if err := n.ManagedBase.Record(reg, n.AgentUID, false); err != nil {
+			return "", nil, err
+		}
+	}
 	title, argv, err := n.Plan(n.Route, w, prepared.ThreadID, n.Settings.Model, n.Settings.Effort)
 	if err != nil {
 		return "", nil, NativeLaunchError(n.Spelling, err)
@@ -131,7 +138,9 @@ func (n *NativeCodexResumeExecution) PrepareLaunch(ctx context.Context, reg *met
 
 // PrepareNativeCodexResume resolves settings before probing any provider.
 func PrepareNativeCodexResume(ctx context.Context, spelling string, plan AgentResumePlan, paths func() (config.Paths, error), resolve func(context.Context, *metadata.AgentSessionRef, string) (NativeCodexRoute, error), launch func(NativeCodexRoute, metadata.AgentWorkspace, string, string, string) (string, []string, error)) (PreparedAgentResume, NativeCodexRoute, codexappserver.ThreadSettings, error) {
-	settings, err := ResolveAgentSettingsWithPaths(paths, plan.Provider, plan.Annotations, plan.SettingsRequest())
+	request := plan.SettingsRequest()
+	request.ManagedCodexBase = true
+	settings, err := ResolveAgentSettingsWithPaths(paths, plan.Provider, plan.Annotations, request)
 	var resumed AgentResumeLaunch
 	var policy codexappserver.ThreadPolicy
 	if err == nil {
@@ -140,13 +149,20 @@ func PrepareNativeCodexResume(ctx context.Context, spelling string, plan AgentRe
 	if err != nil {
 		return PreparedAgentResume{}, NativeCodexRoute{}, codexappserver.ThreadSettings{}, fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w", spelling, plan.AgentName, plan.Provider, plan.ConversationID, err)
 	}
+	service := GuidanceService{Paths: paths}
+	managed, baseErr := service.PlanManagedCodexBase(plan.Project, plan.AgentUID, plan.Annotations, settings)
+	if baseErr != nil {
+		return PreparedAgentResume{}, NativeCodexRoute{}, codexappserver.ThreadSettings{}, baseErr
+	}
+	managed.Instructions.Shared = true
+	settings.ManagedBase = managed
 	route, err := resolve(ctx, plan.Ref, "uid:"+plan.AgentUID)
 	if err != nil {
 		return PreparedAgentResume{}, route, codexappserver.ThreadSettings{}, NativeResumePreparationRefusal(spelling, err)
 	}
 	effort, invalid, skipped := ClaudeResumeEffort("codex", settings.LaunchAnnotations(plan.LaunchAnnotations()))
 	resumed.EffortInvalid, resumed.EffortSkipped = invalid, skipped
-	native := codexappserver.ThreadSettings{Model: settings.Model(plan.ModelOverride), Effort: effort, Policy: policy}
+	native := codexappserver.ThreadSettings{ManagedInstructions: managed.Instructions, Model: settings.Model(plan.ModelOverride), Effort: effort, Policy: policy}
 	title, argv, err := launch(route, plan.Workspace, plan.ConversationID, native.Model, native.Effort)
 	if err != nil {
 		return PreparedAgentResume{}, route, native, fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w", spelling, plan.AgentName, plan.Provider, plan.ConversationID, err)

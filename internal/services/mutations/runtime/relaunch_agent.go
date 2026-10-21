@@ -111,6 +111,9 @@ func (p *AgentRestartPlan) Plan(q AgentSettingsRequest, d AgentRestartPlanning) 
 }
 
 func (p AgentRestartPlan) RefuseLayerChange(q AgentSettingsRequest, refuse func(string, string) error) error {
+	if p.Provider == "codex" && p.Settings.ManagedBase != nil && p.Settings.ManagedBase.Fallback {
+		return nil
+	}
 	r := p.Settings.Resolution
 	if q.Instructions == nil && !slices.Contains(q.Reset, agentsettings.ItemInstructions) && !r.ProfileSwitched {
 		return nil

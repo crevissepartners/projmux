@@ -153,7 +153,7 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 		}, native.Plan)
 		cancel()
 		native.Route = route
-		nativeExecution = &mutationruntime.NativeCodexResumeExecution{Spelling: "agent resume", AgentUID: plan.AgentUID, ConversationID: plan.ConversationID, Route: route, Settings: settings, Resume: native.Resume, Plan: native.Plan}
+		nativeExecution = &mutationruntime.NativeCodexResumeExecution{Spelling: "agent resume", AgentUID: plan.AgentUID, ConversationID: plan.ConversationID, Route: route, Settings: settings, ManagedBase: prepared.Settings.ManagedBase, Resume: native.Resume, Plan: native.Plan}
 	} else {
 		prepared, err = prep.Prepare("agent resume", plan)
 	}
@@ -191,6 +191,11 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 	result.Agent = projection.Items[0].(core.Agent)
 	result.PaneID = out.PaneID
 	result.Notices = prepared.Notices
+	if managed := prepared.Settings.ManagedBase; managed != nil {
+		if notice := managed.Notice(); notice != "" {
+			result.Notices = append(result.Notices, notice)
+		}
+	}
 	if out.NameReason != "" {
 		result.Notices = append([]string{mutationruntime.AgentPaneNameNotice(plan.AgentName, out.NameReason)}, result.Notices...)
 	}

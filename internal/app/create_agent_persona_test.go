@@ -202,9 +202,6 @@ func TestCreateAgentPersonaRefusalsLeaveNoTrace(t *testing.T) {
 		args   []string
 		reason string
 	}{
-		{"codex provider", []string{"agent", "--provider", "codex", "--persona", "reviewer"}, persona.ReasonProviderUnsupported},
-		{"codex interactive-only", []string{"agent", "--provider", "codex", "--interactive-only", "--persona", "reviewer"}, persona.ReasonProviderUnsupported},
-		{"codex shortcut", []string{"codex", "--persona", "reviewer"}, persona.ReasonProviderUnsupported},
 		{"antigravity provider", []string{"agent", "--provider", "antigravity", "--persona", "reviewer"}, persona.ReasonProviderUnsupported},
 		{"dialogue reply-only", []string{"agent", "--provider", "claude", "--" + claudeDialogueReplyOnlyFlag, "--persona", "reviewer"}, persona.ReasonProviderUnsupported},
 		{"missing persona", []string{"agent", "--provider", "claude", "--persona", "absent"}, persona.ReasonNotFound},

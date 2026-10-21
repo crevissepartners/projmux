@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/sessionhistory"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // canonicalIntentScope is the typed identity carried from one UI origin into
@@ -1242,13 +1243,28 @@ func (c *createCommand) openIntentAgent(
 		}
 		prompt, _ := nativePrompt(flags.payload)
 		nativeCtx, cancel := prepareNativeContext(ctx)
+		paths, baseErr := c.processCreatePaths()
+		if baseErr != nil {
+			cancel()
+			return intentAgentOpened{}, baseErr
+		}
+		managed, baseErr := mutationruntime.PrepareManagedCodexBase(paths, agent.Metadata.UID, flags.agentGuidance.codexDeveloperInstructions(agent.Metadata.UID, flags.projectLinks.developerInstructions(flags.personaLaunch.content)), nil, errors.Join(flags.agentGuidance.unavailable, flags.projectLinks.unavailable, flags.projectLinks.project.unavailable))
+		if baseErr != nil {
+			cancel()
+			return intentAgentOpened{}, baseErr
+		}
+		managed.Instructions.Legacy = false
 		prepared, nativeErr := c.codexNative.Create(nativeCtx, plan.nativeRoute, codexNativeCreateInput{
-			Workspace: workspace, DeveloperInstructions: flags.agentGuidance.codexDeveloperInstructions(agent.Metadata.UID, flags.projectLinks.developerInstructions(flags.personaLaunch.content)),
+			ManagedInstructions: managed.Instructions, Workspace: workspace, DeveloperInstructions: flags.agentGuidance.codexDeveloperInstructions(agent.Metadata.UID, flags.projectLinks.developerInstructions(flags.personaLaunch.content)),
 			Policy: flags.profileLaunch.codexPolicy, Prompt: prompt, RequestKey: activation.Generation,
 		})
 		cancel()
 		switch {
 		case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
+			managed.Instructions.Accepted = true
+			if err = managed.Record(working, agent.Metadata.UID, true); err != nil {
+				return intentAgentOpened{}, err
+			}
 			title, launchArgv, err = plan.nativeLauncher.PlanNativeCodexResume(plan.nativeRoute, workspace, prepared.ThreadID)
 			if err != nil {
 				return intentAgentOpened{}, nativeLaunchError(canonicalCreateAgent, err)

@@ -193,7 +193,11 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 	}
 	guidance.recorded = target.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]
 	links := planProjectLinksWith(c.rebind.launcher, provider, *project, target.Metadata.Annotations)
+	if provider == aiModeCodex {
+		links = localProjectLinksLaunch(ai.sharedGuidance().PlanCodexProjectLinks(*project))
+	}
 	settingsRequest := request.settings().withPromptParts(guidance, links)
+	settingsRequest.managedCodexBase = provider == aiModeCodex
 	settingsRequest.projectUID = project.Metadata.UID
 	var err error
 	restart.settings, err = c.rebind.resolveSettings(provider, target.Metadata.Annotations, settingsRequest)
@@ -204,6 +208,12 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 		}
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, err.Error())
 	}
+	if provider == aiModeCodex {
+		restart.settings.managedBase, err = ai.sharedGuidance().PlanManagedCodexBase(*project, target.Metadata.UID, target.Metadata.Annotations, restart.settings.shared(), true)
+		if err != nil {
+			return processRelaunchRecipe{}, err
+		}
+	}
 	if err = restart.refuseLayerChange(settingsRequest); err != nil {
 		return processRelaunchRecipe{}, err
 	}
@@ -212,7 +222,7 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 			return processRelaunchRecipe{}, err
 		}
 	}
-	if restart.settings.instructionsErr != nil {
+	if provider != aiModeCodex && restart.settings.instructionsErr != nil {
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, restart.settings.instructionsErr.Error())
 	}
 	if err = ai.RequireAgentEnabled(provider); err != nil {
@@ -260,15 +270,18 @@ func (c *agentCommand) planProcessRelaunchLaunch(target coremetadata.Agent, pane
 	// Resolve all provider arguments before retiring the writer. Resume's planner
 	// reads the resolved annotation recipe; relaunch retains its own layer sources.
 	launchSettings := r.restart.settings.writeSnapshot()
-	if launchSettings.snapshotErr != nil {
+	if r.restart.provider != aiModeCodex && launchSettings.snapshotErr != nil {
 		return processRelaunchLaunch{}, launchSettings.snapshotErr
 	}
 	planned := processResumeCandidate{Agent: target.Clone(), Pane: pane.Clone(), Record: *pane.Status.ProcessSession.Clone()}
 	planned.Agent.Metadata.Annotations = r.annotations
 	planned.Agent.Spec.Workspace = r.workspace
-	plan, config, applicationSettings, err := c.planProcessResume(planned, processAgentResumeOptions{promptPartsPrepared: true})
+	plan, config, applicationSettings, err := c.planProcessResume(planned, processAgentResumeOptions{promptPartsPrepared: true, managedBase: launchSettings.managedBase})
 	if err != nil {
 		return processRelaunchLaunch{}, err
+	}
+	if applicationSettings.managedBase != nil && applicationSettings.managedBase.Fallback {
+		applicationSettings.managedBase.Annotations = maps.Clone(target.Metadata.Annotations)
 	}
 	return processRelaunchLaunch{settings: launchSettings, applicationSettings: applicationSettings, command: plan, config: config, prompt: prompt}, nil
 }
@@ -387,6 +400,14 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	if err = owned.startProcessResume(ctx, creator, launch.command, launch.config, processRelaunchFirstFrame(launch.prompt)); err != nil {
 		return fail(err)
 	}
+	if launch.applicationSettings.managedBase != nil {
+		_, _, err = intmetadata.NewStore(intmetadata.PathFor(state)).UpdateConvergent(func(reg *coremetadata.Registry) error {
+			return launch.applicationSettings.managedBase.Record(reg, candidate.Agent.Metadata.UID, false)
+		})
+		if err != nil {
+			return fail(err)
+		}
+	}
 	var sync processRelaunchSynchronization
 	sync.changed, sync.controls, sync.attention, err = owned.resumeSynchronization(creator)
 	if err != nil {
@@ -396,6 +417,11 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 	result.Outcome = personaOutcomeResumed
 	if recipe.restart.running {
 		result.Outcome = personaOutcomeRestarted
+	}
+	if launch.applicationSettings.managedBase != nil {
+		if notice := launch.applicationSettings.managedBase.Notice(); notice != "" {
+			fmt.Fprintln(stderr, notice)
+		}
 	}
 	result.SettingsApplication = preparedAgentSettingsApplication(agentApplicationSource{provider: recipe.restart.provider, host: "process", settings: launch.applicationSettings, guidance: recipe.guidance, links: recipe.links, workspace: coremetadata.AgentWorkspace{CWD: launch.command.Dir}, annotations: recipe.annotations})
 	owned.settingsApplication = result.SettingsApplication
@@ -535,11 +561,13 @@ func (c *agentCommand) restoreProcessRelaunchSettings(previous processResumeCand
 		if err := settings.record(&expectedRegistry, c.rebind.create.store.mutator(), binding.Agent); err != nil {
 			return err
 		}
-		if err := guidance.record(&expectedRegistry, c.rebind.create.store.mutator(), binding.Agent); err != nil {
-			return err
-		}
-		if err := links.record(&expectedRegistry, c.rebind.create.store.mutator(), binding.Agent); err != nil {
-			return err
+		if previous.Record.Provider != aiModeCodex {
+			if err := guidance.record(&expectedRegistry, c.rebind.create.store.mutator(), binding.Agent); err != nil {
+				return err
+			}
+			if err := links.record(&expectedRegistry, c.rebind.create.store.mutator(), binding.Agent); err != nil {
+				return err
+			}
 		}
 		expectedAgent, _ = expectedRegistry.Agent(binding.Agent)
 		expected := expectedAgent.Metadata.Annotations
@@ -604,6 +632,9 @@ func (c *agentCommand) reserveProcessRelaunch(ctx context.Context, candidate pro
 		}
 		if err := settings.record(reg, mutator, binding.Agent); err != nil {
 			return err
+		}
+		if candidate.Record.Provider == aiModeCodex {
+			return nil
 		}
 		if err := guidance.record(reg, mutator, binding.Agent); err != nil {
 			return err

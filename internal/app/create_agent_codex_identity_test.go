@@ -161,13 +161,7 @@ func TestCodexFreshCreateWithUnreadableGuidanceSendsNoIdentity(t *testing.T) {
 					breakFile(t, agentguidance.NewDefaultStore(paths).Path())
 					writeCodexGuidancePersona(t, personas)
 				}, true)
-				got := onlyNativeInstructions(t, result)
-				if got != codexPersonaContent || strings.Contains(got, codexIdentityHeading) {
-					t.Fatalf("developer instructions = %q, want %q", got, codexPersonaContent)
-				}
-				if lines := guidanceNoticeLines(result.stderr); len(lines) != 1 {
-					t.Fatalf("stderr = %q, want one guidance notice", result.stderr)
-				}
+				assertFirstManagedCreateRefused(t, result)
 			})
 		}
 	}

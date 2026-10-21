@@ -304,7 +304,7 @@ func TestAgentSettingsReasonsAreTheResolverTokens(t *testing.T) {
 // acceptance 5 (O-6): a Codex thread keeps the developer instructions it
 // started with, so the resume discloses the edited instructions and records
 // nothing for them, and still takes the profile's new effort.
-func TestACodexResumeDisclosesInstructionsItCannotApplyAndTakesTheRest(t *testing.T) {
+func TestACodexResumeRefreshesManagedBaseAndDisclosesSharedThreadUncertainty(t *testing.T) {
 	store := newFakeResourceStore(t)
 	route := nativeTestRoute("generation-settings", coremetadata.CodexGenerationCurrent)
 	ref := nativeTestSessionRef(route, resumeFixtureConversation)
@@ -344,19 +344,19 @@ func TestACodexResumeDisclosesInstructionsItCannotApplyAndTakesTheRest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr, "instructions lead were not applied ("+personaReasonCodexInstructionsImmutable+")") {
-		t.Fatalf("stderr = %q, want the %s notice", stderr, personaReasonCodexInstructionsImmutable)
+	if !strings.Contains(stderr, "codex-managed-base-not-refreshed") {
+		t.Fatalf("shared base uncertainty missing: %q", stderr)
 	}
+
 	calls := splitWindowCalls(tmux)
 	if len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "-c model_reasoning_effort=max resume") {
 		t.Fatalf("split-window calls = %v, want one launch with the profile's effort", calls)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	want := plusSources(withAnnotations(annotations, coremetadata.AnnotationAgentEffort, "max"),
-		coremetadata.AnnotationAgentModelSource, coremetadata.SettingSourceProfile)
-	if !maps.Equal(agent.Metadata.Annotations, want) {
-		t.Fatalf("annotations = %v, want %v", agent.Metadata.Annotations, want)
+	if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersonaDigest] != started.Digest || agent.Metadata.Annotations[coremetadata.AnnotationAgentEffort] != "max" {
+		t.Fatalf("unconfirmed instructions replaced confirmed metadata or effort was not recorded: %v", agent.Metadata.Annotations)
 	}
+
 }
 
 // relaunchProfileFixture is the relaunch fixture whose Agent follows the

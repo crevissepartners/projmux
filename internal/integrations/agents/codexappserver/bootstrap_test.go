@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,7 +76,11 @@ func sequencedEndpoint(t *testing.T, sequences map[string][]string) (*Client, fu
 			if len(queue) > 1 {
 				replies[request.Method] = queue[1:]
 			}
-			_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"result":` + reply + `}` + "\n"))
+			if after, ok0 := strings.CutPrefix(reply, "error:"); ok0 {
+				_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"error":` + after + `}` + "\n"))
+			} else {
+				_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"result":` + reply + `}` + "\n"))
+			}
 		}
 	}()
 

@@ -93,6 +93,7 @@ type wireTurn struct {
 }
 
 type threadStartParams struct {
+	BaseInstructions      *string           `json:"baseInstructions,omitempty"`
 	Config                map[string]string `json:"config,omitempty"`
 	CWD                   string            `json:"cwd,omitempty"`
 	RuntimeWorkspaceRoots []string          `json:"runtimeWorkspaceRoots,omitempty"`
@@ -115,6 +116,7 @@ type threadStartParams struct {
 }
 
 type threadResumeParams struct {
+	BaseInstructions      *string  `json:"baseInstructions,omitempty"`
 	ThreadID              string   `json:"threadId"`
 	CWD                   string   `json:"cwd,omitempty"`
 	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`

@@ -41,6 +41,7 @@ const agentGuidanceReasonUnavailable = "agent-guidance-unavailable"
 // (CodexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
 type AgentGuidanceLaunch struct {
+	CodexBaseFile   bool
 	MigrationNotice string
 	Active          bool
 	Store           agentguidance.Store
@@ -134,6 +135,15 @@ func (l AgentGuidanceLaunch) CodexDeveloperInstructions(agentUID, rest string) s
 // Without guidance it returns base itself, so a create with the guidance off
 // stores exactly what it stored before -- nil included.
 func (l AgentGuidanceLaunch) WithCreateAnnotation(base map[string]string) map[string]string {
+	if l.CodexBaseFile {
+		base = maps.Clone(base)
+		if base == nil {
+			base = map[string]string{}
+		}
+		base[CodexManagedBaseMode] = "base"
+		base[CodexManagedBaseStatus] = "base-file-requested"
+	}
+
 	if !l.On() || base[coremetadata.AnnotationAgentGuidanceDigest] == l.Digest {
 		return base
 	}

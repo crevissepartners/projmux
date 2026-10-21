@@ -42,10 +42,12 @@ type codexGuidanceRoute struct {
 }
 
 type codexGuidanceResult struct {
-	creates []fakeNativeCreate
-	agent   coremetadata.Agent
-	stderr  string
-	leaked  func(marker string) bool
+	err       error
+	unchanged bool
+	creates   []fakeNativeCreate
+	agent     coremetadata.Agent
+	stderr    string
+	leaked    func(marker string) bool
 }
 
 // withCodexGuidanceSeam gives create the real Codex guidance seam on its home
@@ -74,9 +76,11 @@ var codexGuidanceRoutes = []codexGuidanceRoute{
 		if withPersona {
 			flags = []string{"--persona", "reviewer"}
 		}
+		before := store.snapshot()
+		beforePanes := tmux.paneCount()
 		_, stderr, err := runRoute(t, create, codexNativeCreateArgs(flags...)...)
 		if err != nil {
-			t.Fatalf("create: stderr=%q err=%v", stderr, err)
+			return codexGuidanceResult{err: err, creates: native.creates, unchanged: store.snapshot() == before && tmux.paneCount() == beforePanes, stderr: stderr}
 		}
 		return codexGuidanceResult{creates: native.creates, agent: agentNamed(t, store, "win-alpha-main", "agent-test-1"),
 			stderr: stderr, leaked: codexGuidanceLeakCheck(tmux, store)}
@@ -102,8 +106,10 @@ var codexGuidanceRoutes = []codexGuidanceRoute{
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
+		before := fx.store.snapshot()
+		beforePanes := fx.tmux.paneCount()
 		if _, err := fx.create.createCanonicalIntentAgent(scope, intent, aiModeCodex, "", flags, &stdout, &stderr); err != nil {
-			t.Fatalf("create: stderr=%q err=%v", stderr.String(), err)
+			return codexGuidanceResult{err: err, creates: native.creates, unchanged: fx.store.snapshot() == before && fx.tmux.paneCount() == beforePanes, stderr: stderr.String()}
 		}
 		agents := fx.store.registry.AgentsOf(fx.windowUID)
 		return codexGuidanceResult{creates: native.creates, agent: agents[len(agents)-1],
@@ -122,6 +128,9 @@ func writeCodexGuidancePersona(t *testing.T, personas persona.Store) {
 // create result made.
 func onlyNativeInstructions(t *testing.T, result codexGuidanceResult) string {
 	t.Helper()
+	if result.err != nil {
+		t.Fatalf("create refused: %v", result.err)
+	}
 	if len(result.creates) != 1 || result.creates[0].prompt != "review this" {
 		t.Fatalf("native creates = %+v, want exactly one carrying the prompt", result.creates)
 	}
@@ -238,7 +247,8 @@ func TestCreateCodexAgentWithWhitespaceGuidanceSendsWhatItSentBefore(t *testing.
 							coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceFlag,
 						}
 					}
-					if !maps.Equal(annotations, wantAnnotations) || (wantAnnotations == nil) != (annotations == nil) {
+					wantAnnotations = confirmedCodexBaseAnnotations(wantAnnotations, want)
+					if !maps.Equal(annotations, wantAnnotations) {
 						t.Fatalf("Agent annotations = %#v, want %#v", annotations, wantAnnotations)
 					}
 				}
@@ -266,20 +276,7 @@ func TestUnreadableCodexAgentGuidanceCreatesWithoutItWithOneNoticeAndRecordsNoth
 							writeCodexGuidancePersona(t, personas)
 						}
 					}, withPersona)
-					want := ""
-					if withPersona {
-						want = codexPersonaContent
-					}
-					if got := onlyNativeInstructions(t, result); got != want {
-						t.Fatalf("developer instructions = %q, want %q", got, want)
-					}
-					wantNotice := "agent/" + result.agent.Metadata.Name + " launched without the agent guidance (" + agentGuidanceReasonUnavailable + "): "
-					if lines := guidanceNoticeLines(result.stderr); len(lines) != 1 || !strings.Contains(lines[0], wantNotice) {
-						t.Fatalf("stderr = %q, want one line carrying %q", result.stderr, wantNotice)
-					}
-					if _, ok := result.agent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]; ok {
-						t.Fatalf("Agent annotations = %v, want no guidance digest", result.agent.Metadata.Annotations)
-					}
+					assertFirstManagedCreateRefused(t, result)
 				})
 			}
 		}
@@ -310,8 +307,11 @@ func TestCodexCreatesOffTheNativeFreshLaneGetNoGuidance(t *testing.T) {
 				t.Fatalf("native creates = %+v, want none", native.creates)
 			}
 			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
-			if _, ok := agent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]; ok {
-				t.Fatalf("Agent annotations = %v, want no guidance digest", agent.Metadata.Annotations)
+			if agent.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest] == "" || agent.Metadata.Annotations["projmux.io/codex-managed-base-status"] != "base-file-requested" || agent.Metadata.Annotations["projmux.io/codex-managed-base-digest"] != "" {
+				t.Fatalf("plain recipe must record the request without claiming confirmed delivery: %v", agent.Metadata.Annotations)
+			}
+			if !tmuxCallsMention(tmux, "model_instructions_file=") {
+				t.Fatal("plain managed file missing")
 			}
 			if codexGuidanceLeakCheck(tmux, store)("Working with other agents through projmux") || len(guidanceNoticeLines(stderr)) != 0 {
 				t.Fatalf("guidance reached the create: stderr=%q", stderr)

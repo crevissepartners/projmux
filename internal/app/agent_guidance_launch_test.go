@@ -585,7 +585,7 @@ func TestAgentGuidanceLeavesCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 		t.Fatalf("codex resume argv with a guidance digest = %q, want %q", after.argv, before.argv)
 	}
 
-	create := &createCommand{agents: &agentGuidanceAgentLauncher{&exactArgvAgentLauncher{fakeAgentLauncher: newFakeAgentLauncher(), planner: planner}}}
+	create := &createCommand{homeDir: planner.homeDir, lookupEnv: planner.lookupEnv, agents: &agentGuidanceAgentLauncher{&exactArgvAgentLauncher{fakeAgentLauncher: newFakeAgentLauncher(), planner: planner}}}
 	prompted := []string{"review this"}
 	for name, flags := range map[string]resourceCreateFlags{
 		"codex":                  {},
@@ -598,7 +598,8 @@ func TestAgentGuidanceLeavesCodexAndReplyOnlyLaunchesUnchanged(t *testing.T) {
 			provider = aiModeCodex
 		}
 		create.prepareAgentGuidance(provider, &flags)
-		if flags.agentGuidance.active || flags.resumeLaunchValues != nil {
+		wantActive := name == "codex" || name == "codex interactive-only"
+		if flags.agentGuidance.active != wantActive || flags.resumeLaunchValues != nil {
 			t.Fatalf("%s: prepared agent guidance %+v", name, flags.agentGuidance)
 		}
 	}
