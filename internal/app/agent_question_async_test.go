@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
@@ -496,7 +497,9 @@ func TestCLIAsyncLegacyOutboxRetriesOriginalBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fixture := range fixtures {
-		t.Run(fixture.Record.ID, func(t *testing.T) {
+		run := func(t *testing.T) {
+			// Align every clock with the frozen fixture inside this test bubble.
+			time.Sleep(time.Until(fixture.Record.CreatedAt.Add(2 * time.Minute)))
 			cmd, resources, _ := exactControlCLICommand(t)
 			cmd.loadRegistry = func() (metadata.Registry, error) { return resources.registry.Clone(), nil }
 			cmd.messagePaths = agentMessagePaths{loadRegistry: cmd.loadRegistry}
@@ -516,8 +519,7 @@ func TestCLIAsyncLegacyOutboxRetriesOriginalBodies(t *testing.T) {
 				r.Parts[i].Receipt = append(json.RawMessage(nil), compact.Bytes()...)
 			}
 			r.AgentUID = "agt-alpha-codex"
-			now := r.CreatedAt.Add(2 * time.Minute)
-			cmd.now = func() time.Time { return now }
+			cmd.now = time.Now
 			cmd.messageNow = cmd.now
 			writes := 0
 			cmd.controlCall = func(context.Context, string, metadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
@@ -557,7 +559,7 @@ func TestCLIAsyncLegacyOutboxRetriesOriginalBodies(t *testing.T) {
 			if first.Parts[1].Attempt != 3 || first.Parts[1].MessageRef != "message-"+r.ID+"-2-retry-3" || len(first.Parts[1].Receipt) == 0 {
 				t.Fatal("legacy retry lost ref or receipt", first.Parts[1])
 			}
-			now = now.Add(31 * time.Second)
+			time.Sleep(31 * time.Second)
 			for range 2 {
 				if err = cmd.dispatchQuestionOutbox(context.Background(), st); err != nil {
 					t.Fatal(err)
@@ -576,6 +578,9 @@ func TestCLIAsyncLegacyOutboxRetriesOriginalBodies(t *testing.T) {
 					t.Fatalf("legacy body/ref %d changed: found=%v err=%v", i, found, err)
 				}
 			}
+		}
+		t.Run(fixture.Record.ID, func(t *testing.T) {
+			synctest.Test(t, run)
 		})
 	}
 }
