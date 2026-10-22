@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -56,13 +55,9 @@ func PrepareManagedCodexBase(paths config.Paths, uid, text string, annotations m
 	}
 	if preparationErr != nil {
 		previous := annotations[CodexManagedBaseDigest]
-		path, err := store.RecordedSnapshotPath(previous)
+		path, content, err := store.ReadRecordedSnapshot(previous)
 		if err != nil {
 			return nil, fmt.Errorf("codex-managed-base-unavailable: no confirmed managed instructions; refusing provider defaults: %w", errors.Join(preparationErr, err))
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("codex-managed-base-unavailable: confirmed snapshot unreadable: %w", err)
 		}
 		text, out.Digest, out.Fallback = string(content), previous, true
 		out.Path = path
@@ -70,10 +65,8 @@ func PrepareManagedCodexBase(paths config.Paths, uid, text string, annotations m
 	out.PreviousDigest = annotations[CodexManagedBaseDigest]
 	out.PreviousAnnotations = maps.Clone(annotations)
 	previous := ""
-	if path, e := store.RecordedSnapshotPath(out.PreviousDigest); e == nil {
-		if content, e := os.ReadFile(path); e == nil {
-			previous = string(content)
-		}
+	if _, content, e := store.ReadRecordedSnapshot(out.PreviousDigest); e == nil {
+		previous = string(content)
 	}
 	out.Instructions = &codexappserver.ManagedInstructions{Base: text, Previous: previous, Legacy: annotations[CodexManagedBaseMode] != "base" && annotations[CodexManagedBaseDigest] != out.Digest}
 	return out, nil

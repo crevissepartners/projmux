@@ -2291,6 +2291,11 @@ fi
 {
   printf 'cwd=%s\n' "\$PWD"
   printf 'args=%s\n' "\$*"
+  python3 - "\$@" <<'AGENT_ARGV_JSON'
+import json
+import sys
+print("argv=" + json.dumps(sys.argv[1:]))
+AGENT_ARGV_JSON
 } >>$(printf %q "$create_root/agent-launch.log")
 # A payload-bearing create now requires bounded provider/hook acknowledgement.
 # Model the public hook path itself so acknowledgement is committed through the
@@ -2570,6 +2575,66 @@ for want in "$create_second_agent" exact-native-route; do
   fi
 done
 
+# Plain Codex requests a private managed base file; it does not confirm that
+# the provider applied it. Check the exact argv and verified file together.
+create_assert_codex_base_launch() {
+  smoke_wait_until 10 "the Codex provider stub argv record to appear" \
+    grep -q '^argv=' "$create_root/agent-launch.log"
+  python3 - "$create_root" "$create_registry" "$1" "$2" "${@:3}" <<'PY_CODEX_BASE'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import stat
+import sys
+
+root, registry_path, uid, cwd, *payload = sys.argv[1:]
+lines = pathlib.Path(root, "agent-launch.log").read_text().splitlines()
+argv_records = [line.removeprefix("argv=") for line in lines if line.startswith("argv=")]
+assert len(argv_records) == 1, "expected exactly one provider argv record"
+argv = json.loads(argv_records[0])
+assert isinstance(argv, list) and all(isinstance(arg, str) for arg in argv), "invalid argv record"
+assert len(argv) >= 4 and argv[0] == "-c", "missing exact managed base option"
+private_root = pathlib.Path(root, "state/projmux/codex-managed-base/project-links")
+prefix = 'model_instructions_file="' + str(private_root) + '/'
+assert argv[1].startswith(prefix) and argv[1].endswith('"'), "managed base outside private root"
+name = argv[1][len(prefix):-1]
+assert re.fullmatch(r"[0-9a-f]{64}\.md", name), "invalid managed base basename"
+path = private_root / name
+assert argv == ["-c", "model_instructions_file=" + json.dumps(str(path)), "-C", cwd, *payload], "provider argv changed payload or workspace"
+assert [line for line in lines if line.startswith("cwd=")] == ["cwd=" + cwd], "provider cwd mismatch"
+assert [line for line in lines if line.startswith("args=")] == ["args=" + " ".join(argv)], "provider argv text mismatch"
+for directory in (private_root.parent, private_root):
+    info = directory.lstat()
+    assert stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == os.getuid(), "managed base directory is not private"
+with_fd = os.open(private_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    before = os.stat(name, dir_fd=with_fd, follow_symlinks=False)
+    assert stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o600 and before.st_uid == os.getuid(), "managed base is not a private regular file"
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=with_fd)
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        assert os.path.samestat(before, opened), "managed base identity changed before read"
+        content = stream.read(1024 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+    current = os.stat(name, dir_fd=with_fd, follow_symlinks=False)
+    assert os.path.samestat(before, current) and before.st_mode == current.st_mode and before.st_uid == current.st_uid, "managed base identity or permissions changed"
+    assert before.st_size == len(content) == after.st_size and before.st_mtime_ns == after.st_mtime_ns, "managed base changed during read"
+    assert 0 < len(content) <= 1024 * 1024 and hashlib.sha256(content).hexdigest() == name[:-3], "managed base content does not match digest"
+    assert os.path.samestat(os.fstat(with_fd), private_root.lstat()), "managed base directory identity changed"
+finally:
+    os.close(with_fd)
+registry = json.loads(pathlib.Path(registry_path).read_text())
+agents = [agent for agent in registry["agents"] if agent["metadata"]["uid"] == uid]
+assert len(agents) == 1, "managed base Agent identity mismatch"
+annotations = agents[0]["metadata"].get("annotations", {})
+assert annotations.get("projmux.io/codex-managed-base-mode") == "base", "managed base mode missing"
+assert annotations.get("projmux.io/codex-managed-base-status") == "base-file-requested", "plain request promoted or status missing"
+assert not annotations.get("projmux.io/codex-managed-base-digest"), "plain request promoted to confirmed digest"
+PY_CODEX_BASE
+}
+
 # 10. The payload after -- reaches the provider and never the naming.
 : >"$create_root/agent-launch.log"
 pmx_agent create agent --provider codex --interactive-only -p alpha -w "$alpha_window_name" -o name \
@@ -2585,11 +2650,8 @@ if [[ "$create_payload_agent" == "$create_second_agent" ]]; then
 fi
 smoke_wait_until 10 "the payload-bearing provider stub launch log to appear" \
   test -s "$create_root/agent-launch.log"
-if ! grep -Fq -- "args=-C $create_root/legacy/alpha -p payload-project -w payload-window --topic release triage" "$create_root/agent-launch.log"; then
-  echo "the payload did not reach the provider:" >&2
-  cat "$create_root/agent-launch.log" >&2 || true
-  exit 1
-fi
+create_assert_codex_base_launch "$create_payload_agent" "$create_root/legacy/alpha" \
+  -p payload-project -w payload-window --topic "release triage"
 
 # 11. A missing provider is exit 2 with zero mutations and zero stdout.
 agent_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
@@ -2886,7 +2948,8 @@ smoke_assert_file_contains "$create_root/agent-reconcile-repeat.json" '"outcome"
 : >"$create_root/agent-launch.log"
 cross_agent_name="$(pmx_agent create agent --provider codex --interactive-only --project alpha --window "$alpha_window_name" \
   --cwd "$create_root/work/beta" --add-dir "$create_root/legacy/alpha" -o name)"
-smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/legacy/alpha"
+create_assert_codex_base_launch "$cross_agent_name" "$create_root/work/beta" \
+  --add-dir "$create_root/legacy/alpha"
 if ! pmx_agent get agents --project alpha -o name | grep -x "$cross_agent_name" >/dev/null ||
   pmx_agent get agents --project "uid:$create_beta_uid" -o name | grep -x "$cross_agent_name" >/dev/null; then
   echo "cross-Project workspace changed Agent ownership" >&2

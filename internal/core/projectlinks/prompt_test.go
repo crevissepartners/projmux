@@ -184,6 +184,67 @@ func TestProjectLinkRulesSnapshotIsContentAddressedAndPrivate(t *testing.T) {
 	}
 }
 
+func TestReadRecordedSnapshotReturnsVerifiedBytes(t *testing.T) {
+	store := NewSnapshotStore(t.TempDir())
+	original := []byte("confirmed managed base\n")
+	snapshot, err := store.WriteSnapshot(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, content, err := store.ReadRecordedSnapshot(snapshot.Digest)
+	if err != nil || path != snapshot.Path || !bytes.Equal(content, original) {
+		t.Fatalf("verified snapshot = %q, %v; content matches=%t", path, err, bytes.Equal(content, original))
+	}
+	// A caller keeps the bytes actually verified, even if the path changes
+	// later. Reading content must not require a second path-based open.
+	if err := os.WriteFile(snapshot.Path, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(content, original) {
+		t.Fatal("returned verified bytes changed after the file was replaced")
+	}
+	for _, change := range []string{"tampered", "missing", "malformed", "symlink", "directory", "oversized"} {
+		t.Run(change, func(t *testing.T) {
+			store := NewSnapshotStore(t.TempDir())
+			snapshot, err := store.WriteSnapshot(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := snapshot.Digest
+			switch change {
+			case "tampered":
+				err = os.WriteFile(snapshot.Path, []byte("tampered"), 0600)
+			case "missing":
+				err = os.Remove(snapshot.Path)
+			case "malformed":
+				digest = "../outside"
+			case "symlink", "directory":
+				err = os.Rename(snapshot.Path, snapshot.Path+".original")
+				if err == nil && change == "symlink" {
+					err = os.Symlink(snapshot.Path+".original", snapshot.Path)
+				} else if err == nil {
+					err = os.Mkdir(snapshot.Path, 0700)
+				}
+			case "oversized":
+				large := bytes.Repeat([]byte("x"), MaxSnapshotSize+1)
+				digest = Digest(large)
+				var path string
+				path, err = store.SnapshotPath(digest)
+				if err == nil {
+					err = os.WriteFile(path, large, 0600)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			path, content, err := store.ReadRecordedSnapshot(digest)
+			if err == nil || path != "" || content != nil {
+				t.Fatal("unverified snapshot returned a usable path or bytes")
+			}
+		})
+	}
+}
+
 func TestProjectLinkRulesCompositeIsPersonaSeparatorThenRules(t *testing.T) {
 	store := NewSnapshotStore(t.TempDir())
 	rendered := Render(renderGoldenRules, renderGoldenProject)
