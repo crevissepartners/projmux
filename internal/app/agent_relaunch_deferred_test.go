@@ -1555,7 +1555,9 @@ func logClaudeFailureBuffer(t *testing.T, phase string, data []byte) {
 
 func logClaudeFailureRegistration(t *testing.T, path string, before os.FileInfo, agent, pane string, primaryAt, cleanupAt time.Time) {
 	t.Helper()
-	closed := func() { t.Log("claude registration evidence state=closed-unconfirmed actor-pid=unproven best-effort=true") }
+	closed := func() {
+		t.Log("claude registration evidence state=closed-unconfirmed actor-pid=unproven best-effort=true")
+	}
 	pre, err := os.Lstat(path)
 	private := func(info os.FileInfo) bool {
 		if info == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
@@ -1632,12 +1634,12 @@ func logClaudeFailureRegistration(t *testing.T, path string, before os.FileInfo,
 		"helper:ended-accept-failed":          true,
 	}
 	type observation struct {
-		at time.Time
+		at                        time.Time
 		source, code, result, run string
 	}
 	var observations []observation
 	count := 0
-	for _, line := range bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n")) {
+	for line := range bytes.SplitSeq(bytes.TrimSuffix(data, []byte("\n")), []byte("\n")) {
 		if len(data) == 0 {
 			break
 		}
