@@ -3,9 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +18,9 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
@@ -552,6 +556,9 @@ func TestDetachedProcessResumeClaimPeerOrderCLI(t *testing.T) {
 					}
 					poll.Stage = "terminal-check"
 					if terminal := delivery["state"]; terminal != "held" && terminal != "accepted" && terminal != state {
+						if provider == "claude" && ref == "detached-second" {
+							logDetachedPeerPrewriteFailure(t, f, raw, strings.TrimPrefix(source.ref, "uid:"), strings.TrimPrefix(first.ref, "uid:"), next.Binding.PaneUID)
+						}
 						t.Fatalf("unexpected terminal state want %s: %s", state, raw)
 					}
 					return delivery["state"] == state
@@ -899,4 +906,263 @@ func TestDetachedProcessResumeStaleClaimStopCLI(t *testing.T) {
 	}
 	detachedResumeCLI(t, ctx, f, "agent", "stop", first.ref)
 	released = true
+}
+
+// This evidence is a new, potentially delayed observation after the original
+// terminal assertion, before its Fatal and resource cleanup. It cannot restore
+// primary-time state or identify the writer of a later durable record.
+func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []byte, source, target, pane string) {
+	t.Helper()
+	type getEvidence struct {
+		Started, Finished time.Time
+		Read, Handoff string
+		Found, Error, AdapterIsClaude, TerminalMatches bool
+		StateMatches, ReasonMatches, UnknownMatches bool
+		MessageMatches, ConversationMatches, SourceRouteSame, TargetRouteSame, DeadlineSame bool
+	}
+	type eventEvidence struct {
+		Event, Source, Code, Result, At, RunSHA256, Phase string
+		AgentIsSource, AgentIsTarget, PaneMatchesTarget bool
+	}
+	type evidence struct {
+		Phase string
+		PrimaryAt, JournalFinished time.Time
+		Get getEvidence
+		Journal string
+		Records, Matched int
+		Events []eventEvidence
+	}
+	result := evidence{Phase: "post-primary-pre-cleanup", PrimaryAt: time.Now(), Journal: "read-unconfirmed"}
+	result.Get.Read, result.Get.Handoff = "error", "unconfirmed"
+	// Cache only the original receipt bytes. No new status command or IPC.
+	var receipt struct {
+		MessageRef string `json:"messageRef"`
+		ConversationRef string `json:"conversationRef"`
+		Source coremessage.Route `json:"source"`
+		Target coremessage.Route `json:"target"`
+		Deadline time.Time `json:"deadline"`
+		Delivery coremessage.Delivery `json:"delivery"`
+	}
+	primaryValid := json.Unmarshal(primary, &receipt) == nil && receipt.MessageRef == "detached-second" && receipt.Source.Valid() && receipt.Target.Valid() && receipt.Source.Provider == "claude" && receipt.Target.Provider == "claude" && receipt.Source.AgentUID == source && receipt.Target.AgentUID == target && receipt.Target.PaneUID == pane && !receipt.Deadline.IsZero()
+	stateDir := filepath.Dir(filepath.Dir(f.store.Path()))
+	journal := filepath.Join(stateDir, "logs", "operations.jsonl")
+	initial, initialErr := os.Lstat(journal)
+	result.Get.Started = time.Now()
+	// This existing bounded store may ensure its directory and create/open
+	// messages.json.flock. It waits at most two seconds; it does not Apply.
+	record, found, getErr := messagestore.NewBoundedWaitStore(stateDir).Get("detached-second")
+	result.Get.Finished = time.Now()
+	g := &result.Get
+	g.Found, g.Error = found, getErr != nil
+	if getErr == nil {
+		g.Read = "missing"
+		if found {
+			g.Read = "mismatch"
+			g.AdapterIsClaude = record.Adapter == "claude-coordination"
+			g.TerminalMatches = record.Delivery.State.Terminal() && receipt.Delivery.State.Terminal()
+			g.MessageMatches = record.Envelope.MessageRef == receipt.MessageRef && record.Delivery.MessageRef == receipt.MessageRef && receipt.Delivery.MessageRef == receipt.MessageRef
+			g.ConversationMatches = receipt.ConversationRef != "" && record.Envelope.ConversationRef == receipt.ConversationRef && record.Delivery.ConversationRef == receipt.ConversationRef && receipt.Delivery.ConversationRef == receipt.ConversationRef
+			g.StateMatches = record.Delivery.State == coremessage.StateFailed && receipt.Delivery.State == coremessage.StateFailed
+			g.ReasonMatches = record.Delivery.Reason == "provider-prewrite-refused" && receipt.Delivery.Reason == "provider-prewrite-refused"
+			g.UnknownMatches = record.Delivery.OutcomeUnknown == receipt.Delivery.OutcomeUnknown && !receipt.Delivery.OutcomeUnknown
+			g.SourceRouteSame = record.Envelope.Source.Same(receipt.Source)
+			g.TargetRouteSame = record.Envelope.Target.Same(receipt.Target)
+			g.DeadlineSame = record.Envelope.Deadline.Equal(receipt.Deadline)
+			if primaryValid && g.AdapterIsClaude && g.TerminalMatches && g.MessageMatches && g.ConversationMatches && g.StateMatches && g.ReasonMatches && g.UnknownMatches && g.SourceRouteSame && g.TargetRouteSame && g.DeadlineSame {
+				g.Read, g.Handoff = "ok", "not-observed"
+				if record.HandoffObserved {
+					g.Handoff = "observed"
+				}
+			}
+		}
+	}
+	// Output is constructed entirely from closed fields. If limits would be
+	// exceeded, emit no event rows, including no "first N" partial sample.
+	emit := func() {
+		result.JournalFinished = time.Now()
+		const prefix = "detached prewrite evidence (post-primary; writer/cause unproven): "
+		raw, err := json.Marshal(result)
+		// Leave 512 bytes for the Go test log's file/line framing. The new
+		// diagnostic is emitted as one line; overflow emits counts only.
+		if result.Matched > 16 || err != nil || len(prefix)+len(raw) > 8*1024-512 {
+			raw, err = json.Marshal(struct {
+				Journal string
+				Records, Matched int
+			}{"truncated-unconfirmed", result.Records, result.Matched})
+		}
+		if err != nil || len(prefix)+len(raw) > 8*1024-512 {
+			t.Log("detached prewrite evidence: truncated-unconfirmed")
+			return
+		}
+		t.Log(prefix + string(raw))
+	}
+	defer emit()
+	private := func(info os.FileInfo) bool {
+		if info == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+			return false
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		return ok && stat.Uid == uint32(os.Getuid())
+	}
+	if errors.Is(initialErr, os.ErrNotExist) {
+		result.Journal = "missing"
+		return
+	}
+	pre, preErr := os.Lstat(journal)
+	if initialErr != nil || preErr != nil || !private(initial) || !private(pre) || !os.SameFile(initial, pre) || initial.Size() != pre.Size() || !initial.ModTime().Equal(pre.ModTime()) {
+		result.Journal = "metadata-unconfirmed"
+		return
+	}
+	data, ok := readSDKResumeRefusalJournal(journal, initial)
+	post, postErr := os.Lstat(journal)
+	if !ok || postErr != nil || !private(post) || !os.SameFile(initial, post) || post.Size() != int64(len(data)) || pre.Size() != post.Size() || !pre.ModTime().Equal(post.ModTime()) {
+		result.Journal = "read-unconfirmed"
+		return
+	}
+	if len(data) == 0 {
+		result.Journal = "empty"
+		return
+	}
+	if data[len(data)-1] != '\n' {
+		result.Journal = "schema-unconfirmed"
+		return
+	}
+	// The same closed recorder pairs as logClaudeFailureRegistration. Keep
+	// that helper and the SDK reader unchanged; no product schema extension.
+	registrationPairs := map[string]bool{
+		"hook:hook-arguments-present":         true,
+		"hook:registry-path-invalid":          true,
+		"hook:registry-unreadable":            true,
+		"helper:registry-unreadable":          true,
+		"hook:hook-input-unreadable":          true,
+		"hook:payload-not-session-start":      true,
+		"hook:pane-binding-mismatch":          true,
+		"hook:agent-mismatch":                 true,
+		"hook:provider-process-mismatch":      true,
+		"hook:messaging-credential-invalid":   true,
+		"hook:session-id-embeds-credential":   true,
+		"hook:messaging-socket-unavailable":   true,
+		"helper:messaging-socket-unavailable": true,
+		"hook:nonce-unavailable":              true,
+		"hook:authority-invalid":              true,
+		"helper:authority-invalid":            true,
+		"hook:hook-identity-unavailable":      true,
+		"hook:reply-tool-policy-unavailable":  true,
+		"hook:helper-executable-unavailable":  true,
+		"hook:helper-bootstrap-unavailable":   true,
+		"hook:helper-ack-pipe-unavailable":    true,
+		"hook:helper-start-failed":            true,
+		"hook:helper-admission-unconfirmed":   true,
+		"helper:helper-arguments-invalid":     true,
+		"helper:helper-ack-missing":           true,
+		"helper:helper-ack-not-pipe":          true,
+		"helper:helper-input-unreadable":      true,
+		"helper:producer-mismatch":            true,
+		"helper:bootstrap-invalid":            true,
+		"helper:helper-identity-unavailable":  true,
+		"helper:lease-unavailable":            true,
+		"helper:coordination-unavailable":     true,
+		"helper:lease-owner-unavailable":      true,
+		"helper:provider-process-gone":        true,
+		"helper:claim-refused-activation":     true,
+		"helper:claim-refused-competing":      true,
+		"helper:claim-refused-newer":          true,
+		"helper:lock-timeout":                 true,
+		"helper:lock-acquire-failed":          true,
+		"helper:registry-degraded":            true,
+		"helper:registry-write-failed":        true,
+		"helper:route-mismatch":               true,
+		"helper:dialogue-broker-unavailable":  true,
+		"helper:reply-tool-gate-unavailable":  true,
+		"helper:stale-before-ack":             true,
+		"helper:ready":                        true,
+		"helper:ended-context-done":           true,
+		"helper:ended-not-current":            true,
+		"helper:ended-accept-failed":          true,
+	}
+	knownKeys := map[string]bool{}
+	eventType := reflect.TypeOf(diagnostics.Event{})
+	for i := 0; i < eventType.NumField(); i++ {
+		key, _, _ := strings.Cut(eventType.Field(i).Tag.Get("json"), ",")
+		if key != "" && key != "-" {
+			knownKeys[key] = true
+		}
+	}
+	var rows []eventEvidence
+	for line := range bytes.SplitSeq(bytes.TrimSuffix(data, []byte("\n")), []byte("\n")) {
+		fields := json.NewDecoder(bytes.NewReader(line))
+		opening, err := fields.Token()
+		if err != nil || opening != json.Delim('{') {
+			result.Journal = "schema-unconfirmed"
+			return
+		}
+		keys := map[string]bool{}
+		for fields.More() {
+			key, err := fields.Token()
+			name, named := key.(string)
+			var value json.RawMessage
+			if err != nil || !named || !knownKeys[name] || keys[name] || fields.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				result.Journal = "schema-unconfirmed"
+				return
+			}
+			keys[name] = true
+		}
+		ending, err := fields.Token()
+		var event diagnostics.Event
+		decoder := json.NewDecoder(bytes.NewReader(line))
+		decoder.DisallowUnknownFields()
+		if err != nil || ending != json.Delim('}') || fields.Decode(new(any)) != io.EOF || decoder.Decode(&event) != nil || decoder.Decode(new(any)) != io.EOF {
+			result.Journal = "schema-unconfirmed"
+			return
+		}
+		result.Records++
+		handoff := event.Event == "agent.message.claude-handoff-route" && (event.AgentUID == source || event.AgentUID == target)
+		registration := event.Event == "agent.claude.registration" && event.AgentUID == target && event.PaneUID == pane
+		if !handoff && !registration {
+			continue
+		}
+		shape := true
+		for _, key := range []string{"at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend", "source", "code", "agent_uid"} {
+			shape = shape && keys[key]
+		}
+		for key := range keys {
+			switch key {
+			case "at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend", "source", "code", "agent_uid", "pane_uid", "kind":
+			default:
+				shape = false
+			}
+		}
+		at, atErr := time.Parse(time.RFC3339Nano, event.At)
+		shape = shape && atErr == nil && event.Component == "agent"
+		if handoff {
+			shape = shape && !keys["pane_uid"] && event.PaneUID == "" && keys["kind"] && event.Level == "error" && event.Result == "error" && event.Kind == "runtime" && event.DurationMS == 0
+			shape = shape && (event.Code == "claude.handoff.source-route-unproven" || event.Code == "claude.handoff.target-route-unproven")
+			switch event.Source {
+			case "tmux-claude", "tmux-codex", "process-claude", "process-codex", "unknown":
+			default:
+				shape = false
+			}
+		} else {
+			reason, prefix := strings.CutPrefix(event.Code, "claude.registration.")
+			shape = shape && prefix && registrationPairs[event.Source+":"+reason] && keys["pane_uid"] && event.DurationMS >= 0
+			if diagnostics.ClaudeRegistrationReason(reason).Refusal() {
+				shape = shape && keys["kind"] && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
+			} else {
+				shape = shape && !keys["kind"] && event.Level == "info" && event.Result == "success" && event.Kind == ""
+			}
+		}
+		if !shape {
+			result.Journal = "schema-unconfirmed"
+			return
+		}
+		result.Matched++
+		if result.Matched <= 16 {
+			phase := "timestamp-before-primary"
+			if !at.Before(result.PrimaryAt) {
+				phase = "timestamp-at-or-after-primary"
+			}
+			rows = append(rows, eventEvidence{Event: event.Event, Source: event.Source, Code: event.Code, Result: event.Result, At: at.UTC().Format(time.RFC3339Nano), RunSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(event.RunID))), Phase: phase, AgentIsSource: event.AgentUID == source, AgentIsTarget: event.AgentUID == target, PaneMatchesTarget: registration})
+		}
+	}
+	result.Journal, result.Events = "complete", rows
 }
