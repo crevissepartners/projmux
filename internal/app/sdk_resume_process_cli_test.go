@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -783,7 +785,39 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 			if !errors.As(e, &refused) || refused.Code != want || result.Preparation != nil || result.MayBeTruncated {
 				t.Fatalf("Resume %s returned %+v %v; want %s", change, result, e, want)
 			}
-			if !reflect.DeepEqual(before, sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")) {
+			after := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
+			if !reflect.DeepEqual(before, after) {
+				paths := make([]string, 0, len(before)+len(after))
+				for path := range before {
+					paths = append(paths, path)
+				}
+				for path := range after {
+					if _, present := before[path]; !present {
+						paths = append(paths, path)
+					}
+				}
+				sort.Strings(paths)
+				describe := func(value string, present bool) (mode, hash string) {
+					if !present {
+						return "", ""
+					}
+					mode, hash, _ = strings.Cut(value, " ")
+					if strings.Contains(mode, "L") {
+						// Snapshot symlinks hold a raw target, never log it.
+						hash = fmt.Sprintf("%x", sha256.Sum256([]byte(hash)))
+					}
+					return mode, hash
+				}
+				for _, path := range paths {
+					beforeValue, beforePresent := before[path]
+					afterValue, afterPresent := after[path]
+					if beforePresent == afterPresent && beforeValue == afterValue {
+						continue
+					}
+					beforeMode, beforeHash := describe(beforeValue, beforePresent)
+					afterMode, afterHash := describe(afterValue, afterPresent)
+					t.Logf("snapshot delta path=%q before={present:%t mode:%q hash:%q} after={present:%t mode:%q hash:%q}", path, beforePresent, beforeMode, beforeHash, afterPresent, afterMode, afterHash)
+				}
 				t.Fatal("refusal changed Registry/sidecar/claim")
 			}
 		})
