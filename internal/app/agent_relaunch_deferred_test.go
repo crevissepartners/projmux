@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +25,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -489,7 +492,31 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			deferredReady(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := deferredCandidate(t, f, first.ref)
-			run := deferredRelaunchCLI(t, ctx, f, first.ref, "--profile", "delayed")
+			var run *deferredCLIClaim
+			var primaryAt, cleanupAt time.Time
+			journal := filepath.Join(filepath.Dir(f.store.Path()), "logs", "operations.jsonl")
+			var journalBefore os.FileInfo
+			if !killed {
+				journalBefore, _ = os.Lstat(journal)
+				defer func() { cleanupAt = time.Now() }()
+				// Registered before the existing relaunch cleanup: LIFO makes
+				// its Close/Kill/Wait finish before inspecting the owned buffer.
+				t.Cleanup(func() {
+					if primaryAt.IsZero() || run == nil {
+						return
+					}
+					if run.cmd.ProcessState == nil {
+						t.Log("wake evidence post-cleanup=wait-unconfirmed")
+					} else {
+						logClaudeFailureBuffer(t, "post-cleanup", run.stderr.Bytes())
+						t.Logf("wake evidence cleanup-intervened=true cli-wait-exit=%d provider-wait=unproven", run.cmd.ProcessState.ExitCode())
+					}
+					logClaudeFailureRegistration(t, journal, journalBefore, old.Agent.Metadata.UID, old.Record.Binding.PaneUID, primaryAt, cleanupAt)
+				})
+			}
+			relaunchStarted := time.Now()
+			run = deferredRelaunchCLI(t, ctx, f, first.ref, "--profile", "delayed")
+			claimReadyAt := time.Now()
 			frozen, err := deferredFixtureCommand(f).readDeferredLaunch(old.Agent.Metadata.UID)
 			if err != nil || frozen == nil {
 				t.Fatal(err)
@@ -507,6 +534,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			wakeStarted := time.Now()
 			if killed {
 				_ = run.cmd.Process.Kill()
 				_ = run.cmd.Wait()
@@ -517,7 +545,13 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			}
 			line, err := run.output.ReadString('\n')
 			if err != nil {
-				t.Fatalf("wake %v %s", err, run.stderr.String())
+				cached := run.stderr.String()
+				if !killed {
+					primaryAt = time.Now()
+					logClaudeFailureBuffer(t, "primary-cache-copy-unsettled", []byte(cached))
+					t.Logf("wake evidence relaunch-start=%s claim-ready=%s continue-start=%s primary-at=%s claimant-pid=%d producer=unproven", relaunchStarted.UTC().Format(time.RFC3339Nano), claimReadyAt.UTC().Format(time.RFC3339Nano), wakeStarted.UTC().Format(time.RFC3339Nano), primaryAt.UTC().Format(time.RFC3339Nano), run.cmd.Process.Pid)
+				}
+				t.Fatalf("wake %v %s", err, cached)
 			}
 			if killed {
 				if !strings.Contains(line, "foreground=owned") {
@@ -1491,5 +1525,189 @@ func TestDeferredClaudeLegacyModeRefusalAndReplacementActualCLI(t *testing.T) {
 				t.Fatal("replacement not consumed", err)
 			}
 		})
+	}
+}
+
+// These diagnostics only run for the two explicitly selected failure branches.
+// They do not identify the writer PID or promote cleanup observations to causes.
+func logClaudeFailureBuffer(t *testing.T, phase string, data []byte) {
+	t.Helper()
+	class := "unclassified"
+	if len(data) > 64*1024 {
+		class = "over-limit"
+	} else {
+		for _, entry := range []struct{ text, class string }{
+			{"Waiting for first input; the provider has not started.", "initial-wait-notice"},
+			{"claude registration lease is stale or unavailable", "registration-lease-refusal"},
+			{"process-resume-owned", "resume-owned-refusal"},
+		} {
+			if bytes.Contains(data, []byte(entry.text)) {
+				class = entry.class
+			}
+		}
+	}
+	t.Logf("claude failure buffer phase=%s bytes=%d sha256=%x class=%s", phase, len(data), sha256.Sum256(data), class)
+}
+
+func logClaudeFailureRegistration(t *testing.T, path string, before os.FileInfo, agent, pane string, primaryAt, cleanupAt time.Time) {
+	t.Helper()
+	closed := func() { t.Log("claude registration evidence state=closed-unconfirmed actor-pid=unproven best-effort=true") }
+	pre, err := os.Lstat(path)
+	private := func(info os.FileInfo) bool {
+		if info == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+			return false
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		return ok && stat.Uid == uint32(os.Getuid())
+	}
+	if err != nil || !private(before) || !private(pre) || !os.SameFile(before, pre) {
+		closed()
+		return
+	}
+	data, ok := readSDKResumeRefusalJournal(path, before)
+	post, err := os.Lstat(path)
+	if !ok || err != nil || !private(post) || !os.SameFile(pre, post) || pre.Size() != int64(len(data)) || post.Size() != pre.Size() || !pre.ModTime().Equal(post.ModTime()) {
+		closed()
+		return
+	}
+	if len(data) != 0 && data[len(data)-1] != '\n' {
+		closed()
+		return
+	}
+	// Closed recorder source/reason pairs, including refusals. No event text
+	// or unknown field value can become diagnostic output.
+	allowed := map[string]bool{
+		"hook:hook-arguments-present":         true,
+		"hook:registry-path-invalid":          true,
+		"hook:registry-unreadable":            true,
+		"helper:registry-unreadable":          true,
+		"hook:hook-input-unreadable":          true,
+		"hook:payload-not-session-start":      true,
+		"hook:pane-binding-mismatch":          true,
+		"hook:agent-mismatch":                 true,
+		"hook:provider-process-mismatch":      true,
+		"hook:messaging-credential-invalid":   true,
+		"hook:session-id-embeds-credential":   true,
+		"hook:messaging-socket-unavailable":   true,
+		"helper:messaging-socket-unavailable": true,
+		"hook:nonce-unavailable":              true,
+		"hook:authority-invalid":              true,
+		"helper:authority-invalid":            true,
+		"hook:hook-identity-unavailable":      true,
+		"hook:reply-tool-policy-unavailable":  true,
+		"hook:helper-executable-unavailable":  true,
+		"hook:helper-bootstrap-unavailable":   true,
+		"hook:helper-ack-pipe-unavailable":    true,
+		"hook:helper-start-failed":            true,
+		"hook:helper-admission-unconfirmed":   true,
+		"helper:helper-arguments-invalid":     true,
+		"helper:helper-ack-missing":           true,
+		"helper:helper-ack-not-pipe":          true,
+		"helper:helper-input-unreadable":      true,
+		"helper:producer-mismatch":            true,
+		"helper:bootstrap-invalid":            true,
+		"helper:helper-identity-unavailable":  true,
+		"helper:lease-unavailable":            true,
+		"helper:coordination-unavailable":     true,
+		"helper:lease-owner-unavailable":      true,
+		"helper:provider-process-gone":        true,
+		"helper:claim-refused-activation":     true,
+		"helper:claim-refused-competing":      true,
+		"helper:claim-refused-newer":          true,
+		"helper:lock-timeout":                 true,
+		"helper:lock-acquire-failed":          true,
+		"helper:registry-degraded":            true,
+		"helper:registry-write-failed":        true,
+		"helper:route-mismatch":               true,
+		"helper:dialogue-broker-unavailable":  true,
+		"helper:reply-tool-gate-unavailable":  true,
+		"helper:stale-before-ack":             true,
+		"helper:ready":                        true,
+		"helper:ended-context-done":           true,
+		"helper:ended-not-current":            true,
+		"helper:ended-accept-failed":          true,
+	}
+	type observation struct {
+		at time.Time
+		source, code, result, run string
+	}
+	var observations []observation
+	count := 0
+	for _, line := range bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n")) {
+		if len(data) == 0 {
+			break
+		}
+		// Validate complete objects and reject duplicate/null fields before
+		// decoding typed values. Parser errors and original values stay private.
+		keys := map[string]bool{}
+		fields := json.NewDecoder(bytes.NewReader(line))
+		opening, err := fields.Token()
+		if err != nil || opening != json.Delim('{') {
+			closed()
+			return
+		}
+		for fields.More() {
+			key, err := fields.Token()
+			name, named := key.(string)
+			var value json.RawMessage
+			if err != nil || !named || keys[name] || fields.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				closed()
+				return
+			}
+			keys[name] = true
+		}
+		ending, err := fields.Token()
+		if err != nil || ending != json.Delim('}') || fields.Decode(new(any)) != io.EOF {
+			closed()
+			return
+		}
+		var event diagnostics.Event
+		decoder := json.NewDecoder(bytes.NewReader(line))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&event) != nil || decoder.Decode(new(any)) != io.EOF {
+			closed()
+			return
+		}
+		count++
+		if event.Event != "agent.claude.registration" || event.AgentUID != agent || event.PaneUID != pane {
+			continue
+		}
+		for key := range keys {
+			switch key {
+			case "at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend", "source", "code", "agent_uid", "pane_uid", "kind":
+			default:
+				closed()
+				return
+			}
+		}
+		for _, key := range []string{"at", "level", "component", "event", "result", "duration_ms", "run_id", "version", "mux_backend", "source", "code", "agent_uid", "pane_uid"} {
+			if !keys[key] {
+				closed()
+				return
+			}
+		}
+		reason, prefix := strings.CutPrefix(event.Code, "claude.registration.")
+		at, err := time.Parse(time.RFC3339Nano, event.At)
+		refused := diagnostics.ClaudeRegistrationReason(reason).Refusal()
+		shape := event.Level == "info" && event.Result == "success" && event.Kind == ""
+		if refused {
+			shape = event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
+		}
+		if !prefix || !allowed[event.Source+":"+reason] || err != nil || !shape || event.Component != "agent" || event.DurationMS < 0 || event.Command != "" || event.Subcommand != "" || event.Message != "" {
+			closed()
+			return
+		}
+		observations = append(observations, observation{at, event.Source, event.Code, event.Result, fmt.Sprintf("%x", sha256.Sum256([]byte(event.RunID)))})
+	}
+	t.Logf("claude registration evidence state=complete records=%d matched=%d actor-pid=unproven best-effort=true primary-at=%s cleanup-at=%s", count, len(observations), primaryAt.UTC().Format(time.RFC3339Nano), cleanupAt.UTC().Format(time.RFC3339Nano))
+	for _, event := range observations {
+		phase := "before-primary"
+		if !event.at.Before(primaryAt) {
+			phase = "after-primary-before-cleanup"
+		}
+		if !cleanupAt.IsZero() && !event.at.Before(cleanupAt) {
+			phase = "cleanup-or-later"
+		}
+		t.Logf("claude registration evidence at=%s source=%s code=%s result=%s run-sha256=%s phase=%s", event.at.UTC().Format(time.RFC3339Nano), event.source, event.code, event.result, event.run, phase)
 	}
 }
