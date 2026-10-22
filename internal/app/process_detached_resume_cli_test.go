@@ -914,34 +914,34 @@ func TestDetachedProcessResumeStaleClaimStopCLI(t *testing.T) {
 func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []byte, source, target, pane string) {
 	t.Helper()
 	type getEvidence struct {
-		Started, Finished time.Time
-		Read, Handoff string
-		Found, Error, AdapterIsClaude, TerminalMatches bool
-		StateMatches, ReasonMatches, UnknownMatches bool
+		Started, Finished                                                                   time.Time
+		Read, Handoff                                                                       string
+		Found, Error, AdapterIsClaude, TerminalMatches                                      bool
+		StateMatches, ReasonMatches, UnknownMatches                                         bool
 		MessageMatches, ConversationMatches, SourceRouteSame, TargetRouteSame, DeadlineSame bool
 	}
 	type eventEvidence struct {
 		Event, Source, Code, Result, At, RunSHA256, Phase string
-		AgentIsSource, AgentIsTarget, PaneMatchesTarget bool
+		AgentIsSource, AgentIsTarget, PaneMatchesTarget   bool
 	}
 	type evidence struct {
-		Phase string
+		Phase                      string
 		PrimaryAt, JournalFinished time.Time
-		Get getEvidence
-		Journal string
-		Records, Matched int
-		Events []eventEvidence
+		Get                        getEvidence
+		Journal                    string
+		Records, Matched           int
+		Events                     []eventEvidence
 	}
 	result := evidence{Phase: "post-primary-pre-cleanup", PrimaryAt: time.Now(), Journal: "read-unconfirmed"}
 	result.Get.Read, result.Get.Handoff = "error", "unconfirmed"
 	// Cache only the original receipt bytes. No new status command or IPC.
 	var receipt struct {
-		MessageRef string `json:"messageRef"`
-		ConversationRef string `json:"conversationRef"`
-		Source coremessage.Route `json:"source"`
-		Target coremessage.Route `json:"target"`
-		Deadline time.Time `json:"deadline"`
-		Delivery coremessage.Delivery `json:"delivery"`
+		MessageRef      string               `json:"messageRef"`
+		ConversationRef string               `json:"conversationRef"`
+		Source          coremessage.Route    `json:"source"`
+		Target          coremessage.Route    `json:"target"`
+		Deadline        time.Time            `json:"deadline"`
+		Delivery        coremessage.Delivery `json:"delivery"`
 	}
 	primaryValid := json.Unmarshal(primary, &receipt) == nil && receipt.MessageRef == "detached-second" && receipt.Source.Valid() && receipt.Target.Valid() && receipt.Source.Provider == "claude" && receipt.Target.Provider == "claude" && receipt.Source.AgentUID == source && receipt.Target.AgentUID == target && receipt.Target.PaneUID == pane && !receipt.Deadline.IsZero()
 	stateDir := filepath.Dir(filepath.Dir(f.store.Path()))
@@ -986,7 +986,7 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		// diagnostic is emitted as one line; overflow emits counts only.
 		if result.Matched > 16 || err != nil || len(prefix)+len(raw) > 8*1024-512 {
 			raw, err = json.Marshal(struct {
-				Journal string
+				Journal          string
 				Records, Matched int
 			}{"truncated-unconfirmed", result.Records, result.Matched})
 		}
@@ -1081,7 +1081,7 @@ func logDetachedPeerPrewriteFailure(t *testing.T, f processCreateCLI, primary []
 		"helper:ended-accept-failed":          true,
 	}
 	knownKeys := map[string]bool{}
-	eventType := reflect.TypeOf(diagnostics.Event{})
+	eventType := reflect.TypeFor[diagnostics.Event]()
 	for i := 0; i < eventType.NumField(); i++ {
 		key, _, _ := strings.Cut(eventType.Field(i).Tag.Get("json"), ",")
 		if key != "" && key != "-" {
