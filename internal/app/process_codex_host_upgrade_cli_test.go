@@ -41,6 +41,9 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := os.MkdirAll(paths.ConfigDir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(filepath.Join(paths.ConfigDir, "agent-guidance.md"), []byte("MANAGED-GUIDANCE-A"), 0600); err != nil {
 				t.Fatal(err)
 			}

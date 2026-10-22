@@ -201,7 +201,11 @@ func (c *agentCommand) planHostProcessCodexLaunch(recipe processRelaunchRecipe) 
 	}
 	ai := c.ai.(*aiCommand)
 	command, err := processhost.CodexCommand(ai.findAgentBinary(aiModeCodex), recipe.workspace.CWD, ai.processCreateEnvironment(), nil)
-	config := processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(recipe.workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{Model: settings.resolution.New.Model.Value, Effort: annotations[coremetadata.AnnotationAgentEffort], Policy: policy}}
+	var managedInstructions *codexappserver.ManagedInstructions
+	if settings.managedBase != nil {
+		managedInstructions = settings.managedBase.Instructions
+	}
+	config := processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(recipe.workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{ManagedInstructions: managedInstructions, Model: settings.resolution.New.Model.Value, Effort: annotations[coremetadata.AnnotationAgentEffort], Policy: policy}}
 	return command, config, settings, err
 }
 

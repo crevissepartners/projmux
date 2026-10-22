@@ -17,10 +17,12 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 type processCodexCreateCLI struct{ processCreateCLI }
@@ -312,7 +314,27 @@ func TestProcessCodexCreateHooksAndOutputActualCLI(t *testing.T) {
 				t.Fatalf("name bytes %q", stdout.String())
 			}
 			agent := reg.Agents[0]
-			normalized := strings.NewReplacer(agent.Metadata.UID, "AGENT", agent.Status.PaneRef, "PANE", f.project, "PROJECT", f.window, "WINDOW", f.root, "ROOT").Replace(stdout.String())
+			paths, err := config.DefaultPathsFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			guidance := (&mutationruntime.GuidanceService{Paths: func() (config.Paths, error) { return paths, nil }}).PlanProcessAgentGuidance()
+			wantBase := guidance.CodexDeveloperInstructions(agent.Metadata.UID, "")
+			digest := agent.Metadata.Annotations[mutationruntime.CodexManagedBaseDigest]
+			if digest != projectlinks.Digest([]byte(wantBase)) || agent.Metadata.Annotations[mutationruntime.CodexManagedBaseMode] != "base" || agent.Metadata.Annotations[mutationruntime.CodexManagedBaseStatus] != "base-delivered" {
+				t.Fatal("create did not record the exact managed base recipe")
+			}
+			snapshot, err := projectlinks.NewSnapshotStore(filepath.Join(paths.StateDir, "codex-managed-base")).RecordedSnapshotPath(digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base, err := os.ReadFile(snapshot)
+			if err != nil || string(base) != wantBase {
+				t.Fatalf("managed base snapshot mismatch: %v", err)
+			}
+			// Only the Agent UID makes this verified digest vary per fixture.
+			projection := strings.ReplaceAll(stdout.String(), digest, "MANAGED_BASE_DIGEST")
+			normalized := strings.NewReplacer(agent.Metadata.UID, "AGENT", agent.Status.PaneRef, "PANE", f.project, "PROJECT", f.window, "WINDOW", f.root, "ROOT").Replace(projection)
 			if agent.Status.SessionRef != nil && agent.Status.SessionRef.Codex != nil && agent.Status.SessionRef.Codex.Endpoint != nil {
 				normalized = strings.ReplaceAll(normalized, agent.Status.SessionRef.Codex.Endpoint.StateDomainID, "STATE_DOMAIN")
 			}

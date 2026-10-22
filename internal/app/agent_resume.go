@@ -370,6 +370,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	nameReason := out.NameReason
 
 	if nativeLifecycleTargetAfterCommit.valid() {
+		if plan.codexTransfer != nil {
+			if err := plan.codexTransfer.confirmManaged(nativeLifecycleTargetAfterCommit); err != nil {
+				return err
+			}
+		}
 		startup := nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTargetAfterCommit)
 		if plan.codexTransfer != nil {
 			if startup.Status != codexObserverStartupReady {

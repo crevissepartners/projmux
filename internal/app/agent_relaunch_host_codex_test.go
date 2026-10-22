@@ -596,6 +596,9 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 	if !ok || current.Status.PaneRef == oldPane || current.Status.Phase != coremetadata.PhaseRunning || !current.Status.SessionRef.SameConversation(source.Status.SessionRef) {
 		t.Fatal("recovery did not restore same-thread fresh native writer")
 	}
+	if current.Metadata.Annotations["projmux.io/codex-managed-base-status"] != "base-unconfirmed" {
+		t.Fatal("recovery lost the confirmed shared-resume metadata effect")
+	}
 	pane, present := reg.Pane(current.Status.PaneRef)
 	if !present || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() {
 		t.Fatal("recovery lacks verified native authority")
