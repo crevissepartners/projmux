@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ import (
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	metadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -773,20 +775,28 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 				want = projmux.CodeResumeRequestInvalid
 			}
 			before := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
+			journalPath := filepath.Join(f.root, "state", "projmux", "logs", "operations.jsonl")
+			journalBefore, _ := os.Lstat(journalPath)
+			var calls []sdkResumeRefusalCall
 			if change != "request-binding" && change != "wait-for-peer" && change != "override" {
+				started := time.Now()
 				_, e := client.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: ref, Preparation: p})
+				calls = append(calls, sdkResumeRefusalCallEvidence("validate", started, e))
 				var refused *projmux.Refusal
 				if !errors.As(e, &refused) || refused.Code != projmux.CodeResumePreparationStale {
 					t.Fatalf("Validate %s: %v", change, e)
 				}
 			}
+			started := time.Now()
 			result, e := client.ResumeAgent(ctx, req)
+			calls = append(calls, sdkResumeRefusalCallEvidence("resume", started, e))
 			var refused *projmux.Refusal
 			if !errors.As(e, &refused) || refused.Code != want || result.Preparation != nil || result.MayBeTruncated {
 				t.Fatalf("Resume %s returned %+v %v; want %s", change, result, e, want)
 			}
 			after := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
 			if !reflect.DeepEqual(before, after) {
+				logSDKResumeRefusalJournal(t, journalPath, journalBefore, before, after, calls)
 				paths := make([]string, 0, len(before)+len(after))
 				for path := range before {
 					paths = append(paths, path)
@@ -821,5 +831,134 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 				t.Fatal("refusal changed Registry/sidecar/claim")
 			}
 		})
+	}
+}
+
+// Evidence only: these helpers neither change the snapshot assertion nor select
+// a logging policy. A journal run ID does not establish a worker PID identity.
+type sdkResumeRefusalCall struct {
+	name              string
+	started, finished time.Time
+	ownerPID          int
+	birthHash, code   string
+}
+
+func sdkResumeRefusalCallEvidence(name string, started time.Time, err error) sdkResumeRefusalCall {
+	call := sdkResumeRefusalCall{name: name, started: started, finished: time.Now()}
+	var failure *mutationruntime.ProcessResumeFailure
+	if errors.As(err, &failure) {
+		call.ownerPID = failure.Owner.PID
+		call.birthHash = fmt.Sprintf("%x", sha256.Sum256([]byte(failure.Owner.Start)))
+		call.code = failure.Code
+	} else {
+		var refusal *projmux.Refusal
+		if errors.As(err, &refusal) {
+			call.code = string(refusal.Code)
+		}
+	}
+	return call
+}
+
+func logSDKResumeRefusalJournal(t *testing.T, path string, beforeInfo os.FileInfo, before, after map[string]string, calls []sdkResumeRefusalCall) {
+	t.Helper()
+	// A fixed vocabulary prevents unknown log fields from becoming output.
+	closed := func(value string, allowed ...string) string {
+		for _, candidate := range allowed {
+			if value == candidate {
+				return value
+			}
+		}
+		return fmt.Sprintf("unknown:%x", sha256.Sum256([]byte(value)))
+	}
+	for _, call := range calls {
+		t.Logf("journal call name=%s started=%s finished=%s owner_pid=%d owner_birth_sha=%s code=%s", call.name, call.started.UTC().Format(time.RFC3339Nano), call.finished.UTC().Format(time.RFC3339Nano), call.ownerPID, call.birthHash, closed(call.code, "", "process-resume-preparation-stale", "process-resume-plan-invalid", "process-resume-request-invalid"))
+	}
+	state := func(value string) { t.Logf("journal evidence state=%s", value) }
+	if beforeInfo == nil || !beforeInfo.Mode().IsRegular() {
+		state("before-unavailable-or-nonregular")
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		state("open-unavailable")
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(beforeInfo, info) {
+		state("identity-changed-or-nonregular")
+		return
+	}
+	const limit = 5 * 1024 * 1024
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		state("read-unavailable")
+		return
+	}
+	if len(data) > limit {
+		state("size-limit")
+		return
+	}
+	offset := beforeInfo.Size()
+	if offset < 0 || offset > int64(len(data)) {
+		state("shrunk-or-rotated")
+		return
+	}
+	_, beforeHash, _ := strings.Cut(before["logs/operations.jsonl"], " ")
+	_, afterHash, _ := strings.Cut(after["logs/operations.jsonl"], " ")
+	prefixMatches := fmt.Sprintf("%x", sha256.Sum256(data[:offset])) == beforeHash
+	afterMatches := fmt.Sprintf("%x", sha256.Sum256(data)) == afterHash
+	t.Logf("journal evidence bytes=%d offset=%d prefix_matches_before=%t bytes_match_after=%t", len(data), offset, prefixMatches, afterMatches)
+	if !prefixMatches || !afterMatches {
+		state("snapshot-or-concurrent-change")
+		return
+	}
+	added := data[offset:]
+	if len(added) > 0 && added[len(added)-1] != '\n' {
+		state("incomplete-record")
+		return
+	}
+	// Ignore unselected fields when decoding, but never print their raw bytes.
+	type event struct {
+		At         string `json:"at"`
+		Event      string `json:"event"`
+		Result     string `json:"result"`
+		Component  string `json:"component"`
+		Command    string `json:"command"`
+		Subcommand string `json:"subcommand"`
+		Kind       string `json:"kind"`
+		Code       string `json:"code"`
+		RunID      string `json:"run_id"`
+	}
+	var events []event
+	for line := range bytes.SplitSeq(added, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var e event
+		if line[0] != '{' || json.Unmarshal(line, &e) != nil || e.Event == "" || e.Result == "" || e.Component == "" || e.RunID == "" {
+			state("schema-invalid")
+			return
+		}
+		if _, err := time.Parse(time.RFC3339Nano, e.At); err != nil {
+			state("timestamp-invalid")
+			return
+		}
+		events = append(events, e)
+	}
+	t.Logf("journal evidence complete_events=%d actor_pid_link=unproven", len(events))
+	for index, e := range events {
+		at := "invalid"
+		if parsed, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
+			at = parsed.UTC().Format(time.RFC3339Nano)
+		}
+		t.Logf("journal event index=%d at=%s event=%s result=%s component=%s command=%s subcommand=%s kind=%s code=%s run_id_sha=%x", index, at,
+			closed(e.Event, "command.outcome", "lifecycle.outcome", "registry.lock.acquisition"),
+			closed(e.Result, "success", "error", "started"),
+			closed(e.Component, "cli", "runtime", "registry", "agent", "process"),
+			closed(e.Command, "", "agent", "create", "process-agent-owner", "process-agent-launch"),
+			closed(e.Subcommand, "", "resume", "relaunch", "stop"),
+			closed(e.Kind, "", "runtime", "usage", "exit"),
+			closed(e.Code, "", "process-resume-preparation-stale", "registry.lock.timeout", "registry.lock.acquire-failed", "registry.mutation.failed"), sha256.Sum256([]byte(e.RunID)))
 	}
 }
