@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -863,10 +864,8 @@ func logSDKResumeRefusalJournal(t *testing.T, path string, beforeInfo os.FileInf
 	t.Helper()
 	// A fixed vocabulary prevents unknown log fields from becoming output.
 	closed := func(value string, allowed ...string) string {
-		for _, candidate := range allowed {
-			if value == candidate {
-				return value
-			}
+		if slices.Contains(allowed, value) {
+			return value
 		}
 		return fmt.Sprintf("unknown:%x", sha256.Sum256([]byte(value)))
 	}
