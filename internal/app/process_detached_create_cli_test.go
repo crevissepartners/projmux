@@ -328,7 +328,7 @@ func testProcessChildSurvivesParentProviderScenarioCLI(t *testing.T, inferred bo
 	var primaryAt, cleanupAt time.Time
 	var journalBefore os.FileInfo
 	var evidencePane string
-	journal := filepath.Join(filepath.Dir(f.store.Path()), "logs", "operations.jsonl")
+	journal := filepath.Join(filepath.Dir(filepath.Dir(f.store.Path())), "logs", "operations.jsonl")
 	if failureEvidence {
 		defer func() { cleanupAt = time.Now() }()
 		// This callback runs after the existing child-stop cleanup, before

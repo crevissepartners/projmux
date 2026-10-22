@@ -494,7 +494,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			old := deferredCandidate(t, f, first.ref)
 			var run *deferredCLIClaim
 			var primaryAt, cleanupAt time.Time
-			journal := filepath.Join(filepath.Dir(f.store.Path()), "logs", "operations.jsonl")
+			journal := filepath.Join(filepath.Dir(filepath.Dir(f.store.Path())), "logs", "operations.jsonl")
 			var journalBefore os.FileInfo
 			if !killed {
 				journalBefore, _ = os.Lstat(journal)
@@ -528,7 +528,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 			writeCodexProfileFile(t, profiles, "delayed", "model = \"changed-model\"\neffort = \"low\"\n[permissions]\nallow = [\"Bash\"]\n")
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--profile", "none", "--", "source"))
 			deferredReady(t, ctx, f, source.ref)
-			deferredPauseClaimant(t, ctx, f, first.ref, run)
+			claimantIdentitySHA := deferredPauseClaimant(t, ctx, f, first.ref, run)
 			record := deferredPeer(t, ctx, f, source.ref, first.ref, "delayed-peer", "peer exact\ncontent")
 			expected, err := deferredPeerText(record)
 			if err != nil {
@@ -549,7 +549,7 @@ func TestDeferredClaudeRelaunchPeerUsesNewRecipeActualCLI(t *testing.T) {
 				if !killed {
 					primaryAt = time.Now()
 					logClaudeFailureBuffer(t, "primary-cache-copy-unsettled", []byte(cached))
-					t.Logf("wake evidence relaunch-start=%s claim-ready=%s continue-start=%s primary-at=%s claimant-pid=%d producer=unproven", relaunchStarted.UTC().Format(time.RFC3339Nano), claimReadyAt.UTC().Format(time.RFC3339Nano), wakeStarted.UTC().Format(time.RFC3339Nano), primaryAt.UTC().Format(time.RFC3339Nano), run.cmd.Process.Pid)
+					t.Logf("wake evidence relaunch-start=%s claim-ready=%s continue-start=%s primary-at=%s identity-subject=claimant-cli identity-sha256=%x producer-pid=unproven", relaunchStarted.UTC().Format(time.RFC3339Nano), claimReadyAt.UTC().Format(time.RFC3339Nano), wakeStarted.UTC().Format(time.RFC3339Nano), primaryAt.UTC().Format(time.RFC3339Nano), claimantIdentitySHA)
 				}
 				t.Fatalf("wake %v %s", err, cached)
 			}
@@ -937,7 +937,7 @@ func TestDeferredClaudeRelaunchGoUserWinsPendingSlotActualCLI(t *testing.T) {
 
 // Pause only after excluding every claim critical section, and prove stopped
 // before releasing the guard so a live claimant never retains it while parked.
-func deferredPauseClaimant(t *testing.T, ctx context.Context, f processCreateCLI, ref string, run *deferredCLIClaim) {
+func deferredPauseClaimant(t *testing.T, ctx context.Context, f processCreateCLI, ref string, run *deferredCLIClaim) [32]byte {
 	t.Helper()
 	uid := strings.TrimPrefix(ref, "uid:")
 	path := deferredFixtureCommand(f).deferredClaimPath(uid)
@@ -960,6 +960,10 @@ func deferredPauseClaimant(t *testing.T, ctx context.Context, f processCreateCLI
 		}
 		return strings.HasPrefix(strings.TrimSpace(string(out)), "T")
 	})
+	// Use the identity this existing authority check already read; do not
+	// probe the process again or expose its PID/birth value in diagnostics.
+	identity, _ := json.Marshal(record.Process)
+	return sha256.Sum256(identity)
 }
 
 func TestDeferredClaudeExplicitReplacementActualCLI(t *testing.T) {
