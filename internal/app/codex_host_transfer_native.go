@@ -7,6 +7,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"reflect"
 	"time"
 )
@@ -21,13 +22,15 @@ type codexNativeReservedInit struct {
 	Receipt    codexbroker.TransferReceipt
 }
 type codexNativeRebindTransfer struct {
-	initialize func(context.Context, *agentRebinder, agentResumePlan, coremetadata.AgentWorkspace, agentSettingsLaunch, projectLinksLaunch, agentGuidanceLaunch, agentResumeLaunch, codexappserver.ThreadSettings) (*codexNativeReservedInit, error)
-	check      func(context.Context) error
-	grant      func(context.Context, coremetadata.Registry, coremetadata.Pane, superviseSpec, string) (*codexbroker.NativeTransferGrant, error)
-	complete   func(codexLifecycleObserverTarget) error
+	initialize     func(context.Context, *agentRebinder, agentResumePlan, coremetadata.AgentWorkspace, agentSettingsLaunch, projectLinksLaunch, agentGuidanceLaunch, agentResumeLaunch, codexappserver.ThreadSettings) (*codexNativeReservedInit, error)
+	check          func(context.Context) error
+	grant          func(context.Context, coremetadata.Registry, coremetadata.Pane, superviseSpec, string) (*codexbroker.NativeTransferGrant, error)
+	confirmManaged func(codexLifecycleObserverTarget) error
+	complete       func(codexLifecycleObserverTarget) error
 }
 
 func (c *agentCommand) nativeTransferRebind(transfer *codexbroker.RemoteTransfer, record *codexHostTransferRecord, path string) *codexNativeRebindTransfer {
+	var managed *mutationruntime.ManagedCodexBase
 	return &codexNativeRebindTransfer{
 		check: transfer.Check,
 		initialize: func(ctx context.Context, r *agentRebinder, plan agentResumePlan, workspace coremetadata.AgentWorkspace, settings agentSettingsLaunch, links projectLinksLaunch, guidance agentGuidanceLaunch, resumed agentResumeLaunch, nativeSettings codexappserver.ThreadSettings) (*codexNativeReservedInit, error) {
@@ -95,6 +98,8 @@ func (c *agentCommand) nativeTransferRebind(transfer *codexbroker.RemoteTransfer
 			if err = transfer.Check(ctx); err != nil {
 				return nil, err
 			}
+			// Capture only this operation's successful native resume effect.
+			managed = settings.managedBase
 			record.NativeBinding = &reserved.Binding
 			record.Phase = "native-initialized"
 			if err = writeCodexHostTransfer(path, record); err != nil {
@@ -112,6 +117,43 @@ func (c *agentCommand) nativeTransferRebind(transfer *codexbroker.RemoteTransfer
 				return nil, err
 			}
 			return transfer.ActivateNative(ctx, *record.NativeTarget)
+		},
+		confirmManaged: func(target codexLifecycleObserverTarget) error {
+			if managed == nil {
+				return nil
+			}
+			expected, err := managedCodexTransferExpectation(record.NativeExpected, managed)
+			if err != nil {
+				return err
+			}
+			// Native resume also performs this existing, operation-qualified
+			// endpoint adoption. Project it rather than copying the observed ref.
+			projected := coremetadata.Registry{Agents: []coremetadata.Agent{expected.Clone()}}
+			if _, err := c.store.mutator().AdoptCodexResumeEndpoint(&projected, expected.Metadata.UID, target.NativeRoute.Endpoint); err != nil {
+				return err
+			}
+			expected, _ = projected.Agent(expected.Metadata.UID)
+			if record.NativeBinding != nil && record.NativeBinding.TurnID != "" {
+				expected.Status.SessionRef.Codex.HasStartedTurn = true
+			}
+			// No observer has started yet: native authority must still be absent.
+			// The existing complete callback requires verified authority after startup.
+			reg, err := c.loadRegistry()
+			if err != nil {
+				return err
+			}
+			agent, ok := reg.Agent(record.Source.Metadata.UID)
+			pane, present := reg.Pane(target.Identity.PaneUID)
+			if !ok || !present || record.NativeTarget == nil || record.NativeExpected == nil || agent.Status.PaneRef != record.NativeTarget.Pane || agent.Status.Phase != coremetadata.PhaseRunning || !sameHostTransferSpec(agent.Spec, expected.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, expected.Metadata.Annotations) || !agent.Status.SessionRef.SameConversation(record.Source.Status.SessionRef) || pane.Status.Activation.Generation != record.NativeTarget.Generation || pane.Status.Activation.OperationID != record.NativeTarget.Operation || pane.Status.Activation.RuntimeID != record.NativeTarget.RuntimeID || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.ThreadID != record.NativeTarget.Thread || pane.Status.Activation.Codex.Authority != nil || !reflect.DeepEqual(agent.Status.SessionRef, expected.Status.SessionRef) {
+				return processhost.ErrStale
+			}
+			next := *record
+			next.NativeExpected = expected
+			if err := writeCodexHostTransfer(path, &next); err != nil {
+				return err
+			}
+			*record = next
+			return nil
 		},
 		complete: func(target codexLifecycleObserverTarget) error {
 			reg, err := c.loadRegistry()
@@ -210,4 +252,19 @@ func (c *agentCommand) retireFailedNativeTransfer(ctx context.Context, record *c
 	record.NativeBinding = nil
 	record.Phase = "restored"
 	return writeCodexHostTransfer(path, record)
+}
+
+// managedCodexTransferExpectation projects only our successful managed effect
+// onto the journal's old recipe; the caller must still compare the whole result
+// and the exact activation before persisting it.
+func managedCodexTransferExpectation(old *coremetadata.Agent, managed *mutationruntime.ManagedCodexBase) (*coremetadata.Agent, error) {
+	if old == nil || managed == nil || managed.Instructions == nil || !managed.Instructions.Accepted {
+		return nil, processhost.ErrStale
+	}
+	projected := coremetadata.Registry{Agents: []coremetadata.Agent{old.Clone()}}
+	if err := managed.Record(&projected, old.Metadata.UID, false); err != nil {
+		return nil, err
+	}
+	expected, _ := projected.Agent(old.Metadata.UID)
+	return expected, nil
 }

@@ -19,9 +19,11 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // The fixture speaks the native Unix WebSocket protocol and the official
@@ -345,6 +347,22 @@ func TestCodexHostMoveActualCLI(t *testing.T) {
 	if !reflect.DeepEqual(before, after) || !bytes.Equal(wireBefore, wireAfter) || preview.CurrentHost != "tmux" || preview.TargetHost != "process" {
 		t.Fatal("dry-run mutated source")
 	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.ConfigDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.ConfigDir, "agent-guidance.md"), []byte("HOST-MOVE-BASE-B"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	guidance := (&mutationruntime.GuidanceService{Paths: func() (config.Paths, error) { return paths, nil }}).PlanProcessAgentGuidance()
+	wantBase := guidance.CodexDeveloperInstructions(source.Metadata.UID, "")
+	wantDigest := projectlinks.Digest([]byte(wantBase))
+	if wantDigest == source.Metadata.Annotations[mutationruntime.CodexManagedBaseDigest] {
+		t.Fatal("fixture did not change managed base A to B")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	owner, moved := startProcessRelaunchCLI(t, ctx, f, ref, "--host", "process", "--socket-path", socket, "--yes")
@@ -354,6 +372,37 @@ func TestCodexHostMoveActualCLI(t *testing.T) {
 	record := awaitProcessResumeRecord(t, ctx, f, ref, func(r *coremetadata.ProcessSessionRecord) bool {
 		return r.ThreadID == "process-thread" && r.TurnID == ""
 	})
+	transferred, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, present := transferred.Agent(source.Metadata.UID)
+	if !present || applied.Metadata.Annotations[mutationruntime.CodexManagedBaseDigest] != wantDigest || applied.Metadata.Annotations[mutationruntime.CodexManagedBaseStatus] != "base-delivered" {
+		t.Fatal("dedicated transfer did not record its accepted managed base B")
+	}
+	trace, err := os.ReadFile(f.trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumes := 0
+	for line := range bytes.SplitSeq(trace, []byte("\n")) {
+		var frame struct {
+			Method string
+			Params struct {
+				Base      string  `json:"baseInstructions"`
+				Developer *string `json:"developerInstructions"`
+			}
+		}
+		if json.Unmarshal(line, &frame) == nil && frame.Method == "thread/resume" {
+			resumes++
+			if frame.Params.Base != wantBase || frame.Params.Developer != nil {
+				t.Fatal("dedicated transfer did not send base B without developer instructions")
+			}
+		}
+	}
+	if resumes != 1 {
+		t.Fatalf("dedicated transfer resumed %d times, want exactly one", resumes)
+	}
 	var back agentRelaunchResult
 	if err := json.Unmarshal(hostCLIOutput(t, f, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes", "-o", "json"), &back); err != nil {
 		t.Fatal(err)
@@ -595,6 +644,9 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 	current, ok := reg.Agent(source.Metadata.UID)
 	if !ok || current.Status.PaneRef == oldPane || current.Status.Phase != coremetadata.PhaseRunning || !current.Status.SessionRef.SameConversation(source.Status.SessionRef) {
 		t.Fatal("recovery did not restore same-thread fresh native writer")
+	}
+	if current.Metadata.Annotations["projmux.io/codex-managed-base-status"] != "base-unconfirmed" {
+		t.Fatal("recovery lost the confirmed shared-resume metadata effect")
 	}
 	pane, present := reg.Pane(current.Status.PaneRef)
 	if !present || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() {

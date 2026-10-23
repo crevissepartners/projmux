@@ -324,6 +324,21 @@ func testProcessChildSurvivesParentProviderScenarioCLI(t *testing.T, inferred bo
 		t.Fatal("detached child missing")
 	}
 	ref := "uid:" + child.Metadata.UID
+	failureEvidence := !inferred && !regression && provider == "claude" && signal == syscall.SIGHUP
+	var primaryAt, cleanupAt time.Time
+	var journalBefore os.FileInfo
+	var evidencePane string
+	journal := filepath.Join(filepath.Dir(filepath.Dir(f.store.Path())), "logs", "operations.jsonl")
+	if failureEvidence {
+		defer func() { cleanupAt = time.Now() }()
+		// This callback runs after the existing child-stop cleanup, before
+		// fixture removal; resulting events explicitly include cleanup time.
+		t.Cleanup(func() {
+			if !primaryAt.IsZero() {
+				logClaudeFailureRegistration(t, journal, journalBefore, child.Metadata.UID, evidencePane, primaryAt, cleanupAt)
+			}
+		})
+	}
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 12*time.Second)
 		defer stop()
@@ -355,6 +370,11 @@ func testProcessChildSurvivesParentProviderScenarioCLI(t *testing.T, inferred bo
 			return ready
 		})
 	}
+	if failureEvidence {
+		journalBefore, _ = os.Lstat(journal)
+		evidencePane = childPane.Metadata.UID
+	}
+	readyAt := time.Now()
 	// Only this fixture-created provider's own group is targeted.
 	if err = syscall.Kill(-parentActivation.Child.PID, signal); err != nil {
 		t.Fatal(err)
@@ -364,6 +384,7 @@ func testProcessChildSurvivesParentProviderScenarioCLI(t *testing.T, inferred bo
 		t.Logf("regression original parent Wait: %v", parentWaitErr)
 	}
 	waited = true
+	parentWaitAt := time.Now()
 	_ = input.Close()
 	processCLIUntil(t, ctx, func() bool { return processActivationAbsent(parentActivation, localipc.Process) })
 	if err = syscall.Kill(-parentActivation.Child.PID, 0); !errors.Is(err, syscall.ESRCH) {
@@ -372,8 +393,22 @@ func testProcessChildSurvivesParentProviderScenarioCLI(t *testing.T, inferred bo
 	if regression {
 		exerciseClaudeHostReadDeadlineCLI(t, ctx, f, regressionProof, control)
 	}
+	sendStarted := time.Now()
 	out, err := exec.CommandContext(ctx, f.binary, "agent", "message", "send", ref, "--source", ref, "--", "independent child response").CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte("delivered")) {
+		if failureEvidence {
+			primaryAt = time.Now()
+			logClaudeFailureBuffer(t, "primary-combined-output-complete", out)
+			exit := 0
+			var exitError *exec.ExitError
+			if err != nil {
+				exit = -1
+			}
+			if errors.As(err, &exitError) {
+				exit = exitError.ExitCode()
+			}
+			t.Logf("child lease evidence ready-before-signal=%s parent-wait-at=%s send-start=%s primary-at=%s command-exit=%d parent-cli-wait-complete=true actor-pid=unproven", readyAt.UTC().Format(time.RFC3339Nano), parentWaitAt.UTC().Format(time.RFC3339Nano), sendStarted.UTC().Format(time.RFC3339Nano), primaryAt.UTC().Format(time.RFC3339Nano), exit)
+		}
 		t.Fatalf("coordination after parent group exit: %v %s", err, out)
 	}
 	reg, err = f.store.LoadReadOnly()

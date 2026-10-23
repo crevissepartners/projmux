@@ -24,6 +24,7 @@ type AgentPreparation struct {
 	Annotations           func(map[string]string) map[string]string
 	Notices               func(string) []string
 	DeveloperInstructions func(string) string
+	ManagedBase           func(string) (*ManagedCodexBase, error)
 	Policy                codexappserver.ThreadPolicy
 	Model, Effort         string
 }

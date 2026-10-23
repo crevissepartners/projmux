@@ -3,15 +3,21 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
+	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +26,8 @@ import (
 	m "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	metadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"github.com/crevissepartners/projmux/internal/version"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -718,7 +726,7 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 	f := hostLostCLIProviderFixture(t, "claude")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ref, _, _ := recordedLostHostCLI(t, ctx, f, "claude")
+	ref, _, old := recordedLostHostCLI(t, ctx, f, "claude")
 	client, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: f.root + "/config/projmux", StateDir: f.root + "/state/projmux", ProjmuxExecutable: f.binary})
 	if err != nil {
 		t.Fatal(err)
@@ -727,6 +735,7 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("journal-guards", testSDKResumeRefusalJournalGuards)
 	for _, change := range []string{"digest", "pane", "conversation", "binding", "host-lost", "missing", "request-binding", "wait-for-peer", "override"} {
 		t.Run(change, func(t *testing.T) {
 			p := prepared.Preparation
@@ -771,21 +780,543 @@ func TestSDKPreparedResumeRefusals(t *testing.T) {
 				want = projmux.CodeResumeRequestInvalid
 			}
 			before := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
+			journalPath := filepath.Join(f.root, "state", "projmux", "logs", "operations.jsonl")
+			journalBefore, _ := os.Lstat(journalPath)
+			var calls []sdkResumeRefusalCall
+			earlyStale := slices.Contains([]string{"digest", "pane", "conversation", "host-lost", "missing"}, change)
 			if change != "request-binding" && change != "wait-for-peer" && change != "override" {
+				started := time.Now()
 				_, e := client.ValidateAgentResumePreparation(ctx, core.ValidateAgentResumePreparationRequest{Ref: ref, Preparation: p})
+				calls = append(calls, sdkResumeRefusalCallEvidence("validate", started, e, old.Binding, earlyStale))
 				var refused *projmux.Refusal
 				if !errors.As(e, &refused) || refused.Code != projmux.CodeResumePreparationStale {
 					t.Fatalf("Validate %s: %v", change, e)
 				}
 			}
+			started := time.Now()
 			result, e := client.ResumeAgent(ctx, req)
+			calls = append(calls, sdkResumeRefusalCallEvidence("resume", started, e, old.Binding, earlyStale))
 			var refused *projmux.Refusal
 			if !errors.As(e, &refused) || refused.Code != want || result.Preparation != nil || result.MayBeTruncated {
 				t.Fatalf("Resume %s returned %+v %v; want %s", change, result, e, want)
 			}
-			if !reflect.DeepEqual(before, sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")) {
+			after := sdkCreateDirectorySnapshot(t, f.root+"/state/projmux")
+			// Early stale refusals preserve protected state, but an independent
+			// CLI owner may append its ordinary best-effort error outcome.
+			expected := before
+			if before["logs/operations.jsonl"] != after["logs/operations.jsonl"] {
+				if data, ok := readSDKResumeRefusalJournal(journalPath, journalBefore); ok {
+					if checked, ok := sdkResumeRefusalJournalExpected(before, after, data, journalBefore.Size(), calls); ok {
+						expected = checked
+					}
+				}
+			}
+			if !reflect.DeepEqual(expected, after) {
+				logSDKResumeRefusalJournal(t, journalPath, journalBefore, before, after, calls)
+				paths := make([]string, 0, len(before)+len(after))
+				for path := range before {
+					paths = append(paths, path)
+				}
+				for path := range after {
+					if _, present := before[path]; !present {
+						paths = append(paths, path)
+					}
+				}
+				sort.Strings(paths)
+				describe := func(value string, present bool) (mode, hash string) {
+					if !present {
+						return "", ""
+					}
+					mode, hash, _ = strings.Cut(value, " ")
+					if strings.Contains(mode, "L") {
+						// Snapshot symlinks hold a raw target, never log it.
+						hash = fmt.Sprintf("%x", sha256.Sum256([]byte(hash)))
+					}
+					return mode, hash
+				}
+				for _, path := range paths {
+					beforeValue, beforePresent := before[path]
+					afterValue, afterPresent := after[path]
+					if beforePresent == afterPresent && beforeValue == afterValue {
+						continue
+					}
+					beforeMode, beforeHash := describe(beforeValue, beforePresent)
+					afterMode, afterHash := describe(afterValue, afterPresent)
+					t.Logf("snapshot delta path=%q before={present:%t mode:%q hash:%q} after={present:%t mode:%q hash:%q}", path, beforePresent, beforeMode, beforeHash, afterPresent, afterMode, afterHash)
+				}
 				t.Fatal("refusal changed Registry/sidecar/claim")
 			}
 		})
+	}
+}
+
+// Only verified early-stale owner errors qualify for the journal exception.
+// A random journal run ID does not establish a worker PID identity.
+type sdkResumeRefusalCall struct {
+	name              string
+	started, finished time.Time
+	ownerPID          int
+	birthHash, code   string
+	eligible          bool
+}
+
+func sdkResumeRefusalCallEvidence(name string, started time.Time, err error, expected m.ProcessBinding, earlyStale bool) sdkResumeRefusalCall {
+	call := sdkResumeRefusalCall{name: name, started: started, finished: time.Now()}
+	var failure *mutationruntime.ProcessResumeFailure
+	if errors.As(err, &failure) {
+		call.ownerPID = failure.Owner.PID
+		call.birthHash = fmt.Sprintf("%x", sha256.Sum256([]byte(failure.Owner.Start)))
+		call.code = failure.Code
+		call.eligible = earlyStale && failure.Owner.Valid() && metadataProcessBinding(failure.Binding) == expected && failure.Code == string(projmux.CodeResumePreparationStale)
+	} else {
+		var refusal *projmux.Refusal
+		if errors.As(err, &refusal) {
+			call.code = string(refusal.Code)
+		}
+	}
+	return call
+}
+
+// Read the same regular file as the before snapshot, with bounded allocation.
+// The snapshot hashes below fence content changes during and after this read.
+func readSDKResumeRefusalJournal(path string, before os.FileInfo) ([]byte, bool) {
+	if before == nil || !before.Mode().IsRegular() || before.Mode().Perm() != 0600 {
+		return nil, false
+	}
+	entry, err := os.Lstat(path)
+	if err != nil || !entry.Mode().IsRegular() || !os.SameFile(before, entry) {
+		return nil, false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Mode() != before.Mode() || !os.SameFile(before, info) {
+		return nil, false
+	}
+	const limit = 5 * 1024 * 1024
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	end, statErr := os.Lstat(path)
+	if err != nil || statErr != nil || len(data) > limit || end.Mode() != before.Mode() || !os.SameFile(before, end) {
+		return nil, false
+	}
+	return data, true
+}
+
+// This changes the test's former whole-directory no-write assertion: exactly
+// one log hash may advance, after every appended event passes the policy below.
+// No other path, mode, error class or lifecycle phase receives an exception.
+func sdkResumeRefusalJournalExpected(before, after map[string]string, data []byte, offset int64, calls []sdkResumeRefusalCall) (map[string]string, bool) {
+	const key = "logs/operations.jsonl"
+	if offset < 0 || offset > int64(len(data)) || len(data) > 5*1024*1024 {
+		return nil, false
+	}
+	snapshotValue := func(raw []byte) string { return fmt.Sprintf("-rw------- %x", sha256.Sum256(raw)) }
+	if before[key] != snapshotValue(data[:offset]) || after[key] != snapshotValue(data) {
+		return nil, false
+	}
+	// Existing records may have other diagnostic schemas, but new IDs must
+	// be absent from that complete, unchanged JSONL prefix.
+	seen := map[string]bool{}
+	if offset > 0 && data[offset-1] != '\n' {
+		return nil, false
+	}
+	for line := range bytes.SplitSeq(data[:offset], []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var old map[string]json.RawMessage
+		if json.Unmarshal(line, &old) != nil || old == nil {
+			return nil, false
+		}
+		if raw, exists := old["run_id"]; exists {
+			var id string
+			if json.Unmarshal(raw, &id) != nil {
+				return nil, false
+			}
+			seen[id] = true
+		}
+	}
+	added := data[offset:]
+	if len(added) > 0 && added[len(added)-1] != '\n' {
+		return nil, false
+	}
+	used := map[string]bool{}
+	count := 0
+	for line := range bytes.SplitSeq(added, []byte("\n")) {
+		if len(line) == 0 {
+			// Only the final newline may delimit an empty segment.
+			if count == 0 && len(added) > 0 {
+				return nil, false
+			}
+			continue
+		}
+		event, ok := sdkResumeRefusalJournalEvent(line)
+		if !ok || seen[event.runID] {
+			return nil, false
+		}
+		match := -1
+		for i, call := range calls {
+			if !call.eligible || call.ownerPID <= 0 || call.birthHash == "" || call.code != string(projmux.CodeResumePreparationStale) || !slices.Contains([]string{"validate", "resume"}, call.name) || event.at.Before(call.started) || event.at.After(call.finished) {
+				continue
+			}
+			// Millisecond truncation in RecordOutcome cannot place process
+			// startup before the matching SDK call (allow one rounding ms).
+			if event.durationMS < 0 || event.durationMS > call.finished.Sub(call.started).Milliseconds()+1 || event.at.Add(-time.Duration(event.durationMS)*time.Millisecond).Before(call.started.Add(-time.Millisecond)) || !sdkResumeRefusalRunID(event.runID, call, event.at) {
+				continue
+			}
+			if match >= 0 {
+				return nil, false
+			}
+			match = i
+		}
+		if match < 0 || used[calls[match].name] || count >= 2 {
+			return nil, false
+		}
+		used[calls[match].name], seen[event.runID] = true, true
+		count++
+	}
+	// Reject blank records, including an extra newline after a valid event.
+	if bytes.Count(added, []byte("\n")) != count {
+		return nil, false
+	}
+	expected := maps.Clone(before)
+	expected[key] = after[key]
+	return expected, true
+}
+
+type sdkResumeJournalEvent struct {
+	at         time.Time
+	durationMS int64
+	runID      string
+}
+
+func sdkResumeRefusalJournalEvent(line []byte) (sdkResumeJournalEvent, bool) {
+	var event sdkResumeJournalEvent
+	// Decode keys explicitly: Unmarshal/DisallowUnknownFields alone accepts
+	// duplicate keys. Never include a parser error or a field value in output.
+	decoder := json.NewDecoder(bytes.NewReader(line))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return event, false
+	}
+	fields := map[string]json.RawMessage{}
+	for decoder.More() {
+		token, err = decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || fields[key] != nil {
+			return event, false
+		}
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return event, false
+		}
+		fields[key] = raw
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || len(fields) != 11 {
+		return event, false
+	}
+	fixed := map[string]string{"level": "error", "component": "cli", "event": "command.outcome", "result": "error", "version": version.String(), "mux_backend": "tmux", "kind": "runtime", "message": "command failed"}
+	for key, want := range fixed {
+		var got string
+		if json.Unmarshal(fields[key], &got) != nil || got != want {
+			return event, false
+		}
+	}
+	var at string
+	if json.Unmarshal(fields["at"], &at) != nil || json.Unmarshal(fields["run_id"], &event.runID) != nil || json.Unmarshal(fields["duration_ms"], &event.durationMS) != nil || bytes.Equal(fields["duration_ms"], []byte("null")) {
+		return event, false
+	}
+	event.at, err = time.Parse(time.RFC3339Nano, at)
+	return event, err == nil
+}
+
+func sdkResumeRefusalRunID(id string, call sdkResumeRefusalCall, at time.Time) bool {
+	lowerHex := func(value string) bool {
+		return value != "" && strings.Trim(value, "0123456789abcdef") == ""
+	}
+	if len(id) == 32 && lowerHex(id) {
+		// Random IDs correlate a time window, not a PID.
+		return true
+	}
+	stamp, pid, ok := strings.Cut(id, "-")
+	if !ok || !lowerHex(stamp) || !lowerHex(pid) {
+		return false
+	}
+	nanos, err := strconv.ParseInt(stamp, 16, 64)
+	owner, pidErr := strconv.ParseInt(pid, 16, 64)
+	when := time.Unix(0, nanos)
+	return err == nil && pidErr == nil && owner == int64(call.ownerPID) && fmt.Sprintf("%x-%x", nanos, owner) == id && !when.Before(call.started) && !when.After(at)
+}
+
+// These negative controls stay under the existing CLI root and exercise the
+// same validator as the real refusals; no provider or extra test runner starts.
+func testSDKResumeRefusalJournalGuards(t *testing.T) {
+	started := time.Unix(1700000000, 0)
+	call := sdkResumeRefusalCall{name: "resume", started: started, finished: started.Add(time.Second), ownerPID: 123, birthHash: "birth-sha", code: string(projmux.CodeResumePreparationStale), eligible: true}
+	prefix := []byte("{\"run_id\":\"00000000000000000000000000000000\"}\n")
+	base := map[string]any{"at": started.Add(500 * time.Millisecond).UTC().Format(time.RFC3339Nano), "level": "error", "component": "cli", "event": "command.outcome", "result": "error", "duration_ms": 100, "run_id": "11111111111111111111111111111111", "version": version.String(), "mux_backend": "tmux", "kind": "runtime", "message": "command failed"}
+	encode := func(event map[string]any) []byte {
+		raw, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal("cannot encode control event")
+		}
+		return append(raw, '\n')
+	}
+	value := func(raw []byte) string { return fmt.Sprintf("-rw------- %x", sha256.Sum256(raw)) }
+	check := func(t *testing.T, delta []byte, calls []sdkResumeRefusalCall, mutate func(map[string]string, map[string]string), want bool) {
+		t.Helper()
+		data := append(slices.Clone(prefix), delta...)
+		before := map[string]string{"logs/operations.jsonl": value(prefix), "registry.json": "unchanged"}
+		after := maps.Clone(before)
+		after["logs/operations.jsonl"] = value(data)
+		if mutate != nil {
+			mutate(before, after)
+		}
+		expected, ok := sdkResumeRefusalJournalExpected(before, after, data, int64(len(prefix)), calls)
+		if (ok && reflect.DeepEqual(expected, after)) != want {
+			t.Fatal("journal exception guard mismatch")
+		}
+	}
+	t.Run("qualified-zero", func(t *testing.T) { check(t, nil, []sdkResumeRefusalCall{call}, nil, true) })
+	t.Run("local-zero", func(t *testing.T) { check(t, nil, nil, nil, true) })
+	t.Run("qualified-one", func(t *testing.T) { check(t, encode(base), []sdkResumeRefusalCall{call}, nil, true) })
+	t.Run("qualified-two", func(t *testing.T) {
+		validate := call
+		validate.name, validate.started, validate.finished = "validate", started.Add(-time.Second), started
+		prior := maps.Clone(base)
+		prior["at"], prior["run_id"] = started.Add(-500*time.Millisecond).UTC().Format(time.RFC3339Nano), "22222222222222222222222222222222"
+		check(t, append(encode(prior), encode(base)...), []sdkResumeRefusalCall{validate, call}, nil, true)
+	})
+	t.Run("fallback-owner", func(t *testing.T) {
+		e := maps.Clone(base)
+		e["run_id"] = fmt.Sprintf("%x-%x", started.Add(time.Millisecond).UnixNano(), call.ownerPID)
+		check(t, encode(e), []sdkResumeRefusalCall{call}, nil, true)
+	})
+	for _, name := range []string{"owner-invalid", "binding-mismatch", "phase-ineligible", "other-error-code"} {
+		t.Run(name, func(t *testing.T) {
+			binding := m.ProcessBinding{HostInstanceID: "host", ProjectUID: "project", WindowUID: "window", AgentUID: "agent", PaneUID: "pane", Generation: "generation", OperationID: "operation"}
+			failure := &mutationruntime.ProcessResumeFailure{Owner: m.ProcessIdentity{PID: 123, Start: "birth"}, Binding: processSchemaBinding(binding), Code: string(projmux.CodeResumePreparationStale)}
+			early := true
+			switch name {
+			case "owner-invalid":
+				failure.Owner.Start = ""
+			case "binding-mismatch":
+				failure.Binding.Generation = "different"
+			case "phase-ineligible":
+				early = false
+			case "other-error-code":
+				failure.Code = "other-error"
+			}
+			if sdkResumeRefusalCallEvidence("resume", time.Now(), failure, binding, early).eligible {
+				t.Fatal("unqualified failure received a journal exception")
+			}
+		})
+	}
+	for _, name := range []string{"identity", "permissions", "symlink"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "operations.jsonl")
+			if err := os.WriteFile(path, prefix, 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := readSDKResumeRefusalJournal(path, before); !ok {
+				t.Fatal("regular private journal rejected")
+			}
+			switch name {
+			case "identity":
+				// Keep the old inode alive so replacement cannot reuse it.
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, prefix, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "permissions":
+				if err := os.Chmod(path, 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(path+".old", path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, ok := readSDKResumeRefusalJournal(path, before); ok {
+				t.Fatal("changed journal identity or permissions accepted")
+			}
+		})
+	}
+	for _, name := range []string{"prefix", "mode", "protected-path", "extra-event", "local", "unqualified", "other-error", "effect-after", "outside-time", "unknown-key", "duplicate-key", "wrong-version", "wrong-mux", "wrong-message", "wrong-event", "wrong-result", "wrong-level", "wrong-component", "wrong-kind", "missing-key", "wrong-type", "null-duration", "excess-duration", "reused-id", "fallback-pid", "fallback-time", "incomplete", "blank-record"} {
+		t.Run(name, func(t *testing.T) {
+			e := maps.Clone(base)
+			calls := []sdkResumeRefusalCall{call}
+			var mutate func(map[string]string, map[string]string)
+			switch name {
+			case "prefix":
+				mutate = func(b, a map[string]string) { b["logs/operations.jsonl"] = value([]byte("changed")) }
+			case "mode":
+				mutate = func(b, a map[string]string) {
+					a["logs/operations.jsonl"] = strings.Replace(a["logs/operations.jsonl"], "-rw-------", "-rw-r--r--", 1)
+				}
+			case "protected-path":
+				mutate = func(b, a map[string]string) { a["registry.json"] = "changed" }
+			case "local":
+				calls = nil
+			case "unqualified", "effect-after":
+				calls[0].eligible = false
+			case "other-error":
+				calls[0].code = "other-error"
+			case "outside-time":
+				e["at"] = started.Add(2 * time.Second).Format(time.RFC3339Nano)
+			case "unknown-key":
+				e["code"] = ""
+			case "wrong-version":
+				e["version"] = "other-version"
+			case "wrong-mux":
+				e["mux_backend"] = "other-mux"
+			case "wrong-message":
+				e["message"] = "other-message"
+			case "wrong-event", "wrong-result", "wrong-level", "wrong-component", "wrong-kind":
+				e[strings.TrimPrefix(name, "wrong-")] = "unexpected"
+			case "missing-key":
+				delete(e, "duration_ms")
+			case "wrong-type":
+				e["duration_ms"] = "100"
+			case "null-duration":
+				e["duration_ms"] = nil
+			case "excess-duration":
+				e["duration_ms"] = 2000
+			case "reused-id":
+				e["run_id"] = "00000000000000000000000000000000"
+			case "fallback-pid":
+				e["run_id"] = fmt.Sprintf("%x-%x", started.Add(time.Millisecond).UnixNano(), call.ownerPID+1)
+			case "fallback-time":
+				e["run_id"] = fmt.Sprintf("%x-%x", started.Add(-time.Millisecond).UnixNano(), call.ownerPID)
+			}
+			delta := encode(e)
+			switch name {
+			case "extra-event":
+				other := maps.Clone(base)
+				other["run_id"] = "33333333333333333333333333333333"
+				delta = append(delta, encode(other)...)
+			case "duplicate-key":
+				delta = append([]byte("{\"level\":\"error\","), delta[1:]...)
+			case "incomplete":
+				delta = delta[:len(delta)-1]
+			case "blank-record":
+				delta = append(delta, '\n')
+			}
+			check(t, delta, calls, mutate, false)
+		})
+	}
+}
+
+func logSDKResumeRefusalJournal(t *testing.T, path string, beforeInfo os.FileInfo, before, after map[string]string, calls []sdkResumeRefusalCall) {
+	t.Helper()
+	// A fixed vocabulary prevents unknown log fields from becoming output.
+	closed := func(value string, allowed ...string) string {
+		if slices.Contains(allowed, value) {
+			return value
+		}
+		return fmt.Sprintf("unknown:%x", sha256.Sum256([]byte(value)))
+	}
+	for _, call := range calls {
+		t.Logf("journal call name=%s started=%s finished=%s owner_pid=%d owner_birth_sha=%s code=%s", call.name, call.started.UTC().Format(time.RFC3339Nano), call.finished.UTC().Format(time.RFC3339Nano), call.ownerPID, call.birthHash, closed(call.code, "", "process-resume-preparation-stale", "process-resume-plan-invalid", "process-resume-request-invalid"))
+	}
+	state := func(value string) { t.Logf("journal evidence state=%s", value) }
+	if beforeInfo == nil || !beforeInfo.Mode().IsRegular() {
+		state("before-unavailable-or-nonregular")
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		state("open-unavailable")
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(beforeInfo, info) {
+		state("identity-changed-or-nonregular")
+		return
+	}
+	const limit = 5 * 1024 * 1024
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		state("read-unavailable")
+		return
+	}
+	if len(data) > limit {
+		state("size-limit")
+		return
+	}
+	offset := beforeInfo.Size()
+	if offset < 0 || offset > int64(len(data)) {
+		state("shrunk-or-rotated")
+		return
+	}
+	_, beforeHash, _ := strings.Cut(before["logs/operations.jsonl"], " ")
+	_, afterHash, _ := strings.Cut(after["logs/operations.jsonl"], " ")
+	prefixMatches := fmt.Sprintf("%x", sha256.Sum256(data[:offset])) == beforeHash
+	afterMatches := fmt.Sprintf("%x", sha256.Sum256(data)) == afterHash
+	t.Logf("journal evidence bytes=%d offset=%d prefix_matches_before=%t bytes_match_after=%t", len(data), offset, prefixMatches, afterMatches)
+	if !prefixMatches || !afterMatches {
+		state("snapshot-or-concurrent-change")
+		return
+	}
+	added := data[offset:]
+	if len(added) > 0 && added[len(added)-1] != '\n' {
+		state("incomplete-record")
+		return
+	}
+	// Ignore unselected fields when decoding, but never print their raw bytes.
+	type event struct {
+		At         string `json:"at"`
+		Event      string `json:"event"`
+		Result     string `json:"result"`
+		Component  string `json:"component"`
+		Command    string `json:"command"`
+		Subcommand string `json:"subcommand"`
+		Kind       string `json:"kind"`
+		Code       string `json:"code"`
+		RunID      string `json:"run_id"`
+	}
+	var events []event
+	for line := range bytes.SplitSeq(added, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var e event
+		if line[0] != '{' || json.Unmarshal(line, &e) != nil || e.Event == "" || e.Result == "" || e.Component == "" || e.RunID == "" {
+			state("schema-invalid")
+			return
+		}
+		if _, err := time.Parse(time.RFC3339Nano, e.At); err != nil {
+			state("timestamp-invalid")
+			return
+		}
+		events = append(events, e)
+	}
+	t.Logf("journal evidence complete_events=%d actor_pid_link=unproven", len(events))
+	for index, e := range events {
+		at := "invalid"
+		if parsed, err := time.Parse(time.RFC3339Nano, e.At); err == nil {
+			at = parsed.UTC().Format(time.RFC3339Nano)
+		}
+		t.Logf("journal event index=%d at=%s event=%s result=%s component=%s command=%s subcommand=%s kind=%s code=%s run_id_sha=%x", index, at,
+			closed(e.Event, "command.outcome", "lifecycle.outcome", "registry.lock.acquisition"),
+			closed(e.Result, "success", "error", "started"),
+			closed(e.Component, "cli", "runtime", "registry", "agent", "process"),
+			closed(e.Command, "", "agent", "create", "process-agent-owner", "process-agent-launch"),
+			closed(e.Subcommand, "", "resume", "relaunch", "stop"),
+			closed(e.Kind, "", "runtime", "usage", "exit"),
+			closed(e.Code, "", "process-resume-preparation-stale", "registry.lock.timeout", "registry.lock.acquire-failed", "registry.mutation.failed"), sha256.Sum256([]byte(e.RunID)))
 	}
 }

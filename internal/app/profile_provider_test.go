@@ -166,7 +166,7 @@ func TestDeletingInstructionsAProfileUsesIsRefusedAndKeepsResumeWorking(t *testi
 		if len(native.resumes) != 1 || native.resumes[0].policy != readonlyThreadPolicy {
 			t.Fatalf("native resumes = %+v, want one carrying %+v", native.resumes, readonlyThreadPolicy)
 		}
-		if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("p", digest), modelEffortFollowProfile...)) {
+		if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, unconfirmedCodexBaseAnnotations(plusSources(profileAnnotations("p", digest), modelEffortFollowProfile...))) {
 			t.Fatalf("resumed Agent annotations = %v, want digest %s", agent.Metadata.Annotations, digest)
 		}
 	})

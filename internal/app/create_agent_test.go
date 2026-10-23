@@ -13,8 +13,10 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+	"strconv"
 )
 
 // fakeAgentLauncher stands in for the provider launch half of the AI command.
@@ -1782,4 +1784,15 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			}
 		})
 	}
+}
+
+func (f *fakeAgentLauncher) PlanCodexAgentLaunchWithBaseFile(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, _ codexappserver.ThreadPolicy, file string) (string, []string, error) {
+	title, argv, err := f.PlanAgentLaunchWithOptions(aiModeCodex, workspace, payload, model, effort, "")
+	if err == nil {
+		f.mu.Lock()
+		f.plans[len(f.plans)-1].personaFile = file
+		f.mu.Unlock()
+		argv[2] = strings.Replace(argv[2], "exec codex", "exec codex -c "+strconv.Quote("model_instructions_file="+strconv.Quote(file)), 1)
+	}
+	return title, argv, err
 }

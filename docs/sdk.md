@@ -1302,6 +1302,26 @@ modified or replaced proof is a `Refusal` with `CodeResumePreparationStale`.
 A stale explicit request `Binding` remains `CodeResumePlanInvalid`; unsupported
 providers or input combinations remain `CodeResumeRequestInvalid`.
 
+Early stale-proof refusals preserve the Registry, sidecars, claims and provider
+state. They can still append an ordinary CLI error outcome to
+`logs/operations.jsonl`: a spawned validation or resume owner can each record
+zero or one outcome (at most two for a validate/resume pair). Local rejections
+that spawn no owner produce no owner outcome. The journal is best-effort;
+zero records cannot distinguish an interrupted owner from an unreported storage
+failure. This does not make later failures or other error classes read-only.
+
+The process CLI regression explicitly permits this operational write instead of
+asserting that the entire state directory remains byte-for-byte unchanged.
+It checks the returned owner identity and source binding, unchanged regular-file
+identity and private mode, the original byte prefix and snapshot hashes, and
+complete appended events with exact fields, types, version, backend, unique run
+IDs and per-call time/count bounds. Only then does it update the expected hash
+for that one log; every other path retains the full snapshot comparison. A
+random run ID and matching time window do not directly prove an event's PID.
+The timestamp/PID fallback ID must match the returned owner and call interval.
+Earlier failures without retained events cannot be assigned the same cause
+retrospectively. Product journaling and lifecycle guards remain unchanged.
+
 Supplying `Preparation` requires process Claude, `Detach: true`, a nonempty
 user `Prompt`, `WaitForPeer: false` and no model or effort override. A nil
 `Preparation` preserves ordinary Resume, including its existing host-lost

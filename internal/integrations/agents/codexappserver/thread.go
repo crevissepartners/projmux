@@ -207,11 +207,16 @@ func (c *Client) startThread(ctx context.Context, cwd string, roots []string, de
 	if settings.Effort != "" {
 		config = map[string]string{"model_reasoning_effort": settings.Effort}
 	}
+	var base *string
+	if settings.ManagedInstructions != nil {
+		base = &settings.ManagedInstructions.Base
+		developerInstructions = ""
+	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadStart, threadStartParams{
 		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, Model: model,
-		DeveloperInstructions: developerInstructions,
-		Sandbox:               policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy, Config: config,
+		DeveloperInstructions: developerInstructions, BaseInstructions: base,
+		Sandbox: policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy, Config: config,
 	}, &result); err != nil {
 		return ThreadBinding{}, err
 	}
@@ -226,6 +231,9 @@ func (c *Client) startThread(ctx context.Context, cwd string, roots []string, de
 		if err := checkThreadSettings(methodThreadStart, settings, result); err != nil {
 			return ThreadBinding{}, err
 		}
+	}
+	if settings.ManagedInstructions != nil {
+		settings.ManagedInstructions.Accepted = true
 	}
 	return ThreadBinding{ThreadID: threadID}, nil
 }
@@ -259,7 +267,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots [
 
 // resumeThread sends one thread/resume and returns the answer of the exact
 // requested thread, unchecked against policy.
-func (c *Client) resumeThread(ctx context.Context, threadID, cwd string, roots []string, policy ThreadPolicy) (ThreadBinding, threadResult, error) {
+func (c *Client) resumeThread(ctx context.Context, threadID, cwd string, roots []string, policy ThreadPolicy, base ...*string) (ThreadBinding, threadResult, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return ThreadBinding{}, threadResult{}, fmt.Errorf("%w: resume thread is empty", ErrProtocol)
@@ -274,9 +282,13 @@ func (c *Client) resumeThread(ctx context.Context, threadID, cwd string, roots [
 	if err != nil {
 		return ThreadBinding{}, threadResult{}, err
 	}
+	var instructions *string
+	if len(base) > 0 {
+		instructions = base[0]
+	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadResume, threadResumeParams{
-		ThreadID: threadID, CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, ExcludeTurns: true,
+		BaseInstructions: instructions, ThreadID: threadID, CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, ExcludeTurns: true,
 		Sandbox: policy.Sandbox, ApprovalPolicy: policy.ApprovalPolicy,
 	}, &result); err != nil {
 		return ThreadBinding{}, threadResult{}, err
@@ -293,13 +305,17 @@ func (c *Client) resumeThread(ctx context.Context, threadID, cwd string, roots [
 // field is not requested and the thread keeps its own value. The zero value
 // requests nothing.
 type ThreadSettings struct {
+	ManagedInstructions *ManagedInstructions
+
 	Model  string
 	Effort string
 	Policy ThreadPolicy
 }
 
 // IsZero reports settings that request nothing.
-func (s ThreadSettings) IsZero() bool { return s.Model == "" && s.Effort == "" && s.Policy.IsZero() }
+func (s ThreadSettings) IsZero() bool {
+	return s.Model == "" && s.Effort == "" && s.Policy.IsZero() && s.ManagedInstructions == nil
+}
 
 // ReasonSettingsMismatch is the stable reason token of a thread whose model or
 // effort is not the one a resume applied.
@@ -358,16 +374,38 @@ func (c *Client) UpdateThreadSettings(ctx context.Context, threadID string, sett
 // read again, and a field it still does not report is a *PolicyMismatchError
 // or a *SettingsMismatchError. Zero settings send exactly the request
 // ResumeThread sends with a zero policy.
-func (c *Client) ResumeThreadWithSettings(ctx context.Context, threadID, cwd string, roots []string, settings ThreadSettings) (ThreadBinding, error) {
+func (c *Client) ResumeThreadWithSettings(ctx context.Context, threadID, cwd string, roots []string, settings ThreadSettings) (bindingOut ThreadBinding, errOut error) {
+	defer func() {
+		if errOut != nil {
+			bindingOut, errOut = c.recoverManagedBase(ctx, threadID, cwd, roots, settings, errOut)
+		}
+	}()
+
 	if err := settings.Policy.validate(); err != nil {
 		return ThreadBinding{}, err
 	}
-	binding, result, err := c.resumeThread(ctx, threadID, cwd, roots, settings.Policy)
+	var base *string
+	if managed := settings.ManagedInstructions; managed != nil {
+		base = &managed.Base
+		if managed.Shared {
+			ids, err := c.ListLoadedThreadIDs(ctx)
+			if err != nil {
+				return ThreadBinding{}, err
+			}
+			managed.Warm = false
+			for _, id := range ids {
+				if id == threadID {
+					managed.Warm = true
+				}
+			}
+		}
+	}
+	binding, result, err := c.resumeThread(ctx, threadID, cwd, roots, settings.Policy, base)
 	if err != nil {
 		return ThreadBinding{}, err
 	}
 	if checkThreadSettings(methodThreadResume, settings, result) == nil {
-		return binding, nil
+		return binding, c.finishManagedResume(ctx, threadID, settings.ManagedInstructions)
 	}
 	if err := c.UpdateThreadSettings(ctx, binding.ThreadID, settings); err != nil {
 		return ThreadBinding{}, fmt.Errorf("%w: %w", ErrSettingsNotApplied, err)
@@ -378,7 +416,7 @@ func (c *Client) ResumeThreadWithSettings(ctx context.Context, threadID, cwd str
 	if err := checkThreadSettings(methodThreadSettingsUpdate, settings, result); err != nil {
 		return ThreadBinding{}, err
 	}
-	return binding, nil
+	return binding, c.finishManagedResume(ctx, threadID, settings.ManagedInstructions)
 }
 
 // checkThreadSettings holds every requested field of settings against the

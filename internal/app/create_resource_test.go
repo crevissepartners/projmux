@@ -196,10 +196,13 @@ func fakeCreatedTupleOwned(tmux *fakeTmux, result intmux.NewSessionResult, marke
 // the on-disk first-use suite.
 func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *fakeTmux) (*createCommand, *fakeSessionMaterializer) {
 	t.Helper()
+	home := t.TempDir()
 	sessions := &fakeSessionMaterializer{tmux: tmux}
 	mirror := intmetadata.NewMirror(tmux)
 	return &createCommand{
-		store: store.store(),
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+		store:     store.store(),
 		reconciler: &registryReconciler{
 			DiscoverRoots: func() ([]string, error) { return nil, nil },
 			LiveSessions: func(context.Context) (map[string]bool, error) {

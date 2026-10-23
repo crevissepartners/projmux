@@ -51,6 +51,8 @@ type agentResumeLaunch struct {
 // means the launch is not layered and reads the Agent's annotations as they
 // are.
 type agentSettingsLaunch struct {
+	managedBase *mutationruntime.ManagedCodexBase
+
 	// projectGuidance is recorded with an ordinary process resume reservation.
 	projectGuidance projectGuidanceLaunch
 	layered         bool
@@ -72,8 +74,9 @@ type agentSettingsLaunch struct {
 // (profile; "" for none). The zero value asks nothing: the launch runs what
 // the layers resolve to now.
 type agentSettingsRequest struct {
-	projectUID    string
-	model, effort string
+	managedCodexBase bool
+	projectUID       string
+	model, effort    string
 	// instructions and profile are nil when not asked; a pointer to "" is an
 	// explicit none.
 	instructions *string
@@ -107,17 +110,17 @@ func localAgentResumeLaunch(v mutationruntime.AgentResumeLaunch) agentResumeLaun
 }
 
 func (v agentSettingsLaunch) shared() mutationruntime.AgentSettingsLaunch {
-	return mutationruntime.AgentSettingsLaunch{ProjectGuidance: v.projectGuidance.shared(), Layered: v.layered, Resolution: v.resolution, InstructionsErr: v.instructionsErr, Snapshot: v.snapshot, SnapshotErr: v.snapshotErr}
+	return mutationruntime.AgentSettingsLaunch{ManagedBase: v.managedBase, ProjectGuidance: v.projectGuidance.shared(), Layered: v.layered, Resolution: v.resolution, InstructionsErr: v.instructionsErr, Snapshot: v.snapshot, SnapshotErr: v.snapshotErr}
 }
 func localAgentSettingsLaunch(v mutationruntime.AgentSettingsLaunch) agentSettingsLaunch {
-	return agentSettingsLaunch{projectGuidance: localProjectGuidanceLaunch(v.ProjectGuidance), layered: v.Layered, resolution: v.Resolution, instructionsErr: v.InstructionsErr, snapshot: v.Snapshot, snapshotErr: v.SnapshotErr}
+	return agentSettingsLaunch{managedBase: v.ManagedBase, projectGuidance: localProjectGuidanceLaunch(v.ProjectGuidance), layered: v.Layered, resolution: v.Resolution, instructionsErr: v.InstructionsErr, snapshot: v.Snapshot, snapshotErr: v.SnapshotErr}
 }
 
 func (v agentSettingsRequest) shared() mutationruntime.AgentSettingsRequest {
-	return mutationruntime.AgentSettingsRequest{ProjectUID: v.projectUID, Model: v.model, Effort: v.effort, Instructions: v.instructions, Profile: v.profile, Reset: v.reset, Source: v.source, Guidance: v.guidance, ProjectGuidance: v.projectGuidance, LinkRules: v.linkRules}
+	return mutationruntime.AgentSettingsRequest{ManagedCodexBase: v.managedCodexBase, ProjectUID: v.projectUID, Model: v.model, Effort: v.effort, Instructions: v.instructions, Profile: v.profile, Reset: v.reset, Source: v.source, Guidance: v.guidance, ProjectGuidance: v.projectGuidance, LinkRules: v.linkRules}
 }
 func localAgentSettingsRequest(v mutationruntime.AgentSettingsRequest) agentSettingsRequest {
-	return agentSettingsRequest{projectUID: v.ProjectUID, model: v.Model, effort: v.Effort, instructions: v.Instructions, profile: v.Profile, reset: v.Reset, source: v.Source, guidance: v.Guidance, projectGuidance: v.ProjectGuidance, linkRules: v.LinkRules}
+	return agentSettingsRequest{managedCodexBase: v.ManagedCodexBase, projectUID: v.ProjectUID, model: v.Model, effort: v.Effort, instructions: v.Instructions, profile: v.Profile, reset: v.Reset, source: v.Source, guidance: v.Guidance, projectGuidance: v.ProjectGuidance, linkRules: v.LinkRules}
 }
 
 func (l agentResumeLaunch) agentGuidanceNotice(n string) string {

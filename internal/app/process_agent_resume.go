@@ -25,6 +25,7 @@ import (
 type processResumeFirstFrame = mutationruntime.ProcessResumeFirstFrame
 type processResumeScope struct{ Project, Window selector.Ref }
 type processAgentResumeOptions struct {
+	managedBase         *mutationruntime.ManagedCodexBase
 	Agent               selector.Ref
 	Scope               processResumeScope
 	Prompt              processResumeFirstFrame
@@ -209,6 +210,12 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	result.previousAttention = previousAttention
 	result.attentionChecked = candidate.Record.Provider == aiModeCodex
+	var managedOwner managedCodexBaseOwner
+	if settingsPlan.managedBase != nil {
+		if managedOwner, err = captureManagedCodexBaseOwner(path, b); err != nil {
+			return result, errors.Join(err, result.restoreReservation())
+		}
+	}
 	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
 		if result.hasNoChild() {
 			err = errors.Join(err, result.restoreReservation())
@@ -229,6 +236,11 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		if err = c.finishDeferredLaunch(deferredLaunch, result, true); err != nil {
 			err = result.fail(err)
 			return result, errors.Join(err, c.finishDeferredLaunch(deferredLaunch, result, false))
+		}
+	}
+	if settingsPlan.managedBase != nil {
+		if err = recordManagedCodexBase(path, settingsPlan.managedBase, managedOwner, result.owner.codexEndpoint, false); err != nil {
+			return result, err
 		}
 	}
 	result.settingsApplication = processResumeSettingsApplication(candidate, settingsPlan, plan, deferredLaunch)
@@ -544,7 +556,7 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 	if provider == aiModeClaude && !opts.promptPartsPrepared {
 		projectGuidance = ai.loadProjectGuidance(*project, candidate.Agent.Metadata.Annotations)
 	}
-	request := agentSettingsRequest{projectUID: project.Metadata.UID, model: opts.Model, effort: opts.Effort, source: "resume"}
+	request := agentSettingsRequest{managedCodexBase: provider == aiModeCodex, projectUID: project.Metadata.UID, model: opts.Model, effort: opts.Effort, source: "resume"}
 	if projectGuidance.active && projectGuidance.unavailable == nil {
 		request.projectGuidance = &projectGuidance.digest
 	}
@@ -557,7 +569,7 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 		return processhost.Command{}, config, settingsPlan, settingsPlan.instructionsErr
 	}
 	settingsPlan = settingsPlan.writeSnapshot()
-	if settingsPlan.snapshotErr != nil {
+	if provider != aiModeCodex && settingsPlan.snapshotErr != nil {
 		return processhost.Command{}, config, settingsPlan, settingsPlan.snapshotErr
 	}
 	annotations := projectGuidance.resumeLaunchAnnotations(settingsPlan.launchAnnotations(candidate.Agent.Metadata.Annotations))
@@ -603,7 +615,16 @@ func (c *agentCommand) planProcessResume(candidate processResumeCandidate, opts 
 		return processhost.Command{}, config, settingsPlan, errors.New("process-provider-unsupported: process resume requires Claude or Codex")
 	}
 	command, err := processhost.CodexCommand(path, workspace.CWD, ai.processCreateEnvironment(), nil)
-	config = processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{Model: model, Effort: effort, Policy: policy}}
+	managed := opts.managedBase
+	var baseErr error
+	if managed == nil {
+		managed, baseErr = ai.sharedGuidance().PlanManagedCodexBase(*project, candidate.Agent.Metadata.UID, candidate.Agent.Metadata.Annotations, settingsPlan.shared(), true)
+	}
+	if baseErr != nil {
+		return processhost.Command{}, config, settingsPlan, baseErr
+	}
+	settingsPlan.managedBase = managed
+	config = processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{ManagedInstructions: managed.Instructions, Model: model, Effort: effort, Policy: policy}}
 	return command, config, settingsPlan, err
 }
 

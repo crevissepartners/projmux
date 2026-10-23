@@ -75,9 +75,11 @@ var codexLinkRulesRoutes = []codexLinkRulesRoute{
 		if withPersona {
 			flags = []string{"--instructions", "reviewer"}
 		}
+		before := store.snapshot()
+		beforePanes := tmux.paneCount()
 		_, stderr, err := runRoute(t, create, codexNativeCreateArgs(flags...)...)
 		if err != nil {
-			t.Fatalf("create: stderr=%q err=%v", stderr, err)
+			return codexGuidanceResult{err: err, creates: native.creates, unchanged: store.snapshot() == before && tmux.paneCount() == beforePanes, stderr: stderr}
 		}
 		return codexGuidanceResult{creates: native.creates, agent: agentNamed(t, store, "win-alpha-main", "agent-test-1"),
 			stderr: stderr, leaked: codexGuidanceLeakCheck(tmux, store)}
@@ -110,8 +112,10 @@ var codexLinkRulesRoutes = []codexLinkRulesRoute{
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
+		before := fx.store.snapshot()
+		beforePanes := fx.tmux.paneCount()
 		if _, err := fx.create.createCanonicalIntentAgent(scope, intent, aiModeCodex, "", flags, &stdout, &stderr); err != nil {
-			t.Fatalf("create: stderr=%q err=%v", stderr.String(), err)
+			return codexGuidanceResult{err: err, creates: native.creates, unchanged: fx.store.snapshot() == before && fx.tmux.paneCount() == beforePanes, stderr: stderr.String()}
 		}
 		agents := fx.store.registry.AgentsOf(fx.windowUID)
 		return codexGuidanceResult{creates: native.creates, agent: agents[len(agents)-1],
@@ -241,7 +245,8 @@ func TestCreateCodexAgentInAProjectWithoutLinkRulesSendsWhatItSentBefore(t *test
 						wantAnnotations[coremetadata.AnnotationAgentPersonaDigest] = persona.Digest([]byte(codexPersonaContent))
 						wantAnnotations[coremetadata.AnnotationAgentInstructionsSource] = coremetadata.SettingSourceFlag
 					}
-					if !maps.Equal(annotations, wantAnnotations) || (wantAnnotations == nil) != (annotations == nil) {
+					wantAnnotations = confirmedCodexBaseAnnotations(wantAnnotations, want)
+					if !maps.Equal(annotations, wantAnnotations) {
 						t.Fatalf("Agent annotations = %#v, want %#v", annotations, wantAnnotations)
 					}
 				}
@@ -290,17 +295,7 @@ func TestUnreadableCodexProjectLinkRulesCreateWithoutThemWithOneNoticeAndRecordN
 						prepareCodexLinkRulesCase(t, test, setup)
 						breakFile(t, setup.paths, setup.alpha)
 					}, test.withPersona)
-					want := string(joinSystemPrompt(codexInstructionsWithout(test, result.agent.Metadata.UID)...))
-					if got := onlyNativeInstructions(t, result); got != want {
-						t.Fatalf("developer instructions = %q, want %q", got, want)
-					}
-					wantNotice := "agent/" + result.agent.Metadata.Name + " launched without its Project's label link rules (" + projectLinksReasonUnavailable + "): "
-					if lines := codexLinkRulesNoticeLines(result.stderr); len(lines) != 1 || !strings.Contains(lines[0], wantNotice) {
-						t.Fatalf("stderr = %q, want one line carrying %q", result.stderr, wantNotice)
-					}
-					if _, ok := result.agent.Metadata.Annotations[coremetadata.AnnotationAgentProjectLinkRulesDigest]; ok {
-						t.Fatalf("Agent annotations = %v, want no rules digest", result.agent.Metadata.Annotations)
-					}
+					assertFirstManagedCreateRefused(t, result)
 				})
 			}
 		}
@@ -333,8 +328,11 @@ func TestCodexCreatesOffTheNativeFreshLaneGetNoProjectLinkRules(t *testing.T) {
 				t.Fatalf("native creates = %+v, want none", native.creates)
 			}
 			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
-			if _, ok := agent.Metadata.Annotations[coremetadata.AnnotationAgentProjectLinkRulesDigest]; ok {
-				t.Fatalf("Agent annotations = %v, want no rules digest", agent.Metadata.Annotations)
+			if agent.Metadata.Annotations[coremetadata.AnnotationAgentProjectLinkRulesDigest] == "" || agent.Metadata.Annotations["projmux.io/codex-managed-base-status"] != "base-file-requested" || agent.Metadata.Annotations["projmux.io/codex-managed-base-digest"] != "" {
+				t.Fatalf("plain recipe must record the request without claiming confirmed delivery: %v", agent.Metadata.Annotations)
+			}
+			if !tmuxCallsMention(tmux, "model_instructions_file=") {
+				t.Fatal("plain managed file missing")
 			}
 			if codexGuidanceLeakCheck(tmux, store)(codexLinkRulesMarker) || len(codexLinkRulesNoticeLines(stderr)) != 0 {
 				t.Fatalf("rules reached the create: stderr=%q", stderr)
@@ -354,7 +352,7 @@ func TestCodexCreatesOffTheNativeFreshLaneGetNoProjectLinkRules(t *testing.T) {
 		"resume picker":    {resumeConversation: "conversation-1", payload: []string{"review this"}},
 	} {
 		create.prepareProjectLinks(aiModeCodex, linkRulesRegistryProject(t, store, alpha), &flags)
-		if flags.projectLinks.active || flags.resumeLaunchValues != nil {
+		if flags.projectLinks.active != (name != "resume picker") || flags.resumeLaunchValues != nil {
 			t.Fatalf("%s: prepared project link rules %+v", name, flags.projectLinks)
 		}
 	}

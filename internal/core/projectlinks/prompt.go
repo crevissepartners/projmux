@@ -182,6 +182,13 @@ func (s SnapshotStore) RecordedSnapshotPath(digest string) (string, error) {
 	return path, err
 }
 
+// ReadRecordedSnapshot returns the path and bytes from the same bounded,
+// regular-file and digest-verified read. Callers that need content must use
+// these bytes rather than reopen the returned path after validation.
+func (s SnapshotStore) ReadRecordedSnapshot(digest string) (string, []byte, error) {
+	return s.readSnapshot(digest)
+}
+
 // WriteComposite stores personaContent, CompositeSeparator and the rendered
 // rules digest names, in that order, as one content-addressed file and returns
 // it. The persona bytes are copied exactly; the persona snapshot itself is

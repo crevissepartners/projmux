@@ -188,6 +188,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	var links projectLinksLaunch
 	var guidance agentGuidanceLaunch
 	var nativePolicy codexappserver.ThreadPolicy
+	var managedInstructions *codexappserver.ManagedInstructions
 	var err error
 	if plan.provider == aiModeCodex {
 		prepared, route, nativeSettings, prepareErr := mutationruntime.PrepareNativeCodexResume(context.Background(), spelling, plan.sharedPlan(), r.create.processCreatePaths, func(ctx context.Context, ref *coremetadata.AgentSessionRef, agentRef string) (mutationruntime.NativeCodexRoute, error) {
@@ -213,6 +214,10 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		resumed = localAgentResumeLaunch(prepared.Resumed)
 		settings = localAgentSettingsLaunch(prepared.Settings)
 		nativePolicy = nativeSettings.Policy
+		managedInstructions = nativeSettings.ManagedInstructions
+		if settings.managedBase != nil {
+			guidanceNotice = settings.managedBase.Notice()
+		}
 		effortNotice = resumed.effortNotice(plan.agentName)
 		settingsNotice = settings.notice(plan.agentName)
 	} else {
@@ -238,7 +243,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	if plan.codexTransfer != nil {
 		initCtx, cancel := prepareNativeContext(context.Background())
 		effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
-		reservedNative, err = plan.codexTransfer.initialize(initCtx, r, plan, workspace, settings, links, guidance, resumed, codexappserver.ThreadSettings{Model: settings.model(plan.modelOverride), Effort: effort, Policy: nativePolicy})
+		reservedNative, err = plan.codexTransfer.initialize(initCtx, r, plan, workspace, settings, links, guidance, resumed, codexappserver.ThreadSettings{ManagedInstructions: managedInstructions, Model: settings.model(plan.modelOverride), Effort: effort, Policy: nativePolicy})
 		cancel()
 		if err != nil {
 			return nativeLaunchError(spelling, err)
@@ -313,7 +318,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	nativeThreadID := ""
 	if plan.provider == aiModeCodex {
 		effort, _, _ := claudeResumeEffort(aiModeCodex, settings.launchAnnotations(plan.launchAnnotations()))
-		native := &mutationruntime.NativeCodexResumeExecution{Spelling: spelling, AgentUID: plan.agentUID, ConversationID: plan.conversationID, Route: nativeRoute.shared(), SafeFallback: func(err error) bool { return nativeFallbackAllowed(r.create.codexNative, err) }, Settings: codexappserver.ThreadSettings{Model: settings.model(plan.modelOverride), Effort: effort, Policy: nativePolicy},
+		native := &mutationruntime.NativeCodexResumeExecution{ManagedBase: settings.managedBase, Spelling: spelling, AgentUID: plan.agentUID, ConversationID: plan.conversationID, Route: nativeRoute.shared(), SafeFallback: func(err error) bool { return nativeFallbackAllowed(r.create.codexNative, err) }, Settings: codexappserver.ThreadSettings{ManagedInstructions: managedInstructions, Model: settings.model(plan.modelOverride), Effort: effort, Policy: nativePolicy},
 			Resume: func(ctx context.Context, route mutationruntime.NativeCodexRoute, w coremetadata.AgentWorkspace, id string, settings codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error) {
 				if plan.codexTransfer != nil {
 					return reservedNative.Binding, plan.codexTransfer.check(ctx)
@@ -365,6 +370,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	nameReason := out.NameReason
 
 	if nativeLifecycleTargetAfterCommit.valid() {
+		if plan.codexTransfer != nil {
+			if err := plan.codexTransfer.confirmManaged(nativeLifecycleTargetAfterCommit); err != nil {
+				return err
+			}
+		}
 		startup := nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTargetAfterCommit)
 		if plan.codexTransfer != nil {
 			if startup.Status != codexObserverStartupReady {
@@ -393,6 +403,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// The Agent is back without its Project's label link rules, disclosed
 		// the same way.
 		fmt.Fprintln(stderr, linksNotice)
+	}
+	if settings.managedBase != nil {
+		guidanceNotice = settings.managedBase.Notice()
 	}
 	if guidanceNotice != "" {
 		// The Agent is back without the agent guidance, disclosed the same

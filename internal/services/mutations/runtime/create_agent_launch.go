@@ -347,6 +347,14 @@ type FreshAgentLauncher interface {
 
 func PlanFreshAgent(launcher FreshAgentLauncher, provider string, workspace coremetadata.AgentWorkspace, flags AgentSettingsFlags, personaFile string) (string, []string, error) {
 	switch {
+	case provider == "codex" && personaFile != "":
+		p, ok := launcher.(interface {
+			PlanCodexAgentLaunchWithBaseFile(coremetadata.AgentWorkspace, []string, string, string, codexappserver.ThreadPolicy, string) (string, []string, error)
+		})
+		if !ok {
+			return "", nil, errors.New("create agent: managed Codex base file launcher is not configured")
+		}
+		return p.PlanCodexAgentLaunchWithBaseFile(workspace, flags.Payload, flags.Model, flags.Effort, flags.ProfileLaunch.CodexPolicy, personaFile)
 	case provider == "codex" && !NativeCodexFreshCreateRequired(provider, flags.InteractiveOnly, flags.Payload, flags.Host, flags.ResumeConversation) && !flags.ProfileLaunch.CodexPolicy.IsZero():
 		p, ok := launcher.(interface {
 			PlanCodexAgentLaunchWithPolicy(coremetadata.AgentWorkspace, []string, string, string, codexappserver.ThreadPolicy) (string, []string, error)

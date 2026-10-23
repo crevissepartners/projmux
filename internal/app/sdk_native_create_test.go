@@ -14,6 +14,7 @@ import (
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -38,10 +39,27 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 		sdk := lane != "cli"
 		t.Run(lane, func(t *testing.T) {
 			// Provider and broker Unix sockets must fit even under a long CI TMPDIR.
-			root := shortTempDomain(t)
+			root, err := os.MkdirTemp("/tmp", "pmxb")
+			if err != nil {
+				t.Fatal(err)
+			}
+			retired, protocolWaited := false, false
+			t.Cleanup(func() {
+				if retired && protocolWaited {
+					if err := os.RemoveAll(root); err != nil {
+						t.Error(err)
+					}
+				} else {
+					t.Logf("preserved unresolved native fixture root=%s; owner review required", root)
+				}
+			})
+			t.Logf("native create fixture root=%s", root)
 			home, state, config := filepath.Join(root, "home"), filepath.Join(root, "state", "projmux"), filepath.Join(root, "config", "projmux")
 			providerRoot := filepath.Join(root, "codex")
 			bin := filepath.Join(home, ".local", "bin")
+			observerLog := filepath.Join(root, "observer-receipts.tsv")
+			executable := filepath.Join(root, "projmux")
+			relaunchObserverExecutable(t, executable, binary, observerLog)
 			for _, dir := range []string{home, bin, providerRoot} {
 				if err := os.MkdirAll(dir, 0700); err != nil {
 					t.Fatal(err)
@@ -70,7 +88,9 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				_ = server.Process.Kill()
-				_ = server.Wait()
+				waitErr := server.Wait()
+				protocolWaited = true
+				t.Logf("owned protocol server pid=%d Wait returned: %v", server.Process.Pid, waitErr)
 				if t.Failed() {
 					t.Log(stderr.String())
 				}
@@ -79,7 +99,7 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 			defer cancel()
 			waitCodexCreate(t, ctx, func() bool { _, err := os.Stat(control); return err == nil })
 			socket, run := sdkCreateSocket(t)
-			options := projmux.Options{StateDir: state, ConfigDir: config, HomeDir: home, DefaultShell: "/bin/sh", SocketPath: socket, ProjmuxExecutable: binary}
+			options := projmux.Options{StateDir: state, ConfigDir: config, HomeDir: home, DefaultShell: "/bin/sh", SocketPath: socket, ProjmuxExecutable: executable}
 			client, err := projmux.NewClient(options)
 			if err != nil {
 				t.Fatal(err)
@@ -117,7 +137,18 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 					}
 				})
 			}
-			t.Cleanup(func() { cleanupSDKNativePeers(t, state) })
+			var ownedUID string
+			births := map[string]metadata.ProcessIdentity{}
+			t.Cleanup(func() {
+				if ownedUID != "" && !cleanupRelaunchBinding(t, client, state, ownedUID, window.Window.Metadata.UID, socket) {
+					return
+				}
+				if ownedUID != "" && !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, true) {
+					return
+				}
+				cleanupSDKNativePeers(t, state)
+				retired = true
+			})
 			req := core.CreateAgentRequest{Project: "uid:" + project.Project.Metadata.UID, Window: "uid:" + window.Window.Metadata.UID, Provider: "codex", Name: "native-worker", Profile: "native", Creator: "uid:" + parent, Payload: []string{"hello-native"}}
 			var result core.CreateAgentResult
 			if sdk {
@@ -131,10 +162,10 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 				// Returned public resources must not alias the persisted native binding.
 				result.Agent.Status.SessionRef.Codex.ThreadID = "changed"
 			} else {
-				c := sdkAgentCLI(t, state, config, socket, binary, home)
+				c := sdkAgentCLI(t, state, config, socket, executable, home)
 				c.codexNative = newCodexNativeThreadController(state)
 				// Align CLI's explicit observer tuple with SDK's same-input tuple.
-				c.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: binary}
+				c.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: executable}
 				var out, stderr bytes.Buffer
 				err = c.Run([]string{"agent", "--host", "tmux", "--project", req.Project, "--window", req.Window, "--provider", "codex", "--name", "native-worker", "--profile", "native", "--creator", req.Creator, "-o", "receipt", "--", "hello-native"}, &out, &stderr)
 				if err != nil {
@@ -148,8 +179,16 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 					created = a
 				}
 			}
+			ownedUID = created.Metadata.UID
 			if created.Status.SessionRef == nil || created.Status.SessionRef.Codex.ThreadID != "process-thread" || created.Metadata.Annotations[metadata.AnnotationCreatorAgent] != parent || created.Status.Activation.State != metadata.ActivationAcknowledged {
 				t.Fatalf("native state/creator mismatch: %+v", created)
+			}
+			if !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, false) {
+				t.Fatal("initial observer birth capture uncertain")
+			}
+			confirmed := maps.Clone(created.Metadata.Annotations)
+			if confirmed[mutationruntime.CodexManagedBaseDigest] == "" || confirmed[mutationruntime.CodexManagedBaseStatus] != "base-delivered" {
+				t.Fatalf("initial base not confirmed: %v", confirmed)
 			}
 			var paneID string
 			for _, p := range reg.Panes {
@@ -192,7 +231,7 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 				switch frame.Method {
 				case "thread/start":
 					start++
-					if !strings.Contains(fmt.Sprint(frame.Params["developerInstructions"]), "Read carefully.") || !strings.Contains(fmt.Sprint(frame.Params["developerInstructions"]), created.Metadata.UID) || frame.Params["model"] != "stub-model" || frame.Params["approvalPolicy"] != "on-request" || frame.Params["sandbox"] != "read-only" {
+					if !strings.Contains(fmt.Sprint(frame.Params["baseInstructions"]), "Read carefully.") || !strings.Contains(fmt.Sprint(frame.Params["baseInstructions"]), created.Metadata.UID) || frame.Params["model"] != "stub-model" || frame.Params["approvalPolicy"] != "on-request" || frame.Params["sandbox"] != "read-only" {
 						t.Fatalf("native payload/profile: %+v", frame.Params)
 					}
 				case "turn/start":
@@ -215,7 +254,8 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = client.WriteInstructions(ctx, "reviewer", []byte("Revised instructions remain immutable on resume.")); err != nil {
+			revisedInstructions := "Revised managed instructions B."
+			if _, err = client.WriteInstructions(ctx, "reviewer", []byte(revisedInstructions)); err != nil {
 				t.Fatal(err)
 			}
 
@@ -224,9 +264,9 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 					out, err := client.ResumeAgent(ctx, core.ResumeAgentRequest{Ref: "uid:" + created.Metadata.UID, Model: "resumed-model", Effort: "high"})
 					return strings.Join(out.Notices, "\n"), err
 				}
-				c := sdkResumeCLI(t, state, config, socket, binary, home)
+				c := sdkResumeCLI(t, state, config, socket, executable, home)
 				c.rebind.create.codexNative = newCodexNativeThreadController(state)
-				c.rebind.create.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: binary}
+				c.rebind.create.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: executable}
 				var output, stderr bytes.Buffer
 				err := c.runResume([]string{"uid:" + created.Metadata.UID, "--model", "resumed-model", "--effort", "high"}, &output, &stderr)
 				return stderr.String(), err
@@ -324,9 +364,9 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 					}
 					notices = strings.Join(resumed.Notices, "\n")
 				} else {
-					c := sdkResumeCLI(t, state, config, socket, binary, home)
+					c := sdkResumeCLI(t, state, config, socket, executable, home)
 					c.rebind.create.codexNative = newCodexNativeThreadController(state)
-					c.rebind.create.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: binary}
+					c.rebind.create.resumes.(*aiCommand).nativeObserverPaths = &mutationruntime.NativeObserverPaths{Paths: configpkg.Paths{StateDir: state, ConfigDir: config}, RegistryPath: storepkg.PathFor(state), Executable: executable}
 					var output, stderr bytes.Buffer
 					err = c.runResume([]string{"uid:" + created.Metadata.UID, "--model", "resumed-model", "--effort", "high"}, &output, &stderr)
 					if err != nil {
@@ -337,13 +377,24 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 					}
 					notices = stderr.String()
 				}
-				if !strings.Contains(notices, "instructions") {
-					t.Fatal("immutable instruction change was not disclosed", notices)
+				if !strings.Contains(notices, "codex-managed-base-not-refreshed:") || !strings.Contains(notices, "unconfirmed") {
+					t.Fatal("shared managed base was not disclosed as unconfirmed", notices)
+				}
+				if !observeRelaunchObserverReceipts(t, observerLog, binary, state, births, false) {
+					t.Fatal("resumed observer birth capture uncertain")
 				}
 				waitSDKResumeBirth(t, state, created.Metadata.UID)
 				afterReg := projectRegistry(t, state)
 				after, _ := afterReg.Agent(created.Metadata.UID)
 				pane, _ := afterReg.Pane(after.Status.PaneRef)
+				for _, key := range []string{mutationruntime.CodexManagedBaseDigest, mutationruntime.CodexManagedBaseMode, metadata.AnnotationAgentPersona, metadata.AnnotationAgentPersonaDigest, metadata.AnnotationAgentInstructionsSource, metadata.AnnotationAgentGuidanceDigest, metadata.AnnotationAgentProjectGuidanceDigest, metadata.AnnotationAgentProjectLinkRulesDigest} {
+					if after.Metadata.Annotations[key] != confirmed[key] {
+						t.Fatalf("shared resume promoted unconfirmed %s: %v", key, after.Metadata.Annotations)
+					}
+				}
+				if status := after.Metadata.Annotations[mutationruntime.CodexManagedBaseStatus]; status != "base-unconfirmed" && status != "not-refreshed-loaded-thread" {
+					t.Fatalf("missing unconfirmed managed status: %s", status)
+				}
 				if after.Metadata.Annotations[metadata.AnnotationAgentProfileDigest] != updatedProfile.Digest {
 					t.Fatal("resume lost current profile digest")
 				}
@@ -358,7 +409,7 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			starts, turns, resumes, settingsApplied := 0, 0, 0, false
+			starts, turns, resumes, managedResumes, bootstrapResumes, settingsApplied := 0, 0, 0, 0, 0, false
 			for line := range bytes.SplitSeq(wire, []byte("\n")) {
 				var frame struct {
 					Method string         `json:"method"`
@@ -379,7 +430,24 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 				case "thread/resume":
 					resumes++
 					if _, present := frame.Params["developerInstructions"]; present {
-						t.Fatal("resume tried to replace start-only instructions")
+						t.Fatal("resume sent permanent developer instructions")
+					}
+					_, hasSandbox := frame.Params["sandbox"]
+					_, hasApproval := frame.Params["approvalPolicy"]
+					if hasSandbox || hasApproval {
+						if frame.Params["sandbox"] != "workspace-write" || frame.Params["approvalPolicy"] != "never" {
+							t.Fatalf("unexpected main resume policy tuple: %+v", frame.Params)
+						}
+						managedResumes++
+						base, ok := frame.Params["baseInstructions"].(string)
+						if !ok || !strings.Contains(base, revisedInstructions) || strings.Contains(base, "Read carefully.") {
+							t.Fatalf("main resume did not replace base A with B: %+v", frame.Params)
+						}
+					} else {
+						bootstrapResumes++
+						if _, present := frame.Params["baseInstructions"]; present {
+							t.Fatalf("ordinary bootstrap resume changed the managed base: %+v", frame.Params)
+						}
 					}
 					if frame.Params["threadId"] != "process-thread" {
 						t.Fatalf("different resumed thread: %+v", frame)
@@ -388,6 +456,9 @@ func TestSDKNativeCodexCreateExplicitRootsAndFrozenEnvironment(t *testing.T) {
 			}
 			if starts != 1 || turns != 1 || resumes < 2 {
 				t.Fatalf("resume created another conversation/turn: %d/%d/%d", starts, turns, resumes)
+			}
+			if managedResumes != 3 || bootstrapResumes == 0 {
+				t.Fatalf("managed/bootstrap resume coverage missing: %d/%d", managedResumes, bootstrapResumes)
 			}
 			if !settingsApplied {
 				t.Fatal("resume settings update missing from wire")

@@ -3961,3 +3961,7 @@ func (c *aiCommand) sharedAgentCommand() *mutationruntime.AgentCommandPlanner {
 
 	return &mutationruntime.AgentCommandPlanner{ExecArgv: c.agentExecArgv, LookupEnv: c.env, HomeDir: c.homeOrEmpty(), CommandShell: posixCommandShell(c.lookupEnv), LookupBinary: func(bin string) string { return c.readTrimmed("command", "-v", bin) }}
 }
+
+func (c *aiCommand) PlanCodexAgentLaunchWithBaseFile(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy, file string) (string, []string, error) {
+	return c.sharedAgentLaunch().PlanCodexAgentLaunchWithBaseFile(workspace, payload, model, effort, policy, file)
+}

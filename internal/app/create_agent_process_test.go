@@ -33,7 +33,7 @@ func TestProcessCodexLaunchAndSettingsHaveDedicatedOwnership(t *testing.T) {
 	policy := codexappserver.ThreadPolicy{Sandbox: "read-only", ApprovalPolicy: "on-request"}
 	plan := processAgentCreatePlan{workspace: workspace, flags: resourceCreateFlags{model: "stub-model", effort: "low", profileLaunch: profileLaunch{codexPolicy: policy}}}
 	settings := processCodexCreateConfig(plan, "agent-owned")
-	if settings.Settings != (codexappserver.ThreadSettings{Model: "stub-model", Effort: "low", Policy: policy}) || !reflect.DeepEqual(settings.Roots, workspace.AdditionalWritableRoots) {
+	if settings.Settings.Model != "stub-model" || settings.Settings.Effort != "low" || settings.Settings.Policy != policy || settings.Settings.ManagedInstructions == nil || settings.DeveloperInstructions != "" || !reflect.DeepEqual(settings.Roots, workspace.AdditionalWritableRoots) {
 		t.Fatalf("settings lost: %+v", settings)
 	}
 	if !nativeCodexFreshCreateRequired(aiModeCodex, processCreateFlags(processAgentCreateOptions{})) {

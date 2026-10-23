@@ -463,10 +463,10 @@ func TestACodexRelaunchRefusesInstructionsAndPermissionsItCannotChange(t *testin
 		flags []string
 		want  string
 	}{
-		{name: "instructions", flags: []string{"--instructions", "reviewer"}, want: personaReasonCodexInstructionsImmutable},
-		{name: "no instructions", flags: []string{"--instructions", "none"}, want: personaReasonCodexInstructionsImmutable},
-		{name: "profile with other instructions", flags: []string{"--profile", "review"}, want: personaReasonCodexInstructionsImmutable},
-		{name: "reset of instructions to none", flags: []string{"--reset", "instructions"}, want: personaReasonCodexInstructionsImmutable},
+		{name: "instructions", flags: []string{"--instructions", "reviewer"}, want: ""},
+		{name: "no instructions", flags: []string{"--instructions", "none"}, want: ""},
+		{name: "profile with other instructions", flags: []string{"--profile", "review"}, want: ""},
+		{name: "reset of instructions to none", flags: []string{"--reset", "instructions"}, want: ""},
 		{name: "profile without a sandbox", flags: []string{"--profile", "loose"}, want: relaunchReasonCodexPermissionsKept},
 		{name: "no profile", flags: []string{"--profile", "none", "--instructions", "lead"}, want: relaunchReasonCodexPermissionsKept},
 	} {
@@ -481,6 +481,24 @@ func TestACodexRelaunchRefusesInstructionsAndPermissionsItCannotChange(t *testin
 			beforeAnnotations := f.agent(t).Metadata.Annotations
 			before := f.store.snapshot()
 			stdout, _, err := runRoute(t, f.command, append([]string{"relaunch", "uid:" + personaAttachAgent}, test.flags...)...)
+			if test.want == "" {
+				if err != nil || len(controller.resumes) != 1 || controller.resumes[0].managed == nil {
+					t.Fatalf("managed relaunch %q: resumes=%+v err=%v", test.flags, controller.resumes, err)
+				}
+				after := f.agent(t)
+				if after.Metadata.UID != personaAttachAgent || after.Status.SessionRef.ConversationID() != resumeFixtureConversation || after.Metadata.Annotations["projmux.io/codex-managed-base-status"] != "base-unconfirmed" {
+					t.Fatalf("managed relaunch lost identity/history or claimed shared confirmation: %+v", after)
+				}
+				// A shared provider cannot confirm replacing its base. Keep the
+				// previous confirmed role while sending the requested current role.
+				if after.Metadata.Annotations[coremetadata.AnnotationAgentPersona] != beforeAnnotations[coremetadata.AnnotationAgentPersona] {
+					t.Fatal("unconfirmed base replaced confirmed instructions metadata")
+				}
+				if (test.name == "instructions" || test.name == "profile with other instructions") && !strings.Contains(controller.resumes[0].managed.Base, "review") {
+					t.Fatalf("requested instructions missing from managed base: %q", controller.resumes[0].managed.Base)
+				}
+				return
+			}
 			if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "("+test.want+")") || !strings.HasSuffix(err.Error(), "nothing was changed") {
 				t.Fatalf("relaunch %q err = %v, want a %s refusal", test.flags, err, test.want)
 			}
@@ -519,7 +537,7 @@ func TestACodexRelaunchSwitchesToAProfileThatKeepsItsInstructions(t *testing.T) 
 		coremetadata.AnnotationAgentModelSource, coremetadata.SettingSourceProfile,
 		coremetadata.AnnotationAgentEffort, "low",
 		coremetadata.AnnotationAgentEffortSource, coremetadata.SettingSourceProfile)
-	if got := f.agent(t).Metadata.Annotations; !maps.Equal(got, want) {
+	if got := f.agent(t).Metadata.Annotations; !maps.Equal(got, unconfirmedCodexBaseAnnotations(want)) {
 		t.Fatalf("annotations = %v, want %v", got, want)
 	}
 	if !strings.Contains(stdout, `"outcome":"restarted"`) || !strings.Contains(stdout, `"profile":{"name":"strict","digest":"`+digest+`","source":"relaunch"}`) {

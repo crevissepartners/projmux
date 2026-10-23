@@ -186,7 +186,7 @@ func TestAgentRelaunchOfACodexAgentPassesTheCodexModelAndEffortFlags(t *testing.
 		after.Status.SessionRef.ConversationID() != resumeFixtureConversation {
 		t.Fatalf("codex Agent after relaunch = %s on %q %+v", after.Status.Phase, after.Status.PaneRef, after.Status.SessionRef)
 	}
-	if !maps.Equal(after.Metadata.Annotations, plusSources(modelEffortAnnotations("gpt-6", "xhigh"), modelEffortRelaunch...)) {
+	if !maps.Equal(after.Metadata.Annotations, unconfirmedCodexBaseAnnotations(plusSources(modelEffortAnnotations("gpt-6", "xhigh"), modelEffortRelaunch...))) {
 		t.Fatalf("annotations = %v, want only the new model and effort", after.Metadata.Annotations)
 	}
 	if !strings.Contains(stdout, `"outcome":"restarted"`) || !strings.Contains(stdout, `"provider":"codex"`) {

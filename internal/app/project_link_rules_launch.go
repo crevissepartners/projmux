@@ -162,7 +162,7 @@ func planCodexProjectLinksWith(launcher any, project coremetadata.Project) proje
 // are left exactly as they were.
 func (c *createCommand) prepareProjectLinks(provider string, project coremetadata.Project, flags *resourceCreateFlags) {
 	flags.projectLinks = projectLinksLaunch{}
-	if provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, *flags) {
+	if provider == aiModeCodex && flags.resumeConversation == "" && !flags.dialogueReplyOnly {
 		flags.projectLinks = planCodexProjectLinksWith(c.agents, project)
 		return
 	}

@@ -201,7 +201,11 @@ func (c *agentCommand) planHostProcessCodexLaunch(recipe processRelaunchRecipe) 
 	}
 	ai := c.ai.(*aiCommand)
 	command, err := processhost.CodexCommand(ai.findAgentBinary(aiModeCodex), recipe.workspace.CWD, ai.processCreateEnvironment(), nil)
-	config := processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(recipe.workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{Model: settings.resolution.New.Model.Value, Effort: annotations[coremetadata.AnnotationAgentEffort], Policy: policy}}
+	var managedInstructions *codexappserver.ManagedInstructions
+	if settings.managedBase != nil {
+		managedInstructions = settings.managedBase.Instructions
+	}
+	config := processhost.CodexConfig{Version: version.String(), Roots: slices.Clone(recipe.workspace.AdditionalWritableRoots), Settings: codexappserver.ThreadSettings{ManagedInstructions: managedInstructions, Model: settings.resolution.New.Model.Value, Effort: annotations[coremetadata.AnnotationAgentEffort], Policy: policy}}
 	return command, config, settings, err
 }
 
@@ -431,6 +435,35 @@ func (c *agentCommand) startTmuxCodexTransfer(ctx context.Context, cancel contex
 	}
 	if err != nil {
 		return fail(err)
+	}
+	if settings.managedBase != nil {
+		// The dedicated writer has successfully resumed the exact thread. Only
+		// this operation's accepted managed effect may change the reserved recipe.
+		next, recordErr := managedCodexTransferExpectation(&expected, settings.managedBase)
+		if recordErr != nil {
+			return fail(recordErr)
+		}
+		_, recordErr = creator.store.update(func(working *coremetadata.Registry) error {
+			agent, found := working.Agent(binding.Agent)
+			pane, present := working.Pane(binding.Pane)
+			if !found || !present || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != binding.Pane || !sameHostTransferSpec(agent.Spec, expected.Spec) || !reflect.DeepEqual(agent.Metadata.Annotations, expected.Metadata.Annotations) || !reflect.DeepEqual(agent.Status.SessionRef, expected.Status.SessionRef) || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.Binding != metadataProcessBinding(binding) || pane.Status.ProcessSession.ThreadID != source.conversation.Thread || pane.Status.Activation.Process == nil || pane.Status.Activation.Process.Binding != metadataProcessBinding(binding) {
+				return processhost.ErrStale
+			}
+			if err := settings.managedBase.Record(working, binding.Agent, false); err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(agent.Metadata.Annotations, next.Metadata.Annotations) {
+				return processhost.ErrStale
+			}
+			return nil
+		})
+		if recordErr != nil {
+			return fail(recordErr)
+		}
+		// Keep both rollback and the durable journal on the same expected recipe
+		// before Finish; a journal write failure still retires only our child.
+		expected = next.Clone()
+		source.journal.Expected = &expected
 	}
 	source.journal.Phase = "ready"
 	if err = writeCodexHostTransfer(source.journalPath, source.journal); err != nil {

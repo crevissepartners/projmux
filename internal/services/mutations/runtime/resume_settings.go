@@ -18,6 +18,8 @@ import (
 // means the launch is not layered and reads the Agent's annotations as they
 // are.
 type AgentSettingsLaunch struct {
+	ManagedBase *ManagedCodexBase
+
 	// projectGuidance is recorded with an ordinary process resume reservation.
 	ProjectGuidance ProjectGuidanceLaunch
 	Layered         bool
@@ -39,8 +41,10 @@ type AgentSettingsLaunch struct {
 // (profile; "" for none). The zero value asks nothing: the launch runs what
 // the layers resolve to now.
 type AgentSettingsRequest struct {
-	ProjectUID    string
-	Model, Effort string
+	// ManagedCodexBase is true only when this lifecycle sends the managed base.
+	ManagedCodexBase bool
+	ProjectUID       string
+	Model, Effort    string
 	// instructions and profile are nil when not asked; a pointer to "" is an
 	// explicit none.
 	Instructions *string
@@ -133,7 +137,7 @@ func ResolveAgentSettingsWithPaths(paths func() (config.Paths, error), Provider 
 	if Provider != aiModeClaude && Provider != aiModeCodex {
 		return AgentSettingsLaunch{}, nil
 	}
-	in := agentsettings.Input{Annotations: Annotations, InstructionsFixed: Provider == aiModeCodex, Reset: request.Reset}
+	in := agentsettings.Input{Annotations: Annotations, InstructionsFixed: Provider == "codex" && !request.ManagedCodexBase, Reset: request.Reset}
 	recordedName := Annotations[coremetadata.AnnotationAgentProfile]
 	switching := request.Profile != nil && *request.Profile != recordedName
 	if recordedName != "" {
@@ -346,6 +350,9 @@ func (l AgentSettingsLaunch) Record(registry *coremetadata.Registry, mutator cor
 		if err != nil {
 			return MapMetadataError(err)
 		}
+	}
+	if l.ManagedBase != nil {
+		return l.ManagedBase.Record(registry, AgentUID, false)
 	}
 	current := coremetadata.PersonaAnnotationsOf(coremetadata.Agent{Metadata: coremetadata.ObjectMeta{Annotations: RegistryAgentAnnotations(registry, AgentUID)}})
 	want := current

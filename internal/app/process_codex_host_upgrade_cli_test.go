@@ -29,9 +29,9 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 	for _, tc := range []struct {
 		name, instructions, status, reason string
 	}{
-		{"preserved", "legacy", "preserved", "codex-instructions-immutable"},
-		{"replacement-not-applied", "replacement", "not-applied", "codex-instructions-immutable"},
-		{"unavailable-not-applied", "", "not-applied", "instructions-unavailable"},
+		{"refreshed", "legacy", "delivered", "managed-base-delivered"},
+		{"replacement-applied", "replacement", "delivered", "managed-base-delivered"},
+		{"unavailable-fallback", "", "not-applied", "managed-base-not-refreshed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := processCodexRelaunchFixture(t)
@@ -39,6 +39,12 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			defer cancel()
 			paths, err := config.DefaultPathsFromEnv()
 			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(paths.ConfigDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(paths.ConfigDir, "agent-guidance.md"), []byte("MANAGED-GUIDANCE-A"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			personas := persona.NewDefaultStore(paths)
@@ -77,6 +83,9 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			currentProfile := "provider = \"codex\"\nmodel = \"current-model\"\neffort = \"high\"\n"
 			if tc.instructions != "" {
 				currentProfile += "instructions = \"" + tc.instructions + "\"\n"
+			}
+			if err := os.WriteFile(filepath.Join(paths.ConfigDir, "agent-guidance.md"), []byte("MANAGED-GUIDANCE-B"), 0600); err != nil {
+				t.Fatal(err)
 			}
 			afterDigest := writeCodexProfile(t, profiles, "upgrade", currentProfile)
 			if tc.instructions == "" {
@@ -119,16 +128,13 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			if e.Status != tc.status || e.Reason != tc.reason {
 				t.Fatalf("legacy instructions: %+v", e)
 			}
-			if tc.instructions == "replacement" && (e.Value == nil || *e.Value != "legacy" || e.RequestedValue == nil || *e.RequestedValue != "replacement") {
-				t.Fatalf("lost immutable/current distinction: %+v", e)
-			}
-			if tc.instructions == "" && (e.Value != nil || e.RequestedValue == nil || *e.RequestedValue != "legacy") {
-				t.Fatalf("unavailable instructions invented an applied value or lost the request: %+v", e)
+			if tc.instructions != "" && (e.Value == nil || *e.Value != tc.instructions) {
+				t.Fatalf("current instructions not reported: %+v", e)
 			}
 			for _, setting := range []string{"agent-guidance", "project-guidance", "link-rules"} {
 				e := lifecycleEntry(t, receipt.SettingsApplication, setting)
-				if e.Status != "preserved" || e.Reason != "codex-instructions-immutable" || e.Value != nil {
-					t.Fatalf("invented instruction application: %+v", e)
+				if e.Status != tc.status || e.Reason != tc.reason {
+					t.Fatalf("managed component %s: %+v", setting, e)
 				}
 			}
 			next := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool {
@@ -164,7 +170,7 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 			if len(frames["thread/start"]) != 1 || len(frames["thread/resume"]) != 2 || len(frames["thread/settings/update"]) != 1 || len(frames["turn/start"]) != 1 {
 				t.Fatalf("unexpected conversation/settings/input ledger: %+v", frames)
 			}
-			initialInstructions, _ := frames["thread/start"][0]["developerInstructions"].(string)
+			initialInstructions, _ := frames["thread/start"][0]["baseInstructions"].(string)
 			if !strings.Contains(initialInstructions, "fixture instruction body: legacy") || strings.Contains(initialInstructions, "fixture instruction body: replacement") {
 				t.Fatal("fixture did not establish the legacy developer instructions")
 			}
@@ -177,15 +183,28 @@ func TestProcessCodexHostUpgradeCurrentConfigurationCLI(t *testing.T) {
 					t.Fatalf("wrong resumed conversation: %+v", params)
 				}
 			}
-			for _, method := range []string{"thread/resume", "thread/settings/update"} {
-				for _, params := range frames[method] {
-					for _, key := range []string{"developerInstructions", "baseInstructions"} {
-						if value, present := params[key]; present && value != nil && value != "" {
-							t.Fatalf("legacy instructions rewritten on %s: %+v", method, params)
-						}
-					}
-				}
+			resumedBase, _ := frames["thread/resume"][0]["baseInstructions"].(string)
+			wantInstruction := tc.instructions
+			if wantInstruction == "" {
+				wantInstruction = "legacy"
 			}
+			wantGuidance := "MANAGED-GUIDANCE-B"
+			if tc.instructions == "" {
+				wantGuidance = "MANAGED-GUIDANCE-A"
+			}
+			if !strings.Contains(resumedBase, wantGuidance) {
+				t.Fatalf("mixed or stale managed composition: %q", resumedBase)
+			}
+			if !strings.Contains(resumedBase, "fixture instruction body: "+wantInstruction) {
+				t.Fatalf("latest/fallback base not sent: %q", resumedBase)
+			}
+			if _, exists := frames["thread/start"][0]["developerInstructions"]; exists {
+				t.Fatal("create persisted legacy developer instructions")
+			}
+			if _, exists := frames["thread/resume"][0]["developerInstructions"]; exists {
+				t.Fatal("resume persisted developer instructions")
+			}
+
 		})
 	}
 }

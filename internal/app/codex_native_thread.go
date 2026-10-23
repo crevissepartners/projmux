@@ -81,7 +81,7 @@ func newCodexNativeThreadController(stateDir string) defaultCodexNativeThreadCon
 type codexNativeCreateInput = mutationruntime.NativeCodexCreateInput
 
 type codexNativeThreadClient interface {
-	StartThreadWithModel(context.Context, string, []string, string, codexappserver.ThreadPolicy, string) (codexappserver.ThreadBinding, error)
+	StartThreadWithSettings(context.Context, string, []string, string, codexappserver.ThreadSettings) (codexappserver.ThreadBinding, error)
 	StartTurnWithOptions(context.Context, string, string, string, string, string) (string, error)
 	BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error)
 	Close() error

@@ -93,7 +93,22 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 		instructions = s.annotations[coremetadata.AnnotationAgentPersona]
 		wantedInstructions = instructions
 	}
+	managed := s.settings.managedBase
+	managedStatus, managedReason := "delivered", "managed-base-delivered"
+	if managed != nil && (managed.Fallback || managed.Instructions.Fallback || managed.Instructions.Shared) {
+		managedStatus, managedReason = "not-applied", "managed-base-not-refreshed"
+	}
 	switch {
+	case managed != nil:
+		if managedStatus == "not-applied" {
+			prior := managed.PreviousAnnotations[coremetadata.AnnotationAgentPersona]
+			add("instructions", managedStatus, managedReason, value(prior))
+			if wantedInstructions != prior {
+				a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
+			}
+		} else {
+			add("instructions", managedStatus, managedReason, value(instructions))
+		}
 	case r.InstructionsNotApplied:
 		add("instructions", "not-applied", "codex-instructions-immutable", value(instructions))
 		if wantedInstructions != instructions {
@@ -116,6 +131,8 @@ func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsAp
 		{"link-rules", "link-rules-unavailable", s.links.active || s.snapshot, s.links.unavailable != nil || s.resumed.projectLinksUnavailable != nil},
 	} {
 		switch {
+		case managed != nil:
+			add(part.setting, managedStatus, managedReason, nil)
 		case s.provider == aiModeCodex:
 			add(part.setting, "preserved", "codex-instructions-immutable", nil)
 		case part.unavailable:

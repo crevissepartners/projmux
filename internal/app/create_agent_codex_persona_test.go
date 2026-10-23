@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -89,6 +90,7 @@ func TestCreateCodexAgentWithPersonaSendsItAsDeveloperInstructions(t *testing.T)
 				coremetadata.AnnotationAgentPersonaDigest:      digest,
 				coremetadata.AnnotationAgentInstructionsSource: coremetadata.SettingSourceFlag,
 			}
+			want = confirmedCodexBaseAnnotations(want, codexPersonaContent)
 			if len(agent.Metadata.Annotations) != len(want) {
 				t.Fatalf("Agent annotations = %v, want %v", agent.Metadata.Annotations, want)
 			}
@@ -140,17 +142,13 @@ func TestCreateCodexAgentWithoutPersonaSendsNoDeveloperInstructions(t *testing.T
 	if len(native.creates) != 1 || native.creates[0].instructions != "" {
 		t.Fatalf("native creates = %+v, want one carrying no developer instructions", native.creates)
 	}
-	if agent := agentNamed(t, store, "win-alpha-main", "agent-test-1"); agent.Metadata.Annotations != nil {
+	if agent := agentNamed(t, store, "win-alpha-main", "agent-test-1"); !maps.Equal(agent.Metadata.Annotations, confirmedCodexBaseAnnotations(nil, "")) {
 		t.Fatalf("Agent annotations = %#v, want nil", agent.Metadata.Annotations)
 	}
 }
 
-// TestCodexPersonaIsRefusedOffTheNativeFreshLane is acceptance 3 for Codex:
-// only the lane that opens a thread of its own can carry a persona, because
-// thread/start is the only moment one can be given. Every other Codex create
-// refuses with persona-provider-unsupported before reading the persona file,
-// so no thread, no Registry write, no tmux Pane and no snapshot exist.
-func TestCodexPersonaIsRefusedOffTheNativeFreshLane(t *testing.T) {
+// Plain creation carries the same role privately without changing control lanes.
+func TestCodexPlainPersonaUsesPrivateBaseFileAndKeepsThePlainLane(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		args []string
@@ -171,25 +169,31 @@ func TestCodexPersonaIsRefusedOffTheNativeFreshLane(t *testing.T) {
 			if _, err := personas.Write("reviewer", []byte(codexPersonaContent)); err != nil {
 				t.Fatal(err)
 			}
-			before, panes := store.snapshot(), tmux.paneCount()
 
+			withCodexGuidanceSeam(t, create)
 			stdout, _, err := runRoute(t, create, test.args...)
-			if err == nil {
-				t.Fatalf("create succeeded: %q", stdout)
-			}
-			if !IsUsageError(err) || !strings.Contains(err.Error(), persona.ReasonProviderUnsupported) ||
-				!strings.Contains(err.Error(), "nothing was created") {
-				t.Fatalf("err = %v, want a usage error carrying %s", err, persona.ReasonProviderUnsupported)
-			}
-			if stdout != "" {
-				t.Fatalf("refused create wrote %q", stdout)
+			if err != nil {
+				t.Fatalf("plain managed create: %v %s", err, stdout)
 			}
 			if len(native.creates) != 0 {
-				t.Fatalf("refused create opened a thread: %+v", native.creates)
+				t.Fatalf("plain lane became native: %+v", native.creates)
 			}
-			if store.snapshot() != before || store.writes != 0 || tmux.paneCount() != panes {
-				t.Fatalf("refused create mutated state: writes=%d registry=%s", store.writes, store.snapshot())
+			if tmuxCallsMention(tmux, codexPersonaContent) {
+				t.Fatal("instruction content leaked into argv")
 			}
+			if !tmuxCallsMention(tmux, "model_instructions_file=") {
+				t.Fatal("plain base snapshot not passed")
+			}
+			found := false
+			for _, agent := range store.registry.Agents {
+				if agent.Metadata.Annotations[coremetadata.AnnotationAgentPersona] == "reviewer" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("plain role recipe missing")
+			}
+
 		})
 	}
 }
@@ -213,9 +217,9 @@ func TestPersonaLaneGateTable(t *testing.T) {
 		{name: "codex reply-only with a prompt", provider: aiModeCodex,
 			flags: resourceCreateFlags{payload: prompted.payload, dialogueReplyOnly: true}, refused: true},
 		{name: "codex native fresh", provider: aiModeCodex, flags: prompted},
-		{name: "codex with no prompt", provider: aiModeCodex, refused: true},
+		{name: "codex with no prompt", provider: aiModeCodex},
 		{name: "codex interactive-only", provider: aiModeCodex,
-			flags: resourceCreateFlags{payload: prompted.payload, interactiveOnly: true}, refused: true},
+			flags: resourceCreateFlags{payload: prompted.payload, interactiveOnly: true}},
 		{name: "codex resume", provider: aiModeCodex,
 			flags:   resourceCreateFlags{payload: prompted.payload, resumeConversation: resumeFixtureConversation},
 			refused: true},

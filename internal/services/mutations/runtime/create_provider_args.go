@@ -3,7 +3,11 @@ package runtime
 import (
 	"fmt"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/projectlinks"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // ProviderOptionArity is how many operands one provider option consumes.
@@ -261,4 +265,25 @@ func (c *AgentLaunchService) PlanCodexAgentLaunchWithPolicy(workspace coremetada
 		return "", nil, err
 	}
 	return title, argv, nil
+}
+
+func (c *AgentLaunchService) PlanCodexAgentLaunchWithBaseFile(workspace coremetadata.AgentWorkspace, payload []string, model, effort string, policy codexappserver.ThreadPolicy, file string) (string, []string, error) {
+	if !filepath.IsAbs(file) {
+		return "", nil, fmt.Errorf("codex-managed-base-unavailable: base snapshot path is not absolute")
+	}
+	digest := strings.TrimSuffix(filepath.Base(file), ".md")
+	checked, err := projectlinks.NewSnapshotStore(filepath.Dir(filepath.Dir(file))).RecordedSnapshotPath(digest)
+	if err != nil {
+		return "", nil, fmt.Errorf("codex-managed-base-unavailable: %w", err)
+	}
+	if checked != filepath.Clean(file) {
+		return "", nil, fmt.Errorf("codex-managed-base-unavailable: snapshot is outside its store")
+	}
+	extra, err := ProviderLaunchArgs("codex", workspace, payload)
+	if err != nil {
+		return "", nil, err
+	}
+	options := append(CodexLaunchOptionArgs(model, effort), CodexCLIProfileArgs(policy)...)
+	options = append(options, "-c", "model_instructions_file="+strconv.Quote(file))
+	return c.Plan("codex", workspace.CWD, append(options, extra...))
 }

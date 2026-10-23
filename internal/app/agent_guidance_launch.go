@@ -46,6 +46,7 @@ var _ codexAgentGuidancePlanner = (*aiCommand)(nil)
 // (codexAgentIdentity), then the persona, Project instructions and rules. The identity goes
 // only with the guidance.
 type agentGuidanceLaunch struct {
+	codexBaseFile   bool
 	migrationNotice string
 	active          bool
 	store           agentguidance.Store
@@ -159,21 +160,24 @@ func planCodexAgentGuidanceWith(launcher any) agentGuidanceLaunch {
 	return planner.PlanCodexAgentGuidance()
 }
 
-// prepareAgentGuidance resolves the guidance one create launches with into
-// flags.agentGuidance; its notice is disclosed once the Agent has a name.
-// It runs after prepareProjectLinks, because the guidance goes in front of the
-// file that prepared. A resume-picker create joins a conversation whose
-// recorded system prompt lacks the guidance, so it launches (and records) the
-// digest with the snapshot mode off; a fresh create records only the digest.
-// A Codex fresh create (nativeCodexFreshCreateRequired) sends the guidance,
-// followed by the Agent's identity paragraph, as its thread's developer
-// instructions and records the digest; it passes no file. The reply-only
-// lane, every other Codex lane and every other provider are left exactly as
-// they were.
+// prepareAgentGuidance resolves the composition after Project instructions
+// and link rules. Native Codex sends it as baseInstructions; plain Codex
+// carries only a private model_instructions_file snapshot path. Explicitly
+// empty managed guidance still replaces the provider base. Reply-only and
+// other-provider behavior retain their existing contracts.
 func (c *createCommand) prepareAgentGuidance(provider string, flags *resourceCreateFlags) {
 	flags.agentGuidance = agentGuidanceLaunch{}
-	if provider == aiModeCodex && nativeCodexFreshCreateRequired(provider, *flags) {
-		flags.agentGuidance = planCodexAgentGuidanceWith(c.agents)
+	if provider == aiModeCodex && flags.resumeConversation == "" && !flags.dialogueReplyOnly {
+		guidance := planCodexAgentGuidanceWith(c.agents)
+		if guidance.active && !nativeCodexFreshCreateRequired(provider, *flags) {
+			paths, err := c.processCreatePaths()
+			if err != nil {
+				guidance.unavailable = err
+			} else {
+				guidance = localAgentGuidanceLaunch(guidance.shared().WithCodexBaseFile(paths, flags.projectLinks.shared(), flags.personaLaunch.content))
+			}
+		}
+		flags.agentGuidance = guidance
 		return
 	}
 	if provider != aiModeClaude || flags.dialogueReplyOnly {

@@ -330,7 +330,7 @@ func TestTmuxResumeKeepsSessionRefAndHistoryBytes(t *testing.T) {
 	before, _ := json.Marshal(agent.Status.SessionRef)
 	beforeHistory, _ := os.ReadFile(sessionhistory.Path(state))
 	stdout, stderr, err := runRoute(t, command, "resume", "codex", "--project", "beta")
-	if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
+	if err != nil || stdout != "agent/codex resumed\n" || withoutManagedCodexResumeNotice(t, stderr) != "" {
 		t.Fatalf("tmux resume bytes: %q %q %v", stdout, stderr, err)
 	}
 	agent, _ = store.registry.Agent("agt-beta-codex")
@@ -406,7 +406,7 @@ func TestTmuxCreateSessionRefAndHistoryBytes(t *testing.T) {
 	state := t.TempDir()
 	create.store.stateDir = func() (string, error) { return state, nil }
 	_, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "review this")
-	if err != nil || stderr != "" {
+	if err != nil || withoutManagedCodexResumeNotice(t, stderr) != "" {
 		t.Fatal(err, stderr)
 	}
 	a := agentNamed(t, store, "win-alpha-main", "agent-test-1")

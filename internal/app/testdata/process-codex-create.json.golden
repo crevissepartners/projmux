@@ -10,6 +10,9 @@
         "name": "owned",
         "annotations": {
           "projmux.io/agent-guidance-digest": "ed0abc7115757a430780f0ec97cb3167a5b5da2bbc27742072dd03814958702e",
+          "projmux.io/codex-managed-base-digest": "MANAGED_BASE_DIGEST",
+          "projmux.io/codex-managed-base-mode": "base",
+          "projmux.io/codex-managed-base-status": "base-delivered",
           "projmux.io/effort": "low",
           "projmux.io/effort-source": "flag",
           "projmux.io/model": "stub-model",

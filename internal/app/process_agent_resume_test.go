@@ -123,7 +123,7 @@ func TestProcessSupportedResumeKeepsTmuxGrammarAndDetachedResult(t *testing.T) {
 		command, launcher, _, _ := newTestAgentResumeCommand(t, store, newFakeTmux())
 		enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
 		stdout, stderr, err := runRoute(t, command, args...)
-		if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
+		if err != nil || stdout != "agent/codex resumed\n" || withoutManagedCodexResumeNotice(t, stderr) != "" {
 			t.Fatalf("tmux bytes changed for %q: %q %q %v", args, stdout, stderr, err)
 		}
 	}

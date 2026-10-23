@@ -395,7 +395,7 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	if stdout != "agent/codex resumed\n" {
 		t.Fatalf("stdout = %q, want the resumed result line", stdout)
 	}
-	if stderr != "" {
+	if withoutManagedCodexResumeNotice(t, stderr) != "" {
 		t.Fatalf("stderr = %q, want none for a conversation no other Agent shares", stderr)
 	}
 	if len(ai.calls) != 0 || len(usage.calls) != 0 {
@@ -475,7 +475,7 @@ func TestAgentResumeRoutesProductionAIPresentationWritesThroughExactRuntime(t *t
 	bindTestCreateRuntimeRoute(agent.rebind.create, tmux, func(string) string { return "" })
 
 	stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "uid:prj-beta")
-	if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
+	if err != nil || stdout != "agent/codex resumed\n" || withoutManagedCodexResumeNotice(t, stderr) != "" {
 		t.Fatalf("production-bound resume = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
@@ -511,7 +511,7 @@ func TestAgentResumeProductionBinderWriteFailureIsVisibleAndRollsBack(t *testing
 	tmux.failMessage = "permission denied writing resumed Pane metadata"
 
 	stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "uid:prj-beta")
-	if err == nil || stdout != "" || stderr != "" || !strings.Contains(err.Error(), "permission denied writing resumed Pane metadata") {
+	if err == nil || stdout != "" || withoutManagedCodexResumeNotice(t, stderr) != "" || !strings.Contains(err.Error(), "permission denied writing resumed Pane metadata") {
 		t.Fatalf("binder failure = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	if store.snapshot() != registryBefore || store.writes != writesBefore || tmux.state() != runtimeBefore {
@@ -896,7 +896,7 @@ func TestSeveralAgentsOnOneConversationResolveDeterministically(t *testing.T) {
 					t.Fatalf("disclosure = %q, want it to mention %q", stderr, want)
 				}
 			}
-			if got := strings.Count(stderr, "\n"); got != 2 {
+			if got := strings.Count(withoutManagedCodexResumeNotice(t, stderr), "\n"); got != 2 {
 				t.Fatalf("disclosure has %d lines, want one per sibling: %q", got, stderr)
 			}
 			if strings.Index(stderr, "agt-alpha-codex") > strings.Index(stderr, "agt-review-codex") {

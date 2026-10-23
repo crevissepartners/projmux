@@ -44,7 +44,6 @@ func TestProcessCodexRelaunchActualCLI(t *testing.T) {
 		token string
 	}{
 		{[]string{"--model", "new-model"}, relaunchReasonAgentBusy},
-		{[]string{"--instructions", "different", "--yes"}, "codex-instructions-immutable"},
 		{[]string{"--profile", "missing", "--yes"}, "profile-not-found"},
 	} {
 		out, err := exec.CommandContext(ctx, f.binary, append([]string{"agent", "relaunch", first.ref}, tc.flags...)...).CombinedOutput()

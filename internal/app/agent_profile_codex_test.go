@@ -133,7 +133,7 @@ func TestCodexNativeCreateSendsTheProfileSandboxAndApprovalOnThreadStart(t *test
 				t.Fatalf("native creates = %+v, want one carrying policy %+v", native.creates, test.want)
 			}
 			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
-			if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations(test.name, loaded.Digest), profileFlag...)) {
+			if !maps.Equal(agent.Metadata.Annotations, confirmedCodexBaseAnnotations(plusSources(profileAnnotations(test.name, loaded.Digest), profileFlag...), "")) {
 				t.Fatalf("Agent annotations = %v, want the profile pair", agent.Metadata.Annotations)
 			}
 
@@ -345,8 +345,18 @@ func TestCodexPlainProfileLaunchKeepsModelEffortAndPersonaLaneRules(t *testing.T
 	f.writeProfile(t, "instructed", "instructions = \"go-reviewer\"\n")
 	_, _, err = runRoute(t, f.create, "agent", "--provider", "codex", "--profile", "instructed", "--interactive-only",
 		"--project", "alpha", "--window", "review", "--name", "instructed")
-	if err == nil || !strings.Contains(err.Error(), "persona-provider-unsupported") {
-		t.Fatalf("codex plain lane with profile instructions = %v, want the persona-provider-unsupported refusal --instructions gets", err)
+	if err != nil {
+		t.Fatalf("plain profile instructions: %v", err)
+	}
+	agents := f.store.registry.AgentsOf("win-alpha-review")
+	found := false
+	for _, a := range agents {
+		if a.Metadata.Annotations[coremetadata.AnnotationAgentPersona] == "go-reviewer" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("plain profile lost its instructions recipe")
 	}
 }
 
@@ -452,7 +462,7 @@ func TestCodexAgentResumeResendsTheCurrentProfilePolicyAndRecordsItsDigest(t *te
 		t.Fatalf("native resumes = %+v, want one carrying %+v", native.resumes, want)
 	}
 	agent, _ := store.registry.Agent("agt-beta-codex")
-	if !maps.Equal(agent.Metadata.Annotations, plusSources(profileAnnotations("guard", edited), allFollowProfile...)) || agent.Status.PaneRef == "" {
+	if !maps.Equal(agent.Metadata.Annotations, unconfirmedCodexBaseAnnotations(plusSources(profileAnnotations("guard", edited), modelEffortFollowProfile...))) || agent.Status.PaneRef == "" {
 		t.Fatalf("resumed Agent annotations = %v paneRef=%q, want the current digest %s", agent.Metadata.Annotations, agent.Status.PaneRef, edited)
 	}
 
@@ -463,7 +473,7 @@ func TestCodexAgentResumeResendsTheCurrentProfilePolicyAndRecordsItsDigest(t *te
 	if len(native.resumes) != 1 || !native.resumes[0].policy.IsZero() {
 		t.Fatalf("unprofiled native resumes = %+v, want one with a zero policy", native.resumes)
 	}
-	if agent, _ := store.registry.Agent("agt-beta-codex"); agent.Metadata.Annotations != nil {
+	if agent, _ := store.registry.Agent("agt-beta-codex"); !maps.Equal(agent.Metadata.Annotations, unconfirmedCodexBaseAnnotations(nil)) {
 		t.Fatalf("unprofiled resume annotated the Agent: %v", agent.Metadata.Annotations)
 	}
 }

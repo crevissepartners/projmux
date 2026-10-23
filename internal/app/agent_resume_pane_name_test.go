@@ -62,7 +62,7 @@ func TestAgentResumeCarriesOldAgentPaneName(t *testing.T) {
 			tmux := newFakeTmux()
 
 			newPane, stderr, launcher := runPaneNameResume(t, store, tmux)
-			if stderr != "" {
+			if withoutManagedCodexResumeNotice(t, stderr) != "" {
 				t.Fatalf("stderr = %q, want no disclosure", stderr)
 			}
 			if newPane.Metadata.UID == old.Metadata.UID {
@@ -112,7 +112,7 @@ func TestAgentResumeResolvesSeveralOldPaneNamesByTerminationReceipt(t *testing.T
 		markTopologyAgentInterrupted(t, store, "agt-beta-codex", second.Metadata.UID)
 
 		newPane, stderr, _ := runPaneNameResume(t, store, newFakeTmux())
-		if stderr != "" || newPane.Metadata.Name != "second" {
+		if withoutManagedCodexResumeNotice(t, stderr) != "" || newPane.Metadata.Name != "second" {
 			t.Fatalf("new pane/%s stderr=%q, want the receipt Pane name and no disclosure", newPane.Metadata.Name, stderr)
 		}
 		if _, ok := store.registry.Pane(second.Metadata.UID); ok {
@@ -131,7 +131,7 @@ func TestAgentResumeResolvesSeveralOldPaneNamesByTerminationReceipt(t *testing.T
 		newPane, stderr, _ := runPaneNameResume(t, store, newFakeTmux())
 		want := fmt.Sprintf("projmux: agent/codex new Pane keeps an automatic name: old Panes pane/first (uid:%s), pane/second (uid:%s) carry names and the last termination receipt selects none of them\n",
 			first.Metadata.UID, second.Metadata.UID)
-		if stderr != want {
+		if withoutManagedCodexResumeNotice(t, stderr) != want {
 			t.Fatalf("stderr = %q, want exactly %q", stderr, want)
 		}
 		if newPane.Metadata.Name != newPane.Metadata.UID {
@@ -159,7 +159,7 @@ func TestAgentResumeKeepsAutomaticNameWhenOldPaneIsNotProvenNonLive(t *testing.T
 
 	newPane, stderr, _ := runPaneNameResume(t, store, tmux)
 	if !strings.HasPrefix(stderr, "projmux: agent/codex new Pane keeps an automatic name: pane codex uid "+old.Metadata.UID+" is already live on") ||
-		strings.Count(stderr, "\n") != 1 {
+		strings.Count(withoutManagedCodexResumeNotice(t, stderr), "\n") != 1 {
 		t.Fatalf("stderr = %q, want one not-proven-non-live line", stderr)
 	}
 	if newPane.Metadata.Name != newPane.Metadata.UID {
@@ -195,7 +195,7 @@ func TestAgentResumeWithNoOldPaneRowDerivesTheCreateAgentPaneName(t *testing.T) 
 			tmux := newFakeTmux()
 
 			newPane, stderr, launcher := runPaneNameResume(t, store, tmux)
-			if stderr != "" {
+			if withoutManagedCodexResumeNotice(t, stderr) != "" {
 				t.Fatalf("stderr = %q, want no disclosure", stderr)
 			}
 			if newPane.Metadata.Name != "codex-pane" {
@@ -230,7 +230,7 @@ func TestAgentResumeWhoseDerivedPaneNameCannotBeUsedKeepsAnAutomaticName(t *test
 
 		newPane, stderr, _ := runPaneNameResume(t, store, newFakeTmux())
 		if !strings.HasPrefix(stderr, "projmux: agent/codex new Pane keeps an automatic name: ") ||
-			!strings.Contains(stderr, "codex-pane") || strings.Count(stderr, "\n") != 1 {
+			!strings.Contains(stderr, "codex-pane") || strings.Count(withoutManagedCodexResumeNotice(t, stderr), "\n") != 1 {
 			t.Fatalf("stderr = %q, want one line naming the held derived name", stderr)
 		}
 		if newPane.Metadata.Name != newPane.Metadata.UID {
@@ -251,7 +251,7 @@ func TestAgentResumeWhoseDerivedPaneNameCannotBeUsedKeepsAnAutomaticName(t *test
 		command, launcher, _, _ := newTestAgentResumeCommand(t, store, newFakeTmux())
 		enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
 		stdout, stderr, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
-		if err != nil || stdout != "agent/"+long+" resumed\n" || stderr != "" {
+		if err != nil || stdout != "agent/"+long+" resumed\n" || withoutManagedCodexResumeNotice(t, stderr) != "" {
 			t.Fatalf("agent resume stdout=%q stderr=%q err=%v, want success and no disclosure", stdout, stderr, err)
 		}
 		agent, _ := store.registry.Agent("agt-beta-codex")

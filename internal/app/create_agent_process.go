@@ -158,7 +158,25 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 	launch := processhost.Launch{Binding: result.Binding, Command: plan.command}
 	if result.Provider == aiModeCodex {
 		launch.Spawned = processCodexCreateSpawn(path, result.Binding)
-		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, processCodexCreateConfig(plan, result.Binding.Agent), path, nil)
+		cfg := processCodexCreateConfig(plan, result.Binding.Agent)
+		paths, pathsErr := c.processCreatePaths()
+		if pathsErr != nil {
+			return result, pathsErr
+		}
+		managed, prepareErr := mutationruntime.PrepareManagedCodexBase(paths, result.Binding.Agent, cfg.Settings.ManagedInstructions.Base, nil, errors.Join(plan.flags.agentGuidance.unavailable, plan.flags.projectLinks.unavailable, plan.flags.projectLinks.project.unavailable))
+		if prepareErr != nil {
+			return result, prepareErr
+		}
+		cfg.Settings.ManagedInstructions = managed.Instructions
+		managed.Instructions.Legacy = false
+		managedOwner, captureErr := captureManagedCodexBaseOwner(path, result.Binding)
+		if captureErr != nil {
+			return result, captureErr
+		}
+		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, cfg, path, nil)
+		if err == nil {
+			err = recordManagedCodexBase(path, managed, managedOwner, result.codexEndpoint, true)
+		}
 		if result.codexEndpoint != nil && result.codexEndpoint.handle != nil {
 			result.Handle = result.codexEndpoint.handle
 		}

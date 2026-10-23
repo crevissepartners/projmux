@@ -1501,11 +1501,13 @@ nothing. `model` is checked only for its shape, whatever the provider, and
 store, `<config dir>/personas/<name>.md`, and one profile key. What the
 instructions do depends on the lane, exactly as for `create --instructions`:
 Claude appends them to the system prompt, and
-Codex takes them only on a prompted create that opens its own thread (see
-[CLI guide](cli-guide.md#agent-profiles-at-create)); a promptless Codex create
-with Profile instructions is refused before creating anything. Codex keeps
-the developer instructions recorded when the thread started; a relaunch and a
-resume cannot replace them (`codex-instructions-immutable`). A profile
+Codex sends the assembled managed instructions as `baseInstructions` on native
+create and recalculates them on process/tmux resume and relaunch. Plain tmux
+creation passes the private snapshot path via `model_instructions_file`, including
+promptless and interactive-only creation; it keeps the existing control lane. This replaces
+Codex's built-in base rather than appending it. The existing Agent and thread
+are preserved. See [managed Codex instructions](cli-guide.md#managed-codex-base-instructions)
+for fallback and the loaded-thread and historical developer limitations. A profile
 keeps the instructions it names: `instructions delete <name>` refuses with
 exit 2 (`profile-instructions-in-use`) while any stored profile that parses
 names them, valid or not, and names each such profile. Change the profile with

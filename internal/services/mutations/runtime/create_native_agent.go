@@ -49,7 +49,19 @@ func (n *NativeCreationEngine) Create(ctx context.Context, working *metadata.Reg
 	if p.DeveloperInstructions != nil {
 		instructions = p.DeveloperInstructions(work.Agent.Metadata.UID)
 	}
-	binding, err := n.CreateThread(ctx, NativeCodexCreateInput{Workspace: w, DeveloperInstructions: instructions, Policy: p.Policy, Model: p.Model, Effort: p.Effort, Prompt: n.Prompt, RequestKey: work.Activation.Generation})
+	var managed *ManagedCodexBase
+	var err error
+	if p.ManagedBase != nil {
+		managed, err = p.ManagedBase(work.Agent.Metadata.UID)
+		if err != nil {
+			return out, err
+		}
+	}
+	var wire *codexappserver.ManagedInstructions
+	if managed != nil {
+		wire = managed.Instructions
+	}
+	binding, err := n.CreateThread(ctx, NativeCodexCreateInput{Workspace: w, DeveloperInstructions: instructions, ManagedInstructions: wire, Policy: p.Policy, Model: p.Model, Effort: p.Effort, Prompt: n.Prompt, RequestKey: work.Activation.Generation})
 	if err != nil {
 		if n.SafeFallback(err) || NativeRootsUnsupported(err) {
 			return out, n.PreparationRefusal(err)
@@ -58,6 +70,12 @@ func (n *NativeCreationEngine) Create(ctx context.Context, working *metadata.Reg
 	}
 	if strings.TrimSpace(binding.ThreadID) == "" {
 		return out, n.LaunchError(fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
+	}
+	if managed != nil {
+		managed.Instructions.Accepted = true
+		if err = managed.Record(working, work.Agent.Metadata.UID, true); err != nil {
+			return out, err
+		}
 	}
 	title, argv, err := n.Plan(w, binding.ThreadID, p.Model, p.Effort)
 	if err != nil {

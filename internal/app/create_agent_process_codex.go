@@ -79,9 +79,12 @@ func (c *createCommand) prepareProcessCodexLaunch(plan *processAgentCreatePlan) 
 
 func processCodexCreateConfig(plan processAgentCreatePlan, agent string) processhost.CodexConfig {
 	flags := plan.flags
+	base := flags.agentGuidance.codexDeveloperInstructions(agent, flags.projectLinks.developerInstructions(flags.personaLaunch.content))
+	if base == "" {
+		base = "\n"
+	}
 	return processhost.CodexConfig{Version: version.String(), Roots: plan.workspace.AdditionalWritableRoots,
-		Settings:              codexappserver.ThreadSettings{Model: flags.model, Effort: flags.effort, Policy: flags.profileLaunch.codexPolicy},
-		DeveloperInstructions: flags.agentGuidance.codexDeveloperInstructions(agent, flags.projectLinks.developerInstructions(flags.personaLaunch.content))}
+		Settings: codexappserver.ThreadSettings{Model: flags.model, Effort: flags.effort, Policy: flags.profileLaunch.codexPolicy, ManagedInstructions: &codexappserver.ManagedInstructions{Base: base}}}
 }
 
 type processCreateControl struct {
