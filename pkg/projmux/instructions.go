@@ -66,6 +66,9 @@ type Options struct {
 // are atomic except for the legacy setter described below. Multi-call transactions
 // and concurrent profile edits are not serialized (the same limits apply to separate CLI processes).
 // GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
+// SetStatusbarResources is also synchronous without context; it atomically saves the
+// preference, prepares the full config and applies it to the exact app socket.
+// Errors preserve its partial result; completed effects are not rolled back.
 // SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).
 type Client struct {
 	processCreateContext mutationruntime.ProcessCreateContext

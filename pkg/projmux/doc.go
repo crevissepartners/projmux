@@ -297,4 +297,13 @@
 // AttachAgentPersona and DetachAgentPersona share the CLI persona transaction
 // for an explicitly selected Claude tmux Agent, preserving the conversation and
 // attach provenance. Inspect the returned plan, Notices and Recovery on errors.
+//
+// SetStatusbarResources is an opt-in synchronous settings operation without a
+// context argument. It validates exact trimmed on/off before effects, then
+// checks build support, atomically saves the preference, prepares the complete
+// tmux config and applies it through the captured owned app socket. Its result
+// reports Saved and Prepared/Live even on failure; errors retain their causes.
+// It requires an explicit absolute same-build ProjmuxExecutable for generation.
+// It ignores ambient TMUX/TMUX_PANE/private anchors and does not infer a helper.
+// Concurrent saves are not serialized; completed effects are not rolled back.
 package projmux
