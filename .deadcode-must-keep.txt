@@ -106,6 +106,7 @@ Client.SetAISplitMode	Public v0 legacy AI split mode plain-write setter; parity,
 Client.SetAgentGuidanceEnabled	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.SetAgentProtection	Public v0 exact Agent protection label facade; verified by CLI/SDK parity, locked transaction refusals and public-only consumers.
 Client.SetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
+Client.SetStatusbarResources	Public v0 synchronous statusbar resources save/prepare/exact-app-socket apply; partial-result, captured-input, guarded-retirement, refusal and public consumer tests.
 Client.StartTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.SteerTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.StopAgent	Public v0 process Stop API; exercised by exact-generation retirement, cancellation, explicit roots and external consumer tests.
@@ -150,6 +151,7 @@ Client.resumeAgentPlan	Public ResumeAgent/RelaunchAgent shared transaction closu
 Client.resumePreparationRequest	Shared exact scoped selector and observed binding closure for the public Prepare and Validate APIs; public consumer and refusal tests preserve process Claude admission.
 Client.resumeProcessAgent	Public ResumeAgent detached process closure; supplemental frozen-domain/claim and external caller-exit fixtures cover identity and lifetime.
 Client.sampleSystem	Implementation of the public host system sampler facade, preserving the existing sampler and captured CPU cache destination.
+Client.setStatusbarResources	Internal orchestration for public Client.SetStatusbarResources and its typed partial results; proof fixtures: TestStatusbarResourcesSDKStrictBeforeEffects and TestStatusbarResourcesSDKUsesCapturedInputs.
 Client.stopProjectWithRunner	Public v0 Project stop implementation reached through the external SDK; verified by exact target guards, CLI parity and cancellation tests.
 Client.turn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 CodexCommand	Owned processhost Codex preparation retained for dedicated stdio and typed fixture proof until public activation supplies an importer.
@@ -822,6 +824,8 @@ statusbarDecorationTmuxOptionForTarget	Original app rendering adapter retained f
 statusbarHUDVisibilityPath	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarHUDVisibilitySet.isDefault	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarNotifyBudgetFormat	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
+statusbarResourcesBoundRunner.Run	Physical captured-socket runner for public Client.SetStatusbarResources; proof fixtures: TestStatusbarResourcesBoundSocketRejectsChangedResponse and TestStatusbarResourcesExactSocketNoAmbientFallback.
+statusbarResourcesHelper	Captured absolute executable helper check after save for public Client.SetStatusbarResources; proof fixtures: TestStatusbarResourcesSDKHelperFailsAfterSave and TestExternalStatusbarResourcesConsumer.
 statusbarRowCount	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowCountOption	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 statusbarRowFormatLines	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.

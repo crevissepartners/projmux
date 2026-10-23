@@ -1,10 +1,10 @@
 package app
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
 )
 
@@ -34,28 +34,12 @@ func (c *settingsCommand) currentLiveResourcesMode() (config.LiveResourcesMode, 
 }
 
 func (c *settingsCommand) setLiveResourcesMode(value string) error {
-	if !systemstatus.Supported() {
-		return fmt.Errorf("live system resources are unavailable on this platform")
-	}
-	mode := config.NormalizeLiveResourcesMode(value)
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return err
-	}
-	if err := config.SaveLiveResourcesFile(paths.LiveResourcesFile(), mode); err != nil {
-		return err
-	}
-	prepared, live, err := c.regenerateAndReloadTmuxConfig()
-	if err != nil {
-		if prepared.Status == keymapApplyFailed {
-			return fmt.Errorf("update status bar runtime config: %w", err)
-		}
-		if live.Status == keymapApplyFailed {
-			return fmt.Errorf("reload active status bar: %w", err)
-		}
-		return err
-	}
-	return nil
+	_, err := (settings.StatusbarResources{
+		Supported: systemstatus.Supported,
+		Paths:     func() (config.Paths, error) { return configPaths(c.homeDir, c.lookupEnv) },
+		Apply:     c.regenerateAndReloadTmuxConfig,
+	}).Set(value)
+	return err
 }
 
 func (c *settingsCommand) currentProjectHooksMode() (config.ProjectHooksMode, string) {

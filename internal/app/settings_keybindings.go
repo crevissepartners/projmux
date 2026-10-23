@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -2618,49 +2618,17 @@ func (c *settingsCommand) finishKeymapApply(schema keymapApplyStage, path string
 // graceful (Live becomes skipped, err is nil) so the durable save still
 // succeeds and callers can surface the "run `projmux config apply`" follow-up.
 func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyStage, live keymapApplyStage, err error) {
-	configPath, genErr := c.writeTmuxAppConfig()
-	if genErr != nil {
-		prepared = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("generated tmux config", genErr)}
-		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "generated tmux config failed"}
-		return prepared, live, genErr
-	}
-	prepared = keymapApplyStage{Status: keymapApplyOK, Detail: "generated tmux config: " + configPath}
-	if (c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "") && !c.reloadAppServer {
-		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "Settings is not running inside tmux"}
-		return prepared, live, nil
-	}
-	if c.tmuxRunner == nil {
-		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "exact tmux command runner is not configured"}
-		return prepared, live, nil
-	}
-	ctx := context.Background()
-	route, routeErr := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
-	if routeErr != nil || route.ExpectedSocketPath == "" {
-		if routeErr == nil {
-			routeErr = errors.New("Settings live reload has no exact physical socket")
-		}
-		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
-		return prepared, live, routeErr
-	}
-	if route.Authority != nil && route.Authority.Class == runtimeMutationRouteStandalone {
-		routeErr = errors.New("Settings live reload refuses an operator-owned standalone tmux server")
-		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
-		return prepared, live, routeErr
-	}
-	if retireErr := c.retireCurrentTmuxKeySequenceState(ctx, route); retireErr != nil {
-		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux sequence cleanup", retireErr)}
-		return prepared, live, retireErr
-	}
-	if guardErr := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); guardErr != nil {
-		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload guard", guardErr)}
-		return prepared, live, guardErr
-	}
-	if _, reloadErr := c.tmuxRunner.Run(ctx, "tmux", "-S", route.ExpectedSocketPath, "source-file", configPath); reloadErr != nil {
-		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload", reloadErr)}
-		return prepared, live, reloadErr
-	}
-	live = keymapApplyStage{Status: keymapApplyOK}
-	return prepared, live, nil
+	return (settings.StatusbarResourcesApply{
+		Generate: c.writeTmuxAppConfig,
+		Retire:   c.retireCurrentTmuxKeySequenceState,
+		Runner:   c.tmuxRunner,
+		Skip: func() (bool, string) {
+			return (c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "") && !c.reloadAppServer, "Settings is not running inside tmux"
+		},
+		ResolveRoute: func(ctx context.Context) (runtimeMutationRoute, error) {
+			return resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+		},
+	}).Apply()
 }
 
 // retireCurrentTmuxKeySequenceState brings the Settings save path under the
@@ -2670,47 +2638,16 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 // has runOutput; nil remains a compatibility seam for narrow unit commands
 // that only record the historical source-file call.
 func (c *settingsCommand) retireCurrentTmuxKeySequenceState(ctx context.Context, route runtimeMutationRoute) error {
-	read := func(option string) (string, error) {
-		if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); err != nil {
-			return "", err
-		}
-		out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", route.ExpectedSocketPath, "show-options", "-gqv", option)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", option, err)
-		}
-		return strings.TrimSpace(string(out)), nil
-	}
-	roots, err := read(tmuxSequenceRootsOption)
-	if err != nil {
-		return err
-	}
-	tables, err := read(tmuxSequenceTablesOption)
-	if err != nil {
-		return err
-	}
-	for _, command := range keySequenceRetireCommandsWithPrefix([]string{"tmux"}, roots, tables) {
-		if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); err != nil {
-			return err
-		}
-		if _, err := c.tmuxRunner.Run(ctx, "tmux", append([]string{"-S", route.ExpectedSocketPath}, command[1:]...)...); err != nil {
-			return fmt.Errorf("%s: %w", strings.Join(command[1:], " "), err)
-		}
-	}
-	return nil
+	return settings.RetireCurrentTmuxKeySequenceState(ctx, c.tmuxRunner, route)
 }
-
-type keymapApplyStatus string
 
 const (
-	keymapApplyOK      keymapApplyStatus = "ok"
-	keymapApplySkipped keymapApplyStatus = "skipped"
-	keymapApplyFailed  keymapApplyStatus = "failed"
+	keymapApplyOK      = settings.ApplyOK
+	keymapApplySkipped = settings.ApplySkipped
+	keymapApplyFailed  = settings.ApplyFailed
 )
 
-type keymapApplyStage struct {
-	Status keymapApplyStatus
-	Detail string
-}
+type keymapApplyStage = settings.ApplyStage
 
 type keymapApplyReport struct {
 	// Migrated is the keymap schema stage. It leads because a v0 file must
