@@ -184,10 +184,7 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 	if localipc.ReadJSON(conn, &request) != nil || s.launchErr != nil || s.handle == nil {
 		return
 	}
-	peer, parent, err := localipc.PeerProcess(conn)
-	if err != nil {
-		peer, parent, err = s.recheckRegisteredHelper(request, err, func() (coremetadata.ProcessIdentity, int, error) { return localipc.PeerProcess(conn) }, localipc.Process)
-	}
+	peer, parent, err := s.exchangePeer(request, conn)
 	if err != nil || int64(peer.OwnerUID) != int64(os.Getuid()) {
 		return
 	}
@@ -259,6 +256,19 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 		return
 	}
 	_ = localipc.WriteJSON(conn, s.check(bounded, request, peer, parent))
+}
+
+// claudeProcessPeer reads a connection's kernel peer. Tests replace it to
+// inject a parent-transition snapshot.
+var claudeProcessPeer = localipc.PeerProcess
+
+// exchangePeer is the peer identity one host exchange authorizes with.
+func (s *claudeProcessService) exchangePeer(request claudeProcessCheck, conn *net.UnixConn) (coremetadata.ProcessIdentity, int, error) {
+	peer, parent, err := claudeProcessPeer(conn)
+	if err != nil {
+		peer, parent, err = s.recheckRegisteredHelper(request, err, func() (coremetadata.ProcessIdentity, int, error) { return claudeProcessPeer(conn) }, localipc.Process)
+	}
+	return peer, parent, err
 }
 
 // claudeProcessOperation rejects mixed requests on both sides of the socket.
@@ -789,7 +799,7 @@ func dialProcessClaudeHost(proof claudeProcessProof) (*net.UnixConn, error) {
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
-	peer, _, err := localipc.PeerProcess(conn)
+	peer, _, err := claudeProcessPeer(conn)
 	if err != nil || peer != proof.HostProcess {
 		_ = conn.Close()
 		return nil, processhost.ErrStale
