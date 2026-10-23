@@ -955,8 +955,8 @@ func assertClaudeProcessLeaseAfterWait(t *testing.T, dir string, snapshot proces
 }
 
 func TestClaudeProcessWaitBoundsDelayedHelperCleanup(t *testing.T) {
-	f := newProcessClaudeFixture(t, nil)
-	_ = f.proof(t)
+	f := newProcessClaudeFixture(t, processClaudeLeaseReadyProvider)
+	_ = f.proof(t, func() bool { return processClaudeLeaseHookWaitComplete(f.root) })
 	reg, err := f.store.LoadDegradedReadOnly()
 	if err != nil {
 		t.Fatal(err)

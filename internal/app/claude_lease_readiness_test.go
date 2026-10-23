@@ -11,8 +11,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
 )
 
-// Only the lease readiness test opts in. Registration can be discoverable
-// before SessionStart's hook exits and its helper finishes changing parents.
+// Only tests that read the helper identity right after proof opt in: the lease
+// readiness test and the delayed helper cleanup test. Registration can be
+// discoverable before SessionStart's hook exits and its helper finishes
+// changing parents.
 // This marker follows subprocess.run's actual Wait, not the first stream init
 // (which this provider emits only after input). It grants no lease authority.
 func processClaudeLeaseReadyProvider(root, _ string) processhost.Command {
