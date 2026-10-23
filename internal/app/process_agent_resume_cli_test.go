@@ -119,6 +119,21 @@ func awaitProcessResumeRecord(t *testing.T, ctx context.Context, f processCreate
 		}
 	}
 }
+
+// awaitProcessConversationConfirmed waits until the provider stream confirmed
+// the conversation. A Claude SessionStart reservation alone does not survive
+// owner Wait, so an owner stopped before this is not a resume candidate.
+func awaitProcessConversationConfirmed(t *testing.T, ctx context.Context, f processCreateCLI, ref string) {
+	t.Helper()
+	processCLIUntil(t, ctx, func() bool {
+		reg, err := f.store.LoadReadOnly()
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent, ok := reg.Agent(strings.TrimPrefix(ref, "uid:"))
+		return ok && agent.Status.SessionRef != nil && agent.Status.SessionRef.ConversationID() != ""
+	})
+}
 func assertProcessCLIForeground(t *testing.T, f processCreateCLI, record coremetadata.ProcessSessionRecord) {
 	t.Helper()
 	reg, err := f.store.LoadReadOnly()
@@ -188,6 +203,7 @@ func TestCodexResumeAttentionConflictRefusesBeforeProviderActualCLI(t *testing.T
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path())))
@@ -973,6 +989,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--name", "source", "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "source task"))
@@ -1080,6 +1097,7 @@ func TestDeferredClaimUserFirstFrameGoPathActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 			first.shutdown(t)
 			t.Setenv("PMX_TEST_DEFERRED_INTERNAL", "1")
 			c := New().agent
@@ -1116,6 +1134,7 @@ func TestDeferredClaimIdleCPUActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--", "first task"))
+	awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 	first.shutdown(t)
 	run := startDeferredCLIClaim(t, ctx, f, first.ref)
 	start := time.Now()
@@ -1140,6 +1159,7 @@ func TestDeferredSupervisorSpawnFailureActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--", "first task"))
+	awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 	first.shutdown(t)
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--name", "source", "--", "source task"))
 	awaitProcessResumeRecord(t, ctx, f, source.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ConnectionID != "" })
@@ -1179,6 +1199,7 @@ func TestDeferredPeerWakeLatencyActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			target := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "target task"))
+			awaitProcessConversationConfirmed(t, ctx, f, target.ref)
 			target.shutdown(t)
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
 			// Probe the unclaimed target until the source's live route is ready.
@@ -1448,6 +1469,7 @@ func TestDeferredTailDrainKeepsControlsResponsiveActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+	awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 	first.shutdown(t)
 	awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 	source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
@@ -1508,6 +1530,7 @@ func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			target := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "target task"))
+			awaitProcessConversationConfirmed(t, ctx, f, target.ref)
 			target.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, target.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			source := startResumeCLIInvocation(t, ctx, f, f.args("--provider", provider, "--profile", "none", "--model", "stub-model", "--effort", "low", "--name", "source", "--", "source task"))
@@ -1604,6 +1627,7 @@ func TestCodexResumeRetiredAttentionAndInitFailureActualCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--", "first task"))
+	awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 	first.shutdown(t)
 	old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 	attention := newProcessAttentionStore(filepath.Dir(filepath.Dir(f.store.Path())))
@@ -1986,6 +2010,7 @@ func TestProcessCodexResumeGoalFirstFramesActualCLI(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			first := startResumeCLIInvocation(t, ctx, f, f.args("--provider", aiModeCodex, "--profile", "none", "--model", "stub-model", "--effort", "low", "--", "first task"))
+			awaitProcessConversationConfirmed(t, ctx, f, first.ref)
 			first.shutdown(t)
 			old := awaitProcessResumeRecord(t, ctx, f, first.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.ResumeState == coremetadata.ProcessResumable })
 			path := filepath.Join(f.root, "codex-provider.py")
