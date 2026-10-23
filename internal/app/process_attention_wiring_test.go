@@ -189,10 +189,7 @@ func TestProcessAttentionDefaultMixedTmuxErrorRetainsProcess(t *testing.T) {
 }
 
 func TestProcessAttentionActualCLIIsolated(t *testing.T) {
-	binary := os.Getenv("PMX_TEST_CLI")
-	if binary == "" {
-		t.Skip("run with isolated copied CLI binary")
-	}
+	binary := copiedCLI(t, "PMX_TEST_CLI")
 	reg, store, path := processAttentionWiringFixture(t)
 	records, err := store.read()
 	if err != nil {

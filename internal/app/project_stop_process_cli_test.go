@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -14,9 +13,7 @@ import (
 // The copied product talks to a real fixture provider and its foreground host.
 // No tmux Session exists; Project stop must still retire that host through Wait.
 func TestProjectStopHeadlessActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := newProcessCreateCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()

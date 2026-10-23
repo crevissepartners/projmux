@@ -42,9 +42,7 @@ type processDeleteCLI struct {
 // reads keep their provider harness unchanged.
 func newProcessDeleteCLI(t *testing.T, provider string) processDeleteCLI {
 	t.Helper()
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	var f processCreateCLI
 	var ownerArgs []string
 	if provider == aiModeCodex {

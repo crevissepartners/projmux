@@ -80,7 +80,7 @@ type processCodexFixture struct {
 // processCodexPeerProviderFixture upgrades only the peer protocol fixture.
 // Ordinary CLI consumers retain their original initialize identity and goldens.
 func processCodexPeerProviderFixture() string {
-	return strings.Replace(processCodexProviderFixture, "'userAgent':'projmux/0.160.0'", "'userAgent':'projmux/0.162.1'", 1)
+	return mustPatchFixture(processCodexProviderFixture, "'userAgent':'projmux/0.160.0'", "'userAgent':'projmux/0.162.1'")
 }
 
 // prepareProcessCodexPeerCLI opts a disposable peer CLI fixture into the
@@ -97,8 +97,8 @@ func prepareProcessCodexPeerCLI(t *testing.T, f processCreateCLI) {
 	if strings.Count(script, legacy) != 1 {
 		t.Fatal("peer fixture initialize identity did not match")
 	}
-	script = strings.Replace(script, legacy, "'userAgent':'projmux/0.162.1'", 1)
-	script = strings.Replace(script, "codex-cli 0.160.0", "codex-cli 0.162.1", 1)
+	script = patchFixture(t, script, legacy, "'userAgent':'projmux/0.162.1'")
+	script = patchFixture(t, script, "codex-cli 0.160.0", "codex-cli 0.162.1")
 	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +694,7 @@ s=socket.socket(socket.AF_UNIX);s.settimeout(3);s.connect(sys.argv[1]);s.sendall
 // processCodexSteerFixture answers turn/steer with the given Python statement.
 func processCodexSteerFixture(steer string) func(string, string, []string) processhost.Command {
 	return func(root, binary string, env []string) processhost.Command {
-		fixture := strings.Replace(processCodexPeerProviderFixture(), " elif method=='turn/interrupt':", " elif method=='thread/inject_items':"+steer+"\n elif method=='turn/interrupt':", 1)
+		fixture := mustPatchFixture(processCodexPeerProviderFixture(), " elif method=='turn/interrupt':", " elif method=='thread/inject_items':"+steer+"\n elif method=='turn/interrupt':")
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", fixture}, Dir: root, Env: env}
 	}
 }
@@ -950,8 +950,8 @@ func TestCodexProcessReceiptCommitRetryNeverReplaysTurn(t *testing.T) {
 	released := filepath.Join(left.root, "receipt-lock-released")
 	right := newProcessCodexPeerFixture(t, func(root, binary string, env []string) processhost.Command {
 		script := fmt.Sprintf("import fcntl,time\nreceipt_path=%q\nrelease_path=%q\nreleased_path=%q\n", store.Path()+".flock", release, released) + processCodexPeerProviderFixture()
-		script = strings.Replace(script, "  reply({'turn':{'id':current}})", "  lock=open(receipt_path,'a')\n  fcntl.flock(lock,fcntl.LOCK_EX)\n  reply({'turn':{'id':current}})", 1)
-		script = strings.Replace(script, " elif method=='turn/interrupt':", "  while not os.path.exists(release_path):time.sleep(0.002)\n  fcntl.flock(lock,fcntl.LOCK_UN);lock.close()\n  open(released_path,'w').close()\n elif method=='turn/interrupt':", 1)
+		script = patchFixture(t, script, "  reply({'turn':{'id':current}})", "  lock=open(receipt_path,'a')\n  fcntl.flock(lock,fcntl.LOCK_EX)\n  reply({'turn':{'id':current}})")
+		script = patchFixture(t, script, " elif method=='turn/interrupt':", "  while not os.path.exists(release_path):time.sleep(0.002)\n  fcntl.flock(lock,fcntl.LOCK_UN);lock.close()\n  open(released_path,'w').close()\n elif method=='turn/interrupt':")
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
 	})
 	m := &codexProcessMessages{store: store, endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}
@@ -1008,7 +1008,7 @@ func TestCodexProcessReceiptCommitRetryNeverReplaysTurn(t *testing.T) {
 func TestCodexProcessCommittedReceiptsDoNotExhaustOutcomeCache(t *testing.T) {
 	left := newProcessCodexPeerFixture(t, nil)
 	right := newProcessCodexFixtureWithEvents(t, func(root, binary string, env []string) processhost.Command {
-		script := strings.Replace(processCodexPeerProviderFixture(), "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':", 1)
+		script := patchFixture(t, processCodexPeerProviderFixture(), "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':")
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
 	}, 2048) // Test only: keep the existing host lifetime limit out of this cache test.
 	m := &codexProcessMessages{store: messagestore.NewStore(filepath.Join(left.root, "messages")), endpoints: map[string]*codexProcessEndpoint{left.endpoint.binding.Agent: left.endpoint, right.endpoint.binding.Agent: right.endpoint}}

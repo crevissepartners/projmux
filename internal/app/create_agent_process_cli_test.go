@@ -136,10 +136,7 @@ type processCreateCLI struct {
 
 func newProcessCreateCLI(t *testing.T) processCreateCLI {
 	t.Helper()
-	product := os.Getenv("PMX_TEST_CLI")
-	if product == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	product := copiedCLI(t, "PMX_TEST_CLI")
 	root, err := os.MkdirTemp(os.TempDir(), "pc-")
 	if err != nil {
 		t.Fatal(err)
@@ -173,9 +170,9 @@ func newProcessCreateCLI(t *testing.T) processCreateCLI {
 	}
 	script := filepath.Join(root, "provider.py")
 	trace := filepath.Join(root, "wire.jsonl")
-	provider := strings.Replace(processClaudeProviderFixture, " frame=json.loads(line)", " open("+fmt.Sprintf("%q", trace)+",'a').write(line)\n frame=json.loads(line)", 1)
-	provider = strings.Replace(provider, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'messages.jsonl'),'a').write(json.dumps(m)+'\\n');emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", 1)
-	provider = strings.Replace(provider, "elif prompt=='register-again':", "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})\n   b=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])\n   subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)\n  elif prompt=='register-again':", 1)
+	provider := patchFixture(t, processClaudeProviderFixture, " frame=json.loads(line)", " open("+fmt.Sprintf("%q", trace)+",'a').write(line)\n frame=json.loads(line)")
+	provider = patchFixture(t, provider, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'messages.jsonl'),'a').write(json.dumps(m)+'\\n');emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()")
+	provider = patchFixture(t, provider, "elif prompt=='register-again':", "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})\n   b=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])\n   subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)\n  elif prompt=='register-again':")
 	if err = os.WriteFile(script, []byte(provider), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -818,9 +815,9 @@ func TestProcessCreatorActualCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Parent and child share a Registry but each provider owns its endpoint.
-			raw = []byte(strings.Replace(string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'", 1))
+			raw = []byte(patchFixture(t, string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'"))
 			branch := "elif prompt=='nested-create':\n   result=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'create','agent','--host','process','--project','uid:" + f.project + "','--window','uid:" + f.window + "','--provider','claude','--name','nested'],input='',text=True,capture_output=True)\n   result_path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'nested-result')\n   with open(result_path+'.tmp','w') as result_file:result_file.write(str(result.returncode)+'\\n'+result.stdout+result.stderr)\n   os.replace(result_path+'.tmp',result_path)\n  elif prompt=='register-again':"
-			if err = os.WriteFile(script, []byte(strings.Replace(string(raw), "elif prompt=='register-again':", branch, 1)), 0600); err != nil {
+			if err = os.WriteFile(script, []byte(patchFixture(t, string(raw), "elif prompt=='register-again':", branch)), 0600); err != nil {
 				t.Fatal(err)
 			}
 			args := f.args()
@@ -1038,7 +1035,7 @@ func TestProcessOwnerStopExit143RemainsResumableActualCLI(t *testing.T) {
 			}
 			// Install the handler before the first user frame, then remain alive after
 			// stdin EOF so the real supervisor must send TERM. Wait must retain 143.
-			provider := strings.Replace(string(raw), "for line in sys.stdin:", "import signal\nsignal.signal(signal.SIGTERM,lambda *_: sys.exit(143))\nfor line in sys.stdin:", 1)
+			provider := patchFixture(t, string(raw), "for line in sys.stdin:", "import signal\nsignal.signal(signal.SIGTERM,lambda *_: sys.exit(143))\nfor line in sys.stdin:")
 			provider += "\nthreading.Event().wait()\n"
 			if err = os.WriteFile(path, []byte(provider), 0600); err != nil {
 				t.Fatal(err)
@@ -1329,9 +1326,9 @@ func TestProcessClaudeRunningPeerNativeDeliveryActualCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := strings.Replace(string(raw), "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})", "elif prompt=='send-message':\n   emit({'type':'assistant','session_id':'process-session','content':'running'})", 1)
+	script := patchFixture(t, string(raw), "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})", "elif prompt=='send-message':\n   emit({'type':'assistant','session_id':'process-session','content':'running'})")
 	// Keep the native arrival in the existing turn, without a control prompt.
-	script = strings.Replace(script, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();continue", 1)
+	script = patchFixture(t, script, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();continue")
 	// This test alone records fixed phase flags and the sender's actual Wait.
 	// The sidecar contains no provider frames, credentials or environment.
 	senderObservation := `t6_lock=threading.Lock()
@@ -1348,13 +1345,13 @@ def t6_wait(child):
  code=child.wait()
  t6_note(exited=True,exit_code=code)
 `
-	script = strings.Replace(script, "write_lock=threading.Lock()", senderObservation+"write_lock=threading.Lock()", 1)
-	script = strings.Replace(script, "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})", "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})\nt6_note(hook_returned=True)", 1)
+	script = patchFixture(t, script, "write_lock=threading.Lock()", senderObservation+"write_lock=threading.Lock()")
+	script = patchFixture(t, script, "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})", "hook('claude-endpoint-register',{'hook_event_name':'SessionStart','session_id':'process-session'})\nt6_note(hook_returned=True)")
 	send := "subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)"
 	// Init output alone does not publish registration or open the host turn.
 	// The sole provider-child sender waits for the parent's private release.
-	script = strings.Replace(script, send, "t6_note(init_emitted=True)\n   while not os.path.exists(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'peer-release')): threading.Event().wait(0.01)\n   child="+send+"\n   t6_note(started=True,agent=b['Agent'])\n   threading.Thread(target=t6_wait,args=(child,),daemon=True).start()", 1)
-	script = strings.Replace(script, "c.close();continue", "c.close();t6_note(native_seen=True);continue", 1)
+	script = patchFixture(t, script, send, "t6_note(init_emitted=True)\n   while not os.path.exists(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'peer-release')): threading.Event().wait(0.01)\n   child="+send+"\n   t6_note(started=True,agent=b['Agent'])\n   threading.Thread(target=t6_wait,args=(child,),daemon=True).start()")
+	script = patchFixture(t, script, "c.close();continue", "c.close();t6_note(native_seen=True);continue")
 	if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -1789,12 +1786,12 @@ func TestProcessClaudeJoinBudgetConsumptionActualCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := strings.Replace(string(raw), "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})", "elif prompt=='send-message':\n   emit({'type':'assistant','session_id':'process-session','content':'running'})", 1)
+	script := patchFixture(t, string(raw), "elif prompt=='send-message':\n   emit({'type':'result','subtype':'success','session_id':'process-session'})", "elif prompt=='send-message':\n   emit({'type':'assistant','session_id':'process-session','content':'running'})")
 	// Keep the native arrival in the existing turn, without a control prompt.
-	script = strings.Replace(script, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();continue", 1)
+	script = patchFixture(t, script, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();continue")
 	// The owned provider sends nine peers before producing a new model request.
 	// The ninth is held; later boundaries release it and allow another eleven.
-	script = strings.Replace(script, "subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)", "threading.Thread(target=send_many,args=(b,),daemon=True).start()", 1)
+	script = patchFixture(t, script, "subprocess.Popen([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','message','send','uid:'+b['Agent'],'--source','uid:'+b['Agent'],'--','peer payload'],stdout=open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'w'),stderr=subprocess.STDOUT)", "threading.Thread(target=send_many,args=(b,),daemon=True).start()")
 	helper := `
 import time
 def send_many(b):
@@ -1806,7 +1803,7 @@ def send_many(b):
    time.sleep(.1)
  open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'message-receipt'),'wb').write(r.stdout)
 `
-	script = strings.Replace(script, "request_count=0", helper+"\nrequest_count=0", 1)
+	script = patchFixture(t, script, "request_count=0", helper+"\nrequest_count=0")
 	if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}

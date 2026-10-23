@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -14,9 +13,7 @@ import (
 )
 
 func TestVirtualWindowTmuxToProcessRelaunchActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	liveguard.RequireActive(t)
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {

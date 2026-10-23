@@ -21,9 +21,7 @@ import (
 // These use only copied CLI binaries and protocol fixtures in the fixture HOME.
 // Session/Wait predicates are the existing readiness barriers, never sleeps.
 func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
@@ -38,12 +36,12 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 				if strings.Count(string(raw), "turn=0") != 1 || strings.Count(string(raw), "elif method in ('thread/start','thread/resume'):") != 1 {
 					t.Fatal("settings protocol fixture anchors changed")
 				}
-				source := strings.Replace(string(raw), "turn=0", "model='stub-model'\neffort='low'\nsandbox={'type':'readOnly'}\napproval='on-request'\nturn=0", 1)
-				source = strings.Replace(source, "elif method in ('thread/start','thread/resume'):", `elif method=='thread/resume':
+				source := patchFixture(t, string(raw), "turn=0", "model='stub-model'\neffort='low'\nsandbox={'type':'readOnly'}\napproval='on-request'\nturn=0")
+				source = patchFixture(t, source, "elif method in ('thread/start','thread/resume'):", `elif method=='thread/resume':
   reply({'thread':{'id':'process-thread'},'model':model,'reasoningEffort':effort,'sandbox':sandbox,'approvalPolicy':approval})
  elif method=='thread/settings/update':
   p=n['params'];model=p.get('model',model);effort=p.get('effort',effort);sandbox=p.get('sandboxPolicy',sandbox);approval=p.get('approvalPolicy',approval);reply({})
- elif method=='thread/start':`, 1)
+ elif method=='thread/start':`)
 				if err = os.WriteFile(path, []byte(source), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -190,9 +188,7 @@ func TestAgentLifecycleGuidanceActualCLI(t *testing.T) {
 }
 
 func TestAgentLifecycleGuidanceFrozenActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := deferredResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
@@ -275,9 +271,7 @@ func TestAgentLifecycleGuidanceFrozenActualCLI(t *testing.T) {
 }
 
 func TestAgentLifecycleGuidanceClaimModesActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := deferredResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
@@ -349,9 +343,7 @@ func TestAgentLifecycleGuidanceClaimModesActualCLI(t *testing.T) {
 // This observes a copied product CLI with isolated protocol providers, not
 // collaboration Agents or real provider accounts.
 func TestGuidanceFragmentsSnapshotActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)

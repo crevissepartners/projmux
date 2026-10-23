@@ -83,9 +83,7 @@ func hostCLIOutput(t *testing.T, f processCreateCLI, args ...string) []byte {
 }
 
 func TestClaudeHostMoveActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f, agent, oldUID, socket := hostMoveCLIFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	defer cancel()
@@ -346,9 +344,7 @@ func TestProcessHostRetirementCASRetainsEvidenceOnMismatch(t *testing.T) {
 }
 
 func TestClaudeHostTransferFailedInitRestoresRecipeActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f, agent, _, socket := hostMoveCLIFixture(t)
 	scriptPath := filepath.Join(f.root, "provider.py")
 	script, err := os.ReadFile(scriptPath)

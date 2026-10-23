@@ -39,9 +39,7 @@ func awaitDetachedRelaunchInitialConversation(t *testing.T, ctx context.Context,
 }
 
 func TestDetachedProcessRelaunchSameConversationCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
@@ -106,9 +104,7 @@ func TestDetachedProcessRelaunchSameConversationCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := deferredResumeCLIFixture(t, "claude")
 	diagnostic := newClaudeAuthorityFailureDiagnostics(t)
 	diagnostic.paths = []string{f.store.Path()}
@@ -171,9 +167,7 @@ func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchRefusalsAndPreviewCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := deferredResumeCLIFixture(t, "claude")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -202,9 +196,7 @@ func TestDetachedProcessRelaunchRefusalsAndPreviewCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchHostTransferCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f, source, _, socket := hostMoveCLIFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -226,9 +218,7 @@ type detachedRelaunchCancelWriter struct{ cancel context.CancelFunc }
 func (w detachedRelaunchCancelWriter) Write(b []byte) (int, error) { w.cancel(); return len(b), nil }
 
 func TestDetachedProcessRelaunchRollbackCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, mode := range []string{"claim-output", "provider-output", "caller-cancel", "same-recipe-running-output", "stale-source"} {
 		t.Run(mode, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, "claude")
@@ -383,9 +373,7 @@ func TestDetachedProcessRelaunchRollbackCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchCodexHostTransferCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f, source, _, socket := codexHostMoveCLIFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -426,13 +414,13 @@ func TestDetachedProcessRelaunchTranscriptCLI(t *testing.T) {
 			response := `{"type":"assistant","message":{"content":"detached fixture reply"}}` + "\n"
 			if provider == "claude" {
 				responseJSON, _ := json.Marshal(response)
-				text = strings.Replace(text, "with write_lock: print(json.dumps(frame),flush=True)", "with write_lock:\n  if frame.get('type')=='assistant':open("+string(pathJSON)+",'a').write("+string(responseJSON)+")\n  print(json.dumps(frame),flush=True)", 1)
-				text = strings.Replace(text, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();emit({'type':'result','subtype':'success','session_id':'process-session'});continue", 1)
+				text = patchFixture(t, text, "with write_lock: print(json.dumps(frame),flush=True)", "with write_lock:\n  if frame.get('type')=='assistant':open("+string(pathJSON)+",'a').write("+string(responseJSON)+")\n  print(json.dumps(frame),flush=True)")
+				text = patchFixture(t, text, "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close()", "emit({'type':'assistant','session_id':'process-session','message_echo':m});c.close();emit({'type':'result','subtype':'success','session_id':'process-session'});continue")
 			} else {
 				response = `{"type":"event_msg","payload":{"type":"agent_message","message":"detached fixture reply"}}` + "\n"
 				responseJSON, _ := json.Marshal(response)
-				text = strings.Replace(text, "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':", 1)
-				text = strings.Replace(text, "def complete():open", "def complete():open("+string(pathJSON)+",'a').write("+string(responseJSON)+");notify('item/agentMessage/delta',{'threadId':'process-thread','turnId':current,'itemId':'reply-'+current,'delta':'detached fixture reply'});open", 1)
+				text = patchFixture(t, text, "if prompt=='controls' or prompt.startswith('{'):", "if prompt=='controls':")
+				text = patchFixture(t, text, "def complete():open", "def complete():open("+string(pathJSON)+",'a').write("+string(responseJSON)+");notify('item/agentMessage/delta',{'threadId':'process-thread','turnId':current,'itemId':'reply-'+current,'delta':'detached fixture reply'});open")
 			}
 			if err = os.WriteFile(scriptPath, []byte(text), 0600); err != nil {
 				t.Fatal(err)
@@ -533,21 +521,19 @@ func TestDetachedProcessRelaunchTranscriptCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchSelfTargetCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := processResumeCLIFixture(t, aiModeClaude)
 	path := filepath.Join(f.root, "provider.py")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := strings.Replace(string(raw), "elif prompt=='register-again':", `elif prompt=='self-relaunch':
+	source := patchFixture(t, string(raw), "elif prompt=='register-again':", `elif prompt=='self-relaunch':
    b=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])
    p=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','relaunch','uid:'+b['Agent'],'--detach','--model','new-model','--yes','--','unsafe'],capture_output=True)
    open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'self-refusal'),'wb').write(p.stdout+p.stderr)
    emit({'type':'result','subtype':'success','session_id':'process-session'})
-  elif prompt=='register-again':`, 1)
+  elif prompt=='register-again':`)
 	if err = os.WriteFile(path, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -581,9 +567,7 @@ func TestDetachedProcessRelaunchSelfTargetCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchStartupFailureCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := processResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
@@ -618,9 +602,7 @@ func TestDetachedProcessRelaunchStartupFailureCLI(t *testing.T) {
 }
 
 func TestDetachedProcessRelaunchBusyRefusalCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := processResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
