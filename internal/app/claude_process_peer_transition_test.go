@@ -16,12 +16,7 @@ import (
 // private short socket path, and this process's kernel identity.
 func peerTransitionSocket(t *testing.T) (*localipc.Listener, *net.UnixConn, *net.UnixConn, coremetadata.ProcessIdentity) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "pc-peer-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	listener, err := localipc.Listen(filepath.Join(dir, "host.sock"))
+	listener, err := localipc.Listen(filepath.Join(shortTempDomain(t), "host.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
