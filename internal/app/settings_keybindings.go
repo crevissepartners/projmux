@@ -2641,8 +2641,6 @@ func (c *settingsCommand) retireCurrentTmuxKeySequenceState(ctx context.Context,
 	return settings.RetireCurrentTmuxKeySequenceState(ctx, c.tmuxRunner, route)
 }
 
-type keymapApplyStatus = settings.ApplyStatus
-
 const (
 	keymapApplyOK      = settings.ApplyOK
 	keymapApplySkipped = settings.ApplySkipped

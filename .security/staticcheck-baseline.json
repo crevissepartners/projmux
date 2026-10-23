@@ -24,6 +24,11 @@
       "reason": "Relocated from internal/app/materialize.go with the shared replacement materializer. Diagnostic source and maximum count remain unchanged; only the owner path changed."
     },
     {
+      "rule": "ST1005",
+      "scope": "internal/services/settings/statusbar_resources_apply.go: two relocated Settings live reload diagnostics",
+      "reason": "Relocated from internal/app/settings_keybindings.go with the shared statusbar resources apply service. Diagnostic source and maximum count remain unchanged to preserve the existing reload error context; only the owner path changed."
+    },
+    {
       "rule": "U1000",
       "scope": "internal/app/statusbar_row_one_visibility.go statusbarRowOneVisibilitySet.visible",
       "reason": "Private app compatibility method used by the unchanged locked WEB TestWebFrontSettingPatchWritesOnlyWebToml; retain exactly one finding after removing the 38 unused private compatibility declarations selected for removal."
@@ -102,20 +107,6 @@
     },
     {
       "rule": "ST1005",
-      "path": "internal/app/settings_keybindings.go",
-      "message": "error strings should not be capitalized",
-      "source": "routeErr = errors.New(\"Settings live reload has no exact physical socket\")",
-      "max_count": 1
-    },
-    {
-      "rule": "ST1005",
-      "path": "internal/app/settings_keybindings.go",
-      "message": "error strings should not be capitalized",
-      "source": "routeErr = errors.New(\"Settings live reload refuses an operator-owned standalone tmux server\")",
-      "max_count": 1
-    },
-    {
-      "rule": "ST1005",
       "path": "internal/services/mutations/rename.go",
       "message": "error strings should not be capitalized",
       "source": "return \"\", CommittedMirrorError(\"rename\", coremetadata.KindWindow, uid, errors.New(\"Window owner root disappeared from Registry\"))",
@@ -155,6 +146,20 @@
       "message": "error strings should not be capitalized",
       "source": "return errors.New(\"Pane inventory drifted before split\")",
       "max_count": 2
+    },
+    {
+      "rule": "ST1005",
+      "path": "internal/services/settings/statusbar_resources_apply.go",
+      "message": "error strings should not be capitalized",
+      "source": "routeErr = errors.New(\"Settings live reload has no exact physical socket\")",
+      "max_count": 1
+    },
+    {
+      "rule": "ST1005",
+      "path": "internal/services/settings/statusbar_resources_apply.go",
+      "message": "error strings should not be capitalized",
+      "source": "routeErr = errors.New(\"Settings live reload refuses an operator-owned standalone tmux server\")",
+      "max_count": 1
     },
     {
       "rule": "ST1008",

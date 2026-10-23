@@ -12,8 +12,8 @@
     "staticcheck": {
       "finding_count": 24,
       "fingerprint_count": 23,
-      "finding_identity_sha256": "2d721708c7e99783934c6901f8a51f82b9bd858b1cb455c6b3b06492b09cd2fa",
-      "baseline_sha256": "b0d756bc8fbbc883f73cd2dee5e10b5b460e573d1b7cd36fb464875abada43a7"
+      "finding_identity_sha256": "9fceaed297d930ce1de8a555882967e2003f5d4ed754b84d9f4ef7d3948624cc",
+      "baseline_sha256": "41819a4ee2b9d7ea057df20503de07a9d5dce9064e2e52b57b5619466039c7c2"
     }
   }
 }
