@@ -344,17 +344,20 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	}
 	// A waiting seed keeps one owner live for the Linux/macOS full-argv
 	// discovery control. Missing/truncated ps output must not mean absence.
-	ownerIdentity, _, e := localipc.Process(owner.Process.Pid)
+	ownerIdentity, ownerExited, e := readyOutboxChild(owner.Process.Pid, owner.Wait)
+	ownerWaited = ownerExited
 	if e != nil {
-		t.Fatal(e)
+		t.Fatal(e, ownerErr.String())
 	}
-	initial, e := asyncQuestionOutboxIdentities(ctx, f.binary)
-	if e != nil {
-		t.Fatal(e)
-	}
+	var initial []coremetadata.ProcessIdentity
 	ownerFound := false
-	for _, identity := range initial {
-		ownerFound = ownerFound || identity == ownerIdentity
+	if !ownerExited {
+		if initial, e = asyncQuestionOutboxIdentities(ctx, f.binary); e != nil {
+			t.Fatal(e)
+		}
+		for _, identity := range initial {
+			ownerFound = ownerFound || identity == ownerIdentity
+		}
 	}
 	if ownerFound {
 		t.Logf("ready outbox full-argv control identity=%+v", ownerIdentity)
@@ -363,10 +366,12 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 		// startup recovery may already own the seed, and then this child returns
 		// right after ready. Only that exit 0 explains its absence; a live child
 		// missed by discovery is killed at the bound and fails here.
-		e = owner.Wait()
-		ownerWaited = true
-		if e != nil {
-			t.Fatal("ready outbox owner missing from full-argv discovery", ownerIdentity, e, ownerErr.String())
+		if !ownerExited {
+			e = owner.Wait()
+			ownerWaited = true
+			if e != nil {
+				t.Fatal("ready outbox owner missing from full-argv discovery", ownerIdentity, e, ownerErr.String())
+			}
 		}
 		release, owned, e := st.LockOwner()
 		if owned {
@@ -853,6 +858,71 @@ func asyncQuestionOutboxPIDs(ctx context.Context, binary string) (map[int]bool, 
 
 // Confirm argv around kernel birth reads. A terminal/zombie identity reported
 // absent by localipc is kernel inactivity, not PID removal or an actual Wait.
+// readyOutboxChild reads the ready outbox child's kernel identity. A child
+// that already exited reads as confirmed absence; it is reaped, and only exit 0
+// counts (runQuestionOutbox returning after another owner took admission). Any
+// other read error, or a non-zero exit, fails and is never treated as absence.
+func readyOutboxChild(pid int, wait func() error) (coremetadata.ProcessIdentity, bool, error) {
+	identity, _, err := localipc.Process(pid)
+	if !errors.Is(err, localipc.ErrProcessAbsent) {
+		return identity, false, err
+	}
+	if err = wait(); err != nil {
+		return coremetadata.ProcessIdentity{}, true, fmt.Errorf("ready outbox child exited before discovery: %w", err)
+	}
+	return coremetadata.ProcessIdentity{}, true, nil
+}
+
+// The ready child may exit 0 before its first identity read. That exit is the
+// only absence the positive control accepts.
+func TestReadyOutboxChildExitBeforeFirstRead(t *testing.T) {
+	exited := func(t *testing.T, script string) *exec.Cmd {
+		t.Helper()
+		cmd := exec.Command("sh", "-c", script)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		// Unreaped, the child stays a zombie: the kernel proves it is not live.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, _, err := localipc.Process(cmd.Process.Pid); errors.Is(err, localipc.ErrProcessAbsent) {
+				return cmd
+			}
+			if time.Now().After(deadline) {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				t.Fatal("child did not exit")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	t.Run("exit-0", func(t *testing.T) {
+		cmd := exited(t, "exit 0")
+		identity, gone, err := readyOutboxChild(cmd.Process.Pid, cmd.Wait)
+		if err != nil || !gone || identity.PID != 0 || cmd.ProcessState == nil {
+			t.Fatalf("exit 0 before first read: identity=%+v gone=%v err=%v", identity, gone, err)
+		}
+	})
+	t.Run("exit-nonzero", func(t *testing.T) {
+		cmd := exited(t, "exit 3")
+		if _, gone, err := readyOutboxChild(cmd.Process.Pid, cmd.Wait); err == nil || !gone {
+			t.Fatalf("non-zero exit accepted: gone=%v err=%v", gone, err)
+		}
+	})
+	t.Run("live", func(t *testing.T) {
+		cmd := exec.Command("sleep", "30")
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+		waited := false
+		identity, gone, err := readyOutboxChild(cmd.Process.Pid, func() error { waited = true; return nil })
+		if err != nil || gone || waited || identity.PID != cmd.Process.Pid {
+			t.Fatalf("live child: identity=%+v gone=%v waited=%v err=%v", identity, gone, waited, err)
+		}
+	})
+}
+
 func asyncQuestionOutboxIdentities(ctx context.Context, binary string) ([]coremetadata.ProcessIdentity, error) {
 	for {
 		first, err := asyncQuestionOutboxPIDs(ctx, binary)

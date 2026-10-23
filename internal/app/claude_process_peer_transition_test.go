@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -109,6 +110,45 @@ func TestClaudeHostExchangePeerRefusalsSurviveOneSnapshot(t *testing.T) {
 			}
 			if *reads > tc.reads {
 				t.Fatalf("peer reads = %d, want at most %d", *reads, tc.reads)
+			}
+		})
+	}
+}
+
+// With a registered read-only helper, a failed settled snapshot still reaches
+// the unchanged registered-helper recheck with the first witness. The host path
+// therefore reads the peer at most three times (the client dial at most twice),
+// and the third read is only the recheck's own, accepted only with its full
+// kernel chain. The protected TestRegisteredClaudeHelperReparentSnapshot pins
+// that acceptance; here the chain is unproven and both cases still refuse.
+func TestClaudeHostExchangePeerRegisteredHelperAfterSecondFailure(t *testing.T) {
+	gone := exec.Command("sh", "-c", "exit 0")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		hookLive bool
+		reads    int
+	}{{"hook-live", true, 2}, {"chain-unproven", false, 3}} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, server, self := peerTransitionSocket(t)
+			_, activation := hostLostFixture(t)
+			hook := coremetadata.ProcessIdentity{PID: gone.Process.Pid, OwnerUID: self.OwnerUID, Start: "hook"}
+			if tc.hookLive {
+				hook = self
+			}
+			b := processSchemaBinding(activation.Binding)
+			registration := &coremetadata.ClaudeRegistration{Ready: true, Authority: coremetadata.ClaudeAuthorityRef{Process: activation.Child, LeaseProcess: self, SessionID: "session", RegistrationGeneration: "registered"}}
+			s := claudeProcessService{binding: b, ownedProcess: activation.Child, ownedHostProcess: activation.HostProcess, registration: registration, registrationGeneration: "registered", registeredHelper: &claudeRegisteredHelper{Hook: hook, Lease: self, Generation: "registered", Binding: b}}
+			witness := localipc.ParentTransitionWitness{Process: self, OldParent: hook.PID, NewParent: os.Getppid()}
+			reads := scriptedClaudeProcessPeer(t, witness, errors.New("peer unavailable"))
+			peer, parent, err := s.exchangePeer(claudeProcessCheck{Binding: b, Session: "session", Lookup: true}, server)
+			if err == nil || peer.PID != 0 || parent != 0 {
+				t.Fatalf("unproven registered helper accepted: %+v %d %v", peer, parent, err)
+			}
+			if *reads != tc.reads {
+				t.Fatalf("peer reads = %d, want %d", *reads, tc.reads)
 			}
 		})
 	}
