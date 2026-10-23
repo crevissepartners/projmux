@@ -1543,9 +1543,11 @@ func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			script := patchFixture(t, string(raw), "elif prompt=='interrupt':", "elif prompt=='interrupt' or 'eof-first' in prompt:")
+			var script string
 			if provider == aiModeCodex {
 				script = patchFixture(t, string(raw), "elif prompt!='hold':complete()", "elif prompt!='hold' and 'eof-first' not in prompt:complete()")
+			} else {
+				script = patchFixture(t, string(raw), "elif prompt=='interrupt':", "elif prompt=='interrupt' or 'eof-first' in prompt:")
 			}
 			if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 				t.Fatal(err)
