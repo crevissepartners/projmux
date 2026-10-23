@@ -18,9 +18,7 @@ import (
 )
 
 func TestProcessSessionBindingActualCLICreateResumeAndHistory(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := processResumeCLIFixture(t, provider)
@@ -149,9 +147,7 @@ func TestProcessSessionBindingActualCLICreateResumeAndHistory(t *testing.T) {
 }
 
 func TestProcessSessionStartingDeleteActualCLITenTimes(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for i := range 10 {
 		t.Run(string(rune('a'+i)), func(t *testing.T) {
 			f := newProcessCreateCLI(t)
@@ -201,9 +197,7 @@ func TestProcessSessionStartingDeleteActualCLITenTimes(t *testing.T) {
 }
 
 func TestProcessSessionWaitBeforeInitNeverBecomesResumeBackfillSource(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := newProcessCreateCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -222,9 +216,7 @@ func TestProcessSessionWaitBeforeInitNeverBecomesResumeBackfillSource(t *testing
 }
 
 func TestProcessSessionLegacyAgentBackfilledByActualCLIWait(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := processResumeCLIFixture(t, provider)
@@ -289,9 +281,7 @@ func TestProcessSessionLegacyAgentBackfilledByActualCLIWait(t *testing.T) {
 }
 
 func TestProcessSessionRelaunchPreservesConversationActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			var f processCreateCLI
@@ -370,9 +360,7 @@ func TestProcessSessionRelaunchPreservesConversationActualCLI(t *testing.T) {
 }
 
 func TestProcessSessionHistoryAppendFailureWarnsWithoutFailingActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		t.Run(provider, func(t *testing.T) {
 			f := processResumeCLIFixture(t, provider)

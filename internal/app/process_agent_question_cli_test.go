@@ -30,9 +30,7 @@ import (
 // Initial create payload is the only input trigger. All provider processes,
 // configuration, Registry and socket paths belong to these protocol fixtures.
 func TestExactProcessQuestionsCreatePayloadActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied product binary required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		for _, annotation := range []string{"", coremetadata.QuestionChannelOn, "off"} {
 			t.Run(provider+"/"+annotation, func(t *testing.T) {
@@ -62,10 +60,10 @@ func TestExactProcessQuestionsCreatePayloadActualCLI(t *testing.T) {
 				}
 				script := string(raw)
 				if provider == aiModeClaude {
-					script = strings.Replace(script, "emit({'type':'result','subtype':'success','session_id':'process-session'})\n elif frame['type']=='control_request':", "if request_count<3:\n   request_count+=1;request['request_id']='question-'+str(request_count);emit(request)\n  else:emit({'type':'result','subtype':'success','session_id':'process-session'})\n elif frame['type']=='control_request':", 1)
+					script = patchFixture(t, script, "emit({'type':'result','subtype':'success','session_id':'process-session'})\n elif frame['type']=='control_request':", "if request_count<3:\n   request_count+=1;request['request_id']='question-'+str(request_count);emit(request)\n  else:emit({'type':'result','subtype':'success','session_id':'process-session'})\n elif frame['type']=='control_request':")
 				} else {
-					script = strings.Replace(script, "'question':'Color?','options'", "'question':'Color?','isOther':True,'options'", 1)
-					script = strings.Replace(script, "if responses==2:complete()", "if 'answers' in n['result'] and responses<3:\n   q['id']='next-'+str(responses);emit(q)", 1)
+					script = patchFixture(t, script, "'question':'Color?','options'", "'question':'Color?','isOther':True,'options'")
+					script = patchFixture(t, script, "if responses==2:complete()", "if 'answers' in n['result'] and responses<3:\n   q['id']='next-'+str(responses);emit(q)")
 				}
 				if err = os.WriteFile(scriptPath, []byte(script), 0600); err != nil {
 					t.Fatal(err)
@@ -202,9 +200,7 @@ func TestExactProcessQuestionsCreatePayloadActualCLI(t *testing.T) {
 }
 
 func TestExactProcessSecretTypedActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied product binary required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, mode := range []config.AgentQuestionAnswering{config.AgentQuestionAnsweringClaude, config.AgentQuestionAnsweringProjmux} {
 		t.Run(string(mode), func(t *testing.T) {
 			f := newProcessCodexCreateCLI(t)
@@ -215,9 +211,9 @@ func TestExactProcessSecretTypedActualCLI(t *testing.T) {
 			scriptPath := filepath.Join(f.root, "codex-provider.py")
 			raw, _ := os.ReadFile(scriptPath)
 			script := string(raw)
-			script = strings.Replace(script, "with open(log,'a') as f:f.write(line)", "with open(log,'a') as f:f.write('[redacted answer]\\n' if 'answers' in json.loads(line).get('result',{}) else line)", 1)
-			script = strings.Replace(script, "'question':'Color?','options':[{'label':'blue'},{'label':'red'}]", "'question':'Secret?','isSecret':True,'isOther':True,'options':[]", 1)
-			script = strings.Replace(script, "responses+=1", "responses+=1\n  if 'answers' in n['result']:open(os.path.join(os.environ['HOME'],'secret-received'),'w').write(str(n['result']['answers']['q']['answers']==['private-fixture-value']))", 1)
+			script = patchFixture(t, script, "with open(log,'a') as f:f.write(line)", "with open(log,'a') as f:f.write('[redacted answer]\\n' if 'answers' in json.loads(line).get('result',{}) else line)")
+			script = patchFixture(t, script, "'question':'Color?','options':[{'label':'blue'},{'label':'red'}]", "'question':'Secret?','isSecret':True,'isOther':True,'options':[]")
+			script = patchFixture(t, script, "responses+=1", "responses+=1\n  if 'answers' in n['result']:open(os.path.join(os.environ['HOME'],'secret-received'),'w').write(str(n['result']['answers']['q']['answers']==['private-fixture-value']))")
 			if err := os.WriteFile(scriptPath, []byte(script), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -603,9 +599,7 @@ func TestCLIAsyncQuestionLateOwnerRetirement(t *testing.T) {
 		})
 		return
 	}
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied product binary required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, stuck := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stuck=%v", stuck), func(t *testing.T) {
 			root := t.TempDir()

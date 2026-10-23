@@ -22,9 +22,7 @@ import (
 // One opt-in topcase extends the copied-product inventory. The existing guarded
 // supervisor init and provider fixtures supply the actual production ownership.
 func TestOwnedProcessSettingsActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	assertOffline := func(t *testing.T, f processCreateCLI, life *agentHostTransferLifetime) coremetadata.Registry {
 		t.Helper()
 		reg := mustRegistry(t, f)

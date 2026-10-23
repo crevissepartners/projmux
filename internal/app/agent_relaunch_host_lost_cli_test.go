@@ -42,9 +42,7 @@ func recordedLostHostCLI(t *testing.T, ctx context.Context, f processCreateCLI, 
 }
 
 func TestHostLostExplicitRelaunchActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied CLI required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		for _, mode := range []string{"foreground", "detach"} {
 			t.Run(provider+"/"+mode, func(t *testing.T) {
@@ -104,9 +102,7 @@ func TestHostLostExplicitRelaunchActualCLI(t *testing.T) {
 }
 
 func TestHostLostExplicitRelaunchFailureActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied CLI required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		for _, mode := range []string{"foreground", "detach"} {
 			cases := []struct {
@@ -223,9 +219,7 @@ func hostLostCLIProviderFixture(t *testing.T, provider string) processCreateCLI 
 }
 
 func TestHostLostExplicitRelaunchClaudeRequiresPromptCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied CLI required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, mode := range []string{"foreground", "detach"} {
 		for _, prompt := range []string{"", "   "} {
 			t.Run(mode+"/"+map[bool]string{true: "omitted", false: "whitespace"}[prompt == ""], func(t *testing.T) {

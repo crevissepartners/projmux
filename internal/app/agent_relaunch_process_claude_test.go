@@ -111,9 +111,7 @@ func startProcessRelaunchCLI(t *testing.T, ctx context.Context, f processCreateC
 }
 
 func TestProcessClaudeRelaunchActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := processResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	defer cancel()
@@ -272,12 +270,12 @@ func TestProcessClaudeRelaunchSelfTargetActualCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := strings.Replace(string(raw), "elif prompt=='register-again':", `elif prompt=='self-relaunch':
+	source := patchFixture(t, string(raw), "elif prompt=='register-again':", `elif prompt=='self-relaunch':
    b=json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])
    p=subprocess.run([os.environ['PMX_TEST_PROCESS_BINARY'],'agent','relaunch','uid:'+b['Agent'],'--model','new-model','--yes','--','unsafe'],capture_output=True)
    open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'self-refusal'),'wb').write(p.stdout+p.stderr)
    emit({'type':'result','subtype':'success','session_id':'process-session'})
-  elif prompt=='register-again':`, 1)
+  elif prompt=='register-again':`)
 	if err = os.WriteFile(path, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}

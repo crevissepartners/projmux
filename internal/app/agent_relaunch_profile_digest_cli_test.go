@@ -240,7 +240,7 @@ func testProfileDigestBornResumeFailure(t *testing.T) {
 						if !strings.Contains(string(raw), needle) {
 							t.Fatal("fixture init refusal patch did not match")
 						}
-						if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(raw), needle, "emit({'type':'system','subtype':'init','session_id':'rejected-session'})")), 0600); err != nil {
+						if err := os.WriteFile(path, []byte(patchFixtureAll(t, string(raw), needle, "emit({'type':'system','subtype':'init','session_id':'rejected-session'})")), 0600); err != nil {
 							t.Fatal(err)
 						}
 					} else {
@@ -258,7 +258,7 @@ func testProfileDigestBornResumeFailure(t *testing.T) {
 						if !strings.Contains(string(raw), needle) {
 							t.Fatal("fixture refusal patch did not match")
 						}
-						if err := os.WriteFile(path, []byte(strings.Replace(string(raw), needle, replacement, 1)), 0600); err != nil {
+						if err := os.WriteFile(path, []byte(patchFixture(t, string(raw), needle, replacement)), 0600); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -364,9 +364,7 @@ func digestCLIAnnotations(t *testing.T, f processCreateCLI, ref string) map[stri
 }
 
 func TestSameNameProfileDigestImmediateActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		for _, route := range []string{"relaunch", "resume"} {
 			t.Run(provider+"/"+route, func(t *testing.T) {
@@ -428,9 +426,7 @@ func TestSameNameProfileDigestImmediateActualCLI(t *testing.T) {
 }
 
 func TestSameNameProfileDigestFrozenAndOrdinaryClaimActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := deferredRelaunchFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -468,9 +464,7 @@ func TestSameNameProfileDigestFrozenAndOrdinaryClaimActualCLI(t *testing.T) {
 }
 
 func TestSameNameProfileDigestFailedLaunchActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := deferredRelaunchFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

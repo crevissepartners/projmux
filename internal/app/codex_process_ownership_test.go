@@ -137,7 +137,7 @@ func TestCodexProcessQuestionPolicyParity(t *testing.T) {
 
 func TestCodexProcessUnknownServerRequestIsObservable(t *testing.T) {
 	f := newProcessCodexFixture(t, func(root, binary string, env []string) processhost.Command {
-		script := strings.Replace(processCodexProviderFixture, "  if prompt=='controls'", "  if prompt=='unknown':emit({'id':99,'method':'unsupported/request','params':{'threadId':'process-thread','turnId':current}})\n  elif prompt=='controls'", 1)
+		script := patchFixture(t, processCodexProviderFixture, "  if prompt=='controls'", "  if prompt=='unknown':emit({'id':99,'method':'unsupported/request','params':{'threadId':'process-thread','turnId':current}})\n  elif prompt=='controls'")
 		return processhost.Command{Path: "python3", Args: []string{"-u", "-c", script}, Dir: root, Env: env}
 	})
 	if err := f.endpoint.handle.Turn(context.Background(), f.endpoint.authority(), "unknown", "unknown"); err != nil && !strings.Contains(err.Error(), "unsupported Codex server request") {
@@ -165,10 +165,7 @@ func TestCodexProcessUnknownServerRequestIsObservable(t *testing.T) {
 // Every subprocess uses the copied product binary and this fixture's HOME.
 // The provider is a protocol stub; no broker, live registry or API is used.
 func TestCodexProcessV5ActualCLIIsolated(t *testing.T) {
-	product := os.Getenv("PMX_TEST_CLI")
-	if product == "" {
-		t.Skip("set PMX_TEST_CLI to an isolated copied product binary")
-	}
+	product := copiedCLI(t, "PMX_TEST_CLI")
 	f := newProcessCodexFixture(t, nil)
 	e := f.endpoint
 	paths := config.DefaultPaths(filepath.Join(f.root, "config"), filepath.Join(f.root, "state"))

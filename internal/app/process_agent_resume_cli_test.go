@@ -152,9 +152,7 @@ func assertProcessCLIForeground(t *testing.T, f processCreateCLI, record coremet
 
 func processResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 	t.Helper()
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	var f processCreateCLI
 	if provider == aiModeCodex {
 		f = newProcessCodexCreateCLI(t).processCreateCLI
@@ -167,8 +165,8 @@ func processResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		if err != nil {
 			t.Fatal(err)
 		}
-		source := strings.Replace(string(script), "s=socket.socket(socket.AF_UNIX);s.bind(path)", "if os.path.exists(path):os.unlink(path)\ns=socket.socket(socket.AF_UNIX);s.bind(path)", 1)
-		source = strings.Replace(source, "path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'provider.sock')", "open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'argv.jsonl'),'a').write(json.dumps(sys.argv)+'\\n')\npath=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'provider.sock')", 1)
+		source := patchFixture(t, string(script), "s=socket.socket(socket.AF_UNIX);s.bind(path)", "if os.path.exists(path):os.unlink(path)\ns=socket.socket(socket.AF_UNIX);s.bind(path)")
+		source = patchFixture(t, source, "path=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'provider.sock')", "open(os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'argv.jsonl'),'a').write(json.dumps(sys.argv)+'\\n')\npath=os.path.join(os.environ['PMX_TEST_PROCESS_ROOT'],'provider.sock')")
 		if err = os.WriteFile(path, []byte(source), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -181,9 +179,7 @@ func processResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		if err != nil {
 			t.Fatal(err)
 		}
-		script := strings.Replace(string(raw), "elif method=='thread/start':", "elif method in ('thread/start','thread/resume'):", 1)
-		script = strings.Replace(script, "p['model']", "p.get('model') or 'stub-model'", 1)
-		script = strings.Replace(script, "p['config']['model_reasoning_effort']", "p.get('config',{}).get('model_reasoning_effort','low')", 1)
+		script := patchFixture(t, string(raw), "elif method=='thread/start':", "elif method in ('thread/start','thread/resume'):")
 		script = "import sys\nif '--version' in sys.argv: print('codex-cli 0.160.0');sys.exit(0)\n" + script
 		path := filepath.Join(f.root, "codex-provider.py")
 		if err := os.WriteFile(path, []byte(script), 0600); err != nil {
@@ -718,7 +714,7 @@ func deferredResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = os.WriteFile(path, []byte(strings.Replace(string(raw), "prompt=='controls' or prompt.startswith('{')", "prompt=='controls'", 1)), 0600); err != nil {
+		if err = os.WriteFile(path, []byte(patchFixture(t, string(raw), "prompt=='controls' or prompt.startswith('{')", "prompt=='controls'")), 0600); err != nil {
 			t.Fatal(err)
 		}
 	} else {
@@ -727,8 +723,8 @@ func deferredResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 		if err != nil {
 			t.Fatal(err)
 		}
-		script := strings.Replace(string(raw), "  inp={'questions'", "  emit({'type':'result','subtype':'success','session_id':'process-session'})\n  continue\n  inp={'questions'", 1)
-		script = strings.Replace(script, "'provider.sock'", "'provider-%s.sock'%os.getpid()", 1)
+		script := patchFixture(t, string(raw), "  inp={'questions'", "  emit({'type':'result','subtype':'success','session_id':'process-session'})\n  continue\n  inp={'questions'")
+		script = patchFixture(t, script, "'provider.sock'", "'provider-%s.sock'%os.getpid()")
 		if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -1037,7 +1033,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			}
 			delayed := "import sys,time\nif '--resume' in sys.argv: time.sleep(2)\n" + string(raw)
 			if provider == aiModeCodex {
-				delayed = strings.Replace(string(raw), "elif method in ('thread/start','thread/resume'):\n", "elif method in ('thread/start','thread/resume'):\n  if method=='thread/resume': __import__('time').sleep(2)\n", 1)
+				delayed = patchFixture(t, string(raw), "elif method in ('thread/start','thread/resume'):\n", "elif method in ('thread/start','thread/resume'):\n  if method=='thread/resume': __import__('time').sleep(2)\n")
 			}
 			if err = os.WriteFile(path, []byte(delayed), 0600); err != nil {
 				t.Fatal(err)
@@ -1063,7 +1059,7 @@ func TestDeferredExpiryAndProviderRefusalActualCLI(t *testing.T) {
 			pauseClaim(claim)
 			replacement := "import sys\nif '--resume' in sys.argv: sys.exit(7)\n" + string(raw)
 			if provider == aiModeCodex {
-				replacement = strings.Replace(string(raw), "elif method in ('thread/start','thread/resume'):", "elif method=='thread/resume':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture resume refusal'}})\n elif method=='thread/start':", 1)
+				replacement = patchFixture(t, string(raw), "elif method in ('thread/start','thread/resume'):", "elif method=='thread/resume':emit({'id':n['id'],'error':{'code':-32603,'message':'fixture resume refusal'}})\n elif method=='thread/start':")
 			}
 			if err = os.WriteFile(path, []byte(replacement), 0600); err != nil {
 				t.Fatal(err)
@@ -1265,9 +1261,7 @@ builtins.open=_reply_barrier_open
 }
 
 func TestDeferredReplyCompletionPublicationActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, nonzero := range []bool{false, true} {
 		t.Run(fmt.Sprintf("nonzero=%t", nonzero), func(t *testing.T) {
 			control := t.TempDir()
@@ -1360,9 +1354,9 @@ func TestDeferredExplicitReplyActualCLI(t *testing.T) {
    threading.Thread(target=deferred_reply,daemon=True).start()
 `
 				if os.Getenv("PMX_TEST_REPLY_NONZERO") == "true" {
-					reply = strings.Replace(reply, "stdout=output,stderr=subprocess.STDOUT)\n", "stdout=output,stderr=subprocess.STDOUT)\n    p=subprocess.run([sys.executable,'-c','import sys;sys.exit(7)'])\n", 1)
+					reply = patchFixture(t, reply, "stdout=output,stderr=subprocess.STDOUT)\n", "stdout=output,stderr=subprocess.STDOUT)\n    p=subprocess.run([sys.executable,'-c','import sys;sys.exit(7)'])\n")
 				}
-				script := "import time\n" + strings.Replace(string(raw), "  continue\n  inp=", reply+"  continue\n  inp=", 1)
+				script := "import time\n" + patchFixture(t, string(raw), "  continue\n  inp=", reply+"  continue\n  inp=")
 				if control := os.Getenv("PMX_TEST_REPLY_PUBLICATION_CONTROL"); control != "" {
 					// os is needed before installing the fixture-only open wrapper.
 					script = "import os\n" + deferredReplyPublicationBarrier(control) + script
@@ -1462,7 +1456,7 @@ func TestDeferredTailDrainKeepsControlsResponsiveActualCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := strings.Replace(string(raw), "if prompt=='controls':", "if prompt=='controls' or (prompt.startswith('{') and turn==1):", 1)
+	script := patchFixture(t, string(raw), "if prompt=='controls':", "if prompt=='controls' or (prompt.startswith('{') and turn==1):")
 	if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -1549,9 +1543,11 @@ func TestDeferredDrainEOFPreservesPeerForNextClaimActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			script := strings.Replace(string(raw), "elif prompt=='interrupt':", "elif prompt=='interrupt' or 'eof-first' in prompt:", 1)
+			var script string
 			if provider == aiModeCodex {
-				script = strings.Replace(string(raw), "elif prompt!='hold':complete()", "elif prompt!='hold' and 'eof-first' not in prompt:complete()", 1)
+				script = patchFixture(t, string(raw), "elif prompt!='hold':complete()", "elif prompt!='hold' and 'eof-first' not in prompt:complete()")
+			} else {
+				script = patchFixture(t, string(raw), "elif prompt=='interrupt':", "elif prompt=='interrupt' or 'eof-first' in prompt:")
 			}
 			if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 				t.Fatal(err)
@@ -2018,12 +2014,12 @@ func TestProcessCodexResumeGoalFirstFramesActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			script := strings.Replace(string(raw), " elif method in ('thread/start','thread/resume'):", ` elif method=='thread/resume':
+			script := patchFixture(t, string(raw), " elif method in ('thread/start','thread/resume'):", ` elif method=='thread/resume':
   current='goal-resumed'
   notify('turn/started',{'threadId':'process-thread','turn':{'id':current}})
   reply({'thread':{'id':'process-thread'},'model':'stub-model','reasoningEffort':'low','sandbox':{'type':'readOnly'},'approvalPolicy':'on-request'})
- elif method in ('thread/start','thread/resume'):`, 1)
-			script = strings.Replace(script, " elif method=='turn/interrupt':", " elif method=='turn/steer':reply({'turnId':current})\n elif method=='turn/interrupt':", 1)
+ elif method in ('thread/start','thread/resume'):`)
+			script = patchFixture(t, script, " elif method=='turn/interrupt':", " elif method=='turn/steer':reply({'turnId':current})\n elif method=='turn/interrupt':")
 			if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 				t.Fatal(err)
 			}

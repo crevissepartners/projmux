@@ -25,9 +25,7 @@ import (
 )
 
 func TestSDKDetachedProcessRelaunchCancellationSettlesBornGeneration(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, provider)
@@ -121,9 +119,7 @@ func TestSDKDetachedProcessRelaunchCancellationSettlesBornGeneration(t *testing.
 }
 
 func TestSDKDetachedProcessRelaunchFrozenDomains(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{"claude", "codex"} {
 		for _, domain := range []string{"a", "b"} {
 			t.Run(provider+domain, func(t *testing.T) {
@@ -317,9 +313,7 @@ func sdkRelaunchRegistryChanges(before, after []byte) []string {
 }
 
 func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			var f processCreateCLI
@@ -334,8 +328,8 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				script := strings.Replace(string(raw), "  inp={'questions'", "  emit({'type':'result','subtype':'success','session_id':'process-session'})\n  continue\n  inp={'questions'", 1)
-				script = strings.Replace(script, "'provider.sock'", "'provider-%s.sock'%os.getpid()", 1)
+				script := patchFixture(t, string(raw), "  inp={'questions'", "  emit({'type':'result','subtype':'success','session_id':'process-session'})\n  continue\n  inp={'questions'")
+				script = patchFixture(t, script, "'provider.sock'", "'provider-%s.sock'%os.getpid()")
 				if err = os.WriteFile(path, []byte(script), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -421,9 +415,7 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 }
 
 func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{"claude", "codex"} {
 		for _, rejectStart := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/reject-start=%t", provider, rejectStart), func(t *testing.T) {
@@ -678,9 +670,7 @@ func TestSDKDetachedHostMoveFrozenSupervisorDomains(t *testing.T) {
 }
 
 func TestSDKDetachedProcessRelaunchBusyStopsNothing(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := processResumeCLIFixture(t, aiModeClaude)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
@@ -715,9 +705,7 @@ func (w sdkRelaunchCanceledOutput) Write([]byte) (int, error) {
 // Golden CLI diagnostics are measured with a copied main 6c875e75 binary.
 // No legacy relaunch verifier is retained in the product for this comparison.
 func TestSDKDetachedProcessRelaunchCLIErrorParity(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, mode := range []string{"canceled-output", "stale-source"} {
 		t.Run(mode, func(t *testing.T) {
 			f := deferredResumeCLIFixture(t, "claude")
@@ -779,9 +767,7 @@ func TestSDKDetachedProcessRelaunchCLIErrorParity(t *testing.T) {
 // Running record after retiring our fixture processes supplies no actual Wait
 // evidence and must not admit a Stop, replacement writer, or Offline success.
 func TestSDKDetachedProcessRelaunchLostHostRefuses(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			f := hostLostCLIProviderFixture(t, provider)

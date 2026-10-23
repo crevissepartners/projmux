@@ -33,9 +33,7 @@ func init() {
 }
 
 func TestOwnedHostTransferActualCLI(t *testing.T) {
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("set PMX_TEST_CLI to a copied product binary")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, provider := range []string{aiModeClaude, aiModeCodex} {
 		for _, mode := range []string{"cancel", "registration-failure", "shutdown", "reverse", "cli-eof", "cli-output-failure"} {
 			t.Run(provider+"/"+mode, func(t *testing.T) {

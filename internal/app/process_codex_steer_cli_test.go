@@ -29,21 +29,19 @@ func testProcessCodexInputCLI(t *testing.T, deliver bool) {
 	if deliver {
 		start, steer = "deliver", "deliver"
 	}
-	if os.Getenv("PMX_TEST_CLI") == "" {
-		t.Skip("copied product binary required")
-	}
+	copiedCLI(t, "PMX_TEST_CLI")
 	f := newProcessCodexCreateCLI(t)
 	scriptPath := filepath.Join(f.root, "codex-provider.py")
 	raw, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := strings.Replace(string(raw), " elif method=='turn/interrupt':", ` elif method=='turn/steer':
+	script := patchFixture(t, string(raw), " elif method=='turn/interrupt':", ` elif method=='turn/steer':
   reply({'turnId':current})
   open(os.path.join(os.environ['HOME'],'steered-response.json'),'w').write(json.dumps({'turn':current,'answer':n['params']['input'][0]['text']}))
   notify('item/agentMessage/delta',{'threadId':'process-thread','turnId':current,'itemId':'answer','delta':n['params']['input'][0]['text']})
   complete()
- elif method=='turn/interrupt':`, 1)
+ elif method=='turn/interrupt':`)
 	if err := os.WriteFile(scriptPath, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +114,7 @@ func testProcessCodexInputCLI(t *testing.T, deliver bool) {
 	out, err := cli("agent", "turn", steer, ref, "--", "same-turn-answer")
 	want := "Steer current turn thread=\"process-thread\" turn=\"turn-1\" acceptance=provider delivery=unconfirmed\n"
 	if deliver {
-		want = strings.Replace(want, " acceptance=", " mode=steer acceptance=", 1)
+		want = patchFixture(t, want, " acceptance=", " mode=steer acceptance=")
 	}
 	if err != nil || string(out) != want {
 		t.Fatalf("steer: %v %q want %q", err, out, want)
