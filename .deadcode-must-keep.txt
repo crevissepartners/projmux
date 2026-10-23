@@ -34,6 +34,9 @@ CaptureProjectDefaults	Captured defaults for the external v0 SDK NewClient; veri
 Catalog.Keys	Whole-catalog key enumeration retained as the test seam that pins the shipped default catalog key coverage.
 Catalog.LocaleKeys	Per-locale key enumeration retained as the test seam that pins the shipped catalog per-locale coverage.
 Catalog.MissingFallbackKeys	Fallback-locale projection of MissingLocaleKeys retained as the test seam that pins required-key coverage of the shipped catalog.
+CentralStatusbarDefaults	Shared service body of public Client.GetCentralStatusbarDefaults over the capability-derived central leaves; proof fixtures: TestCentralStatusbarDefaultsMatrix and TestCentralStatusbarDefaultsFollowSeedAuthority.
+CentralStatusbarLeaf	Shared central-file read with the default fallback, moved from the app loaders for the public defaults read; proof fixtures: TestCentralStatusbarDefaultsMatrix and TestStatusbarVisibilityLoadersResolveTUIThenCentralThenDefault.
+CentralStatusbarVisibility	Shared receiver-less central leaf reader behind the app loaders the web calls and the public defaults read; proof fixtures: TestCentralStatusbarDefaultsSDKParityWithLegacyLoaders and TestCentralStatusbarReaderMakesNoFrontRead.
 ClassifySchemaVersion	Ambient-environment entry point of ClassifySchemaVersionWith retained as the test seam that pins fail-closed registry schema classification.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 Client.AckNotifications	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -57,6 +60,7 @@ Client.DeleteProjectLinkRulesWithOptions	Public per-call degraded Registry link 
 Client.DeliverTurn	Public v0 exact turn SDK entrypoint or its external-only execution closure; default socket/process fixtures, context, no-replay and external consumer tests cover this path.
 Client.DetachAgentPersona	Public exact Claude persona detach facade; the attach-source transaction and recovery are shared with CLI.
 Client.GetAISplitMode	Public v0 legacy TUI-first AI split mode read; parity and external consumer tests.
+Client.GetCentralStatusbarDefaults	Public v0 synchronous central statusbar defaults read with the legacy default fallback; proof fixtures: TestCentralStatusbarDefaultsSDKParityWithLegacyLoaders and TestExternalCentralStatusbarDefaultsConsumer.
 Client.GetConfig	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.GetResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 Client.GetUsage	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
@@ -684,7 +688,6 @@ loadAIBadgeStyle	Original app rendering adapter retained for independent generat
 loadCentralAINewWindowMode	Legacy app central AI mode loader proof seam; retained for missing-home and central file error regression tests after shared TUI execution extraction.
 loadCentralAgentUsageVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadCentralStatusbarHUDVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
-loadCentralStatusbarLeaf	Shared body of the receiver-less central status bar readers retained with them for web/dev (reader-first).
 loadCentralStatusbarRowOneVisibility	Receiver-less central status bar reader a non-TUI surface falls back through instead of the TUI loaders; web/dev switches to it after this CORE merge (reader-first), so main has no caller yet.
 loadDesktopNotifyModeForTmuxConfig	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
 loadLiveResourcesMode	Original app rendering adapter retained for independent generated-config assertions; delegates to the shared renderer without changing its inputs.
