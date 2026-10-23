@@ -27,13 +27,13 @@ import (
 // default when nothing is stored or the central file cannot be read.
 
 func loadCentralStatusbarHUDVisibility(homeDir func() (string, error), lookupEnv func(string) string, component statusbarHUDComponent) config.StatusbarVisibilityState {
-	return settings.CentralStatusbarVisibility(centralStatusbarPaths(homeDir, lookupEnv), func(paths config.Paths) (string, bool) {
+	return settings.CentralStatusbarVisibility(func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }, func(paths config.Paths) (string, bool) {
 		return statusbarHUDVisibilityPath(paths, component)
 	}, config.StatusbarVisibilityOn)
 }
 
 func loadCentralStatusbarRowOneVisibility(homeDir func() (string, error), lookupEnv func(string) string, component statusbarRowOneComponent) config.StatusbarVisibilityState {
-	return settings.CentralStatusbarVisibility(centralStatusbarPaths(homeDir, lookupEnv), func(paths config.Paths) (string, bool) {
+	return settings.CentralStatusbarVisibility(func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }, func(paths config.Paths) (string, bool) {
 		return statusbarRowOneVisibilityPath(paths, component)
 	}, config.StatusbarVisibilityOn)
 }
@@ -43,13 +43,9 @@ func loadCentralAgentUsageVisibility(homeDir func() (string, error), lookupEnv f
 	if window, ok := agentUsageWindowCapability(leaf.provider, leaf.window); ok && strings.TrimSpace(leaf.window) != "" {
 		defaultValue = config.NormalizeStatusbarVisibility(string(window.DefaultVisibility))
 	}
-	return settings.CentralStatusbarVisibility(centralStatusbarPaths(homeDir, lookupEnv), func(paths config.Paths) (string, bool) {
+	return settings.CentralStatusbarVisibility(func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }, func(paths config.Paths) (string, bool) {
 		return agentUsageVisibilityPath(paths, leaf)
 	}, defaultValue)
-}
-
-func centralStatusbarPaths(homeDir func() (string, error), lookupEnv func(string) string) func() (config.Paths, error) {
-	return func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }
 }
 
 // centralStatusbarSeedLeaves are the TUI visibility files whose valid values
