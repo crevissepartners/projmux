@@ -57,24 +57,11 @@ type Command struct {
 	journal   *diagnostics.UsageRecorder
 }
 
-// HUDWindowCapability is one canonical account window the ambient usage HUD
-// can project for a provider. It is deliberately closed over the explicit HUD
-// projection below; opaque quota buckets never become Settings rows.
-type HUDWindowCapability struct {
-	Window            usage.Window
-	Key               string
-	Label             string
-	DefaultVisibility config.StatusbarVisibility
-}
+// HUDWindowCapability and HUDProviderCapability are the capability table of
+// internal/services/usage, kept here under their old names.
+type HUDWindowCapability = usageService.HUDWindowCapability
 
-// HUDProviderCapability is the Settings/render contract for one provider.
-// Providers are returned in aiprovider.UsageSupported declared order.
-type HUDProviderCapability struct {
-	ID          aiprovider.ID
-	Model       string
-	DisplayName string
-	Windows     []HUDWindowCapability
-}
+type HUDProviderCapability = usageService.HUDProviderCapability
 
 type hudVisibilityPreferences struct {
 	providers map[string]bool
@@ -1556,34 +1543,10 @@ func ResetInText(seconds *int64) string {
 	return fmt.Sprintf("%ds", *seconds)
 }
 
-// HUDProviderCapabilities is the single explicit capability seam shared by
-// ambient projection and Settings. Provider inventory/order comes from the
-// usage-supported catalog; window inventory is intentionally enumerated here
-// because it cannot be inferred from opaque account snapshots.
+// HUDProviderCapabilities returns the shared capability table of
+// internal/services/usage: the same providers, order and new slices.
 func HUDProviderCapabilities() []HUDProviderCapability {
-	providers := aiprovider.UsageSupported()
-	out := make([]HUDProviderCapability, 0, len(providers))
-	for _, provider := range providers {
-		capability := HUDProviderCapability{
-			ID:          provider.ID,
-			Model:       provider.UsageModel,
-			DisplayName: provider.DisplayName,
-		}
-		switch provider.ID {
-		case aiprovider.Claude:
-			capability.Windows = []HUDWindowCapability{
-				{Window: usage.Window5h, Key: "5h", Label: "5h", DefaultVisibility: config.StatusbarVisibilityOn},
-				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
-			}
-		case aiprovider.Codex:
-			capability.Windows = []HUDWindowCapability{
-				{Window: usage.Window5h, Key: "5h", Label: "5h", DefaultVisibility: config.StatusbarVisibilityOff},
-				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
-			}
-		}
-		out = append(out, capability)
-	}
-	return out
+	return usageService.HUDProviderCapabilities()
 }
 
 func (c *Command) loadHUDVisibilityPreferences() hudVisibilityPreferences {

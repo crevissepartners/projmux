@@ -306,4 +306,10 @@
 // It requires an explicit absolute same-build ProjmuxExecutable for generation.
 // It ignores ambient TMUX/TMUX_PANE/private anchors and does not infer a helper.
 // Concurrent saves are not serialized; completed effects are not rolled back.
+//
+// GetCentralStatusbarDefaults is an opt-in synchronous read without a context
+// argument. It returns every central status bar visibility leaf by Key from the
+// captured ConfigDir, falling back to the built-in defaults (Codex 5h off) on a
+// path, read or parse error instead of failing, as the legacy web fallback did.
+// It reads no TUI file and has no effects. GetConfig keeps its strict errors.
 package projmux

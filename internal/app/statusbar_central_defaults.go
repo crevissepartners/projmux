@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/settings"
 )
 
 // The central status bar defaults sit under the TUI visibility files (see
@@ -19,34 +19,23 @@ import (
 // statusbar_hud_visibility.go and statusbar_row_one_visibility.go resolve TUI,
 // then central, then the built-in default.
 //
-// The functions below read the central layer alone. They take no settings
-// command and read no TUI file, so a surface other than the TUI can fall back
-// to the central default instead of the TUI's value. Each returns Source
-// central with the stored value, or Source default with the built-in (usage
-// window: capability) default when nothing is stored.
+// The functions below read the central layer alone through the settings
+// service, which the public SDK shares. They take no settings command and read
+// no TUI file, so a surface other than the TUI can fall back to the central
+// default instead of the TUI's value. Each returns Source central with the
+// stored value, or Source default with the built-in (usage window: capability)
+// default when nothing is stored or the central file cannot be read.
 
 func loadCentralStatusbarHUDVisibility(homeDir func() (string, error), lookupEnv func(string) string, component statusbarHUDComponent) config.StatusbarVisibilityState {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	path, ok := statusbarHUDVisibilityPath(paths, component)
-	if !ok {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	return loadCentralStatusbarLeaf(paths, path, config.StatusbarVisibilityOn)
+	return settings.CentralStatusbarVisibility(func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }, func(paths config.Paths) (string, bool) {
+		return statusbarHUDVisibilityPath(paths, component)
+	}, config.StatusbarVisibilityOn)
 }
 
 func loadCentralStatusbarRowOneVisibility(homeDir func() (string, error), lookupEnv func(string) string, component statusbarRowOneComponent) config.StatusbarVisibilityState {
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	path, ok := statusbarRowOneVisibilityPath(paths, component)
-	if !ok {
-		return config.DefaultStatusbarVisibilityState()
-	}
-	return loadCentralStatusbarLeaf(paths, path, config.StatusbarVisibilityOn)
+	return settings.CentralStatusbarVisibility(func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }, func(paths config.Paths) (string, bool) {
+		return statusbarRowOneVisibilityPath(paths, component)
+	}, config.StatusbarVisibilityOn)
 }
 
 func loadCentralAgentUsageVisibility(homeDir func() (string, error), lookupEnv func(string) string, leaf agentUsageVisibilityLeaf) config.StatusbarVisibilityState {
@@ -54,26 +43,9 @@ func loadCentralAgentUsageVisibility(homeDir func() (string, error), lookupEnv f
 	if window, ok := agentUsageWindowCapability(leaf.provider, leaf.window); ok && strings.TrimSpace(leaf.window) != "" {
 		defaultValue = config.NormalizeStatusbarVisibility(string(window.DefaultVisibility))
 	}
-	defaultState := config.DefaultStatusbarVisibilityState()
-	defaultState.Effective = defaultValue
-	paths, err := configPaths(homeDir, lookupEnv)
-	if err != nil {
-		return defaultState
-	}
-	path, ok := agentUsageVisibilityPath(paths, leaf)
-	if !ok {
-		return defaultState
-	}
-	return loadCentralStatusbarLeaf(paths, path, defaultValue)
-}
-
-func loadCentralStatusbarLeaf(paths config.Paths, tuiPath string, defaultValue config.StatusbarVisibility) config.StatusbarVisibilityState {
-	state, err := config.LoadCentralStatusbarVisibility(paths.StatusbarDefaultsFile(), tuiPath, defaultValue)
-	if err != nil {
-		state = config.DefaultStatusbarVisibilityState()
-		state.Effective = config.NormalizeStatusbarVisibility(string(defaultValue))
-	}
-	return state
+	return settings.CentralStatusbarVisibility(func() (config.Paths, error) { return configPaths(homeDir, lookupEnv) }, func(paths config.Paths) (string, bool) {
+		return agentUsageVisibilityPath(paths, leaf)
+	}, defaultValue)
 }
 
 // centralStatusbarSeedLeaves are the TUI visibility files whose valid values
@@ -81,22 +53,7 @@ func loadCentralStatusbarLeaf(paths config.Paths, tuiPath string, defaultValue c
 // HUD capability map, and the four row one segments. The settings launcher is
 // TUI only.
 func centralStatusbarSeedLeaves(paths config.Paths) []string {
-	leaves := []string{
-		paths.StatusbarNotificationsHUDVisibilityFile(),
-		paths.StatusbarAgentUsageHUDVisibilityFile(),
-	}
-	for _, capability := range usagecmd.HUDProviderCapabilities() {
-		leaves = append(leaves, paths.StatusbarAgentUsageProviderVisibilityFile(string(capability.ID)))
-		for _, window := range capability.Windows {
-			leaves = append(leaves, paths.StatusbarAgentUsageWindowVisibilityFile(string(capability.ID), window.Key))
-		}
-	}
-	return append(leaves,
-		paths.StatusbarProjectVisibilityFile(),
-		paths.StatusbarWorkingDirectoryVisibilityFile(),
-		paths.StatusbarGitVisibilityFile(),
-		paths.StatusbarClockVisibilityFile(),
-	)
+	return settings.CentralStatusbarSeedLeaves(paths)
 }
 
 // seedCentralStatusbarDefaults copies the valid TUI status bar values into the
