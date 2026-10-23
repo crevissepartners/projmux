@@ -72,7 +72,7 @@ func runProcessSupervisorOwnerFixture() error {
 }
 
 func TestProcessSupervisorActualCLIIsolated(t *testing.T) {
-	product := copiedCLI(t, "PMX_TEST_CLI")
+	copiedCLI(t, "PMX_TEST_CLI")
 	for _, mode := range []string{"EOF", "INT", "TERM", "KILL"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("TMPDIR", "/tmp")
