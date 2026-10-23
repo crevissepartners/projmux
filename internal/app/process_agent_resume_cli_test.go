@@ -180,8 +180,6 @@ func processResumeCLIFixture(t *testing.T, provider string) processCreateCLI {
 			t.Fatal(err)
 		}
 		script := patchFixture(t, string(raw), "elif method=='thread/start':", "elif method in ('thread/start','thread/resume'):")
-		script = patchFixture(t, script, "p['model']", "p.get('model') or 'stub-model'")
-		script = patchFixture(t, script, "p['config']['model_reasoning_effort']", "p.get('config',{}).get('model_reasoning_effort','low')")
 		script = "import sys\nif '--version' in sys.argv: print('codex-cli 0.160.0');sys.exit(0)\n" + script
 		path := filepath.Join(f.root, "codex-provider.py")
 		if err := os.WriteFile(path, []byte(script), 0600); err != nil {

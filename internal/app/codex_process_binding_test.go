@@ -98,7 +98,10 @@ func prepareProcessCodexPeerCLI(t *testing.T, f processCreateCLI) {
 		t.Fatal("peer fixture initialize identity did not match")
 	}
 	script = patchFixture(t, script, legacy, "'userAgent':'projmux/0.162.1'")
-	script = patchFixture(t, script, "codex-cli 0.160.0", "codex-cli 0.162.1")
+	// Only resume fixtures print a version line; create fixtures have none.
+	if strings.Contains(script, "codex-cli 0.160.0") {
+		script = patchFixture(t, script, "codex-cli 0.160.0", "codex-cli 0.162.1")
+	}
 	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
 		t.Fatal(err)
 	}
