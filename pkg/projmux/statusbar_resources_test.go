@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -16,10 +17,13 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/services/instructions"
 	"github.com/crevissepartners/projmux/internal/services/keybinding"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	"github.com/crevissepartners/projmux/internal/services/tmuxconfig"
+	"github.com/crevissepartners/projmux/internal/testutil/liveguard"
 	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -583,4 +587,115 @@ func sdkResourcesEmbeddedDigest(raw []byte) (string, error) {
 		return "", fmt.Errorf("generated config has invalid digest records %q", found)
 	}
 	return found[0], nil
+}
+
+// The public setter reaches a real app-owned server only through the absolute
+// socket in a pre-created directory; ambient TMUX values point elsewhere.
+func TestStatusbarResourcesRealIsolatedSocket(t *testing.T) {
+	liveguard.RequireActive(t)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		if os.Getenv("PROJMUX_REAL_TMUX_STRICT") == "1" {
+			t.Fatal(err)
+		}
+		t.Skip("tmux unavailable")
+	}
+	if !ResourcesSupported() {
+		t.Skip("live system resources unsupported on this build")
+	}
+	t.Setenv("HOME", t.TempDir())
+	newClient := func(t *testing.T, socket string) *Client {
+		t.Helper()
+		root := t.TempDir()
+		helper := filepath.Join(root, "projmux-helper")
+		if err := os.WriteFile(helper, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c, err := NewClient(Options{ConfigDir: filepath.Join(root, "arbitrary-settings-basename"), StateDir: filepath.Join(root, "separate-state"), HomeDir: filepath.Join(root, "captured-home"), DefaultShell: "/bin/sh", ProjmuxExecutable: helper, SocketPath: socket})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	socketRoot := func(t *testing.T) string {
+		t.Helper()
+		root, err := os.MkdirTemp(os.Getenv("TMUX_TMPDIR"), "sdk-resources-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.RemoveAll(root); err != nil {
+				t.Error(err)
+			}
+		})
+		if st, err := os.Stat(root); err != nil || !st.IsDir() || !filepath.IsAbs(root) {
+			t.Fatal("absolute socket root absent")
+		}
+		return root
+	}
+	poison := func(t *testing.T) {
+		decoy := filepath.Join(t.TempDir(), "decoy")
+		t.Setenv("TMUX", decoy+",999,1")
+		t.Setenv("TMUX_PANE", "%999")
+		t.Setenv("__PROJMUX_RUNTIME_ANCHOR_PANE", "%999")
+	}
+	t.Run("applied", func(t *testing.T) {
+		socket := filepath.Join(socketRoot(t), "s")
+		direct := tmux.ExecRunner{}
+		run := func(args ...string) string {
+			t.Helper()
+			out, err := direct.Run(context.Background(), "tmux", append([]string{"-S", socket}, args...)...)
+			if err != nil {
+				t.Fatalf("%v: %v %s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		run("-f", "/dev/null", "new-session", "-d", "-s", "alpha", "tail -f /dev/null")
+		t.Cleanup(func() {
+			if run("display-message", "-p", "#{socket_path}") != socket {
+				t.Error("cleanup route proof")
+				return
+			}
+			run("kill-server")
+		})
+		run("set-option", "-g", tmuxopts.AppGlobal, "1")
+		run("set-option", "-g", mutationruntime.RuntimeMutationSocketNameOption, "projmux")
+		poison(t)
+		c := newClient(t, socket)
+		paths, err := c.instructions.Paths()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, mode := range []string{"on", "off"} {
+			out, err := c.SetStatusbarResources(" " + mode + " ")
+			if err != nil || out.Mode != mode || !out.Saved || out.Prepared.Status != "ok" || out.Live.Status != "ok" {
+				t.Fatalf("%s: %+v %v", mode, out, err)
+			}
+			if saved, err := config.LoadLiveResourcesFile(paths.LiveResourcesFile()); err != nil || string(saved) != mode {
+				t.Fatalf("%s saved %q %v", mode, saved, err)
+			}
+			generated, err := os.ReadFile(filepath.Join(paths.ConfigDir, "tmux.conf"))
+			if err != nil || !slices.Contains(strings.Split(string(generated), "\n"), "set -g "+tmuxconfig.LiveResourcesTmuxOption+" "+mode) {
+				t.Fatalf("%s generated config: %v", mode, err)
+			}
+			if got := run("show-options", "-gqv", tmuxconfig.LiveResourcesTmuxOption); got != mode {
+				t.Fatalf("%s not applied to the exact server: %q", mode, got)
+			}
+		}
+		if _, err := os.Stat(strings.TrimSuffix(os.Getenv("TMUX"), ",999,1")); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal("ambient TMUX socket touched", err)
+		}
+	})
+	t.Run("no-server", func(t *testing.T) {
+		socket := filepath.Join(socketRoot(t), "s")
+		poison(t)
+		c := newClient(t, socket)
+		out, err := c.SetStatusbarResources("on")
+		sdkResourcesRefusal(t, err, CodeStatusbarResourcesApplyFailed)
+		if out.Mode != "on" || !out.Saved || out.Prepared.Status != "ok" || out.Live.Status != "failed" || !strings.HasPrefix(err.Error(), "reload active status bar: ") {
+			t.Fatal(out, err)
+		}
+		if _, err := os.Stat(socket); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal("absent server socket was created", err)
+		}
+	})
 }
