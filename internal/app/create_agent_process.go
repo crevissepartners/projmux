@@ -169,9 +169,13 @@ func (c *createCommand) startProcessAgent(ctx context.Context, request processAg
 		}
 		cfg.Settings.ManagedInstructions = managed.Instructions
 		managed.Instructions.Legacy = false
+		managedOwner, captureErr := captureManagedCodexBaseOwner(path, result.Binding)
+		if captureErr != nil {
+			return result, captureErr
+		}
 		result.codexEndpoint, err = startProcessCodex(ctx, host, launch, cfg, path, nil)
 		if err == nil {
-			_, _, err = intmetadata.NewStore(path).UpdateConvergent(func(reg *coremetadata.Registry) error { return managed.Record(reg, result.Binding.Agent, true) })
+			err = recordManagedCodexBase(path, managed, managedOwner, result.codexEndpoint, true)
 		}
 		if result.codexEndpoint != nil && result.codexEndpoint.handle != nil {
 			result.Handle = result.codexEndpoint.handle

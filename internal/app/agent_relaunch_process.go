@@ -397,14 +397,17 @@ func (c *agentCommand) startProcessRelaunch(ctx context.Context, cancel context.
 		}
 		return fmt.Errorf("agent relaunch: failed to apply the launch configuration; recorded conversation retained; %s (%s): %w", c.processRelaunchFailureRecovery(reg, candidate.Agent, request, recovery), ownerHint, cause)
 	}
+	var managedOwner managedCodexBaseOwner
+	if launch.applicationSettings.managedBase != nil {
+		if managedOwner, err = captureManagedCodexBaseOwner(intmetadata.PathFor(state), owned.Binding); err != nil {
+			return fail(err)
+		}
+	}
 	if err = owned.startProcessResume(ctx, creator, launch.command, launch.config, processRelaunchFirstFrame(launch.prompt)); err != nil {
 		return fail(err)
 	}
 	if launch.applicationSettings.managedBase != nil {
-		_, _, err = intmetadata.NewStore(intmetadata.PathFor(state)).UpdateConvergent(func(reg *coremetadata.Registry) error {
-			return launch.applicationSettings.managedBase.Record(reg, candidate.Agent.Metadata.UID, false)
-		})
-		if err != nil {
+		if err = recordManagedCodexBase(intmetadata.PathFor(state), launch.applicationSettings.managedBase, managedOwner, owned.owner.codexEndpoint, false); err != nil {
 			return fail(err)
 		}
 	}

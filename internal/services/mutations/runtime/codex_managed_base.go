@@ -93,7 +93,12 @@ func (c *GuidanceService) PlanManagedCodexBase(project metadata.Project, uid str
 	if name != "" {
 		loaded, e := persona.NewDefaultStore(paths).Load(name)
 		instructionsErr = e
-		if e == nil {
+		// The base must carry the bytes whose digest the recipe records. A file
+		// replaced after settings resolution is a component failure, so the
+		// whole previous recipe is retained instead of mixing two reads.
+		if e == nil && persona.Digest(loaded.Content) != settings.Resolution.InstructionsDigest {
+			instructionsErr = fmt.Errorf("codex-managed-base-instructions-changed: instructions %q changed after settings resolution; the new content is not applied", name)
+		} else if e == nil {
 			instructions = string(loaded.Content)
 		}
 	}

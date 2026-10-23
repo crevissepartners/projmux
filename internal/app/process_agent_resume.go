@@ -210,6 +210,12 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 	}
 	result.previousAttention = previousAttention
 	result.attentionChecked = candidate.Record.Provider == aiModeCodex
+	var managedOwner managedCodexBaseOwner
+	if settingsPlan.managedBase != nil {
+		if managedOwner, err = captureManagedCodexBaseOwner(path, b); err != nil {
+			return result, errors.Join(err, result.restoreReservation())
+		}
+	}
 	if err = result.startProcessResume(ctx, creator, plan, config, request.options.Prompt); err != nil {
 		if result.hasNoChild() {
 			err = errors.Join(err, result.restoreReservation())
@@ -233,10 +239,7 @@ func (c *agentCommand) resumeProcessAgent(ctx context.Context, request processAg
 		}
 	}
 	if settingsPlan.managedBase != nil {
-		_, _, err = intmetadata.NewStore(path).UpdateConvergent(func(reg *coremetadata.Registry) error {
-			return settingsPlan.managedBase.Record(reg, candidate.Agent.Metadata.UID, false)
-		})
-		if err != nil {
+		if err = recordManagedCodexBase(path, settingsPlan.managedBase, managedOwner, result.owner.codexEndpoint, false); err != nil {
 			return result, err
 		}
 	}
