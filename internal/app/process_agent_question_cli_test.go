@@ -342,7 +342,7 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	if _, e = readyR.Read(ready[:]); e != nil || ready[0] != '1' {
 		t.Fatal(e)
 	}
-	// A waiting seed keeps this owner live for the Linux/macOS full-argv
+	// A waiting seed keeps one owner live for the Linux/macOS full-argv
 	// discovery control. Missing/truncated ps output must not mean absence.
 	ownerIdentity, _, e := localipc.Process(owner.Process.Pid)
 	if e != nil {
@@ -356,10 +356,42 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	for _, identity := range initial {
 		ownerFound = ownerFound || identity == ownerIdentity
 	}
-	if !ownerFound {
-		t.Fatal("ready outbox owner missing from full-argv discovery", ownerIdentity)
+	if ownerFound {
+		t.Logf("ready outbox full-argv control identity=%+v", ownerIdentity)
+	} else {
+		// Ready admits; it does not keep this child as the owner. Create's
+		// startup recovery may already own the seed, and then this child returns
+		// right after ready. Only that exit 0 explains its absence; a live child
+		// missed by discovery is killed at the bound and fails here.
+		e = owner.Wait()
+		ownerWaited = true
+		if e != nil {
+			t.Fatal("ready outbox owner missing from full-argv discovery", ownerIdentity, e, ownerErr.String())
+		}
+		release, owned, e := st.LockOwner()
+		if owned {
+			release()
+		}
+		if e != nil || owned {
+			t.Fatal("no outbox owner holds the waiting seed", owned, e)
+		}
+		if initial, e = asyncQuestionOutboxIdentities(ctx, f.binary); e != nil {
+			t.Fatal(e)
+		}
+		for _, identity := range initial {
+			if alive, e := asyncQuestionIdentityActive(ctx, identity); e != nil || !alive {
+				t.Fatal("discovered outbox owner not live", identity, alive, e)
+			}
+		}
+		release, owned, e = st.LockOwner()
+		if owned {
+			release()
+		}
+		if e != nil || owned || len(initial) == 0 {
+			t.Fatal("ready outbox owner missing from full-argv discovery", initial, owned, e)
+		}
+		t.Logf("ready outbox exited after admission elsewhere; full-argv control identities=%+v", initial)
 	}
-	t.Logf("ready outbox full-argv control identity=%+v", ownerIdentity)
 	ask := exec.CommandContext(ctx, f.binary, "agent", "question", "ask", ref, "--questions", `[{"question":"Continue work?","options":[{"label":"yes (Recommended)"}]}]`, "--expires-in", "10s", "-o", "json")
 	raw, e := ask.CombinedOutput()
 	if e != nil {
@@ -412,7 +444,23 @@ func TestCLIAsyncQuestionActualCLIIsolated(t *testing.T) {
 	if raw, e = exec.CommandContext(ctx, f.binary, "agent", "question", "decline", ref, declined.ID).CombinedOutput(); e != nil {
 		t.Fatal(string(raw), e)
 	}
-	if e = owner.Wait(); e != nil {
+	if !ownerFound {
+		// The admitted owner is not ours to Wait. Keep the same barrier: it
+		// retires only after delivering every result, before the provider stops.
+		// Observe its kernel retirement; never turn a read error into absence.
+		processCLIUntil(t, ctx, func() bool {
+			for _, identity := range initial {
+				alive, e := asyncQuestionIdentityActive(ctx, identity)
+				if e != nil && ctx.Err() == nil {
+					t.Fatal("admitted outbox owner retirement unreadable", identity, e)
+				}
+				if e != nil || alive {
+					return false
+				}
+			}
+			return true
+		})
+	} else if e = owner.Wait(); e != nil {
 		ownerWaited = true
 		t.Fatal(e, ownerErr.String())
 	}
