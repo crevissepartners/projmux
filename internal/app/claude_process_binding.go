@@ -262,9 +262,24 @@ func (s *claudeProcessService) exchange(ctx context.Context, conn *net.UnixConn)
 // inject a parent-transition snapshot.
 var claudeProcessPeer = localipc.PeerProcess
 
+// settledClaudeProcessPeer reads conn's peer once more, exactly once, when the
+// first snapshot caught a parent transition. A reparent is one kernel event (an
+// ancestor exited), so the independent snapshot after it is the same evidence
+// an exchange started a moment later would have read. Any other error, or a
+// second failed snapshot, keeps the first refusal.
+func settledClaudeProcessPeer(conn *net.UnixConn) (coremetadata.ProcessIdentity, int, error) {
+	peer, parent, err := claudeProcessPeer(conn)
+	if _, transition := localipc.ProcessParentTransition(err); transition {
+		if settled, settledParent, again := claudeProcessPeer(conn); again == nil {
+			return settled, settledParent, nil
+		}
+	}
+	return peer, parent, err
+}
+
 // exchangePeer is the peer identity one host exchange authorizes with.
 func (s *claudeProcessService) exchangePeer(request claudeProcessCheck, conn *net.UnixConn) (coremetadata.ProcessIdentity, int, error) {
-	peer, parent, err := claudeProcessPeer(conn)
+	peer, parent, err := settledClaudeProcessPeer(conn)
 	if err != nil {
 		peer, parent, err = s.recheckRegisteredHelper(request, err, func() (coremetadata.ProcessIdentity, int, error) { return claudeProcessPeer(conn) }, localipc.Process)
 	}
@@ -799,7 +814,7 @@ func dialProcessClaudeHost(proof claudeProcessProof) (*net.UnixConn, error) {
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(localipc.Deadline))
-	peer, _, err := claudeProcessPeer(conn)
+	peer, _, err := settledClaudeProcessPeer(conn)
 	if err != nil || peer != proof.HostProcess {
 		_ = conn.Close()
 		return nil, processhost.ErrStale
