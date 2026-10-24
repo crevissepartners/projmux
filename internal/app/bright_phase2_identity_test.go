@@ -50,36 +50,36 @@ func appLightThemeConfig() theme.ThemeConfig {
 // config contract additions update every digest together.
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
-		"standalone": "478f83629b75dcca23b8cd1a0018d2ed58de9af66b7737bdabe038b2ebaf24e0",
-		"app":        "2b83e7b23394e766e94752b22b86d6f4508f1ef0513a9b5b8725dd0fae0a5d5b",
+		"standalone": "ad5b4ee0e83de769d0890dff03c9c21e1c432eb1c86eb303d530ffd83198d822",
+		"app":        "fa00bcdbe9447184bcd9203d5d414cf0efd563ec1e414059dd7c308c5242934d",
 	},
 	"projmux": {
-		"standalone": "a68beaf41bba695eeb76c329a3a04837c3c1828ec9e7f12f0441f87b4a3135c5",
-		"app":        "f31dd33c3b0c33e8dd14d3ce3888a440f996c8427c1869b20f3b8a159acf50fe",
+		"standalone": "346a2fd7c926f97fd6bd040e1203bd4ced466854f617a32ffd013d324f58f633",
+		"app":        "efdc8dc37dabbe65af3fa9291e1ac9405690e4b858e3c6ec5d0b631e8f4337dd",
 	},
 	"blue-hour": {
-		"standalone": "b6f12eb2a223e903fed9de7dd8f901448deaa2ba3f65371e8c38be01bcf2d20e",
-		"app":        "8f7ef83144ed3aee230c28eb9bccbfaabc24961822f0f0ad3489b1e21976cd1a",
+		"standalone": "d651cbb95d9a448749fadd2db2b103f2becc6b7bedc50cc0b634cfa513b6a10f",
+		"app":        "e01f959d448edcd84b3af13cb92a3592669a04ca89e0097ed6423da4e9c32645",
 	},
 	"carbon-violet": {
-		"standalone": "b22989a74b304917b0c4cc5dfbdb8b2c968ca00786ab708372c688ded8c65a41",
-		"app":        "8c12b99080b59f26d89ea6721be6c681010efa8172426166ca5b858ebde14fcd",
+		"standalone": "f1f54bf8011f51d15c09c02a79ce1e4fd08aa12ed586af9be379c24fb2b73d47",
+		"app":        "8a0765d77e55dd140c093ae9e996bd32ebbd45d1489a11f85d53678c74f617c0",
 	},
 	"ember": {
-		"standalone": "a7584215ca4b86853df0b901cbadf334f758b61230f943e9b9b6c3ea5873a529",
-		"app":        "baf2665a5e4e0498ba32058c141498dddc510fbc1f870f4d2a46e439a12b8df7",
+		"standalone": "bb87a3f0dc3abc9f70113e4780150f573ad2ef6ee4282f86afce7956524c7a78",
+		"app":        "e2caccfbc609d95a147d0c926176f1c2409b0d97c7d31c70dc9c9d8c64af0b3f",
 	},
 	"forest": {
-		"standalone": "30ef8f4d79aaee2b334bfe5ff6680e6d6a8157e0b7b17275271d3f6cb66998bb",
-		"app":        "101942e837b3fd588b99736cf724fd5749261f10e9c4f7f8aafec5d0ee0d2e30",
+		"standalone": "38b2ed97098df2159a57dedc053e6583364abaaf593a5f9064943c3493b7d7ee",
+		"app":        "c8f3c7e2d1ae165c724cb76f9e66169768b92421156b8a3ae64a66b77470dd34",
 	},
 	"rose": {
-		"standalone": "254681e04357d2343e2ac511b6bedf08b44ecd394ac987cf0be989db2c59af1b",
-		"app":        "88ff558c3405861d56d4b22324d37831f83b411e123e507465d8d68c4391f3ac",
+		"standalone": "638e596042dfc59a15055a5587b987284a04bcbb67a7f9f4fdadf7782301c760",
+		"app":        "49eaabbaaddbfb8b1b36fe003fc44ecc5ee6e8dd72bbde397f9a2012432426cb",
 	},
 	"high-contrast": {
-		"standalone": "2d7020516d4d93f098bff8a6c019aaeb681e95380e169174d53be10b9166b04a",
-		"app":        "e245e7efc6c8f7aa10f47b6ad9dc100dacac9d0fc739644ae6eec2471bff1bfc",
+		"standalone": "3cd79610eb177c3be0148a38b79139bc17bc46820b1125e21723053c5bd0a229",
+		"app":        "1431410e365c753ac87f81f855441872965610a02177167b46f358606f526f16",
 	},
 }
 
@@ -106,7 +106,10 @@ var brightPhase2ConfigGoldens = map[string]map[string]string{
 // changed lines). Every digest was rebaselined once more when both configs
 // began turning on the server option focus-events ahead of the pane focus hooks
 // (that line and the app config's embedded digest are the only changed lines).
-// Theme rendering itself is unchanged, which is what this test still pins.
+// Both configs were rebaselined again for exact-entry conditional appends to
+// terminal-features and (app only) update-environment. Only those generated
+// option commands and the embedded app config digest changed; theme rendering
+// itself is unchanged, which is what this test still pins.
 func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 	t.Parallel()
 
