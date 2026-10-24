@@ -14,7 +14,7 @@ import (
 // "" when that line prints no owner.
 func cliPlanOwner(t *testing.T, plan, uid string) string {
 	t.Helper()
-	for _, line := range strings.Split(plan, "\n") {
+	for line := range strings.SplitSeq(plan, "\n") {
 		if strings.HasPrefix(line, " ") || !strings.Contains(line, " uid="+uid) {
 			continue
 		}
