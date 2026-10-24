@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -149,7 +150,10 @@ func newFreshOpenRealTmux(t *testing.T, ctx context.Context, registered bool, mo
 		newOperationID: func() (string, error) { return "op-fresh-ask-materialize", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			client := inttmux.NewClient(exact, inttmux.WithSocketName(logical))
-			return &materializer{Mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: client, Target: target, Warn: warn}}
+			// Like the canonical create fixture, run shell commands directly.
+			// app.test is not a CLI supervisor: invoking it with internal argv
+			// re-enters the whole suite until the isolated tmux server exits.
+			return &materializer{Executable: func() (string, error) { return "", errors.New("no supervisor in this test") }, Mirror: intmetadata.NewMirror(exact), MaterializeRuntime: mutationruntime.MaterializeRuntime{Runner: exact, Sessions: client, Target: target, Warn: warn}}
 		},
 		warn:    io.Discard,
 		agents:  newFakeTopologyAgentLauncher(),
@@ -407,5 +411,25 @@ func TestFreshOpenAsksFirstAndFillsTheFirstPaneThroughRealTmux(t *testing.T) {
 
 			fresh.requireShellOnly(t)
 		})
+	}
+}
+
+// Shell-only fresh opens must not launch app.test as a CLI supervisor.
+func TestFreshOpenShellFixtureDoesNotReenterTestBinary(t *testing.T) {
+	requireRealTmux(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	fresh := newFreshOpenRealTmux(t, ctx, false, aiModeShell)
+	fresh.open(t, ctx)
+	fresh.requireShellOnly(t)
+	window := fresh.freshWindow(t)
+	panes := fresh.fx.store.registry.PanesOf(window.Metadata.UID)
+	runtimeID := realTmuxPaneWithUID(t, fresh.fx.tmuxPaneIDs(t, window), panes[0].Metadata.UID)
+	command, err := fresh.fx.tmux("display-message", "-p", "-t", runtimeID, "#{pane_start_command}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(command, "internal supervise") || strings.Contains(command, os.Args[0]) {
+		t.Fatalf("fresh shell launched the test image as a CLI: %s", command)
 	}
 }

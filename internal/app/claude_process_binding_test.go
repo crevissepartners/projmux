@@ -146,8 +146,14 @@ func newProcessClaudeFixture(t *testing.T, command func(string, string) processh
 
 func newProcessClaudeFixtureAt(t *testing.T, command func(string, string) processhost.Command, sharedPath string, lifetime ...processOwnerLifetime) *processClaudeFixture {
 	t.Helper()
+	return newProcessClaudeFixtureInDomain(t, command, sharedPath, shortTempDomain(t), lifetime...)
+}
+
+// The caller owns domain, including when it outlives a deliberately killed helper.
+func newProcessClaudeFixtureInDomain(t *testing.T, command func(string, string) processhost.Command, sharedPath, domain string, lifetime ...processOwnerLifetime) *processClaudeFixture {
+	t.Helper()
 	// Allocate a private short root without changing the test environment.
-	root := codexHostMoveFixtureShortState(t, shortTempDomain(t))
+	root := codexHostMoveFixtureShortState(t, domain)
 	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
