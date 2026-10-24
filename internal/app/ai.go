@@ -144,6 +144,9 @@ type aiCommand struct {
 	// later. See honestAIIngestResult.
 	paneWriteMu      sync.Mutex
 	paneWriteFailure string
+	// claudeApprovalLockHooks observes the pending subagent approval lock in
+	// tests; nil in production.
+	claudeApprovalLockHooks *claudeApprovalLockHooks
 }
 
 func newAICommand() *aiCommand {

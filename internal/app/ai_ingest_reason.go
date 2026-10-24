@@ -109,6 +109,7 @@ const (
 
 	aiIngestReasonSubagentApprovalAnswered aiIngestReason = "subagent approval answered"
 	aiIngestReasonSubagentApprovalPending  aiIngestReason = "subagent approval still pending"
+	aiIngestReasonSubagentApprovalLocked   aiIngestReason = "subagent approval lock unavailable"
 )
 
 // aiIngestReasonUnclassified is what a value outside the vocabulary becomes.
@@ -205,6 +206,7 @@ var aiIngestReasons = func() []aiIngestReason {
 		aiIngestReasonInvocationStart,
 		aiIngestReasonSubagentApprovalAnswered,
 		aiIngestReasonSubagentApprovalPending,
+		aiIngestReasonSubagentApprovalLocked,
 
 		aiIngestReasonUnclassified,
 	}

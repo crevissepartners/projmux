@@ -596,24 +596,40 @@ Pane option `@projmux_ai_approval_agent_ids`, a set of at most 8 pending
 subagents. When the Pane was not already awaiting approval, the id starts a
 new set. When it was and the set tracks that wait, the id joins the set.
 Otherwise the Pane becomes untracked: the wait came from the main thread, the
-set would exceed 8, or the id cannot be held (empty, over 128 bytes, or
-containing whitespace, control characters, `,` or `*`). A main-thread
-`PermissionRequest` empties the set. A `PostToolUse` or `PostToolUseFailure`
-under an `agent_id` in a tracked set, on a Pane still projecting
-`approval_required`, means that request was answered. The id leaves the set,
-which is recorded as `result=quiet` with reason
+set would exceed 8, the id cannot be held (empty, over 128 bytes, or
+containing whitespace, control characters, `,` or `*`), or the Pane's markers
+could not be read. A main-thread `PermissionRequest` empties the set, and tries
+to even when its marker read failed. Only a `PostToolUse` or
+`PostToolUseFailure` under an `agent_id` in a tracked set, on a Pane still
+projecting `approval_required`, means that request was answered;
+`PermissionDenied` and `ElicitationResult` keep their earlier handling. The id
+leaves the set, recorded as `result=quiet` with reason
 `subagent approval still pending` while other subagents still wait. When the
 set becomes empty, the projection returns to `in_progress` without a
 notification, recorded as `result=state` with reason
-`subagent approval answered`; for an exact owned managed Agent the
-interaction becomes `in_progress` too. Both readings come from the hook's
-single Pane marker read, so no tmux call is added. Unanswered requests,
+`subagent approval answered`. For an exact owned managed Agent, the
+interaction becomes `in_progress` too.
+
+Requests and answers change the set under a per-Pane lock in the state
+directory (`claude-approval-locks/`, one of 64 files chosen by the Pane's tmux
+route and id). Inside the lock the hook reads the badge and the set again, and
+a request also applies its approval projection there, so concurrent hooks see
+each other's finished state. A hook that cannot take the lock within 2 seconds
+never clears the badge. An answer is then recorded as `result=quiet`, and a
+request as an extra `result=error` record, both with reason
+`subagent approval lock unavailable`; the request still projects its approval
+and leaves the set untracked. Only approval-related hooks take the lock and
+read the markers a second time: a `PermissionRequest`, or a subagent's
+`PostToolUse`/`PostToolUseFailure` whose first read shows `approval_required`.
+Every other hook adds no marker read, lock, or write. Unanswered requests,
 main-thread requests and their existing operator-answer handling, untracked
-Panes, and explicit runtime `quiet` overrides keep their earlier behavior.
-This rule also covers a hook that finds no managed binding for its Pane, which
-projects onto the Pane alone, and an owned request answered after its
-interaction aged out of the freshness window. The background fallback above
-still repairs only `response_complete`.
+Panes, and explicit runtime `quiet` overrides keep their earlier behavior. If
+the main-thread request's write to empty the set fails, its record reports the
+pane marker write failure and the earlier set can remain. This rule also covers
+a hook that finds no managed binding for its Pane, which projects onto the Pane
+alone, and an owned request answered after its interaction aged out of the
+freshness window. The background fallback above still repairs only
+`response_complete`.
 
 Agent-hook JSON diagnostics add `agent_id` and `agent_type` (each capped at 128
 characters; identifiers containing control characters are omitted), plus `background_tasks_in_flight` when the task field is present,
