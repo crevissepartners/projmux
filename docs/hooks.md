@@ -534,8 +534,8 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | Event | Behavior |
 | --- | --- |
 | `PreToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `PostToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `PostToolUseFailure` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed; while `agent-approval-answering` is `projmux` it also closes the one waiting permission request the terminal answered (see [below](#answering-claude-permission-requests-in-projmux)) |
+| `PostToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed; under a subagent whose permission request the pane awaits, it marks that request answered (see the subagent approval rule below) |
+| `PostToolUseFailure` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed; under a subagent whose permission request the pane awaits, it marks that request answered (see the subagent approval rule below); while `agent-approval-answering` is `projmux` it also closes the one waiting permission request the terminal answered (see [below](#answering-claude-permission-requests-in-projmux)) |
 | `PostToolBatch` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PermissionDenied` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `Notification` | pushes a Claude notify row for response-ready, approval-required, or input-ready based on `notification_type` |
@@ -549,7 +549,7 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `PreCompact` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PostCompact` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `SessionEnd` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `PermissionRequest` | pushes a critical approval row with the tool name and a concise tool input summary |
+| `PermissionRequest` | pushes a critical approval row with the tool name and a concise tool input summary; a subagent request also records its `agent_id` as pending (see the subagent approval rule below) |
 | `Setup` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `TeammateIdle` | pushes an info Claude teammate waiting row with teammate context metadata when present |
 | `TaskCreated` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
@@ -589,6 +589,31 @@ allowed interaction inside the Registry transaction. If another hook records
 approval/input wait or changes that binding first, the observation stays quiet
 without changing state, projecting a badge, acknowledging notifications, or
 releasing held messages.
+
+A subagent's answered permission request clears the approval badge it raised.
+A `PermissionRequest` that carries an `agent_id` keeps that id in the internal
+Pane option `@projmux_ai_approval_agent_ids`, a set of at most 8 pending
+subagents. When the Pane was not already awaiting approval, the id starts a
+new set. When it was and the set tracks that wait, the id joins the set.
+Otherwise the Pane becomes untracked: the wait came from the main thread, the
+set would exceed 8, or the id cannot be held (empty, over 128 bytes, or
+containing whitespace, control characters, `,` or `*`). A main-thread
+`PermissionRequest` empties the set. A `PostToolUse` or `PostToolUseFailure`
+under an `agent_id` in a tracked set, on a Pane still projecting
+`approval_required`, means that request was answered. The id leaves the set,
+which is recorded as `result=quiet` with reason
+`subagent approval still pending` while other subagents still wait. When the
+set becomes empty, the projection returns to `in_progress` without a
+notification, recorded as `result=state` with reason
+`subagent approval answered`; for an exact owned managed Agent the
+interaction becomes `in_progress` too. Both readings come from the hook's
+single Pane marker read, so no tmux call is added. Unanswered requests,
+main-thread requests and their existing operator-answer handling, untracked
+Panes, and explicit runtime `quiet` overrides keep their earlier behavior.
+This rule also covers a hook that finds no managed binding for its Pane, which
+projects onto the Pane alone, and an owned request answered after its
+interaction aged out of the freshness window. The background fallback above
+still repairs only `response_complete`.
 
 Agent-hook JSON diagnostics add `agent_id` and `agent_type` (each capped at 128
 characters; identifiers containing control characters are omitted), plus `background_tasks_in_flight` when the task field is present,

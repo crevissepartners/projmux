@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -56,7 +57,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	}
 	defer c.flushPendingAgentSessionRef(paneID)
 
-	binding, owned := c.markAIHookPaneBinding(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
+	binding, owned, markers := c.markAIHookPaneBinding(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	metadata := payload.claudeMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderClaude, payload.EventName)
 
@@ -73,7 +74,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "Notification":
 		return c.ingestClaudeNotification(paneID, payload, metadata, action)
 	case "PermissionRequest":
-		return c.ingestClaudePermissionRequest(paneID, payload, metadata, action)
+		return c.ingestClaudePermissionRequest(paneID, payload, metadata, action, markers)
 	case "Stop":
 		return c.ingestClaudeStop(paneID, payload, metadata, action, binding, owned)
 	case "StopFailure":
@@ -83,6 +84,9 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
 		if payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure" {
 			c.closeClaudePermissionAnsweredInTerminal(data, payload)
+		}
+		if answered, err := c.ingestClaudeSubagentApprovalAnswered(paneID, payload, metadata, action, markers); answered {
+			return err
 		}
 		return c.ingestClaudeOperatorDialogClosed(paneID, payload, metadata, action, binding, owned)
 	case "PreToolUse", "PostToolBatch", "SubagentStart":
@@ -162,20 +166,139 @@ func (c *aiCommand) ingestClaudeNotification(paneID string, payload claudeHookPa
 	})
 }
 
-func (c *aiCommand) ingestClaudePermissionRequest(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
+func (c *aiCommand) ingestClaudePermissionRequest(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution, markers aiHookPaneMarkers) error {
 	if action.Action == aiHookActionQuiet {
 		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	body := formatClaudePermissionNotifyBody(payload)
-	return c.emitClaudeHookStatus(paneID, payload, action, attentionNotifyInput{
+	if err := c.emitClaudeHookStatus(paneID, payload, action, attentionNotifyInput{
 		ID:        claudePermissionNotifyID(payload),
 		Text:      body.Text,
 		Severity:  body.Severity,
 		Metadata:  mergeAINotifyBodyMetadata(metadata, body),
 		Force:     true,
 		BadgeKind: aiBadgeKindApprovalRequired,
-	})
+	}); err != nil {
+		return err
+	}
+	c.recordClaudeApprovalAgentID(paneID, payload.AgentID, markers)
+	return nil
+}
+
+// The pending subagent approvals are a bounded set of agent_ids on an internal
+// Pane option. It says which subagents' requests the current approval_required
+// projection is waiting on, so a tool that runs under one of them after its
+// answer can tell whether anything is still waiting. A Pane that cannot say
+// that holds the untracked value, and an untracked or absent set never clears
+// a badge: the projection then keeps its earlier behavior.
+const (
+	claudeApprovalAgentIDsLimit     = 8
+	claudeApprovalAgentIDsUntracked = "*"
+	claudeApprovalAgentIDsSeparator = ","
+)
+
+func claudeApprovalAgentIDTrackable(agentID string) bool {
+	if agentID == "" || len(agentID) > 128 {
+		return false
+	}
+	for _, r := range agentID {
+		if r <= ' ' || r == 0x7f || r == ',' || r == '*' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseClaudeApprovalAgentIDs returns the tracked set; tracked is false for
+// the untracked value and anything this code did not write.
+func parseClaudeApprovalAgentIDs(value string) (ids []string, tracked bool) {
+	if value == "" {
+		return nil, true
+	}
+	ids = strings.Split(value, claudeApprovalAgentIDsSeparator)
+	if len(ids) > claudeApprovalAgentIDsLimit {
+		return nil, false
+	}
+	for _, id := range ids {
+		if !claudeApprovalAgentIDTrackable(id) {
+			return nil, false
+		}
+	}
+	return ids, true
+}
+
+// recordClaudeApprovalAgentID updates the pending set after a PermissionRequest
+// projected approval_required. A main-thread request empties the set, so no
+// subagent answer can clear the badge it raised. A subagent request starts a
+// new set when the Pane was not already awaiting approval, joins a tracked set
+// when it was, and otherwise leaves the Pane untracked: an approval wait the
+// set does not account for, an overflow, an id it cannot hold, or a Pane whose
+// markers could not be read.
+func (c *aiCommand) recordClaudeApprovalAgentID(paneID, agentID string, markers aiHookPaneMarkers) {
+	current, known := markers.value(aiPaneApprovalAgentIDsOption)
+	if agentID == "" {
+		if known && current != "" {
+			c.noteAIPaneMarkerWriteFailure(c.clearAIPaneOption(paneID, aiPaneApprovalAgentIDsOption))
+		}
+		return
+	}
+	next := claudeApprovalAgentIDsUntracked
+	if badge, _ := markers.value(aiPaneBadgeKindOption); known && claudeApprovalAgentIDTrackable(agentID) {
+		if normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
+			next = agentID
+		} else if ids, tracked := parseClaudeApprovalAgentIDs(current); tracked && len(ids) > 0 {
+			if !slices.Contains(ids, agentID) {
+				ids = append(ids, agentID)
+			}
+			if len(ids) <= claudeApprovalAgentIDsLimit {
+				next = strings.Join(ids, claudeApprovalAgentIDsSeparator)
+			}
+		}
+	}
+	if !known || current != next {
+		c.recordAIPaneOption(paneID, aiPaneApprovalAgentIDsOption, next)
+	}
+}
+
+// ingestClaudeSubagentApprovalAnswered handles a tool that ran under a
+// subagent whose permission request the Pane still awaits: its request was
+// answered. The agent_id leaves the set; when the set is empty the projection
+// returns to busy, state only, and otherwise it stays awaiting approval for the
+// subagents that still wait. answered is false for every other event, which
+// keeps its existing handling: main-thread tools, ids not in a tracked set, a
+// Pane no longer awaiting approval, and explicit runtime quiet overrides.
+func (c *aiCommand) ingestClaudeSubagentApprovalAnswered(paneID string, payload claudeHookPayload, metadata map[string]string,
+	action aiHookActionResolution, markers aiHookPaneMarkers,
+) (answered bool, err error) {
+	if payload.AgentID == "" || (action.Action == aiHookActionQuiet && action.Source == aiHookActionSourceRuntime) {
+		return false, nil
+	}
+	badge, known := markers.value(aiPaneBadgeKindOption)
+	if !known || normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
+		return false, nil
+	}
+	current, _ := markers.value(aiPaneApprovalAgentIDsOption)
+	ids, tracked := parseClaudeApprovalAgentIDs(current)
+	if !tracked || !slices.Contains(ids, payload.AgentID) {
+		return false, nil
+	}
+	remaining := slices.DeleteFunc(ids, func(id string) bool { return id == payload.AgentID })
+	if len(remaining) > 0 {
+		c.recordAIPaneOption(paneID, aiPaneApprovalAgentIDsOption, strings.Join(remaining, claudeApprovalAgentIDsSeparator))
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalPending))
+		return true, nil
+	}
+	c.noteAIPaneMarkerWriteFailure(c.clearAIPaneOption(paneID, aiPaneApprovalAgentIDsOption))
+	if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{
+		Metadata:  metadata,
+		BadgeKind: aiBadgeKindInProgress,
+	}); err != nil {
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
+		return true, err
+	}
+	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiIngestReasonSubagentApprovalAnswered))
+	return true, nil
 }
 
 func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution, binding managedAgentBinding, owned bool) error {

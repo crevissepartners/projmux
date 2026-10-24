@@ -64,6 +64,7 @@ const (
 	aiPaneResumeIDOption         = mutationruntime.AiPaneResumeIDOption
 	aiPaneResumeSourceOption     = mutationruntime.AiPaneResumeSourceOption
 	aiPaneTranscriptPathOption   = "@projmux_ai_transcript_path"
+	aiPaneApprovalAgentIDsOption = "@projmux_ai_approval_agent_ids"
 	aiPaneResumeUpdatedAtOption  = mutationruntime.AiPaneResumeUpdatedAtOption
 
 	canonicalCreateTargetClientEnv = keybinding.CanonicalCreateTargetClientEnv
