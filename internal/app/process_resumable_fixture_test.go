@@ -28,17 +28,23 @@ type processResumableFixture struct {
 	wait       func(context.Context) (processhost.Snapshot, error)
 }
 
-func newProcessResumableFixture(t *testing.T, provider string) processResumableFixture {
+func newProcessResumableFixture(t *testing.T, provider string, domains ...string) processResumableFixture {
 	t.Helper()
+	var domain string
+	if len(domains) > 0 {
+		domain = domains[0]
+	} else {
+		domain = shortTempDomain(t)
+	}
 	var f processResumableFixture
 	if provider == "claude" {
-		c := newProcessClaudeFixture(t, nil)
+		c := newProcessClaudeFixtureInDomain(t, nil, "", domain)
 		c.turn(t, "unfinished", "question")
 		f = processResumableFixture{root: c.root, path: c.path, store: c.store, binding: c.binding, observe: func(t *testing.T) processhost.Snapshot {
 			return c.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 1 })
 		}, stop: func() error { return c.handle.Stop(c.binding) }, wait: func(ctx context.Context) (processhost.Snapshot, error) { return c.handle.Wait(ctx, c.binding) }}
 	} else {
-		c := newProcessCodexFixture(t, nil)
+		c := newProcessCodexFixtureInDomain(t, nil, processhost.DefaultLimits().Events, domain)
 		c.turn(t, "unfinished", "controls")
 		f = processResumableFixture{root: c.root, path: c.path, store: c.store, binding: c.endpoint.binding, observe: func(t *testing.T) processhost.Snapshot {
 			return c.wait(t, func(s processhost.Snapshot) bool { return len(s.Pending) == 2 })
@@ -129,7 +135,11 @@ func TestProcessSupportedResumableKilledOwnerHelper(t *testing.T) {
 	if provider == "" {
 		return
 	}
-	f := newProcessResumableFixture(t, provider)
+	domain := os.Getenv("PMX_TEST_RESUMABLE_ROOT")
+	if domain == "" {
+		t.Fatal("killed owner helper needs a parent-owned domain")
+	}
+	f := newProcessResumableFixture(t, provider, domain)
 	reg, err := f.store.LoadDegradedReadOnly()
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +159,14 @@ func TestProcessSupportedResumableOwnerKillRemainsUnknownFixture(t *testing.T) {
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			root := t.TempDir()
+			// Register the guard first so it runs after the domain's cleanup.
+			var domain string
+			t.Cleanup(func() {
+				if _, err := os.Stat(domain); !os.IsNotExist(err) {
+					t.Errorf("parent-owned killed-owner domain remains: %s (%v)", domain, err)
+				}
+			})
+			domain = shortTempDomain(t)
 			binary := filepath.Join(root, "owner.test")
 			raw, err := os.ReadFile(os.Args[0])
 			if err != nil {
@@ -167,7 +185,7 @@ func TestProcessSupportedResumableOwnerKillRemainsUnknownFixture(t *testing.T) {
 				}
 				cmd.Env = append(cmd.Env, v)
 			}
-			cmd.Env = append(cmd.Env, "HOME="+root, "CODEX_HOME="+root+"/codex", "PMX_TEST_RESUMABLE_OWNER="+provider)
+			cmd.Env = append(cmd.Env, "HOME="+root, "CODEX_HOME="+root+"/codex", "PMX_TEST_RESUMABLE_OWNER="+provider, "PMX_TEST_RESUMABLE_ROOT="+domain)
 			stdin, err := cmd.StdinPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -197,7 +215,18 @@ func TestProcessSupportedResumableOwnerKillRemainsUnknownFixture(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Logf("isolated killed-owner provider HOME=%s", ready.Root)
-			defer os.RemoveAll(ready.Root)
+			physicalDomain, err := filepath.EvalSymlinks(domain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			physicalRoot, err := filepath.EvalSymlinks(ready.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			relative, err := filepath.Rel(physicalDomain, physicalRoot)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				t.Fatalf("child fixture root %s is outside parent-owned domain %s: %v", ready.Root, domain, err)
+			}
 			supervisor, _, err := localipc.Process(ready.Snapshot.SupervisorPID)
 			if err != nil {
 				t.Fatal(err)

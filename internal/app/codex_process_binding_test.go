@@ -123,8 +123,14 @@ func newProcessCodexFixture(t *testing.T, command func(string, string, []string)
 
 func newProcessCodexFixtureWithEvents(t *testing.T, command func(string, string, []string) processhost.Command, events int, lifetime ...processOwnerLifetime) *processCodexFixture {
 	t.Helper()
+	return newProcessCodexFixtureInDomain(t, command, events, shortTempDomain(t), lifetime...)
+}
+
+// The caller owns domain, including when it outlives a deliberately killed helper.
+func newProcessCodexFixtureInDomain(t *testing.T, command func(string, string, []string) processhost.Command, events int, domain string, lifetime ...processOwnerLifetime) *processCodexFixture {
+	t.Helper()
 	// Keep copied supervisor/provider paths short on both supported platforms.
-	root := codexHostMoveFixtureShortState(t, shortTempDomain(t))
+	root := codexHostMoveFixtureShortState(t, domain)
 	t.Logf("isolated provider HOME=%s", root)
 	binary := filepath.Join(root, "projmux.test")
 	raw, err := os.ReadFile(os.Args[0])
