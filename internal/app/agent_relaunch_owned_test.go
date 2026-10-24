@@ -51,6 +51,9 @@ func TestOwnedHostTransferActualCLI(t *testing.T) {
 					t.Fatal(beforeHistoryErr)
 				}
 				command := New().agent
+				// Reverse transfers need a real CLI supervisor, not this test
+				// image, whose internal supervise argv would re-enter the suite.
+				command.rebind.create.runtime.Executable = func() (string, error) { return f.binary, nil }
 				reg, err := f.store.LoadReadOnly()
 				if err != nil {
 					t.Fatal(err)
