@@ -248,7 +248,15 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	resolution, err := flags.resolve(selector.VerbDelete, false, registry)
+	var resolution selector.Resolution
+	if verb == deleteVerbUnregister && kind == coremetadata.KindProject && len(refs) > 1 && len(flags.projects) == len(refs) {
+		// Only canonical unregister's positional Project refs fan out. Explicit
+		// --project occurrences (including a scope mixed with refs) and every
+		// deprecated delete spelling retain their existing singular query rules.
+		resolution, err = resolveUnregisterProjectRefs(flags, registry)
+	} else {
+		resolution, err = flags.resolve(selector.VerbDelete, false, registry)
+	}
 	if err != nil {
 		return MapMetadataError(err)
 	}
@@ -386,6 +394,37 @@ func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args
 		}
 	}
 	return nil
+}
+
+// resolveUnregisterProjectRefs unions independently resolved positional refs.
+// It does not widen selector.Query: each probe retains the existing label
+// filters, and the caller still preflights every ref, protection and the full
+// descendant plan before one confirmation and one atomic unregister operation.
+func resolveUnregisterProjectRefs(flags resourceQueryFlags, registry coremetadata.Registry) (selector.Resolution, error) {
+	resolution := selector.Resolution{Kind: coremetadata.KindProject}
+	seen := make(map[string]bool)
+	for _, raw := range flags.targetRefs() {
+		probe := flags.withTargetRefs([]string{raw})
+		query, err := probe.query()
+		if err != nil {
+			return selector.Resolution{}, err
+		}
+		part, err := probe.resolveQuery(registry, query)
+		if err != nil {
+			return selector.Resolution{}, err
+		}
+		for _, match := range part.Matches {
+			if !seen[match.UID] {
+				seen[match.UID] = true
+				resolution.Matches = append(resolution.Matches, match)
+			}
+		}
+	}
+	if err := selector.Enforce(selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindProject},
+		strings.Join(flags.targetRefs(), ", "), resolution); err != nil {
+		return selector.Resolution{}, err
+	}
+	return resolution, nil
 }
 
 // runProjectUnregister is the explicit unregister cell of the Project lifecycle
