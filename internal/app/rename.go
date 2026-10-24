@@ -89,6 +89,7 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 	// the public selector grammar. A Project rename has no enclosing root.
 	flags.managedRootNamespaceScope = kind == coremetadata.KindWindow || kind == coremetadata.KindPane || kind == coremetadata.KindAgent
 	flags.register(fs)
+	flags.registerOutput(fs)
 	name := fs.String("name", "", "the new Projmux metadata.name")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
