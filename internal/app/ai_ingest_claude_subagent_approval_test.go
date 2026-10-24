@@ -617,3 +617,98 @@ func TestClaudeSubagentPermissionTimedOutRequestSurvivesARequestHolder(t *testin
 		t.Fatalf("fence after child-a's answer = %q", fence)
 	}
 }
+
+func claudeSubagentApprovalInteraction(t *testing.T, f *claudeQuietHookFixture) coremetadata.AgentInteractionKind {
+	t.Helper()
+	agent, ok := f.registry.Agent(f.agentUID)
+	if !ok {
+		t.Fatalf("agent %s missing", f.agentUID)
+	}
+	return agent.Status.Interaction.Kind
+}
+
+// claudeSubagentApprovalKept asserts that a subagent's tool on an owned Pane
+// kept the approval badge and interaction for the given reason instead of
+// reaching the operator-answer handler.
+func claudeSubagentApprovalKept(t *testing.T, f *claudeQuietHookFixture, entry aiIngestLogEntry, reason aiIngestReason) {
+	t.Helper()
+	if entry.Result != "quiet" || entry.Reason != reason {
+		t.Fatalf("record = %+v, want quiet %q", entry, reason)
+	}
+	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge = %q, want %q", got, aiBadgeKindApprovalRequired)
+	}
+	if got := claudeSubagentApprovalInteraction(t, f); got != coremetadata.InteractionApprovalRequired {
+		t.Fatalf("interaction = %q, want %q", got, coremetadata.InteractionApprovalRequired)
+	}
+}
+
+// On an owned Pane, child-a's answer under the lock is stopped after its read
+// while child-b's request times out and projects with the fence. child-a then
+// empties the set, writes busy and restores the approval from the fence. Its
+// next tool and child-b's own answer find the fence first, so neither reaches
+// the operator-answer handler that would return the Agent to busy.
+func TestClaudeSubagentPermissionOwnedFenceKeepsTheBadgeAfterTheRestore(t *testing.T) {
+	f := claudeSubagentApprovalFixture(t, "owned")
+	claudeSubagentApprovalRequest(t, f, "child-a")
+	var once sync.Once
+	f.cmd.claudeApprovalLockHooks = &claudeApprovalLockHooks{afterRead: func() {
+		once.Do(func() {
+			claudeBackgroundIngest(t, f, "PermissionRequest", map[string]any{"agent_id": "child-b", "tool_name": "Bash"})
+		})
+	}}
+	entry := claudeBackgroundIngest(t, f, "PostToolUse", map[string]any{"agent_id": "child-a", "tool_name": "Bash"})
+	f.cmd.claudeApprovalLockHooks = nil
+	options := claudeSubagentApprovalPanes[f].pane.options
+	if pending, ok := options[aiPaneApprovalAgentIDsOption]; ok || options[aiPaneApprovalFenceOption] != claudeApprovalFenceSet {
+		t.Fatalf("pending set %q (%v) fence %q after the restore, want an empty set and the fence", pending, ok, options[aiPaneApprovalFenceOption])
+	}
+	claudeSubagentApprovalKept(t, f, entry, aiIngestReasonSubagentApprovalFenced)
+	for _, agentID := range []string{"child-a", "child-b"} {
+		claudeSubagentApprovalKept(t, f, claudeSubagentApprovalToolRan(t, f, "PostToolUse", agentID), aiIngestReasonSubagentApprovalFenced)
+	}
+}
+
+// On an owned Pane waiting on {child-a, child-b}, child-a's answer keeps the
+// badge for child-b, and so does child-a's next tool: it is not in the set,
+// but the set still waits, so the operator-answer handler never sees it.
+func TestClaudeSubagentPermissionOwnedBadgeStaysForAnotherSubagentsTool(t *testing.T) {
+	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
+		t.Run(event, func(t *testing.T) {
+			f := claudeSubagentApprovalFixture(t, "owned")
+			claudeSubagentApprovalRequest(t, f, "child-a")
+			claudeSubagentApprovalRequest(t, f, "child-b")
+			claudeSubagentApprovalKept(t, f, claudeSubagentApprovalToolRan(t, f, event, "child-a"), aiIngestReasonSubagentApprovalPending)
+			claudeSubagentApprovalKept(t, f, claudeSubagentApprovalToolRan(t, f, event, "child-a"), aiIngestReasonSubagentApprovalPending)
+			if pending := claudeSubagentApprovalPanes[f].pane.options[aiPaneApprovalAgentIDsOption]; pending != "child-b" {
+				t.Fatalf("pending set = %q, want child-b", pending)
+			}
+		})
+	}
+}
+
+// On an owned Pane, a subagent's tool whose snapshot shows the approval but
+// whose read under the lock fails keeps the badge and the interaction.
+func TestClaudeSubagentPermissionOwnedBadgeStaysWhenTheLockedReadFails(t *testing.T) {
+	f := claudeSubagentApprovalFixture(t, "owned")
+	claudeSubagentApprovalRequest(t, f, "child-a")
+	read := f.cmd.readCommand
+	reads := 0
+	f.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if a := stripRecordedTmuxRoute(args); name == "tmux" && len(a) == 5 && a[0] == "display-message" && a[3] == claudeQuietHookPane && a[4] == aiHookPaneMarkerFormat {
+			if reads++; reads == 2 {
+				return nil, os.ErrNotExist
+			}
+		}
+		return read(ctx, name, args...)
+	}
+	entry := claudeBackgroundIngest(t, f, "PostToolUse", map[string]any{"agent_id": "child-a", "tool_name": "Bash"})
+	f.cmd.readCommand = read
+	if reads != 2 {
+		t.Fatalf("hook marker reads = %d, want the snapshot and the read under the lock", reads)
+	}
+	claudeSubagentApprovalKept(t, f, entry, aiIngestReasonSubagentApprovalFenced)
+	if pending := claudeSubagentApprovalPanes[f].pane.options[aiPaneApprovalAgentIDsOption]; pending != "child-a" {
+		t.Fatalf("pending set = %q, want child-a", pending)
+	}
+}

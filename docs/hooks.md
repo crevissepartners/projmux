@@ -608,7 +608,11 @@ leaves the set, recorded as `result=quiet` with reason
 set becomes empty, the projection returns to `in_progress` without a
 notification, recorded as `result=state` with reason
 `subagent approval answered`. For an exact owned managed Agent, the
-interaction becomes `in_progress` too.
+interaction becomes `in_progress` too. While a tracked set still waits, a tool
+under a subagent the set does not hold keeps the badge, recorded as
+`result=quiet` with reason `subagent approval still pending`, and does not
+reach the operator-answer handling that would otherwise return an owned
+Agent to `in_progress`.
 
 Requests and answers change the set under a per-Pane lock in the state
 directory (`claude-approval-locks/`, one of 64 files chosen by the Pane's tmux
@@ -620,8 +624,10 @@ request as an extra `result=error` record, both with reason
 `subagent approval lock unavailable`. The request still projects its
 approval, after it sets the internal Pane option `@projmux_ai_approval_fence`.
 No lock holder writes that fence, so a holder judging an older read cannot
-erase it. While the fence is set the Pane is untracked: an answer keeps the
-badge, recorded as `result=quiet` with reason `subagent approval fenced`. An
+erase it. While the fence is set the Pane is untracked: a subagent's tool on
+an approval badge keeps it, whether or not its id is in the set, recorded as
+`result=quiet` with reason `subagent approval fenced`. A failed marker read
+under the lock is handled the same way. An
 answer that already returned the projection to `in_progress` reads the fence
 once more afterwards and, when it is set or cannot be read, restores
 `approval_required` with the same record. Only a main-thread
@@ -637,7 +643,10 @@ pane marker write failure and the earlier set can remain. If a request's fence
 write fails after a lock timeout, its record reports the pane marker write
 failure, and an answer holder that judged an older read can still clear that
 request's badge. A fence stays until the next main-thread request, so until
-then subagent answers on that Pane keep the badge. This rule also covers
+then subagent answers on that Pane keep the badge. Likewise, when a wait ends
+with ids still in the set, for example through a subagent's
+`PermissionDenied`, later subagent tools on that Pane keep the badge until a
+main-thread request or another projection rewrites it. This rule also covers
 a hook that finds no managed binding for its Pane, which projects onto the Pane
 alone, and an owned request answered after its interaction aged out of the
 freshness window. The background fallback above still repairs only

@@ -374,10 +374,12 @@ func claudeApprovalFenced(markers aiHookPaneMarkers) bool {
 // approval wait takes the approval lock; under it the markers are read again,
 // the agent_id leaves the set, and when the set is empty the projection returns
 // to busy, state only. Otherwise it stays awaiting approval for the subagents
-// that still wait. answered is false for every other event, which keeps its
-// existing handling: main-thread tools, ids not in a tracked set, a Pane no
-// longer awaiting approval, and explicit runtime quiet overrides. A lock that
-// cannot be taken, or an approval fence, leaves the badge as it is.
+// that still wait, and so does a tool under a subagent the set does not hold
+// while others still wait. answered is false for every other event, which
+// keeps its existing handling: main-thread tools, an untracked or empty set
+// without a fence, a Pane no longer awaiting approval, and explicit runtime
+// quiet overrides. A lock that cannot be taken, a failed read under it, or an
+// approval fence leaves the badge as it is.
 func (c *aiCommand) ingestClaudeSubagentApprovalAnswered(paneID string, payload claudeHookPayload, metadata map[string]string,
 	action aiHookActionResolution, markers aiHookPaneMarkers,
 ) (answered bool, err error) {
@@ -388,18 +390,27 @@ func (c *aiCommand) ingestClaudeSubagentApprovalAnswered(paneID string, payload 
 		return false, nil
 	}
 	lockErr := c.withClaudeApprovalLock(paneID, func(current aiHookPaneMarkers) {
+		// Once the snapshot showed an approval wait, this decides the event
+		// unless the wait is one the set does not track: a fence or a failed
+		// read, or a set still waiting on other subagents, keeps the badge
+		// rather than letting the operator-answer handler clear it.
 		badge, known := current.value(aiPaneBadgeKindOption)
-		if !known || normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
+		if !known || claudeApprovalFenced(current) {
+			answered = true
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalFenced))
+			return
+		}
+		if normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
 			return
 		}
 		pending, _ := current.value(aiPaneApprovalAgentIDsOption)
 		ids, tracked := parseClaudeApprovalAgentIDs(pending)
-		if !tracked || !slices.Contains(ids, payload.AgentID) {
+		if !tracked || len(ids) == 0 {
 			return
 		}
 		answered = true
-		if claudeApprovalFenced(current) {
-			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalFenced))
+		if !slices.Contains(ids, payload.AgentID) {
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalPending))
 			return
 		}
 		remaining := slices.DeleteFunc(ids, func(id string) bool { return id == payload.AgentID })
