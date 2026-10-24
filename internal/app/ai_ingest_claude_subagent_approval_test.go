@@ -70,17 +70,23 @@ func claudeSubagentApprovalFixture(t *testing.T, mode string) *claudeQuietHookFi
 // hook's marker reads were answered: a fixture that misses them would judge
 // every Pane unknown and prove nothing. Every hook reads the markers once; an
 // approval-related hook reads them once more under the approval lock: a
-// PermissionRequest, or a subagent's tool on a Pane awaiting approval.
+// PermissionRequest, or a subagent's tool on a Pane awaiting approval. An
+// answer that returns the badge to busy reads them a third time for the fence.
 func claudeSubagentApprovalIngest(t *testing.T, f *claudeQuietHookFixture, event string, extra map[string]any) aiIngestLogEntry {
 	t.Helper()
 	state := claudeSubagentApprovalPanes[f]
+	agentID, _ := extra["agent_id"].(string)
+	answer := agentID != "" && (event == "PostToolUse" || event == "PostToolUseFailure") &&
+		state.pane.options[aiPaneBadgeKindOption] == aiBadgeKindApprovalRequired
 	want := 1
-	if agentID, _ := extra["agent_id"].(string); event == "PermissionRequest" || (agentID != "" &&
-		(event == "PostToolUse" || event == "PostToolUseFailure") && state.pane.options[aiPaneBadgeKindOption] == aiBadgeKindApprovalRequired) {
+	if event == "PermissionRequest" || answer {
 		want = 2
 	}
 	before := state.markerReads
 	entry := claudeBackgroundIngest(t, f, event, extra)
+	if answer && state.pane.options[aiPaneBadgeKindOption] == aiBadgeKindInProgress {
+		want = 3
+	}
 	if got := state.markerReads - before; got != want {
 		t.Fatalf("%s answered %d hook marker reads, want %d", event, got, want)
 	}
@@ -508,5 +514,106 @@ func TestClaudeSubagentPermissionAnswerWithoutTheLockKeepsTheBadge(t *testing.T)
 	}
 	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
 		t.Fatalf("badge = %q, want %q", got, aiBadgeKindApprovalRequired)
+	}
+}
+
+// holdClaudeApprovalLock runs holder's hook until it holds the approval lock
+// with the markers read and keeps it there. The returned func releases the
+// holder and waits for its hook to finish.
+func holdClaudeApprovalLock(t *testing.T, holder *claudeQuietHookFixture, data []byte) func() {
+	t.Helper()
+	holding, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	holder.cmd.claudeApprovalLockHooks = &claudeApprovalLockHooks{afterRead: func() {
+		once.Do(func() {
+			close(holding)
+			<-release
+		})
+	}}
+	done := make(chan error, 1)
+	go func() { done <- holder.cmd.ingestClaudeHook(data, holder.explicitPane) }()
+	select {
+	case <-holding:
+	case <-time.After(5 * time.Second):
+		t.Fatal("holder never held the approval lock")
+	}
+	var released sync.Once
+	finish := func() {
+		released.Do(func() {
+			close(release)
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+			holder.cmd.claudeApprovalLockHooks = nil
+		})
+	}
+	t.Cleanup(finish)
+	return finish
+}
+
+// claudeApprovalRequestTimesOut runs a request while another hook holds the
+// Pane's approval lock: it gives up after the wait limit, sets the fence, and
+// projects its approval outside the lock.
+func claudeApprovalRequestTimesOut(t *testing.T, f *claudeQuietHookFixture, pane *claudeSharedApprovalPane, agentID string) {
+	t.Helper()
+	if err := f.cmd.ingestClaudeHook(claudeApprovalHookPayload(t, "PermissionRequest", agentID), f.explicitPane); err != nil {
+		t.Fatal(err)
+	}
+	if fence, _ := pane.option(aiPaneApprovalFenceOption); fence != claudeApprovalFenceSet {
+		t.Fatalf("fence after the timed-out request = %q", fence)
+	}
+	if badge, _ := pane.option(aiPaneBadgeKindOption); badge != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge after the timed-out request = %q", badge)
+	}
+}
+
+// An answer holds the lock with {child-a} read while child-b's request times
+// out and projects outside it. The holder then empties the set and writes
+// busy from its older read, but the fence it reads afterwards restores
+// child-b's approval, and child-b's own answer later keeps it too.
+func TestClaudeSubagentPermissionTimedOutRequestSurvivesAnAnswerHolder(t *testing.T) {
+	first, second, pane := claudeApprovalHookProcesses(t)
+	if err := first.cmd.ingestClaudeHook(claudeApprovalHookPayload(t, "PermissionRequest", "child-a"), first.explicitPane); err != nil {
+		t.Fatal(err)
+	}
+	finish := holdClaudeApprovalLock(t, first, claudeApprovalHookPayload(t, "PostToolUse", "child-a"))
+	claudeApprovalRequestTimesOut(t, second, pane, "child-b")
+	finish()
+	if badge, _ := pane.option(aiPaneBadgeKindOption); badge != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge after the holder answered child-a = %q, want child-b's approval kept", badge)
+	}
+	if err := second.cmd.ingestClaudeHook(claudeApprovalHookPayload(t, "PostToolUse", "child-b"), second.explicitPane); err != nil {
+		t.Fatal(err)
+	}
+	if badge, _ := pane.option(aiPaneBadgeKindOption); badge != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge on a fenced Pane after child-b's tool = %q", badge)
+	}
+	if err := second.cmd.ingestClaudeHook(claudeApprovalHookPayload(t, "PermissionRequest", ""), second.explicitPane); err != nil {
+		t.Fatal(err)
+	}
+	if fence, ok := pane.option(aiPaneApprovalFenceOption); ok {
+		t.Fatalf("fence after a main-thread request = %q", fence)
+	}
+}
+
+// A request holds the lock with a busy Pane read while child-b's request
+// times out and projects outside it. The holder then starts {child-a} from its
+// older read, but child-a's answer cannot clear the badge child-b still needs.
+func TestClaudeSubagentPermissionTimedOutRequestSurvivesARequestHolder(t *testing.T) {
+	first, second, pane := claudeApprovalHookProcesses(t)
+	finish := holdClaudeApprovalLock(t, first, claudeApprovalHookPayload(t, "PermissionRequest", "child-a"))
+	claudeApprovalRequestTimesOut(t, second, pane, "child-b")
+	finish()
+	if pending, _ := pane.option(aiPaneApprovalAgentIDsOption); pending != "child-a" {
+		t.Fatalf("pending set the holder wrote = %q, want its older read's set", pending)
+	}
+	if err := first.cmd.ingestClaudeHook(claudeApprovalHookPayload(t, "PostToolUse", "child-a"), first.explicitPane); err != nil {
+		t.Fatal(err)
+	}
+	if badge, _ := pane.option(aiPaneBadgeKindOption); badge != aiBadgeKindApprovalRequired {
+		t.Fatalf("badge after child-a's answer = %q, want child-b's approval kept", badge)
+	}
+	if fence, _ := pane.option(aiPaneApprovalFenceOption); fence != claudeApprovalFenceSet {
+		t.Fatalf("fence after child-a's answer = %q", fence)
 	}
 }

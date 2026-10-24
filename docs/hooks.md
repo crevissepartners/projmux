@@ -617,15 +617,27 @@ a request also applies its approval projection there, so concurrent hooks see
 each other's finished state. A hook that cannot take the lock within 2 seconds
 never clears the badge. An answer is then recorded as `result=quiet`, and a
 request as an extra `result=error` record, both with reason
-`subagent approval lock unavailable`; the request still projects its approval
-and leaves the set untracked. Only approval-related hooks take the lock and
-read the markers a second time: a `PermissionRequest`, or a subagent's
-`PostToolUse`/`PostToolUseFailure` whose first read shows `approval_required`.
-Every other hook adds no marker read, lock, or write. Unanswered requests,
+`subagent approval lock unavailable`. The request still projects its
+approval, after it sets the internal Pane option `@projmux_ai_approval_fence`.
+No lock holder writes that fence, so a holder judging an older read cannot
+erase it. While the fence is set the Pane is untracked: an answer keeps the
+badge, recorded as `result=quiet` with reason `subagent approval fenced`. An
+answer that already returned the projection to `in_progress` reads the fence
+once more afterwards and, when it is set or cannot be read, restores
+`approval_required` with the same record. Only a main-thread
+`PermissionRequest` clears the fence. Only approval-related hooks take the
+lock and read the markers a second time: a `PermissionRequest`, or a
+subagent's `PostToolUse`/`PostToolUseFailure` whose first read shows
+`approval_required`; an answer that empties the set reads them a third time
+for the fence. Every other hook adds no marker read, lock, or write. Unanswered requests,
 main-thread requests and their existing operator-answer handling, untracked
 Panes, and explicit runtime `quiet` overrides keep their earlier behavior. If
 the main-thread request's write to empty the set fails, its record reports the
-pane marker write failure and the earlier set can remain. This rule also covers
+pane marker write failure and the earlier set can remain. If a request's fence
+write fails after a lock timeout, its record reports the pane marker write
+failure, and an answer holder that judged an older read can still clear that
+request's badge. A fence stays until the next main-thread request, so until
+then subagent answers on that Pane keep the badge. This rule also covers
 a hook that finds no managed binding for its Pane, which projects onto the Pane
 alone, and an owned request answered after its interaction aged out of the
 freshness window. The background fallback above still repairs only

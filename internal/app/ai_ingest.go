@@ -671,8 +671,9 @@ const aiHookPaneMarkerSeparator = "__PROJMUX_TMUX_AI_MARK_SEP__"
 
 // aiHookPaneMarkerOptions are the markers a hook compares before it writes.
 // The resume timestamp is not among them: it follows the resume id and source.
-// The badge kind and the pending subagent approvals are read, never recorded,
-// here: the Claude approval handlers judge them from this same read.
+// The badge kind, the pending subagent approvals and the approval fence are
+// read, never recorded, here: the Claude approval handlers judge them from this
+// same read.
 var aiHookPaneMarkerOptions = []string{
 	aiPaneHookActiveOption,
 	aiPaneManagedOption,
@@ -685,6 +686,7 @@ var aiHookPaneMarkerOptions = []string{
 	aiPaneResumeSourceOption,
 	aiPaneBadgeKindOption,
 	aiPaneApprovalAgentIDsOption,
+	aiPaneApprovalFenceOption,
 }
 
 var aiHookPaneMarkerFormat = func() string {
