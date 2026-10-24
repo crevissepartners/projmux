@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,32 +13,28 @@ import (
 
 const claudeSubagentApprovalAgentID = "a3b0-workflow-child"
 
-// claudeSubagentApprovalMarkerReads counts each fixture's hook marker reads.
-// The tests using it do not run in parallel.
-var claudeSubagentApprovalMarkerReads = map[*claudeQuietHookFixture]int{}
+// claudeSubagentApprovalPane is the emulated tmux Pane of one fixture and the
+// number of hook marker reads it answered. The tests using it do not run in
+// parallel.
+type claudeSubagentApprovalPane struct {
+	pane        *hookMarkerPane
+	markerReads int
+}
+
+var claudeSubagentApprovalPanes = map[*claudeQuietHookFixture]*claudeSubagentApprovalPane{}
 
 // claudeSubagentApprovalFixture builds the Pane a background Workflow runs in.
 // "owned" keeps the exact Agent->Pane binding; "binding_miss" is the same
 // managed Agent whose hook cannot read the Pane's uid option, so every hook
 // projects onto the Pane alone and the Registry is never written; "unbound" is
-// a Pane with no Agent at all. The hook marker read answers from the Pane
-// options the fixture recorded so far, as tmux would.
+// a Pane with no Agent at all. installHookMarkerPane answers the hook marker
+// read from the options earlier hooks wrote, as tmux would.
 func claudeSubagentApprovalFixture(t *testing.T, mode string) *claudeQuietHookFixture {
 	t.Helper()
 	f := newClaudeQuietHookFixture(t, mode != "unbound")
 	read := f.cmd.readCommand
 	lookup := claudeIngestReadCommand(claudeQuietHookPane)
 	f.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		if marker := stripRecordedTmuxRoute(args); name == "tmux" && len(marker) == 5 && marker[0] == "display-message" &&
-			marker[3] == claudeQuietHookPane && marker[4] == aiHookPaneMarkerFormat {
-			claudeSubagentApprovalMarkerReads[f]++
-			state := claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands)
-			fields := []string{claudeQuietHookPane}
-			for _, option := range aiHookPaneMarkerOptions {
-				fields = append(fields, state[option])
-			}
-			return []byte(strings.Join(fields, aiHookPaneMarkerSeparator) + "\n"), nil
-		}
 		if mode == "binding_miss" && name == "tmux" && len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
 			return nil, os.ErrNotExist
 		}
@@ -48,6 +43,17 @@ func claudeSubagentApprovalFixture(t *testing.T, mode string) *claudeQuietHookFi
 		}
 		return lookup(ctx, name, args...)
 	}
+	state := &claudeSubagentApprovalPane{pane: installHookMarkerPane(f.cmd, claudeQuietHookPane)}
+	marked := f.cmd.readCommand
+	f.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, err := marked(ctx, name, args...)
+		if marker := stripRecordedTmuxRoute(args); err == nil && name == "tmux" && len(marker) == 5 &&
+			marker[0] == "display-message" && marker[3] == claudeQuietHookPane && marker[4] == aiHookPaneMarkerFormat {
+			state.markerReads++
+		}
+		return out, err
+	}
+	claudeSubagentApprovalPanes[f] = state
 	if mode != "unbound" {
 		f.ingest(t, "PreToolUse")
 		setClaudeQuietInteraction(t, f, coremetadata.InteractionInProgress)
@@ -55,9 +61,23 @@ func claudeSubagentApprovalFixture(t *testing.T, mode string) *claudeQuietHookFi
 	return f
 }
 
+// claudeSubagentApprovalIngest is claudeBackgroundIngest that fails unless the
+// hook's one marker read was answered: a fixture that misses that read would
+// judge every Pane unknown and prove nothing.
+func claudeSubagentApprovalIngest(t *testing.T, f *claudeQuietHookFixture, event string, extra map[string]any) aiIngestLogEntry {
+	t.Helper()
+	state := claudeSubagentApprovalPanes[f]
+	before := state.markerReads
+	entry := claudeBackgroundIngest(t, f, event, extra)
+	if got := state.markerReads - before; got != 1 {
+		t.Fatalf("%s answered %d hook marker reads, want exactly 1", event, got)
+	}
+	return entry
+}
+
 func claudeSubagentApprovalBadge(t *testing.T, f *claudeQuietHookFixture) string {
 	t.Helper()
-	return claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands)[aiPaneBadgeKindOption]
+	return claudeSubagentApprovalPanes[f].pane.options[aiPaneBadgeKindOption]
 }
 
 // The issue #1644 order: a main-thread Stop leaves a Workflow in flight, a
@@ -69,15 +89,18 @@ func TestClaudeSubagentPermissionAnswerReturnsTheBadgeToBusy(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := claudeSubagentApprovalFixture(t, mode)
 			child := map[string]any{"agent_id": claudeSubagentApprovalAgentID, "agent_type": "workflow-subagent"}
-			claudeBackgroundIngest(t, f, "Stop", map[string]any{"background_tasks": []any{map[string]any{"type": "workflow", "status": "running"}}})
-			claudeBackgroundIngest(t, f, "PreToolUse", child)
-			claudeBackgroundIngest(t, f, "PermissionRequest", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "agent_type": "workflow-subagent",
+			claudeSubagentApprovalIngest(t, f, "Stop", map[string]any{"background_tasks": []any{map[string]any{"type": "workflow", "status": "running"}}})
+			claudeSubagentApprovalIngest(t, f, "PreToolUse", child)
+			claudeSubagentApprovalIngest(t, f, "PermissionRequest", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "agent_type": "workflow-subagent",
 				"tool_name": "Bash", "tool_input": map[string]any{"command": "go test ./..."}})
 			if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
 				t.Fatalf("badge after the request = %q, want %q", got, aiBadgeKindApprovalRequired)
 			}
-			claudeBackgroundIngest(t, f, "Notification", map[string]any{"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"})
-			claudeBackgroundIngest(t, f, "PostToolUse", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "agent_type": "workflow-subagent", "tool_name": "Bash"})
+			claudeSubagentApprovalIngest(t, f, "Notification", map[string]any{"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"})
+			entry := claudeSubagentApprovalIngest(t, f, "PostToolUse", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "agent_type": "workflow-subagent", "tool_name": "Bash"})
+			if entry.Result != "state" || entry.Reason != aiIngestReasonSubagentApprovalAnswered {
+				t.Fatalf("answer record = %+v, want the subagent approval answer", entry)
+			}
 
 			if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
 				t.Fatalf("badge after the answered tool ran = %q, want %q", got, aiBadgeKindInProgress)
@@ -104,11 +127,18 @@ func TestClaudeSubagentPermissionAnsweredAfterTheFreshnessWindowReturnsTheBadgeT
 	f := claudeSubagentApprovalFixture(t, "owned")
 	now := claudeQuietHookClock
 	f.cmd.now = func() time.Time { return now }
-	claudeBackgroundIngest(t, f, "PermissionRequest", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "tool_name": "Bash"})
+	claudeSubagentApprovalIngest(t, f, "PermissionRequest", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "tool_name": "Bash"})
 	now = now.Add(coremetadata.AgentInteractionFreshFor + time.Minute)
-	claudeBackgroundIngest(t, f, "PostToolUse", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "tool_name": "Bash"})
+	entry := claudeSubagentApprovalIngest(t, f, "PostToolUse", map[string]any{"agent_id": claudeSubagentApprovalAgentID, "tool_name": "Bash"})
 	if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
 		t.Fatalf("badge = %q, want %q", got, aiBadgeKindInProgress)
+	}
+	if entry.Result != "state" || entry.Reason != aiIngestReasonSubagentApprovalAnswered {
+		t.Fatalf("answer record = %+v, want the subagent approval answer", entry)
+	}
+	agent, _ := f.registry.Agent(f.agentUID)
+	if agent.Status.Interaction.Kind != coremetadata.InteractionInProgress {
+		t.Fatalf("interaction = %+v, want in_progress", agent.Status.Interaction)
 	}
 }
 
@@ -118,7 +148,7 @@ func claudeSubagentApprovalRequest(t *testing.T, f *claudeQuietHookFixture, agen
 	if agentID != "" {
 		extra["agent_id"] = agentID
 	}
-	return claudeBackgroundIngest(t, f, "PermissionRequest", extra)
+	return claudeSubagentApprovalIngest(t, f, "PermissionRequest", extra)
 }
 
 func claudeSubagentApprovalToolRan(t *testing.T, f *claudeQuietHookFixture, event, agentID string) aiIngestLogEntry {
@@ -127,7 +157,7 @@ func claudeSubagentApprovalToolRan(t *testing.T, f *claudeQuietHookFixture, even
 	if agentID != "" {
 		extra["agent_id"] = agentID
 	}
-	return claudeBackgroundIngest(t, f, event, extra)
+	return claudeSubagentApprovalIngest(t, f, event, extra)
 }
 
 // Several subagents can wait at once: the badge returns to busy only when the
@@ -141,7 +171,6 @@ func TestClaudeSubagentPermissionAnswersClearTheBadgeOnlyWhenNoneWait(t *testing
 				claudeSubagentApprovalRequest(t, f, "child-a")
 				claudeSubagentApprovalRequest(t, f, "child-b")
 				requested := len(f.cmd.notifyStore.(*stubNotifyStore).pushed)
-				reads := claudeSubagentApprovalMarkerReads[f]
 				entry := claudeSubagentApprovalToolRan(t, f, event, "child-a")
 				if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindApprovalRequired {
 					t.Fatalf("badge with child-b still waiting = %q", got)
@@ -156,17 +185,14 @@ func TestClaudeSubagentPermissionAnswersClearTheBadgeOnlyWhenNoneWait(t *testing
 					}
 				}
 				entry = claudeSubagentApprovalToolRan(t, f, event, "child-b")
-				if got := claudeSubagentApprovalMarkerReads[f] - reads; got != 2 {
-					t.Fatalf("marker reads for two answers = %d, want one per hook", got)
-				}
 				if got := claudeSubagentApprovalBadge(t, f); got != aiBadgeKindInProgress {
 					t.Fatalf("badge after the last answer = %q", got)
 				}
 				if entry.Result != "state" || entry.Reason != aiIngestReasonSubagentApprovalAnswered || entry.AgentID != "child-b" {
 					t.Fatalf("last answer record = %+v", entry)
 				}
-				if state := claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands); state[aiPaneApprovalAgentIDsOption] != "" {
-					t.Fatalf("pending set after the last answer = %q", state[aiPaneApprovalAgentIDsOption])
+				if pending, ok := claudeSubagentApprovalPanes[f].pane.options[aiPaneApprovalAgentIDsOption]; ok {
+					t.Fatalf("pending set after the last answer = %q", pending)
 				}
 				if got := len(f.cmd.notifyStore.(*stubNotifyStore).pushed); got != requested {
 					t.Fatalf("answers pushed %d notifications, want none", got-requested)
@@ -186,8 +212,8 @@ func TestClaudeSubagentPermissionBadgeStaysWithoutItsAnswer(t *testing.T) {
 	}{
 		{"unanswered", func(t *testing.T, f *claudeQuietHookFixture) {
 			claudeSubagentApprovalRequest(t, f, "child-a")
-			claudeBackgroundIngest(t, f, "PreToolUse", map[string]any{"agent_id": "child-a"})
-			claudeBackgroundIngest(t, f, "Notification", map[string]any{"notification_type": "permission_prompt"})
+			claudeSubagentApprovalIngest(t, f, "PreToolUse", map[string]any{"agent_id": "child-a"})
+			claudeSubagentApprovalIngest(t, f, "Notification", map[string]any{"notification_type": "permission_prompt"})
 		}},
 		{"other_subagent_tool", func(t *testing.T, f *claudeQuietHookFixture) {
 			claudeSubagentApprovalRequest(t, f, "child-a")
@@ -196,8 +222,8 @@ func TestClaudeSubagentPermissionBadgeStaysWithoutItsAnswer(t *testing.T) {
 		{"main_thread_request_empties_the_set", func(t *testing.T, f *claudeQuietHookFixture) {
 			claudeSubagentApprovalRequest(t, f, "child-a")
 			claudeSubagentApprovalRequest(t, f, "")
-			if state := claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands); state[aiPaneApprovalAgentIDsOption] != "" {
-				t.Fatalf("pending set after a main-thread request = %q", state[aiPaneApprovalAgentIDsOption])
+			if pending, ok := claudeSubagentApprovalPanes[f].pane.options[aiPaneApprovalAgentIDsOption]; ok {
+				t.Fatalf("pending set after a main-thread request = %q", pending)
 			}
 			claudeSubagentApprovalToolRan(t, f, "PostToolUse", "child-a")
 		}},
