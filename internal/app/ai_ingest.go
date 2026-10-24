@@ -596,9 +596,10 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 
 // markAIHookPaneBinding is markAIHookPane that also returns the exact
 // Agent->Pane binding the marking already read, so a handler can judge the
-// Agent without a second Registry read. ok is false unless the Pane is bound
-// to a Running Agent of this provider.
-func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionID, transcriptPath string) (managedAgentBinding, bool) {
+// Agent without a second Registry read, and the markers the marking read
+// before it wrote, so a handler can judge the Pane without a second tmux read.
+// ok is false unless the Pane is bound to a Running Agent of this provider.
+func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionID, transcriptPath string) (managedAgentBinding, bool, aiHookPaneMarkers) {
 	// Every set-option makes tmux redraw every client, and the first redraw of a
 	// second forks each `#()` job of the status line. Most hooks arrive on a Pane
 	// that already carries these exact markers, so read them once and write only
@@ -641,9 +642,9 @@ func (c *aiCommand) markAIHookPaneBinding(paneID, agent, cwd, threadID, sessionI
 			ThreadID:       threadID,
 			TranscriptPath: transcriptPath,
 		})
-		return binding, true
+		return binding, true, current
 	}
-	return managedAgentBinding{}, false
+	return managedAgentBinding{}, false, current
 }
 
 // writeAIHookResumeMetadata writes the resume pointer as one unit: its id, its
@@ -670,6 +671,9 @@ const aiHookPaneMarkerSeparator = "__PROJMUX_TMUX_AI_MARK_SEP__"
 
 // aiHookPaneMarkerOptions are the markers a hook compares before it writes.
 // The resume timestamp is not among them: it follows the resume id and source.
+// The badge kind, the pending subagent approvals and the approval fence are
+// read, never recorded, here: the Claude approval handlers judge them from this
+// same read.
 var aiHookPaneMarkerOptions = []string{
 	aiPaneHookActiveOption,
 	aiPaneManagedOption,
@@ -680,6 +684,9 @@ var aiHookPaneMarkerOptions = []string{
 	aiPaneTranscriptPathOption,
 	aiPaneResumeIDOption,
 	aiPaneResumeSourceOption,
+	aiPaneBadgeKindOption,
+	aiPaneApprovalAgentIDsOption,
+	aiPaneApprovalFenceOption,
 }
 
 var aiHookPaneMarkerFormat = func() string {
@@ -722,6 +729,15 @@ func (c *aiCommand) readAIHookPaneMarkers(paneID string) aiHookPaneMarkers {
 		values[option] = fields[i+1]
 	}
 	return aiHookPaneMarkers{values: values}
+}
+
+// value reports what the read found for option; ok is false when the read
+// failed and the Pane's value is unknown.
+func (m aiHookPaneMarkers) value(option string) (string, bool) {
+	if m.values == nil {
+		return "", false
+	}
+	return m.values[option], true
 }
 
 // holds reports whether the read found option already set to value.

@@ -1,15 +1,22 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	localstate "github.com/crevissepartners/projmux/internal/state"
+	"golang.org/x/sys/unix"
 )
 
 const claudeTranscriptTailLimit = 256 * 1024
@@ -56,7 +63,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	}
 	defer c.flushPendingAgentSessionRef(paneID)
 
-	binding, owned := c.markAIHookPaneBinding(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
+	binding, owned, markers := c.markAIHookPaneBinding(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	metadata := payload.claudeMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderClaude, payload.EventName)
 
@@ -83,6 +90,9 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "PostToolUse", "PostToolUseFailure", "PermissionDenied", "ElicitationResult":
 		if payload.EventName == "PostToolUse" || payload.EventName == "PostToolUseFailure" {
 			c.closeClaudePermissionAnsweredInTerminal(data, payload)
+			if answered, err := c.ingestClaudeSubagentApprovalAnswered(paneID, payload, metadata, action, markers); answered {
+				return err
+			}
 		}
 		return c.ingestClaudeOperatorDialogClosed(paneID, payload, metadata, action, binding, owned)
 	case "PreToolUse", "PostToolBatch", "SubagentStart":
@@ -168,14 +178,277 @@ func (c *aiCommand) ingestClaudePermissionRequest(paneID string, payload claudeH
 		return nil
 	}
 	body := formatClaudePermissionNotifyBody(payload)
-	return c.emitClaudeHookStatus(paneID, payload, action, attentionNotifyInput{
+	input := attentionNotifyInput{
 		ID:        claudePermissionNotifyID(payload),
 		Text:      body.Text,
 		Severity:  body.Severity,
 		Metadata:  mergeAINotifyBodyMetadata(metadata, body),
 		Force:     true,
 		BadgeKind: aiBadgeKindApprovalRequired,
+	}
+	// The set and the approval projection change together under the Pane's
+	// approval lock, so a concurrent request or answer always reads the other's
+	// finished state.
+	var emitErr error
+	lockErr := c.withClaudeApprovalLock(paneID, func(current aiHookPaneMarkers) {
+		c.recordClaudeApprovalAgentID(paneID, payload.AgentID, current)
+		emitErr = c.emitClaudeHookStatus(paneID, payload, action, input)
 	})
+	if lockErr == nil {
+		return emitErr
+	}
+	// Without the lock the approval is still projected, after the fence: a
+	// holder may be judging an older read and overwrite the set, but it never
+	// writes the fence, and an answer that wrote busy reads the fence afterwards.
+	c.noteAIPaneMarkerWriteFailure(c.setAIPaneOption(paneID, aiPaneApprovalFenceOption, claudeApprovalFenceSet))
+	if err := c.emitClaudeHookStatus(paneID, payload, action, input); err != nil {
+		return err
+	}
+	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestReasonSubagentApprovalLocked))
+	return nil
+}
+
+// The pending subagent approvals are a bounded set of agent_ids on an internal
+// Pane option. It says which subagents' requests the current approval_required
+// projection is waiting on, so a tool that runs under one of them after its
+// answer can tell whether anything is still waiting. A Pane that cannot say
+// that holds the untracked value, and an untracked or absent set never clears
+// a badge: the projection then keeps its earlier behavior.
+const (
+	claudeApprovalAgentIDsLimit     = 8
+	claudeApprovalAgentIDsUntracked = "*"
+	claudeApprovalAgentIDsSeparator = ","
+)
+
+func claudeApprovalAgentIDTrackable(agentID string) bool {
+	if agentID == "" || len(agentID) > 128 {
+		return false
+	}
+	for _, r := range agentID {
+		if r <= ' ' || r == 0x7f || r == ',' || r == '*' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseClaudeApprovalAgentIDs returns the tracked set; tracked is false for
+// the untracked value and anything this code did not write.
+func parseClaudeApprovalAgentIDs(value string) (ids []string, tracked bool) {
+	if value == "" {
+		return nil, true
+	}
+	ids = strings.Split(value, claudeApprovalAgentIDsSeparator)
+	if len(ids) > claudeApprovalAgentIDsLimit {
+		return nil, false
+	}
+	for _, id := range ids {
+		if !claudeApprovalAgentIDTrackable(id) {
+			return nil, false
+		}
+	}
+	return ids, true
+}
+
+// claudeApprovalLockWaitLimit bounds how long an approval hook waits for the
+// Pane's approval lock. The holder re-reads the markers, updates the set and
+// applies one projection; a request's projection includes its notification,
+// so the hold is not bounded by this limit. The hook itself runs synchronously
+// inside the provider, so a slow holder must not stall it: a request that
+// gives up sets the approval fence instead.
+const claudeApprovalLockWaitLimit = 2 * time.Second
+
+// The approval fence is a Pane option only a request that could not take the
+// approval lock sets, before it projects approval_required. No lock holder
+// writes it, so a holder judging an older read cannot erase it. While it is
+// set, the Pane is untracked: no answer clears the badge, and an answer that
+// already wrote busy restores the approval when it reads the fence afterwards.
+// Only a main-thread request, which empties the set under the lock, clears it.
+const claudeApprovalFenceSet = "1"
+
+// claudeApprovalLockBuckets bounds the lock files: tmux Pane ids only grow, so
+// one file per Pane would grow without end, and lock files are never removed.
+// Each Pane maps to exactly one bucket, so its hooks are always serialized;
+// unrelated Panes that share a bucket only wait for each other's hold.
+const claudeApprovalLockBuckets = 64
+
+type claudeApprovalLockHooks struct {
+	contended func()
+	afterRead func()
+}
+
+// claudeApprovalLockPath names the lock of the exact Pane the hook writes: the
+// tmux route its option writes use, and the Pane id on that server.
+func (c *aiCommand) claudeApprovalLockPath(paneID string) (string, error) {
+	stateDir, err := c.aiStateDir()
+	if err != nil {
+		return "", err
+	}
+	route, refusal := c.aiPaneOptionRoute(paneID)
+	if refusal != nil {
+		return "", errAIPaneWriteUnavailable
+	}
+	sum := sha256.Sum256([]byte(strings.Join(append(slices.Clone(route.transport.Args()), paneID), "\x00")))
+	bucket := binary.BigEndian.Uint32(sum[:4]) % claudeApprovalLockBuckets
+	return filepath.Join(stateDir, "claude-approval-locks", fmt.Sprintf("pane-%02d.lock", bucket)), nil
+}
+
+// withClaudeApprovalLock runs fn under the Pane's approval lock with markers
+// re-read inside it, so fn judges the Pane as the previous holder left it
+// rather than as the hook's earlier snapshot saw it.
+func (c *aiCommand) withClaudeApprovalLock(paneID string, fn func(aiHookPaneMarkers)) error {
+	path, err := c.claudeApprovalLockPath(paneID)
+	if err != nil {
+		return err
+	}
+	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	var contended func()
+	if c.claudeApprovalLockHooks != nil {
+		contended = c.claudeApprovalLockHooks.contended
+	}
+	lock, err := localstate.AcquireFileLock(path, claudeApprovalLockWaitLimit, contended)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		_ = lock.Close()
+	}()
+	current := c.readAIHookPaneMarkers(paneID)
+	if c.claudeApprovalLockHooks != nil && c.claudeApprovalLockHooks.afterRead != nil {
+		c.claudeApprovalLockHooks.afterRead()
+	}
+	fn(current)
+	return nil
+}
+
+// recordClaudeApprovalAgentID updates the pending set before a PermissionRequest
+// projects approval_required, judging the markers read under the approval
+// lock. A main-thread request always tries to empty the set and clear the
+// approval fence, so no subagent answer can clear the badge it raises. A
+// subagent request starts a new set when the Pane was not already awaiting
+// approval, joins a tracked set when it was, and otherwise leaves the Pane
+// untracked: an approval wait the set does not account for, an overflow, an id
+// it cannot hold, or a Pane whose markers could not be read.
+func (c *aiCommand) recordClaudeApprovalAgentID(paneID, agentID string, markers aiHookPaneMarkers) {
+	current, known := markers.value(aiPaneApprovalAgentIDsOption)
+	if agentID == "" {
+		if !known || current != "" {
+			c.noteAIPaneMarkerWriteFailure(c.clearAIPaneOption(paneID, aiPaneApprovalAgentIDsOption))
+		}
+		if fence, known := markers.value(aiPaneApprovalFenceOption); !known || fence != "" {
+			c.noteAIPaneMarkerWriteFailure(c.clearAIPaneOption(paneID, aiPaneApprovalFenceOption))
+		}
+		return
+	}
+	next := claudeApprovalAgentIDsUntracked
+	if badge, _ := markers.value(aiPaneBadgeKindOption); known && claudeApprovalAgentIDTrackable(agentID) {
+		if normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
+			next = agentID
+		} else if ids, tracked := parseClaudeApprovalAgentIDs(current); tracked && len(ids) > 0 {
+			if !slices.Contains(ids, agentID) {
+				ids = append(ids, agentID)
+			}
+			if len(ids) <= claudeApprovalAgentIDsLimit {
+				next = strings.Join(ids, claudeApprovalAgentIDsSeparator)
+			}
+		}
+	}
+	if !known || current != next {
+		c.recordAIPaneOption(paneID, aiPaneApprovalAgentIDsOption, next)
+	}
+}
+
+// claudeApprovalFenced reports whether a request that could not take the
+// approval lock may still be waiting: the fence is set, or the read failed.
+func claudeApprovalFenced(markers aiHookPaneMarkers) bool {
+	fence, known := markers.value(aiPaneApprovalFenceOption)
+	return !known || fence != ""
+}
+
+// ingestClaudeSubagentApprovalAnswered handles a PostToolUse or
+// PostToolUseFailure under a subagent whose permission request the Pane still
+// awaits: its request was answered. Only an event whose snapshot shows an
+// approval wait takes the approval lock; under it the markers are read again,
+// the agent_id leaves the set, and when the set is empty the projection returns
+// to busy, state only. Otherwise it stays awaiting approval for the subagents
+// that still wait, and so does a tool under a subagent the set does not hold
+// while others still wait. answered is false for every other event, which
+// keeps its existing handling: main-thread tools, an untracked or empty set
+// without a fence, a Pane no longer awaiting approval, and explicit runtime
+// quiet overrides. A lock that cannot be taken, a failed read under it, or an
+// approval fence leaves the badge as it is.
+func (c *aiCommand) ingestClaudeSubagentApprovalAnswered(paneID string, payload claudeHookPayload, metadata map[string]string,
+	action aiHookActionResolution, markers aiHookPaneMarkers,
+) (answered bool, err error) {
+	if payload.AgentID == "" || (action.Action == aiHookActionQuiet && action.Source == aiHookActionSourceRuntime) {
+		return false, nil
+	}
+	if badge, known := markers.value(aiPaneBadgeKindOption); !known || normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
+		return false, nil
+	}
+	lockErr := c.withClaudeApprovalLock(paneID, func(current aiHookPaneMarkers) {
+		// Once the snapshot showed an approval wait, this decides the event
+		// unless the wait is one the set does not track: a fence or a failed
+		// read, or a set still waiting on other subagents, keeps the badge
+		// rather than letting the operator-answer handler clear it.
+		badge, known := current.value(aiPaneBadgeKindOption)
+		if !known || claudeApprovalFenced(current) {
+			answered = true
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalFenced))
+			return
+		}
+		if normalizeAIBadgeKind(badge) != aiBadgeKindApprovalRequired {
+			return
+		}
+		pending, _ := current.value(aiPaneApprovalAgentIDsOption)
+		ids, tracked := parseClaudeApprovalAgentIDs(pending)
+		if !tracked || len(ids) == 0 {
+			return
+		}
+		answered = true
+		if !slices.Contains(ids, payload.AgentID) {
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalPending))
+			return
+		}
+		remaining := slices.DeleteFunc(ids, func(id string) bool { return id == payload.AgentID })
+		if len(remaining) > 0 {
+			c.recordAIPaneOption(paneID, aiPaneApprovalAgentIDsOption, strings.Join(remaining, claudeApprovalAgentIDsSeparator))
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalPending))
+			return
+		}
+		c.noteAIPaneMarkerWriteFailure(c.clearAIPaneOption(paneID, aiPaneApprovalAgentIDsOption))
+		if err = c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{
+			Metadata:  metadata,
+			BadgeKind: aiBadgeKindInProgress,
+		}); err != nil {
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
+			return
+		}
+		// A request that gave up on the lock sets the fence before it projects
+		// approval_required. tmux applies commands in order, so if this read
+		// misses the fence, that projection lands after busy; if it finds it,
+		// the approval is restored here. Either way the request's wait stays.
+		if claudeApprovalFenced(c.readAIHookPaneMarkers(paneID)) {
+			if err = c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
+				Metadata:  metadata,
+				BadgeKind: aiBadgeKindApprovalRequired,
+			}); err != nil {
+				c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
+				return
+			}
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalFenced))
+			return
+		}
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiIngestReasonSubagentApprovalAnswered))
+	})
+	if lockErr != nil {
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonSubagentApprovalLocked))
+		return true, nil
+	}
+	return answered, err
 }
 
 func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution, binding managedAgentBinding, owned bool) error {

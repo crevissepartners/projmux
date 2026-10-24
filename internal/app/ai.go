@@ -64,6 +64,8 @@ const (
 	aiPaneResumeIDOption         = mutationruntime.AiPaneResumeIDOption
 	aiPaneResumeSourceOption     = mutationruntime.AiPaneResumeSourceOption
 	aiPaneTranscriptPathOption   = "@projmux_ai_transcript_path"
+	aiPaneApprovalAgentIDsOption = "@projmux_ai_approval_agent_ids"
+	aiPaneApprovalFenceOption    = "@projmux_ai_approval_fence"
 	aiPaneResumeUpdatedAtOption  = mutationruntime.AiPaneResumeUpdatedAtOption
 
 	canonicalCreateTargetClientEnv = keybinding.CanonicalCreateTargetClientEnv
@@ -143,6 +145,9 @@ type aiCommand struct {
 	// later. See honestAIIngestResult.
 	paneWriteMu      sync.Mutex
 	paneWriteFailure string
+	// claudeApprovalLockHooks observes the pending subagent approval lock in
+	// tests; nil in production.
+	claudeApprovalLockHooks *claudeApprovalLockHooks
 }
 
 func newAICommand() *aiCommand {
@@ -213,6 +218,7 @@ func (c *aiCommand) cloneSeams() *aiCommand {
 		paneDelete:                    c.paneDelete,
 		heldRelease:                   c.heldRelease,
 		permissionAnsweredInTerminal:  c.permissionAnsweredInTerminal,
+		claudeApprovalLockHooks:       c.claudeApprovalLockHooks,
 	}
 }
 

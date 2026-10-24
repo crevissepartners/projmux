@@ -106,6 +106,11 @@ const (
 	aiIngestReasonPaneNotFound    aiIngestReason = "pane not found"
 	aiIngestReasonHighVolumeEvent aiIngestReason = "high-volume event"
 	aiIngestReasonInvocationStart aiIngestReason = "invocation started"
+
+	aiIngestReasonSubagentApprovalAnswered aiIngestReason = "subagent approval answered"
+	aiIngestReasonSubagentApprovalPending  aiIngestReason = "subagent approval still pending"
+	aiIngestReasonSubagentApprovalLocked   aiIngestReason = "subagent approval lock unavailable"
+	aiIngestReasonSubagentApprovalFenced   aiIngestReason = "subagent approval fenced"
 )
 
 // aiIngestReasonUnclassified is what a value outside the vocabulary becomes.
@@ -200,6 +205,10 @@ var aiIngestReasons = func() []aiIngestReason {
 		aiIngestReasonPaneNotFound,
 		aiIngestReasonHighVolumeEvent,
 		aiIngestReasonInvocationStart,
+		aiIngestReasonSubagentApprovalAnswered,
+		aiIngestReasonSubagentApprovalPending,
+		aiIngestReasonSubagentApprovalLocked,
+		aiIngestReasonSubagentApprovalFenced,
 
 		aiIngestReasonUnclassified,
 	}
