@@ -217,6 +217,7 @@ func (c *aiCommand) cloneSeams() *aiCommand {
 		paneDelete:                    c.paneDelete,
 		heldRelease:                   c.heldRelease,
 		permissionAnsweredInTerminal:  c.permissionAnsweredInTerminal,
+		claudeApprovalLockHooks:       c.claudeApprovalLockHooks,
 	}
 }
 

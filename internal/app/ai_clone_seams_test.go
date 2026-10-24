@@ -172,6 +172,7 @@ func fullyWiredAICommandFixture(t *testing.T) *aiCommand {
 			launch: func(string) error { return nil },
 		},
 		permissionAnsweredInTerminal: func(string, string, json.RawMessage) {},
+		claudeApprovalLockHooks:      &claudeApprovalLockHooks{},
 		pendingAgentSessionRefs:      map[string]coremetadata.AgentSessionObservation{"%9": {Provider: "claude", SessionID: "orig"}},
 		pendingCodexBindings:         map[string]coremetadata.CodexActivationObservation{"%9": {ThreadID: "orig"}},
 		paneWriteFailure:             aiPaneWriteReasonMarkerUnavailable,
