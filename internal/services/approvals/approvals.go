@@ -244,7 +244,7 @@ func (c Service) listStore(agent coremetadata.Agent, store *agentapproval.Store)
 	if err != nil {
 		return List{}, fmt.Errorf("agent approval list: %w", err)
 	}
-	out := List{Provider: "claude", AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Answering: string(c.Answering()), Requests: []Record{}}
+	out := List{Provider: coremetadata.NormalizeProvider(agent.Spec.Provider), AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, Answering: string(c.Answering()), Requests: []Record{}}
 	for _, v := range records {
 		if v.State == agentapproval.StateWaiting {
 			out.Requests = append(out.Requests, Record{ID: v.ID, State: v.State, ToolName: v.ToolName, AgentType: v.AgentType, ToolInput: v.ToolInput, CreatedAt: v.CreatedAt, Deadline: v.Deadline})
