@@ -72,6 +72,10 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   Pane focus hooks and `projmux attention clear` consume only the
   response-complete live badge, including stale `@projmux_ai_state=waiting`
   fallback state; action-required and in-progress live badges remain visible.
+  tmux runs those focus hooks only while the server option `focus-events` is
+  on, so both generated configs set it; tmux then asks the outer terminal for
+  focus reports and writes `\e[I`/`\e[O` only to panes whose program requested
+  focus reporting.
   Window-list badges and app pane-border badges use the same semantic priority,
   with display style controlled by Settings > Appearance > AI badge style and
   persisted in `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-badge-style`.

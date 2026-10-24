@@ -245,6 +245,9 @@ func TmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set -g " + LiveResourcesTmuxOption + " " + string(liveResourcesMode),
 	}
 	lines = append(lines,
+		// tmux runs pane-focus-in/out only while this server option is on,
+		// and it defaults to off.
+		"set -s focus-events on",
 		"set-hook -g pane-focus-out "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-focus-in "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g after-select-pane "+keybinding.TmuxConfigQuote("run-shell -b "+keybinding.TmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
