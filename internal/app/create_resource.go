@@ -744,6 +744,14 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 		if flags.provider == "" {
 			return usageError("process-window-provider-required: create window --host process requires --provider claude or codex; nothing was created")
 		}
+		// Keep the shell-specific process refusal, but normalize Agent argv
+		// before checking process support and constructing the typed request.
+		if strings.ToLower(strings.TrimSpace(flags.provider)) != aiModeShell {
+			flags.provider, err = requireCanonicalProvider(spelling, flags.provider)
+			if err != nil {
+				return err
+			}
+		}
 		if flags.provider != aiModeClaude && flags.provider != aiModeCodex {
 			return usageError("process-window-provider-unsupported: create window --host process requires Claude or Codex; nothing was created")
 		}

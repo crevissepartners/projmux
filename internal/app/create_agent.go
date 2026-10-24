@@ -115,6 +115,13 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		return err
 	}
 	if flags.host == "process" {
+		// The typed process request accepts canonical IDs, not argv spellings.
+		if flags.providerSet {
+			flags.provider, err = requireCanonicalProvider(spelling, flags.provider)
+			if err != nil {
+				return err
+			}
+		}
 		return c.runProcessAgentCLI(flags, stdout, stderr)
 	}
 	provider, err := c.resolveCreateProvider(spelling, shortcutProvider, flags)
