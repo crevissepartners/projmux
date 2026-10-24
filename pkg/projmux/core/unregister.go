@@ -15,6 +15,11 @@ type DeleteResource struct {
 }
 type DeleteTarget struct {
 	DeleteResource
+	// Owner is the target's owner chain exactly as the CLI delete plan prints
+	// it after owner=, such as "project/alpha window/main". It is empty for a
+	// target without an owner, such as an unregistered Project. Descendants
+	// carry no owner.
+	Owner       string           `json:"owner"`
 	Descendants []DeleteResource `json:"descendants"`
 }
 type DeletionAffected struct {

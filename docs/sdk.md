@@ -154,6 +154,11 @@ frontends must still use the deletion executor's locked admission when executing
 Remove the label with `projmux label agent <ref> projmux.io/protected-`
 before retrying.
 
+Each `DeletePlan.Targets[i].Owner` carries the target's owner chain exactly as
+the CLI delete plan prints it after `owner=`, for example
+`project/alpha window/main`. It is empty for a target without an owner, such as
+the Project `UnregisterProject` removes, and cascade `Descendants` have no owner.
+
 `Client.Delete` returns the CLI's process Agent classification in
 `DeleteResult.Processes`: AgentUID, WindowUID, RootKind, RootUID, Runtime,
 Evidence and HostPID. Dry runs and confirmation refusals include the reviewed

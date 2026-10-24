@@ -10,6 +10,7 @@ type DeleteResource struct {
 }
 type DeletePreviewTarget struct {
 	DeleteResource
+	Owner       string           `json:"owner"`
 	Descendants []DeleteResource `json:"descendants"`
 }
 type DeletePreview struct {
@@ -22,7 +23,7 @@ type DeletePreview struct {
 func PreviewDelete(plan DeletePlan) DeletePreview {
 	p := DeletePreview{Kind: plan.Kind, Targets: []DeletePreviewTarget{}, Cascades: plan.Cascades(), Affected: []DeletionAffected{}}
 	for _, target := range plan.Targets {
-		t := DeletePreviewTarget{DeleteResource: DeleteResource{Kind: plan.Kind, UID: target.Match.UID, Name: target.Match.Name}, Descendants: []DeleteResource{}}
+		t := DeletePreviewTarget{DeleteResource: DeleteResource{Kind: plan.Kind, UID: target.Match.UID, Name: target.Match.Name}, Owner: target.Match.Owner.String(), Descendants: []DeleteResource{}}
 		p.Affected = append(p.Affected, DeletionAffected{Kind: string(plan.Kind), UID: t.UID, Name: t.Name, Action: DeletionAffectedDeleted})
 		for _, d := range target.Descendants {
 			t.Descendants = append(t.Descendants, DeleteResource(d))
