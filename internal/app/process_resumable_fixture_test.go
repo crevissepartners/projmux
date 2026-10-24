@@ -215,6 +215,18 @@ func TestProcessSupportedResumableOwnerKillRemainsUnknownFixture(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Logf("isolated killed-owner provider HOME=%s", ready.Root)
+			physicalDomain, err := filepath.EvalSymlinks(domain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			physicalRoot, err := filepath.EvalSymlinks(ready.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			relative, err := filepath.Rel(physicalDomain, physicalRoot)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				t.Fatalf("child fixture root %s is outside parent-owned domain %s: %v", ready.Root, domain, err)
+			}
 			supervisor, _, err := localipc.Process(ready.Snapshot.SupervisorPID)
 			if err != nil {
 				t.Fatal(err)
