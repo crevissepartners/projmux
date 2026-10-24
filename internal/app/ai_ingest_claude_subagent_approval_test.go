@@ -30,7 +30,8 @@ func claudeSubagentApprovalFixture(t *testing.T, mode string) *claudeQuietHookFi
 	read := f.cmd.readCommand
 	lookup := claudeIngestReadCommand(claudeQuietHookPane)
 	f.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && len(args) == 5 && args[0] == "display-message" && args[3] == claudeQuietHookPane && args[4] == aiHookPaneMarkerFormat {
+		if marker := stripRecordedTmuxRoute(args); name == "tmux" && len(marker) == 5 && marker[0] == "display-message" &&
+			marker[3] == claudeQuietHookPane && marker[4] == aiHookPaneMarkerFormat {
 			claudeSubagentApprovalMarkerReads[f]++
 			state := claudeQuietHookPaneState(t, cmdRecorder(f.cmd).commands)
 			fields := []string{claudeQuietHookPane}
