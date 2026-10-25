@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"maps"
 	"os"
@@ -32,9 +33,13 @@ type ProcessAgentCreateOptions struct {
 	NewWindow                                                          *coremetadata.BootstrapWindow
 	Provider, Name, CWD, Model, Effort, Instructions, Profile, Persona string
 	// Creator is the bare Agent UID validated by parseResourceCreateFlags.
-	Creator          string
-	Payload, AddDirs []string
-	Labels           map[string]string
+	Creator string
+	// OperatorCreatorClient is the in-process operator client an SDK create
+	// runs for (core.CreateAgentRequest.Operator). No argv spelling sets it, and
+	// the owner route admits it only on the SDK's frozen-context request.
+	OperatorCreatorClient string
+	Payload, AddDirs      []string
+	Labels                map[string]string
 }
 
 type ProcessAgentCreateRequest struct{ Options ProcessAgentCreateOptions }
@@ -78,6 +83,11 @@ func NewProcessAgentCreateRequest(opts ProcessAgentCreateOptions) (ProcessAgentC
 	// old in-process caller's uid: prefix without parsing it a second time.
 	if opts.Creator != "" && (strings.TrimSpace(opts.Creator) != opts.Creator || strings.ContainsAny(opts.Creator, ":/ \t\r\n")) {
 		return ProcessAgentCreateRequest{}, processCreateUsage("create agent process-creator-uid-invalid: expected a bare Agent UID; nothing was created")
+	}
+	if opts.OperatorCreatorClient != "" {
+		if err := operatorclient.Validate(opts.OperatorCreatorClient); err != nil {
+			return ProcessAgentCreateRequest{}, processCreateUsage("create agent process-operator-creator-invalid: " + err.Error() + "; nothing was created")
+		}
 	}
 	opts.Payload, opts.AddDirs, opts.Labels = slices.Clone(opts.Payload), slices.Clone(opts.AddDirs), maps.Clone(opts.Labels)
 	return ProcessAgentCreateRequest{Options: opts}, nil

@@ -223,6 +223,16 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 	if err != nil {
 		return err
 	}
+	// Only the SDK's frozen-context request carries an operator creator, and
+	// that request has already withdrawn ambient provenance above.
+	if client := request.options.OperatorCreatorClient; client != "" {
+		if req.Context == nil {
+			return errors.New("process-detached-operator-creator-sdk-only")
+		}
+		if err = command.recordOperatorCreator(client); err != nil {
+			return err
+		}
+	}
 	life, cancel := processForegroundLifetime()
 	life = (processOwnerLifetime{}).withContext(life)
 	defer cancel()

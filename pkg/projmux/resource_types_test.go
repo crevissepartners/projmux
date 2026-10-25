@@ -213,3 +213,25 @@ func compareUntaggedShape(t *testing.T, a, b reflect.Type) {
 		}
 	}
 }
+
+// The operator creator is opaque: it has no exported field, so decoding request
+// data cannot name an operator, and CreateAgentRequest carries it only as that
+// type. Its zero value names none.
+func TestPublicOperatorCreatorIsOpaque(t *testing.T) {
+	operator := reflect.TypeFor[core.OperatorCreator]()
+	for i := range operator.NumField() {
+		if operator.Field(i).IsExported() {
+			t.Fatalf("core.OperatorCreator exports %s", operator.Field(i).Name)
+		}
+	}
+	if f, ok := reflect.TypeFor[core.CreateAgentRequest]().FieldByName("Operator"); !ok || f.Type != operator || f.Tag != "" {
+		t.Fatal("CreateAgentRequest.Operator missing or not core.OperatorCreator")
+	}
+	var req core.CreateAgentRequest
+	if err := json.Unmarshal([]byte(`{"Operator":{"client":"tester","Client":"tester"}}`), &req); err != nil || req.Operator.Client() != "" {
+		t.Fatalf("decoded operator %q: %v", req.Operator.Client(), err)
+	}
+	if got := core.NewOperatorCreator("tester").Client(); got != "tester" || (core.OperatorCreator{}).Client() != "" {
+		t.Fatalf("operator client %q", got)
+	}
+}
