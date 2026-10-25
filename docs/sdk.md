@@ -200,6 +200,19 @@ It supports Claude, Antigravity, native prompted Codex, payload-free Codex and
 `InteractiveOnly` Codex.
 `Pane` selects an optional anchor; `Creator` accepts only an explicit `uid:`
 Agent declaration and records `creator-basis=explicit` without inferring a caller.
+`Operator: core.NewOperatorCreator("<client>")` records an in-process operator
+client as the creator (`creator-basis=operator`) on the Agent and its Pane,
+under the same rule as the CLI's in-process operator seam. It takes precedence
+over `Creator`, which must still name an Agent and is then reported in
+`Notices` with the CLI's stderr line
+`creator declaration not recorded: operator-client (--creator uid:<agent>)`.
+`core.OperatorCreator` has no exported field, so decoded request data (JSON, a
+form, a `Creator` string) never names an operator; its zero value names none. A
+client name outside the operator client rule refuses with
+`CodeCreateCreatorInvalid` before anything changes. The SDK does not know who
+called it: attaching `Operator` only for a request the operator made is the
+caller's responsibility. Detached process creates carry it to the owner route as
+a typed request field, never as argv.
 Profiles, instructions, model, effort, workspace roots and placement use the
 CLI's existing validation. Set `Options.ProjmuxExecutable` from the same build.
 

@@ -343,6 +343,7 @@ NewExisting	Test-only installed qualification API retained for unchanged model-d
 NewGraphReader	Public v0 coherent resource graph SDK entrypoint or its adapter (ObserveResourceGraph/ReadRegistryFileIdentity); reachable from external consumers rather than the CLI binary; covered by resourcegraph JSON parity, single-read, identity, field coverage and GOWORK=off consumer tests.
 NewMutationLockPolicy	Internal immutable acquisition-site policy constructor; verified by caller-copy, invalid-token and Store reader rejection tests.
 NewMutationLockRecorder	Internal caller-declared mutation lock aggregation constructor; exercised by fake clock/writer and concurrency tests.
+NewOperatorCreator	Public CreateAgentRequest.Operator constructor for an in-process operator client; TestCreateAgentOperatorCreatorMatchesCLI and TestCreateAgentOperatorCreatorMatchesCLIProcess compare its record with the CLI operator seam.
 NewProcessAgentDeleter	Explicit Registry-root constructor retained for public SDK process Agent deletion without ambient environment reads.
 NewProcessClient	Owned process Codex notification bound follows the dormant host seam; retain until the Task 5 foreground consumer activates it.
 NewReader	Runtime SDK production reader wiring retained for external ObserveRuntime consumers; covered by CLI parity and external consumer tests.
@@ -362,6 +363,7 @@ NormalizeKeymapTypedChord	Internal keymap/catalog compatibility entrypoint retai
 Observe	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 ObserveFrontReads	Test hook of the settings layer seam; the settings layer guard installs it to count front-layer reads per public route, and production never installs an observer.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
+OperatorCreator.Client	Public accessor CreateAgent reads the in-process operator client through; the type has no exported field, which TestPublicOperatorCreatorIsOpaque pins.
 OperatorOrigin	The operator-origin constructor is the one sanctioned way to build operator input; no product path in this build calls it until an in-process operator client sender lands, and TestNoProductPathBuildsAnOperatorOrigin pins that its callers are only the listed producers.
 Pane.ResourceKind	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 PaneActivation.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.

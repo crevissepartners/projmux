@@ -41,9 +41,28 @@ type CreatePaneResult struct {
 	Receipt    OperationReceipt
 }
 
+// OperatorCreator names the in-process operator client a create runs for. Its
+// client name is unexported, so decoding request data (JSON, a form, a Creator
+// string) never produces one; only in-process code that calls
+// NewOperatorCreator does. The zero value names no operator.
+type OperatorCreator struct{ client string }
+
+// NewOperatorCreator names client as the operator a create runs for. CreateAgent
+// checks the name against the operator client rule (1-32 bytes of lowercase
+// ASCII letters, digits and '-', starting with a letter) before anything
+// changes and refuses a name outside it with create-creator-invalid. An empty
+// name is the zero value.
+func NewOperatorCreator(client string) OperatorCreator { return OperatorCreator{client: client} }
+
+// Client is the operator client name, or empty for the zero value.
+func (o OperatorCreator) Client() string { return o.client }
+
 // CreateAgentRequest creates one Agent in an explicitly named Project and
 // Window. Creator is an optional uid: Agent declaration; no caller is inferred.
-// Instructions names stored instructions, while Payload contains provider argv.
+// Operator, set only in process, records the operator client as the creator
+// under the CLI's rule: it takes precedence over Creator, which is then reported
+// in Notices as not recorded. Instructions names stored instructions, while
+// Payload contains provider argv.
 type CreateAgentRequest struct {
 	// Host defaults to tmux. Process requires Detach; foreground SDK ownership
 	// and config-based host inference are unsupported.
@@ -59,6 +78,7 @@ type CreateAgentRequest struct {
 	Placement, CwdFrom                             string
 	Payload                                        []string
 	Creator, SocketPath                            string
+	Operator                                       OperatorCreator
 }
 
 // CreateAgentResult also accompanies an activation-unconfirmed error: its

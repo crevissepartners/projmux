@@ -32,8 +32,9 @@ import (
 //     is dropped with one stderr line.
 //  4. operator: the create ran in process for a named operator client -- the
 //     UI intents (client "ui"), or a client layered on top of projmux through
-//     recordOperatorCreator. Such a create observes no pane chain, because
-//     its process environment says nothing about who asked.
+//     recordOperatorCreator or the SDK's CreateAgentRequest.Operator. Such a
+//     create observes no pane chain, because its process environment says
+//     nothing about who asked.
 //  5. nothing, when there is no evidence.
 //
 // The record is provenance, never authentication. Apart from the refused
@@ -139,8 +140,7 @@ func (c *createCommand) observeCreator(ctx context.Context, working *coremetadat
 const (
 	creatorDeclinedProcessChain        = "process-chain-disagrees"
 	creatorDeclinedPaneChain           = "pane-chain-disagrees"
-	creatorDeclinedOperator            = "operator-client"
-	creatorDeclinedDiagnosticFmt       = "creator declaration not recorded: %s (--creator uid:%s)\n"
+	creatorDeclinedOperator            = mutationruntime.CreatorDeclinedOperator
 	creatorFlagName                    = "creator"
 	creatorFlagUsage                   = "Agent that created this one, as uid:<agent>; recorded as the explicit creator basis only when no pane or process chain is observed"
 	creatorFlagRequiresAgentRefusalFmt = "%s --creator applies only to an Agent; name an Agent --provider; nothing was created"
@@ -168,10 +168,11 @@ type creatorRecord struct {
 }
 
 // newOperatorCreator is the operator creator record, or no record for a name
-// outside the client rule. Its producers are the in-process seams only:
-// TestNoArgvPathBuildsAnOperatorCreator holds the list.
+// outside the client rule. The record is the one the SDK writes too
+// (mutationruntime.OperatorAgentCreator). Its producers are the in-process
+// seams only: TestNoArgvPathBuildsAnOperatorCreator holds the list.
 func newOperatorCreator(client string) creatorRecord {
-	if operatorclient.Validate(client) != nil {
+	if mutationruntime.OperatorAgentCreator(client).Annotations == nil {
 		return creatorRecord{}
 	}
 	return creatorRecord{basis: coremetadata.CreatorBasisOperator, client: client}
@@ -210,10 +211,10 @@ func (c *createCommand) decideCreator(ctx context.Context, spelling string, work
 	}
 
 	if c != nil && c.operatorCreatorClient != "" {
+		// The operator precedence is the SDK's too: one shared decision.
+		decision := mutationruntime.DecideOperatorCreator(c.operatorCreatorClient, declared)
 		record := newOperatorCreator(c.operatorCreatorClient)
-		if declared != "" {
-			record.declared, record.declined = declared, creatorDeclinedOperator
-		}
+		record.declared, record.declined = decision.Declared, decision.Declined
 		return record, nil
 	}
 	observed := c.observeCreator(ctx, working)
@@ -244,7 +245,7 @@ func (r creatorRecord) annotations() map[string]string {
 	case coremetadata.CreatorBasisExplicit:
 		return coremetadata.ExplicitCreatorAnnotations(r.agentUID)
 	case coremetadata.CreatorBasisOperator:
-		return coremetadata.OperatorCreatorAnnotations(r.client)
+		return mutationruntime.OperatorAgentCreator(r.client).Annotations
 	}
 	return nil
 }
@@ -288,9 +289,18 @@ func (r creatorRecord) report(stderr io.Writer) {
 	if r.basis == "" {
 		r.observed.reportSkip(stderr)
 	}
-	if r.declined != "" && stderr != nil {
-		_, _ = fmt.Fprintf(stderr, creatorDeclinedDiagnosticFmt, r.declined, r.declared)
+	if notice := r.declinedNotice(); notice != "" && stderr != nil {
+		_, _ = fmt.Fprintln(stderr, notice)
 	}
+}
+
+// declinedNotice is the line, without its newline, for a declaration the
+// record did not use, or empty.
+func (r creatorRecord) declinedNotice() string {
+	if r.declined == "" {
+		return ""
+	}
+	return mutationruntime.CreatorDeclinedNotice(r.declined, r.declared)
 }
 
 // paneChainAnchorConfirm is the one server-side step of the pane-chain

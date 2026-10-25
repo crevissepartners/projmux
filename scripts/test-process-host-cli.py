@@ -39,6 +39,7 @@ FILES = (
     "create_agent_process_codex_cli_test.go",
     "process_agent_resume_cli_test.go",
     "create_agent_process_cli_test.go",
+    "sdk_create_operator_creator_cli_test.go",
     "delete_agent_process_cli_test.go",
     "codex_process_binding_test.go",
     "codex_process_ownership_test.go",

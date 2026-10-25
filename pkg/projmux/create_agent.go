@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/operatorclient"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/tmux"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
@@ -89,6 +90,12 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Creator must be an exact Agent reference uid:<agent>"}
 		}
 	}
+	operator := req.Operator.Client()
+	if operator != "" {
+		if err := operatorclient.Validate(operator); err != nil {
+			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Operator: " + err.Error(), cause: err}
+		}
+	}
 	scope, labels, socket, err := c.createInputs(ctx, "CreateAgentRequest", req.Project, req.Name, req.Labels, req.SocketPath)
 	if err != nil {
 		return result, err
@@ -165,10 +172,22 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if placement == "" {
 		placement = "right"
 	}
+	// The CLI's creator precedence: a declaration naming no Agent refuses, then
+	// an in-process operator is recorded in its place.
+	var declined string
 	machine := &mutationruntime.AgentCreation{Execution: execution, Prepare: planner.Prepare, ResolveWorkspace: func(reg metadata.Registry, p metadata.Project, provider, cwd string, dirs []string) (metadata.AgentWorkspace, error) {
 		return mutationruntime.ResolveAgentWorkspaceFor("create agent", reg, p, provider, cwd, dirs)
 	}, Creator: func(_ context.Context, reg *metadata.Registry) (mutationruntime.AgentCreatorRecord, error) {
-		return mutationruntime.DeclaredAgentCreator(reg, creator, "create agent", fields.Option("creator"))
+		declared, err := mutationruntime.DeclaredAgentCreator(reg, creator, "create agent", fields.Option("creator"))
+		if err != nil || operator == "" {
+			return declared, err
+		}
+		decision := mutationruntime.DecideOperatorCreator(operator, creator)
+		declined = ""
+		if decision.Declined != "" {
+			declined = mutationruntime.CreatorDeclinedNotice(decision.Declined, decision.Declared)
+		}
+		return decision.AgentCreatorRecord, nil
 	}}
 	if native != nil {
 		machine.Native = native.Engine
@@ -196,6 +215,9 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	result.Agent = projection.Items[0].(core.Agent)
 	result.PaneID = first.PaneID
 	result.Notices = out.Notices
+	if declined != "" {
+		result.Notices = append(result.Notices, declined)
+	}
 	receipt := createReceipt(metadata.KindAgent, out.Results, out.SelectedWindowUIDs)
 	receipt.Profile = planner.ProfileReceipt()
 	if err := unregisterCopy(receipt, &result.Receipt); err != nil {
@@ -241,7 +263,15 @@ func (c *Client) createProcessAgent(ctx context.Context, req core.CreateAgentReq
 			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Creator must be an exact Agent reference uid:<agent>"}
 		}
 	}
-	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, Payload: req.Payload, AddDirs: req.AddDirs, Labels: labels}
+	operator := req.Operator.Client()
+	if operator != "" {
+		if err := operatorclient.Validate(operator); err != nil {
+			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Operator: " + err.Error(), cause: err}
+		}
+	}
+	// The operator travels to the owner route as a typed field of the internal
+	// request, never as argv.
+	options := mutationruntime.ProcessAgentCreateOptions{Project: scope.Project, Window: window, Provider: req.Provider, Name: req.Name, CWD: req.Cwd, Model: req.Model, Effort: req.Effort, Instructions: req.Instructions, Profile: req.Profile, Creator: creator, OperatorCreatorClient: operator, Payload: req.Payload, AddDirs: req.AddDirs, Labels: labels}
 	reply, err := mutationruntime.ExecuteDetachedProcessCreate(ctx, c.processCreateContext, options)
 	if reply.Binding.Agent != "" {
 		_ = unregisterCopy(metadata.ProcessBinding{HostInstanceID: reply.Binding.Host, ProjectUID: reply.Binding.Project, WindowUID: reply.Binding.Window, AgentUID: reply.Binding.Agent, PaneUID: reply.Binding.Pane, Generation: reply.Binding.Generation, OperationID: reply.Binding.Operation}, &result.Binding)

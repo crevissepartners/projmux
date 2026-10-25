@@ -141,7 +141,12 @@ func (c *createCommand) processCreateCommitted(result processAgentCreateResult) 
 		return mutationruntime.ProcessCreateCommitted{}, errors.New("process-detached-pane-missing")
 	}
 	receipt := createResultsReceipt(coremetadata.KindAgent, []createResult{result.Created})
-	return mutationruntime.ProcessCreateCommitted{Agent: *agent, Pane: *pane, Receipt: receiptcore.OperationReceipt(receipt), Notices: slices.Clone(result.Notices)}, nil
+	notices := slices.Clone(result.Notices)
+	// The SDK reads the declined-declaration line the CLI prints to stderr.
+	if notice := result.creator.declinedNotice(); notice != "" {
+		notices = append(notices, notice)
+	}
+	return mutationruntime.ProcessCreateCommitted{Agent: *agent, Pane: *pane, Receipt: receiptcore.OperationReceipt(receipt), Notices: notices}, nil
 }
 
 // Only the SDK supervisor receives these existing activation-routing fields.
