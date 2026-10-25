@@ -20,10 +20,7 @@ const (
 	aiHookActionState  = hookcatalog.ActionState
 )
 
-type (
-	aiHookCatalog      = hookcatalog.Catalog
-	aiHookCatalogEvent = hookcatalog.Event
-)
+type aiHookCatalog = hookcatalog.Catalog
 
 func (c *aiCommand) aiHookInstallEvents(provider string) ([]string, error) {
 	catalog, err := c.loadAIHookCatalog(provider)

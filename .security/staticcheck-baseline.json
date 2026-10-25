@@ -29,6 +29,11 @@
       "reason": "Relocated from internal/app/settings_keybindings.go with the shared statusbar resources apply service. Diagnostic source and maximum count remain unchanged to preserve the existing reload error context; only the owner path changed."
     },
     {
+      "rule": "multiple",
+      "scope": "internal/services/claudesettings/hooks.go: one relocated S1031 nil check and three relocated ST1005 Claude settings diagnostics",
+      "reason": "Moved from internal/app/ai_integrate.go on 2026-10-25 with the shared Claude hook plan the SDK previews and applies. The four previously reviewed rows keep their rule, message, byte-identical source and maximum count to preserve CLI failure bytes; only the owner path changed."
+    },
+    {
       "rule": "U1000",
       "scope": "internal/app/statusbar_row_one_visibility.go statusbarRowOneVisibilitySet.visible",
       "reason": "Private app compatibility method used by the unchanged locked WEB TestWebFrontSettingPatchWritesOnlyWebToml; retain exactly one finding after removing the 38 unused private compatibility declarations selected for removal."
@@ -65,7 +70,7 @@
     },
     {
       "rule": "S1031",
-      "path": "internal/app/ai_integrate.go",
+      "path": "internal/services/claudesettings/hooks.go",
       "message": "unnecessary nil check around range",
       "source": "if hooks != nil {",
       "max_count": 1
@@ -86,21 +91,21 @@
     },
     {
       "rule": "ST1005",
-      "path": "internal/app/ai_integrate.go",
+      "path": "internal/services/claudesettings/hooks.go",
       "message": "error strings should not be capitalized",
       "source": "return nil, errors.New(\"Claude settings hooks field must be a JSON object\")",
       "max_count": 1
     },
     {
       "rule": "ST1005",
-      "path": "internal/app/ai_integrate.go",
+      "path": "internal/services/claudesettings/hooks.go",
       "message": "error strings should not be capitalized",
       "source": "return nil, false, \"\", fmt.Errorf(\"Claude settings %s hook event %s contains a non-object matcher entry\", path, event)",
       "max_count": 1
     },
     {
       "rule": "ST1005",
-      "path": "internal/app/ai_integrate.go",
+      "path": "internal/services/claudesettings/hooks.go",
       "message": "error strings should not be capitalized",
       "source": "return nil, false, \"\", fmt.Errorf(\"Claude settings %s hook event %s must be an array\", path, event)",
       "max_count": 1
