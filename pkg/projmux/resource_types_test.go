@@ -2,6 +2,7 @@ package projmux_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"github.com/crevissepartners/projmux/internal/core/receipt"
 	"github.com/crevissepartners/projmux/internal/integrations/agentcontrol"
@@ -252,5 +253,43 @@ func TestPublicCreateAgentPreflightSurface(t *testing.T) {
 	if !ok || method.Type.NumIn() != 3 || method.Type.In(1) != create.Type.In(1) || method.Type.In(2) != reflect.TypeFor[core.CreateAgentRequest]() ||
 		method.Type.NumOut() != 2 || method.Type.Out(0) != result || method.Type.Out(1) != reflect.TypeFor[error]() {
 		t.Fatalf("PreflightCreateAgent signature %v", method.Type)
+	}
+}
+
+// The Claude hook preview and apply take and answer exactly these untagged
+// fields: the plan the CLI makes plus its Base, and the apply's outcome.
+func TestPublicClaudeHooksSurface(t *testing.T) {
+	str, flag := reflect.TypeFor[string](), reflect.TypeFor[bool]()
+	for typ, fields := range map[reflect.Type]map[string]reflect.Type{
+		reflect.TypeFor[core.ClaudeHooksRequest]():      {"Remove": flag},
+		reflect.TypeFor[core.ClaudeHooksPlan]():         {"Path": str, "Exists": flag, "Changed": flag, "Base": str, "Current": str, "Next": str, "Conflict": str, "Action": str},
+		reflect.TypeFor[core.ApplyClaudeHooksRequest](): {"Remove": flag, "Base": str},
+		reflect.TypeFor[core.ApplyClaudeHooksResult]():  {"Changed": flag, "Path": str, "Action": str},
+	} {
+		if typ.NumField() != len(fields) {
+			t.Fatalf("%s has %d fields, want %d", typ, typ.NumField(), len(fields))
+		}
+		for name, want := range fields {
+			if f, ok := typ.FieldByName(name); !ok || f.Type != want || f.Tag != "" {
+				t.Fatalf("%s.%s missing or not an untagged %s", typ, name, want)
+			}
+		}
+	}
+	client := reflect.TypeFor[*projmux.Client]()
+	ctx := reflect.TypeFor[context.Context]()
+	for name, io := range map[string][2]reflect.Type{
+		"PreviewClaudeHooks": {reflect.TypeFor[core.ClaudeHooksRequest](), reflect.TypeFor[core.ClaudeHooksPlan]()},
+		"ApplyClaudeHooks":   {reflect.TypeFor[core.ApplyClaudeHooksRequest](), reflect.TypeFor[core.ApplyClaudeHooksResult]()},
+	} {
+		method, ok := client.MethodByName(name)
+		if !ok || method.Type.NumIn() != 3 || method.Type.In(1) != ctx || method.Type.In(2) != io[0] ||
+			method.Type.NumOut() != 2 || method.Type.Out(0) != io[1] || method.Type.Out(1) != reflect.TypeFor[error]() {
+			t.Fatalf("%s signature %v", name, method.Type)
+		}
+	}
+	for code, want := range map[projmux.Code]string{projmux.CodeClaudeSettingsChanged: "claude-settings-changed", projmux.CodeClaudeHooksConflict: "claude-hooks-conflict", projmux.CodeClaudeSettingsUnreadable: "claude-settings-unreadable"} {
+		if string(code) != want {
+			t.Fatalf("refusal code %q, want %q", code, want)
+		}
 	}
 }

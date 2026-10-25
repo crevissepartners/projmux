@@ -1652,3 +1652,47 @@ The method reads only `statusbar-defaults.json` in the captured ConfigDir. It
 reads no TUI leaf or `web.toml`, writes nothing, samples nothing, does not
 touch the Registry, tmux or providers, and observes no cancellation.
 GetConfig and SetConfig are unchanged.
+
+## Claude hook integration preview and apply
+
+`Client.PreviewClaudeHooks(ctx, core.ClaudeHooksRequest{Remove: ...})` returns
+the plan `projmux agent integrate claude` (with `--remove` when `Remove`) makes
+for Claude Code's `.claude/settings.json` under the Client's `HomeDir`, and
+writes nothing. The plan is the command's own: the same code reads the file,
+finds the projmux-managed entries and builds `Next`, and the installed events
+come from the embedded Claude hook catalog merged with the
+`ai-hooks.d/claude.json` override in the Client's ConfigDir. `Path`, `Exists`,
+`Current`, `Next`, `Changed`, `Conflict` and `Action` are the command's plan
+and outcome text; `Base` is the lowercase hex SHA-256 of `Current`, or empty
+when the file does not exist. A conflict the command would refuse is the
+plan's `Conflict`, not an error. A file that cannot be read or parsed is a
+`CodeClaudeSettingsUnreadable` (`claude-settings-unreadable`) refusal.
+
+`Client.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Remove, Base})`
+plans again and carries the plan out as the command does. It is refused with
+`CodeClaudeSettingsChanged` (`claude-settings-changed`) when `Base` is not the
+`Base` of the file it now reads, with `CodeClaudeHooksConflict`
+(`claude-hooks-conflict`) when the plan has a `Conflict`, and with
+`CodeClaudeSettingsUnreadable` as the preview is. A plan with nothing to change
+writes nothing and returns `Changed` false. Otherwise the file is replaced with
+the command's writer: atomically, keeping an existing file's mode and a
+symbolic link's target, and refused with `CodeClaudeSettingsChanged` if the
+file stopped holding the bytes it read before the replace. That check is a
+re-read, not a lock; applies are serialized only within one process. The
+command's dry-run diff lines and any localized text are not returned.
+
+```go
+plan, err := client.PreviewClaudeHooks(ctx, core.ClaudeHooksRequest{})
+if err != nil {
+    return err
+}
+if plan.Conflict != "" || !plan.Changed {
+    fmt.Println(plan.Action, plan.Conflict)
+    return nil
+}
+result, err := client.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Base: plan.Base})
+var refusal *projmux.Refusal
+if errors.As(err, &refusal) && refusal.Code == projmux.CodeClaudeSettingsChanged {
+    // The file changed after the preview: preview again.
+}
+```

@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxexec"
+	"github.com/crevissepartners/projmux/internal/services/hookcatalog"
 )
 
 // These process-private variables bind provider hooks to the materialization
@@ -21,7 +22,7 @@ import (
 // providers merely inherit them from the internal supervisor and hook ingest
 // consumes them as capability evidence.
 const (
-	internalActivationPaneUIDEnv    = "PMX_INTERNAL_ACTIVATION_PANE_UID"
+	internalActivationPaneUIDEnv    = hookcatalog.ActivationPaneUIDEnv
 	internalActivationGenerationEnv = "PMX_INTERNAL_ACTIVATION_GENERATION"
 	internalClaudeRegistryPathEnv   = "PMX_INTERNAL_CLAUDE_REGISTRY_PATH"
 )

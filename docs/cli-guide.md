@@ -2746,7 +2746,7 @@ Claude Code hook ingest is available through `ingest claude-hook`, but
 `~/.claude/settings.json`. It installs command hooks for every event whose
 effective Claude hook catalog entry has `"install": true`. The embedded default
 catalog is based on Claude Code 2.1.140 and lives at
-`internal/app/ai_hook_catalogs/claude.json`; a local override may be placed at
+`internal/services/hookcatalog/catalogs/claude.json`; a local override may be placed at
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hooks.d/claude.json` to disable
 or add events before projmux itself is released:
 
@@ -2785,7 +2785,7 @@ block in `~/.codex/config.toml`. It enables `[features] hooks = true`,
 merging into an existing `[features]` table when present, and installs broad
 command hooks for every event whose effective Codex hook catalog entry has
 `"install": true`. The embedded default catalog is based on Codex CLI 0.130.0
-and lives at `internal/app/ai_hook_catalogs/codex.json`; a local override may
+and lives at `internal/services/hookcatalog/catalogs/codex.json`; a local override may
 be placed at `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hooks.d/codex.json`:
 
 ```json

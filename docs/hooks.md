@@ -420,7 +420,7 @@ hook entry projmux does not own, because Codex keys trust state by array
 position.
 
 The Codex hooks install list is catalog-driven. Projmux ships an embedded
-default catalog at `internal/app/ai_hook_catalogs/codex.json`, and merges an
+default catalog at `internal/services/hookcatalog/catalogs/codex.json`, and merges an
 optional local override from:
 
 ```text
@@ -828,7 +828,7 @@ writes nothing, and can be run again. That check is a re-read, not a lock: a
 write that lands in the instant between it and the replace is not detected.
 
 The Claude hooks install list is catalog-driven. Projmux ships an embedded
-default catalog at `internal/app/ai_hook_catalogs/claude.json`, and merges an
+default catalog at `internal/services/hookcatalog/catalogs/claude.json`, and merges an
 optional local override from:
 
 ```text

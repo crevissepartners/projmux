@@ -17,12 +17,13 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentapproval"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/claudesettings"
 )
 
 const (
 	// claudePermissionHookRoute is the hidden `internal` route Claude Code runs
 	// as a PermissionRequest hook.
-	claudePermissionHookRoute = "claude-permission-hook"
+	claudePermissionHookRoute = claudesettings.PermissionHookRoute
 	// claudePermissionPoll is how often the waiting hook rereads its record.
 	claudePermissionPoll = 250 * time.Millisecond
 	// claudePermissionGiveUp is how long past the deadline a hook that cannot
