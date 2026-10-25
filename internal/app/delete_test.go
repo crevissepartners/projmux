@@ -2470,3 +2470,36 @@ func TestUnregisterProjectReceiptCountsTheWholeRemovedSubtree(t *testing.T) {
 		t.Fatalf("the alias receipt differs from the canonical one beyond its warning:\nalias=%+v\ncanonical=%+v", alias, canonical)
 	}
 }
+
+func TestDeprecatedProjectDeleteAliasesKeepSingularParser(t *testing.T) {
+	for _, kind := range []string{"project", "projects"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Run("singular", func(t *testing.T) {
+				store := freshStartFixtureStore(t)
+				stdout, stderr, err := runRoute(t, newTestDeleteCommand(store, false, false, nil), kind, "uid:prj-alpha", "--yes")
+				if err != nil {
+					t.Fatalf("single ref refused: %v (stderr %q)", err, stderr)
+				}
+				if _, ok := store.registry.Project("prj-alpha"); ok {
+					t.Fatal("single ref retained target")
+				}
+				if _, ok := store.registry.Project("prj-beta"); !ok {
+					t.Fatal("single ref removed sibling")
+				}
+				if !strings.Contains(stdout, "receipt operation=unregister.project") || !strings.Contains(stderr, projectDeleteAliasWarning) {
+					t.Fatalf("receipt or deprecation warning drift: stdout=%q stderr=%q", stdout, stderr)
+				}
+			})
+			t.Run("multiple", func(t *testing.T) {
+				store := freshStartFixtureStore(t)
+				stdout, stderr, err := runRoute(t, newTestDeleteCommand(store, false, false, nil), kind, "uid:prj-alpha", "uid:prj-beta", "--yes")
+				if err == nil || publicRouteArgvExitCode(err) != 2 || !strings.Contains(err.Error(), "--project accepts at most one occurrence") {
+					t.Fatalf("multiple refs error=%v stderr=%q; want existing rc2 singular refusal", err, stderr)
+				}
+				if store.writes != 0 || stdout != "" {
+					t.Fatalf("refusal had effects: writes=%d stdout=%q", store.writes, stdout)
+				}
+			})
+		})
+	}
+}
