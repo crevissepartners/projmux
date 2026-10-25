@@ -85,16 +85,6 @@ func Default(provider string) (Catalog, error) {
 	return Parse([]byte(raw), provider)
 }
 
-// DefaultInstallEvents is InstallEvents of the embedded catalog, or nil for a
-// provider without one.
-func DefaultInstallEvents(provider string) []string {
-	catalog, err := Default(provider)
-	if err != nil {
-		return nil
-	}
-	return InstallEvents(catalog)
-}
-
 // ApplyOverride merges into base the override catalog file at path, read with
 // readFile (os.ReadFile when nil). A missing or blank file leaves base as is.
 func ApplyOverride(base Catalog, path string, readFile func(string) ([]byte, error)) (Catalog, error) {

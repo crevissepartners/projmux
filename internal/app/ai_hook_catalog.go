@@ -80,7 +80,11 @@ func defaultAIHookCatalog(provider string) (aiHookCatalog, error) {
 }
 
 func defaultAIHookInstallEvents(provider string) []string {
-	return hookcatalog.DefaultInstallEvents(provider)
+	catalog, err := defaultAIHookCatalog(provider)
+	if err != nil {
+		return nil
+	}
+	return aiHookCatalogInstallEvents(catalog)
 }
 
 func validAIHookAction(action string) bool {
