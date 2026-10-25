@@ -21,9 +21,16 @@ type RelaunchAgentRequest struct {
 // the exact Agent and conversation when an immediate recovery is available.
 // Recovery is empty after a fresh phase refusal; inspect the error, notices and
 // receipt before further action. Operations are never automatically replayed.
+//
+// CurrentModel and CurrentEffort are the model and effort the Agent records
+// from its last launch, the CLI's currentModel and currentEffort. They can
+// differ from CurrentSettings, which holds what the layers resolve to now.
+// SettingsApplication is non-nil only once the resume step has completed; a
+// dry run, an unchanged outcome or a refusal before resume leaves it nil.
 type RelaunchAgentResult struct {
 	AgentUID, AgentName, Provider                    string
 	CurrentHost, TargetHost                          string
+	CurrentModel, CurrentEffort                      string
 	Binding                                          ProcessBinding
 	ClaimWaiting                                     bool
 	Phase                                            AgentPhase
@@ -38,6 +45,24 @@ type RelaunchAgentResult struct {
 	Recovery                                         string
 	Stop                                             DeleteResult
 	Resume                                           ResumeAgentResult
+	SettingsApplication                              *AgentSettingsApplication
+}
+
+// AgentSettingsApplication reports how one launch applied each Agent setting,
+// the CLI's settingsApplication. NotAppliedCount counts not-applied entries.
+type AgentSettingsApplication struct {
+	Entries         []AgentSettingApplication
+	NotAppliedCount int
+}
+
+// AgentSettingApplication is one setting's application. Setting, Status and
+// Reason use the CLI's tokens. A nil Value or RequestedValue is absent; a
+// pointer to "" is an explicit none. NextAction is the fallback-locale text
+// for a not-applied entry and empty otherwise.
+type AgentSettingApplication struct {
+	Setting, Status, Reason string
+	Value, RequestedValue   *string
+	NextAction              string
 }
 
 // RelaunchAgentSettings exposes layer values without internal package imports.

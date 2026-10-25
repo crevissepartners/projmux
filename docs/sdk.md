@@ -815,6 +815,15 @@ later caller cancellation. The Agent UID and provider conversation are preserved
 a committed tmux rebind creates a new Pane/generation. Success acknowledges the
 commit, not provider activation, a model response or terminal rendering.
 
+`CurrentModel` and `CurrentEffort` are the model and effort the Agent records,
+the CLI's `currentModel` and `currentEffort`; they can differ from
+`CurrentSettings`, which holds what the layers resolve to now.
+`SettingsApplication` is the CLI's `settingsApplication`, computed by the same
+shared code: `Entries` with `Setting`, `Status`, `Reason`, `Value`,
+`RequestedValue` and `NextAction`, plus `NotAppliedCount`. It is nil until the
+resume step completes, so a dry run, an unchanged outcome or a refusal before
+resume leaves it nil. Process relaunches fill these fields from the CLI JSON.
+
 Inspect the result even when the call fails: `Stop` and `Resume` retain their
 receipts, `Outcome` distinguishes a failed Stop from failed resume, and `Recovery`
 names the exact target. A failed Stop is observed as alive, closed or unknown;
