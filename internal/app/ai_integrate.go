@@ -744,6 +744,10 @@ func (c *aiCommand) writeClaudeSettings(path string, data []byte) error {
 // writeClaudeSettingsFromPlan writes plan's next bytes, refusing a settings
 // file that no longer holds the bytes the plan read.
 func (c *aiCommand) writeClaudeSettingsFromPlan(plan claudeHookPlan) error {
+	if c.writeFile != nil {
+		// A writeFile seam writes the bytes as given and has no base to check.
+		return c.writeClaudeSettings(plan.path, []byte(plan.next))
+	}
 	base := &claudesettings.Base{Exists: plan.exists, Data: []byte(plan.current)}
 	return c.writeClaudeSettingsBase(plan.path, base, []byte(plan.next))
 }

@@ -618,7 +618,6 @@ agentCommand.prepareOwnedClaudeResume	Private S568 no-first-input Claude Resume 
 agentCommand.runOwnedProcessRelaunch	Private S568 typed samehost settings producer retained for Preview/Unchanged/Owned/Prepared ownership proofs and the planned web consumer; independent Cancel and exact Wait preserve CLI foreground lifetime.
 agentSettingsReader.resolve	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.
 aiCommand.withProcessTarget	Internal process terminal invocation binding through existing AI transport seams; retained until foreground activation supplies its caller.
-aiCommand.writeClaudeSettings	Two-argument Claude settings write kept for the private web install, which sets its own writeFile seam; the CLI install and hook migration write through writeClaudeSettingsFromPlan.
 aiSummaryForKind	Fallback-locale entry point of aiSummaryForKindLocale retained as the AI notification label seam.
 applyCodexForeground	Internal foreground process control retained for exact per-user IPC and provider fixture proof before public activation.
 approvalRefusal	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
