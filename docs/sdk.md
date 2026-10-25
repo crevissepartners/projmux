@@ -1427,9 +1427,10 @@ Kind-by-kind reads would join different Registry reads; this call never does.
 corresponds to `--socket`, `SocketPath` must be absolute, both together are a
 `CodeRuntimeRequestInvalid` refusal, and empty fields use an explicit
 `Options.SocketPath`, otherwise no server. TMUX and the app/default socket are
-never consulted. Without a server, or when a server or a process host cannot be
-read, the Registry rows remain with status `unknown` and `Graph.Unavailable`
-names the scope; that is not an error.
+never consulted. Without a server, or when the server cannot be read, the rows
+tmux would judge have status `unknown` and `Graph.Unavailable` names the tmux
+scope. A process host that cannot be read leaves its process Pane `unknown`
+with no `Graph.Unavailable` entry. Neither is an error.
 
 `RegistryIdentity` is the `core.RegistryFileIdentity` of the file the rows were
 read from. It is set only when both stats succeed and agree; a replacement in
@@ -1461,6 +1462,56 @@ Process hosts are only observed within the CLI's existing read budgets; no
 process admission, binding or control authority is returned.
 `ReadRegistrySnapshot`, `ListResources`, `GetResource`, and `ObserveRuntime`
 keep their existing behavior.
+
+## Agent settings without relaunch admission
+
+`Client.ReadAgentSettings(ctx, core.ReadAgentSettingsRequest{AgentUIDs: ...})`
+returns, for each selected Agent, the settings its plain `agent relaunch` would
+resolve, without admitting that relaunch. An empty `AgentUIDs` selects every
+Agent in the Registry; otherwise it holds bare Agent UIDs, read once each, and
+a UID the Registry does not hold yields an entry with `Unavailable`
+`resource-not-found`. An empty or `uid:`-prefixed UID is a `CodeSelectorInvalid`
+refusal. `Agents` are in UID order.
+
+Each `core.AgentSettingsResolution` carries `Provider`, the `Host` the relaunch
+launches on (`tmux`, or `process` for an Agent with exactly one process Pane),
+and `Current`, `New` and `Reasons`: the same values `agent relaunch --dry-run
+-o json` reports as `currentSettings`, `newSettings` and `relaunchReasons`. The
+SDK builds the request with the code the CLI relaunch uses for that host,
+including the agent guidance and the Project's label link rules (none for an
+Agent that records the reply-only activation on tmux), and resolves it with
+the same resolution. `core.AgentLaunchSettings` JSON is the CLI's
+`currentSettings` JSON byte for byte, so `json.Marshal(resolution.Current)` can
+stand in for it. Only Claude and Codex Agents are layered; others have
+`Layered` false and no settings. When the settings cannot be resolved now and
+the relaunch would be refused for it, `Unavailable` holds that refusal token
+(`relaunch-no-conversation`, or the profile's own token) and the settings are
+zero.
+
+One call reads the Registry once, through the degraded read-only loader, and
+never locks, repairs or writes it. It contacts no tmux server, process host or
+provider, writes no instructions snapshot, and checks no phase, interaction,
+conversation or Codex preflight: a Pending, busy or Running Agent is resolved
+like any other, and a resolution does not say the relaunch would be admitted.
+The agent guidance is planned at most once per provider and host and the label
+link rules at most once per provider and Project; that planning writes what
+every launch plan writes, their content-addressed snapshots and the guidance's
+one-time first-use migration. The settings application of a relaunch and the
+internal resolution fields are not returned.
+
+```go
+read, err := client.ReadAgentSettings(ctx, core.ReadAgentSettingsRequest{})
+if err != nil {
+    return err
+}
+for _, agent := range read.Agents {
+    if !agent.Layered || agent.Unavailable != "" {
+        continue
+    }
+    current, _ := json.Marshal(agent.Current) // the CLI's currentSettings JSON
+    fmt.Println(agent.AgentUID, string(current), agent.Reasons)
+}
+```
 
 ### Complete recorded session history
 

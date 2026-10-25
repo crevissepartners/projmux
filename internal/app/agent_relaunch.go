@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/profile"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 // agentRelaunchSpelling is the one route spelling of `agent relaunch`.
@@ -225,10 +226,7 @@ func (c *agentCommand) runTmuxRelaunch(registry coremetadata.Registry, target co
 
 	// Validation. Provider first, because a model or an effort only means
 	// something for a Claude or Codex Agent.
-	provider := coremetadata.NormalizeProvider(target.Spec.Provider)
-	if provider == "" && target.Status.SessionRef != nil {
-		provider = coremetadata.NormalizeProvider(target.Status.SessionRef.Provider)
-	}
+	provider := mutationruntime.RelaunchAgentProvider(target)
 	restart := c.newAgentRestart(spelling, registry, target, provider, relaunchTokens, refuse)
 	restart.comparesPromptParts = true
 	if provider != aiModeClaude && provider != aiModeCodex {

@@ -17,13 +17,11 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 func relaunchCurrentHost(reg coremetadata.Registry, agent coremetadata.Agent) string {
-	if pane, ambiguous := processResumePane(reg, agent.Metadata.UID); pane != nil && !ambiguous {
-		return "process"
-	}
-	return "tmux"
+	return mutationruntime.RelaunchCurrentHost(reg, agent.Metadata.UID)
 }
 
 func (c *agentCommand) runHostRelaunch(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {

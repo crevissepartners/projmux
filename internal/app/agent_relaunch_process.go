@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
 const (
@@ -187,18 +188,14 @@ func (c *agentCommand) planProcessRelaunchRecipe(reg coremetadata.Registry, targ
 	if !ok {
 		return processRelaunchRecipe{}, refuse(relaunchReasonNoConversation, "process launcher is unavailable")
 	}
-	guidance := ai.PlanProcessAgentGuidance()
+	planner := relaunchPromptPlanner{launcher: c.rebind.launcher, guidance: ai.sharedGuidance()}
 	if request.host == "tmux" {
-		guidance = planAgentGuidanceWith(c.rebind.launcher, provider, target.Metadata.Annotations)
+		planner.processGuidance = func() mutationruntime.AgentGuidanceLaunch {
+			return planAgentGuidanceWith(c.rebind.launcher, provider, target.Metadata.Annotations).shared()
+		}
 	}
-	guidance.recorded = target.Metadata.Annotations[coremetadata.AnnotationAgentGuidanceDigest]
-	links := planProjectLinksWith(c.rebind.launcher, provider, *project, target.Metadata.Annotations)
-	if provider == aiModeCodex {
-		links = localProjectLinksLaunch(ai.sharedGuidance().PlanCodexProjectLinks(*project))
-	}
-	settingsRequest := request.settings().withPromptParts(guidance, links)
-	settingsRequest.managedCodexBase = provider == aiModeCodex
-	settingsRequest.projectUID = project.Metadata.UID
+	shared, sharedGuidance, sharedLinks := mutationruntime.RelaunchSettingsRequest(request.settings().shared(), mutationruntime.RelaunchSettingsTarget{Provider: provider, Host: "process", Project: *project, Annotations: target.Metadata.Annotations}, planner)
+	guidance, links, settingsRequest := localAgentGuidanceLaunch(sharedGuidance), localProjectLinksLaunch(sharedLinks), localAgentSettingsRequest(shared)
 	var err error
 	restart.settings, err = c.rebind.resolveSettings(provider, target.Metadata.Annotations, settingsRequest)
 	if err != nil {
