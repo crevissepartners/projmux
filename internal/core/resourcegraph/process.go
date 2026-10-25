@@ -78,8 +78,9 @@ func (p ProcessInventory) current(pane coremetadata.Pane) (*ProcessKey, Status) 
 		case fromSession:
 			// Without an activation there is no live owner: the generation was
 			// either retired after its Wait or reserved and not yet spawned.
-			// Only its own exact supervisor Wait receipt can prove offline.
-			if observation.Status == StatusOffline && coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
+			// Only its own exact supervisor Wait receipt, or its own lost-host
+			// retirement that proved both identities absent, can prove offline.
+			if observation.Status == StatusOffline && (coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) || coremetadata.MatchesProcessHostLostRetirement(pane.Status.ProcessSession.Binding, pane.Status.LastTermination)) {
 				status = StatusOffline
 			}
 		case observation.Status == StatusLive || observation.Status == StatusOffline:

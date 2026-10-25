@@ -175,6 +175,7 @@ var agentActions = []AgentAction{
 	{ID: "topic.set", Group: "topic", Route: "agent topic", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "topic.clear", Group: "topic", Route: "agent topic", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "stop", Group: "stop", Route: "agent stop", Callable: true, Cells: claudeAndCodex(SupportNativeExact, CompletionProcessWait)},
+	{ID: "mark-offline", Group: "mark-offline", Route: "agent mark-offline", Callable: true, Cells: claudeAndCodex(SupportGenericRegistry, CompletionRegistryCommit)},
 	{ID: "resume", Group: "resume", Route: "agent resume", Callable: true, Cells: cells(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "relaunch", Group: "relaunch", Route: "agent relaunch", Callable: true, Cells: claudeAndCodex(SupportProviderResume, CompletionProviderLaunch)},
 	{ID: "instructions.attach", Group: "instructions", Route: "agent instructions attach", Callable: true, Cells: claudeOnly(SupportProviderResume, CompletionProviderLaunch)},

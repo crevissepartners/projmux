@@ -255,6 +255,10 @@ func retiredProcessObservation(reg coremetadata.Registry, binding processhost.Bi
 		return processhost.Snapshot{}, processhost.ErrStale
 	}
 	receipt := pane.Status.LastTermination
+	if reg.ProcessHostLostOffline(binding.Pane) {
+		// A lost-host retirement proved absence, not exit: no Exit is invented.
+		return processhost.Snapshot{Binding: binding, Provider: agent.Spec.Provider, State: processhost.StateRetired}, nil
+	}
 	if !coremetadata.MatchesProcessWait(MetadataProcessBinding(binding), receipt) || !coremetadata.SameProcessWait(receipt, agent.Status.LastTermination) {
 		return processhost.Snapshot{}, processhost.ErrStale
 	}

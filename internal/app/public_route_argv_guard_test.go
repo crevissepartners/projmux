@@ -138,6 +138,7 @@ var publicRouteArgvOperandRoutes = []string{
 	"agent status",
 	"agent topic",
 	"agent stop",
+	"agent mark-offline",
 	"agent resume",
 	"agent relaunch",
 	"agent turn start",

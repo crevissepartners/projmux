@@ -72,7 +72,11 @@ func TestProcessContainerGraphAndPickerStatusAgree(t *testing.T) {
 				}
 				agent, _ := view.Row("uid:agent-one")
 				leaf, _ := view.Row("uid:" + pane.Metadata.UID)
-				if agent.Status != status || leaf.Status != status || !reflect.DeepEqual(agent.Actions, []Action{ActionDelete}) || !reflect.DeepEqual(leaf.Actions, []Action{ActionDelete}) {
+				wantAgentActions := []Action{ActionDelete}
+				if status == resourcegraph.StatusUnknown {
+					wantAgentActions = []Action{ActionResume, ActionMarkOffline, ActionDelete}
+				}
+				if agent.Status != status || leaf.Status != status || !reflect.DeepEqual(agent.Actions, wantAgentActions) || !reflect.DeepEqual(leaf.Actions, []Action{ActionDelete}) {
 					t.Fatalf("leaf changed agent=%+v pane=%+v", agent, leaf)
 				}
 			})

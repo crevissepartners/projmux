@@ -30,6 +30,8 @@ func TestInventoryObservationsRetainUnavailableDeclarations(t *testing.T) {
 		{"unavailable", Snapshot{}, errors.New("unavailable"), resourcegraph.StatusUnknown},
 		{"contradictory", Snapshot{Binding: b, State: "ready", Exit: &Exit{Code: 0}}, nil, resourcegraph.StatusUnknown},
 		{"EOF-without-Wait", Snapshot{Binding: b, State: "exited"}, nil, resourcegraph.StatusUnknown},
+		{"lost-host-retired", Snapshot{Binding: b, State: StateRetired}, nil, resourcegraph.StatusOffline},
+		{"retired-with-exit", Snapshot{Binding: b, State: StateRetired, Exit: &Exit{Code: 0}}, nil, resourcegraph.StatusUnknown},
 		{"foreign", Snapshot{Binding: Binding{Host: "other"}, State: "ready"}, nil, resourcegraph.StatusUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

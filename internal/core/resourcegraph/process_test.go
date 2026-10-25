@@ -170,6 +170,9 @@ func TestProcessInventoryRetiredGenerationProjectsOfflineOnlyWithExactWait(t *te
 	key := ProcessKey{Host: "host", Pane: pane.Metadata.UID, Generation: "retired"}
 	other := exact
 	other.Generation = "older"
+	lost := coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceReconcile, Classification: coremetadata.TerminationUnknown, ObservedAt: exact.ObservedAt, PaneUID: binding.PaneUID, AgentUID: binding.AgentUID, Generation: binding.Generation, OperationID: binding.OperationID}
+	otherLost := lost
+	otherLost.Generation = "older"
 	for _, test := range []struct {
 		name     string
 		receipt  *coremetadata.TerminationEvidence
@@ -181,6 +184,9 @@ func TestProcessInventoryRetiredGenerationProjectsOfflineOnlyWithExactWait(t *te
 		{"other generation receipt", &other, []ProcessObservation{{Key: key, Status: StatusOffline}}, StatusUnknown},
 		{"retired cannot be live", &exact, []ProcessObservation{{Key: key, Status: StatusLive}}, StatusUnknown},
 		{"unobserved", &exact, nil, StatusUnknown},
+		{"lost-host retirement", &lost, []ProcessObservation{{Key: key, Status: StatusOffline}}, StatusOffline},
+		{"other generation lost-host retirement", &otherLost, []ProcessObservation{{Key: key, Status: StatusOffline}}, StatusUnknown},
+		{"lost-host retirement unobserved", &lost, nil, StatusUnknown},
 	} {
 		pane.Status.LastTermination = test.receipt
 		inventory := Inventory{Processes: ProcessInventory{Declared: []ProcessKey{key}, Observed: test.observed}}

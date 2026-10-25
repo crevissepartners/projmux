@@ -226,6 +226,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.usage, "agent usage", "usage", nil, rest, stdout, stderr)
 	case "stop":
 		return c.runStop(rest, stdout, stderr)
+	case "mark-offline":
+		return c.runMarkOffline(rest, stdout, stderr)
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
 	case "relaunch":
