@@ -209,8 +209,8 @@ func (c *createCommand) planProcessAgent(opts processAgentCreateOptions) (proces
 	if err != nil {
 		return plan, err
 	}
-	if provider != aiModeClaude && provider != aiModeCodex {
-		return plan, errors.New("process-provider-unsupported: this process creator requires Claude or Codex")
+	if err = mutationruntime.RequireProcessProvider(provider); err != nil {
+		return plan, err
 	}
 	flags.provider = provider
 	if err = c.agents.RequireAgentEnabled(provider); err != nil {

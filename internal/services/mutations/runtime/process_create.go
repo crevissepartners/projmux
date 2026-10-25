@@ -24,6 +24,16 @@ type ProcessCreateContext struct {
 
 func processCreateUsage(message string) error { return &createUsageError{message: message} }
 
+// RequireProcessProvider refuses a resolved provider the process creator
+// cannot host. The detached child and the SDK preflight both ask it once the
+// provider, a profile's included, is resolved.
+func RequireProcessProvider(provider string) error {
+	if provider != "claude" && provider != "codex" {
+		return errors.New("process-provider-unsupported: this process creator requires Claude or Codex")
+	}
+	return nil
+}
+
 // Typed callers and the CLI share this validated request. It contains no argv
 // parser, output selection, terminal handle, or inferred runtime authority.
 type ProcessAgentCreateOptions struct {

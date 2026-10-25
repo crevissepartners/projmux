@@ -13,6 +13,7 @@ AgentInputFields.RequireInteractiveOnlyProvider	Public v0 tmux Agent creation cl
 AgentInputFields.RequireProfileLane	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 AgentInteraction.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AgentProgress.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+AgentSettings.CheckPersonaLaunch	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 AgentWorkspace.IsZero	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
 AggregateTeardownEvents	Pure multi-event teardown authority is called by the product path and retained for lifecycle decision proofs.
 All	Closed provider-registry projection retained as the test seam that pins the live aiprovider registry create-shortcut and picker-order contract.
@@ -86,6 +87,7 @@ Client.Models	Public v0 Agent catalog SDK entrypoint or its read-only adapter; r
 Client.ObserveResourceGraph	Public v0 coherent resource graph SDK entrypoint or its adapter (ObserveResourceGraph/ReadRegistryFileIdentity); reachable from external consumers rather than the CLI binary; covered by resourcegraph JSON parity, single-read, identity, field coverage and GOWORK=off consumer tests.
 Client.ObserveRuntime	Public v0 runtime SDK entrypoint retained for external modules; checked by runtime parity, cancellation, field coverage and external consumer tests.
 Client.ParseProfile	Public typed profile parse SDK entrypoint, covered by SDK/CLI parity and external consumer tests.
+Client.PreflightCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 Client.PreflightDelete	Public v0 deletion-protection preflight for external frontends before provider Stop; covered by protected SDK surface and host admission race tests.
 Client.PrepareAgentResume	Public process Claude child-free preparation entrypoint; external consumer and same-fixture prepared lifecycle tests preserve frozen proof without claim or provider.
 Client.PreviewProfile	Public write-free profile preview SDK entrypoint, covered by no-effects, cancellation, parity and external consumer tests.
@@ -134,6 +136,7 @@ Client.agentPersonaWithResume	Public persona SDK execution closure; real resume 
 Client.agentSessionsService	Public v0 Agent/Project session history SDK closure, consumed by TestExternalAgentSessionsConsumer and covered by TestSDKAgentSessionsCLIParityAndReadOnly and direct read admission tests; no transcript or writer API.
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
+Client.checkCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 Client.createAgent	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 Client.createDiscoveryRoots	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createInputs	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
@@ -147,6 +150,7 @@ Client.deleteWithRunner	Public v0 Window, Pane and Agent deletion SDK entrypoint
 Client.guidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.peerMessages	Client.SendMessage and Client.MessageStatus construct the same frozen-path execution service through this adapter.
+Client.preflightCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 Client.questionService	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
@@ -759,6 +763,7 @@ processAgentDeleter.stopAndWait	Thin runtime adapter retained for exact native o
 processApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 processCodexLaunchEnv	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
 processCodexSelections	Internal dedicated Codex process binding/control/receipt proof; retain until the Task 5 foreground consumer activates this seam.
+processCreateShape	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 processUserDeliveryAcceptance	Retained typed receipt validation for the planned foreign-owned Codex deliverProcessUserInput consumer rejects missing or malformed actual Mode/Operation/TurnID without replay or fallback.
 processWaitRetired	Metadata predicate adapter retained for exact owned process control consumers; deletion also proves kernel retirement in the shared executor.
 profileRefusal	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.

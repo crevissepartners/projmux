@@ -216,6 +216,25 @@ a typed request field, never as argv.
 Profiles, instructions, model, effort, workspace roots and placement use the
 CLI's existing validation. Set `Options.ProjmuxExecutable` from the same build.
 
+`Client.PreflightCreateAgent(ctx, req)` answers, before the caller creates a
+Window for the Agent, the refusals `CreateAgent` would give the same
+`CreateAgentRequest` for its profile, instructions and model, with the same
+`Code` and message as `CreateAgent` and `projmux create agent`. It runs the
+checks `CreateAgent` runs before its first effect, in the same order, and reads
+the stored instructions the request or its profile names; it writes nothing,
+runs no tmux command and starts no process. `Window` may be empty, and a named
+Window or Pane is only parsed, not resolved. A process request is first refused
+as `CreateAgent` refuses its shape, and a provider its profile chooses must be
+Claude or Codex. Without a refusal it returns `core.CreateAgentPreflight` with
+the provider the create will run, the profile's when the request names none.
+It does not authorize the create: `CreateAgent` checks again, so settings
+changed in between decide. It cannot answer what only the create's effects
+reveal: a Window or Pane that does not resolve, an instructions or profile
+settings snapshot that cannot be written, Codex native preparation, a missing
+Project root or the workspace. A request with more than one defect can meet a
+different first refusal in the detached process creator, which checks in
+another order.
+
 Prompted Codex uses the existing official app-server endpoint and the CLI's native
 thread/start and initial turn path. Instructions and profile settings are applied
 when the thread starts. The captured provider PATH, CODEX_HOME and HomeDir reach
