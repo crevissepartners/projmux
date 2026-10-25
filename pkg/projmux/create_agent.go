@@ -227,6 +227,11 @@ func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentReque
 	}
 	fields := mutationruntime.AgentInputFields{}
 	settings := mutationruntime.AgentSettingsFlags{Profile: req.Profile, ProfileProjectUID: project.Metadata.UID, Instructions: req.Instructions, InstructionsOption: "instructions", Model: req.Model, Effort: req.Effort, Labels: req.Labels, Payload: req.Payload, InteractiveOnly: req.InteractiveOnly, DialogueReplyOnly: req.DialogueReplyOnly}
+	if process {
+		// The detached creator's profile rules see a process host: a Codex
+		// process Agent starts natively even without a payload.
+		settings.Host = "process"
+	}
 	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime, Settings: settings, Fields: fields}
 	provider := req.Provider
 	if provider == "" {

@@ -25,7 +25,8 @@ func (r *preflightRunner) Run(context.Context, string, ...string) ([]byte, error
 
 // preflightClient is one Project named sample with stored instructions
 // reviewer and the profiles claude, coder (codex), other (antigravity) and
-// reviewing (claude with instructions reviewer). The socket is absent, so
+// reviewing (claude with instructions reviewer), and careful (codex with
+// approval untrusted). The socket is absent, so
 // any tmux use would fail.
 func preflightClient(t *testing.T) (*Client, string, string) {
 	t.Helper()
@@ -46,7 +47,7 @@ func preflightClient(t *testing.T) (*Client, string, string) {
 	if _, err = c.WriteInstructions(ctx, "reviewer", []byte("Review carefully.\n")); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"claude": "provider = \"claude\"\n", "coder": "provider = \"codex\"\n", "other": "provider = \"antigravity\"\n", "reviewing": "provider = \"claude\"\ninstructions = \"reviewer\"\n"} {
+	for name, body := range map[string]string{"claude": "provider = \"claude\"\n", "coder": "provider = \"codex\"\n", "careful": "provider = \"codex\"\n[permissions]\napproval = \"untrusted\"\n", "other": "provider = \"antigravity\"\n", "reviewing": "provider = \"claude\"\ninstructions = \"reviewer\"\n"} {
 		if _, err = c.WriteProfile(ctx, name, []byte(body)); err != nil {
 			t.Fatal(err)
 		}
@@ -193,6 +194,22 @@ func TestPreflightCreateAgentProcessShape(t *testing.T) {
 	want := mutationruntime.RequireProcessProvider("antigravity")
 	if !errors.As(err, &refusal) || refusal.Code != CodeCreateExecutionFailed || want == nil || err.Error() != want.Error() || !strings.HasPrefix(err.Error(), "process-provider-unsupported:") {
 		t.Fatalf("profile provider: %v", err)
+	}
+	// A Codex process Agent starts natively without a payload, so a profile
+	// asking for untrusted approval applies there, inferred or named, while a
+	// payload-free tmux Codex Agent runs the CLI, which refuses it.
+	for _, provider := range []string{"", "codex"} {
+		got, err := c.PreflightCreateAgent(context.Background(), process(core.CreateAgentRequest{Detach: true, Provider: provider, Profile: "careful"}))
+		if err != nil || got.Provider != "codex" {
+			t.Fatalf("process untrusted %q: %+v %v", provider, got, err)
+		}
+		tmuxReq := core.CreateAgentRequest{Project: "sample", Window: "extra", Provider: provider, Profile: "careful"}
+		_, preErr := c.PreflightCreateAgent(context.Background(), tmuxReq)
+		_, createErr := c.CreateAgent(context.Background(), tmuxReq)
+		var pre *Refusal
+		if !errors.As(preErr, &pre) || pre.Code != CodeProfileCodexCLIUntrusted || createErr == nil || preErr.Error() != createErr.Error() {
+			t.Fatalf("tmux untrusted %q: preflight %v, CreateAgent %v", provider, preErr, createErr)
+		}
 	}
 	// tmux hosts the same profile.
 	if got, err := c.PreflightCreateAgent(context.Background(), core.CreateAgentRequest{Project: "sample", Profile: "other"}); err != nil || got.Provider != "antigravity" {
