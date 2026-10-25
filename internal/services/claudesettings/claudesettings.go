@@ -158,7 +158,7 @@ func resolveTarget(path string) (string, fs.FileInfo, error) {
 // left for the caller, since it may be a link or may not exist.
 func walkLink(dir, link string) (string, error) {
 	var parts []string
-	for _, part := range strings.Split(link, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(link, string(filepath.Separator)) {
 		if part != "" && part != "." {
 			parts = append(parts, part)
 		}
