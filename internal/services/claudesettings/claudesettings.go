@@ -57,6 +57,7 @@ func (e *ChangedError) Error() string {
 // otherwise Replace returns ChangedError. It leaves no temporary file behind
 // on any failure.
 func Replace(path string, base *Base, data []byte) error {
+	// #nosec G301 -- Claude Code's own ~/.claude directory, created 0755 as the CLI has always created it.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
