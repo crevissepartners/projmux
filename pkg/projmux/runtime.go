@@ -43,22 +43,9 @@ func (c *Client) ObserveRuntime(ctx context.Context, input RuntimeRequest) (core
 	default:
 		return core.RuntimeReport{}, &Refusal{Code: CodeRuntimeRequestInvalid, message: fmt.Sprintf("get runtime %s is not available; this release implements: sessions, windows, panes", input.Kind)}
 	}
-	request := resourcegraph.TransportRequest{SocketName: input.SocketName, SocketPath: input.SocketPath}
-	// Validate request fields before applying the Client's explicit route. An
-	// explicit name overrides Options.SocketPath rather than conflicting with it.
-	transport, err := runtimeservice.ResolveTransport(request)
+	transport, err := c.runtimeTransport("RuntimeRequest", input.SocketName, input.SocketPath)
 	if err != nil {
-		message := "RuntimeRequest.SocketName and SocketPath are mutually exclusive"
-		if strings.TrimSpace(input.SocketName) == "" || strings.TrimSpace(input.SocketPath) == "" {
-			message = fmt.Sprintf("RuntimeRequest.SocketPath must be absolute, got %q", strings.TrimSpace(input.SocketPath))
-		}
-		return core.RuntimeReport{}, &Refusal{Code: CodeRuntimeRequestInvalid, message: message}
-	}
-	if transport.Kind == resourcegraph.TransportNone && c.runtimeSocketPath != "" {
-		transport, err = runtimeservice.ResolveTransport(resourcegraph.TransportRequest{SocketPath: c.runtimeSocketPath})
-		if err != nil {
-			return core.RuntimeReport{}, err
-		}
+		return core.RuntimeReport{}, err
 	}
 	if c.pathsErr != nil {
 		return core.RuntimeReport{}, resourceRefusal(c.pathsErr)
@@ -78,4 +65,23 @@ func (c *Client) ObserveRuntime(ctx context.Context, input RuntimeRequest) (core
 	var report core.RuntimeReport
 	err = json.Unmarshal(raw, &report)
 	return report, err
+}
+
+// runtimeTransport resolves one exact route for the request type named by
+// request. Request fields are validated before the Client's explicit route is
+// applied; an explicit name overrides Options.SocketPath rather than
+// conflicting with it. Neither TMUX nor the app/default socket is consulted.
+func (c *Client) runtimeTransport(request, socketName, socketPath string) (resourcegraph.Transport, error) {
+	transport, err := runtimeservice.ResolveTransport(resourcegraph.TransportRequest{SocketName: socketName, SocketPath: socketPath})
+	if err != nil {
+		message := request + ".SocketName and SocketPath are mutually exclusive"
+		if strings.TrimSpace(socketName) == "" || strings.TrimSpace(socketPath) == "" {
+			message = fmt.Sprintf("%s.SocketPath must be absolute, got %q", request, strings.TrimSpace(socketPath))
+		}
+		return resourcegraph.Transport{}, &Refusal{Code: CodeRuntimeRequestInvalid, message: message}
+	}
+	if transport.Kind == resourcegraph.TransportNone && c.runtimeSocketPath != "" {
+		return runtimeservice.ResolveTransport(resourcegraph.TransportRequest{SocketPath: c.runtimeSocketPath})
+	}
+	return transport, nil
 }

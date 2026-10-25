@@ -1397,6 +1397,58 @@ graphs remain readable. Cancellation is checked before captured path errors
 and before returning success. A loader or projection failure wins over
 cancellation during that work; cancellation does not interrupt file I/O.
 
+## One coherent resource graph and its Registry file identity
+
+`Client.ObserveResourceGraph(ctx, projmux.ResourceGraphRequest{...})` returns
+one `core.ResourceGraph` built from a single observation: it stats the Registry
+file, reads the Registry once through the CLI's degraded read-only loader,
+stats the file again, then observes the selected tmux server once and the
+process hosts that Registry declares once, and resolves them with the graph
+rules the CLI uses. `Graph` is a `core.ResourceGraphView` whose JSON is the
+CLI's internal graph JSON byte for byte: Projects, ControlSessions, Windows,
+Panes and Agents with their class, status and owner chain, every observed tmux
+object with its attribution, conflicts, and the scopes that could not be read.
+Kind-by-kind reads would join different Registry reads; this call never does.
+
+`ResourceGraphRequest` routes exactly like `RuntimeRequest`: `SocketName`
+corresponds to `--socket`, `SocketPath` must be absolute, both together are a
+`CodeRuntimeRequestInvalid` refusal, and empty fields use an explicit
+`Options.SocketPath`, otherwise no server. TMUX and the app/default socket are
+never consulted. Without a server, or when a server or a process host cannot be
+read, the Registry rows remain with status `unknown` and `Graph.Unavailable`
+names the scope; that is not an error.
+
+`RegistryIdentity` is the `core.RegistryFileIdentity` of the file the rows were
+read from. It is set only when both stats succeed and agree; a replacement in
+between, or a file that cannot be stat'ed, leaves it nil and the graph is still
+returned. `Client.ReadRegistryFileIdentity(ctx)` stats the same file without
+reading, locking, repairing it, or contacting tmux or providers, and for the
+same file state returns the same value. Use it to decide cheaply whether a held
+graph is still current; a missing file is a `CodeRegistryUnavailable` refusal,
+never a zero identity.
+
+```go
+observed, err := client.ObserveResourceGraph(ctx, projmux.ResourceGraphRequest{SocketName: "projmux"})
+if err != nil {
+    return err
+}
+for _, pane := range observed.Graph.Panes {
+    fmt.Println(pane.Pane.Metadata.UID, pane.Class, pane.Status)
+}
+if observed.RegistryIdentity != nil {
+    current, err := client.ReadRegistryFileIdentity(ctx)
+    if err == nil && current == *observed.RegistryIdentity {
+        // The Registry has not been rewritten since this graph was read.
+    }
+}
+```
+
+Neither call writes tmux, the Registry, provider hosts, or the caller's stderr.
+Process hosts are only observed within the CLI's existing read budgets; no
+process admission, binding or control authority is returned.
+`ReadRegistrySnapshot`, `ListResources`, `GetResource`, and `ObserveRuntime`
+keep their existing behavior.
+
 ### Complete recorded session history
 
 `Client.ListRecordedSessions(ctx)` returns `core.RecordedSessionsList` with

@@ -5,39 +5,18 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"sort"
-	"sync"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 )
 
-// Observation is a separate read protocol. Provider input, pending requests,
-// output, diagnostics and control authority never cross this boundary.
-type processHostObservation struct {
-	Binding         processhost.Binding
-	Host, Child     coremetadata.ProcessIdentity
-	Provider, State string
-	Exit            *processhost.Exit `json:",omitempty"`
-	// Control protocol v1 (processHostProtocol). Revision is the owner's build
-	// revision, Actions its supported actions, Turn whether a provider turn is
-	// running, and Pending the count of open control requests; their content
-	// never crosses. An answer without Protocol is a protocol-0 owner.
-	// Coordination is the owner build's claudeCoordinationVersion; an owner
-	// that leaves it out predates the field and its version is unknown.
-	Protocol     int      `json:",omitempty"`
-	Revision     string   `json:",omitempty"`
-	Actions      []string `json:",omitempty"`
-	Turn         bool     `json:",omitempty"`
-	Pending      int      `json:",omitempty"`
-	OwnerMode    string   `json:",omitempty"`
-	Coordination int      `json:",omitempty"`
-}
+// Observation is a separate read protocol owned by the shared runtime service.
+// The defined type keeps the owner-side methods in this package.
+type processHostObservation runtimeservice.ProcessHostObservation
 
 // newProcessHostObservation describes one owner's current snapshot in control
 // protocol v1.
@@ -60,42 +39,12 @@ func (v processHostObservation) hostRevision() string {
 }
 
 // Both the responder and reader compare the complete immutable activation.
-// An unavailable child is not an exit; only the host's reaped Wait can say so.
 func processObservationMatches(reg coremetadata.Registry, binding processhost.Binding, view processHostObservation) bool {
-	if !processObservationOwnership(reg, binding, view) {
-		return false
-	}
-	host, _, err := localipc.Process(view.Host.PID)
-	if err != nil || host != view.Host {
-		return false
-	}
-	if view.Exit != nil {
-		return view.State == "exited"
-	}
-	child, parent, err := localipc.Process(view.Child.PID)
-	if err != nil || child != view.Child {
-		return false
-	}
-	// The provider belongs to the host's dedicated supervisor, not to an
-	// unrelated process that happens to have the same UID.
-	_, hostPID, err := localipc.Process(parent)
-	if err != nil || hostPID != view.Host.PID {
-		return false
-	}
-	switch view.State {
-	case "starting", "ready", "stopping", "unknown":
-		return true
-	default:
-		return false
-	}
+	return runtimeservice.ProcessObservationMatches(reg, binding, runtimeservice.ProcessHostObservation(view))
 }
 
 func processObservationOwnership(reg coremetadata.Registry, binding processhost.Binding, view processHostObservation) bool {
-	current := metadataProcessBinding(binding)
-	activation, provider, ok := reg.CurrentProcessActivation(current)
-	return ok && view.Binding == binding && provider == view.Provider &&
-		activation.HostProcess == view.Host && activation.Child == view.Child &&
-		int64(view.Host.OwnerUID) == int64(os.Getuid()) && int64(view.Child.OwnerUID) == int64(os.Getuid())
+	return runtimeservice.ProcessObservationOwnership(reg, binding, runtimeservice.ProcessHostObservation(view))
 }
 
 type remoteProcessObserver struct {
@@ -105,76 +54,25 @@ type remoteProcessObserver struct {
 	binding      processhost.Binding
 }
 
+func (r remoteProcessObserver) service() runtimeservice.ProcessObserver {
+	return runtimeservice.ProcessObserver{Ctx: r.ctx, Registry: r.registry, RegistryPath: r.registryPath, Binding: r.binding}
+}
+
 func (r remoteProcessObserver) Observe(binding processhost.Binding) (processhost.Snapshot, error) {
-	if binding != r.binding || r.ctx.Err() != nil {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	pane, ok := r.registry.Pane(binding.Pane)
-	if !ok {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	if pane.Status.Activation.IsZero() {
-		return retiredProcessObservation(r.registry, binding)
-	}
-	if pane.Status.Activation.Process == nil {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	activation := pane.Status.Activation.Process
-	agent, ok := r.registry.Agent(binding.Agent)
-	if !ok {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	if snapshot, ok := recordedProcessExit(r.registry, binding, *pane, *activation, agent.Spec.Provider); ok {
-		return snapshot, nil
-	}
-	return r.observeHost(binding, *activation, agent.Spec.Provider)
+	return r.service().Observe(binding)
 }
 
 // recordedProcessExit projects a durable supervisor receipt for the exact
 // current activation. Any mismatch falls through to the live host read.
 func recordedProcessExit(reg coremetadata.Registry, binding processhost.Binding, pane coremetadata.Pane, activation coremetadata.ProcessActivation, provider string) (processhost.Snapshot, bool) {
-	receipt := pane.Status.LastTermination
-	if receipt == nil || receipt.Source != coremetadata.TerminationSourceSupervisor ||
-		receipt.PaneUID != binding.Pane || receipt.AgentUID != binding.Agent || receipt.Generation != binding.Generation || receipt.OperationID != binding.Operation ||
-		receipt.ObservedAt.IsZero() || (receipt.ExitCode == nil && receipt.Signal == "") {
-		return processhost.Snapshot{}, false
-	}
-	exit := &processhost.Exit{Signal: receipt.Signal}
-	if receipt.ExitCode != nil {
-		exit.Code = *receipt.ExitCode
-	}
-	view := processHostObservation{Binding: binding, Host: activation.HostProcess, Child: activation.Child, Provider: provider, State: "exited", Exit: exit}
-	if !coremetadata.MatchesProcessWait(metadataProcessBinding(binding), receipt) || !processObservationOwnership(reg, binding, view) {
-		return processhost.Snapshot{}, false
-	}
-	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: exit}, true
-}
-
-func (r remoteProcessObserver) observeHost(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (processhost.Snapshot, error) {
-	view, err := r.observeHostView(binding, activation, provider)
-	if err != nil {
-		return processhost.Snapshot{}, err
-	}
-	return processhost.Snapshot{Binding: binding, Provider: view.Provider, State: view.State, PID: view.Child.PID, Exit: view.Exit}, nil
+	return runtimeservice.RecordedProcessExit(reg, binding, pane, activation, provider)
 }
 
 // observeHostView reads the exact live owner's observation, including the
 // protocol fields a protocol-0 owner leaves empty.
 func (r remoteProcessObserver) observeHostView(binding processhost.Binding, activation coremetadata.ProcessActivation, provider string) (processHostObservation, error) {
-	socket := processHostSocket(provider, r.registryPath, binding.Pane, binding.Generation)
-	identity, err := localipc.InspectOwnedSocket(socket)
-	if err != nil {
-		return processHostObservation{}, err
-	}
-	result, err := callProcessForeground(r.ctx, socket, identity, activation.HostProcess, processHostRequest(provider, &binding, nil))
-	if err != nil {
-		return processHostObservation{}, err
-	}
-	current, err := localipc.InspectOwnedSocket(socket)
-	if err != nil || current != identity || !result.Accepted || result.Observation == nil || !processObservationMatches(r.registry, binding, *result.Observation) {
-		return processHostObservation{}, processhost.ErrStale
-	}
-	return *result.Observation, nil
+	view, err := r.service().ObserveHostView(binding, activation, provider)
+	return processHostObservation(view), err
 }
 
 // processHostRevisionLookup reports the build revision of the owner hosting
@@ -230,10 +128,7 @@ func observeProcessHostOwnerContext(ctx context.Context, registry coremetadata.R
 
 // processHostSocket names the owned control socket of one provider's host.
 func processHostSocket(provider, registryPath, pane, generation string) string {
-	if provider == aiModeCodex {
-		return processCodexHostSocket(registryPath, pane, generation)
-	}
-	return processClaudeHostSocket(registryPath, pane, generation)
+	return runtimeservice.ProcessHostSocket(provider, registryPath, pane, generation)
 }
 
 // processHostRequest wraps an observation or foreground request in the
@@ -245,127 +140,20 @@ func processHostRequest(provider string, observe *processhost.Binding, foregroun
 	return claudeProcessCheck{Observe: observe, Foreground: foreground}
 }
 
-// Retired session history can prove offline state, but cannot grant a host or
-// control authority. CurrentProcessActivation deliberately remains false.
-func retiredProcessObservation(reg coremetadata.Registry, binding processhost.Binding) (processhost.Snapshot, error) {
-	if err := reg.Validate(); err != nil {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	pane, ok := reg.Pane(binding.Pane)
-	if !ok || !pane.Status.Activation.IsZero() || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess || pane.Status.ProcessSession == nil {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	record := pane.Status.ProcessSession
-	agent, ok := reg.Agent(binding.Agent)
-	if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != binding.Pane || record.Provider != agent.Spec.Provider || processSchemaBinding(record.Binding) != binding {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	receipt := pane.Status.LastTermination
-	if !coremetadata.MatchesProcessWait(metadataProcessBinding(binding), receipt) || !coremetadata.SameProcessWait(receipt, agent.Status.LastTermination) {
-		return processhost.Snapshot{}, processhost.ErrStale
-	}
-	exit := &processhost.Exit{Signal: receipt.Signal}
-	if receipt.ExitCode != nil {
-		exit.Code = *receipt.ExitCode
-	}
-	return processhost.Snapshot{Binding: binding, Provider: agent.Spec.Provider, State: "exited", Exit: exit}, nil
-}
-
 // Each owner gets this budget after acquiring a probe slot. Queueing behind
 // another owner does not consume it. Failures remain unknown.
-const processObservationReadLimit = 250 * time.Millisecond
+const processObservationReadLimit = runtimeservice.ProcessObservationReadLimit
 
-// Bound the whole inventory separately, including queueing. Large inventories
-// can still exhaust this cap; their unobserved declarations remain unknown.
-const processObservationTotalLimit = 2 * time.Second
-
-// Declarations are collected before probing. One unavailable host cannot erase
-// another Pane or cause a tmux lookup, and the entire observation is bounded.
+// observeRegistryProcesses observes the default Registry's process
+// declarations through the shared runtime service and keeps the CLI's stderr
+// deadline diagnostic.
 func observeRegistryProcesses(ctx context.Context, registry coremetadata.Registry) resourcegraph.ProcessInventory {
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		return resourcegraph.ProcessInventory{}
 	}
-	ctx, cancel := context.WithTimeout(ctx, processObservationTotalLimit)
-	defer cancel()
-	totalDeadline, _ := ctx.Deadline()
-	targets := []processhost.InventoryTarget{}
-	for _, pane := range registry.Panes {
-		if pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
-			continue
-		}
-		var binding processhost.Binding
-		if pane.Status.Activation.Process != nil {
-			binding = processSchemaBinding(pane.Status.Activation.Process.Binding)
-		} else if pane.Status.ProcessSession != nil {
-			binding = processSchemaBinding(pane.Status.ProcessSession.Binding)
-		} else {
-			continue
-		}
-		targets = append(targets, processhost.InventoryTarget{Binding: binding, Observer: remoteProcessObserver{ctx: ctx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: binding}})
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Binding.Pane < targets[j].Binding.Pane })
-	results := make([]resourcegraph.ProcessInventory, len(targets))
-	ownerTimeouts := make([]bool, len(targets))
-	totalLimited := make([]bool, len(targets))
-	var group sync.WaitGroup
-	slots := make(chan struct{}, 8)
-	for i, target := range targets {
-		pane, ok := registry.Pane(target.Binding.Pane)
-		if ok && pane.Status.Activation.IsZero() {
-			// Exact retired Wait/Phase/Binding evidence needs no owner or
-			// network budget. Keep the same validator, even after cancellation.
-			target.Observer = remoteProcessObserver{ctx: context.Background(), registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: target.Binding}
-			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{target})
-			continue
-		}
-		group.Go(func() {
-			// Start unknown so every declaration survives an exhausted cap.
-			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{{Binding: target.Binding}})
-			select {
-			case slots <- struct{}{}:
-				defer func() { <-slots }()
-			case <-ctx.Done():
-				totalLimited[i] = true
-				return
-			}
-			if ctx.Err() != nil {
-				totalLimited[i] = true
-				return
-			}
-			ownerCtx, cancelOwner := context.WithTimeout(ctx, processObservationReadLimit)
-			defer cancelOwner()
-			target.Observer = remoteProcessObserver{ctx: ownerCtx, registry: registry, registryPath: intmetadata.PathFor(paths.StateDir), binding: target.Binding}
-			results[i] = processhost.ObserveInventory([]processhost.InventoryTarget{target})
-			// The socket deadline can fire just before context's timer runs.
-			// Compare the deadline as well so those timeouts leave a signal.
-			deadline, _ := ownerCtx.Deadline()
-			now := time.Now()
-			if results[i].Observed[0].Status == resourcegraph.StatusUnknown && (ownerCtx.Err() != nil || !now.Before(deadline)) {
-				if ctx.Err() != nil || !now.Before(totalDeadline) {
-					totalLimited[i] = true
-				} else {
-					ownerTimeouts[i] = true
-				}
-			}
-		})
-	}
-	group.Wait()
-	var inventory resourcegraph.ProcessInventory
-	var ownerTimeoutCount, totalLimitedCount int
-	for i, result := range results {
-		inventory.Declared = append(inventory.Declared, result.Declared...)
-		inventory.Observed = append(inventory.Observed, result.Observed...)
-		if ownerTimeouts[i] {
-			ownerTimeoutCount++
-		}
-		if totalLimited[i] {
-			totalLimitedCount++
-		}
-	}
-	if ownerTimeoutCount+totalLimitedCount > 0 {
+	return runtimeservice.ObserveRegistryProcesses(ctx, registry, intmetadata.PathFor(paths.StateDir), func(ownerTimeouts, totalLimited int) {
 		// Internal diagnostic only: no provider content or control authority.
-		fmt.Fprintf(os.Stderr, "process observation deadline: owner_timeouts=%d total_limited=%d\n", ownerTimeoutCount, totalLimitedCount)
-	}
-	return inventory
+		fmt.Fprintf(os.Stderr, "process observation deadline: owner_timeouts=%d total_limited=%d\n", ownerTimeouts, totalLimited)
+	})
 }
