@@ -162,7 +162,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 	if err != nil {
 		return out, err
 	}
-	out = core.RelaunchAgentResult{AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider, Phase: core.AgentPhase(target.Status.Phase), Interaction: string(p.Interaction), PaneUID: p.PaneUID, ConversationID: p.Resume.ConversationID, DryRun: q.DryRun, Restart: p.Running, ConfirmationRequired: p.ConfirmationRequired(), CurrentSettings: publicRelaunchSettings(p.Settings.Resolution.Current), NewSettings: publicRelaunchSettings(p.Settings.Resolution.New), RelaunchReasons: append([]string{}, p.Settings.Resolution.Reasons...)}
+	out = core.RelaunchAgentResult{AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: provider, Phase: core.AgentPhase(target.Status.Phase), Interaction: string(p.Interaction), PaneUID: p.PaneUID, ConversationID: p.Resume.ConversationID, CurrentModel: target.Metadata.Annotations[metadata.AnnotationAgentModel], CurrentEffort: target.Metadata.Annotations[metadata.AnnotationAgentEffort], DryRun: q.DryRun, Restart: p.Running, ConfirmationRequired: p.ConfirmationRequired(), CurrentSettings: publicRelaunchSettings(p.Settings.Resolution.Current), NewSettings: publicRelaunchSettings(p.Settings.Resolution.New), RelaunchReasons: append([]string{}, p.Settings.Resolution.Reasons...)}
 	out.Outcome = p.RelaunchDisposition(settings, q.DryRun)
 	if out.Outcome == "unchanged" {
 		out.Unchanged = true
@@ -254,7 +254,9 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			if err != nil {
 				return err
 			}
-			out.Resume, err = c.resumeAgentPlan(admitted, plan, socket, runner)
+			var application *runtime.AgentSettingsApplication
+			out.Resume, application, err = c.resumeAgentPlanWithApplication(admitted, plan, socket, runner)
+			out.SettingsApplication = publicSettingsApplication(application)
 			return err
 		},
 		ResumeFailed: func(err error) error {
@@ -307,6 +309,18 @@ func publicRelaunchSettings(s agentsettings.Settings) core.RelaunchAgentSettings
 	}
 	return core.RelaunchAgentSettings{Profile: core.RelaunchAgentProfile{Name: s.Profile.Name, Digest: s.Profile.Digest, Source: s.Profile.Source}, Instructions: setting(s.Instructions), Model: setting(s.Model), Effort: setting(s.Effort)}
 }
+// publicSettingsApplication copies the shared runtime value; it adds nothing.
+func publicSettingsApplication(a *runtime.AgentSettingsApplication) *core.AgentSettingsApplication {
+	if a == nil {
+		return nil
+	}
+	out := &core.AgentSettingsApplication{NotAppliedCount: a.NotAppliedCount, Entries: make([]core.AgentSettingApplication, 0, len(a.Entries))}
+	for _, e := range a.Entries {
+		out.Entries = append(out.Entries, core.AgentSettingApplication{Setting: e.Setting, Status: e.Status, Reason: e.Reason, Value: e.Value, RequestedValue: e.RequestedValue, NextAction: e.NextAction})
+	}
+	return out
+}
+
 func validateRelaunchLayers(q core.RelaunchAgentRequest) error {
 	bad := func(s string) error { return &Refusal{Code: CodeRelaunchRequestInvalid, message: s} }
 	if q.Profile != nil && *q.Profile != "" {

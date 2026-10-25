@@ -115,13 +115,18 @@ func (c *Client) resumeAgent(ctx context.Context, req core.ResumeAgentRequest, r
 // resumeAgentPlan keeps the existing rebind transaction shared with relaunch.
 // Its caller owns selection and admission; it never infers a current Agent.
 func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.AgentResumePlan, socket string, runner mutationruntime.TmuxCommandRunner) (core.ResumeAgentResult, error) {
-	var result core.ResumeAgentResult
-	var err error
+	result, _, err := c.resumeAgentPlanWithApplication(ctx, plan, socket, runner)
+	return result, err
+}
+
+// resumeAgentPlanWithApplication also returns the settings application the
+// CLI reports for the same resume; it is nil until the transaction commits.
+func (c *Client) resumeAgentPlanWithApplication(ctx context.Context, plan mutationruntime.AgentResumePlan, socket string, runner mutationruntime.TmuxCommandRunner) (result core.ResumeAgentResult, application *mutationruntime.AgentSettingsApplication, err error) {
 	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
 	transaction.Outcomes = c.createOutcomes()
 	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime}
 	if err := planner.RequireEnabled(plan.Provider); err != nil {
-		return result, resumeRefusal(err)
+		return result, application, resumeRefusal(err)
 	}
 	planner.Initialize()
 	paths := func() (config.Paths, error) { return c.paths, nil }
@@ -134,7 +139,7 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 	}}
 	// Snapshot preparation and transaction follow the last caller Context check.
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return result, application, err
 	}
 	var prepared mutationruntime.PreparedAgentResume
 	var native *mutationruntime.SDKNativeSession
@@ -143,7 +148,7 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 
 		native, err = planner.NativeSession()
 		if err != nil {
-			return result, &Refusal{Code: CodeResumeNativeCodexUnavailable, message: err.Error(), cause: err}
+			return result, application, &Refusal{Code: CodeResumeNativeCodexUnavailable, message: err.Error(), cause: err}
 		}
 		var route mutationruntime.NativeCodexRoute
 		var settings codexappserver.ThreadSettings
@@ -158,10 +163,10 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 		prepared, err = prep.Prepare("agent resume", plan)
 	}
 	if err != nil {
-		return result, resumeRefusal(err)
+		return result, application, resumeRefusal(err)
 	}
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return result, application, err
 	}
 	machine := &mutationruntime.AgentResumeExecution{Execution: execution, ResolveWorkspace: mutationruntime.ResolveAgentWorkspaceFor, Record: prepared.Record, Layered: prepared.Settings.Layered}
 	machine.Handoff = machine.HandOffResumedPaneName
@@ -178,14 +183,19 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 	}
 	var out mutationruntime.AgentResumeResult
 	if err := transaction.Transact(mutationruntime.CreateKindResume, machine.Operation("agent resume", plan, prepared.Title, prepared.Argv, &out), execution.ExactProjectOwnershipGuard(plan.ProjectUID)); err != nil {
-		return result, resumeRefusal(err)
+		return result, application, resumeRefusal(err)
 	}
+	workspace := plan.Workspace
+	if workspace.CWD == "" {
+		workspace.CWD = plan.ProjectRoot
+	}
+	application = mutationruntime.PreparedAgentSettingsApplication(mutationruntime.AgentApplicationSource{ModelArg: prepared.Settings.Model(plan.ModelOverride), NativeReady: nativeExecution != nil && nativeExecution.ThreadID != "", ReplyOnly: plan.DialogueReplyOnly, Provider: plan.Provider, Host: "tmux", Settings: prepared.Settings, Resumed: prepared.Resumed, Guidance: prepared.Guidance, Links: prepared.Links, Workspace: workspace, Annotations: plan.LaunchAnnotations()})
 	if native != nil {
 		native.ObserveResume(plan.AgentUID, out, nativeExecution.ThreadID)
 	}
 	projection, err := c.createProjection(socket, core.KindAgent, mutationruntime.ShellCreateResource{UID: plan.AgentUID})
 	if err != nil {
-		return result, err
+		return result, application, err
 	}
 	result.Projection = projection
 	result.Agent = projection.Items[0].(core.Agent)
@@ -202,16 +212,16 @@ func (c *Client) resumeAgentPlan(ctx context.Context, plan mutationruntime.Agent
 	result.Notices = append(plan.SharedConversationNotices("agent resume"), result.Notices...)
 	after, err := resources.Load(c.paths)
 	if err != nil {
-		return result, resourceRefusal(err)
+		return result, application, resourceRefusal(err)
 	}
 	record := mutationruntime.ResumeReceipt(after, plan.AgentUID, out.PaneUID)
 	if record.APIVersion == "" {
-		return result, &Refusal{Code: CodeResumeExecutionFailed, message: "committed resume resources changed before receipt projection"}
+		return result, application, &Refusal{Code: CodeResumeExecutionFailed, message: "committed resume resources changed before receipt projection"}
 	}
 	if err := unregisterCopy(record, &result.Receipt); err != nil {
-		return result, err
+		return result, application, err
 	}
-	return result, nil
+	return result, application, nil
 }
 func resumeRefusal(err error) error {
 	if err == nil {

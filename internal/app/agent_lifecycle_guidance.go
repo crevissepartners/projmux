@@ -12,22 +12,13 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 )
 
-// Invocation-only disclosure. Neither this carrier nor its enums are persisted
-// or part of the public SDK. A value pointer preserves explicit none.
-type agentSettingsApplication struct {
-	Entries         []agentSettingApplication `json:"entries"`
-	NotAppliedCount int                       `json:"notAppliedCount"`
-}
-type agentSettingApplication struct {
-	Setting        string  `json:"setting"`
-	Status         string  `json:"status"`
-	Reason         string  `json:"reason"`
-	Value          *string `json:"value,omitempty"`
-	RequestedValue *string `json:"requestedValue,omitempty"`
-	NextAction     string  `json:"nextAction,omitempty"`
-}
+// Invocation-only disclosure, computed by the shared runtime so the CLI and the
+// public SDK report the same entries. A value pointer preserves explicit none.
+type agentSettingsApplication = mutationruntime.AgentSettingsApplication
+type agentSettingApplication = mutationruntime.AgentSettingApplication
 
 type agentApplicationSource struct {
 	replyOnly      bool
@@ -43,118 +34,14 @@ type agentApplicationSource struct {
 	snapshot       bool // process ordinary resume consumes recorded guidance/rules.
 }
 
+func (s agentApplicationSource) shared() mutationruntime.AgentApplicationSource {
+	return mutationruntime.AgentApplicationSource{ReplyOnly: s.replyOnly, NativeReady: s.nativeReady, Provider: s.provider, Host: s.host, ModelArg: s.modelArg, Settings: s.settings.shared(), Resumed: s.resumed.shared(), Guidance: s.guidance.shared(), Links: s.links.shared(), Workspace: s.workspace, Annotations: s.annotations, Snapshot: s.snapshot}
+}
+
 // Called only after launch preparation/commit succeeds, with the actual values
 // of that preparation, never with a restart preflight substituted for them.
 func preparedAgentSettingsApplication(s agentApplicationSource) *agentSettingsApplication {
-	a := &agentSettingsApplication{Entries: make([]agentSettingApplication, 0, 8)}
-	add := func(setting, status, reason string, value *string) {
-		a.Entries = append(a.Entries, agentSettingApplication{Setting: setting, Status: status, Reason: reason, Value: value})
-	}
-	value := func(s string) *string { return &s }
-	r := s.settings.resolution
-	if s.replyOnly {
-		for _, setting := range []string{"profile", "model", "effort", "instructions", "agent-guidance", "project-guidance", "link-rules"} {
-			add(setting, "unobserved", "application-unobserved", nil)
-		}
-		add("workspace", "delivered", "workspace-resolved", value(s.workspace.CWD))
-		return a
-	}
-	if s.settings.layered {
-		add("profile", "recorded", "profile-recipe-recorded", value(r.New.Profile.Name))
-	} else if s.resumed.profileName != "" {
-		add("profile", "recorded", "profile-recipe-recorded", value(s.resumed.profileName))
-	} else {
-		add("profile", "unobserved", "application-unobserved", nil)
-	}
-	reason := "launch-arguments"
-	if s.provider == aiModeCodex && (s.host == "process" || s.nativeReady) {
-		reason = "thread-settings-ready"
-	}
-	if s.settings.layered && r.New.Model.Value != "" && (s.host == "process" || r.PassModel) {
-		add("model", "delivered", reason, value(r.New.Model.Value))
-	} else if !s.settings.layered && s.modelArg != "" {
-		add("model", "delivered", reason, value(s.modelArg))
-	} else if s.host == "process" {
-		add("model", "unobserved", "application-unobserved", nil)
-	} else {
-		add("model", "preserved", "conversation-model-preserved", nil)
-	}
-	effort, _, _ := claudeResumeEffort(s.provider, s.settings.launchAnnotations(s.annotations))
-	if s.resumed.effortSkipped {
-		add("effort", "not-applied", "effort-invalid", nil)
-		a.Entries[len(a.Entries)-1].RequestedValue = value(s.resumed.effortInvalid)
-	} else if effort != "" {
-		add("effort", "delivered", reason, value(effort))
-	} else {
-		add("effort", "unobserved", "application-unobserved", nil)
-	}
-	instructions, wantedInstructions := r.New.Instructions.Value, r.WantedInstructions
-	if !s.settings.layered {
-		instructions = s.annotations[coremetadata.AnnotationAgentPersona]
-		wantedInstructions = instructions
-	}
-	managed := s.settings.managedBase
-	managedStatus, managedReason := "delivered", "managed-base-delivered"
-	if managed != nil && (managed.Fallback || managed.Instructions.Fallback || managed.Instructions.Shared) {
-		managedStatus, managedReason = "not-applied", "managed-base-not-refreshed"
-	}
-	switch {
-	case managed != nil:
-		if managedStatus == "not-applied" {
-			prior := managed.PreviousAnnotations[coremetadata.AnnotationAgentPersona]
-			add("instructions", managedStatus, managedReason, value(prior))
-			if wantedInstructions != prior {
-				a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
-			}
-		} else {
-			add("instructions", managedStatus, managedReason, value(instructions))
-		}
-	case r.InstructionsNotApplied:
-		add("instructions", "not-applied", "codex-instructions-immutable", value(instructions))
-		if wantedInstructions != instructions {
-			a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
-		}
-	case r.InstructionsUnavailable != "" || s.settings.instructionsErr != nil || s.settings.snapshotErr != nil || s.resumed.personaUnavailable != nil:
-		add("instructions", "not-applied", "instructions-unavailable", nil)
-		a.Entries[len(a.Entries)-1].RequestedValue = value(wantedInstructions)
-	case s.provider == aiModeCodex:
-		add("instructions", "preserved", "codex-instructions-immutable", value(instructions))
-	default:
-		add("instructions", "delivered", "launch-arguments", value(instructions))
-	}
-	for _, part := range []struct {
-		setting, reason     string
-		active, unavailable bool
-	}{
-		{"agent-guidance", "guidance-unavailable", s.guidance.active || s.snapshot, s.guidance.unavailable != nil || s.resumed.agentGuidanceUnavailable != nil},
-		{"project-guidance", "project-guidance-unavailable", s.links.project.active || s.settings.projectGuidance.active, s.links.project.unavailable != nil || s.settings.projectGuidance.unavailable != nil},
-		{"link-rules", "link-rules-unavailable", s.links.active || s.snapshot, s.links.unavailable != nil || s.resumed.projectLinksUnavailable != nil},
-	} {
-		switch {
-		case managed != nil:
-			add(part.setting, managedStatus, managedReason, nil)
-		case s.provider == aiModeCodex:
-			add(part.setting, "preserved", "codex-instructions-immutable", nil)
-		case part.unavailable:
-			add(part.setting, "not-applied", part.reason, nil)
-		case s.snapshot && part.setting != "project-guidance":
-			add(part.setting, "preserved", "recorded-snapshot", nil)
-		case part.active:
-			add(part.setting, "delivered", "launch-arguments", nil)
-		default:
-			add(part.setting, "unobserved", "application-unobserved", nil)
-		}
-	}
-	add("workspace", "delivered", "workspace-resolved", value(s.workspace.CWD))
-	for i := range a.Entries {
-		e := &a.Entries[i]
-		if e.Status != "not-applied" {
-			continue
-		}
-		a.NotAppliedCount++
-		e.NextAction = lifecycleFallbackText("next." + e.Reason)
-	}
-	return a
+	return mutationruntime.PreparedAgentSettingsApplication(s.shared())
 }
 
 // A frozen recipe has committed values but no provider yet. Consuming it later
@@ -205,10 +92,6 @@ func frozenAgentSettingsApplication(record *deferredLaunchRecord, pending bool) 
 
 func processAgentSettingsApplication(provider string, settings agentSettingsLaunch, command processhost.Command, annotations map[string]string) *agentSettingsApplication {
 	return preparedAgentSettingsApplication(agentApplicationSource{provider: provider, host: "process", settings: settings, annotations: annotations, workspace: coremetadata.AgentWorkspace{CWD: command.Dir}, snapshot: true})
-}
-
-func lifecycleFallbackText(key string) string {
-	return LocalizeText(i18n.FallbackLocale, i18n.Key("agent.lifecycle."+key), "")
 }
 
 func lifecycleText(key string) string {

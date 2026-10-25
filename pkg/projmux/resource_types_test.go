@@ -157,3 +157,59 @@ func fillResourceFields(v reflect.Value) {
 		v.SetUint(7)
 	}
 }
+
+// The public settings application keeps the untagged convention of public
+// results, so it is checked by field name: every runtime field has a public
+// field of the same name and shape, and the runtime JSON (the CLI's
+// settingsApplication) decodes into it without loss.
+func TestPublicRelaunchSettingsApplicationCoverage(t *testing.T) {
+	runtimeType, publicType := reflect.TypeFor[mutationruntime.AgentSettingsApplication](), reflect.TypeFor[core.AgentSettingsApplication]()
+	compareUntaggedShape(t, runtimeType, publicType)
+	source := reflect.New(runtimeType)
+	fillResourceFields(source.Elem())
+	b, err := json.Marshal(source.Interface())
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := reflect.New(publicType)
+	if err := json.Unmarshal(b, public.Interface()); err != nil {
+		t.Fatal(err)
+	}
+	// Back through the public names into the runtime type, then its own JSON.
+	b2, _ := json.Marshal(public.Interface())
+	back := reflect.New(runtimeType)
+	if err := json.Unmarshal(b2, back.Interface()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := json.Marshal(back.Interface()); !bytes.Equal(got, b) {
+		t.Fatalf("settings application JSON differs:\n%s\n%s", b, got)
+	}
+	result := reflect.TypeFor[core.RelaunchAgentResult]()
+	for name, want := range map[string]reflect.Type{"CurrentModel": reflect.TypeFor[string](), "CurrentEffort": reflect.TypeFor[string](), "SettingsApplication": reflect.PointerTo(publicType)} {
+		if f, ok := result.FieldByName(name); !ok || f.Type != want || f.Tag != "" {
+			t.Fatalf("RelaunchAgentResult.%s missing or not %s", name, want)
+		}
+	}
+}
+func compareUntaggedShape(t *testing.T, a, b reflect.Type) {
+	t.Helper()
+	if a.Kind() != b.Kind() {
+		t.Fatalf("shape %s vs %s", a, b)
+	}
+	switch a.Kind() {
+	case reflect.Pointer, reflect.Slice:
+		compareUntaggedShape(t, a.Elem(), b.Elem())
+	case reflect.Struct:
+		if a.NumField() != b.NumField() {
+			t.Fatalf("field count %s vs %s", a, b)
+		}
+		for i := 0; i < a.NumField(); i++ {
+			f := a.Field(i)
+			g, ok := b.FieldByName(f.Name)
+			if !ok || g.Tag != "" {
+				t.Fatalf("missing or tagged public field %s.%s", b, f.Name)
+			}
+			compareUntaggedShape(t, f.Type, g.Type)
+		}
+	}
+}
