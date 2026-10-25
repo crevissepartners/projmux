@@ -135,8 +135,17 @@ func TestObserveResourceGraphMatchesCoreGraph(t *testing.T) {
 		t.Fatalf("public graph JSON differs from resourcegraph.Resolve:\n got %s\nwant %s", gotJSON, want)
 	}
 	// The fixture must exercise every row family the contract names.
-	if len(got.Graph.ControlSessions) != 1 || got.Graph.ControlSessions[0].Class != "control" || got.Graph.ControlSessions[0].Status != "live" {
+	// A registered ControlSession binds its exact control-role session, so both
+	// the Registry row and that runtime session are managed.
+	if len(got.Graph.ControlSessions) != 1 || got.Graph.ControlSessions[0].Class != "managed" || got.Graph.ControlSessions[0].Status != "live" {
 		t.Fatalf("control session: %+v", got.Graph.ControlSessions)
+	}
+	control := false
+	for _, node := range got.Graph.Runtime {
+		control = control || (node.Ref.ID == "$2" && node.Class == "managed" && node.ResourceUID == "ctl-01")
+	}
+	if !control {
+		t.Fatalf("control session not bound: %+v", got.Graph.Runtime)
 	}
 	statuses := map[string]string{}
 	for _, pane := range got.Graph.Panes {
