@@ -300,6 +300,10 @@ func (v registryNavigationView) actionEntry(row registryview.Row, action registr
 			Value: navActionStartProject,
 		}
 	case registryview.ActionResume:
+		if row.Process != nil {
+			return runtimeUnavailableAction(v.locale, "Resume",
+				"run `projmux agent resume uid:"+row.UID+"`")
+		}
 		return intpickercompat.Entry{
 			Label: settingsLabelLocale(v.locale, settingsGlyphOpen, settingsColorType, "Resume", row.Name),
 			Value: navActionResume,
@@ -307,6 +311,9 @@ func (v registryNavigationView) actionEntry(row registryview.Row, action registr
 	case registryview.ActionRebind:
 		return runtimeUnavailableAction(v.locale, "Rebind",
 			"run `projmux rebind project uid:"+registryNavigationProjectUID(v.view, row)+" --root <absolute-path>`")
+	case registryview.ActionMarkOffline:
+		return runtimeUnavailableAction(v.locale, "Mark offline",
+			"run `projmux agent mark-offline uid:"+row.UID+"`")
 	case registryview.ActionDelete:
 		return runtimeUnavailableAction(v.locale, "Delete",
 			"run `projmux delete "+string(row.Kind)+" uid:"+row.UID+"`")

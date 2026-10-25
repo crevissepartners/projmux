@@ -79,6 +79,9 @@ const (
 	OperationCreatePane    Operation = "create.pane"
 	OperationCreateAgent   Operation = "create.agent"
 	OperationResumeAgent   Operation = "agent.resume"
+	// OperationMarkOfflineAgent retires a lost host generation. It is never
+	// a stop: no runtime was stopped and no Wait was observed.
+	OperationMarkOfflineAgent Operation = "agent.mark-offline"
 
 	OperationRenameProject Operation = "rename.project"
 	OperationRenameWindow  Operation = "rename.window"

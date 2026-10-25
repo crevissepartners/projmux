@@ -537,6 +537,31 @@ func TestExternalStopAgentConsumer(t *testing.T) {
 	}
 }
 
+func TestExternalMarkAgentOfflineConsumer(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	c, err := projmux.NewClient(projmux.Options{ConfigDir: filepath.Join(t.TempDir(), "config"), StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var result core.MarkAgentOfflineResult
+	result, err = c.MarkAgentOffline(ctx, core.MarkAgentOfflineRequest{Ref: "uid:agent", Binding: core.ProcessBinding{Generation: "generation"}})
+	if !errors.Is(err, context.Canceled) || result.Changed || result.Termination != nil {
+		t.Fatalf("cancelled MarkAgentOffline %+v %v", result, err)
+	}
+	_, err = c.MarkAgentOffline(context.Background(), core.MarkAgentOfflineRequest{})
+	var refusal *projmux.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != projmux.CodeSelectorInvalid {
+		t.Fatalf("typed MarkAgentOffline refusal: %v", err)
+	}
+	_ = []projmux.Code{projmux.CodeMarkAgentOfflineProcessUnsupported, projmux.CodeMarkAgentOfflineOwnerPresent, projmux.CodeMarkAgentOfflineNotHostLost, projmux.CodeMarkAgentOfflineConversationUnavailable, projmux.CodeMarkAgentOfflineStale}
+	_ = core.OperationMarkOfflineAgent
+	if _, err = os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("preflight created state: %v", err)
+	}
+}
+
 // This consumer seeds a public resource fixture without importing internal code.
 func TestExternalDeleteProcessAgentConsumer(t *testing.T) {
 	root := t.TempDir()

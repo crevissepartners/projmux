@@ -64,6 +64,10 @@ const (
 	ActionStart Action = "start"
 	// ActionResume is the Agent spelling of start.
 	ActionResume Action = "resume"
+	// ActionMarkOffline retires a process Agent whose host was lost without
+	// starting its provider. Only an unknown process Agent row offers it; the
+	// command itself re-proves both recorded identities absent.
+	ActionMarkOffline Action = "mark-offline"
 	// ActionRebind repoints the owning Project at an existing root. It is the
 	// only action a missing-root row offers besides delete, because nothing
 	// else can succeed until the root is real again.
@@ -748,6 +752,11 @@ func paneActions(pane resourcegraph.PaneNode) []Action {
 }
 func agentActions(agent resourcegraph.AgentNode) []Action {
 	if agent.Process != nil {
+		// A process host that could not be observed may be lost. Resume and
+		// mark-offline each prove the recorded identities absent before acting.
+		if agent.Status == resourcegraph.StatusUnknown && !agent.MissingRoot {
+			return []Action{ActionResume, ActionMarkOffline, ActionDelete}
+		}
 		return []Action{ActionDelete}
 	}
 	return resourceActions(RowKindAgent, agent.Status, agent.MissingRoot)

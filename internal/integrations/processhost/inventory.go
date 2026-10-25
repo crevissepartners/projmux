@@ -2,6 +2,10 @@ package processhost
 
 import "github.com/crevissepartners/projmux/internal/core/resourcegraph"
 
+// StateRetired is the observation of a generation retired after its host was
+// proven lost. It carries no Exit: no Wait was observed, only absence.
+const StateRetired = "retired"
+
 // InventoryTarget retains an exact declaration even when its host is unavailable.
 // Handles and observers belong to the caller; observation never discovers or
 // starts a host.
@@ -28,7 +32,7 @@ func ObserveInventory(targets []InventoryTarget) resourcegraph.ProcessInventory 
 		}
 		if observer != nil {
 			if snapshot, err := observer.Observe(binding); err == nil && snapshot.Binding == binding {
-				if snapshot.Exit != nil && snapshot.State == "exited" {
+				if (snapshot.Exit != nil && snapshot.State == "exited") || (snapshot.Exit == nil && snapshot.State == StateRetired) {
 					status = resourcegraph.StatusOffline
 				} else if snapshot.Exit == nil && (snapshot.State == "ready" || (snapshot.State == "starting" && snapshot.PID > 0)) {
 					status = resourcegraph.StatusLive

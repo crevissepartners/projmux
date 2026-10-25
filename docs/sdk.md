@@ -454,6 +454,32 @@ public resume or delete recovery; uncertain retirement is not automatically
 retried. Claim lock admission honors caller cancellation and deadlines, including
 when another birth or claim release holds the guard.
 
+## Mark a process Agent whose host died offline
+
+`Client.MarkAgentOffline(ctx, core.MarkAgentOfflineRequest{Ref: "uid:..."})`
+retires one process Agent whose recorded host and provider child are both gone,
+through the same executor as CLI `agent mark-offline`. `Project` and `Window`
+optionally scope the reference; a nonzero `Binding` requires that exact recorded
+generation and a different one is refused with `agent-mark-offline-stale` before
+effects. It starts, signals, and invokes no provider and no CLI subprocess.
+
+The kernel must prove both recorded identities absent, and the proof is repeated
+inside the Registry transaction against the exact current activation. Success
+clears the activation, records `status.lastTermination` with source `reconcile`
+and classification `unknown` and no exit status, sets the Agent `Offline` and
+`processSession.resumeState=resumable`, and keeps the Agent UID, Pane UID, and
+conversation. This is not Wait evidence and never a stop; public CLI resume
+continues the same conversation. An Agent that already holds this exact record
+returns `Changed=false` without a write.
+
+`MarkAgentOfflineResult` includes `AgentUID`, `PaneUID`, `Binding`,
+`Termination`, `Changed`, and the `agent.mark-offline` `Receipt`. Typed
+`Refusal.Code` values match the CLI tokens: `agent-mark-offline-process-unsupported`
+(tmux or ambiguous), `agent-mark-offline-owner-present` (an identity is alive or
+its absence cannot be proven; use `StopAgent`), `agent-mark-offline-not-host-lost`
+(no recorded process host), `agent-mark-offline-conversation-unavailable`, and
+`agent-mark-offline-stale`. Every refusal leaves the Registry unchanged.
+
 ## Delete a headless Agent
 
 `Client.Delete(ctx, core.DeleteRequest{Kind: core.KindAgent, Ref: "uid:...",

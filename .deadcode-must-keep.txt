@@ -82,6 +82,7 @@ Client.ListQuestions	Public v0 Agent question SDK entrypoint/adapter or preserve
 Client.ListQuestionsWithOptions	Public opt-in SDK question source and file-only approval reads; preserved for external consumers and covered by source fencing, default parity and read-effect fixtures.
 Client.ListRecordedSessions	Public v0 complete recorded session history SDK, consumed by TestExternalRecordedSessionsConsumer and covered by CORE parity and read admission tests; no Registry or writer API.
 Client.ListResources	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+Client.MarkAgentOffline	Public v0 lost-host process retirement API; exercised by SDK/CLI parity, kernel absence refusal, no-op and external consumer tests.
 Client.MessageArchiveFiles	Public SDK entrypoint for caller-owned archive paths without file access.
 Client.MessageStatus	Public SDK Client.MessageStatus entrypoint; external consumers follow original receipts without replay.
 Client.Models	Public v0 Agent catalog SDK entrypoint or its read-only adapter; retained for external modules and exercised by catalog parity and GOWORK=off consumer tests.
