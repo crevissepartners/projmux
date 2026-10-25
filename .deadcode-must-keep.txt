@@ -152,6 +152,7 @@ Client.relaunchLiveness	Public RelaunchAgent failure-observation closure; TestRe
 Client.relaunchProcessAgent	Public RelaunchAgent process/host closure; frozen-domain, claim, host-move and startup cancellation fixtures plus external caller-exit consumers preserve explicit routing and identity.
 Client.resumeAgent	Public v0 tmux Agent resume entrypoint or its external-only closure; SDK/CLI parity, refusal, rollback and boundary tests cover this path.
 Client.resumeAgentPlan	Public ResumeAgent/RelaunchAgent shared transaction closure; TestResumeAgentSDKCLIParity, TestResumeAgentSDKCLIRollback and TestRelaunchAgentSDKNativeCodexAndPostStopCancellation protect commit and recovery.
+Client.resumeAgentPlanWithApplication	Public RelaunchAgent shared resume closure that also returns the shared settings application; TestRelaunchAgentSettingsApplicationMatchesCLI compares it exactly with CLI settingsApplication.
 Client.resumePreparationRequest	Shared exact scoped selector and observed binding closure for the public Prepare and Validate APIs; public consumer and refusal tests preserve process Claude admission.
 Client.resumeProcessAgent	Public ResumeAgent detached process closure; supplemental frozen-domain/claim and external caller-exit fixtures cover identity and lifetime.
 Client.sampleSystem	Implementation of the public host system sampler facade, preserving the existing sampler and captured CPU cache destination.
@@ -761,6 +762,7 @@ publicQuestionDispatcher.SupportsAsyncQuestionAnswers	Optional async question re
 publicQuestionDispatcher.SupportsAsyncQuestionDeclines	Optional public decline capability keeps legacy dispatchers read-only; exercised through NewClient Options by TestSDKOptionalPublicQuestionDeclineReceiptDispatcher.
 publicRelaunchSettings	Public RelaunchAgent settings projection closure; TestRelaunchAgentSDKCLISettingsParity compares current/new profile, instructions, model, effort and sources with CLI.
 publicResource	Public v0 resource SDK entrypoint or its JSON/selection adapter; retained for external consumers and checked by SDK parity, field coverage, and boundary tests.
+publicSettingsApplication	Public RelaunchAgent settings application projection closure; TestRelaunchAgentSettingsApplicationMatchesCLI and TestPublicRelaunchSettingsApplicationCoverage check it against CLI and runtime fields.
 questionClosedAsking	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 questionRecordRefusal	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
 questionRefusal	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.

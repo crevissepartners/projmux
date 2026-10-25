@@ -309,6 +309,7 @@ func publicRelaunchSettings(s agentsettings.Settings) core.RelaunchAgentSettings
 	}
 	return core.RelaunchAgentSettings{Profile: core.RelaunchAgentProfile{Name: s.Profile.Name, Digest: s.Profile.Digest, Source: s.Profile.Source}, Instructions: setting(s.Instructions), Model: setting(s.Model), Effort: setting(s.Effort)}
 }
+
 // publicSettingsApplication copies the shared runtime value; it adds nothing.
 func publicSettingsApplication(a *runtime.AgentSettingsApplication) *core.AgentSettingsApplication {
 	if a == nil {
