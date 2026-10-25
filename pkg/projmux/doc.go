@@ -33,7 +33,10 @@
 // tmux observations for context. They never control provider processes.
 // ReadRegistrySnapshot instead returns stored Projects, Windows, and Agents
 // from one effect-free Registry read, preserving row order and duplicate UIDs
-// with caller-owned values and no runtime observation.
+// with caller-owned values and no runtime observation. ObserveResourceGraph
+// joins one Registry read to one tmux and process observation with the CLI's
+// graph rules and reports that read's Registry file identity;
+// ReadRegistryFileIdentity stats the same file without reading it.
 //
 // GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
 // SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).

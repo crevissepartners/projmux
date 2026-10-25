@@ -8,6 +8,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 )
 
 // Store identity follows the host's turn-scoped request fence. Providers may
@@ -42,9 +43,9 @@ func processProviderLaunchEnv(launch processhost.Launch, bindingKey, hostKey, so
 
 // Binding conversions are shared across creation, authority and observation.
 func processSchemaBinding(b coremetadata.ProcessBinding) processhost.Binding {
-	return processhost.Binding{Host: b.HostInstanceID, Project: b.ProjectUID, Window: b.WindowUID, Agent: b.AgentUID, Pane: b.PaneUID, Generation: b.Generation, Operation: b.OperationID}
+	return runtimeservice.ProcessSchemaBinding(b)
 }
 
 func metadataProcessBinding(b processhost.Binding) coremetadata.ProcessBinding {
-	return coremetadata.ProcessBinding{HostInstanceID: b.Host, ProjectUID: b.Project, WindowUID: b.Window, AgentUID: b.Agent, PaneUID: b.Pane, Generation: b.Generation, OperationID: b.Operation}
+	return runtimeservice.MetadataProcessBinding(b)
 }
