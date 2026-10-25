@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/services/claudesettings"
+	"github.com/crevissepartners/projmux/internal/services/hookcatalog"
 )
 
 const (
@@ -31,45 +31,28 @@ const (
 	// converges it forward instead of refusing the file as hand-edited.
 	priorCodexHookCommand = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
-	claudeSettingsRelativePath = ".claude/settings.json"
-	claudeHookManagedMarker    = "projmux-managed:claude-hook:v1"
-	claudeHookCommand          = canonicalClaudeHookRoute + aiHookPaneArgument + " >/dev/null 2>&1 || true # " + claudeHookManagedMarker
-	canonicalClaudeHookRoute   = "projmux internal agent-hook ingest claude-hook"
+	// The Claude settings path, hook commands and markers live in
+	// claudesettings, shared with the SDK.
+	claudeSettingsRelativePath = claudesettings.SettingsRelativePath
+	claudeHookManagedMarker    = claudesettings.HookManagedMarker
+	claudeHookCommand          = claudesettings.HookCommand
+	canonicalClaudeHookRoute   = claudesettings.CanonicalHookRoute
 
-	// aiHookPaneArgument hands a provider hook the Pane it belongs to instead of
-	// letting it inherit one. projmux plants the activation envelope on the
-	// process it launches in the Pane, so the hook keeps its own identity even
-	// when the app-server that spawned it inherited no tmux environment at all.
-	// The value is deliberately unquoted and `=`-joined: an app-server shared by
-	// several Panes carries no envelope and expands this to a bare `--pane=`,
-	// which is not an identity, and the established matcher stays its fallback.
-	// The same argument is written for every provider; nothing here is
-	// provider-specific.
-	aiHookPaneArgument = " --pane=${" + internalActivationPaneUIDEnv + ":-}"
+	// aiHookPaneArgument is the Pane argument every provider hook carries;
+	// see hookcatalog.PaneArgument.
+	aiHookPaneArgument = hookcatalog.PaneArgument
 
-	// claudeQuestionManagedMarker owns the one AskUserQuestion PreToolUse entry
-	// that lets `projmux agent question answer` answer an opted-in Claude
-	// Agent's question. Unlike the ingest command, its stdout reaches Claude
-	// Code: that is where the answer is handed over.
-	claudeQuestionManagedMarker = "projmux-managed:claude-question:v1"
-	claudeQuestionHookCommand   = "exec projmux internal " + claudeQuestionHookRoute + aiHookPaneArgument + " 2>/dev/null # " + claudeQuestionManagedMarker
-	// claudeQuestionHookMatcher limits the entry to the one tool it answers.
-	claudeQuestionHookMatcher = "AskUserQuestion"
+	claudeQuestionManagedMarker = claudesettings.QuestionManagedMarker
+	claudeQuestionHookCommand   = claudesettings.QuestionHookCommand
+	claudeQuestionHookMatcher   = claudesettings.QuestionHookMatcher
 	// claudeQuestionHookTimeoutMargin is how far the installed hook timeout
 	// outlasts the longest answer window (Unlimited), so the hook, not Claude
 	// Code's timeout, is what ends an unanswered wait. config owns the value.
 	claudeQuestionHookTimeoutMargin = config.AgentQuestionHookTimeoutMarginSeconds * time.Second
-	// claudeQuestionStatusMessage is what Claude Code shows while the hook
-	// holds the question.
-	claudeQuestionStatusMessage = "Question held for a projmux answer (projmux agent question answer); Esc declines"
+	claudeQuestionStatusMessage     = claudesettings.QuestionStatusMessage
 
-	// claudePermissionManagedMarker owns the one PermissionRequest entry that
-	// lets `projmux agent approval answer` allow or deny a projmux Claude
-	// Agent's permission request. It is a separate entry from the ingest
-	// command on the same event, which discards its stdout; this one's stdout
-	// reaches Claude Code, because that is where the decision is handed over.
-	claudePermissionManagedMarker = "projmux-managed:claude-permission:v1"
-	claudePermissionHookCommand   = "exec projmux internal " + claudePermissionHookRoute + aiHookPaneArgument + " 2>/dev/null # " + claudePermissionManagedMarker
+	claudePermissionManagedMarker = claudesettings.PermissionManagedMarker
+	claudePermissionHookCommand   = claudesettings.PermissionHookCommand
 
 	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
 	tmuxBellHookName      = "alert-bell"
@@ -79,7 +62,7 @@ const (
 var (
 	legacyCodexHookRoute      = legacyAIIngestCommand("codex-hook")
 	legacyCodexHookCommand    = legacyCodexHookRoute + " >/dev/null 2>&1 || true"
-	legacyClaudeHookRoute     = legacyAIIngestCommand("claude-hook")
+	legacyClaudeHookRoute     = claudesettings.LegacyHookRoute
 	legacyClaudeHookCommand   = legacyClaudeHookRoute + " >/dev/null 2>&1 || true # " + claudeHookManagedMarker
 	legacyTmuxBellHookCommand = `run-shell -b '` + legacyAIIngestCommand(`bell --pane "#{pane_id}"`) +
 		` >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
@@ -89,7 +72,7 @@ var (
 // full spelling must remain recognizable in marker-owned v0.10.1 files, but it
 // must not survive as contiguous read-only data in a current production binary.
 func legacyAIIngestCommand(suffix string) string {
-	return strings.Join([]string{"projmux", "ai", "ingest", suffix}, " ")
+	return hookcatalog.LegacyIngestCommand(suffix)
 }
 
 func legacyAIIngestArgs(suffix string) string {
@@ -108,6 +91,17 @@ type codexIntegrationPlan struct {
 	// projmux-owned exactly like a marker-owned file.
 	unmarked bool
 }
+
+// These keep the command's names for the shared settings parsing, hooks
+// object, managed entries and encoding.
+var (
+	claudeHookManagedEntry       = claudesettings.HookManagedEntry
+	claudeQuestionManagedEntry   = claudesettings.QuestionManagedEntry
+	claudePermissionManagedEntry = claudesettings.PermissionManagedEntry
+	parseClaudeSettings          = claudesettings.ParseSettings
+	claudeSettingsHooks          = claudesettings.SettingsHooks
+	encodeClaudeSettings         = claudesettings.EncodeSettings
+)
 
 type claudeHookPlan struct {
 	path     string
@@ -417,99 +411,13 @@ func (c *aiCommand) planClaudeHookIntegrationMode(remove, includeCoordination bo
 }
 
 func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordination bool, path, current string) (claudeHookPlan, error) {
-	settings, err := parseClaudeSettings(current, path)
+	plan, err := claudesettings.PlanHooks(remove, includeCoordination, path, current, func() ([]string, error) {
+		return c.aiHookInstallEvents(aiHookProviderClaude)
+	})
 	if err != nil {
 		return claudeHookPlan{}, err
 	}
-	hooks, err := claudeSettingsHooks(settings, false)
-	if err != nil {
-		return claudeHookPlan{}, err
-	}
-	cleaned := false
-	conflict := ""
-	if hooks != nil {
-		for event, value := range hooks {
-			nextEntries, removed, eventConflict, err := claudeHookEntriesWithoutManaged(value, event, path)
-			if err != nil {
-				return claudeHookPlan{}, err
-			}
-			cleaned = cleaned || removed
-			if eventConflict != "" && conflict == "" {
-				conflict = eventConflict
-			}
-			if len(nextEntries) == 0 {
-				delete(hooks, event)
-			} else {
-				hooks[event] = nextEntries
-			}
-		}
-	}
-
-	plan := claudeHookPlan{path: path, current: current, conflict: conflict}
-	if remove {
-		next, err := encodeClaudeSettings(settings)
-		if err != nil {
-			return claudeHookPlan{}, err
-		}
-		plan.next = next
-		plan.changed = cleaned && next != current
-		if cleaned {
-			plan.action = "removed projmux-managed Claude Code hook wiring from " + path
-		} else {
-			plan.action = "no changes: projmux-managed Claude Code hook wiring is not present in " + path
-		}
-		return plan, nil
-	}
-	if conflict != "" {
-		plan.action = "would refuse to install Claude Code hook wiring"
-		plan.next = current
-		return plan, nil
-	}
-	hookEvents, err := c.aiHookInstallEvents(aiHookProviderClaude)
-	if err != nil {
-		return claudeHookPlan{}, err
-	}
-
-	hooks, err = claudeSettingsHooks(settings, true)
-	if err != nil {
-		return claudeHookPlan{}, err
-	}
-	for _, event := range hookEvents {
-		entry := claudeHookManagedEntry()
-		if event == "SessionStart" {
-			entry["hooks"] = append(entry["hooks"].([]any), map[string]any{
-				"type": "command", "command": claudeRegistrationHookCommand, "timeout": 5,
-			})
-		}
-		hooks[event] = append(claudeHookEntrySlice(hooks[event]), entry)
-	}
-	if includeCoordination {
-		// Ingress is an immediate helper push. These short compatibility
-		// callbacks observe turn boundaries; Stop text has no reply authority.
-		// Only an authenticated explicit public reply can commit a peer response.
-		hooks["Stop"] = append(claudeHookEntrySlice(hooks["Stop"]), claudeCoordinationManagedEntry())
-		hooks["UserPromptSubmit"] = append(claudeHookEntrySlice(hooks["UserPromptSubmit"]), claudeCoordinationBoundaryManagedEntry())
-		// The question channel rides on explicit integration only, like the
-		// coordination callbacks above. It holds nothing open for an Agent that
-		// was not opted in with `projmux agent question enable`.
-		hooks["PreToolUse"] = append(claudeHookEntrySlice(hooks["PreToolUse"]), claudeQuestionManagedEntry())
-		// The permission hook is its own PermissionRequest entry next to the
-		// ingest entry. It decides nothing unless agent-approval-answering is
-		// `projmux`.
-		hooks["PermissionRequest"] = append(claudeHookEntrySlice(hooks["PermissionRequest"]), claudePermissionManagedEntry())
-	}
-	next, err := encodeClaudeSettings(settings)
-	if err != nil {
-		return claudeHookPlan{}, err
-	}
-	plan.next = next
-	plan.changed = next != current
-	if plan.changed {
-		plan.action = "configured Claude Code hooks in " + path
-	} else {
-		plan.action = "no changes: Claude Code hooks are already configured in " + path
-	}
-	return plan, nil
+	return claudeHookPlan{path: plan.Path, current: plan.Current, next: plan.Next, action: plan.Action, changed: plan.Changed, conflict: plan.Conflict}, nil
 }
 
 func (c *aiCommand) planTmuxBellIntegration(remove bool) (tmuxBellPlan, error) {
@@ -721,18 +629,7 @@ func (c *aiCommand) writeCodexConfig(path string, data []byte) error {
 // readClaudeSettingsState reads the settings file and reports whether it
 // exists; a missing file reads as "".
 func (c *aiCommand) readClaudeSettingsState(path string) (string, bool, error) {
-	readFile := c.readFile
-	if readFile == nil {
-		readFile = os.ReadFile
-	}
-	data, err := readFile(path)
-	if err == nil {
-		return string(data), true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
-	}
-	return "", false, fmt.Errorf("read Claude settings %s: %w", path, err)
+	return claudesettings.ReadState(path, c.readFile)
 }
 
 // writeClaudeSettings writes data as the settings file at path without a
@@ -1094,202 +991,4 @@ func stripCodexTomlComment(line string) string {
 		}
 	}
 	return line
-}
-
-func parseClaudeSettings(content, path string) (map[string]any, error) {
-	if strings.TrimSpace(content) == "" {
-		return map[string]any{}, nil
-	}
-	var settings map[string]any
-	if err := json.Unmarshal([]byte(content), &settings); err != nil {
-		return nil, fmt.Errorf("parse Claude settings %s: %w", path, err)
-	}
-	if settings == nil {
-		return map[string]any{}, nil
-	}
-	return settings, nil
-}
-
-func claudeSettingsHooks(settings map[string]any, create bool) (map[string]any, error) {
-	value, ok := settings["hooks"]
-	if !ok {
-		if !create {
-			return nil, nil
-		}
-		hooks := map[string]any{}
-		settings["hooks"] = hooks
-		return hooks, nil
-	}
-	hooks, ok := value.(map[string]any)
-	if !ok {
-		return nil, errors.New("Claude settings hooks field must be a JSON object")
-	}
-	return hooks, nil
-}
-
-func claudeHookEntriesWithoutManaged(value any, event, path string) ([]any, bool, string, error) {
-	if value == nil {
-		return nil, false, "", nil
-	}
-	entries, ok := value.([]any)
-	if !ok {
-		return nil, false, "", fmt.Errorf("Claude settings %s hook event %s must be an array", path, event)
-	}
-	out := make([]any, 0, len(entries))
-	removed := false
-	conflict := ""
-	for _, entryValue := range entries {
-		entry, ok := entryValue.(map[string]any)
-		if !ok {
-			return nil, false, "", fmt.Errorf("Claude settings %s hook event %s contains a non-object matcher entry", path, event)
-		}
-		hookValues, ok := entry["hooks"].([]any)
-		if !ok {
-			out = append(out, entry)
-			continue
-		}
-		nextHooks := make([]any, 0, len(hookValues))
-		removedQuestion := false
-		for _, hookValue := range hookValues {
-			hook, ok := hookValue.(map[string]any)
-			if !ok {
-				nextHooks = append(nextHooks, hookValue)
-				continue
-			}
-			command, _ := hook["command"].(string)
-			if hook["type"] == "command" && strings.Contains(command, claudeQuestionManagedMarker) {
-				removed, removedQuestion = true, true
-				continue
-			}
-			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) || strings.Contains(command, claudePermissionManagedMarker) ||
-				strings.Contains(command, claudeCoordinationManagedMarker) || strings.Contains(command, priorClaudeCoordinationV2Marker) || strings.Contains(command, priorClaudeCoordinationManagedMarker)) {
-				removed = true
-				continue
-			}
-			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute) ||
-				strings.Contains(command, "internal claude-message-wait") || strings.Contains(command, "internal claude-message-reply") || strings.Contains(command, "internal claude-message-boundary") || strings.Contains(command, "internal "+claudeQuestionHookRoute) || strings.Contains(command, "internal "+claudePermissionHookRoute)) && conflict == "" {
-				conflict = fmt.Sprintf("Claude Code hook %s already contains unmanaged projmux ingest command in %s: %s", event, path, command)
-			}
-			nextHooks = append(nextHooks, hookValue)
-		}
-		if len(nextHooks) == 0 && len(entry) == 1 {
-			continue
-		}
-		// The question entry is the one managed entry that carries a matcher.
-		// Once its command is gone the matcher alone matches nothing, so the
-		// entry goes with it.
-		if len(nextHooks) == 0 && removedQuestion && claudeHookEntryIsHooksAndMatcherOnly(entry) {
-			continue
-		}
-		if len(nextHooks) == 0 {
-			delete(entry, "hooks")
-		} else {
-			entry["hooks"] = nextHooks
-		}
-		out = append(out, entry)
-	}
-	return out, removed, conflict, nil
-}
-
-func claudeHookEntrySlice(value any) []any {
-	if entries, ok := value.([]any); ok {
-		return entries
-	}
-	return nil
-}
-
-func claudeHookManagedEntry() map[string]any {
-	return map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": claudeHookCommand,
-			},
-		},
-	}
-}
-
-// claudeHookEntryIsHooksAndMatcherOnly reports whether a matcher entry holds
-// nothing but its hooks and its matcher.
-func claudeHookEntryIsHooksAndMatcherOnly(entry map[string]any) bool {
-	for key := range entry {
-		if key != "hooks" && key != "matcher" {
-			return false
-		}
-	}
-	return true
-}
-
-// claudeQuestionManagedEntry is the AskUserQuestion PreToolUse entry. Its
-// command's stdout is not discarded: an answered question's decision is printed
-// there. Its timeout is the fixed ceiling config.AgentQuestionHookTimeoutSeconds,
-// never read from the window file: the hook rereads the window for every
-// question and ends the wait itself, so a changed window applies to the next
-// question without re-running integrate. An entry an older projmux installed
-// with window plus the margin is removed by its marker and rewritten with the
-// ceiling on the next integrate.
-func claudeQuestionManagedEntry() map[string]any {
-	return map[string]any{
-		"matcher": claudeQuestionHookMatcher,
-		"hooks": []any{
-			map[string]any{
-				"type":          "command",
-				"command":       claudeQuestionHookCommand,
-				"timeout":       config.AgentQuestionHookTimeoutSeconds,
-				"statusMessage": claudeQuestionStatusMessage,
-			},
-		},
-	}
-}
-
-// claudePermissionManagedEntry is the PermissionRequest entry of the
-// permission hook. It carries no matcher, so it sees every tool's request. Its
-// timeout is the fixed ceiling config.AgentApprovalHookTimeoutSeconds, the
-// longest window plus a margin, never read from the window file: the hook
-// rereads the window for every request and ends the wait itself.
-func claudePermissionManagedEntry() map[string]any {
-	return map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": claudePermissionHookCommand,
-				"timeout": config.AgentApprovalHookTimeoutSeconds,
-			},
-		},
-	}
-}
-
-func claudeCoordinationManagedEntry() map[string]any {
-	return map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": claudeCoordinationHookCommand,
-				"timeout": int(claudeCoordinationHookTimeout / time.Second),
-			},
-		},
-	}
-}
-
-func claudeCoordinationBoundaryManagedEntry() map[string]any {
-	return map[string]any{
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": claudeCoordinationBoundaryCommand,
-				"timeout": 5,
-			},
-		},
-	}
-}
-
-func encodeClaudeSettings(settings map[string]any) (string, error) {
-	var out strings.Builder
-	encoder := json.NewEncoder(&out)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(settings); err != nil {
-		return "", fmt.Errorf("encode Claude settings: %w", err)
-	}
-	return out.String(), nil
 }

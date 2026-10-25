@@ -1,58 +1,26 @@
 package app
 
 import (
-	_ "embed"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/services/hookcatalog"
 )
 
+// The catalogs and their parsing live in hookcatalog, shared with the SDK.
+// These names keep the command's spelling of them.
 const (
-	aiHookProviderClaude      = "claude"
-	aiHookProviderCodex       = "codex"
-	aiHookProviderAntigravity = "antigravity"
+	aiHookProviderClaude      = hookcatalog.ProviderClaude
+	aiHookProviderCodex       = hookcatalog.ProviderCodex
+	aiHookProviderAntigravity = hookcatalog.ProviderAntigravity
 
-	aiHookActionNotify = "notify"
-	aiHookActionQuiet  = "quiet"
-	aiHookActionState  = "state"
+	aiHookActionNotify = hookcatalog.ActionNotify
+	aiHookActionQuiet  = hookcatalog.ActionQuiet
+	aiHookActionState  = hookcatalog.ActionState
 )
 
-//go:embed ai_hook_catalogs/claude.json
-var defaultClaudeHookCatalogJSON string
-
-//go:embed ai_hook_catalogs/codex.json
-var defaultCodexHookCatalogJSON string
-
-//go:embed ai_hook_catalogs/antigravity.json
-var defaultAntigravityHookCatalogJSON string
-
-type aiHookCatalog struct {
-	Provider        string               `json:"provider"`
-	ObservedVersion string               `json:"observed_version,omitempty"`
-	Events          []aiHookCatalogEvent `json:"events"`
-}
-
-type aiHookCatalogEvent struct {
-	Name    string `json:"name"`
-	Install bool   `json:"install"`
-	Action  string `json:"action"`
-}
-
-type rawAIHookCatalog struct {
-	Provider        string                  `json:"provider"`
-	ObservedVersion string                  `json:"observed_version"`
-	Events          []rawAIHookCatalogEvent `json:"events"`
-}
-
-type rawAIHookCatalogEvent struct {
-	Name    string `json:"name"`
-	Install *bool  `json:"install"`
-	Action  string `json:"action"`
-}
+type aiHookCatalog = hookcatalog.Catalog
 
 func (c *aiCommand) aiHookInstallEvents(provider string) ([]string, error) {
 	catalog, err := c.loadAIHookCatalog(provider)
@@ -84,13 +52,7 @@ func (c *aiCommand) aiHookObservedVersion(provider string) string {
 }
 
 func aiHookCatalogInstallEvents(catalog aiHookCatalog) []string {
-	events := make([]string, 0, len(catalog.Events))
-	for _, event := range catalog.Events {
-		if event.Install {
-			events = append(events, event.Name)
-		}
-	}
-	return events
+	return hookcatalog.InstallEvents(catalog)
 }
 
 func (c *aiCommand) loadAIHookCatalog(provider string) (aiHookCatalog, error) {
@@ -107,41 +69,11 @@ func (c *aiCommand) loadAIHookCatalog(provider string) (aiHookCatalog, error) {
 	if err != nil {
 		return aiHookCatalog{}, err
 	}
-	readFile := c.readFile
-	if readFile == nil {
-		readFile = os.ReadFile
-	}
-	data, err := readFile(overridePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return catalog, nil
-		}
-		return aiHookCatalog{}, fmt.Errorf("read AI hook catalog override %s: %w", overridePath, err)
-	}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return catalog, nil
-	}
-
-	override, err := parseAIHookCatalog(data, provider)
-	if err != nil {
-		return aiHookCatalog{}, fmt.Errorf("parse AI hook catalog override %s: %w", overridePath, err)
-	}
-	return mergeAIHookCatalog(catalog, override), nil
+	return hookcatalog.ApplyOverride(catalog, overridePath, c.readFile)
 }
 
 func defaultAIHookCatalog(provider string) (aiHookCatalog, error) {
-	var raw string
-	switch provider {
-	case aiHookProviderClaude:
-		raw = defaultClaudeHookCatalogJSON
-	case aiHookProviderCodex:
-		raw = defaultCodexHookCatalogJSON
-	case aiHookProviderAntigravity:
-		raw = defaultAntigravityHookCatalogJSON
-	default:
-		return aiHookCatalog{}, fmt.Errorf("unknown AI hook catalog provider %q", provider)
-	}
-	return parseAIHookCatalog([]byte(raw), provider)
+	return hookcatalog.Default(provider)
 }
 
 func defaultAIHookInstallEvents(provider string) []string {
@@ -152,81 +84,8 @@ func defaultAIHookInstallEvents(provider string) []string {
 	return aiHookCatalogInstallEvents(catalog)
 }
 
-func parseAIHookCatalog(data []byte, provider string) (aiHookCatalog, error) {
-	var raw rawAIHookCatalog
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return aiHookCatalog{}, err
-	}
-	raw.Provider = strings.TrimSpace(raw.Provider)
-	if raw.Provider == "" {
-		raw.Provider = provider
-	}
-	if raw.Provider != provider {
-		return aiHookCatalog{}, fmt.Errorf("provider = %q, want %q", raw.Provider, provider)
-	}
-
-	catalog := aiHookCatalog{
-		Provider:        raw.Provider,
-		ObservedVersion: strings.TrimSpace(raw.ObservedVersion),
-		Events:          make([]aiHookCatalogEvent, 0, len(raw.Events)),
-	}
-	seen := map[string]bool{}
-	for _, rawEvent := range raw.Events {
-		name := strings.TrimSpace(rawEvent.Name)
-		if name == "" {
-			return aiHookCatalog{}, errors.New("event name must not be empty")
-		}
-		if seen[name] {
-			return aiHookCatalog{}, fmt.Errorf("duplicate event %q", name)
-		}
-		seen[name] = true
-
-		action := strings.TrimSpace(rawEvent.Action)
-		if action == "" {
-			action = aiHookActionQuiet
-		}
-		if !validAIHookAction(action) {
-			return aiHookCatalog{}, fmt.Errorf("event %s has invalid action %q", name, action)
-		}
-		install := true
-		if rawEvent.Install != nil {
-			install = *rawEvent.Install
-		}
-		catalog.Events = append(catalog.Events, aiHookCatalogEvent{
-			Name:    name,
-			Install: install,
-			Action:  action,
-		})
-	}
-	return catalog, nil
-}
-
-func mergeAIHookCatalog(base, override aiHookCatalog) aiHookCatalog {
-	if strings.TrimSpace(override.ObservedVersion) != "" {
-		base.ObservedVersion = override.ObservedVersion
-	}
-	index := map[string]int{}
-	for i, event := range base.Events {
-		index[event.Name] = i
-	}
-	for _, event := range override.Events {
-		if i, ok := index[event.Name]; ok {
-			base.Events[i] = event
-			continue
-		}
-		index[event.Name] = len(base.Events)
-		base.Events = append(base.Events, event)
-	}
-	return base
-}
-
 func validAIHookAction(action string) bool {
-	switch action {
-	case aiHookActionNotify, aiHookActionQuiet, aiHookActionState:
-		return true
-	default:
-		return false
-	}
+	return hookcatalog.ValidAction(action)
 }
 
 func (c *aiCommand) aiHookCatalogOverridePath(provider string) (string, error) {

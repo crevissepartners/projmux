@@ -43,6 +43,7 @@ CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available acros
 Client.AckNotifications	Public v0 settings, stored usage or notification SDK entrypoint or its adapter; exercised by CLI/statusbar parity, field coverage and GOWORK=off external consumer tests.
 Client.AnswerApproval	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.AnswerQuestion	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.
+Client.ApplyClaudeHooks	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.AttachAgentPersona	Public exact Claude persona attach facade; shared persona service and SDK/CLI execution parity preserve provenance and conversation.
 Client.Bind	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.Call	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
@@ -90,6 +91,7 @@ Client.ParseProfile	Public typed profile parse SDK entrypoint, covered by SDK/CL
 Client.PreflightCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 Client.PreflightDelete	Public v0 deletion-protection preflight for external frontends before provider Stop; covered by protected SDK surface and host admission race tests.
 Client.PrepareAgentResume	Public process Claude child-free preparation entrypoint; external consumer and same-fixture prepared lifecycle tests preserve frozen proof without claim or provider.
+Client.PreviewClaudeHooks	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.PreviewProfile	Public write-free profile preview SDK entrypoint, covered by no-effects, cancellation, parity and external consumer tests.
 Client.ReadAgentGuidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.ReadAgentSettings	Public v0 admission-free Agent settings SDK entrypoint or its adapter (ReadAgentSettings); reachable from external consumers rather than the CLI binary; covered by CLI relaunch dry-run parity, single-read, admission-free, field coverage and GOWORK=off consumer tests.
@@ -137,6 +139,7 @@ Client.agentSessionsService	Public v0 Agent/Project session history SDK closure,
 Client.approvalAgent	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.approvalService	Public v0 approval SDK entrypoint or native transport adapter; external consumers use these paths, verified by approval SDK/CLI parity, boundary and field-coverage fixtures.
 Client.checkCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
+Client.claudeHookInstallEvents	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.createAgent	Public v0 tmux Agent creation closure or preserved CLI catalog proof; covered by SDK/CLI parity, boundary and external consumer tests.
 Client.createDiscoveryRoots	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
 Client.createInputs	Public v0 shell Window/Pane creation SDK entrypoint or its external-only adapter; verified by real tmux SDK/CLI Registry, receipt, hook and rollback parity and GOWORK=off consumer tests.
@@ -150,6 +153,7 @@ Client.deleteWithRunner	Public v0 Window, Pane and Agent deletion SDK entrypoint
 Client.guidance	Public v0 global guidance editing SDK entrypoint or adapter; covered by CLI/SDK parity and GOWORK=off external consumer fixtures.
 Client.linkRulesService	Public v0 Project link rules SDK entrypoint or its adapter; retained for external consumers and exercised by CLI/SDK parity, typed refusals, field coverage, and GOWORK=off consumer tests.
 Client.peerMessages	Client.SendMessage and Client.MessageStatus construct the same frozen-path execution service through this adapter.
+Client.planClaudeHooks	Public v0 Claude hook integration SDK entrypoint or its adapter (PreviewClaudeHooks, ApplyClaudeHooks); reachable from external consumers rather than the CLI binary; covered by CLI plan and install parity, writes-nothing, stale-base refusal and GOWORK=off consumer tests.
 Client.preflightCreateAgent	Public v0 pre-Window Agent create preflight closure for external frontends; runs CreateAgent's effect-free checks and is covered by TestPreflightCreateAgentMatchesCreateAgent, TestPreflightCreateAgentLeavesNoEffects and the protected SDK surface.
 Client.profileService	Public v0 profile SDK entrypoint or refusal adapter; exercised by CLI parity and GOWORK=off external consumer tests.
 Client.questionAgent	Public v0 Agent question SDK entrypoint/adapter or preserved CLI question adapter for private consumers; exercised by fixture SDK/CLI parity, field coverage and GOWORK=off consumer tests.

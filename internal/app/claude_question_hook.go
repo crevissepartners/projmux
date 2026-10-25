@@ -19,12 +19,13 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/agentquestion"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/claudesettings"
 )
 
 const (
 	// claudeQuestionHookRoute is the hidden `internal` route Claude Code runs
 	// as a PreToolUse hook for AskUserQuestion.
-	claudeQuestionHookRoute = "claude-question-hook"
+	claudeQuestionHookRoute = claudesettings.QuestionHookRoute
 	// claudeQuestionPoll is how often the waiting hook rereads its record.
 	claudeQuestionPoll = 250 * time.Millisecond
 	// claudeQuestionGiveUp is how long past the deadline a hook that cannot

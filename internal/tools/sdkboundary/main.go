@@ -122,6 +122,8 @@ func allowedImplementation(p packageData) bool {
 		module + "/internal/integrations/processhost",
 		module + "/internal/integrations/agents/agentquestion",
 		module + "/internal/services/settings",
+		module + "/internal/services/claudesettings",
+		module + "/internal/services/hookcatalog",
 		module + "/internal/services/tmuxconfig",
 		module + "/internal/services/keybinding",
 		module + "/internal/platformkeys/binding",

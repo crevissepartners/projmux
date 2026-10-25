@@ -21,13 +21,14 @@ import (
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/claudesettings"
 )
 
 // Exec replaces the hook shell: the registration process's direct parent must
 // be the exact activation-exec process after it exec'd Claude. An unmanaged
 // nested Claude may inherit the private activation environment, but cannot pass
 // this producer check for its own SessionStart.
-const claudeRegistrationHookCommand = "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # " + claudeHookManagedMarker
+const claudeRegistrationHookCommand = claudesettings.RegistrationHookCommand
 
 // claudeEndpointPollInterval is the helper accept loop's idle cadence only. It
 // never bounds how long a readiness answer may take; see

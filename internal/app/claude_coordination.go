@@ -26,17 +26,18 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/services/claudesettings"
 )
 
 const (
 	claudeCoordinationVersion            = claudeadapter.CoordinationVersion
 	claudeProviderFrameMaxBytes          = 8 << 10
-	claudeCoordinationHookTimeout        = 5 * time.Second
-	priorClaudeCoordinationManagedMarker = "projmux-managed:claude-coordination:v1"
-	priorClaudeCoordinationV2Marker      = "projmux-managed:claude-coordination:v2"
-	claudeCoordinationManagedMarker      = "projmux-managed:claude-coordination:v3"
-	claudeCoordinationHookCommand        = "exec projmux internal claude-message-reply >/dev/null 2>&1 # " + claudeCoordinationManagedMarker
-	claudeCoordinationBoundaryCommand    = "exec projmux internal claude-message-boundary >/dev/null 2>&1 # " + claudeCoordinationManagedMarker
+	claudeCoordinationHookTimeout        = claudesettings.CoordinationHookTimeout
+	priorClaudeCoordinationManagedMarker = claudesettings.PriorCoordinationManagedMarker
+	priorClaudeCoordinationV2Marker      = claudesettings.PriorCoordinationV2Marker
+	claudeCoordinationManagedMarker      = claudesettings.CoordinationManagedMarker
+	claudeCoordinationHookCommand        = claudesettings.CoordinationHookCommand
+	claudeCoordinationBoundaryCommand    = claudesettings.CoordinationBoundaryCommand
 )
 
 type claudeCoordinationSource struct {
