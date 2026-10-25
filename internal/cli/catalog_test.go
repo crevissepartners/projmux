@@ -580,3 +580,25 @@ func TestOnlyCanonicalChildrenSurviveOnMixedLegacyRoots(t *testing.T) {
 		}
 	}
 }
+
+func TestDeprecatedProjectDeleteHelpUsesSingularRef(t *testing.T) {
+	for _, route := range []string{"delete", "delete project", "delete projects"} {
+		t.Run(route, func(t *testing.T) {
+			var help strings.Builder
+			target, ok := RequestedHelp(append(strings.Fields(route), "--help"))
+			if !ok {
+				t.Fatal("help route not recognized")
+			}
+			if err := RenderHelp(&help, target); err != nil {
+				t.Fatal(err)
+			}
+			want := "projmux delete project [<ref>] [--project <ref> | -p <ref>]"
+			if !strings.Contains(help.String(), want) {
+				t.Errorf("help must advertise an optional singular Project ref; want %q in:\n%s", want, help.String())
+			}
+			if strings.Contains(help.String(), "projmux delete project [<ref>...]") {
+				t.Error("help advertises multiple positional Project refs")
+			}
+		})
+	}
+}

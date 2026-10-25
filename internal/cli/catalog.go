@@ -1648,7 +1648,7 @@ var routes = []Route{
 		// destructive verb. Naming the scope in the string it prints is what
 		// makes the drift loud instead.
 		Usage: []string{
-			"projmux delete project [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
+			"projmux delete project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
@@ -1670,7 +1670,7 @@ var routes = []Route{
 				Invocation: InvocationNatural,
 				Summary:    "Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, and runtime",
 				Aliases:    []string{"projects"},
-				Usage:      []string{"projmux delete project [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
+				Usage:      []string{"projmux delete project [<ref>] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
 				Canonical:  []string{"unregister project"},
 			},
 			{
