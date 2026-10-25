@@ -92,11 +92,15 @@ type codexIntegrationPlan struct {
 	unmarked bool
 }
 
-// claudeHookManagedEntry and encodeClaudeSettings keep the command's names
-// for the shared ingest entry and settings encoding.
+// These keep the command's names for the shared settings parsing, hooks
+// object, managed entries and encoding.
 var (
-	claudeHookManagedEntry = claudesettings.HookManagedEntry
-	encodeClaudeSettings   = claudesettings.EncodeSettings
+	claudeHookManagedEntry       = claudesettings.HookManagedEntry
+	claudeQuestionManagedEntry   = claudesettings.QuestionManagedEntry
+	claudePermissionManagedEntry = claudesettings.PermissionManagedEntry
+	parseClaudeSettings          = claudesettings.ParseSettings
+	claudeSettingsHooks          = claudesettings.SettingsHooks
+	encodeClaudeSettings         = claudesettings.EncodeSettings
 )
 
 type claudeHookPlan struct {

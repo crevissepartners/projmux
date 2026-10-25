@@ -194,3 +194,25 @@ func TestApplyClaudeHooksMatchesCLIInstall(t *testing.T) {
 		}
 	}
 }
+
+// The command's settings names the private web server also reads stay
+// callable with their signatures and are the shared claudesettings code.
+func TestClaudeSettingsNamesDelegate(t *testing.T) {
+	settings, err := parseClaudeSettings(`{"hooks":{"Stop":[]}}`, "settings.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks, err := claudeSettingsHooks(settings, false)
+	if err != nil || hooks["Stop"] == nil {
+		t.Fatalf("%v %v", hooks, err)
+	}
+	if _, err := parseClaudeSettings("[]", "settings.json"); err == nil {
+		t.Fatal("non-object settings parsed")
+	}
+	hooks["PreToolUse"] = []any{claudeQuestionManagedEntry()}
+	hooks["PermissionRequest"] = []any{claudePermissionManagedEntry()}
+	encoded, err := encodeClaudeSettings(settings)
+	if err != nil || !strings.Contains(encoded, claudeQuestionManagedMarker) || !strings.Contains(encoded, claudePermissionManagedMarker) {
+		t.Fatalf("%s %v", encoded, err)
+	}
+}

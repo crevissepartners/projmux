@@ -109,7 +109,7 @@ func PlanHooks(remove, includeCoordination bool, path, current string, installEv
 	if err != nil {
 		return Plan{}, err
 	}
-	hooks, err := settingsHooks(settings, false)
+	hooks, err := SettingsHooks(settings, false)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -158,7 +158,7 @@ func PlanHooks(remove, includeCoordination bool, path, current string, installEv
 		return Plan{}, err
 	}
 
-	hooks, err = settingsHooks(settings, true)
+	hooks, err = SettingsHooks(settings, true)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -180,11 +180,11 @@ func PlanHooks(remove, includeCoordination bool, path, current string, installEv
 		// The question channel rides on explicit integration only, like the
 		// coordination callbacks above. It holds nothing open for an Agent that
 		// was not opted in with `projmux agent question enable`.
-		hooks["PreToolUse"] = append(entrySlice(hooks["PreToolUse"]), questionManagedEntry())
+		hooks["PreToolUse"] = append(entrySlice(hooks["PreToolUse"]), QuestionManagedEntry())
 		// The permission hook is its own PermissionRequest entry next to the
 		// ingest entry. It decides nothing unless agent-approval-answering is
 		// `projmux`.
-		hooks["PermissionRequest"] = append(entrySlice(hooks["PermissionRequest"]), permissionManagedEntry())
+		hooks["PermissionRequest"] = append(entrySlice(hooks["PermissionRequest"]), PermissionManagedEntry())
 	}
 	next, err := EncodeSettings(settings)
 	if err != nil {
@@ -199,6 +199,7 @@ func PlanHooks(remove, includeCoordination bool, path, current string, installEv
 	}
 	return plan, nil
 }
+
 // ParseSettings parses settings; blank content is an empty object.
 func ParseSettings(content, path string) (map[string]any, error) {
 	if strings.TrimSpace(content) == "" {
@@ -213,7 +214,10 @@ func ParseSettings(content, path string) (map[string]any, error) {
 	}
 	return settings, nil
 }
-func settingsHooks(settings map[string]any, create bool) (map[string]any, error) {
+
+// SettingsHooks is the settings' hooks object; with create it adds an empty
+// one when absent.
+func SettingsHooks(settings map[string]any, create bool) (map[string]any, error) {
 	value, ok := settings["hooks"]
 	if !ok {
 		if !create {
@@ -298,6 +302,7 @@ func entrySlice(value any) []any {
 	}
 	return nil
 }
+
 // HookManagedEntry is the ingest entry every installed event gets.
 func HookManagedEntry() map[string]any {
 	return map[string]any{
@@ -321,7 +326,7 @@ func entryIsHooksAndMatcherOnly(entry map[string]any) bool {
 	return true
 }
 
-// questionManagedEntry is the AskUserQuestion PreToolUse entry. Its
+// QuestionManagedEntry is the AskUserQuestion PreToolUse entry. Its
 // command's stdout is not discarded: an answered question's decision is printed
 // there. Its timeout is the fixed ceiling config.AgentQuestionHookTimeoutSeconds,
 // never read from the window file: the hook rereads the window for every
@@ -329,7 +334,7 @@ func entryIsHooksAndMatcherOnly(entry map[string]any) bool {
 // question without re-running integrate. An entry an older projmux installed
 // with window plus the margin is removed by its marker and rewritten with the
 // ceiling on the next integrate.
-func questionManagedEntry() map[string]any {
+func QuestionManagedEntry() map[string]any {
 	return map[string]any{
 		"matcher": QuestionHookMatcher,
 		"hooks": []any{
@@ -343,12 +348,12 @@ func questionManagedEntry() map[string]any {
 	}
 }
 
-// permissionManagedEntry is the PermissionRequest entry of the
+// PermissionManagedEntry is the PermissionRequest entry of the
 // permission hook. It carries no matcher, so it sees every tool's request. Its
 // timeout is the fixed ceiling config.AgentApprovalHookTimeoutSeconds, the
 // longest window plus a margin, never read from the window file: the hook
 // rereads the window for every request and ends the wait itself.
-func permissionManagedEntry() map[string]any {
+func PermissionManagedEntry() map[string]any {
 	return map[string]any{
 		"hooks": []any{
 			map[string]any{
@@ -381,6 +386,7 @@ func coordinationBoundaryManagedEntry() map[string]any {
 		},
 	}
 }
+
 // EncodeSettings is settings as the command writes it: two-space indented
 // JSON with HTML left unescaped and a trailing newline.
 func EncodeSettings(settings map[string]any) (string, error) {
