@@ -65,89 +65,13 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	if strings.TrimSpace(req.Window) == "" {
 		return result, &Refusal{Code: CodeSelectorInvalid, message: "CreateAgentRequest.Window must name one Window"}
 	}
-	for _, input := range []struct {
-		kind       metadata.Kind
-		raw, field string
-	}{{metadata.KindWindow, req.Window, "Window"}, {metadata.KindPane, req.Pane, "Pane"}} {
-		if input.raw != "" {
-			if _, err := selector.ParseRef(input.kind, input.raw); err != nil {
-				return result, resourceRefusal(selectorInputError(err, "CreateAgentRequest."+input.field))
-			}
-		}
-	}
-	if req.Placement != "" && req.Placement != "right" && req.Placement != "down" {
-		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest.Placement requires right or down"}
-	}
-	req.CwdFrom = strings.TrimSpace(req.CwdFrom)
-	if req.CwdFrom != "" && req.CwdFrom != "project" && req.CwdFrom != "pane" {
-		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest.CwdFrom requires project or pane"}
-	}
-	creator := ""
-	if req.Creator != "" {
-		var ok bool
-		creator, ok = strings.CutPrefix(req.Creator, "uid:")
-		if !ok || creator == "" || strings.TrimSpace(creator) != creator || strings.ContainsAny(creator, ":/ \t") {
-			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Creator must be an exact Agent reference uid:<agent>"}
-		}
-	}
-	operator := req.Operator.Client()
-	if operator != "" {
-		if err := operatorclient.Validate(operator); err != nil {
-			return result, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Operator: " + err.Error(), cause: err}
-		}
-	}
-	scope, labels, socket, err := c.createInputs(ctx, "CreateAgentRequest", req.Project, req.Name, req.Labels, req.SocketPath)
+	checked, err := c.checkCreateAgent(ctx, req, runner, false)
 	if err != nil {
 		return result, err
 	}
-	reg, err := resources.Load(c.paths)
-	if err != nil {
-		return result, resourceRefusal(err)
-	}
-	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
-	transaction.Outcomes = c.createOutcomes()
-	project, err := execution.ResolveProject(reg, scope)
-	if err != nil {
-		return result, createRefusal(err, "CreateAgentRequest")
-	}
-	fields := mutationruntime.AgentInputFields{}
-	settings := mutationruntime.AgentSettingsFlags{Profile: req.Profile, ProfileProjectUID: project.Metadata.UID, Instructions: req.Instructions, InstructionsOption: "instructions", Model: req.Model, Effort: req.Effort, Labels: req.Labels, Payload: req.Payload, InteractiveOnly: req.InteractiveOnly, DialogueReplyOnly: req.DialogueReplyOnly}
-	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime, Settings: settings, Fields: fields}
-	provider := req.Provider
-	if provider == "" {
-		selected, err := planner.SettingsService().SelectCreateProfile("create agent", settings)
-		if err != nil {
-			return result, createRefusal(err, "CreateAgentRequest")
-		}
-		provider = selected.Spec.Provider
-	}
-	provider, err = fields.RequireCanonicalProvider("create agent", provider)
-	if err != nil {
-		return result, createRefusal(err, "CreateAgentRequest")
-	}
-	planner.Provider = provider
-	for _, err := range []error{fields.RequireInteractiveOnlyProvider("create agent", provider, settings.InteractiveOnly), fields.RequireLaunchOptions("create agent", provider, settings.Model, settings.Effort, settings.DialogueReplyOnly, "nothing was created"), fields.RequirePersonaLane("create agent", provider, settings), fields.RequireProfileLane("create agent", settings.Profile, settings.DialogueReplyOnly), fields.RequireDialogueMode(provider, settings.DialogueReplyOnly, settings.Payload), mutationruntime.RefuseStatelessAgentWorkspace(provider, req.Cwd, req.AddDirs)} {
-		if err != nil {
-			return result, createRefusal(err, "CreateAgentRequest")
-		}
-	}
-	if err = planner.SettingsService().ResolveCreateProfile("create agent", provider, &planner.Settings); err != nil {
-		return result, createRefusal(err, "CreateAgentRequest")
-	}
-	if planner.Settings.ProfileLaunch.Active() {
-		if err = fields.RequireLaunchOptions("create agent", provider, planner.Settings.Model, planner.Settings.Effort, settings.DialogueReplyOnly, "nothing was created"); err != nil {
-			return result, createRefusal(err, "CreateAgentRequest")
-		}
-		if err = fields.RequirePersonaLane("create agent", provider, planner.Settings); err != nil {
-			return result, createRefusal(err, "CreateAgentRequest")
-		}
-	}
-	if _, err := mutationruntime.DeclaredAgentCreator(&reg, creator, "create agent", fields.Option("creator")); err != nil {
-		return result, &Refusal{Code: CodeCreateCreatorInvalid, message: err.Error(), cause: err}
-	}
-	if err := planner.RequireEnabled(provider); err != nil {
-		return result, createRefusal(err, "CreateAgentRequest")
-	}
+	scope, labels, socket, execution, transaction := checked.scope, checked.labels, checked.socket, checked.execution, checked.transaction
+	fields, planner, provider, creator, operator := checked.fields, checked.planner, checked.provider, checked.creator, checked.operator
+	req.CwdFrom = checked.cwdFrom
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -229,6 +153,124 @@ func (c *Client) createAgent(ctx context.Context, req core.CreateAgentRequest, r
 	return result, nil
 }
 
+// createAgentChecks is what the checks of a create that change nothing
+// resolved, for the create that runs after them.
+type createAgentChecks struct {
+	scope                       mutationruntime.CreateScope
+	labels                      map[string]string
+	socket                      string
+	execution                   *mutationruntime.CreateExecution
+	transaction                 *mutationruntime.CreateTransaction
+	fields                      mutationruntime.AgentInputFields
+	planner                     *mutationruntime.SDKAgentPlanner
+	provider, creator, operator string
+	cwdFrom                     string
+}
+
+// checkCreateAgent gives every refusal a tmux create gives before its first
+// effect, in the create's order: request grammar, scope, the profile, the
+// provider and its launch lanes, the creator declaration, and the enabled
+// providers. It reads the Registry and the config and writes nothing, so
+// PreflightCreateAgent runs it too. It does not refuse an empty Window. For
+// process it keeps the process creator's Creator grammar and requires a
+// provider the process creator hosts once the provider is resolved.
+func (c *Client) checkCreateAgent(ctx context.Context, req core.CreateAgentRequest, runner mutationruntime.TmuxCommandRunner, process bool) (createAgentChecks, error) {
+	var checked createAgentChecks
+	for _, input := range []struct {
+		kind       metadata.Kind
+		raw, field string
+	}{{metadata.KindWindow, req.Window, "Window"}, {metadata.KindPane, req.Pane, "Pane"}} {
+		if input.raw != "" {
+			if _, err := selector.ParseRef(input.kind, input.raw); err != nil {
+				return checked, resourceRefusal(selectorInputError(err, "CreateAgentRequest."+input.field))
+			}
+		}
+	}
+	if req.Placement != "" && req.Placement != "right" && req.Placement != "down" {
+		return checked, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest.Placement requires right or down"}
+	}
+	req.CwdFrom = strings.TrimSpace(req.CwdFrom)
+	if req.CwdFrom != "" && req.CwdFrom != "project" && req.CwdFrom != "pane" {
+		return checked, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest.CwdFrom requires project or pane"}
+	}
+	creator := ""
+	if req.Creator != "" {
+		forbidden := ":/ \t"
+		if process {
+			forbidden = ":/ \t\r\n"
+		}
+		var ok bool
+		creator, ok = strings.CutPrefix(req.Creator, "uid:")
+		if !ok || creator == "" || strings.TrimSpace(creator) != creator || strings.ContainsAny(creator, forbidden) {
+			return checked, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Creator must be an exact Agent reference uid:<agent>"}
+		}
+	}
+	operator := req.Operator.Client()
+	if operator != "" {
+		if err := operatorclient.Validate(operator); err != nil {
+			return checked, &Refusal{Code: CodeCreateCreatorInvalid, message: "CreateAgentRequest.Operator: " + err.Error(), cause: err}
+		}
+	}
+	scope, labels, socket, err := c.createInputs(ctx, "CreateAgentRequest", req.Project, req.Name, req.Labels, req.SocketPath)
+	if err != nil {
+		return checked, err
+	}
+	reg, err := resources.Load(c.paths)
+	if err != nil {
+		return checked, resourceRefusal(err)
+	}
+	execution, transaction := mutationruntime.NewSDKCreate(c.paths, socket, c.projectShell, c.projmuxExecutable, c.projectSessionName, runner, c.createDiscoveryRoots)
+	transaction.Outcomes = c.createOutcomes()
+	project, err := execution.ResolveProject(reg, scope)
+	if err != nil {
+		return checked, createRefusal(err, "CreateAgentRequest")
+	}
+	fields := mutationruntime.AgentInputFields{}
+	settings := mutationruntime.AgentSettingsFlags{Profile: req.Profile, ProfileProjectUID: project.Metadata.UID, Instructions: req.Instructions, InstructionsOption: "instructions", Model: req.Model, Effort: req.Effort, Labels: req.Labels, Payload: req.Payload, InteractiveOnly: req.InteractiveOnly, DialogueReplyOnly: req.DialogueReplyOnly}
+	planner := &mutationruntime.SDKAgentPlanner{Paths: c.paths, HomeDir: c.discoveryHome, Shell: c.projectShell, Executable: c.projmuxExecutable, Environment: c.agentEnvironment, Store: transaction.Store, Runtime: execution.Runtime, Settings: settings, Fields: fields}
+	provider := req.Provider
+	if provider == "" {
+		selected, err := planner.SettingsService().SelectCreateProfile("create agent", settings)
+		if err != nil {
+			return checked, createRefusal(err, "CreateAgentRequest")
+		}
+		provider = selected.Spec.Provider
+	}
+	provider, err = fields.RequireCanonicalProvider("create agent", provider)
+	if err != nil {
+		return checked, createRefusal(err, "CreateAgentRequest")
+	}
+	if process {
+		if err := mutationruntime.RequireProcessProvider(provider); err != nil {
+			return checked, createRefusal(err, "CreateAgentRequest")
+		}
+	}
+	planner.Provider = provider
+	for _, err := range []error{fields.RequireInteractiveOnlyProvider("create agent", provider, settings.InteractiveOnly), fields.RequireLaunchOptions("create agent", provider, settings.Model, settings.Effort, settings.DialogueReplyOnly, "nothing was created"), fields.RequirePersonaLane("create agent", provider, settings), fields.RequireProfileLane("create agent", settings.Profile, settings.DialogueReplyOnly), fields.RequireDialogueMode(provider, settings.DialogueReplyOnly, settings.Payload), mutationruntime.RefuseStatelessAgentWorkspace(provider, req.Cwd, req.AddDirs)} {
+		if err != nil {
+			return checked, createRefusal(err, "CreateAgentRequest")
+		}
+	}
+	if err = planner.SettingsService().ResolveCreateProfile("create agent", provider, &planner.Settings); err != nil {
+		return checked, createRefusal(err, "CreateAgentRequest")
+	}
+	if planner.Settings.ProfileLaunch.Active() {
+		if err = fields.RequireLaunchOptions("create agent", provider, planner.Settings.Model, planner.Settings.Effort, settings.DialogueReplyOnly, "nothing was created"); err != nil {
+			return checked, createRefusal(err, "CreateAgentRequest")
+		}
+		if err = fields.RequirePersonaLane("create agent", provider, planner.Settings); err != nil {
+			return checked, createRefusal(err, "CreateAgentRequest")
+		}
+	}
+	if _, err := mutationruntime.DeclaredAgentCreator(&reg, creator, "create agent", fields.Option("creator")); err != nil {
+		return checked, &Refusal{Code: CodeCreateCreatorInvalid, message: err.Error(), cause: err}
+	}
+	if err := planner.RequireEnabled(provider); err != nil {
+		return checked, createRefusal(err, "CreateAgentRequest")
+	}
+	return createAgentChecks{scope: scope, labels: labels, socket: socket, execution: execution, transaction: transaction, fields: fields, planner: planner, provider: provider, creator: creator, operator: operator, cwdFrom: req.CwdFrom}, nil
+}
+
 func createFirstResult(rows []mutationruntime.ShellCreateResource) (mutationruntime.ShellCreateResource, error) {
 	if len(rows) == 0 {
 		return mutationruntime.ShellCreateResource{}, &Refusal{Code: CodeCreateExecutionFailed, message: "shared create execution returned no resource"}
@@ -236,16 +278,26 @@ func createFirstResult(rows []mutationruntime.ShellCreateResource) (mutationrunt
 	return rows[0], nil
 }
 
+// processCreateShape refuses a process request the process creator never
+// takes, whatever the settings: no Detach, tmux placement, a Pane, an
+// alternate launch lane, or a provider other than Claude or Codex.
+func processCreateShape(req core.CreateAgentRequest) error {
+	if !req.Detach || req.Pane != "" || req.Placement != "" || (req.CwdFrom != "" && req.CwdFrom != "project") || req.InteractiveOnly || req.DialogueReplyOnly {
+		return &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest process requires Detach and does not support tmux placement, Pane, or alternate launch lanes"}
+	}
+	if req.Provider != "" && req.Provider != "claude" && req.Provider != "codex" {
+		return &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest process supports Claude or Codex"}
+	}
+	return nil
+}
+
 func (c *Client) createProcessAgent(ctx context.Context, req core.CreateAgentRequest) (core.CreateAgentResult, error) {
 	var result core.CreateAgentResult
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !req.Detach || req.Pane != "" || req.Placement != "" || (req.CwdFrom != "" && req.CwdFrom != "project") || req.InteractiveOnly || req.DialogueReplyOnly {
-		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest process requires Detach and does not support tmux placement, Pane, or alternate launch lanes"}
-	}
-	if req.Provider != "" && req.Provider != "claude" && req.Provider != "codex" {
-		return result, &Refusal{Code: CodeCreateRequestInvalid, message: "CreateAgentRequest process supports Claude or Codex"}
+	if err := processCreateShape(req); err != nil {
+		return result, err
 	}
 	scope, labels, _, err := c.createInputs(ctx, "CreateAgentRequest", req.Project, req.Name, req.Labels, req.SocketPath)
 	if err != nil {

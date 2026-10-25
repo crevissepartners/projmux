@@ -92,3 +92,10 @@ type CreateAgentResult struct {
 	Projection ResourceList
 	Receipt    OperationReceipt
 }
+
+// CreateAgentPreflight is what PreflightCreateAgent resolved for a request it
+// did not refuse. Provider is the provider the create will run, the one a
+// profile chooses when the request names none.
+type CreateAgentPreflight struct {
+	Provider string
+}

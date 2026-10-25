@@ -25,6 +25,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/services/questions"
 	"github.com/crevissepartners/projmux/internal/services/settings"
 	savedusage "github.com/crevissepartners/projmux/internal/services/usage"
+	"github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
@@ -233,5 +234,23 @@ func TestPublicOperatorCreatorIsOpaque(t *testing.T) {
 	}
 	if got := core.NewOperatorCreator("tester").Client(); got != "tester" || (core.OperatorCreator{}).Client() != "" {
 		t.Fatalf("operator client %q", got)
+	}
+}
+
+// The create preflight takes the CreateAgentRequest CreateAgent takes and
+// answers only the resolved provider, untagged like the other public results.
+func TestPublicCreateAgentPreflightSurface(t *testing.T) {
+	result := reflect.TypeFor[core.CreateAgentPreflight]()
+	if result.NumField() != 1 {
+		t.Fatalf("CreateAgentPreflight has %d fields", result.NumField())
+	}
+	if f, ok := result.FieldByName("Provider"); !ok || f.Type != reflect.TypeFor[string]() || f.Tag != "" {
+		t.Fatal("CreateAgentPreflight.Provider missing or not an untagged string")
+	}
+	method, ok := reflect.TypeFor[*projmux.Client]().MethodByName("PreflightCreateAgent")
+	create, _ := reflect.TypeFor[*projmux.Client]().MethodByName("CreateAgent")
+	if !ok || method.Type.NumIn() != 3 || method.Type.In(1) != create.Type.In(1) || method.Type.In(2) != reflect.TypeFor[core.CreateAgentRequest]() ||
+		method.Type.NumOut() != 2 || method.Type.Out(0) != result || method.Type.Out(1) != reflect.TypeFor[error]() {
+		t.Fatalf("PreflightCreateAgent signature %v", method.Type)
 	}
 }

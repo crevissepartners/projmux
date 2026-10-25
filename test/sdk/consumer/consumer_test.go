@@ -443,6 +443,11 @@ func TestExternalAgentCreateConsumer(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || out.Agent.Metadata.UID != "" {
 		t.Fatalf("%+v %v", out, err)
 	}
+	var preflight core.CreateAgentPreflight
+	preflight, err = c.PreflightCreateAgent(ctx, core.CreateAgentRequest{Project: "uid:project", Provider: "claude", Profile: "none"})
+	if !errors.Is(err, context.Canceled) || preflight.Provider != "" {
+		t.Fatalf("cancelled preflight %+v %v", preflight, err)
+	}
 	// Native create uses only public request/result/error types from an external module.
 	_, nativeErr := c.CreateAgent(ctx, core.CreateAgentRequest{Project: "uid:project", Window: "uid:window", Provider: "codex", Profile: "native", Instructions: "reviewer", Payload: []string{"hello"}})
 	if !errors.Is(nativeErr, context.Canceled) {

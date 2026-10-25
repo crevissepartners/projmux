@@ -224,7 +224,11 @@ func runProcessDetachedEntry(route string, command *createCommand, resume *agent
 		return err
 	}
 	// Only the SDK's frozen-context request carries an operator creator, and
-	// that request has already withdrawn ambient provenance above.
+	// that request has already withdrawn ambient provenance above. A Context
+	// tells the SDK's request shape apart; it does not authenticate where the
+	// request came from. A process of the same OS user that writes this
+	// request is already inside the trust boundary: a creator is provenance,
+	// not authentication.
 	if client := request.options.OperatorCreatorClient; client != "" {
 		if req.Context == nil {
 			return errors.New("process-detached-operator-creator-sdk-only")
