@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/cli"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"

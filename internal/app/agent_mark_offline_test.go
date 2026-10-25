@@ -18,8 +18,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
-	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	runtimeservice "github.com/crevissepartners/projmux/internal/services/runtime"
 	sdk "github.com/crevissepartners/projmux/pkg/projmux"
 	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
@@ -188,7 +188,7 @@ func TestAgentMarkOfflineRefusesWithoutWrites(t *testing.T) {
 		}},
 		{name: "tmux", token: mutationruntime.MarkOfflineProcessUnsupported, change: func(reg *coremetadata.Registry, b processhost.Binding) {
 			pane, _ := reg.Pane(b.Pane)
-			pane.Spec.Runtime = coremetadata.PaneRuntime{}
+			pane.Spec.Runtime = coremetadata.PaneRuntimeSpec{}
 			pane.Status.ProcessSession = nil
 			pane.Status.Activation = coremetadata.PaneActivation{}
 		}},
@@ -196,7 +196,7 @@ func TestAgentMarkOfflineRefusesWithoutWrites(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store, b, activation := hostLostStore(t, aiModeClaude)
 			if tc.change != nil {
-				if _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error { tc.change(reg, b); return nil }); err != nil {
+				if _, _, err := store.UpdateConvergent(func(reg *coremetadata.Registry) error { tc.change(reg, b); return nil }); err != nil {
 					t.Fatal(err)
 				}
 			}
