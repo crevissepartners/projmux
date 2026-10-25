@@ -59,7 +59,7 @@ func (c *aiCommand) beginManagedIngestProducerFileMigration() (int, func() error
 	if (strings.Contains(claudePlan.current, claudeHookManagedMarker) || strings.Contains(claudePlan.current, claudeCoordinationManagedMarker)) && claudePlan.changed {
 		mutations = append(mutations, managedIngestFileMutation{
 			path: claudePlan.path, current: claudePlan.current, next: claudePlan.next, mode: 0o644, label: "Claude settings",
-			write: func() error { return c.writeClaudeSettings(claudePlan.path, []byte(claudePlan.next)) },
+			write: func() error { return c.writeClaudeSettingsFromPlan(claudePlan) },
 		})
 	}
 	if strings.Contains(hookPlan.current, antigravityManagedMarker) && hookPlan.changed {
