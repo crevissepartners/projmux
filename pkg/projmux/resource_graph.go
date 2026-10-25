@@ -31,10 +31,12 @@ var newResourceGraphReader = runtimeservice.NewGraphReader
 //
 // RegistryIdentity is set only when both stats succeed and agree; a rewrite in
 // between leaves it nil and the graph is still returned. Without a server, or
-// when a server or process host cannot be read, Registry rows remain with
-// Status "unknown" and the reason is reported in Graph.Unavailable rather than
-// as an error. Nothing is written to tmux, the Registry, provider hosts or the
-// caller's stderr, and no process admission or control authority is returned.
+// when the server cannot be read, the rows tmux would judge have Status
+// "unknown" and Graph.Unavailable names the tmux scope; a process host that
+// cannot be read leaves its process Pane "unknown" with no Unavailable entry.
+// Neither is an error. Nothing is written to tmux, the Registry, provider
+// hosts or the caller's stderr, and no process admission or control authority
+// is returned.
 //
 // Cancellation is checked between the reads. Registry failures retain the
 // registry-unavailable refusal of the other resource reads. Results own their

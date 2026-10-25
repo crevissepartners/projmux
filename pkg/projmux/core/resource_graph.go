@@ -28,8 +28,10 @@ type RegistryFileIdentity struct {
 // overlay, every observed runtime object with an attribution, and the reasons
 // for both. Its JSON is the CLI's internal graph JSON byte for byte.
 //
-// Registry rows are enumerated from the Registry, so an unreadable observation
-// yields the same rows with Status "unknown" and a reason in Unavailable.
+// Registry rows are enumerated from the Registry, so an unreadable tmux
+// observation yields the same rows, those tmux would judge with Status
+// "unknown" and a reason in Unavailable; an unreadable process host leaves its
+// process Pane "unknown" without an Unavailable entry.
 // Runtime nodes are enumerated from the observation.
 type ResourceGraphView struct {
 	Transport       RuntimeTransport          `json:"transport"`

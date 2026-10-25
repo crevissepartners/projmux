@@ -127,12 +127,9 @@ func (c *agentCommand) plan(r *agentRestart, request agentSettingsRequest, socke
 			if c.rebind == nil || c.rebind.create == nil {
 				return mutationruntime.AgentSettingsLaunch{}, nil
 			}
-			if r.comparesPromptParts && !plan.DialogueReplyOnly {
-				q = q.WithPromptParts(planAgentGuidanceWith(c.rebind.launcher, r.provider, r.target.Metadata.Annotations).shared(), planProjectLinksWith(c.rebind.launcher, r.provider, plan.Project, r.target.Metadata.Annotations).shared())
-			}
-			if r.provider == aiModeCodex && r.comparesPromptParts {
-				service := mutationruntime.GuidanceService{Paths: c.rebind.create.processCreatePaths}
-				q = q.WithPromptParts(service.PlanCodexAgentGuidance(), service.PlanCodexProjectLinks(plan.Project))
+			if r.comparesPromptParts {
+				target := mutationruntime.RelaunchSettingsTarget{Provider: r.provider, Host: "tmux", Project: plan.Project, Annotations: r.target.Metadata.Annotations}
+				q, _, _ = mutationruntime.RelaunchSettingsRequest(q, target, relaunchPromptPlanner{launcher: c.rebind.launcher, guidance: &mutationruntime.GuidanceService{Paths: c.rebind.create.processCreatePaths}})
 			}
 			q.ManagedCodexBase = r.provider == aiModeCodex
 			v, e := c.rebind.resolveSettings(r.provider, r.target.Metadata.Annotations, localAgentSettingsRequest(q))

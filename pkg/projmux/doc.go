@@ -37,6 +37,8 @@
 // joins one Registry read to one tmux and process observation with the CLI's
 // graph rules and reports that read's Registry file identity;
 // ReadRegistryFileIdentity stats the same file without reading it.
+// ReadAgentSettings resolves from one Registry read the settings each Agent's
+// plain relaunch would run with, without admitting that relaunch.
 //
 // GetAISplitMode and SetAISplitMode preserve the synchronous legacy settings contract and take no context; they do not observe cancellation.
 // SetAISplitMode uses a non-atomic plain write (0644 on creation, subject to umask; existing file mode preserved).
