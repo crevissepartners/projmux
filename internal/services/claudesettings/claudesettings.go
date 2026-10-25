@@ -9,7 +9,9 @@
 //
 // A caller that planned from the file passes what it read as a Base. The file
 // is read again just before the rename, and one that no longer holds the
-// planned bytes is refused with ChangedError; nothing is written then.
+// planned bytes is refused with ChangedError; nothing is written then. The
+// check is a re-read, not a lock: a write that lands between it and the
+// rename is not detected.
 package claudesettings
 
 import (
@@ -21,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // CodeChanged is the refusal token for a settings file that changed after
@@ -110,8 +113,17 @@ func Replace(path string, base *Base, data []byte) error {
 
 // resolveTarget follows path's symbolic links to the file Replace writes,
 // including a link whose target does not exist yet. info is nil when that
-// file does not exist.
+// file does not exist. A relative link is resolved against the real
+// directory that holds it, one component at a time, so a ".." after a
+// symbolically linked directory climbs from where that link points, as the
+// kernel's lookup does.
 func resolveTarget(path string) (string, fs.FileInfo, error) {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		info, err := os.Stat(target)
+		return target, info, err
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", nil, err
+	}
 	target := path
 	for range maxLinkHops {
 		info, err := os.Lstat(target)
@@ -128,12 +140,46 @@ func resolveTarget(path string) (string, fs.FileInfo, error) {
 		if err != nil {
 			return "", nil, err
 		}
+		dir := string(filepath.Separator)
 		if !filepath.IsAbs(link) {
-			link = filepath.Join(filepath.Dir(target), link)
+			if dir, err = filepath.EvalSymlinks(filepath.Dir(target)); err != nil {
+				return "", nil, err
+			}
 		}
-		target = link
+		if target, err = walkLink(dir, link); err != nil {
+			return "", nil, err
+		}
 	}
 	return "", nil, fmt.Errorf("%s: too many levels of symbolic links", path)
+}
+
+// walkLink is the path link names from the real directory dir. Every
+// component but the last is resolved before the next is applied; the last is
+// left for the caller, since it may be a link or may not exist.
+func walkLink(dir, link string) (string, error) {
+	var parts []string
+	for _, part := range strings.Split(link, string(filepath.Separator)) {
+		if part != "" && part != "." {
+			parts = append(parts, part)
+		}
+	}
+	current := dir
+	for i, part := range parts {
+		if part == ".." {
+			current = filepath.Dir(current)
+			continue
+		}
+		next := filepath.Join(current, part)
+		if i == len(parts)-1 {
+			return next, nil
+		}
+		resolved, err := filepath.EvalSymlinks(next)
+		if err != nil {
+			return "", err
+		}
+		current = resolved
+	}
+	return current, nil
 }
 
 // createTemp is os.CreateTemp with a chosen create mode, so that a new

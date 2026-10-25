@@ -128,13 +128,80 @@ func TestReplaceFollowsLinkChain(t *testing.T) {
 	requireNoTemp(t, filepath.Dir(target))
 }
 
+// TestReplaceClimbsFromALinkedDirectory pins a relative link whose ".."
+// follows a symbolically linked directory: settings.json -> hop/../real.json
+// with hop -> other/config names other/real.json, as the kernel resolves it,
+// not the lexical claude/real.json beside the link.
+func TestReplaceClimbsFromALinkedDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		exists bool
+		base   bool
+	}{
+		{name: "existing target without base", exists: true},
+		{name: "existing target with base", exists: true, base: true},
+		{name: "missing target without base"},
+		{name: "missing target with base", base: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			claudeDir := filepath.Join(root, "claude")
+			configDir := filepath.Join(root, "other", "config")
+			for _, dir := range []string{claudeDir, configDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(configDir, filepath.Join(claudeDir, "hop")); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(claudeDir, "settings.json")
+			if err := os.Symlink("hop/../real.json", path); err != nil {
+				t.Fatal(err)
+			}
+			kernelTarget := filepath.Join(root, "other", "real.json")
+			lexical := filepath.Join(claudeDir, "real.json")
+			if err := os.WriteFile(lexical, []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.exists {
+				if err := os.WriteFile(kernelTarget, []byte("{}\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var base *Base
+			if tc.base {
+				base = &Base{Exists: tc.exists}
+				if tc.exists {
+					base.Data = []byte("{}\n")
+				}
+			}
+
+			if err := Replace(path, base, []byte("next\n")); err != nil {
+				t.Fatal(err)
+			}
+			if data, err := os.ReadFile(kernelTarget); err != nil || string(data) != "next\n" {
+				t.Fatalf("kernel target %s = %q, %v; want the new bytes", kernelTarget, data, err)
+			}
+			if data, err := os.ReadFile(lexical); err != nil || string(data) != "{}\n" {
+				t.Fatalf("lexical neighbour %s = %q, %v; want it untouched", lexical, data, err)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != "next\n" {
+				t.Fatalf("settings path reads %q, %v; want the new bytes through the link", data, err)
+			}
+			requireNoTemp(t, filepath.Join(root, "other"))
+			requireNoTemp(t, claudeDir)
+		})
+	}
+}
+
 func TestReplaceRefusesLinkLoop(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	if err := os.Symlink(path, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := Replace(path, nil, []byte("next\n")); err == nil || !strings.Contains(err.Error(), "too many levels of symbolic links") {
+	if err := Replace(path, nil, []byte("next\n")); err == nil || !strings.Contains(err.Error(), "too many") {
 		t.Fatalf("Replace = %v, want a refused link loop", err)
 	}
 	requireNoTemp(t, dir)
