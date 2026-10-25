@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/services/claudesettings"
 )
 
 const (
@@ -115,6 +116,9 @@ type claudeHookPlan struct {
 	action   string
 	changed  bool
 	conflict string
+	// exists records that the plan read a settings file at path, so the
+	// write can tell an empty file from one that does not exist.
+	exists bool
 }
 
 type tmuxBellPlan struct {
@@ -270,7 +274,7 @@ func (c *aiCommand) runIntegrateClaude(args []string, stdout, stderr io.Writer) 
 		_, err := fmt.Fprintf(stdout, "%s\n", plan.action)
 		return err
 	}
-	if err := c.writeClaudeSettings(plan.path, []byte(plan.next)); err != nil {
+	if err := c.writeClaudeSettingsFromPlan(plan); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(stdout, "%s\n", plan.action)
@@ -389,11 +393,11 @@ func (c *aiCommand) planClaudeHookMigration() (claudeHookPlan, error) {
 		return claudeHookPlan{}, fmt.Errorf("resolve home directory: %w", err)
 	}
 	path := filepath.Join(home, claudeSettingsRelativePath)
-	current, err := c.readClaudeSettings(path)
+	current, exists, err := c.readClaudeSettingsState(path)
 	if err != nil {
 		return claudeHookPlan{}, err
 	}
-	return claudeHookPlan{path: path, current: current, next: current,
+	return claudeHookPlan{path: path, current: current, next: current, exists: exists,
 		action: "no changes: Claude hook integration is explicit"}, nil
 }
 
@@ -403,11 +407,13 @@ func (c *aiCommand) planClaudeHookIntegrationMode(remove, includeCoordination bo
 		return claudeHookPlan{}, fmt.Errorf("resolve home directory: %w", err)
 	}
 	path := filepath.Join(home, claudeSettingsRelativePath)
-	current, err := c.readClaudeSettings(path)
+	current, exists, err := c.readClaudeSettingsState(path)
 	if err != nil {
 		return claudeHookPlan{}, err
 	}
-	return c.planClaudeHookIntegrationFromCurrent(remove, includeCoordination, path, current)
+	plan, err := c.planClaudeHookIntegrationFromCurrent(remove, includeCoordination, path, current)
+	plan.exists = exists
+	return plan, err
 }
 
 func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordination bool, path, current string) (claudeHookPlan, error) {
@@ -712,22 +718,46 @@ func (c *aiCommand) writeCodexConfig(path string, data []byte) error {
 	return nil
 }
 
-func (c *aiCommand) readClaudeSettings(path string) (string, error) {
+// readClaudeSettingsState reads the settings file and reports whether it
+// exists; a missing file reads as "".
+func (c *aiCommand) readClaudeSettingsState(path string) (string, bool, error) {
 	readFile := c.readFile
 	if readFile == nil {
 		readFile = os.ReadFile
 	}
 	data, err := readFile(path)
 	if err == nil {
-		return string(data), nil
+		return string(data), true, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+		return "", false, nil
 	}
-	return "", fmt.Errorf("read Claude settings %s: %w", path, err)
+	return "", false, fmt.Errorf("read Claude settings %s: %w", path, err)
 }
 
+// writeClaudeSettings writes data as the settings file at path without a
+// plan to check it against. See writeClaudeSettingsBase.
 func (c *aiCommand) writeClaudeSettings(path string, data []byte) error {
+	return c.writeClaudeSettingsBase(path, nil, data)
+}
+
+// writeClaudeSettingsFromPlan writes plan's next bytes, refusing a settings
+// file that no longer holds the bytes the plan read.
+func (c *aiCommand) writeClaudeSettingsFromPlan(plan claudeHookPlan) error {
+	if c.writeFile != nil {
+		// A writeFile seam writes the bytes as given and has no base to check.
+		return c.writeClaudeSettings(plan.path, []byte(plan.next))
+	}
+	base := &claudesettings.Base{Exists: plan.exists, Data: []byte(plan.current)}
+	return c.writeClaudeSettingsBase(plan.path, base, []byte(plan.next))
+}
+
+// writeClaudeSettingsBase writes the settings file through
+// claudesettings.Replace, an atomic replace that keeps the file's mode and a
+// symbolic link's target and, with a non-nil base, refuses a file changed
+// since it was read. A writeFile seam, when set, writes the file instead,
+// exactly as it is given the path, data and 0644.
+func (c *aiCommand) writeClaudeSettingsBase(path string, base *claudesettings.Base, data []byte) error {
 	mkdirAll := c.mkdirAll
 	if mkdirAll == nil {
 		mkdirAll = os.MkdirAll
@@ -735,11 +765,17 @@ func (c *aiCommand) writeClaudeSettings(path string, data []byte) error {
 	if err := mkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create Claude settings directory: %w", err)
 	}
-	writeFile := c.writeFile
-	if writeFile == nil {
-		writeFile = os.WriteFile
+	if c.writeFile != nil {
+		if err := c.writeFile(path, data, 0o644); err != nil {
+			return fmt.Errorf("write Claude settings %s: %w", path, err)
+		}
+		return nil
 	}
-	if err := writeFile(path, data, 0o644); err != nil {
+	if err := claudesettings.Replace(path, base, data); err != nil {
+		var changed *claudesettings.ChangedError
+		if errors.As(err, &changed) {
+			return err
+		}
 		return fmt.Errorf("write Claude settings %s: %w", path, err)
 	}
 	return nil

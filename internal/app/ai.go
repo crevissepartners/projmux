@@ -150,6 +150,9 @@ type aiCommand struct {
 	claudeApprovalLockHooks *claudeApprovalLockHooks
 }
 
+// newAICommand leaves writeFile nil. Every write that reads it falls back to
+// os.WriteFile, except the Claude settings file, which nil sends through the
+// atomic replace (writeClaudeSettingsBase).
 func newAICommand() *aiCommand {
 	return &aiCommand{
 		nativePicker:                  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
@@ -158,7 +161,6 @@ func newAICommand() *aiCommand {
 		homeDir:                       os.UserHomeDir,
 		stdin:                         os.Stdin,
 		readFile:                      os.ReadFile,
-		writeFile:                     os.WriteFile,
 		mkdirAll:                      os.MkdirAll,
 		runCommand:                    runExternalCommand,
 		readCommand:                   readExternalCommand,

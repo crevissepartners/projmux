@@ -816,6 +816,17 @@ already has an unmanaged command that invokes `projmux internal agent-hook inges
 projmux refuses to install over it because it cannot tell whether the command
 is user-owned or stale projmux wiring.
 
+An install or removal replaces `~/.claude/settings.json` instead of editing it
+in place. The new settings are written beside the file, synced, and renamed over
+it, so Claude Code reads either the old file or the new one. The file keeps its
+mode; a new file is created `0644` less the umask, in a `0755` directory. When
+the settings path is a symbolic link, the link stays and its target is replaced.
+Because the file is replaced, a hard link to it keeps the old settings. Right
+before the replace, projmux reads the file again; if it no longer holds what
+the command planned from, the command refuses with `claude-settings-changed`,
+writes nothing, and can be run again. That check is a re-read, not a lock: a
+write that lands in the instant between it and the replace is not detected.
+
 The Claude hooks install list is catalog-driven. Projmux ships an embedded
 default catalog at `internal/app/ai_hook_catalogs/claude.json`, and merges an
 optional local override from:
