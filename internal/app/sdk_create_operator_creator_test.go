@@ -28,9 +28,9 @@ type sdkOperatorCreatorFixture struct {
 	binary                      string
 }
 
-func newSDKOperatorCreatorFixture(t *testing.T, binary, home string) sdkOperatorCreatorFixture {
+// root is the Project root; a CLI/SDK pair shares one so their Registries compare.
+func newSDKOperatorCreatorFixture(t *testing.T, binary, home, root string) sdkOperatorCreatorFixture {
 	t.Helper()
-	root := t.TempDir()
 	state := filepath.Join(t.TempDir(), "projmux")
 	config := filepath.Join(t.TempDir(), "projmux")
 	t.Setenv("XDG_CONFIG_HOME", filepath.Dir(config))
@@ -85,8 +85,9 @@ func TestCreateAgentOperatorCreatorMatchesCLI(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			var snapshots, lines []string
+			root := t.TempDir()
 			for _, sdk := range []bool{false, true} {
-				f := newSDKOperatorCreatorFixture(t, binary, home)
+				f := newSDKOperatorCreatorFixture(t, binary, home, root)
 				req := core.CreateAgentRequest{Project: "sample", Window: "extra", Provider: "claude", Name: "worker", Operator: core.NewOperatorCreator(sdkOperatorCreatorClient)}
 				args := []string{"agent", "--project", "sample", "--window", "extra", "--provider", "claude", "--name", "worker"}
 				if declare {
@@ -175,7 +176,7 @@ func TestCreateAgentOperatorCreatorCannotBeDecoded(t *testing.T) {
 
 	binary := sdkCreateBinary(t)
 	home := sdkAgentHome(t)
-	f := newSDKOperatorCreatorFixture(t, binary, home)
+	f := newSDKOperatorCreatorFixture(t, binary, home, t.TempDir())
 	bodies := []string{
 		`{"Project":"sample","Window":"extra","Provider":"claude","Name":"w1","Operator":{"client":"tester","Client":"tester"}}`,
 		`{"Project":"sample","Window":"extra","Provider":"claude","Name":"w2","operator":{"client":"tester"},"OperatorClient":"tester","CreatorBasis":"operator","creator-basis":"operator"}`,
@@ -216,7 +217,7 @@ func TestCreateAgentOperatorCreatorCannotBeDecoded(t *testing.T) {
 func TestCreateAgentDeclaredCreatorCannotClaimOperator(t *testing.T) {
 	binary := sdkCreateBinary(t)
 	home := sdkAgentHome(t)
-	f := newSDKOperatorCreatorFixture(t, binary, home)
+	f := newSDKOperatorCreatorFixture(t, binary, home, t.TempDir())
 	before := projectRegistryBytes(t, f.state)
 	for _, creator := range []string{"web", "operator", "operator-client", "ui", "uid:web", "uid:operator", "uid:ui", "uid:" + sdkOperatorCreatorClient, "operator:web", "uid:operator:web"} {
 		_, err := f.client.CreateAgent(context.Background(), core.CreateAgentRequest{Project: "sample", Window: "extra", Provider: "claude", Creator: creator})
