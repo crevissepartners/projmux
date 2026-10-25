@@ -49,7 +49,7 @@ func settingsFixtureClient(t *testing.T) (*Client, config.Paths, map[string]stri
 		claude, _ := reg.Agent(uids["claude-b"])
 		claude.Metadata.Annotations = map[string]string{metadata.AnnotationAgentPersona: "reviewer", metadata.AnnotationAgentPersonaDigest: persona.Digest([]byte("REVIEWER_V1"))}
 		busy, _ := reg.Agent("agent-01")
-		busy.Status.Interaction = metadata.AgentInteraction{Kind: metadata.InteractionInProgress, ObservedAt: time.Now(), Source: metadata.InteractionSourceProviderHook}
+		busy.Status.Interaction = metadata.AgentInteraction{Kind: metadata.InteractionInProgress, ObservedAt: time.Now(), Source: string(metadata.InteractionSourceProviderHook)}
 		return nil
 	})
 	if err != nil {
