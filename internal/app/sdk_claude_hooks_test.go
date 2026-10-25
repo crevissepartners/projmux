@@ -162,7 +162,7 @@ func TestApplyClaudeHooksMatchesCLIInstall(t *testing.T) {
 				result, sdkErr := client.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Remove: remove, Base: plan.Base})
 				if plan.Conflict != "" {
 					var refusal *projmux.Refusal
-					if cliErr == nil || !strings.Contains(cliErr.Error(), plan.Conflict) || !errors.As(sdkErr, &refusal) || refusal.Code != projmux.CodeClaudeHooksConflict {
+					if cliErr == nil || !strings.Contains(strings.ReplaceAll(cliErr.Error(), cliHome, "HOME"), strings.ReplaceAll(plan.Conflict, sdkHome, "HOME")) || !errors.As(sdkErr, &refusal) || refusal.Code != projmux.CodeClaudeHooksConflict {
 						t.Fatalf("conflict: CLI %v, SDK %v", cliErr, sdkErr)
 					}
 				} else {
