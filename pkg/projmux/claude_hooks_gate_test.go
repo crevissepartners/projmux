@@ -13,10 +13,11 @@ import (
 )
 
 // stagedContext is a context the test ends by hand: Err is nil until the
-// test calls end, and its first Err call is signaled on entered, so a test
-// knows the call under test got past its entry check without sleeping.
+// test calls end, and its first Done call is signaled on waiting. Done is
+// read only by the slot select, after the entry Err check returned nil, so a
+// test knows the call under test got past that check without sleeping.
 type stagedContext struct {
-	entered  chan struct{}
+	waiting  chan struct{}
 	done     chan struct{}
 	once     sync.Once
 	mu       sync.Mutex
@@ -26,14 +27,16 @@ type stagedContext struct {
 }
 
 func newStagedContext(errAfter int) *stagedContext {
-	return &stagedContext{entered: make(chan struct{}), done: make(chan struct{}), errAfter: errAfter}
+	return &stagedContext{waiting: make(chan struct{}), done: make(chan struct{}), errAfter: errAfter}
 }
 
 func (s *stagedContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (s *stagedContext) Done() <-chan struct{}       { return s.done }
-func (s *stagedContext) Value(any) any               { return nil }
+func (s *stagedContext) Done() <-chan struct{} {
+	s.once.Do(func() { close(s.waiting) })
+	return s.done
+}
+func (s *stagedContext) Value(any) any { return nil }
 func (s *stagedContext) Err() error {
-	s.once.Do(func() { close(s.entered) })
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -93,9 +96,27 @@ func TestApplyClaudeHooksWaitObservesContext(t *testing.T) {
 				_, err := c.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Remove: tc.remove})
 				result <- err
 			}()
-			<-ctx.entered
+			// Failure bounds, not sync points: on a timeout the slot is
+			// freed so the stuck apply ends before the test fails.
+			fail := func(msg string) {
+				<-claudeHooksApply
+				held = false
+				<-result
+				t.Fatal(msg)
+			}
+			select {
+			case <-ctx.waiting:
+			case <-time.After(10 * time.Second):
+				fail("waiting apply never watched its context")
+			}
 			ctx.end(tc.err)
-			if err := <-result; !errors.Is(err, tc.err) {
+			var err error
+			select {
+			case err = <-result:
+			case <-time.After(10 * time.Second):
+				fail("waiting apply ignored its ended context")
+			}
+			if !errors.Is(err, tc.err) {
 				t.Fatalf("waiting apply returned %v, want %v", err, tc.err)
 			}
 			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {

@@ -17,7 +17,7 @@ type ClaudeHooksRequest struct {
 // is the same settings re-encoded.
 //
 // Conflict, when set, explains why the integration refuses; ApplyClaudeHooks
-// refuses it before anything else. An install plan with a Conflict has Next
+// refuses it before writing or returning a no-change result. An install plan with a Conflict has Next
 // equal to Current and Changed false, but a removal plan may still carry the
 // cleaned Next and Changed true. Action is the command's one-line outcome
 // text.
