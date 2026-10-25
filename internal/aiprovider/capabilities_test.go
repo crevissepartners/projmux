@@ -45,8 +45,8 @@ func TestAgentCapabilityCatalogIsClosedCartesianMatrix(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 30 {
-		t.Fatalf("action count = %d, want 30", len(seen))
+	if len(seen) != 31 {
+		t.Fatalf("action count = %d, want 31", len(seen))
 	}
 }
 

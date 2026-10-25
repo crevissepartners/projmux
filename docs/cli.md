@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 267 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 268 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -121,6 +121,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent stop <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+projmux agent mark-offline <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--model <model>] [--effort <level>] [--dialogue-reply-only] [--wait-for-peer] [--detach] [-o <mode>] [-- <prompt>]
 projmux agent relaunch <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--profile <name>|none] [--instructions <name>|none] [--model <model>] [--effort <level>] [--reset <item>[,...]|all] [--host tmux|process] [--detach] [--yes] [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json] [-- <prompt>]
 projmux agent turn start|steer <agent-ref> -- <text>
@@ -166,6 +167,7 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent stop`](#projmux-agent-stop) | Stop one exact process Agent after its provider Wait; preserve the Agent, Pane, and conversation |
+| [`projmux agent mark-offline`](#projmux-agent-mark-offline) | Mark one process Agent whose host died Offline without starting its provider; preserve the Agent, Pane, and conversation |
 | [`projmux agent resume`](#projmux-agent-resume) | Resume one retired process Agent with optional detached ownership, or rebind an Offline or Failed tmux Agent |
 | [`projmux agent relaunch`](#projmux-agent-relaunch) | Restart one exact Claude or Codex Agent on the same conversation with another profile, instructions, model, or effort |
 | [`projmux agent turn`](#projmux-agent-turn) | Send or steer one exact native Codex turn, or interrupt an exact Codex or Claude turn |
@@ -180,7 +182,7 @@ Subcommands:
 | [`projmux agent question`](#projmux-agent-question) | Answer one exact Claude or Codex Agent's current or waiting questions |
 | [`projmux agent sessions`](#projmux-agent-sessions) | List the Claude or Codex conversations an Agent or a Project has moved through, backfill past Claude sessions from delivered message frames, or persist their current Registry affiliation |
 
-Canonical spelling: `projmux agent guidance show`, `projmux agent guidance read`, `projmux agent guidance validate`, `projmux agent guidance set`, `projmux agent guidance reset`, `projmux agent guidance delete`, `projmux agent guidance enable`, `projmux agent guidance disable`, `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
+Canonical spelling: `projmux agent guidance show`, `projmux agent guidance read`, `projmux agent guidance validate`, `projmux agent guidance set`, `projmux agent guidance reset`, `projmux agent guidance delete`, `projmux agent guidance enable`, `projmux agent guidance disable`, `projmux agent status`, `projmux agent topic`, `projmux agent stop`, `projmux agent mark-offline`, `projmux agent resume`, `projmux agent relaunch`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn deliver`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent approval list`, `projmux agent approval answer`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent capabilities`, `projmux agent models`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`, `projmux agent question enable`, `projmux agent question disable`, `projmux agent question ask`, `projmux agent question list`, `projmux agent question answer`, `projmux agent question decline`, `projmux agent sessions list`, `projmux agent sessions backfill`, `projmux agent sessions project`, `projmux agent sessions attribute`
 
 ### `projmux agent guidance`
 
@@ -470,6 +472,35 @@ projmux agent stop <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w
 ```
 
 Process Agents only; tmux targets are refused before a control write. A detached deferred claim is released by exact claimant identity before child birth, without creating Wait evidence. After birth, success requires the exact generation's durable provider Wait and kernel retirement of its owner and provider. A target already stopped with that evidence is a no-op. Unknown or stale owners never become successful stops. Resume uses the preserved conversation.
+
+### `projmux agent mark-offline`
+
+Mark one process Agent whose host died Offline without starting its provider; preserve the Agent, Pane, and conversation
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent mark-offline <agent-ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [-o <mode>]
+```
+
+Process Agents only; tmux targets are refused before a write with agent-mark-offline-process-unsupported. It proceeds only when the kernel proves both the recorded host and provider child absent, and proves it again inside the Registry transaction against the exact current activation. A live or unprovable owner is refused with agent-mark-offline-owner-present and nothing is written; use agent stop for a live owner.
+
+Success clears the activation, records status.lastTermination source=reconcile classification=unknown without exit status, sets the Agent Offline and processSession.resumeState=resumable, and keeps the Agent UID, Pane UID, and conversation. No provider Wait evidence is created and the result is never a stop. A target already marked this way is a no-op (already offline). agent resume continues the same conversation.
+
+Other refusals: agent-mark-offline-not-host-lost (no recorded process host, for example already retired after Wait or pending), agent-mark-offline-conversation-unavailable (no resumable conversation recorded for the current generation), and agent-mark-offline-stale (the generation changed while it was read). The receipt operation is agent.mark-offline with every effect axis unchanged; -o receipt prints it and -o none prints nothing.
+
+Output modes (`-o`): `receipt`, `none`
 
 ### `projmux agent resume`
 
