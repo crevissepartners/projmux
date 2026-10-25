@@ -11,10 +11,16 @@ type ClaudeHooksRequest struct {
 // Claude Code settings file at Path. Exists reports that the file was there;
 // Current is its content ("" when it is not) and Base the lowercase hex
 // SHA-256 of that content ("" when it is not). Next is the content the
-// integration would write and Changed whether it differs from Current.
+// integration plans, and Changed whether the command would write it. Changed
+// is the command's own decision and is not always Next != Current: a removal
+// with nothing projmux-managed to remove keeps Changed false even when Next
+// is the same settings re-encoded.
 //
-// Conflict, when set, explains why the integration refuses: Next is then
-// Current and Changed false. Action is the command's one-line outcome text.
+// Conflict, when set, explains why the integration refuses; ApplyClaudeHooks
+// refuses it before anything else. An install plan with a Conflict has Next
+// equal to Current and Changed false, but a removal plan may still carry the
+// cleaned Next and Changed true. Action is the command's one-line outcome
+// text.
 type ClaudeHooksPlan struct {
 	Path     string
 	Exists   bool

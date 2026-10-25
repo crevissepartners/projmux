@@ -222,3 +222,37 @@ func TestApplyClaudeHooksRefusesConflictAndUnreadable(t *testing.T) {
 		t.Fatalf("no-change apply wrote: %v", after)
 	}
 }
+
+// A removal plan is the command's own: with a managed and an unmanaged
+// projmux entry it keeps the cleaned Next and Changed alongside the Conflict,
+// which the apply refuses first; with nothing managed to remove from compact
+// settings Next is re-encoded but Changed stays false.
+func TestPreviewClaudeHooksRemovePlanValues(t *testing.T) {
+	ctx := context.Background()
+	c, _, path := claudeHooksClient(t)
+	mixed := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"}]},{"hooks":[{"type":"command","command":"projmux ai ingest claude-hook >/dev/null 2>&1 || true"}]}]}}` + "\n"
+	writeClaudeHooksSettings(t, path, mixed)
+	plan, err := c.PreviewClaudeHooks(ctx, core.ClaudeHooksRequest{Remove: true})
+	if err != nil || plan.Conflict == "" || !plan.Changed || plan.Next == plan.Current || strings.Contains(plan.Next, "projmux-managed:claude-hook:v1") {
+		t.Fatalf("mixed removal plan %+v %v", plan, err)
+	}
+	_, err = c.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Remove: true, Base: plan.Base})
+	requireClaudeHooksRefusal(t, err, projmux.CodeClaudeHooksConflict)
+	if b, _ := os.ReadFile(path); string(b) != mixed {
+		t.Fatalf("refused removal wrote %q", b)
+	}
+
+	compact := `{"theme":"dark","hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo keep"}]}]}}`
+	writeClaudeHooksSettings(t, path, compact)
+	plan, err = c.PreviewClaudeHooks(ctx, core.ClaudeHooksRequest{Remove: true})
+	if err != nil || plan.Conflict != "" || plan.Changed || plan.Next == plan.Current {
+		t.Fatalf("compact removal plan %+v %v", plan, err)
+	}
+	result, err := c.ApplyClaudeHooks(ctx, core.ApplyClaudeHooksRequest{Remove: true, Base: plan.Base})
+	if err != nil || result.Changed {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != compact {
+		t.Fatalf("no-op removal wrote %q", b)
+	}
+}
