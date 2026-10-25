@@ -219,10 +219,12 @@ func TestAgentMarkOfflineRefusesWithoutWrites(t *testing.T) {
 
 // The transaction proves absence again and compares the exact activation.
 func TestAgentMarkOfflineRechecksInsideTransaction(t *testing.T) {
-	for _, which := range []string{"revived", "replaced"} {
+	for _, which := range []string{"revived", "replaced", "canceled", "retired-other-generation"} {
 		t.Run(which, func(t *testing.T) {
 			store, b, activation := hostLostStore(t, aiModeCodex)
 			reg, _ := store.LoadReadOnly()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			reads := 0
 			read := func(pid int) (coremetadata.ProcessIdentity, int, error) {
 				reads++
@@ -231,8 +233,10 @@ func TestAgentMarkOfflineRechecksInsideTransaction(t *testing.T) {
 				}
 				return absentProcess(pid)
 			}
+			var before []byte
 			update := func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
-				if which == "replaced" {
+				switch which {
+				case "replaced":
 					if _, err := store.Update(func(r *coremetadata.Registry) error {
 						pane, _ := r.Pane(b.Pane)
 						pane.Status.Activation.Process.Child.Start = "other"
@@ -240,21 +244,69 @@ func TestAgentMarkOfflineRechecksInsideTransaction(t *testing.T) {
 					}); err != nil {
 						t.Fatal(err)
 					}
+				case "canceled":
+					// The caller gives up while the transaction waits for the lock.
+					cancel()
+				case "retired-other-generation":
+					// Another generation of the same Pane started and was retired
+					// after the caller read the first one.
+					var other coremetadata.ProcessActivation
+					if _, err := store.Update(func(r *coremetadata.Registry) error {
+						pane, _ := r.Pane(b.Pane)
+						next := pane.Status.Activation.Process.Binding
+						next.Generation, next.OperationID = "new-generation", "new-operation"
+						pane.Status.Activation.Process.Binding = next
+						pane.Status.Activation.Generation, pane.Status.Activation.OperationID = next.Generation, next.OperationID
+						pane.Status.ProcessSession.Binding, pane.Status.ProcessSession.ConnectionID = next, next.OperationID
+						other = *pane.Status.Activation.Process
+						return nil
+					}); err != nil {
+						t.Fatal(err)
+					}
+					if _, _, err := store.UpdateConvergent(func(r *coremetadata.Registry) error {
+						return intmetadata.DefaultMutator().MarkProcessHostLostOffline(r, other)
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var err error
+				if before, err = os.ReadFile(store.Path()); err != nil {
+					t.Fatal(err)
 				}
 				return store.UpdateConvergent(fn)
 			}
 			marker := mutationruntime.ProcessAgentMarkOffline{Update: update, ReadIdentity: mutationruntime.ProcessIdentityReader(read)}
-			err := marker.MarkExact(context.Background(), reg, b.Agent)
-			want := mutationruntime.MarkOfflineOwnerPresent
-			if which == "replaced" {
-				want = mutationruntime.MarkOfflineStale
+			err := marker.MarkExact(ctx, reg, b.Agent)
+			if which == "canceled" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("err %v, want context.Canceled", err)
+				}
+			} else {
+				want := mutationruntime.MarkOfflineOwnerPresent
+				if which != "revived" {
+					want = mutationruntime.MarkOfflineStale
+				}
+				var refusal *mutationruntime.MarkOfflineRefusal
+				if !errors.As(err, &refusal) || refusal.Code != want {
+					t.Fatalf("err %v, want %s", err, want)
+				}
 			}
-			var refusal *mutationruntime.MarkOfflineRefusal
-			if !errors.As(err, &refusal) || refusal.Code != want {
-				t.Fatalf("err %v, want %s", err, want)
+			after, err := os.ReadFile(store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("refused transaction wrote the Registry")
 			}
 			latest, _ := store.LoadReadOnly()
 			pane, _ := latest.Pane(b.Pane)
+			if which == "retired-other-generation" {
+				// The other generation's retirement is left exactly as it was.
+				if !latest.ProcessHostLostOffline(b.Pane) || pane.Status.LastTermination.Generation != "new-generation" || marker.Changed {
+					t.Fatalf("other generation changed: %+v changed=%v", pane.Status.LastTermination, marker.Changed)
+				}
+				return
+			}
 			if pane.Status.Activation.Process == nil || pane.Status.LastTermination != nil {
 				t.Fatal("refused transaction retired the generation")
 			}

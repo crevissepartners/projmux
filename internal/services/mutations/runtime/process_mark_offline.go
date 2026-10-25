@@ -73,13 +73,30 @@ func (m *ProcessAgentMarkOffline) MarkExact(ctx context.Context, reg coremetadat
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// admit rewrites PaneUID and Binding for the result, so the generation read
+	// here is kept apart: every success inside the transaction must be about it.
+	readPane, readBinding := m.PaneUID, activation.Binding
 	latest, changed, err := m.Update(func(working *coremetadata.Registry) error {
-		current, done, err := m.admit(*working, agentUID)
-		if err != nil || done {
+		// Update takes no context and may wait for the lock; a caller canceled
+		// meanwhile must not get a durable write.
+		if err := ctx.Err(); err != nil {
 			return err
+		}
+		current, done, err := m.admit(*working, agentUID)
+		if err != nil {
+			return err
+		}
+		if m.PaneUID != readPane || m.Binding != readBinding {
+			return markOfflineRefusal(MarkOfflineStale, "agent uid:%s changed generation since it was read", agentUID)
+		}
+		if done {
+			return nil
 		}
 		if current != activation {
 			return markOfflineRefusal(MarkOfflineStale, "agent uid:%s changed generation since it was read", agentUID)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return m.Mutator.MarkProcessHostLostOffline(working, current)
 	})
