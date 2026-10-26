@@ -178,7 +178,7 @@ func TestStopProjectSDKRunningProcessAgentsPartialResult(t *testing.T) {
 			}
 			result, err := client.StopProject(context.Background(), core.StopProjectRequest{Ref: "uid:prj-alpha"})
 			var refusal *projmux.Refusal
-			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || result.Stopped || result.Receipt.Operation != core.OperationStopProject || len(result.Receipt.AffectedUIDs) != 1 || result.Receipt.AffectedUIDs[0].Action != core.ActionStopped {
+			if !errors.As(err, &refusal) || refusal.Code != projmux.CodeProjectStopExecutionFailed || result.Stopped || result.Receipt.Operation != core.OperationStopProject || result.Receipt.Effects.Runtime != core.RuntimePartiallyStopped || len(result.Receipt.AffectedUIDs) != 1 || result.Receipt.AffectedUIDs[0].Action != core.ActionStopped {
 				t.Fatalf("partial %+v %v", result, err)
 			}
 			after := projectRegistry(t, state)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -216,6 +217,13 @@ func TestProjectStopHeadlessOnlyAndReceipt(t *testing.T) {
 	out, _, err := runRoute(t, cmd, "project", "uid:prj-alpha", "-o", "receipt")
 	if err != nil || !strings.Contains(out, agentUID) || !strings.Contains(out, "stopped") {
 		t.Fatalf("out=%s err=%v", out, err)
+	}
+	var receipt cli.OperationReceipt
+	if err := json.Unmarshal([]byte(out), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Effects.Runtime != "agents-stopped" || len(receipt.AffectedUIDs) != 2 || receipt.AffectedUIDs[0].Action != cli.ActionUnchanged || receipt.AffectedUIDs[1].Action != cli.ActionStopped {
+		t.Fatalf("process-only receipt overstates Project stop: %s", out)
 	}
 	pane, _ := backing.registry.Pane(paneUID)
 	agent, _ := backing.registry.Agent(agentUID)
@@ -447,8 +455,13 @@ func TestProjectStopConfirmedAgentReceiptsSurviveTmuxFailure(t *testing.T) {
 				t.Fatalf("confirmed stops missing: %s", out)
 			}
 			expectedProject := cli.ActionStopped
+			expectedRuntime := cli.RuntimeEffect("stopped")
 			if fail {
 				expectedProject = cli.ActionUnchanged
+				expectedRuntime = "partially-stopped"
+			}
+			if receipt.Effects.Runtime != expectedRuntime {
+				t.Fatalf("runtime=%s, want %s: %s", receipt.Effects.Runtime, expectedRuntime, out)
 			}
 			if actions[runtimeFixtureProject] != expectedProject || (fail && receipt.Effects.Focus != cli.FocusUnchanged) {
 				t.Fatalf("false Project stop/focus: %s", out)
@@ -548,4 +561,81 @@ func projectStopFixtureStore(t *testing.T, backing *fakeResourceStore) *resource
 	root := t.TempDir()
 	s.stateDir = func() (string, error) { return root, nil }
 	return s
+}
+
+// Pin each partial-result direction and both receipt projections at the CLI boundary.
+func TestProjectStopReceiptOutcomesAndProjections(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		live, failTmux, failAgent bool
+		runtime                   cli.RuntimeEffect
+		project                   cli.ReceiptAction
+	}{
+		{"all stopped", true, false, false, cli.RuntimeStopped, cli.ActionStopped},
+		{"Agents stopped tmux failed", true, true, false, cli.RuntimePartiallyStopped, cli.ActionUnchanged},
+		{"tmux stopped Agent unconfirmed", true, false, true, cli.RuntimePartiallyStopped, cli.ActionStopped},
+		{"Agents only", false, false, false, cli.RuntimeAgentsStopped, cli.ActionUnchanged},
+		{"Agents only partial", false, false, true, cli.RuntimePartiallyStopped, cli.ActionUnchanged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectStopRouteFixture(t)
+			f.switcher.tmuxRunner = &projectStopKillFailureRunner{base: f.runner, fail: tc.failTmux}
+			failure := ""
+			if tc.failAgent {
+				failure = "reject"
+			}
+			f.switcher.stopProcessAgents = stopProcessFixture(t, failure)
+			cmd := &projectLifecycleCommand{verb: projectLifecycleStop, store: f.backing.store(), switcher: f.switcher, lookupEnv: f.switcher.lookupEnv}
+			project, _ := f.backing.registry.Project(runtimeFixtureProject)
+			r, err := cmd.execute(context.Background(), canonicalStopProject, *project, project.Spec.Root, f.session, tc.live, nil)
+			if (err != nil) != (tc.failAgent || tc.failTmux) || r.Effects.Runtime != tc.runtime || r.AffectedUIDs[0].Action != tc.project {
+				t.Fatalf("receipt=%+v err=%v", r, err)
+			}
+			if err := r.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			wantAgents := 2
+			if tc.failAgent {
+				wantAgents--
+			}
+			if len(r.AffectedUIDs) != 1+wantAgents {
+				t.Fatalf("affected=%+v", r.AffectedUIDs)
+			}
+			for _, row := range r.AffectedUIDs[1:] {
+				if row.Kind != "Agent" || row.Action != cli.ActionStopped {
+					t.Fatalf("Agent row=%+v", row)
+				}
+			}
+			if tc.failAgent && !strings.Contains(err.Error(), projectStopAgentsStillRunning) {
+				t.Fatal(err)
+			}
+			if tc.failTmux && !strings.Contains(err.Error(), "injected tmux kill failure") {
+				t.Fatal(err)
+			}
+			if err != nil && exitCodeOf(err) != 1 {
+				t.Fatalf("exit=%d", exitCodeOf(err))
+			}
+			if !tc.live && f.runner.killed {
+				t.Fatal("process-only stop killed a session")
+			}
+			var human, encoded bytes.Buffer
+			if err := writeOperationReceipt(&human, cli.OutputModeDefault, r); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeOperationReceipt(&encoded, cli.OutputModeReceipt, r); err != nil {
+				t.Fatal(err)
+			}
+			var decoded cli.OperationReceipt
+			if err := json.Unmarshal(encoded.Bytes(), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			var projected bytes.Buffer
+			if err := decoded.WriteHuman(&projected); err != nil {
+				t.Fatal(err)
+			}
+			if human.String() != projected.String() || !strings.Contains(human.String(), "runtime="+string(tc.runtime)) {
+				t.Fatalf("human/JSON differ: %s / %s", human.String(), encoded.String())
+			}
+		})
+	}
 }

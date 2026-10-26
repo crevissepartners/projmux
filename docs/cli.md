@@ -47,7 +47,7 @@ The machine-readable manifest contains 268 route-effect records, including hidde
 | `address` | `unchanged|allocated|renamed|released` |
 | `topology` | `unchanged|established|reparented|removed|replaced` |
 | `desired-state` | `unchanged|created|reused|removed|replaced` |
-| `runtime` | `unchanged|materialized|already-live|reparented|stopped|preserved` |
+| `runtime` | `unchanged|materialized|already-live|reparented|stopped|partially-stopped|agents-stopped|preserved` |
 | `focus` | `unchanged|moved-current-client|attached-caller` |
 | `cardinality` | `unchanged|exact-one|one-or-more|zero-or-more` |
 | `domain-effect` | `null|agent-delivery` |
@@ -4973,7 +4973,7 @@ Allowed effects:
 - `address=unchanged`
 - `topology=unchanged`
 - `desired-state=unchanged`
-- `runtime=stopped`
+- `runtime=stopped|partially-stopped|agents-stopped`
 - `focus=unchanged|moved-current-client`
 - `cardinality=exact-one`
 - `domain-effect=null`
@@ -4982,7 +4982,7 @@ Allowed effects:
 projmux stop project <ref> [-o receipt|none]
 ```
 
-Stops Running headless Agents through their process hosts before terminating tmux; durable Wait confirmation shares one 10-second limit. A Project with only Running headless Agents can also be stopped. Unconfirmed Agents remain Running and are named with project-stop-agents-still-running; the command exits nonzero after continuing the tmux stop. Retry stop project for remaining Agents. Project session Ctrl-X in the sidebar and session picker follows the same stop path.
+Stops Running headless Agents through their process hosts before terminating tmux; durable Wait confirmation shares one 10-second limit. A Project with only Running headless Agents can also be stopped. Receipts use runtime=stopped only for a live session and all selected Agents confirmed stopped, partially-stopped for confirmed stops mixed with failure or uncertainty, and agents-stopped when only Agents existed and all stopped. The Project action is stopped only when its session stopped; otherwise it is unchanged. Unconfirmed Agents remain Running and are named with project-stop-agents-still-running; the command exits nonzero after continuing the tmux stop. Retry stop project for remaining Agents. Project session Ctrl-X in the sidebar and session picker follows the same stop path.
 
 Output modes (`-o`): `receipt`, `none`
 

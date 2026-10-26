@@ -240,8 +240,16 @@ func (c *projectLifecycleCommand) execute(
 		if err != nil && !tmuxStopped && len(stopped) == 0 {
 			return cli.OperationReceipt{}, err
 		}
-		receipt := c.receipt(cli.OperationStopProject, target, cli.RuntimeStopped, focus)
-		if live && !tmuxStopped {
+		runtime := cli.RuntimeStopped
+		if err != nil {
+			runtime = cli.RuntimePartiallyStopped
+		} else if !live {
+			runtime = cli.RuntimeAgentsStopped
+		}
+		receipt := c.receipt(cli.OperationStopProject, target, runtime, focus)
+		// The Project row describes its session, not its stopped descendants.
+		receipt.AffectedUIDs[0].Action = cli.ActionStopped
+		if !tmuxStopped {
 			// Only the confirmed Agent runtimes stopped; do not claim the Project
 			// session stopped or its attached client moved when tmux failed.
 			receipt.AffectedUIDs[0].Action = cli.ActionUnchanged
