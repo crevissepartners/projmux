@@ -70,8 +70,9 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 
 // An unfinished Codex host transfer takes precedence over every relaunch, as
 // in dispatchRelaunch. A dry run and every request but the exact recovery one
-// get the CLI refusals before any effect; the exact one plans the CLI's
-// would-resume and, once admitted, runs the CLI recovery to its tmux writer.
+// get the CLI refusals before any effect, coded as invalid requests; the exact
+// one plans the CLI's would-resume and, once admitted, runs the CLI recovery
+// to its tmux writer.
 // The CLI dry-run preview is skipped: recovery refuses a dry run by design.
 func (c *agentCommand) runSDKCodexTransferRecovery(life context.Context, session *processDetachedRelaunchSession, reg m.Registry, target m.Agent, request agentRelaunchRequest, path string, journal *codexHostTransferRecord) error {
 	refused := func(err error) error {
@@ -84,7 +85,10 @@ func (c *agentCommand) runSDKCodexTransferRecovery(life context.Context, session
 		return refused(err)
 	}
 	if err := refuseCodexTransferRecovery(target.Metadata.UID, request); err != nil {
-		return refused(err)
+		// The CLI exits with this usage error; the SDK refuses the same
+		// request as invalid. The refusing call decides, never its text.
+		_ = session.encoder.Encode(processDetachedReply{Owner: session.identity, Error: err.Error(), ErrorCode: "relaunch-request-invalid"})
+		return err
 	}
 	// The fields recoverCodexHostTransfer itself reports.
 	result := agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeWouldResume, CurrentHost: "tmux", TargetHost: "tmux"}

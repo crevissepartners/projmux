@@ -1097,7 +1097,10 @@ A Codex Agent whose earlier host move left an unfinished transfer behaves as in
 `agent relaunch`: that transfer takes precedence over every relaunch, on tmux
 and process sources alike. `DryRun` and every request other than the exact
 recovery one refuse before any effect with the CLI's text and its recovery
-command; the Code is `relaunch-execution-failed`. The exact recovery request is
+command; the Code is `relaunch-request-invalid`, where the CLI exits with a
+usage error. Checks that run before this one on the same path (`Detach` for a
+process destination, Codex prompt and provider checks) and a failure of the
+exact recovery itself keep their own Codes. The exact recovery request is
 `Host: "tmux", Confirm: true` with no Model, Effort, Profile, Instructions, Reset
 or Prompt. It runs the CLI recovery through `Options.ProjmuxExecutable` and
 reports `Outcome` `resumed`, `CurrentHost` and `TargetHost` `tmux`, and the
