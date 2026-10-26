@@ -170,6 +170,14 @@ HostPID is zero when no live owner PID is reported. The returned slice belongs
 to the caller. Owner credentials and private admission evidence are excluded.
 `PreflightDelete` continues to check Registry protection without runtime access.
 
+For tmux Agent cleanup, `Client.Delete` with `KindAgent` finds tmux only in
+absolute directories on the PATH captured when the Client was created, even
+if the ambient PATH later changes. A missing captured tmux or cleanup failure
+is returned to the caller. Relative PATH entries and Clients created without
+tmux on their captured PATH are not supported by this guarantee. No tmux
+executable option is added: `Options.ProjmuxExecutable` names projmux, not
+tmux. CLI behavior and SDK Window/Pane deletion are unchanged.
+
 Instruction/profile metadata, process input UI descriptors, question session
 metadata and running Agent aggregates that the corresponding CLI output does
 not expose are outside these result projections. Existing `ListProfiles.Valid`

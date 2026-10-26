@@ -36,6 +36,9 @@ const (
 // does not imply that no runtime effects occurred.
 // The SDK has no current Pane and never queues a deferred self-kill.
 func (c *Client) Delete(ctx context.Context, req core.DeleteRequest) (core.DeleteResult, error) {
+	if req.Kind == core.KindAgent {
+		return c.deleteWithRunner(ctx, req, frozenTurnRunner{c})
+	}
 	return c.deleteWithRunner(ctx, req, tmux.ExecRunner{})
 }
 func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, runner mutationruntime.TmuxCommandRunner) (core.DeleteResult, error) {
