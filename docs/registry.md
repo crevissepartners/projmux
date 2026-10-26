@@ -66,6 +66,25 @@ while CLI `get windows` reports `offline`. Live process children make both
 surfaces `live`; failed process observations make both `unknown` with only
 `delete`.
 
+## Process Agent actions
+
+`get agents` and the registry picker offer `resume,delete` for an observed
+Offline process Agent only when its saved phase is Offline, it owns exactly
+one matching process Pane, that Pane's activation is retired, and its durable
+session is resumable for the observed generation. A missing root or any failed
+candidate condition leaves only `delete`. Offline requires the exact Wait
+receipt or the existing lost-host retirement evidence, not the saved phase alone.
+For retired Panes, process observation validates the Registry before reporting
+Offline, including the provider conversation identity; degraded loading alone
+does not establish those conditions.
+
+Unknown process Agents without a missing root retain
+`resume,mark-offline,delete`; live process Agents retain only `delete`.
+The picker only advises `projmux agent resume uid:<uid>`; it does not execute
+process resume. The action is a stored candidate hint, not a promise that the
+provider, profile, command, or workspace will accept resume. The CLI continues
+to check those requirements when the command runs.
+
 ## Process evidence
 
 `get pane -o json` and `get panes -o json` expose the stored model. The same
