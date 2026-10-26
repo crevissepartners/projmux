@@ -645,8 +645,8 @@ func TestCodexHostTransferSDKCLIParity(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			codexHostMovePendingJournal(t, ctx, f, ref, socket)
-			// A failed restore leaves the Offline tmux recipe with the journal
-			// still pending: the route the SDK takes for a tmux Agent.
+			// A failed native restore leaves its reserved tmux Pane with the
+			// journal still pending: the route the SDK takes for a tmux Agent.
 			codexHostMoveFailRecovery(t, ctx, f, ref, socket, "split")
 			paths, err := config.DefaultPathsFromEnv()
 			if err != nil {
@@ -661,8 +661,8 @@ func TestCodexHostTransferSDKCLIParity(t *testing.T) {
 			if pane, _ := processResumePane(reg, source.Metadata.UID); pane != nil {
 				t.Fatalf("fixture must leave no process source: %+v", pane)
 			}
-			if a, _ := reg.Agent(source.Metadata.UID); a.Status.Phase != coremetadata.PhaseOffline || a.Status.PaneRef != "" {
-				t.Fatalf("fixture must leave an Offline tmux recipe: %+v", a.Status)
+			if a, _ := reg.Agent(source.Metadata.UID); a.Status.Reason != "native-transfer-planned" {
+				t.Fatalf("fixture must leave the reserved native tmux target: %+v", a.Status)
 			}
 			client, err := projmux.NewClient(projmux.Options{HomeDir: os.Getenv("HOME"), ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
 			if err != nil {
