@@ -27,10 +27,16 @@ type tmuxCodexRelaunchSource struct {
 	journalPath  string
 }
 
-func (c *agentCommand) runCodexHostRelaunch(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
-	refuse := func(reason, detail string) error {
+func codexHostRelaunchRefuse(target coremetadata.Agent) func(reason, detail string) error {
+	return func(reason, detail string) error {
 		return usageError(fmt.Sprintf("agent relaunch: agent/%s %s (%s); nothing was changed", target.Metadata.Name, detail, reason))
 	}
+}
+
+// checkCodexHostRelaunch is what runCodexHostRelaunch refuses before it reads
+// the transfer journal.
+func (c *agentCommand) checkCodexHostRelaunch(target coremetadata.Agent, request agentRelaunchRequest) error {
+	refuse := codexHostRelaunchRefuse(target)
 	if coremetadata.RecordsDialogueReplyOnly(target.Metadata.Annotations) {
 		return refuse(replyOnlyReasonLaunchFixed, "has a fixed reply-only launch")
 	}
@@ -43,6 +49,14 @@ func (c *agentCommand) runCodexHostRelaunch(reg coremetadata.Registry, target co
 	if c.rebind == nil || c.rebind.create == nil {
 		return refuse(relaunchReasonNoConversation, "has no configured relaunch owner")
 	}
+	return nil
+}
+
+func (c *agentCommand) runCodexHostRelaunch(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
+	if err := c.checkCodexHostRelaunch(target, request); err != nil {
+		return err
+	}
+	refuse := codexHostRelaunchRefuse(target)
 	path, err := c.codexHostTransferPath(target.Metadata.UID)
 	if err != nil {
 		return err

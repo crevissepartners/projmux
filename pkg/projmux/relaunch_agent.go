@@ -88,11 +88,19 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			processSource = true
 		}
 	}
-	if processSource || (q.Host != "" && q.Host != "tmux") {
+	// An unfinished Codex host transfer journal takes precedence over the
+	// ordinary tmux relaunch, as in the CLI; only the executable's CLI code
+	// refuses or recovers it.
+	pendingTransfer := false
+	if target.Spec.Provider == "codex" {
+		_, statErr := os.Lstat(runtime.CodexHostTransferPath(c.paths.StateDir, target.Metadata.UID))
+		pendingTransfer = !errors.Is(statErr, os.ErrNotExist)
+	}
+	if processSource || pendingTransfer || (q.Host != "" && q.Host != "tmux") {
 		if processSource && q.Host != "tmux" {
 			q.SocketPath = requestSocket
 		}
-		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg)
+		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg, pendingTransfer)
 	}
 	if q.Detach || q.Prompt != "" || q.Binding != (core.ProcessBinding{}) {
 		return out, &Refusal{Code: CodeRelaunchRequestInvalid, message: "RelaunchAgentRequest process inputs require a process destination or source"}

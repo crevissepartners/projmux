@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,6 +26,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
+	"github.com/crevissepartners/projmux/pkg/projmux"
+	"github.com/crevissepartners/projmux/pkg/projmux/core"
 )
 
 // The fixture speaks the native Unix WebSocket protocol and the official
@@ -589,53 +593,11 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 		t.Skip("set PMX_TEST_CLI")
 	}
 	f, source, oldPane, socket := codexHostMoveCLIFixture(t)
-	providerPath := filepath.Join(f.root, "codex-provider.py")
-	raw, err := os.ReadFile(providerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	original := append([]byte(nil), raw...)
-	raw = bytes.Replace(raw, []byte("elif method=='thread/resume':"), []byte("elif method=='thread/resume':\n  sys.exit(91)"), 1)
-	if bytes.Equal(original, raw) {
-		t.Fatal("dedicated resume fault was not injected")
-	}
-	if err = os.WriteFile(providerPath, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
+	ref := "uid:" + source.Metadata.UID
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ref := "uid:" + source.Metadata.UID
-	out, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--host", "process", "--socket-path", socket, "--yes").CombinedOutput()
-	t.Logf("injected failure=%v %s", err, out)
-	if err == nil || !bytes.Contains(out, []byte("recover")) {
-		t.Fatalf("failed target: %v %s", err, out)
-	}
-	if err = os.WriteFile(providerPath, original, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if fault != "" {
-		if fault == "split" {
-			realTmux, err := exec.LookPath("tmux")
-			if err != nil {
-				t.Fatal(err)
-			}
-			wrapper := "#!/bin/sh\ncase \" $* \" in *' split-window '*) if test -f " + fmt.Sprintf("%q", filepath.Join(f.root, "fail-shared-split")) + "; then exit 91; fi;; esac\nexec " + fmt.Sprintf("%q", realTmux) + " \"$@\"\n"
-			if err = os.WriteFile(filepath.Join(f.root, "tmux"), []byte(wrapper), 0700); err != nil {
-				t.Fatal(err)
-			}
-		}
-		marker := filepath.Join(f.root, "fail-shared-"+fault)
-		if err = os.WriteFile(marker, []byte("fail"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		failed, failedErr := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes").CombinedOutput()
-		if failedErr == nil {
-			t.Fatalf("native %s failure was bypassed: %s", fault, failed)
-		}
-		if err = os.Remove(marker); err != nil {
-			t.Fatal(err)
-		}
-	}
+	codexHostMovePendingJournal(t, ctx, f, ref, socket)
+	codexHostMoveFailRecovery(t, ctx, f, ref, socket, fault)
 	hostCLIOutput(t, f, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
 	reg, err := f.store.LoadReadOnly()
 	if err != nil {
@@ -663,6 +625,299 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 	record, err := readCodexHostTransfer(journals[0])
 	if err != nil || record.TerminatedTarget == nil || record.TerminatedTarget.Status.LastTermination == nil {
 		t.Fatalf("recovery lost target actual Wait: %v", err)
+	}
+}
+
+// The public SDK relaunch of a Codex Agent meets the journal an unfinished host
+// transfer retains exactly as `agent relaunch` does: on the Offline source a
+// failed process move restores, on a reserved tmux target, and on the live
+// process target an owner killed mid-launch leaves. On the same fixture a dry
+// run and inexact requests refuse with the CLI's own text before any effect,
+// and the exact recovery request (Host tmux, Confirm, nothing else) runs the
+// CLI recovery: each variant ends once, through one surface, in the same
+// Agent, Pane and journal state or the same refusal.
+func TestCodexHostTransferSDKCLIParity(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI")
+	}
+	for _, start := range []string{"offline-source", "tmux-target", "live-process-source"} {
+		var recovered []string
+		for _, sdk := range []bool{false, true} {
+			t.Run(start+"/"+map[bool]string{false: "cli-recovers", true: "sdk-recovers"}[sdk], func(t *testing.T) {
+				recovered = append(recovered, codexHostTransferSDKCLIParity(t, start, sdk))
+			})
+		}
+		if len(recovered) == 2 && recovered[0] != recovered[1] {
+			t.Fatalf("%s: recovered state differs CLI %q SDK %q", start, recovered[0], recovered[1])
+		}
+		t.Logf("%s: recovered state %q", start, recovered)
+	}
+}
+
+func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string {
+	f, source, oldPane, socket := codexHostMoveCLIFixture(t)
+	ref := "uid:" + source.Metadata.UID
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if start == "live-process-source" {
+		// The owner dies after recording launching: the journal stays pending
+		// on a live reciprocal process Pane binding.
+		codexHostMoveOwnerDeath(t, ctx, f, ref, socket)
+	} else {
+		// The failed move restores the Offline tmux source, journal pending.
+		codexHostMovePendingJournal(t, ctx, f, ref, socket)
+	}
+	if start == "tmux-target" {
+		// A failed native restore then leaves its reserved tmux Pane with the
+		// journal still pending: the route the SDK takes for a tmux Agent.
+		codexHostMoveFailRecovery(t, ctx, f, ref, socket, "split")
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(source.Metadata.UID))
+	journal := filepath.Join(paths.StateDir, "codex-host-transfers", fmt.Sprintf("%x.json", sum[:]))
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	processPane, _ := processResumePane(reg, source.Metadata.UID)
+	fixture, _ := reg.Agent(source.Metadata.UID)
+	switch start {
+	case "offline-source":
+		if processPane != nil || fixture.Status.Phase != coremetadata.PhaseOffline || fixture.Status.PaneRef != "" {
+			t.Fatalf("fixture must leave the Offline tmux source: pane=%+v status=%+v", processPane, fixture.Status)
+		}
+	case "tmux-target":
+		if processPane != nil || fixture.Status.Reason != "native-transfer-planned" {
+			t.Fatalf("fixture must leave the reserved native tmux target: pane=%+v status=%+v", processPane, fixture.Status)
+		}
+	case "live-process-source":
+		if processPane == nil || processPane.Status.ProcessSession == nil || fixture.Status.PaneRef != processPane.Metadata.UID {
+			t.Fatalf("fixture must leave a reciprocal process Pane binding: pane=%+v status=%+v", processPane, fixture.Status)
+		}
+	}
+	t.Logf("%s fixture: phase=%s reason=%s pane=%s", start, fixture.Status.Phase, fixture.Status.Reason, fixture.Status.PaneRef)
+	client, err := projmux.NewClient(projmux.Options{HomeDir: os.Getenv("HOME"), ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := func() string {
+		t.Helper()
+		registry, err := os.ReadFile(f.store.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := os.ReadFile(journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		panes, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(registry) + "\x00" + string(pending) + "\x00" + string(panes)
+	}
+	for _, tc := range []struct {
+		name string
+		cli  []string
+		sdk  core.RelaunchAgentRequest
+		text string
+	}{
+		{"dry-run", []string{"--dry-run"}, core.RelaunchAgentRequest{DryRun: true}, "agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: "},
+		{"no-host", []string{"--yes"}, core.RelaunchAgentRequest{Confirm: true}, "agent relaunch: recover the previous exact recipe first; recover with: "},
+		{"settings-change", []string{"--host", "tmux", "--yes", "--effort", "high"}, core.RelaunchAgentRequest{Host: "tmux", Confirm: true, Effort: "high"}, "agent relaunch: recover the previous exact recipe first; recover with: "},
+	} {
+		before := evidence()
+		args := append([]string{"agent", "relaunch", ref, "--socket-path", socket}, tc.cli...)
+		var stderr bytes.Buffer
+		cli := exec.CommandContext(ctx, f.binary, args...)
+		cli.Stderr = &stderr
+		if out, err := cli.Output(); err == nil {
+			t.Fatalf("%s: CLI did not refuse: %s", tc.name, out)
+		}
+		if before != evidence() {
+			t.Fatalf("%s: CLI refusal changed state", tc.name)
+		}
+		q := tc.sdk
+		q.Ref, q.SocketPath = ref, socket
+		got, err := client.RelaunchAgent(ctx, q)
+		var refused *projmux.Refusal
+		if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchExecutionFailed {
+			t.Fatalf("%s: SDK did not refuse with an existing code: result=%+v err=%v", tc.name, got, err)
+		}
+		want := tc.text + codexTransferRecoveryCommand(source.Metadata.UID, agentRelaunchRequest{socket: deleteSocketFlags{socketPath: socket}})
+		if refused.Error() != want || strings.TrimSpace(stderr.String()) != want {
+			t.Fatalf("%s: refusal text differs\nSDK=%q\nCLI=%q\nwant=%q", tc.name, refused.Error(), stderr.String(), want)
+		}
+		if before != evidence() {
+			t.Fatalf("%s: SDK refusal changed state", tc.name)
+		}
+		t.Logf("%s: CLI and SDK refused with %q", tc.name, want)
+	}
+	var result core.RelaunchAgentResult
+	var refusal string
+	if sdk {
+		result, err = client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Host: "tmux", Confirm: true, SocketPath: socket})
+		if err != nil {
+			var refused *projmux.Refusal
+			if start != "live-process-source" || !errors.As(err, &refused) {
+				t.Fatal(err)
+			}
+			refusal = fmt.Sprintf("code=%s text=%s", refused.Code, refused.Error())
+		}
+	} else if start == "live-process-source" {
+		var stderr bytes.Buffer
+		cli := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
+		cli.Stderr = &stderr
+		if _, err := cli.Output(); err != nil {
+			refusal = fmt.Sprintf("code=%s text=%s", projmux.CodeRelaunchExecutionFailed, strings.TrimSpace(stderr.String()))
+		}
+	} else {
+		hostCLIOutput(t, f, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
+	}
+	if refusal != "" {
+		// The exact recovery may refuse on a target whose owner died; both
+		// surfaces must then refuse alike and leave the journal pending.
+		t.Logf("exact recovery refused: %s", refusal)
+		if _, err := os.Stat(journal); err != nil {
+			t.Fatalf("refused recovery lost the pending journal: %v", err)
+		}
+		return "refused " + normalizeFixtureRefusal(refusal)
+	}
+	reg, err = f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, ok := reg.Agent(source.Metadata.UID)
+	if !ok || current.Status.PaneRef == oldPane || current.Status.Phase != coremetadata.PhaseRunning || !current.Status.SessionRef.SameConversation(source.Status.SessionRef) {
+		t.Fatal("recovery did not restore same-thread fresh native writer")
+	}
+	pane, present := reg.Pane(current.Status.PaneRef)
+	if !present || pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() {
+		t.Fatal("recovery lacks a verified native tmux writer")
+	}
+	if sdk && (result.Outcome != personaOutcomeResumed || result.DryRun || result.CurrentHost != "tmux" || result.TargetHost != "tmux" || result.AgentUID != source.Metadata.UID || result.NewPaneUID != current.Status.PaneRef) {
+		t.Fatalf("SDK recovery result %+v, Agent pane %s", result, current.Status.PaneRef)
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("pending journal remains: %v", err)
+	}
+	archives, err := filepath.Glob(filepath.Join(paths.StateDir, "codex-host-transfers", "*.completed.json"))
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("completed evidence: %v %v", archives, err)
+	}
+	return fmt.Sprintf("phase=%s runtime=%s managed-base=%s archives=%d", current.Status.Phase, pane.Spec.Runtime.EffectiveKind(), current.Metadata.Annotations["projmux.io/codex-managed-base-status"], len(archives))
+}
+
+var fixtureCodexHostSocket = regexp.MustCompile(`pmx-ce-[0-9a-f]+/codex-host\.sock`)
+
+// normalizeFixtureRefusal replaces only the per-fixture Codex host endpoint directory; every other byte stays compared.
+func normalizeFixtureRefusal(text string) string {
+	return fixtureCodexHostSocket.ReplaceAllString(text, "pmx-ce-<hash>/codex-host.sock")
+}
+
+// codexHostMoveFailRecovery makes one exact recovery attempt fail at the named
+// native stage; the journal stays pending and the stage is unblocked again.
+func codexHostMoveFailRecovery(t *testing.T, ctx context.Context, f processCreateCLI, ref, socket, fault string) {
+	t.Helper()
+	if fault == "" {
+		return
+	}
+	if fault == "split" {
+		realTmux, err := exec.LookPath("tmux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapper := "#!/bin/sh\ncase \" $* \" in *' split-window '*) if test -f " + fmt.Sprintf("%q", filepath.Join(f.root, "fail-shared-split")) + "; then exit 91; fi;; esac\nexec " + fmt.Sprintf("%q", realTmux) + " \"$@\"\n"
+		if err = os.WriteFile(filepath.Join(f.root, "tmux"), []byte(wrapper), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := filepath.Join(f.root, "fail-shared-"+fault)
+	if err := os.WriteFile(marker, []byte("fail"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	failed, failedErr := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes").CombinedOutput()
+	if failedErr == nil {
+		t.Fatalf("native %s failure was bypassed: %s", fault, failed)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// codexHostMoveOwnerDeath kills the owner of a tmux-to-process move after it
+// records launching, while the dedicated target holds thread/resume, then
+// waits for the supervisor to retire the held provider. The Registry keeps the
+// reciprocal process Pane binding and the journal stays pending.
+func codexHostMoveOwnerDeath(t *testing.T, ctx context.Context, f processCreateCLI, ref, socket string) {
+	t.Helper()
+	providerPath := filepath.Join(f.root, "codex-provider.py")
+	raw, err := os.ReadFile(providerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(f.root, "resume-held")
+	original := append([]byte(nil), raw...)
+	raw = bytes.Replace(raw, []byte("elif method=='thread/resume':"), []byte("elif method=='thread/resume':\n  open("+fmt.Sprintf("%q", marker)+",'w').write(str(os.getpid()));__import__('time').sleep(30)"), 1)
+	if bytes.Equal(original, raw) {
+		t.Fatal("dedicated resume hold was not injected")
+	}
+	if err = os.WriteFile(providerPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	owner := exec.Command(f.binary, "agent", "relaunch", ref, "--host", "process", "--socket-path", socket, "--yes")
+	owner.Stdout, owner.Stderr = &out, &out
+	if err = owner.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if owner.ProcessState == nil {
+			_ = owner.Process.Kill()
+			_ = owner.Wait()
+		}
+	})
+	var held []byte
+	waitCodexCreate(t, ctx, func() bool { held, err = os.ReadFile(marker); return err == nil && len(held) > 0 })
+	if err = owner.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("killed owner pid=%d: %v %s", owner.Process.Pid, owner.Wait(), out.String())
+	// Only the dead owner writes the Registry; wait for the held provider to
+	// exit so nothing outlives the fixture.
+	waitCodexCreate(t, ctx, func() bool { _, err := os.Stat(filepath.Join("/proc", string(held))); return os.IsNotExist(err) })
+	if err = os.WriteFile(providerPath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// codexHostMovePendingJournal leaves the journal a failed tmux-to-process move
+// retains: the dedicated target fails thread/resume, then the provider is restored.
+func codexHostMovePendingJournal(t *testing.T, ctx context.Context, f processCreateCLI, ref, socket string) {
+	t.Helper()
+	providerPath := filepath.Join(f.root, "codex-provider.py")
+	raw, err := os.ReadFile(providerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := append([]byte(nil), raw...)
+	raw = bytes.Replace(raw, []byte("elif method=='thread/resume':"), []byte("elif method=='thread/resume':\n  sys.exit(91)"), 1)
+	if bytes.Equal(original, raw) {
+		t.Fatal("dedicated resume fault was not injected")
+	}
+	if err = os.WriteFile(providerPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--host", "process", "--socket-path", socket, "--yes").CombinedOutput()
+	t.Logf("injected failure=%v %s", err, out)
+	if err == nil || !bytes.Contains(out, []byte("recover")) {
+		t.Fatalf("failed target: %v %s", err, out)
+	}
+	if err = os.WriteFile(providerPath, original, 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 

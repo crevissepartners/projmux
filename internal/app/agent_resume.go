@@ -123,6 +123,7 @@ func (p agentResumePlan) launchAnnotations() map[string]string {
 // cannot change no matter what happens on the runtime side.
 type agentRebinder struct {
 	settingsApplication func(*agentSettingsApplication) // optional invocation-local value receiver
+	resumedPane         func(paneUID string)            // optional invocation-local receiver of the committed Pane
 	create              *createCommand
 	launcher            agentResumeLauncher
 	resolveWorkspace    func(string, coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
@@ -423,6 +424,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		r.settingsApplication(application)
 	} else {
 		writeAgentSettingsNotice(stderr, application)
+	}
+	if r.resumedPane != nil {
+		r.resumedPane(out.PaneUID)
 	}
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)
 	return err

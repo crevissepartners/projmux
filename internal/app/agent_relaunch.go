@@ -184,23 +184,15 @@ func (c *agentCommand) runRelaunch(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *agentCommand) dispatchRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {
-	if request.detach && cmp.Or(request.host, relaunchCurrentHost(registry, target)) != "process" {
-		return usageError("agent relaunch: --detach requires a process destination; nothing was changed")
+	if err := refuseRelaunchDetach(registry, target, request); err != nil {
+		return err
 	}
 	// An offline source still has a tmux recipe. Its pending host-transfer
 	// journal must take precedence over the ordinary same-host relaunch route.
-	if target.Spec.Provider == aiModeCodex && c.store != nil && c.store.stateDir != nil {
-		path, err := c.codexHostTransferPath(target.Metadata.UID)
-		if err != nil {
-			return err
-		}
-		pending, err := readCodexHostTransfer(path)
-		if err != nil {
-			return err
-		}
-		if pending != nil {
-			return c.runCodexHostRelaunch(registry, target, request, stdout, stderr)
-		}
+	if _, pending, err := c.pendingCodexHostTransfer(target); err != nil {
+		return err
+	} else if pending != nil {
+		return c.runCodexHostRelaunch(registry, target, request, stdout, stderr)
 	}
 	current := relaunchCurrentHost(registry, target)
 	if request.host != "" && request.host != current {
@@ -216,6 +208,15 @@ func (c *agentCommand) dispatchRelaunch(registry coremetadata.Registry, target c
 		return usageError("agent relaunch: a first prompt applies only to process agents; nothing was changed")
 	}
 	return c.runTmuxRelaunch(registry, target, request, stdout, stderr)
+}
+
+// refuseRelaunchDetach is the first relaunch refusal: a detached relaunch
+// needs a process destination.
+func refuseRelaunchDetach(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest) error {
+	if request.detach && cmp.Or(request.host, relaunchCurrentHost(registry, target)) != "process" {
+		return usageError("agent relaunch: --detach requires a process destination; nothing was changed")
+	}
+	return nil
 }
 
 func (c *agentCommand) runTmuxRelaunch(registry coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, stdout, stderr io.Writer) error {

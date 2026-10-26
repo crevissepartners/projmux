@@ -31,7 +31,9 @@ type RelaunchProcessError struct {
 func (e *RelaunchProcessError) Error() string { return e.cause.Error() }
 func (e *RelaunchProcessError) Unwrap() error { return e.cause }
 
-func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentRequest, target m.Agent, reg m.Registry) (out core.RelaunchAgentResult, err error) {
+// A pending Codex host transfer skips the request shape rules of an ordinary
+// process relaunch: the executable's CLI code answers every request first.
+func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentRequest, target m.Agent, reg m.Registry, pendingTransfer bool) (out core.RelaunchAgentResult, err error) {
 	current := "tmux"
 	pane, ambiguous := runtime.ProcessAgentPane(reg, target.Metadata.UID)
 	if ambiguous {
@@ -50,17 +52,19 @@ func (c *Client) relaunchProcessAgent(ctx context.Context, q core.RelaunchAgentR
 	if destination != "process" && destination != "tmux" {
 		return out, bad("RelaunchAgentRequest.Host must be tmux or process")
 	}
-	if destination == "process" && !q.Detach {
-		return out, bad("RelaunchAgentRequest process destination requires Detach")
-	}
-	if destination == "tmux" && q.Detach {
-		return out, bad("agent relaunch: --detach requires a process destination; nothing was changed")
-	}
-	if current == "process" && destination == "process" && q.SocketPath != "" {
-		return out, bad("agent relaunch: process agents do not use a tmux socket; nothing was changed")
-	}
-	if destination == "tmux" && q.Prompt != "" {
-		return out, bad("agent relaunch: a first prompt applies only to the process target; nothing was changed")
+	if !pendingTransfer {
+		if destination == "process" && !q.Detach {
+			return out, bad("RelaunchAgentRequest process destination requires Detach")
+		}
+		if destination == "tmux" && q.Detach {
+			return out, bad("agent relaunch: --detach requires a process destination; nothing was changed")
+		}
+		if current == "process" && destination == "process" && q.SocketPath != "" {
+			return out, bad("agent relaunch: process agents do not use a tmux socket; nothing was changed")
+		}
+		if destination == "tmux" && q.Prompt != "" {
+			return out, bad("agent relaunch: a first prompt applies only to the process target; nothing was changed")
+		}
 	}
 	if !filepath.IsAbs(c.projmuxExecutable) {
 		return out, &Refusal{Code: CodeExecutableInvalid, message: "Options.ProjmuxExecutable must name an absolute projmux executable"}

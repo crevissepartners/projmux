@@ -18,12 +18,8 @@ import (
 // Recovery consumes the same owner-private reservation receipt; it never
 // recreates a broker, adopts a process, or revives old control tokens.
 func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, path string, record *codexHostTransferRecord, stdout, stderr io.Writer) error {
-	recovery := codexTransferRecoveryCommand(target.Metadata.UID, request)
-	if request.dryRun {
-		return usageError("agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: " + recovery)
-	}
-	if request.host != "tmux" || !request.yes || request.model != "" || request.effort != "" || request.profile != nil || request.instructions != nil || len(request.reset) != 0 || len(request.prompt) != 0 {
-		return usageError("agent relaunch: recover the previous exact recipe first; recover with: " + recovery)
+	if err := refuseCodexTransferRecovery(target.Metadata.UID, request); err != nil {
+		return err
 	}
 	unlock, err := lockDeferredClaim(path)
 	if err != nil {
@@ -39,6 +35,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 	}
 	if record.Phase == "preparing" {
 		if err := c.cleanupNoEffectCodexTransfer(context.Background(), path, record); err == nil {
+			c.reportCodexRecovered(record.Pane.Metadata.UID)
 			return writeAgentRelaunchResult(stdout, request, agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeResumed, CurrentHost: "tmux", TargetHost: "tmux", NewPaneUID: record.Pane.Metadata.UID})
 		}
 	}
@@ -54,6 +51,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 			if err := completeCodexHostTransfer(path); err != nil {
 				return err
 			}
+			c.reportCodexRecovered(record.NativeTarget.Pane)
 			return writeAgentRelaunchResult(stdout, request, agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeResumed, CurrentHost: "tmux", TargetHost: "tmux", NewPaneUID: record.NativeTarget.Pane})
 		}
 		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -91,7 +89,12 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		if err = transfer.Abort(ctx); err != nil {
 			return err
 		}
-		return removeCodexHostTransfer(path)
+		if err = removeCodexHostTransfer(path); err != nil {
+			return err
+		}
+		// The surviving source keeps writing on its own Pane.
+		c.reportCodexRecovered(record.Pane.Metadata.UID)
+		return nil
 	}
 	if record.Retired == nil {
 		if target.Status.Phase != coremetadata.PhaseOffline || target.Status.PaneRef != "" || !reflect.DeepEqual(target.Spec, record.Source.Spec) || !reflect.DeepEqual(target.Metadata.Annotations, record.Source.Metadata.Annotations) {
@@ -204,7 +207,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		if err = completeCodexHostTransfer(path); err != nil {
 			return err
 		}
-		return c.rebind.rebind(agentRelaunchSpelling, plan, stdout, stderr)
+		return c.codexRecoveryRebinder().rebind(agentRelaunchSpelling, plan, stdout, stderr)
 	}
 	if err != nil {
 		return err
@@ -219,7 +222,39 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		return err
 	}
 	plan.codexTransfer = c.nativeTransferRebind(transfer, record, path)
-	return c.rebind.rebind(agentRelaunchSpelling, plan, stdout, stderr)
+	return c.codexRecoveryRebinder().rebind(agentRelaunchSpelling, plan, stdout, stderr)
+}
+
+// reportCodexRecovered tells an SDK adapter that asked which Pane this
+// recovery leaves the Agent on.
+func (c *agentCommand) reportCodexRecovered(paneUID string) {
+	if c.codexRecovered != nil {
+		c.codexRecovered(paneUID)
+	}
+}
+
+// codexRecoveryRebinder delivers the Pane the recovery's rebind commits to the
+// same receiver; the CLI keeps its own rebinder.
+func (c *agentCommand) codexRecoveryRebinder() *agentRebinder {
+	if c.codexRecovered == nil {
+		return c.rebind
+	}
+	rebinder := *c.rebind
+	rebinder.resumedPane = c.codexRecovered
+	return &rebinder
+}
+
+// refuseCodexTransferRecovery is what recovery refuses before any effect: a dry
+// run, and every request but the exact one (--host tmux --yes, nothing else).
+func refuseCodexTransferRecovery(uid string, request agentRelaunchRequest) error {
+	recovery := codexTransferRecoveryCommand(uid, request)
+	if request.dryRun {
+		return usageError("agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: " + recovery)
+	}
+	if request.host != "tmux" || !request.yes || request.model != "" || request.effort != "" || request.profile != nil || request.instructions != nil || len(request.reset) != 0 || len(request.prompt) != 0 {
+		return usageError("agent relaunch: recover the previous exact recipe first; recover with: " + recovery)
+	}
+	return nil
 }
 
 func (c *agentCommand) reclaimCodexHostTransfer(ctx context.Context, record *codexHostTransferRecord) (*codexbroker.RemoteTransfer, error) {

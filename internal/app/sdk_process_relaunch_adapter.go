@@ -17,6 +17,11 @@ import (
 // The SDK uses the existing relaunch planner/owner. A read-only plan and an
 // explicit caller acknowledgment precede the first Stop or provider reservation.
 func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel context.CancelFunc, session *processDetachedRelaunchSession, reg m.Registry, target m.Agent, request agentRelaunchRequest) error {
+	if path, journal, err := c.pendingCodexHostTransfer(target); err != nil {
+		return encodeDetachedRelaunchError(session.encoder, session.identity, processhost.Binding{}, nil, err)
+	} else if journal != nil {
+		return c.runSDKCodexTransferRecovery(life, session, reg, target, request, path, journal)
+	}
 	preview := request
 	preview.dryRun = true
 	var planned agentHostTransferResult
@@ -61,6 +66,59 @@ func (c *agentCommand) runSDKProcessRelaunchOwner(life context.Context, cancel c
 	// Process destinations return through finishOwned/finishClaim. A tmux
 	// destination completes synchronously and acknowledges its exact rebind.
 	return finishSDKRelaunch(session, c.hostTransferResult.Result)
+}
+
+// An unfinished Codex host transfer takes precedence over every relaunch, as
+// in dispatchRelaunch. A dry run and every request but the exact recovery one
+// get the CLI refusals before any effect; the exact one plans the CLI's
+// would-resume and, once admitted, runs the CLI recovery to its tmux writer.
+// The CLI dry-run preview is skipped: recovery refuses a dry run by design.
+func (c *agentCommand) runSDKCodexTransferRecovery(life context.Context, session *processDetachedRelaunchSession, reg m.Registry, target m.Agent, request agentRelaunchRequest, path string, journal *codexHostTransferRecord) error {
+	refused := func(err error) error {
+		return encodeDetachedRelaunchError(session.encoder, session.identity, processhost.Binding{}, nil, err)
+	}
+	if err := refuseRelaunchDetach(reg, target, request); err != nil {
+		return refused(err)
+	}
+	if err := c.checkCodexHostRelaunch(target, request); err != nil {
+		return refused(err)
+	}
+	if err := refuseCodexTransferRecovery(target.Metadata.UID, request); err != nil {
+		return refused(err)
+	}
+	// The fields recoverCodexHostTransfer itself reports.
+	result := agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeWouldResume, CurrentHost: "tmux", TargetHost: "tmux"}
+	fail := func(err error) error {
+		return encodeDetachedRelaunchError(session.encoder, session.identity, processhost.Binding{}, &result, err)
+	}
+	raw, _ := json.Marshal(result)
+	if err := session.encoder.Encode(processDetachedReply{Owner: session.identity, Phase: "planned", Relaunch: raw}); err != nil {
+		return err
+	}
+	var admit string
+	if err := session.decoder.Decode(&admit); err != nil {
+		return err
+	}
+	if admit != "admit" || life.Err() != nil {
+		return fail(context.Canceled)
+	}
+	session.timer.Stop()
+	// The CLI recovery runs exactly as `agent relaunch --host tmux --yes` runs
+	// it, outside any typed host-transfer result.
+	// The receipt names the Pane the recovery itself left the Agent on, never
+	// a later Registry read another stop or rebind may already have changed.
+	recovered := ""
+	recovery := *c
+	recovery.hostTransferContext, recovery.hostTransferResult = nil, nil
+	recovery.codexRecovered = func(pane string) { recovered = pane }
+	if err := recovery.recoverCodexHostTransfer(reg, target, request, path, journal, io.Discard, io.Discard); err != nil {
+		return fail(err)
+	}
+	if recovered == "" {
+		return fail(processhost.ErrStale)
+	}
+	result.Outcome, result.NewPaneUID = personaOutcomeResumed, recovered
+	return finishSDKRelaunch(session, result)
 }
 
 func finishSDKRelaunch(s *processDetachedRelaunchSession, result agentRelaunchResult) error {

@@ -1,10 +1,8 @@
 package app
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/processhost"
+	mutationruntime "github.com/crevissepartners/projmux/internal/services/mutations/runtime"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -45,8 +44,21 @@ func (c *agentCommand) codexHostTransferPath(uid string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256([]byte(uid))
-	return filepath.Join(state, "codex-host-transfers", fmt.Sprintf("%x.json", sum[:])), nil
+	return mutationruntime.CodexHostTransferPath(state, uid), nil
+}
+
+// pendingCodexHostTransfer reads the journal an unfinished host transfer of a
+// Codex target retains. A record takes precedence over every relaunch route.
+func (c *agentCommand) pendingCodexHostTransfer(target coremetadata.Agent) (string, *codexHostTransferRecord, error) {
+	if target.Spec.Provider != aiModeCodex || c.store == nil || c.store.stateDir == nil {
+		return "", nil, nil
+	}
+	path, err := c.codexHostTransferPath(target.Metadata.UID)
+	if err != nil {
+		return "", nil, err
+	}
+	record, err := readCodexHostTransfer(path)
+	return path, record, err
 }
 func readCodexHostTransfer(path string) (*codexHostTransferRecord, error) {
 	data, err := readCodexHostTransferBytes(path)
