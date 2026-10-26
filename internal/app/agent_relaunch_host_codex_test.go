@@ -628,17 +628,18 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 }
 
 // The public SDK relaunch of a Codex Agent meets the journal an unfinished host
-// transfer retains exactly as `agent relaunch` does, whether the Agent is left
-// on its failed process target or on a reserved tmux target. On the same
-// fixture a dry run and inexact requests refuse with the CLI's own text before
-// any effect, and the exact recovery request (Host tmux, Confirm, nothing else)
-// runs the CLI recovery: each variant recovers once, through one surface, to
-// the same Agent, Pane and journal state.
+// transfer retains exactly as `agent relaunch` does: on the Offline source a
+// failed process move restores, on a reserved tmux target, and on the live
+// process target an owner killed mid-launch leaves. On the same fixture a dry
+// run and inexact requests refuse with the CLI's own text before any effect,
+// and the exact recovery request (Host tmux, Confirm, nothing else) runs the
+// CLI recovery: each variant ends once, through one surface, in the same
+// Agent, Pane and journal state or the same refusal.
 func TestCodexHostTransferSDKCLIParity(t *testing.T) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI")
 	}
-	for _, start := range []string{"process-target", "tmux-target"} {
+	for _, start := range []string{"offline-source", "tmux-target", "live-process-source"} {
 		var recovered []string
 		for _, sdk := range []bool{false, true} {
 			t.Run(start+"/"+map[bool]string{false: "cli-recovers", true: "sdk-recovers"}[sdk], func(t *testing.T) {
@@ -655,10 +656,16 @@ func TestCodexHostTransferSDKCLIParity(t *testing.T) {
 func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string {
 	f, source, oldPane, socket := codexHostMoveCLIFixture(t)
 	ref := "uid:" + source.Metadata.UID
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	// The failed move leaves the Agent on its failed process target.
-	codexHostMovePendingJournal(t, ctx, f, ref, socket)
+	if start == "live-process-source" {
+		// The owner dies after recording launching: the journal stays pending
+		// on a live reciprocal process Pane binding.
+		codexHostMoveOwnerDeath(t, ctx, f, ref, socket)
+	} else {
+		// The failed move restores the Offline tmux source, journal pending.
+		codexHostMovePendingJournal(t, ctx, f, ref, socket)
+	}
 	if start == "tmux-target" {
 		// A failed native restore then leaves its reserved tmux Pane with the
 		// journal still pending: the route the SDK takes for a tmux Agent.
@@ -674,12 +681,23 @@ func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pane, _ := processResumePane(reg, source.Metadata.UID); (pane != nil) != (start == "process-target") {
-		t.Fatalf("%s fixture has process source %+v", start, pane)
+	processPane, _ := processResumePane(reg, source.Metadata.UID)
+	fixture, _ := reg.Agent(source.Metadata.UID)
+	switch start {
+	case "offline-source":
+		if processPane != nil || fixture.Status.Phase != coremetadata.PhaseOffline || fixture.Status.PaneRef != "" {
+			t.Fatalf("fixture must leave the Offline tmux source: pane=%+v status=%+v", processPane, fixture.Status)
+		}
+	case "tmux-target":
+		if processPane != nil || fixture.Status.Reason != "native-transfer-planned" {
+			t.Fatalf("fixture must leave the reserved native tmux target: pane=%+v status=%+v", processPane, fixture.Status)
+		}
+	case "live-process-source":
+		if processPane == nil || processPane.Status.ProcessSession == nil || fixture.Status.PaneRef != processPane.Metadata.UID {
+			t.Fatalf("fixture must leave a reciprocal process Pane binding: pane=%+v status=%+v", processPane, fixture.Status)
+		}
 	}
-	if a, _ := reg.Agent(source.Metadata.UID); start == "tmux-target" && a.Status.Reason != "native-transfer-planned" {
-		t.Fatalf("fixture must leave the reserved native tmux target: %+v", a.Status)
-	}
+	t.Logf("%s fixture: phase=%s reason=%s pane=%s", start, fixture.Status.Phase, fixture.Status.Reason, fixture.Status.PaneRef)
 	client, err := projmux.NewClient(projmux.Options{HomeDir: os.Getenv("HOME"), ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
 	if err != nil {
 		t.Fatal(err)
@@ -738,13 +756,34 @@ func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string 
 		t.Logf("%s: CLI and SDK refused with %q", tc.name, want)
 	}
 	var result core.RelaunchAgentResult
+	var refusal string
 	if sdk {
 		result, err = client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Host: "tmux", Confirm: true, SocketPath: socket})
 		if err != nil {
-			t.Fatal(err)
+			var refused *projmux.Refusal
+			if start != "live-process-source" || !errors.As(err, &refused) {
+				t.Fatal(err)
+			}
+			refusal = fmt.Sprintf("code=%s text=%s", refused.Code, refused.Error())
+		}
+	} else if start == "live-process-source" {
+		var stderr bytes.Buffer
+		cli := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
+		cli.Stderr = &stderr
+		if _, err := cli.Output(); err != nil {
+			refusal = fmt.Sprintf("code=%s text=%s", projmux.CodeRelaunchExecutionFailed, strings.TrimSpace(stderr.String()))
 		}
 	} else {
 		hostCLIOutput(t, f, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
+	}
+	if refusal != "" {
+		// The exact recovery may refuse on a target whose owner died; both
+		// surfaces must then refuse alike and leave the journal pending.
+		t.Logf("exact recovery refused: %s", refusal)
+		if _, err := os.Stat(journal); err != nil {
+			t.Fatalf("refused recovery lost the pending journal: %v", err)
+		}
+		return "refused " + refusal
 	}
 	reg, err = f.store.LoadReadOnly()
 	if err != nil {
@@ -797,6 +836,52 @@ func codexHostMoveFailRecovery(t *testing.T, ctx context.Context, f processCreat
 		t.Fatalf("native %s failure was bypassed: %s", fault, failed)
 	}
 	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// codexHostMoveOwnerDeath kills the owner of a tmux-to-process move after it
+// records launching, while the dedicated target holds thread/resume, then
+// waits for the supervisor to retire the held provider. The Registry keeps the
+// reciprocal process Pane binding and the journal stays pending.
+func codexHostMoveOwnerDeath(t *testing.T, ctx context.Context, f processCreateCLI, ref, socket string) {
+	t.Helper()
+	providerPath := filepath.Join(f.root, "codex-provider.py")
+	raw, err := os.ReadFile(providerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(f.root, "resume-held")
+	original := append([]byte(nil), raw...)
+	raw = bytes.Replace(raw, []byte("elif method=='thread/resume':"), []byte("elif method=='thread/resume':\n  open("+fmt.Sprintf("%q", marker)+",'w').write(str(os.getpid()));__import__('time').sleep(30)"), 1)
+	if bytes.Equal(original, raw) {
+		t.Fatal("dedicated resume hold was not injected")
+	}
+	if err = os.WriteFile(providerPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	owner := exec.Command(f.binary, "agent", "relaunch", ref, "--host", "process", "--socket-path", socket, "--yes")
+	owner.Stdout, owner.Stderr = &out, &out
+	if err = owner.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if owner.ProcessState == nil {
+			_ = owner.Process.Kill()
+			_ = owner.Wait()
+		}
+	})
+	var held []byte
+	waitCodexCreate(t, ctx, func() bool { held, err = os.ReadFile(marker); return err == nil && len(held) > 0 })
+	if err = owner.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("killed owner pid=%d: %v %s", owner.Process.Pid, owner.Wait(), out.String())
+	// Only the dead owner writes the Registry; wait for the held provider to
+	// exit so nothing outlives the fixture.
+	waitCodexCreate(t, ctx, func() bool { _, err := os.Stat(filepath.Join("/proc", string(held))); return os.IsNotExist(err) })
+	if err = os.WriteFile(providerPath, original, 0600); err != nil {
 		t.Fatal(err)
 	}
 }
