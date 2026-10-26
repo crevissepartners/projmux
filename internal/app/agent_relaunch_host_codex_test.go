@@ -1377,7 +1377,7 @@ func relaunchPromptPartsSDKCLIParity(t *testing.T, provider string, sdk bool) st
 	// Only frames sent by this relaunch: the managed base it sends must carry
 	// the new guidance and link rules.
 	var carried []string
-	for _, line := range strings.Split(strings.TrimSpace(string(wire[len(sent):])), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(wire[len(sent):])), "\n") {
 		var frame struct {
 			Method string          `json:"method"`
 			Params json.RawMessage `json:"params"`
