@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1253,4 +1254,146 @@ func waitCodexFixturePeerExit(t *testing.T, process coremetadata.ProcessIdentity
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Errorf("owned fixture peer cleanup still running: pid=%d birth=%v", process.PID, process)
+}
+
+// TestRelaunchPromptPartsSDKCLIParity is Epic 3j Task 2 (763): after the
+// agent guidance and the Project's label link rules change, the public SDK
+// relaunch dry run of a tmux Agent reports what `agent relaunch --dry-run -o
+// json` reports, for Codex and for Claude. For Codex the actual relaunch then
+// restarts the Agent on both surfaces and sends a managed base that carries
+// the new guidance and link rules.
+func TestRelaunchPromptPartsSDKCLIParity(t *testing.T) {
+	if os.Getenv("PMX_TEST_CLI") == "" {
+		t.Skip("set PMX_TEST_CLI")
+	}
+	for _, provider := range []string{aiModeCodex, aiModeClaude} {
+		var applied []string
+		for _, sdk := range []bool{false, true} {
+			t.Run(provider+"/"+map[bool]string{false: "cli-relaunches", true: "sdk-relaunches"}[sdk], func(t *testing.T) {
+				applied = append(applied, relaunchPromptPartsSDKCLIParity(t, provider, sdk))
+			})
+		}
+		if len(applied) == 2 && applied[0] != applied[1] {
+			t.Fatalf("%s: relaunch differs CLI %q SDK %q", provider, applied[0], applied[1])
+		}
+		t.Logf("%s: relaunch %q", provider, applied)
+	}
+}
+
+func relaunchPromptPartsSDKCLIParity(t *testing.T, provider string, sdk bool) string {
+	var f processCreateCLI
+	var source coremetadata.Agent
+	var socket string
+	if provider == aiModeCodex {
+		f, source, _, socket = codexHostMoveCLIFixture(t)
+	} else {
+		f, source, _, socket = hostMoveCLIFixture(t)
+	}
+	ref := "uid:" + source.Metadata.UID
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidance := []byte("Task 2 guidance: prefer projmux agent message send.")
+	writeAgentGuidance(t, paths, guidance)
+	writeLinkRules(t, paths, f.project, linkRulesAlpha)
+	client, err := projmux.NewClient(projmux.Options{HomeDir: os.Getenv("HOME"), ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(f.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cli := exec.CommandContext(ctx, f.binary, "agent", "relaunch", ref, "--socket-path", socket, "--dry-run", "-o", "json")
+	cli.Stderr = &stderr
+	out, err := cli.Output()
+	if err != nil {
+		t.Fatalf("CLI dry run: %v %s", err, stderr.String())
+	}
+	var want agentRelaunchResult
+	if err := json.Unmarshal(out, &want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, SocketPath: socket, DryRun: true})
+	if err != nil {
+		t.Fatalf("SDK dry run: %v", err)
+	}
+	var current, next core.RelaunchAgentSettings
+	raw, _ := json.Marshal(want.CurrentSettings)
+	if err := json.Unmarshal(raw, &current); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(want.NewSettings)
+	if err := json.Unmarshal(raw, &next); err != nil {
+		t.Fatal(err)
+	}
+	if got.Outcome != want.Outcome || got.Restart != want.Restart || got.Unchanged != want.Unchanged || got.ConfirmationRequired != want.ConfirmationRequired ||
+		!reflect.DeepEqual(got.RelaunchReasons, want.RelaunchReasons) || !reflect.DeepEqual(got.CurrentSettings, current) || !reflect.DeepEqual(got.NewSettings, next) {
+		t.Fatalf("dry run differs\nSDK outcome=%s restart=%t unchanged=%t confirm=%t reasons=%q current=%+v new=%+v\nCLI %s", got.Outcome, got.Restart, got.Unchanged, got.ConfirmationRequired, got.RelaunchReasons, got.CurrentSettings, got.NewSettings, out)
+	}
+	for _, reason := range []string{"guidance-changed", "link-rules-changed"} {
+		if !slices.Contains(want.RelaunchReasons, reason) {
+			t.Fatalf("CLI dry run reasons %q lack %s: %s", want.RelaunchReasons, reason, out)
+		}
+	}
+	after, err := os.ReadFile(f.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("a dry run changed the Registry")
+	}
+	t.Logf("%s dry run: outcome=%s reasons=%q", provider, got.Outcome, got.RelaunchReasons)
+	if provider != aiModeCodex {
+		return fmt.Sprintf("outcome=%s reasons=%q", got.Outcome, got.RelaunchReasons)
+	}
+	wirePath := filepath.Join(f.root, "shared-wire.jsonl")
+	sent, err := os.ReadFile(wirePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outcome string
+	if sdk {
+		result, err := client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, SocketPath: socket, Confirm: true})
+		if err != nil {
+			t.Fatalf("SDK relaunch: %v", err)
+		}
+		outcome = result.Outcome
+	} else {
+		var result agentRelaunchResult
+		if err := json.Unmarshal(hostCLIOutput(t, f, "agent", "relaunch", ref, "--socket-path", socket, "--yes", "-o", "json"), &result); err != nil {
+			t.Fatal(err)
+		}
+		outcome = result.Outcome
+	}
+	wire, err := os.ReadFile(wirePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only frames sent by this relaunch: the managed base it sends must carry
+	// the new guidance and link rules.
+	var carried []string
+	for _, line := range strings.Split(strings.TrimSpace(string(wire[len(sent):])), "\n") {
+		var frame struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &frame) == nil && strings.Contains(string(frame.Params), string(guidance)) && strings.Contains(string(frame.Params), linkRulesAlpha.Jira[0]) {
+			carried = append(carried, frame.Method)
+		}
+	}
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaunched, ok := reg.Agent(source.Metadata.UID)
+	if !ok {
+		t.Fatal("Agent disappeared")
+	}
+	return fmt.Sprintf("outcome=%s phase=%s same-thread=%t base-with-guidance-and-link-rules=%q base-status=%s", outcome, relaunched.Status.Phase,
+		relaunched.Status.SessionRef.SameConversation(source.Status.SessionRef), carried, relaunched.Metadata.Annotations[mutationruntime.CodexManagedBaseStatus])
 }
