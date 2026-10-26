@@ -634,6 +634,7 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 // failed process move restores, on a reserved tmux target, and on the live
 // process target an owner killed mid-launch leaves. On the same fixture a dry
 // run and inexact requests refuse with the CLI's own text before any effect,
+// as a usage error from the CLI and an invalid request from the SDK,
 // and the exact recovery request (Host tmux, Confirm, nothing else) runs the
 // CLI recovery: each variant ends once, through one surface, in the same
 // Agent, Pane and journal state or the same refusal.
@@ -735,8 +736,10 @@ func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string 
 		var stderr bytes.Buffer
 		cli := exec.CommandContext(ctx, f.binary, args...)
 		cli.Stderr = &stderr
-		if out, err := cli.Output(); err == nil {
-			t.Fatalf("%s: CLI did not refuse: %s", tc.name, out)
+		out, err := cli.Output()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+			t.Fatalf("%s: CLI did not refuse with a usage error: err=%v out=%s", tc.name, err, out)
 		}
 		if before != evidence() {
 			t.Fatalf("%s: CLI refusal changed state", tc.name)
@@ -745,8 +748,8 @@ func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string 
 		q.Ref, q.SocketPath = ref, socket
 		got, err := client.RelaunchAgent(ctx, q)
 		var refused *projmux.Refusal
-		if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchExecutionFailed {
-			t.Fatalf("%s: SDK did not refuse with an existing code: result=%+v err=%v", tc.name, got, err)
+		if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchRequestInvalid {
+			t.Fatalf("%s: SDK did not refuse the request as invalid: result=%+v err=%v", tc.name, got, err)
 		}
 		want := tc.text + codexTransferRecoveryCommand(source.Metadata.UID, agentRelaunchRequest{socket: deleteSocketFlags{socketPath: socket}})
 		if refused.Error() != want || strings.TrimSpace(stderr.String()) != want {
