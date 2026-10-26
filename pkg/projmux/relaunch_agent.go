@@ -152,10 +152,18 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			return plan, err
 		},
 		ResolveSettings: func(plan runtime.AgentResumePlan, q runtime.AgentSettingsRequest) (runtime.AgentSettingsLaunch, error) {
-			if !plan.DialogueReplyOnly {
+			// A Codex relaunch plans its prompt parts and managed base as the CLI
+			// tmux relaunch does.
+			if provider == "codex" {
+				q, _, _ = runtime.RelaunchSettingsRequest(q, runtime.RelaunchSettingsTarget{Provider: provider, Host: "tmux", Project: plan.Project, Annotations: target.Metadata.Annotations}, guidance)
+			} else if !plan.DialogueReplyOnly {
 				q = q.WithPromptParts(guidance.PlanAgentGuidance(provider, target.Metadata.Annotations), guidance.PlanProjectLinks(provider, plan.Project, target.Metadata.Annotations))
 			}
-			return runtime.ResolveAgentSettings(c.paths, provider, target.Metadata.Annotations, q)
+			settings, err := runtime.ResolveAgentSettings(c.paths, provider, target.Metadata.Annotations, q)
+			if provider == "codex" && err == nil {
+				settings.ManagedBase, err = guidance.PlanManagedCodexBase(plan.Project, target.Metadata.UID, target.Metadata.Annotations, settings)
+			}
+			return settings, err
 		},
 		PreflightCodex: func(plan runtime.AgentResumePlan, s runtime.AgentSettingsLaunch) error {
 			if _, _, err := runtime.NativeCodexResumeProfile(paths, s.LaunchAnnotations(plan.Annotations), plan.ProjectUID); err != nil {
