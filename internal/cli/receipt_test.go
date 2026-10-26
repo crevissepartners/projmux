@@ -224,3 +224,17 @@ func TestReceiptHumanLineUsesTheSameVocabularyAsHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectStopRuntimeVocabularyIsRouteScoped(t *testing.T) {
+	for _, runtime := range []RuntimeEffect{RuntimePartiallyStopped, RuntimeAgentsStopped} {
+		r := NewReceipt(OperationStopProject, ReceiptTarget{Kind: "Project", UID: "project", Name: "project"}, ReceiptEffects{Identity: IdentityUnchanged, Address: AddressUnchanged, Topology: TopologyUnchanged, DesiredState: DesiredStateUnchanged, Runtime: runtime, Focus: FocusUnchanged})
+		r.Add("Project", "project", "project", ActionUnchanged)
+		if err := r.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		r.Operation = OperationStartProject
+		if err := r.Validate(); err == nil {
+			t.Fatalf("start accepted stop-only runtime %s", runtime)
+		}
+	}
+}

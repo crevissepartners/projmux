@@ -43,12 +43,14 @@ const (
 	DesiredStateReplaced  DesiredStateEffect = "replaced"
 )
 const (
-	RuntimeUnchanged    RuntimeEffect = "unchanged"
-	RuntimeMaterialized RuntimeEffect = "materialized"
-	RuntimeAlreadyLive  RuntimeEffect = "already-live"
-	RuntimeReparented   RuntimeEffect = "reparented"
-	RuntimeStopped      RuntimeEffect = "stopped"
-	RuntimePreserved    RuntimeEffect = "preserved"
+	RuntimeUnchanged        RuntimeEffect = "unchanged"
+	RuntimeMaterialized     RuntimeEffect = "materialized"
+	RuntimeAlreadyLive      RuntimeEffect = "already-live"
+	RuntimeReparented       RuntimeEffect = "reparented"
+	RuntimeStopped          RuntimeEffect = "stopped"
+	RuntimePartiallyStopped RuntimeEffect = "partially-stopped"
+	RuntimeAgentsStopped    RuntimeEffect = "agents-stopped"
+	RuntimePreserved        RuntimeEffect = "preserved"
 )
 const (
 	FocusUnchanged          FocusEffect = "unchanged"

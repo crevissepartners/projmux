@@ -115,9 +115,15 @@ func (c *Client) stopProjectWithRunner(ctx context.Context, req core.StopProject
 	}, stopTmux)
 	internal.Stopped = err == nil && (tmuxStopped || len(stopped) != 0)
 	if tmuxStopped || len(stopped) != 0 {
-		internal.Receipt = receipt.NewReceipt(receipt.OperationStopProject, receipt.ReceiptTarget{Kind: "Project", UID: project.Metadata.UID, Name: project.Metadata.Name}, receipt.ReceiptEffects{Identity: receipt.IdentityUnchanged, Address: receipt.AddressUnchanged, Topology: receipt.TopologyUnchanged, DesiredState: receipt.DesiredStateUnchanged, Runtime: receipt.RuntimeStopped, Focus: receipt.FocusUnchanged})
+		runtime := receipt.RuntimeStopped
+		if err != nil {
+			runtime = receipt.RuntimePartiallyStopped
+		} else if !live {
+			runtime = receipt.RuntimeAgentsStopped
+		}
+		internal.Receipt = receipt.NewReceipt(receipt.OperationStopProject, receipt.ReceiptTarget{Kind: "Project", UID: project.Metadata.UID, Name: project.Metadata.Name}, receipt.ReceiptEffects{Identity: receipt.IdentityUnchanged, Address: receipt.AddressUnchanged, Topology: receipt.TopologyUnchanged, DesiredState: receipt.DesiredStateUnchanged, Runtime: runtime, Focus: receipt.FocusUnchanged})
 		action := receipt.ActionStopped
-		if live && !tmuxStopped {
+		if !tmuxStopped {
 			action = receipt.ActionUnchanged
 		}
 		internal.Receipt.Add("Project", project.Metadata.UID, project.Metadata.Name, action)

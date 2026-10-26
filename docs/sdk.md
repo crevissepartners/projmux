@@ -764,6 +764,13 @@ instructions remain stable. Typed causes remain available through error unwrap.
 `StopProjectResult.Receipt` includes confirmed Agent stops even when another
 owner or tmux fails. A failed tmux stop leaves the Project receipt action unchanged;
 a successful tmux stop remains reported even when a process owner refuses.
+`effects.runtime` is `stopped` only when a live tmux session and all selected
+process Agents stopped. It is `partially-stopped` when confirmed stops coexist
+with a failure or unconfirmed stop, and `agents-stopped` when no session existed
+and all selected process Agents stopped. With no session, the Project action is
+`unchanged`; confirmed Agent actions are `stopped`. The public `core.RuntimeEffect`
+constants include `RuntimePartiallyStopped` and `RuntimeAgentsStopped`. Consumers
+must accept these additional values; the receipt version and fields are unchanged.
 `Stopped=false` does not mean that every runtime survived. `Interruptions` and
 `OperationID` retain the existing tmux evidence/compensation summary. Inspect the
 exact affected resources and failed Agent names/UIDs before public

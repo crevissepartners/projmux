@@ -58,12 +58,14 @@ const (
 )
 
 const (
-	RuntimeUnchanged    = core.RuntimeUnchanged
-	RuntimeMaterialized = core.RuntimeMaterialized
-	RuntimeAlreadyLive  = core.RuntimeAlreadyLive
-	RuntimeReparented   = core.RuntimeReparented
-	RuntimeStopped      = core.RuntimeStopped
-	RuntimePreserved    = core.RuntimePreserved
+	RuntimeUnchanged        = core.RuntimeUnchanged
+	RuntimeMaterialized     = core.RuntimeMaterialized
+	RuntimeAlreadyLive      = core.RuntimeAlreadyLive
+	RuntimeReparented       = core.RuntimeReparented
+	RuntimeStopped          = core.RuntimeStopped
+	RuntimePartiallyStopped = core.RuntimePartiallyStopped
+	RuntimeAgentsStopped    = core.RuntimeAgentsStopped
+	RuntimePreserved        = core.RuntimePreserved
 )
 
 const (
@@ -84,7 +86,7 @@ var (
 	addressEffects  = []AddressEffect{AddressUnchanged, AddressAllocated, AddressRenamed, AddressReleased}
 	topologyEffects = []TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyReparented, TopologyRemoved, TopologyReplaced}
 	desiredEffects  = []DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateReused, DesiredStateRemoved, DesiredStateReplaced}
-	runtimeEffects  = []RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive, RuntimeReparented, RuntimeStopped, RuntimePreserved}
+	runtimeEffects  = []RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive, RuntimeReparented, RuntimeStopped, RuntimePartiallyStopped, RuntimeAgentsStopped, RuntimePreserved}
 	focusEffects    = []FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller}
 	cardinalities   = []CardinalityEffect{CardinalityUnchanged, CardinalityExactOne, CardinalityOneOrMore, CardinalityZeroOrMore}
 )
@@ -313,7 +315,7 @@ func openProjectEffects() *AllowedEffects {
 // the session being stopped.
 func stopProjectEffects() *AllowedEffects {
 	return runtimeEffectsOnly(
-		[]RuntimeEffect{RuntimeStopped},
+		[]RuntimeEffect{RuntimeStopped, RuntimePartiallyStopped, RuntimeAgentsStopped},
 		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
 		CardinalityExactOne,
 	)
@@ -2486,7 +2488,7 @@ var routes = []Route{
 				Name:             "project",
 				Invocation:       InvocationExplicit,
 				Summary:          "Terminate the exact persistent tmux session of a Project; the Registry graph, root, and external assets are preserved",
-				Notes:            []string{"Stops Running headless Agents through their process hosts before terminating tmux; durable Wait confirmation shares one 10-second limit. A Project with only Running headless Agents can also be stopped. Unconfirmed Agents remain Running and are named with project-stop-agents-still-running; the command exits nonzero after continuing the tmux stop. Retry stop project for remaining Agents. Project session Ctrl-X in the sidebar and session picker follows the same stop path."},
+				Notes:            []string{"Stops Running headless Agents through their process hosts before terminating tmux; durable Wait confirmation shares one 10-second limit. A Project with only Running headless Agents can also be stopped. Receipts use runtime=stopped only for a live session and all selected Agents confirmed stopped, partially-stopped for confirmed stops mixed with failure or uncertainty, and agents-stopped when only Agents existed and all stopped. The Project action is stopped only when its session stopped; otherwise it is unchanged. Unconfirmed Agents remain Running and are named with project-stop-agents-still-running; the command exits nonzero after continuing the tmux stop. Retry stop project for remaining Agents. Project session Ctrl-X in the sidebar and session picker follows the same stop path."},
 				CanonicalSummary: "Terminate a Project runtime and preserve its Registry graph",
 				Usage:            []string{"projmux stop project <ref> [-o receipt|none]"},
 				Canonical:        []string{"stop project"},

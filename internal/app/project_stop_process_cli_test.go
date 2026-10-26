@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -58,6 +60,23 @@ func TestProjectStopHeadlessActualCLI(t *testing.T) {
 	out, err := exec.CommandContext(ctx, f.binary, "stop", "project", "uid:"+f.project, "-o", "receipt").CombinedOutput()
 	if err != nil || !strings.Contains(string(out), agent.Metadata.UID) {
 		t.Fatalf("stop: %v %s", err, out)
+	}
+	var receipt cli.OperationReceipt
+	if err := json.Unmarshal(out, &receipt); err != nil {
+		t.Fatalf("decode receipt: %v %s", err, out)
+	}
+	if err := receipt.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Effects.Runtime != cli.RuntimeAgentsStopped || len(receipt.AffectedUIDs) != 2 {
+		t.Fatalf("process-only runtime/affected rows: %s", out)
+	}
+	actions := map[string]cli.ReceiptAction{}
+	for _, row := range receipt.AffectedUIDs {
+		actions[row.UID] = row.Action
+	}
+	if actions[f.project] != cli.ActionUnchanged || actions[agent.Metadata.UID] != cli.ActionStopped {
+		t.Fatalf("process-only Project/Agent actions: %s", out)
 	}
 	err = run.cmd.Wait()
 	run.done = true

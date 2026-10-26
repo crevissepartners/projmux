@@ -49,6 +49,8 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"open-project-live", "open project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"stop-project-detached", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusUnchanged, CardinalityExactOne, nil},
 		{"stop-project-attached-fallback", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"stop-project-partial", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimePartiallyStopped, FocusUnchanged, CardinalityExactOne, nil},
+		{"stop-project-agents-only", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAgentsStopped, FocusUnchanged, CardinalityExactOne, nil},
 		{"attach-virtual-primary-shell", "attach project", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"attach-project-offline", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"attach-project-live", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},
