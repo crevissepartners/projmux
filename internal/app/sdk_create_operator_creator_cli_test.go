@@ -22,6 +22,18 @@ import (
 func TestCreateAgentOperatorCreatorMatchesCLIProcess(t *testing.T) {
 	copiedCLI(t, "PMX_TEST_CLI")
 	f := newProcessCreateCLI(t)
+	// Parent and child share a Registry but each provider owns its endpoint:
+	// on the fixture's single path the child provider fails to bind and exits,
+	// and its create fails whenever the owner observes that exit before the
+	// initial turn.
+	script := filepath.Join(f.root, "provider.py")
+	raw, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(script, []byte(patchFixture(t, string(raw), "'provider.sock'", "'provider-'+json.loads(os.environ['PMX_INTERNAL_CLAUDE_PROCESS_BINDING'])['Agent'][-8:]+'.sock'")), 0600); err != nil {
+		t.Fatal(err)
+	}
 	state := filepath.Join(f.root, "state", "projmux")
 	c, err := projmux.NewClient(projmux.Options{HomeDir: f.root, ConfigDir: filepath.Join(f.root, "config", "projmux"), StateDir: state, ProjmuxExecutable: f.binary})
 	if err != nil {
