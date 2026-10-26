@@ -521,7 +521,7 @@ func (b *builder) agents(windowUID, windowID, root string) {
 			MissingRoot: agent.MissingRoot,
 			Runtime:     agent.Runtime,
 			Process:     agent.Process,
-			Actions:     agentActions(agent),
+			Actions:     agentActions(agent, b.registry.Panes),
 			Reason:      statusReason(agent.Status, agent.MissingRoot && agent.Process == nil),
 			Termination: agent.Agent.Status.LastTermination.Clone(),
 		})
@@ -750,14 +750,50 @@ func paneActions(pane resourcegraph.PaneNode) []Action {
 	}
 	return resourceActions(RowKindPane, pane.Status, pane.MissingRoot)
 }
-func agentActions(agent resourcegraph.AgentNode) []Action {
+func agentActions(agent resourcegraph.AgentNode, panes []coremetadata.Pane) []Action {
 	if agent.Process != nil {
 		// A process host that could not be observed may be lost. Resume and
 		// mark-offline each prove the recorded identities absent before acting.
 		if agent.Status == resourcegraph.StatusUnknown && !agent.MissingRoot {
 			return []Action{ActionResume, ActionMarkOffline, ActionDelete}
 		}
+		if retiredProcessResumeCandidate(agent, panes) {
+			return []Action{ActionResume, ActionDelete}
+		}
 		return []Action{ActionDelete}
 	}
 	return resourceActions(RowKindAgent, agent.Status, agent.MissingRoot)
+}
+
+// retiredProcessResumeCandidate mirrors the durable conditions of the CLI's
+// processResumeCandidateToken. In real reads, retiredProcessObservation validates
+// the Registry before reporting Offline for a Pane with no activation; degraded
+// loading alone does not validate it. The graph must observe this exact retired
+// generation: PhaseOffline alone is not proof. This is advice, not authority to
+// execute a provider resume.
+func retiredProcessResumeCandidate(agent resourcegraph.AgentNode, panes []coremetadata.Pane) bool {
+	if agent.Status != resourcegraph.StatusOffline || agent.MissingRoot || agent.Agent.Status.Phase != coremetadata.PhaseOffline || agent.Process == nil || !agent.Process.Valid() {
+		return false
+	}
+	var candidate *coremetadata.Pane
+	for i := range panes {
+		pane := &panes[i]
+		if pane.Metadata.OwnerUID() != agent.Agent.Metadata.UID || pane.Spec.Runtime.EffectiveKind() != coremetadata.RuntimeProcess {
+			continue
+		}
+		if candidate != nil {
+			return false
+		}
+		candidate = pane
+	}
+	if candidate == nil || candidate.Metadata.UID != agent.PaneUID || candidate.Metadata.UID != agent.Process.Pane || !candidate.Status.Activation.IsZero() {
+		return false
+	}
+	if ref := agent.Agent.Status.PaneRef; ref != "" && ref != candidate.Metadata.UID {
+		return false
+	}
+	record := candidate.Status.ProcessSession
+	return record != nil && record.ResumeState == coremetadata.ProcessResumable &&
+		record.Binding.AgentUID == agent.Agent.Metadata.UID && record.Binding.PaneUID == candidate.Metadata.UID &&
+		record.Binding.HostInstanceID == agent.Process.Host && record.Binding.Generation == agent.Process.Generation
 }

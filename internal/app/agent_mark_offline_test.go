@@ -121,7 +121,7 @@ func TestAgentMarkOfflineRetiresLostHostWithoutWait(t *testing.T) {
 			if len(candidates) != 1 || candidates[0].Record.SessionID != oldPane.Status.ProcessSession.SessionID || candidates[0].Record.ThreadID != oldPane.Status.ProcessSession.ThreadID || candidates[0].HostLost != nil {
 				t.Fatalf("resume candidate %+v", candidates)
 			}
-			if row := agentRow(t, store, b.Agent); row.Status != resourcegraph.StatusOffline || !reflect.DeepEqual(row.Actions, []registryview.Action{registryview.ActionDelete}) {
+			if row := agentRow(t, store, b.Agent); row.Status != resourcegraph.StatusOffline || !reflect.DeepEqual(row.Actions, []registryview.Action{registryview.ActionResume, registryview.ActionDelete}) {
 				t.Fatalf("retired lost host row: %s %v", row.Status, row.Actions)
 			}
 			observer := remoteProcessObserver{ctx: context.Background(), registry: reg, registryPath: store.Path(), binding: b}
