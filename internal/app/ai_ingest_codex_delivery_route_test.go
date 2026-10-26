@@ -268,6 +268,7 @@ func TestCodexHookDeliveryLeavesNoTransportDetailInTheIngestLog(t *testing.T) {
 	const paneID = "%7"
 	home := t.TempDir()
 	cmd := testAICommand(home)
+	explicitPane := aiHookTestExplicitPane(cmd, paneID)
 	cmd.stdin = bytes.NewBufferString(
 		`{"hook_event_name":"Stop","thread_id":"codex-session","turn_id":"turn-leak","cwd":"/repo/projmux"}`)
 	base := codexHookIngestReadCommand(paneID)
@@ -279,7 +280,7 @@ func TestCodexHookDeliveryLeavesNoTransportDetailInTheIngestLog(t *testing.T) {
 		}
 		return base(ctx, name, args...)
 	}
-	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+	if err := cmd.Run([]string{"ingest", "codex-hook", "--pane=" + explicitPane}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("an unroutable Stop was ingested without an error")
 	}
 	path, err := cmd.aiIngestLogPath()

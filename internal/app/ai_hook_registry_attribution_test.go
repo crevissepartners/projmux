@@ -218,7 +218,9 @@ func TestMatchAIPaneKeepsTheRegistryStepBehindTheEstablishedLadder(t *testing.T)
 			}
 			return ""
 		}
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			args = stripRecordedTmuxRoute(args)
 			if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 				return []byte("%cwd\x1f/repo/projmux\x1fthread-native\x1f\n"), nil
 			}
@@ -262,7 +264,9 @@ func TestMatchAIPaneLeavesTheLadderReasonWhenThereIsNoConversation(t *testing.T)
 	}
 
 	readable := sharedHostCommand(t, registry)
+	readable.lookupEnv = aiHookTestEnvironment(readable.lookupEnv, "/tmp/hook-test/socket,42,0")
 	readable.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 			return []byte("%other\x1f/repo/other\x1f\x1f\n"), nil
 		}

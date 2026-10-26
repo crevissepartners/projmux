@@ -108,10 +108,11 @@ func newSessionRefHarness(t testing.TB, provider string) *sessionRefHarness {
 			return nil
 		},
 		readCommand: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			if row, ok := testAIPaneRouteProbe(name, args); ok {
-				return row, nil
+			if _, ok := testAIPaneRouteProbe(name, args); ok {
+				return codexHookDeliveryRouteRow("%7", h.envPaneUID), nil
 			}
 			h.tmuxCalls = append(h.tmuxCalls, name+" "+strings.Join(args, " "))
+			args = stripRecordedTmuxRoute(args)
 			if len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
 				return []byte(h.paneUID + "\n"), nil
 			}
@@ -169,6 +170,11 @@ func TestCreateTimeSessionRefMakesSameAndCrossProviderHooksWriteFree(t *testing.
 
 func (h *sessionRefHarness) ingest(t *testing.T, args []string, payload string) {
 	t.Helper()
+	// Model the installed hook's activation-derived --pane argument while
+	// keeping this managed fixture detached (no synthetic TMUX receipt).
+	if !slices.ContainsFunc(args, func(arg string) bool { return arg == "--pane" || strings.HasPrefix(arg, "--pane=") }) {
+		args = append(append([]string(nil), args...), "--pane="+h.envPaneUID)
+	}
 	h.cmd.stdin = strings.NewReader(payload)
 	var stdout, stderr bytes.Buffer
 	if err := h.cmd.runIngest(args, &stdout, &stderr); err != nil {

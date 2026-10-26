@@ -142,7 +142,11 @@ func TestSharedPaneRoutingProviderConsumers(t *testing.T) {
 			cmd.notifyStore = &stubNotifyStore{}
 			cmd.stdin = strings.NewReader(tc.payload)
 			cmd.now = func() time.Time { return time.Unix(100, 0) }
-			if err := cmd.Run(append([]string{"ingest", tc.source}, tc.args...), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			args := append([]string{"ingest", tc.source}, tc.args...)
+			if tc.source != "bell" {
+				args = append(args, "--pane="+aiHookTestExplicitPane(cmd, "%7"))
+			}
+			if err := cmd.Run(args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatal(err)
 			}
 			writes := cmdRecorder(cmd).commands
@@ -264,7 +268,8 @@ func TestSharedPaneRoutingCodexIngest(t *testing.T) {
 				}
 				return nil
 			}
-			err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
+			explicitPane := aiHookTestExplicitPane(cmd, "%7")
+			err := cmd.Run([]string{"ingest", "codex-hook", "--pane=" + explicitPane}, &bytes.Buffer{}, &bytes.Buffer{})
 			path, pathErr := cmd.aiIngestLogPath()
 			if pathErr != nil {
 				t.Fatal(pathErr)

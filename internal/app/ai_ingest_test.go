@@ -148,6 +148,9 @@ func TestMatchAIPanePriority(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/hook-test/socket,42,0"
+		}
 		if name == "TMUX_PANE" {
 			return "%env"
 		}
@@ -157,8 +160,9 @@ func TestMatchAIPanePriority(t *testing.T) {
 		t.Fatalf("env match = %q, reason %q, want %%env", got, reason)
 	}
 
-	cmd.lookupEnv = func(string) string { return "" }
+	cmd.lookupEnv = aiHookTestEnvironment(func(string) string { return "" }, "/tmp/hook-test/socket,42,0")
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}) {
 			return []byte("%cwd\x1f/repo/projmux\x1fthread-1\x1fsession-1\n%thread\x1f/repo/other\x1fthread-2\x1fsession-2\n"), nil
 		}
@@ -190,8 +194,9 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 		"tool_input": {"command": "go test ./internal/app"}
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	explicitPane := aiHookTestExplicitPane(cmd, "%7")
 
-	err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.Run([]string{"ingest", "codex-hook", "--pane=" + explicitPane}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Run ingest codex-hook PermissionRequest error = %v", err)
 	}
@@ -240,8 +245,9 @@ func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
 		"cwd": "/repo/projmux"
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	explicitPane := aiHookTestExplicitPane(cmd, "%7")
 
-	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"ingest", "codex-hook", "--pane=" + explicitPane}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook Stop error = %v", err)
 	}
 	if len(store.pushed) != 1 {
@@ -268,6 +274,7 @@ func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 		"model": "gpt-5.1-codex"
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook UserPromptSubmit error = %v", err)
@@ -303,6 +310,7 @@ func TestIngestCodexHookQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 		"tool_input": {"command": "go test ./internal/app"}
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook PreToolUse error = %v", err)
@@ -371,6 +379,7 @@ func TestIngestCodexHookRuntimeNotifyPushesGenericQueueOnlyRow(t *testing.T) {
 		"tool_input": {"command": "go test ./internal/app", "description": "run focused tests"}
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook PreToolUse error = %v", err)
@@ -439,6 +448,7 @@ func TestIngestCodexHookRuntimeNotifySuppressesSendNotiHook(t *testing.T) {
 		"tool_input": {"file_path": "/repo/projmux/internal/app/ai_ingest.go"}
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook PostToolUse error = %v", err)
@@ -486,6 +496,7 @@ func TestIngestCodexHookCatalogOverrideEventFallsBackToQuiet(t *testing.T) {
 		"tool_input": {"command": "make test"}
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook ExperimentalEvent error = %v", err)
@@ -530,6 +541,7 @@ func TestIngestCodexHookRuntimeQuietAppliesToKnownNotifyEvent(t *testing.T) {
 		"cwd": "/repo/projmux"
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook Stop error = %v", err)
@@ -584,6 +596,7 @@ func TestIngestCodexHookBlankSessionIDDoesNotRewriteResumeMetadata(t *testing.T)
 		"model": "gpt-5.1-codex"
 	}`)
 	cmd.readCommand = codexHookIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest codex-hook blank session id error = %v", err)
@@ -1101,6 +1114,8 @@ func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 		return ""
 	}
 
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+
 	err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Run ingest claude-hook UserPromptSubmit error = %v", err)
@@ -1136,6 +1151,7 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 		"tool_input": {"command": "go test ./internal/app"}
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
@@ -1191,6 +1207,7 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 		"transcript_path": "` + transcript + `"
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Stop error = %v", err)
 	}
@@ -1210,6 +1227,7 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 		"cwd": "/repo/projmux"
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Stop without transcript error = %v", err)
 	}
@@ -1234,6 +1252,7 @@ func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
 		"message": "Need deployment target"
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Notification error = %v", err)
@@ -1318,6 +1337,7 @@ func TestIngestClaudeExtraEvents(t *testing.T) {
 			cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
 			cmd.stdin = strings.NewReader(tc.payload)
 			cmd.readCommand = claudeIngestReadCommand("%7")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 			if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run ingest claude-hook error = %v", err)
@@ -1360,6 +1380,7 @@ func TestIngestClaudeSubagentStopLogsQuietWithoutNotify(t *testing.T) {
 		"subagent": {"type": "reviewer", "id": "sub-7"}
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook SubagentStop error = %v", err)
@@ -1400,6 +1421,7 @@ func TestIngestClaudeRuntimeNotifyAppliesToKnownQuietEvent(t *testing.T) {
 		"subagent": {"type": "reviewer", "id": "sub-7"}
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook SubagentStop error = %v", err)
@@ -1426,6 +1448,7 @@ func TestIngestClaudeQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 		"tool_input": {"command": "go test ./internal/app"}
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook PreToolUse error = %v", err)
@@ -1465,6 +1488,7 @@ func TestIngestClaudeUnknownEventFallsBackToQuiet(t *testing.T) {
 		"tool_input": {"command": "make test"}
 	}`)
 	cmd.readCommand = claudeIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook FutureClaudeEvent error = %v", err)
@@ -1722,6 +1746,8 @@ func TestIngestAntigravityExplicitEventUsesTmuxPaneAndWritesHookResponse(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+
 	cmd.stdin = bytes.NewReader(data)
 	readCommand := antigravityIngestReadCommand("%inherited")
 	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -1748,6 +1774,7 @@ func TestIngestAntigravityExplicitEventUsesTmuxPaneAndWritesHookResponse(t *test
 func TestIngestAntigravityRawV1112FixtureRoutesExplicitPreInvocationByWorkspace(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 	data, err := os.ReadFile(filepath.Join("testdata", "antigravity", "pre_invocation_v1_1_12.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -1757,6 +1784,7 @@ func TestIngestAntigravityRawV1112FixtureRoutesExplicitPreInvocationByWorkspace(
 		if row, ok := testAIPaneRouteProbe(name, args); ok {
 			return row, nil
 		}
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}) {
 			return []byte("%workspace\x1f/workspace/sanitized-project\x1f\x1f\n"), nil
 		}
@@ -1790,6 +1818,7 @@ func TestIngestAntigravityPostToolUseRetainsErrorDiagnosticAndStaysQuiet(t *test
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
 	cmd.stdin = strings.NewReader(`{"conversationId":"ag-conv","cwd":"/repo/projmux","error":"sanitized tool failure"}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "PostToolUse"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
@@ -1824,6 +1853,8 @@ func TestIngestAntigravityUnknownExplicitEventSafelyDegrades(t *testing.T) {
 		}
 		return ""
 	}
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+
 	cmd.stdin = strings.NewReader(`{"eventName":"Stop","conversationId":"sanitized"}`)
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "FutureEvent"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1855,6 +1886,7 @@ func TestIngestAntigravityStopUnknownReasonStaysInfoWithDiagnostic(t *testing.T)
 		"fullyIdle": true
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Stop"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1898,6 +1930,7 @@ func TestIngestAntigravityStopPushesCompletionMetadataAndResumeState(t *testing.
 		"fullyIdle": true
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
@@ -1952,6 +1985,7 @@ func TestIngestAntigravityStopIgnoresToolConfirmationPendingForApproval(t *testi
 		"terminationReason": "completed"
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
@@ -1978,6 +2012,7 @@ func TestIngestAntigravityStopErrorPushesCritical(t *testing.T) {
 		"error": {"message": "tool failed"}
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
@@ -2083,12 +2118,14 @@ func TestIngestAntigravityLegacyStatuslineAfterStopKeepsCompletion(t *testing.T)
 	home := t.TempDir()
 	queue := notify.NewStore(filepath.Join(home, "notify.json"))
 	cmd := testAICommand(home)
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 	cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
 	baseRead := antigravityIngestReadCommand("%7")
 	aiState := ""
 	attentionState := ""
 	thinkingWrites := 0
 	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + aiPaneStateOption + "}"}) {
 			return []byte(aiState + "\n"), nil
 		}
@@ -2167,6 +2204,7 @@ func TestIngestAntigravityPostInvocationQuietWithoutNotify(t *testing.T) {
 		"cwd": "/repo/projmux"
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 
 	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook PostInvocation error = %v", err)
@@ -2225,6 +2263,7 @@ func claudeIngestReadCommand(paneID string) func(context.Context, string, ...str
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
+		args = stripRecordedTmuxRoute(args)
 		switch {
 		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
 			return []byte(paneID + "\x1f/repo/projmux\x1f\x1f\n"), nil
@@ -2245,9 +2284,13 @@ func claudeIngestReadCommand(paneID string) func(context.Context, string, ...str
 
 func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
 	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
+		args = stripRecordedTmuxRoute(args)
 		switch {
 		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
 			return []byte(paneID + "\x1f/repo/projmux\x1f\x1fcodex-session\n"), nil
@@ -2261,11 +2304,6 @@ func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...
 			return []byte(paneID + "\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{socket_path}"}):
 			return []byte("/tmp/tmux-1000/projmux\n"), nil
-		// The hook ingest fixture stands in for a hook the shared app-server
-		// launched: it inherits no tmux environment, so the reflection proves
-		// projmux's own app-owned route holds this Pane before writing to it.
-		case reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", paneID, "-F", codexHookDeliveryRouteFormat}):
-			return codexHookDeliveryRouteRow(paneID, "pan-"+strings.TrimPrefix(paneID, "%")), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -2279,6 +2317,7 @@ func antigravityIngestReadCommand(paneID string) func(context.Context, string, .
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
+		args = stripRecordedTmuxRoute(args)
 		switch {
 		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
 			return []byte(paneID + "\x1f/repo/projmux\x1f\x1f\n"), nil

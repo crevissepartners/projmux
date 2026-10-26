@@ -17,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -759,8 +760,9 @@ func (m aiHookPaneMarkers) record(c *aiCommand, paneID, option, value string) {
 // normally the whole answer: it is resolved through the Registry and does not
 // fall through to the inherited-environment ladder, because falling through
 // would attribute the event to whichever other live Pane happens to share a
-// working directory. The established three-step ladder is unchanged and remains
-// the answer whenever no explicit identity arrived.
+// working directory. The established three-step ladder remains the answer
+// when an exact inherited tmux server is available. Detached hooks use only
+// registered conversations.
 //
 // The one explicit value that is not an answer is one that was never the hook's
 // own. A provider host shared by several Panes inherits the activation envelope
@@ -781,6 +783,10 @@ func (m aiHookPaneMarkers) record(c *aiCommand, paneID, option, value string) {
 // not a binding: nothing here decides what a conversation is bound to, and a
 // conversation no Pane claims fails by name rather than landing on a neighbour.
 func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
+	if !c.hasInheritedAIHookTransport() {
+		identity, reason := c.matchDetachedAIHookPane(in)
+		return identity.paneID, reason
+	}
 	if explicit := strings.TrimSpace(in.ExplicitPane); explicit != "" {
 		paneID, reason := c.resolveExplicitAIPane(in.Provider, explicit)
 		if paneID != "" || reason != aiPaneMatchReasonExplicitForeign {
@@ -846,6 +852,46 @@ func (c *aiCommand) matchAIPaneAfterForeignExplicit(in aiPaneMatchInput) (string
 	return "", aiPaneMatchReasonExplicitForeignOnly
 }
 
+// Detached matching never probes a default or app server for a new target.
+func (c *aiCommand) hasInheritedAIHookTransport() bool {
+	route, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{InheritedTMUX: c.env("TMUX")})
+	return err == nil && route.Present()
+}
+
+// aiHookPaneIdentity retains the resource that attribution proved. A runtime
+// handle alone is reusable, so it must never become a fresh Registry lookup
+// between conversation attribution and transport containment.
+type aiHookPaneIdentity struct {
+	paneID  string
+	paneUID string
+}
+
+func (c *aiCommand) matchAIHookPane(in aiPaneMatchInput) (aiHookPaneIdentity, string) {
+	if !c.hasInheritedAIHookTransport() {
+		return c.matchDetachedAIHookPane(in)
+	}
+	paneID, reason := c.matchAIPane(in)
+	return aiHookPaneIdentity{paneID: paneID}, reason
+}
+
+func (c *aiCommand) matchDetachedAIHookPane(in aiPaneMatchInput) (aiHookPaneIdentity, string) {
+	if explicit := strings.TrimSpace(in.ExplicitPane); explicit != "" {
+		identity, reason := c.resolveExplicitAIHookPane(in.Provider, explicit)
+		if identity.paneID != "" || reason != aiPaneMatchReasonExplicitForeign {
+			return identity, reason
+		}
+		identity, _ = c.resolveRegisteredAIHookPane(in.Provider, in.ThreadID, in.SessionID)
+		if identity.paneID != "" {
+			return identity, ""
+		}
+		return aiHookPaneIdentity{}, aiPaneMatchReasonExplicitForeignOnly
+	}
+	if strings.TrimSpace(in.ThreadID) == "" && strings.TrimSpace(in.SessionID) == "" {
+		return aiHookPaneIdentity{}, aiPaneMatchReasonNoInventory
+	}
+	return c.resolveRegisteredAIHookPane(in.Provider, in.ThreadID, in.SessionID)
+}
+
 // registeredPaneProvider reports the provider the Registry records for a Pane,
 // addressed by either spelling a step can produce. It demands the same round
 // trip resolveExplicitAIPane does -- activation handle, owning Agent, and that
@@ -907,29 +953,43 @@ func (c *aiCommand) matchAIPaneFromInventory(in aiPaneMatchInput) (string, strin
 // both end as a named failure, because a hook that lands on the wrong Pane is
 // worse than one that lands nowhere.
 func (c *aiCommand) resolveRegisteredConversationPane(threadID, sessionID string) (string, string) {
+	identity, reason := c.resolveRegisteredAIHookPane("", threadID, sessionID)
+	return identity.paneID, reason
+}
+
+func (c *aiCommand) resolveRegisteredAIHookPane(provider, threadID, sessionID string) (aiHookPaneIdentity, string) {
 	if c.loadRegistry == nil {
-		return "", aiPaneMatchReasonRegistryUnavailable
+		return aiHookPaneIdentity{}, aiPaneMatchReasonRegistryUnavailable
 	}
 	registry, err := c.loadRegistry()
 	if err != nil {
-		return "", aiPaneMatchReasonRegistryUnavailable
+		return aiHookPaneIdentity{}, aiPaneMatchReasonRegistryUnavailable
 	}
 	panes := registeredConversationPanes(registry)
+	resolved := aiHookPaneIdentity{}
 	for _, id := range []string{threadID, sessionID} {
-		runtimeID, ok := panes[strings.TrimSpace(id)]
+		identity, ok := panes[strings.TrimSpace(id)]
 		if !ok || strings.TrimSpace(id) == "" {
 			continue
 		}
-		if runtimeID == "" {
-			return "", aiPaneMatchReasonConversationShared
+		if identity.paneID == "" || (resolved.paneID != "" && resolved != identity) {
+			return aiHookPaneIdentity{}, aiPaneMatchReasonConversationShared
 		}
-		return runtimeID, ""
+		resolved = identity
 	}
-	return "", aiPaneMatchReasonConversationUnknown
+	if resolved.paneID == "" {
+		return aiHookPaneIdentity{}, aiPaneMatchReasonConversationUnknown
+	}
+	// Coherence uses the very snapshot that attributed the conversation,
+	// never a later occupant of the same runtime handle.
+	if explicitAIPaneIsForeign(provider, registeredPaneProvider(registry, resolved.paneUID)) {
+		return aiHookPaneIdentity{}, aiPaneMatchReasonExplicitForeign
+	}
+	return resolved, ""
 }
 
 // registeredConversationPanes indexes every conversation identifier the Registry
-// currently records against the live runtime handle of the Pane that holds it.
+// currently records against the resource UID and runtime handle of its Pane.
 //
 // The index is built from the resource model, never from a provider name: a
 // Pane contributes the conversation its current activation refinement recorded
@@ -942,18 +1002,18 @@ func (c *aiCommand) resolveRegisteredConversationPane(threadID, sessionID string
 // A conversation claimed by two Panes maps to the empty handle. That is the
 // ambiguity marker, not an absent entry: the caller has to be able to tell "no
 // Pane holds this" from "more than one does", and neither may resolve.
-func registeredConversationPanes(registry coremetadata.Registry) map[string]string {
-	panes := make(map[string]string, len(registry.Panes))
-	claim := func(conversationID, runtimeID string) {
+func registeredConversationPanes(registry coremetadata.Registry) map[string]aiHookPaneIdentity {
+	panes := make(map[string]aiHookPaneIdentity, len(registry.Panes))
+	claim := func(conversationID string, identity aiHookPaneIdentity) {
 		conversationID = strings.TrimSpace(conversationID)
 		if conversationID == "" {
 			return
 		}
-		if held, ok := panes[conversationID]; ok && held != runtimeID {
-			panes[conversationID] = ""
+		if held, ok := panes[conversationID]; ok && held != identity {
+			panes[conversationID] = aiHookPaneIdentity{}
 			return
 		}
-		panes[conversationID] = runtimeID
+		panes[conversationID] = identity
 	}
 	for i := range registry.Panes {
 		pane := &registry.Panes[i]
@@ -967,9 +1027,9 @@ func registeredConversationPanes(registry coremetadata.Registry) map[string]stri
 			continue
 		}
 		if codex := pane.Status.Activation.Codex; codex != nil {
-			claim(codex.ThreadID, runtimeID)
+			claim(codex.ThreadID, aiHookPaneIdentity{paneID: runtimeID, paneUID: pane.Metadata.UID})
 		}
-		claim(agent.Status.SessionRef.ConversationID(), runtimeID)
+		claim(agent.Status.SessionRef.ConversationID(), aiHookPaneIdentity{paneID: runtimeID, paneUID: pane.Metadata.UID})
 	}
 	return panes
 }
@@ -990,31 +1050,36 @@ func registeredConversationPanes(registry coremetadata.Registry) map[string]stri
 // ran a provider by hand -- is not a contradiction and resolves as before. The
 // rule is symmetric over providers and names none of them.
 func (c *aiCommand) resolveExplicitAIPane(provider, ref string) (string, string) {
+	identity, reason := c.resolveExplicitAIHookPane(provider, ref)
+	return identity.paneID, reason
+}
+
+func (c *aiCommand) resolveExplicitAIHookPane(provider, ref string) (aiHookPaneIdentity, string) {
 	if c.loadRegistry == nil {
-		return "", aiPaneMatchReasonRegistryUnavailable
+		return aiHookPaneIdentity{}, aiPaneMatchReasonRegistryUnavailable
 	}
 	registry, err := c.loadRegistry()
 	if err != nil {
-		return "", aiPaneMatchReasonRegistryUnavailable
+		return aiHookPaneIdentity{}, aiPaneMatchReasonRegistryUnavailable
 	}
 	pane, ok := explicitAIPaneResource(registry, ref)
 	if !ok {
-		return "", aiPaneMatchReasonExplicitUnknown
+		return aiHookPaneIdentity{}, aiPaneMatchReasonExplicitUnknown
 	}
 	runtimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID)
 	if runtimeID == "" {
-		return "", aiPaneMatchReasonExplicitNoRuntime
+		return aiHookPaneIdentity{}, aiPaneMatchReasonExplicitNoRuntime
 	}
 	if agentUID := strings.TrimSpace(pane.Status.Activation.AgentUID); agentUID != "" {
 		agent, ok := registry.Agent(agentUID)
 		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
-			return "", aiPaneMatchReasonExplicitStale
+			return aiHookPaneIdentity{}, aiPaneMatchReasonExplicitStale
 		}
 		if explicitAIPaneIsForeign(provider, agent.Spec.Provider) {
-			return "", aiPaneMatchReasonExplicitForeign
+			return aiHookPaneIdentity{}, aiPaneMatchReasonExplicitForeign
 		}
 	}
-	return runtimeID, ""
+	return aiHookPaneIdentity{paneID: runtimeID, paneUID: pane.Metadata.UID}, ""
 }
 
 // explicitAIPaneIsForeign reports whether the Registry positively contradicts a
@@ -1044,7 +1109,15 @@ func explicitAIPaneResource(registry coremetadata.Registry, ref string) (*coreme
 }
 
 func (c *aiCommand) listAIPaneMatchRows() ([]aiPaneMatchRow, bool) {
-	rows, err := c.muxRunner().ListPanes(context.Background(), intmux.ListPanesOptions{
+	route, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{InheritedTMUX: c.env("TMUX")})
+	if err != nil || !route.Present() {
+		return nil, false
+	}
+	runner := intmux.NewRunner(explicitTmuxRunner{
+		Runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
+		Target: route,
+	})
+	rows, err := runner.ListPanes(context.Background(), intmux.ListPanesOptions{
 		All:     true,
 		Formats: aiIngestListPanesFormats,
 	})

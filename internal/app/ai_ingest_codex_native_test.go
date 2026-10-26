@@ -233,6 +233,10 @@ func TestNativeCodexHookAuthoritySemanticWriteSet(t *testing.T) {
 			cmd.stdin = bytes.NewBufferString(`{"hook_event_name":"Stop","thread_id":"thread-phase0r","turn_id":"turn-phase0r","cwd":"/repo/projmux"}`)
 			baseRead := codexHookIngestReadCommand(identity.RuntimeID)
 			cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if _, ok := testAIPaneRouteProbe(name, args); ok {
+					return codexHookDeliveryRouteRow(identity.RuntimeID, identity.PaneUID), nil
+				}
+				args = stripRecordedTmuxRoute(args)
 				switch {
 				case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{" + aiPaneCodexAuthorityOption + "}"}):
 					if test.readErr {
@@ -382,6 +386,10 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 	var hookReadOnce sync.Once
 	baseRead := codexHookIngestReadCommand(identity.RuntimeID)
 	hookCommand.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if _, ok := testAIPaneRouteProbe(name, args); ok {
+			return codexHookDeliveryRouteRow(identity.RuntimeID, identity.PaneUID), nil
+		}
+		args = stripRecordedTmuxRoute(args)
 		switch {
 		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{" + aiPaneCodexAuthorityOption + "}"}):
 			optionsMu.Lock()
@@ -2827,7 +2835,8 @@ func TestCodexHookFallbackSemanticDeliverySurfacesAndExactAck(t *testing.T) {
 					cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
 					return nil
 				}
-				if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				explicitPane := aiHookTestExplicitPane(cmd, "%7")
+				if err := cmd.Run([]string{"ingest", "codex-hook", "--pane=" + explicitPane}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 					t.Fatal(err)
 				}
 

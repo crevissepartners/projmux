@@ -115,10 +115,16 @@ func newClaudeQuietHookFixture(t *testing.T, owned bool) *claudeQuietHookFixture
 		}
 		return ""
 	}
+	// The unbound case models an inherited shell server; the owned case
+	// deliberately remains detached and uses the installed explicit identity.
+	if !owned {
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if row, ok := testAIPaneRouteProbe(name, args); ok {
-			return row, nil
+		if _, ok := testAIPaneRouteProbe(name, args); ok {
+			return codexHookDeliveryRouteRow(claudeQuietHookPane, paneUID), nil
 		}
+		args = stripRecordedTmuxRoute(args)
 		if paneUID != "" && name == "tmux" && len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
 			return []byte(paneUID + "\n"), nil
 		}
