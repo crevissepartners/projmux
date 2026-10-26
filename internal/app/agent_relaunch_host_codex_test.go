@@ -627,138 +627,148 @@ func codexHostMoveRecoveryCLI(t *testing.T, fault string) {
 	}
 }
 
-// The public SDK relaunch of a tmux Codex Agent meets the journal an unfinished
-// host transfer retains exactly as `agent relaunch` does. On the same fixture a
-// dry run and an inexact request refuse with the CLI's own text before any
-// effect, and the exact recovery request (Host tmux, Confirm, nothing else)
+// The public SDK relaunch of a Codex Agent meets the journal an unfinished host
+// transfer retains exactly as `agent relaunch` does, whether the Agent is left
+// on its failed process target or on a reserved tmux target. On the same
+// fixture a dry run and inexact requests refuse with the CLI's own text before
+// any effect, and the exact recovery request (Host tmux, Confirm, nothing else)
 // runs the CLI recovery: each variant recovers once, through one surface, to
 // the same Agent, Pane and journal state.
 func TestCodexHostTransferSDKCLIParity(t *testing.T) {
 	if os.Getenv("PMX_TEST_CLI") == "" {
 		t.Skip("set PMX_TEST_CLI")
 	}
-	var recovered []string
-	for _, sdk := range []bool{false, true} {
-		t.Run(map[bool]string{false: "cli-recovers", true: "sdk-recovers"}[sdk], func(t *testing.T) {
-			f, source, oldPane, socket := codexHostMoveCLIFixture(t)
-			ref := "uid:" + source.Metadata.UID
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			codexHostMovePendingJournal(t, ctx, f, ref, socket)
-			// A failed native restore leaves its reserved tmux Pane with the
-			// journal still pending: the route the SDK takes for a tmux Agent.
-			codexHostMoveFailRecovery(t, ctx, f, ref, socket, "split")
-			paths, err := config.DefaultPathsFromEnv()
-			if err != nil {
-				t.Fatal(err)
-			}
-			sum := sha256.Sum256([]byte(source.Metadata.UID))
-			journal := filepath.Join(paths.StateDir, "codex-host-transfers", fmt.Sprintf("%x.json", sum[:]))
-			reg, err := f.store.LoadReadOnly()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if pane, _ := processResumePane(reg, source.Metadata.UID); pane != nil {
-				t.Fatalf("fixture must leave no process source: %+v", pane)
-			}
-			if a, _ := reg.Agent(source.Metadata.UID); a.Status.Reason != "native-transfer-planned" {
-				t.Fatalf("fixture must leave the reserved native tmux target: %+v", a.Status)
-			}
-			client, err := projmux.NewClient(projmux.Options{HomeDir: os.Getenv("HOME"), ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
-			if err != nil {
-				t.Fatal(err)
-			}
-			evidence := func() string {
-				t.Helper()
-				registry, err := os.ReadFile(f.store.Path())
-				if err != nil {
-					t.Fatal(err)
-				}
-				pending, err := os.ReadFile(journal)
-				if err != nil {
-					t.Fatal(err)
-				}
-				panes, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}").Output()
-				if err != nil {
-					t.Fatal(err)
-				}
-				return string(registry) + "\x00" + string(pending) + "\x00" + string(panes)
-			}
-			for _, tc := range []struct {
-				name string
-				cli  []string
-				sdk  core.RelaunchAgentRequest
-				text string
-			}{
-				{"dry-run", []string{"--dry-run"}, core.RelaunchAgentRequest{DryRun: true}, "agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: "},
-				{"no-host", []string{"--yes"}, core.RelaunchAgentRequest{Confirm: true}, "agent relaunch: recover the previous exact recipe first; recover with: "},
-				{"settings-change", []string{"--host", "tmux", "--yes", "--effort", "high"}, core.RelaunchAgentRequest{Host: "tmux", Confirm: true, Effort: "high"}, "agent relaunch: recover the previous exact recipe first; recover with: "},
-			} {
-				before := evidence()
-				args := append([]string{"agent", "relaunch", ref, "--socket-path", socket}, tc.cli...)
-				var stderr bytes.Buffer
-				cli := exec.CommandContext(ctx, f.binary, args...)
-				cli.Stderr = &stderr
-				if out, err := cli.Output(); err == nil {
-					t.Fatalf("%s: CLI did not refuse: %s", tc.name, out)
-				}
-				if before != evidence() {
-					t.Fatalf("%s: CLI refusal changed state", tc.name)
-				}
-				q := tc.sdk
-				q.Ref, q.SocketPath = ref, socket
-				got, err := client.RelaunchAgent(ctx, q)
-				var refused *projmux.Refusal
-				if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchExecutionFailed {
-					t.Fatalf("%s: SDK did not refuse with an existing code: result=%+v err=%v", tc.name, got, err)
-				}
-				want := tc.text + codexTransferRecoveryCommand(source.Metadata.UID, agentRelaunchRequest{socket: deleteSocketFlags{socketPath: socket}})
-				if refused.Error() != want || strings.TrimSpace(stderr.String()) != want {
-					t.Fatalf("%s: refusal text differs\nSDK=%q\nCLI=%q\nwant=%q", tc.name, refused.Error(), stderr.String(), want)
-				}
-				if before != evidence() {
-					t.Fatalf("%s: SDK refusal changed state", tc.name)
-				}
-				t.Logf("%s: CLI and SDK refused with %q", tc.name, want)
-			}
-			var result core.RelaunchAgentResult
-			if sdk {
-				result, err = client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Host: "tmux", Confirm: true, SocketPath: socket})
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				hostCLIOutput(t, f, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
-			}
-			reg, err = f.store.LoadReadOnly()
-			if err != nil {
-				t.Fatal(err)
-			}
-			current, ok := reg.Agent(source.Metadata.UID)
-			if !ok || current.Status.PaneRef == oldPane || current.Status.Phase != coremetadata.PhaseRunning || !current.Status.SessionRef.SameConversation(source.Status.SessionRef) {
-				t.Fatal("recovery did not restore same-thread fresh native writer")
-			}
-			pane, present := reg.Pane(current.Status.PaneRef)
-			if !present || pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() {
-				t.Fatal("recovery lacks a verified native tmux writer")
-			}
-			if sdk && (result.Outcome != personaOutcomeResumed || result.DryRun || result.CurrentHost != "tmux" || result.TargetHost != "tmux" || result.AgentUID != source.Metadata.UID || result.NewPaneUID != current.Status.PaneRef) {
-				t.Fatalf("SDK recovery result %+v, Agent pane %s", result, current.Status.PaneRef)
-			}
-			if _, err := os.Stat(journal); !os.IsNotExist(err) {
-				t.Fatalf("pending journal remains: %v", err)
-			}
-			archives, err := filepath.Glob(filepath.Join(paths.StateDir, "codex-host-transfers", "*.completed.json"))
-			if err != nil || len(archives) != 1 {
-				t.Fatalf("completed evidence: %v %v", archives, err)
-			}
-			recovered = append(recovered, fmt.Sprintf("phase=%s runtime=%s managed-base=%s archives=%d", current.Status.Phase, pane.Spec.Runtime.EffectiveKind(), current.Metadata.Annotations["projmux.io/codex-managed-base-status"], len(archives)))
-		})
+	for _, start := range []string{"process-target", "tmux-target"} {
+		var recovered []string
+		for _, sdk := range []bool{false, true} {
+			t.Run(start+"/"+map[bool]string{false: "cli-recovers", true: "sdk-recovers"}[sdk], func(t *testing.T) {
+				recovered = append(recovered, codexHostTransferSDKCLIParity(t, start, sdk))
+			})
+		}
+		if len(recovered) == 2 && recovered[0] != recovered[1] {
+			t.Fatalf("%s: recovered state differs CLI %q SDK %q", start, recovered[0], recovered[1])
+		}
+		t.Logf("%s: recovered state %q", start, recovered)
 	}
-	if len(recovered) == 2 && recovered[0] != recovered[1] {
-		t.Fatalf("recovered state differs CLI %q SDK %q", recovered[0], recovered[1])
+}
+
+func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string {
+	f, source, oldPane, socket := codexHostMoveCLIFixture(t)
+	ref := "uid:" + source.Metadata.UID
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	// The failed move leaves the Agent on its failed process target.
+	codexHostMovePendingJournal(t, ctx, f, ref, socket)
+	if start == "tmux-target" {
+		// A failed native restore then leaves its reserved tmux Pane with the
+		// journal still pending: the route the SDK takes for a tmux Agent.
+		codexHostMoveFailRecovery(t, ctx, f, ref, socket, "split")
 	}
-	t.Logf("recovered state %q", recovered)
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(source.Metadata.UID))
+	journal := filepath.Join(paths.StateDir, "codex-host-transfers", fmt.Sprintf("%x.json", sum[:]))
+	reg, err := f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pane, _ := processResumePane(reg, source.Metadata.UID); (pane != nil) != (start == "process-target") {
+		t.Fatalf("%s fixture has process source %+v", start, pane)
+	}
+	if a, _ := reg.Agent(source.Metadata.UID); start == "tmux-target" && a.Status.Reason != "native-transfer-planned" {
+		t.Fatalf("fixture must leave the reserved native tmux target: %+v", a.Status)
+	}
+	client, err := projmux.NewClient(projmux.Options{HomeDir: os.Getenv("HOME"), ConfigDir: paths.ConfigDir, StateDir: paths.StateDir, ProjmuxExecutable: f.binary, SocketPath: socket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := func() string {
+		t.Helper()
+		registry, err := os.ReadFile(f.store.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := os.ReadFile(journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		panes, err := exec.Command("tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(registry) + "\x00" + string(pending) + "\x00" + string(panes)
+	}
+	for _, tc := range []struct {
+		name string
+		cli  []string
+		sdk  core.RelaunchAgentRequest
+		text string
+	}{
+		{"dry-run", []string{"--dry-run"}, core.RelaunchAgentRequest{DryRun: true}, "agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: "},
+		{"no-host", []string{"--yes"}, core.RelaunchAgentRequest{Confirm: true}, "agent relaunch: recover the previous exact recipe first; recover with: "},
+		{"settings-change", []string{"--host", "tmux", "--yes", "--effort", "high"}, core.RelaunchAgentRequest{Host: "tmux", Confirm: true, Effort: "high"}, "agent relaunch: recover the previous exact recipe first; recover with: "},
+	} {
+		before := evidence()
+		args := append([]string{"agent", "relaunch", ref, "--socket-path", socket}, tc.cli...)
+		var stderr bytes.Buffer
+		cli := exec.CommandContext(ctx, f.binary, args...)
+		cli.Stderr = &stderr
+		if out, err := cli.Output(); err == nil {
+			t.Fatalf("%s: CLI did not refuse: %s", tc.name, out)
+		}
+		if before != evidence() {
+			t.Fatalf("%s: CLI refusal changed state", tc.name)
+		}
+		q := tc.sdk
+		q.Ref, q.SocketPath = ref, socket
+		got, err := client.RelaunchAgent(ctx, q)
+		var refused *projmux.Refusal
+		if !errors.As(err, &refused) || refused.Code != projmux.CodeRelaunchExecutionFailed {
+			t.Fatalf("%s: SDK did not refuse with an existing code: result=%+v err=%v", tc.name, got, err)
+		}
+		want := tc.text + codexTransferRecoveryCommand(source.Metadata.UID, agentRelaunchRequest{socket: deleteSocketFlags{socketPath: socket}})
+		if refused.Error() != want || strings.TrimSpace(stderr.String()) != want {
+			t.Fatalf("%s: refusal text differs\nSDK=%q\nCLI=%q\nwant=%q", tc.name, refused.Error(), stderr.String(), want)
+		}
+		if before != evidence() {
+			t.Fatalf("%s: SDK refusal changed state", tc.name)
+		}
+		t.Logf("%s: CLI and SDK refused with %q", tc.name, want)
+	}
+	var result core.RelaunchAgentResult
+	if sdk {
+		result, err = client.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Host: "tmux", Confirm: true, SocketPath: socket})
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		hostCLIOutput(t, f, "agent", "relaunch", ref, "--host", "tmux", "--socket-path", socket, "--yes")
+	}
+	reg, err = f.store.LoadReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, ok := reg.Agent(source.Metadata.UID)
+	if !ok || current.Status.PaneRef == oldPane || current.Status.Phase != coremetadata.PhaseRunning || !current.Status.SessionRef.SameConversation(source.Status.SessionRef) {
+		t.Fatal("recovery did not restore same-thread fresh native writer")
+	}
+	pane, present := reg.Pane(current.Status.PaneRef)
+	if !present || pane.Spec.Runtime.EffectiveKind() == coremetadata.RuntimeProcess || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() {
+		t.Fatal("recovery lacks a verified native tmux writer")
+	}
+	if sdk && (result.Outcome != personaOutcomeResumed || result.DryRun || result.CurrentHost != "tmux" || result.TargetHost != "tmux" || result.AgentUID != source.Metadata.UID || result.NewPaneUID != current.Status.PaneRef) {
+		t.Fatalf("SDK recovery result %+v, Agent pane %s", result, current.Status.PaneRef)
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("pending journal remains: %v", err)
+	}
+	archives, err := filepath.Glob(filepath.Join(paths.StateDir, "codex-host-transfers", "*.completed.json"))
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("completed evidence: %v %v", archives, err)
+	}
+	return fmt.Sprintf("phase=%s runtime=%s managed-base=%s archives=%d", current.Status.Phase, pane.Spec.Runtime.EffectiveKind(), current.Metadata.Annotations["projmux.io/codex-managed-base-status"], len(archives))
 }
 
 // codexHostMoveFailRecovery makes one exact recovery attempt fail at the named
