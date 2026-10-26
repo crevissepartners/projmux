@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/crevissepartners/projmux/internal/core/receipt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -37,10 +39,53 @@ const (
 // The SDK has no current Pane and never queues a deferred self-kill.
 func (c *Client) Delete(ctx context.Context, req core.DeleteRequest) (core.DeleteResult, error) {
 	if req.Kind == core.KindAgent {
-		return c.deleteWithRunner(ctx, req, frozenTurnRunner{c})
+		return c.deleteWithRunner(ctx, req, deleteAgentTmuxRunner{frozenTurnRunner{c}})
 	}
 	return c.deleteWithRunner(ctx, req, tmux.ExecRunner{})
 }
+
+// deleteAgentTmuxRunner retains captured execution while preserving the typed
+// failure evidence used by deletion's exact-absence observers. Other frozen
+// runner consumers keep their existing error semantics.
+type deleteAgentTmuxRunner struct{ frozenTurnRunner }
+
+func (r deleteAgentTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	output, err := r.frozenTurnRunner.Run(ctx, name, args...)
+	if err == nil {
+		return output, nil
+	}
+	kind := tmux.CommandFailureRunner
+	var exitErr *exec.ExitError
+	var execErr *exec.Error
+	switch {
+	case errors.As(err, &exitErr):
+		kind = tmux.CommandFailureExit
+	case errors.As(err, &execErr):
+		kind = tmux.CommandFailureNotFound
+	case errors.Is(err, os.ErrPermission):
+		kind = tmux.CommandFailurePermission
+	}
+	return output, &deleteAgentTmuxError{cause: err, failure: tmux.CommandFailure{
+		Kind: kind, Stderr: strings.TrimSpace(string(output)),
+	}}
+}
+
+type deleteAgentTmuxError struct {
+	cause   error
+	failure tmux.CommandFailure
+}
+
+func (e *deleteAgentTmuxError) Error() string {
+	if e.failure.Stderr != "" {
+		return fmt.Sprintf("%v: %s", e.cause, e.failure.Stderr)
+	}
+	return e.cause.Error()
+}
+
+func (e *deleteAgentTmuxError) Unwrap() error { return e.cause }
+
+func (e *deleteAgentTmuxError) CommandFailure() tmux.CommandFailure { return e.failure }
+
 func (c *Client) deleteWithRunner(ctx context.Context, req core.DeleteRequest, runner mutationruntime.TmuxCommandRunner) (core.DeleteResult, error) {
 	out := core.DeleteResult{}
 	if err := ctx.Err(); err != nil {
