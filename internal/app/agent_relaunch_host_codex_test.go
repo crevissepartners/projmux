@@ -1256,6 +1256,48 @@ func waitCodexFixturePeerExit(t *testing.T, process coremetadata.ProcessIdentity
 	t.Errorf("owned fixture peer cleanup still running: pid=%d birth=%v", process.PID, process)
 }
 
+// stopFixtureProcesses stops every process of this uid, other than the test
+// itself, that was started for one fixture: its environment carries the
+// fixture root as PMX_TEST_PROCESS_ROOT, or its argv names the fixture state
+// directory (a detached observer such as `internal agent-hook ingest
+// codex-broker-watch` gets that directory as an argument and owns no socket the
+// broker cleanup could find). Each process is logged, its birth is read again
+// right before SIGTERM, and it must exit. Without /proc it does nothing.
+func stopFixtureProcesses(t *testing.T, root, stateDir string) {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		environ, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "environ"))
+		if err != nil {
+			continue
+		}
+		cmdline, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		argv := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+		if !slices.Contains(strings.Split(string(environ), "\x00"), "PMX_TEST_PROCESS_ROOT="+root) && !slices.Contains(argv, stateDir) {
+			continue
+		}
+		process, _, err := localipc.Process(pid)
+		if err != nil || process.OwnerUID != uint32(os.Getuid()) {
+			continue
+		}
+		t.Logf("fixture process left after the test: pid=%d argv=%q", pid, argv)
+		if current, _, err := localipc.Process(pid); err != nil || current != process {
+			continue
+		}
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			continue
+		}
+		waitCodexFixturePeerExit(t, process)
+	}
+}
+
 // TestRelaunchPromptPartsSDKCLIParity is Epic 3j Task 2 (763): after the
 // agent guidance and the Project's label link rules change, the public SDK
 // relaunch dry run of a tmux Agent reports what `agent relaunch --dry-run -o
@@ -1269,15 +1311,42 @@ func TestRelaunchPromptPartsSDKCLIParity(t *testing.T) {
 	for _, provider := range []string{aiModeCodex, aiModeClaude} {
 		var applied []string
 		for _, sdk := range []bool{false, true} {
-			t.Run(provider+"/"+map[bool]string{false: "cli-relaunches", true: "sdk-relaunches"}[sdk], func(t *testing.T) {
+			name := provider + "/" + map[bool]string{false: "cli-relaunches", true: "sdk-relaunches"}[sdk]
+			logProviderGuardRecord(t, name+" before")
+			t.Run(name, func(t *testing.T) {
+				// Deferred, this runs before the subtest's cleanups.
+				defer logProviderGuardRecord(t, name+" body end")
 				applied = append(applied, relaunchPromptPartsSDKCLIParity(t, provider, sdk))
 			})
+			logProviderGuardRecord(t, name+" after cleanup")
 		}
 		if len(applied) == 2 && applied[0] != applied[1] {
 			t.Fatalf("%s: relaunch differs CLI %q SDK %q", provider, applied[0], applied[1])
 		}
 		t.Logf("%s: relaunch %q", provider, applied)
 	}
+	time.Sleep(2 * time.Second)
+	logProviderGuardRecord(t, "2s after the last subtest")
+}
+
+// logProviderGuardRecord logs how many provider stand-in runs the liveguard has
+// recorded so far, with what `codex` resolves to and the head of PATH, so a CI
+// log shows when a stray `codex` run happened. The path is the liveguard's
+// private root (rootEnv) joined with providerDirName and providerRecordName in
+// internal/testutil/liveguard, which does not export them.
+func logProviderGuardRecord(t *testing.T, when string) {
+	t.Helper()
+	lines := 0
+	if root := os.Getenv("PMX_TEST_LIVE_MACHINE_GUARD_ROOT"); root != "" {
+		raw, _ := os.ReadFile(filepath.Join(root, "provider-bin", "invocations.log"))
+		lines = strings.Count(string(raw), "\n")
+	}
+	codex, err := exec.LookPath("codex")
+	if err != nil {
+		codex = "error: " + err.Error()
+	}
+	path := filepath.SplitList(os.Getenv("PATH"))
+	t.Logf("provider guard record %s: lines=%d codex=%s PATH[:3]=%q", when, lines, codex, path[:min(3, len(path))])
 }
 
 func relaunchPromptPartsSDKCLIParity(t *testing.T, provider string, sdk bool) string {
@@ -1300,7 +1369,8 @@ func relaunchPromptPartsSDKCLIParity(t *testing.T, provider string, sdk bool) st
 	// or control peer a relaunch starts later keeps probing `codex` on its
 	// PATH; once the fixture root is gone that lookup reaches the real codex.
 	// Registered after the fixture, this cleanup runs before its root is
-	// removed (t.Cleanup is LIFO) and stops only the peers this test started.
+	// removed (t.Cleanup is LIFO) and stops only the peers this test started,
+	// then every other process started for this fixture.
 	peerSockets := func() []string {
 		var found []string
 		for _, dir := range []string{"broker", agentControlDirName} {
@@ -1338,6 +1408,7 @@ func relaunchPromptPartsSDKCLIParity(t *testing.T, provider string, sdk bool) st
 			}
 			waitCodexFixturePeerExit(t, process)
 		}
+		stopFixtureProcesses(t, f.root, paths.StateDir)
 	})
 	guidance := []byte("Task 2 guidance: prefer projmux agent message send.")
 	writeAgentGuidance(t, paths, guidance)
