@@ -88,7 +88,15 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 			processSource = true
 		}
 	}
-	if processSource || (q.Host != "" && q.Host != "tmux") {
+	// An unfinished Codex host transfer journal takes precedence over the
+	// ordinary tmux relaunch, as in the CLI; only the executable's CLI code
+	// refuses or recovers it.
+	pendingTransfer := false
+	if target.Spec.Provider == "codex" {
+		_, statErr := os.Lstat(runtime.CodexHostTransferPath(c.paths.StateDir, target.Metadata.UID))
+		pendingTransfer = !errors.Is(statErr, os.ErrNotExist)
+	}
+	if processSource || pendingTransfer || (q.Host != "" && q.Host != "tmux") {
 		if processSource && q.Host != "tmux" {
 			q.SocketPath = requestSocket
 		}

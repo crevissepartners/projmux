@@ -18,12 +18,8 @@ import (
 // Recovery consumes the same owner-private reservation receipt; it never
 // recreates a broker, adopts a process, or revives old control tokens.
 func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, target coremetadata.Agent, request agentRelaunchRequest, path string, record *codexHostTransferRecord, stdout, stderr io.Writer) error {
-	recovery := codexTransferRecoveryCommand(target.Metadata.UID, request)
-	if request.dryRun {
-		return usageError("agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: " + recovery)
-	}
-	if request.host != "tmux" || !request.yes || request.model != "" || request.effort != "" || request.profile != nil || request.instructions != nil || len(request.reset) != 0 || len(request.prompt) != 0 {
-		return usageError("agent relaunch: recover the previous exact recipe first; recover with: " + recovery)
+	if err := refuseCodexTransferRecovery(target.Metadata.UID, request); err != nil {
+		return err
 	}
 	unlock, err := lockDeferredClaim(path)
 	if err != nil {
@@ -220,6 +216,19 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 	}
 	plan.codexTransfer = c.nativeTransferRebind(transfer, record, path)
 	return c.rebind.rebind(agentRelaunchSpelling, plan, stdout, stderr)
+}
+
+// refuseCodexTransferRecovery is what recovery refuses before any effect: a dry
+// run, and every request but the exact one (--host tmux --yes, nothing else).
+func refuseCodexTransferRecovery(uid string, request agentRelaunchRequest) error {
+	recovery := codexTransferRecoveryCommand(uid, request)
+	if request.dryRun {
+		return usageError("agent relaunch: pending Codex transfer recovery; nothing was changed; recover with: " + recovery)
+	}
+	if request.host != "tmux" || !request.yes || request.model != "" || request.effort != "" || request.profile != nil || request.instructions != nil || len(request.reset) != 0 || len(request.prompt) != 0 {
+		return usageError("agent relaunch: recover the previous exact recipe first; recover with: " + recovery)
+	}
+	return nil
 }
 
 func (c *agentCommand) reclaimCodexHostTransfer(ctx context.Context, record *codexHostTransferRecord) (*codexbroker.RemoteTransfer, error) {

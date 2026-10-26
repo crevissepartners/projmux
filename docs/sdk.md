@@ -1093,6 +1093,16 @@ fences the source generation. DryRun, self-target, busy without Confirm, stale
 bindings and unsupported requests cannot stop the source. Old process writers
 must pass exact Stop, actual Wait and retirement barriers before replacement.
 
+A Codex Agent whose earlier host move left an unfinished transfer behaves as in
+`agent relaunch`: that transfer takes precedence over every relaunch, on tmux
+and process sources alike. `DryRun` and every request other than the exact
+recovery one refuse before any effect with the CLI's text and its recovery
+command; the Code is `relaunch-execution-failed`. The exact recovery request is
+`Host: "tmux", Confirm: true` with no Model, Effort, Profile, Instructions, Reset
+or Prompt. It runs the CLI recovery through `Options.ProjmuxExecutable` and
+reports `Outcome` `resumed`, `CurrentHost` and `TargetHost` `tmux`, and the
+recovered `NewPaneUID`.
+
 Use `Options.ProjmuxExecutable` from the same build. Frozen Home, Config, State
 and captured provider environment reach the existing internal owner, including
 arbitrary absolute Config/State roots. The SDK reads or changes no ambient
