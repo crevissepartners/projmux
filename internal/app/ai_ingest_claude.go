@@ -51,16 +51,18 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		return err
 	}
 
-	paneID, matchReason := c.matchAIPane(aiPaneMatchInput{
+	identity, matchReason := c.matchAIHookPane(aiPaneMatchInput{
 		ExplicitPane: explicitPane,
 		Provider:     aiModeClaude,
 		CWD:          payload.CWD,
 		SessionID:    payload.SessionID,
 	})
+	paneID := identity.paneID
 	if paneID == "" {
 		c.appendAIIngestLog(claudeHookLogEntry("", payload, "ignored", aiIngestRecordReason(matchReason)))
 		return nil
 	}
+	c = c.withAIHookPaneRoute(identity)
 	defer c.flushPendingAgentSessionRef(paneID)
 
 	binding, owned, markers := c.markAIHookPaneBinding(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)

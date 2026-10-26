@@ -143,7 +143,7 @@ func TestManagedProviderHookProjectionFailureKeepsOneCommittedObservation(t *tes
 	}
 	h.cmd.stdin = strings.NewReader(`{"hook_event_name":"UserPromptSubmit","thread_id":"codex-thread-1","session_id":"codex-session-1","cwd":"/src/app"}`)
 	var stdout, stderr bytes.Buffer
-	err := h.cmd.runIngest([]string{"codex-hook"}, &stdout, &stderr)
+	err := h.cmd.runIngest([]string{"codex-hook", "--pane=" + h.envPaneUID}, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "committed Registry state") || !strings.Contains(err.Error(), "projmux reconcile resources") {
 		t.Fatalf("error = %v", err)
 	}

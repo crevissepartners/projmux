@@ -114,10 +114,14 @@ func newAntigravityQuietHookFixture(t *testing.T, owned bool) *antigravityQuietH
 		}
 		return ""
 	}
+	if !owned {
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if row, ok := testAIPaneRouteProbe(name, args); ok {
-			return row, nil
+		if _, ok := testAIPaneRouteProbe(name, args); ok {
+			return codexHookDeliveryRouteRow(antigravityQuietHookPane, paneUID), nil
 		}
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) >= 5 && args[0] == "display-message" {
 			switch args[4] {
 			case "#{" + tmuxopts.PaneUID + "}":

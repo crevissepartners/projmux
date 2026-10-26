@@ -50,16 +50,18 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 		return nil
 	}
 
-	paneID, matchReason := c.matchAIPane(aiPaneMatchInput{
+	identity, matchReason := c.matchAIHookPane(aiPaneMatchInput{
 		ExplicitPane: explicitPane,
 		Provider:     aiModeAntigravity,
 		CWD:          payload.CWD,
 		ThreadID:     payload.ConversationID,
 	})
+	paneID := identity.paneID
 	if paneID == "" {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	}
+	c = c.withAIHookPaneRoute(identity)
 	defer c.flushPendingAgentSessionRef(paneID)
 
 	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)

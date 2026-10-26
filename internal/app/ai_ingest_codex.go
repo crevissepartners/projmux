@@ -43,19 +43,22 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 		return nil
 	}
 	matchReason := ""
+	identity := aiHookPaneIdentity{paneID: paneID, paneUID: c.env(internalActivationPaneUIDEnv)}
 	if !nativeRouted {
-		paneID, matchReason = c.matchAIPane(aiPaneMatchInput{
+		identity, matchReason = c.matchAIHookPane(aiPaneMatchInput{
 			ExplicitPane: explicitPane,
 			Provider:     aiModeCodex,
 			CWD:          payload.CWD,
 			ThreadID:     payload.matchThreadID(),
 			SessionID:    payload.SessionID,
 		})
+		paneID = identity.paneID
 	}
 	if paneID == "" {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
+	c = c.withAIHookPaneRoute(identity)
 	authority, authorityErr := c.muxRunner().ShowPaneOption(context.Background(), paneID, aiPaneCodexAuthorityOption)
 	if nativeRouted && (authorityErr != nil || authority != codexAuthorityHook) {
 		reason := aiIngestReasonNativeAuthorityFailed

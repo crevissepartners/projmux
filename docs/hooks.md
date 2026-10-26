@@ -284,9 +284,20 @@ lands on somebody else's Pane. When it does not, the event is not attributed and
 
 An app-server shared by several Panes carries no envelope, so the argument
 expands to a bare `--pane=`. That is a valid answer meaning "nothing was handed
-over", and attribution falls back to the established ladder: `TMUX_PANE`, then a
-working-directory match against the live pane list, then a thread or session id
-match. Nothing about any of this is provider-specific.
+over". With a valid inherited `TMUX` server receipt, attribution keeps the
+established ladder: `TMUX_PANE`, then a working-directory match against that
+server's live pane list, then a thread or session id match. Without that receipt,
+only a unique conversation already registered to a live Agent/Pane binding can
+supply the target. A new session is not attributed merely because it shares a
+working directory; missing, ambiguous, stale, or foreign identities are refused.
+Nothing about this is provider-specific.
+
+Once attributed, provider-hook state, notification target reads, visibility,
+authority reads, and desktop notification markers use the same server route.
+An inherited exact socket is preserved. Without it, the existing app route must
+prove app ownership and containment of the attributed Pane; there is no default
+socket or server-search fallback. This does not make an unmanaged shell provider
+managed or change native/process notification authority.
 
 Attribution failures are a closed vocabulary in `projmux diagnostics agent-hook`:
 `pane inventory unavailable` (no live pane list could be read), `no matching

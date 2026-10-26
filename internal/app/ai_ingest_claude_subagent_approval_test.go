@@ -40,7 +40,8 @@ func claudeSubagentApprovalFixture(t *testing.T, mode string) *claudeQuietHookFi
 	read := f.cmd.readCommand
 	lookup := claudeIngestReadCommand(claudeQuietHookPane)
 	f.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		if mode == "binding_miss" && name == "tmux" && len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
+		plain := stripRecordedTmuxRoute(args)
+		if mode == "binding_miss" && name == "tmux" && len(plain) >= 5 && plain[0] == "display-message" && plain[4] == "#{"+tmuxopts.PaneUID+"}" {
 			return nil, os.ErrNotExist
 		}
 		if data, err := read(ctx, name, args...); err == nil {

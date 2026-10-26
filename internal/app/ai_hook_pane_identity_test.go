@@ -167,6 +167,7 @@ func TestMatchAIPanePrefersTheHandedPaneOverInheritedEvidence(t *testing.T) {
 		return ""
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 			return []byte("%cwd\x1f/repo/projmux\x1fthread-1\x1fsession-1\n"), nil
 		}
@@ -187,7 +188,8 @@ func TestMatchAIPanePrefersTheHandedPaneOverInheritedEvidence(t *testing.T) {
 	}
 }
 
-// Acceptance 2: with nothing handed over, the established ladder is untouched.
+// Acceptance 2: with nothing handed over and an inherited server, the
+// established ladder is untouched. Detached refusal is covered separately.
 func TestMatchAIPaneKeepsTheEstablishedFallbackWhenNothingWasHandedOver(t *testing.T) {
 	t.Parallel()
 
@@ -202,12 +204,15 @@ func TestMatchAIPaneKeepsTheEstablishedFallbackWhenNothingWasHandedOver(t *testi
 		t.Fatal("fallback matching must not consult the registry")
 		return coremetadata.Registry{}, nil
 	}
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
+
 	if paneID, reason := cmd.matchAIPane(aiPaneMatchInput{CWD: "/repo/projmux"}); paneID != "%inherited" || reason != "" {
 		t.Fatalf("env step = %q, reason %q, want %%inherited", paneID, reason)
 	}
 
-	cmd.lookupEnv = func(string) string { return "" }
+	cmd.lookupEnv = aiHookTestEnvironment(func(string) string { return "" }, "/tmp/hook-test/socket,42,0")
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 			return []byte("%cwd\x1f/repo/projmux\x1fthread-1\x1fsession-1\n%thread\x1f/repo/other\x1fthread-2\x1fsession-2\n"), nil
 		}
@@ -280,6 +285,7 @@ func TestMatchAIPaneRefusesAHandedPaneThatIsGone(t *testing.T) {
 				return ""
 			}
 			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				args = stripRecordedTmuxRoute(args)
 				if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 					return []byte("%9\x1f/repo/projmux\x1fthread-1\x1fsession-1\n"), nil
 				}
@@ -329,8 +335,9 @@ func TestAttributionFailureReasonsAreDistinctAndClosed(t *testing.T) {
 
 	// Nothing handed over, inventory readable, genuinely nothing matches.
 	noMatch := testAICommand(t.TempDir())
-	noMatch.lookupEnv = func(string) string { return "" }
+	noMatch.lookupEnv = aiHookTestEnvironment(func(string) string { return "" }, "/tmp/hook-test/socket,42,0")
 	noMatch.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 			return []byte("%other\x1f/repo/other\x1fthread-9\x1fsession-9\n"), nil
 		}
@@ -374,6 +381,7 @@ func TestAttributionFailureReasonsAreDistinctAndClosed(t *testing.T) {
 	// it into the downstream step's reason would hide that the hook was handed
 	// somebody else's Pane.
 	foreign := inheritedIdentityCommand(t, providerPaneRegistry("pane-claude", "%53", aiModeClaude), "%53")
+	foreign.lookupEnv = aiHookTestEnvironment(foreign.lookupEnv, "/tmp/hook-test/socket,42,0")
 	_, reason = foreign.resolveExplicitAIPane(aiModeCodex, "pane-claude")
 	record(t, "explicit pane of another provider", reason)
 	_, reason = foreign.matchAIPane(aiPaneMatchInput{ExplicitPane: "pane-claude", Provider: aiModeCodex})
@@ -492,6 +500,7 @@ func TestResolveExplicitAIPaneRefusesAnInheritedForeignIdentity(t *testing.T) {
 			t.Parallel()
 			registry := providerPaneRegistry(tc.pane, "%53", tc.provider)
 			cmd := inheritedIdentityCommand(t, registry, "%53")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 			for _, ref := range []string{tc.pane, "%53"} {
 				paneID, reason := cmd.resolveExplicitAIPane(tc.hook, ref)
 				if paneID != "" {
@@ -523,6 +532,7 @@ func TestMatchAIPaneNeverAttributesAnInheritedForeignIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := inheritedIdentityCommand(t, providerPaneRegistry(tc.pane, "%53", tc.provider), "%53")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 			paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
 				ExplicitPane: tc.pane,
 				Provider:     tc.hook,
@@ -561,6 +571,7 @@ func TestMatchAIPaneKeepsAnExplicitPaneWithNoRecordedProvider(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := inheritedIdentityCommand(t, providerPaneRegistry("pane-handed", "%77", tc.pane), "")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 			for _, ref := range []string{"pane-handed", "%77"} {
 				paneID, reason := cmd.matchAIPane(aiPaneMatchInput{ExplicitPane: ref, Provider: tc.hook})
 				if paneID != "%77" || reason != "" {
@@ -589,6 +600,7 @@ func TestMatchAIPaneContinuesPastARefusedInheritedIdentity(t *testing.T) {
 	t.Run("registry conversation answers", func(t *testing.T) {
 		t.Parallel()
 		cmd := inheritedIdentityCommand(t, registry, "%53")
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
 			ExplicitPane: "pane-claude",
 			Provider:     aiModeCodex,
@@ -602,7 +614,9 @@ func TestMatchAIPaneContinuesPastARefusedInheritedIdentity(t *testing.T) {
 	t.Run("inventory answers when the registry cannot", func(t *testing.T) {
 		t.Parallel()
 		cmd := inheritedIdentityCommand(t, registry, "%53")
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			args = stripRecordedTmuxRoute(args)
 			if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 				return []byte("%inventory\x1f/repo/projmux\x1fthread-inventory\x1fsession-inventory\n"), nil
 			}
@@ -622,6 +636,7 @@ func TestMatchAIPaneContinuesPastARefusedInheritedIdentity(t *testing.T) {
 	t.Run("nothing answers", func(t *testing.T) {
 		t.Parallel()
 		cmd := inheritedIdentityCommand(t, registry, "%53")
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
 			ExplicitPane: "pane-claude",
 			Provider:     aiModeCodex,
@@ -646,6 +661,7 @@ func TestForeignExplicitFallThroughIgnoresTheInheritedEnvironment(t *testing.T) 
 
 	registry := providerPaneRegistry("pane-claude", "%53", aiModeClaude)
 	inventory := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 			return []byte("%inventory\x1f/repo/projmux\x1fthread-1\x1fsession-1\n"), nil
 		}
@@ -653,6 +669,8 @@ func TestForeignExplicitFallThroughIgnoresTheInheritedEnvironment(t *testing.T) 
 	}
 
 	refused := inheritedIdentityCommand(t, registry, "%53")
+
+	refused.lookupEnv = aiHookTestEnvironment(refused.lookupEnv, "/tmp/hook-test/socket,42,0")
 	refused.readCommand = inventory
 	paneID, reason := refused.matchAIPane(aiPaneMatchInput{
 		ExplicitPane: "pane-claude",
@@ -669,6 +687,7 @@ func TestForeignExplicitFallThroughIgnoresTheInheritedEnvironment(t *testing.T) 
 	// The path that was handed nothing is untouched: inherited TMUX_PANE still
 	// wins there, ahead of the inventory.
 	blind := inheritedIdentityCommand(t, registry, "%53")
+	blind.lookupEnv = aiHookTestEnvironment(blind.lookupEnv, "/tmp/hook-test/socket,42,0")
 	blind.readCommand = inventory
 	if paneID, reason := blind.matchAIPane(aiPaneMatchInput{Provider: aiModeCodex, CWD: "/repo/projmux"}); paneID != "%53" || reason != "" {
 		t.Fatalf("no-explicit path = %q, reason %q, want %%53", paneID, reason)
@@ -710,13 +729,14 @@ func TestForeignExplicitRefusalLeavesTheRegistryPathUnchanged(t *testing.T) {
 	if !maps.Equal(indexed, registeredConversationPanes(withoutProvider)) {
 		t.Fatalf("the registry conversation index now depends on the recorded provider: %v", indexed)
 	}
-	if indexed["thread-codex"] != "%78" {
-		t.Fatalf("registeredConversationPanes()[thread-codex] = %q, want %%78", indexed["thread-codex"])
+	if indexed["thread-codex"].paneID != "%78" {
+		t.Fatalf("registeredConversationPanes()[thread-codex] = %q, want %%78", indexed["thread-codex"].paneID)
 	}
 
 	// The refusal itself neither writes nor rebinds: inheritedIdentityCommand
 	// fails the test on any registry write.
 	cmd := inheritedIdentityCommand(t, withProvider, "%53")
+	cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 	if paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
 		ExplicitPane: "pane-claude",
 		Provider:     aiModeCodex,
@@ -762,7 +782,9 @@ func TestForeignExplicitFallThroughDoesNotLandOnAnotherProvidersPane(t *testing.
 				Panes:  []coremetadata.Pane{handedPane, rowPane},
 			}
 			cmd := inheritedIdentityCommand(t, registry, "%53")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				args = stripRecordedTmuxRoute(args)
 				if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 					return []byte(tc.foreignRow + "\x1f/repo/projmux\x1f\x1f\n"), nil
 				}
@@ -810,7 +832,9 @@ func TestForeignExplicitFallThroughStillTakesACoherentLadderAnswer(t *testing.T)
 				Panes:  []coremetadata.Pane{handedPane, rowPane},
 			}
 			cmd := inheritedIdentityCommand(t, registry, "%53")
+			cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				args = stripRecordedTmuxRoute(args)
 				if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 					return []byte("%80\x1f/repo/projmux\x1f\x1f\n"), nil
 				}
@@ -846,14 +870,16 @@ func TestForeignExplicitFallThroughDoesNotTakeAForeignConversationPane(t *testin
 	}
 
 	// The record resolves, and it points at a Pane of the wrong provider.
-	if held := registeredConversationPanes(registry)["conversation-shared"]; held != "%53" {
-		t.Fatalf("fixture does not record the conversation on the foreign pane: %q", held)
+	if held := registeredConversationPanes(registry)["conversation-shared"]; held.paneID != "%53" {
+		t.Fatalf("fixture does not record the conversation on the foreign pane: %q", held.paneID)
 	}
 
 	t.Run("ladder answers behind the refused conversation", func(t *testing.T) {
 		t.Parallel()
 		cmd := inheritedIdentityCommand(t, registry, "%53")
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			args = stripRecordedTmuxRoute(args)
 			if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 				return []byte("%80\x1f/repo/projmux\x1f\x1f\n"), nil
 			}
@@ -873,6 +899,7 @@ func TestForeignExplicitFallThroughDoesNotTakeAForeignConversationPane(t *testin
 	t.Run("nothing else answers", func(t *testing.T) {
 		t.Parallel()
 		cmd := inheritedIdentityCommand(t, registry, "%53")
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
 			ExplicitPane: "pane-claude",
 			Provider:     aiModeCodex,
@@ -900,6 +927,7 @@ func TestNoExplicitPathStillTakesACwdMatchRegardlessOfProvider(t *testing.T) {
 		Panes:  []coremetadata.Pane{claudePane},
 	}
 	inventory := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
 			return []byte("%53\x1f/repo/projmux\x1fthread-1\x1fsession-1\n"), nil
 		}
@@ -908,6 +936,7 @@ func TestNoExplicitPathStillTakesACwdMatchRegardlessOfProvider(t *testing.T) {
 
 	for _, provider := range []string{aiModeCodex, aiModeClaude, aiModeAntigravity, ""} {
 		cmd := inheritedIdentityCommand(t, registry, "")
+		cmd.lookupEnv = aiHookTestEnvironment(cmd.lookupEnv, "/tmp/hook-test/socket,42,0")
 		cmd.readCommand = inventory
 		if paneID, reason := cmd.matchAIPane(aiPaneMatchInput{Provider: provider, CWD: "/repo/projmux"}); paneID != "%53" || reason != "" {
 			t.Fatalf("no-explicit cwd step for provider %q = %q, reason %q, want %%53", provider, paneID, reason)

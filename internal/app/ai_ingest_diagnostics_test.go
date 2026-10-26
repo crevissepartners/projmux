@@ -49,6 +49,8 @@ func testAIOperationalCommand(t *testing.T) (*aiCommand, *diagnostics.Store, *di
 			return home
 		case "XDG_STATE_HOME":
 			return stateHome
+		case "TMUX":
+			return "/tmp/hook-test/socket,42,0"
 		case "TMUX_PANE":
 			return "%7"
 		default:
@@ -405,6 +407,7 @@ func TestAIWatcherLifecycleIsBoundedAndSuppressesGenericOutcome(t *testing.T) {
 			cmd, store, lifecycle, _ := testAIOperationalCommand(t)
 			checks := 0
 			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				args = stripRecordedTmuxRoute(args)
 				if name != "tmux" {
 					return nil, os.ErrNotExist
 				}
@@ -496,6 +499,7 @@ func assertSingleAIBellOutcome(t *testing.T, store *diagnostics.Store, result, f
 
 func wireAIDiagnosticsBellPane(cmd *aiCommand, paneID string) {
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		args = stripRecordedTmuxRoute(args)
 		if row, ok := testAIPaneRouteProbe(name, args); ok {
 			return row, nil
 		}
