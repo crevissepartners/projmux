@@ -105,20 +105,19 @@ func (c *agentCommand) runSDKCodexTransferRecovery(life context.Context, session
 	session.timer.Stop()
 	// The CLI recovery runs exactly as `agent relaunch --host tmux --yes` runs
 	// it, outside any typed host-transfer result.
+	// The receipt names the Pane the recovery itself left the Agent on, never
+	// a later Registry read another stop or rebind may already have changed.
+	recovered := ""
 	recovery := *c
 	recovery.hostTransferContext, recovery.hostTransferResult = nil, nil
+	recovery.codexRecovered = func(pane string) { recovered = pane }
 	if err := recovery.recoverCodexHostTransfer(reg, target, request, path, journal, io.Discard, io.Discard); err != nil {
 		return fail(err)
 	}
-	latest, err := c.loadRegistry()
-	if err != nil {
-		return fail(err)
-	}
-	current, ok := latest.Agent(target.Metadata.UID)
-	if !ok {
+	if recovered == "" {
 		return fail(processhost.ErrStale)
 	}
-	result.Outcome, result.NewPaneUID = personaOutcomeResumed, current.Status.PaneRef
+	result.Outcome, result.NewPaneUID = personaOutcomeResumed, recovered
 	return finishSDKRelaunch(session, result)
 }
 

@@ -559,3 +559,27 @@ func TestAgentRelaunchRequiresAnExplicitAgent(t *testing.T) {
 		t.Fatalf("usage refusals wrote %d times", f.store.writes)
 	}
 }
+
+// The committed-Pane receiver names the Pane the rebind itself committed. A
+// stop that moves the Agent off that Pane right after the commit, before the
+// caller assembles its receipt, does not change what the receiver was told.
+func TestRebindReportsItsCommittedPane(t *testing.T) {
+	f := newRelaunchFixture(t)
+	stopFixtureAgent(t, f)
+	received := ""
+	f.command.rebind.resumedPane = func(pane string) {
+		received = pane
+		if committed := f.agent(t).Status.PaneRef; committed != pane {
+			t.Fatalf("receiver got %q, the rebind committed %q", pane, committed)
+		}
+		// Another stop lands before the caller reads its receipt.
+		a, _ := f.store.registry.Agent(personaAttachAgent)
+		a.Status.PaneRef, a.Status.Phase = "", coremetadata.PhaseOffline
+	}
+	if _, stderr, err := runRoute(t, f.command, "resume", "uid:"+personaAttachAgent); err != nil {
+		t.Fatalf("%v %s", err, stderr)
+	}
+	if received == "" || f.agent(t).Status.PaneRef != "" {
+		t.Fatalf("received %q, Agent now on %q", received, f.agent(t).Status.PaneRef)
+	}
+}

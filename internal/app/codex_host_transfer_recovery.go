@@ -35,6 +35,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 	}
 	if record.Phase == "preparing" {
 		if err := c.cleanupNoEffectCodexTransfer(context.Background(), path, record); err == nil {
+			c.reportCodexRecovered(record.Pane.Metadata.UID)
 			return writeAgentRelaunchResult(stdout, request, agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeResumed, CurrentHost: "tmux", TargetHost: "tmux", NewPaneUID: record.Pane.Metadata.UID})
 		}
 	}
@@ -50,6 +51,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 			if err := completeCodexHostTransfer(path); err != nil {
 				return err
 			}
+			c.reportCodexRecovered(record.NativeTarget.Pane)
 			return writeAgentRelaunchResult(stdout, request, agentRelaunchResult{Action: "relaunch", AgentUID: target.Metadata.UID, AgentName: target.Metadata.Name, Provider: aiModeCodex, Outcome: personaOutcomeResumed, CurrentHost: "tmux", TargetHost: "tmux", NewPaneUID: record.NativeTarget.Pane})
 		}
 		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -87,7 +89,12 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		if err = transfer.Abort(ctx); err != nil {
 			return err
 		}
-		return removeCodexHostTransfer(path)
+		if err = removeCodexHostTransfer(path); err != nil {
+			return err
+		}
+		// The surviving source keeps writing on its own Pane.
+		c.reportCodexRecovered(record.Pane.Metadata.UID)
+		return nil
 	}
 	if record.Retired == nil {
 		if target.Status.Phase != coremetadata.PhaseOffline || target.Status.PaneRef != "" || !reflect.DeepEqual(target.Spec, record.Source.Spec) || !reflect.DeepEqual(target.Metadata.Annotations, record.Source.Metadata.Annotations) {
@@ -200,7 +207,7 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		if err = completeCodexHostTransfer(path); err != nil {
 			return err
 		}
-		return c.rebind.rebind(agentRelaunchSpelling, plan, stdout, stderr)
+		return c.codexRecoveryRebinder().rebind(agentRelaunchSpelling, plan, stdout, stderr)
 	}
 	if err != nil {
 		return err
@@ -215,7 +222,26 @@ func (c *agentCommand) recoverCodexHostTransfer(reg coremetadata.Registry, targe
 		return err
 	}
 	plan.codexTransfer = c.nativeTransferRebind(transfer, record, path)
-	return c.rebind.rebind(agentRelaunchSpelling, plan, stdout, stderr)
+	return c.codexRecoveryRebinder().rebind(agentRelaunchSpelling, plan, stdout, stderr)
+}
+
+// reportCodexRecovered tells an SDK adapter that asked which Pane this
+// recovery leaves the Agent on.
+func (c *agentCommand) reportCodexRecovered(paneUID string) {
+	if c.codexRecovered != nil {
+		c.codexRecovered(paneUID)
+	}
+}
+
+// codexRecoveryRebinder delivers the Pane the recovery's rebind commits to the
+// same receiver; the CLI keeps its own rebinder.
+func (c *agentCommand) codexRecoveryRebinder() *agentRebinder {
+	if c.codexRecovered == nil {
+		return c.rebind
+	}
+	rebinder := *c.rebind
+	rebinder.resumedPane = c.codexRecovered
+	return &rebinder
 }
 
 // refuseCodexTransferRecovery is what recovery refuses before any effect: a dry

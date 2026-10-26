@@ -100,7 +100,7 @@ func (c *Client) relaunchAgent(ctx context.Context, q core.RelaunchAgentRequest,
 		if processSource && q.Host != "tmux" {
 			q.SocketPath = requestSocket
 		}
-		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg)
+		return c.relaunchProcessAgent(ctx, q, target.Clone(), reg, pendingTransfer)
 	}
 	if q.Detach || q.Prompt != "" || q.Binding != (core.ProcessBinding{}) {
 		return out, &Refusal{Code: CodeRelaunchRequestInvalid, message: "RelaunchAgentRequest process inputs require a process destination or source"}

@@ -53,6 +53,9 @@ type agentCommand struct {
 	// Set only on a per-call copy by the private typed host-transfer adapter.
 	hostTransferContext context.Context
 	hostTransferResult  *agentHostTransferResult
+	// Set only on a per-call copy by the SDK relaunch adapter: receives the
+	// Pane a Codex host-transfer recovery leaves the Agent on.
+	codexRecovered func(paneUID string)
 	// Private no-firstinput Resume preparation preserves the recorded recipe.
 	processResumePreparation bool
 	// Set only by explicit private Claude preparation on a per-call copy.
