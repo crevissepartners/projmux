@@ -1296,6 +1296,49 @@ func relaunchPromptPartsSDKCLIParity(t *testing.T, provider string, sdk bool) st
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The fixture stops only the brokers it saw when it was created. A broker
+	// or control peer a relaunch starts later keeps probing `codex` on its
+	// PATH; once the fixture root is gone that lookup reaches the real codex.
+	// Registered after the fixture, this cleanup runs before its root is
+	// removed (t.Cleanup is LIFO) and stops only the peers this test started.
+	peerSockets := func() []string {
+		var found []string
+		for _, dir := range []string{"broker", agentControlDirName} {
+			matches, _ := filepath.Glob(filepath.Join(paths.StateDir, dir, "*.sock"))
+			found = append(found, matches...)
+		}
+		return found
+	}
+	fixturePeers := peerSockets()
+	t.Cleanup(func() {
+		for _, address := range peerSockets() {
+			if slices.Contains(fixturePeers, address) {
+				continue
+			}
+			identity, err := localipc.InspectOwnedSocket(address)
+			if err != nil {
+				continue
+			}
+			peer, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: address, Net: "unix"})
+			if err != nil {
+				continue
+			}
+			process, _, err := localipc.PeerProcess(peer)
+			_ = peer.Close()
+			if err != nil || process.OwnerUID != uint32(os.Getuid()) {
+				continue
+			}
+			current, _, err := localipc.Process(process.PID)
+			observed, socketErr := localipc.InspectOwnedSocket(address)
+			if err != nil || current != process || socketErr != nil || observed != identity {
+				continue
+			}
+			if err = syscall.Kill(process.PID, syscall.SIGTERM); err != nil {
+				continue
+			}
+			waitCodexFixturePeerExit(t, process)
+		}
+	})
 	guidance := []byte("Task 2 guidance: prefer projmux agent message send.")
 	writeAgentGuidance(t, paths, guidance)
 	writeLinkRules(t, paths, f.project, linkRulesAlpha)
