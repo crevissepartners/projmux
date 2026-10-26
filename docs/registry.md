@@ -27,7 +27,11 @@ until they are explicitly closed.
 
 Deleting a virtual Window's last Pane or Agent also deletes the Window and
 its remaining descendants. The dry-run includes that Window cascade; the
-Project primary Window moves to an eligible sibling or becomes empty.
+Project primary Window moves to an eligible sibling or becomes empty when no
+Windows remain. When deleting the primary Window, direct Window-owned shell
+siblings retain their existing selection priority and order. If none exists,
+the first same-Project sibling with an eligible Window anchor (Registry order)
+becomes primary, including shell-free tmux Agents and Offline process Agents.
 `delete window uid:<uid>` on a virtual Window needs no tmux server and stops
 its process Agents through their existing owner-host Stop and Wait path.
 `reconcile` and `doctor` do not classify a virtual Window's absent tmux

@@ -577,6 +577,16 @@ func (m Mutator) deleteWindow(reg *Registry, windowUID string, preserveProjectAn
 					break
 				}
 			}
+			// Preserve the legacy shell preference; shell-free Agent Windows
+			// are also eligible, even when their provider is Offline.
+			if project.Spec.PrimaryWindowRef == "" {
+				for _, candidate := range reg.WindowsOf(projectUID) {
+					if _, ok := reg.WindowAnchor(candidate.Metadata.UID); ok {
+						project.Spec.PrimaryWindowRef = candidate.Metadata.UID
+						break
+					}
+				}
+			}
 			if project.Spec.PrimaryWindowRef == "" && project.Status.Session != nil {
 				project.Status.Session.Live = false
 			}
