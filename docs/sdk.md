@@ -469,8 +469,11 @@ clears the activation, records `status.lastTermination` with source `reconcile`
 and classification `unknown` and no exit status, sets the Agent `Offline` and
 `processSession.resumeState=resumable`, and keeps the Agent UID, Pane UID, and
 conversation. This is not Wait evidence and never a stop; public CLI resume
-continues the same conversation. An Agent that already holds this exact record
-returns `Changed=false` without a write.
+continues the same conversation. A relaunch without a first prompt, including a
+Claude resume prepared to wait for its first input, accepts this exact record
+of the same generation as the old child's retirement, as it accepts a Wait, and
+the first input continues the same conversation. An Agent that already holds
+this exact record returns `Changed=false` without a write.
 
 `MarkAgentOfflineResult` includes `AgentUID`, `PaneUID`, `Binding`,
 `Termination`, `Changed`, and the `agent.mark-offline` `Receipt`. Typed

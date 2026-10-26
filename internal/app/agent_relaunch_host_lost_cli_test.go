@@ -287,3 +287,54 @@ func TestHostLostExplicitRelaunchClaudeRequiresPromptCLI(t *testing.T) {
 		}
 	}
 }
+
+// After mark-offline retires a lost host without Wait, a prompt-less relaunch
+// waits for input like any retired Agent, and the first input continues the
+// recorded conversation.
+func TestMarkedOfflineRelaunchWithoutPromptActualCLI(t *testing.T) {
+	copiedCLI(t, "PMX_TEST_CLI")
+	for _, provider := range []string{aiModeClaude, aiModeCodex} {
+		t.Run(provider, func(t *testing.T) {
+			f := hostLostCLIProviderFixture(t, provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			defer cancel()
+			ref, _, old := recordedLostHostCLI(t, ctx, f, provider)
+			cleanupDetachedResume(t, f, ref)
+			detachedResumeCLI(t, ctx, f, "agent", "mark-offline", ref)
+			marked := mustRegistry(t, f)
+			pane, _ := marked.Pane(old.Binding.PaneUID)
+			if !marked.ProcessHostLostOffline(old.Binding.PaneUID) || coremetadata.MatchesProcessWait(old.Binding, pane.Status.LastTermination) {
+				t.Fatal("mark-offline did not record the lost-host retirement alone")
+			}
+			out := detachedResumeCLI(t, ctx, f, "agent", "relaunch", ref, "--detach")
+			if provider == aiModeClaude {
+				if !bytes.Contains(out, []byte("claim=waiting")) {
+					t.Fatal(string(out))
+				}
+				waiting := mustRegistry(t, f)
+				pane, _ = waiting.Pane(old.Binding.PaneUID)
+				if !pane.Status.Activation.IsZero() || pane.Status.ProcessSession.Binding != old.Binding || !waiting.ProcessHostLostOffline(old.Binding.PaneUID) {
+					t.Fatal("waiting relaunch started a child or changed the retirement")
+				}
+				out, err := exec.CommandContext(ctx, f.binary, "agent", "turn", "start", ref, "--", "first input after mark-offline").CombinedOutput()
+				if err != nil || !bytes.Contains(out, []byte("runtime=process")) {
+					t.Fatalf("first input: %v %s", err, out)
+				}
+			} else if !bytes.Contains(out, []byte("foreground=detached")) {
+				t.Fatal(string(out))
+			}
+			next := awaitProcessResumeRecord(t, ctx, f, ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
+			})
+			if next.Binding.AgentUID != old.Binding.AgentUID || next.Binding.PaneUID != old.Binding.PaneUID || next.SessionID != old.SessionID || next.ThreadID != old.ThreadID {
+				t.Fatal("identity or conversation replaced")
+			}
+			reg := mustRegistry(t, f)
+			pane, _ = reg.Pane(old.Binding.PaneUID)
+			if pane.Status.LastTermination == nil || pane.Status.LastTermination.Source != coremetadata.TerminationSourceReconcile || coremetadata.MatchesProcessWait(old.Binding, pane.Status.LastTermination) {
+				t.Fatal("invented old Wait")
+			}
+			detachedResumeCLI(t, ctx, f, "agent", "stop", ref)
+		})
+	}
+}

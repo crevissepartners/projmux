@@ -245,7 +245,7 @@ func (c *agentCommand) reconcileDeferredLaunch(ctx context.Context, record *defe
 			if !ok || !reflect.DeepEqual(candidate.HostLost, record.HostLost) || !processResumeRecordEqual(&candidate.Record, &record.Retired) {
 				return deferredRefused("host-lost prepared activation changed")
 			}
-		} else if ambiguous || !found || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !processResumeRecordEqual(pane.Status.ProcessSession, &record.Retired) || !coremetadata.MatchesProcessWait(record.Retired.Binding, pane.Status.LastTermination) {
+		} else if ambiguous || !found || pane == nil || agent.Status.Phase != coremetadata.PhaseOffline || !processResumeRecordEqual(pane.Status.ProcessSession, &record.Retired) || (!coremetadata.MatchesProcessWait(record.Retired.Binding, pane.Status.LastTermination) && !coremetadata.ProcessHostLostRetired(record.Retired.Binding, *pane, *agent)) {
 			return deferredRefused("prepared relaunch conversation changed")
 		}
 		if reflect.DeepEqual(agent.Spec, record.NewSpec) && reflect.DeepEqual(agent.Metadata.Annotations, record.NewAnnotations) {
@@ -279,7 +279,8 @@ func (c *agentCommand) prepareDeferredAttempt(candidate processResumeCandidate, 
 	}
 	agent, found := reg.Agent(record.Agent)
 	pane, ambiguous := processResumePane(reg, record.Agent)
-	retired := found && !ambiguous && pane != nil && agent.Status.Phase == coremetadata.PhaseOffline && pane.Status.Activation.IsZero() && coremetadata.MatchesProcessWait(candidate.Record.Binding, pane.Status.LastTermination) && coremetadata.MatchesProcessWait(candidate.Record.Binding, agent.Status.LastTermination)
+	retired := found && !ambiguous && pane != nil && agent.Status.Phase == coremetadata.PhaseOffline && pane.Status.Activation.IsZero() &&
+		((coremetadata.MatchesProcessWait(candidate.Record.Binding, pane.Status.LastTermination) && coremetadata.MatchesProcessWait(candidate.Record.Binding, agent.Status.LastTermination)) || coremetadata.ProcessHostLostRetired(candidate.Record.Binding, *pane, *agent))
 	if candidate.HostLost != nil {
 		retired = found && !ambiguous && pane != nil && reflect.DeepEqual(pane.Status.Activation.Process, candidate.HostLost)
 	}

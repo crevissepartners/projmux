@@ -56,11 +56,20 @@ func MatchesProcessHostLostRetirement(binding ProcessBinding, receipt *Terminati
 // an Offline owner, and the same reconcile/unknown receipt on Pane and Agent.
 func (r Registry) ProcessHostLostOffline(paneUID string) bool {
 	pane, ok := r.Pane(paneUID)
-	if !ok || pane.Spec.Runtime.EffectiveKind() != RuntimeProcess || !pane.Status.Activation.IsZero() || pane.Status.ProcessSession == nil {
+	if !ok || pane.Status.ProcessSession == nil {
 		return false
 	}
-	binding := pane.Status.ProcessSession.Binding
-	agent, ok := r.Agent(binding.AgentUID)
-	return ok && agent.Status.Phase == PhaseOffline && agent.Status.PaneRef == paneUID &&
+	agent, ok := r.Agent(pane.Status.ProcessSession.Binding.AgentUID)
+	return ok && ProcessHostLostRetired(pane.Status.ProcessSession.Binding, *pane, *agent)
+}
+
+// ProcessHostLostRetired reports that pane and agent hold the committed
+// lost-host retirement of exactly binding's child. Like a supervisor Wait, it
+// proves that child retired, so the next writer may reserve a generation. It
+// carries no exit status and never becomes Wait evidence.
+func ProcessHostLostRetired(binding ProcessBinding, pane Pane, agent Agent) bool {
+	return pane.Spec.Runtime.EffectiveKind() == RuntimeProcess && pane.Metadata.UID == binding.PaneUID && pane.Status.Activation.IsZero() &&
+		pane.Status.ProcessSession != nil && pane.Status.ProcessSession.Binding == binding &&
+		agent.Metadata.UID == binding.AgentUID && agent.Status.Phase == PhaseOffline && agent.Status.PaneRef == pane.Metadata.UID &&
 		MatchesProcessHostLostRetirement(binding, pane.Status.LastTermination) && SameProcessWait(pane.Status.LastTermination, agent.Status.LastTermination)
 }

@@ -514,8 +514,9 @@ func (c *agentCommand) processRelaunchFailureRecovery(reg coremetadata.Registry,
 	return fmt.Sprintf("inspect with: projmux describe agent uid:%s; relaunch remains refused until the owned child has an exact Wait and the Agent is Offline; only then recover with: %s", target.Metadata.UID, command)
 }
 
-// Only the owner's exact durable supervisor Wait and process resume candidate
-// can authorize the next writer. Host disappearance alone never does.
+// Only the owner's exact durable supervisor Wait, or the committed lost-host
+// retirement of the same binding, and process resume candidate can authorize
+// the next writer. Host disappearance alone never does.
 func (c *agentCommand) awaitProcessRelaunchRetirement(ctx context.Context, target coremetadata.Agent, pane coremetadata.Pane, running bool) (processResumeCandidate, error) {
 	bounded, cancel := context.WithTimeout(ctx, processRelaunchRetirementTimeout)
 	defer cancel()
@@ -528,7 +529,7 @@ func (c *agentCommand) awaitProcessRelaunchRetirement(ctx context.Context, targe
 			if candidate.Record.Binding != pane.Status.ProcessSession.Binding || processRelaunchConversation(&candidate.Record) != processRelaunchConversation(pane.Status.ProcessSession) {
 				return processResumeCandidate{}, processhost.ErrStale
 			}
-			if !coremetadata.MatchesProcessWait(candidate.Record.Binding, candidate.Pane.Status.LastTermination) {
+			if !coremetadata.MatchesProcessWait(candidate.Record.Binding, candidate.Pane.Status.LastTermination) && !coremetadata.ProcessHostLostRetired(candidate.Record.Binding, candidate.Pane, candidate.Agent) {
 				return processResumeCandidate{}, errors.New("exact old child Wait is unavailable")
 			}
 			return candidate, nil
