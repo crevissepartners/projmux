@@ -1274,6 +1274,12 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 		if err != nil || pid == os.Getpid() {
 			continue
 		}
+		// The birth is read before the environment and argv, so a pid that a
+		// new process reuses after they were read fails the check below.
+		process, _, err := localipc.Process(pid)
+		if err != nil || process.OwnerUID != uint32(os.Getuid()) {
+			continue
+		}
 		environ, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "environ"))
 		if err != nil {
 			continue
@@ -1281,10 +1287,6 @@ func stopFixtureProcesses(t *testing.T, root, stateDir string) {
 		cmdline, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
 		argv := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
 		if !slices.Contains(strings.Split(string(environ), "\x00"), "PMX_TEST_PROCESS_ROOT="+root) && !slices.Contains(argv, stateDir) {
-			continue
-		}
-		process, _, err := localipc.Process(pid)
-		if err != nil || process.OwnerUID != uint32(os.Getuid()) {
 			continue
 		}
 		t.Logf("fixture process left after the test: pid=%d argv=%q", pid, argv)
