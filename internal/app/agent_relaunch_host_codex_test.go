@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -783,7 +784,7 @@ func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string 
 		if _, err := os.Stat(journal); err != nil {
 			t.Fatalf("refused recovery lost the pending journal: %v", err)
 		}
-		return "refused " + refusal
+		return "refused " + normalizeFixtureRefusal(refusal)
 	}
 	reg, err = f.store.LoadReadOnly()
 	if err != nil {
@@ -808,6 +809,13 @@ func codexHostTransferSDKCLIParity(t *testing.T, start string, sdk bool) string 
 		t.Fatalf("completed evidence: %v %v", archives, err)
 	}
 	return fmt.Sprintf("phase=%s runtime=%s managed-base=%s archives=%d", current.Status.Phase, pane.Spec.Runtime.EffectiveKind(), current.Metadata.Annotations["projmux.io/codex-managed-base-status"], len(archives))
+}
+
+var fixtureCodexHostSocket = regexp.MustCompile(`pmx-ce-[0-9a-f]+/codex-host\.sock`)
+
+// normalizeFixtureRefusal replaces only the per-fixture Codex host endpoint directory; every other byte stays compared.
+func normalizeFixtureRefusal(text string) string {
+	return fixtureCodexHostSocket.ReplaceAllString(text, "pmx-ce-<hash>/codex-host.sock")
 }
 
 // codexHostMoveFailRecovery makes one exact recovery attempt fail at the named
