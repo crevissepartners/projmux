@@ -102,7 +102,9 @@ func TestReadProjectLinkRulesByUIDUnreadable(t *testing.T) {
 		cause error
 	}{
 		"malformed": {setup: func(t *testing.T, path string) { writeFixtureFile(t, path, "{") }},
-		"invalid":   {setup: func(t *testing.T, path string) { writeFixtureFile(t, path, `{"links":[{"labelKey":"","template":"x"}]}`) }},
+		"invalid": {setup: func(t *testing.T, path string) {
+			writeFixtureFile(t, path, `{"links":[{"labelKey":"","template":"x"}]}`)
+		}},
 		"oversized": {setup: func(t *testing.T, path string) {
 			writeFixtureFile(t, path, strings.Repeat(" ", projectlinks.MaxFileSize+1))
 		}},

@@ -107,7 +107,10 @@ func TestReadAgentDisplaySettingsFromSnapshotMatchesReadAgentSettings(t *testing
 	}
 	loads := 0
 	previousSettings, previousSnapshot := loadAgentSettingsRegistry, loadSnapshotRegistry
-	loadAgentSettingsRegistry = func(config.Paths) (metadata.Registry, error) { loads++; return metadata.Registry{}, errors.New("registry read") }
+	loadAgentSettingsRegistry = func(config.Paths) (metadata.Registry, error) {
+		loads++
+		return metadata.Registry{}, errors.New("registry read")
+	}
 	loadSnapshotRegistry = loadAgentSettingsRegistry
 	t.Cleanup(func() { loadAgentSettingsRegistry, loadSnapshotRegistry = previousSettings, previousSnapshot })
 	if err := os.WriteFile(store.PathFor(paths.StateDir), []byte("{"), 0600); err != nil {
@@ -273,7 +276,9 @@ func TestReadAgentDisplaySettingsFromSnapshotMissingOwners(t *testing.T) {
 
 	for name, mutate := range map[string]func(*core.RegistrySnapshot){
 		"Project": func(s *core.RegistrySnapshot) { s.Projects = nil },
-		"Window":  func(s *core.RegistrySnapshot) { agentRow(t, s, uids["claude-a"]).Metadata.OwnerRef = &core.OwnerRef{Kind: core.KindWindow, UID: "window-gone"} },
+		"Window": func(s *core.RegistrySnapshot) {
+			agentRow(t, s, uids["claude-a"]).Metadata.OwnerRef = &core.OwnerRef{Kind: core.KindWindow, UID: "window-gone"}
+		},
 	} {
 		missing := snapshot.Clone()
 		mutate(&missing)
