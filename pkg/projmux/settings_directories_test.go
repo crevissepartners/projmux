@@ -79,6 +79,7 @@ func TestSettingsInputPathsInputs(t *testing.T) {
 			GuidanceFragmentsDir:         filepath.Join(dir, "agent-guidance.d"),
 			GuidanceMigrationReceiptFile: filepath.Join(dir, "agent-guidance-migration.json"),
 			GuidanceMigrationBackupFile:  filepath.Join(dir, "agent-guidance.md.bak"),
+			ProjectLinkRulesDir:          filepath.Join(dir, "project-links"),
 		}
 	}
 	for _, input := range []string{"/config/projmux", "", "config/projmux", "/config/projmux/", "config/old/../projmux//", "$HOME/~/projmux", " config "} {
@@ -94,14 +95,19 @@ func TestSettingsInputPathsInputs(t *testing.T) {
 			t.Fatalf("SettingsInputPaths(%q, Project) = %+v %v, want %+v", input, got, err, want)
 		}
 	}
-	// The paths are the ones the guidance and link rule stores read.
+	// The paths are the ones the guidance and link rule stores read, and the
+	// link rules directory is the one holding every Project's rule file.
 	got, _ := projmux.SettingsInputPaths("/config/projmux", inputPathsProject)
 	guidance := agentguidance.NewStore("/config/projmux", "/state")
 	projectGuidance, _ := agentguidance.NewProjectStore("/config/projmux", "/state").Path(inputPathsProject)
 	linkRules, _ := projectlinks.NewStore("/config/projmux").Path(inputPathsProject)
 	if got.GuidanceFile != guidance.Path() || got.GuidancePolicyFile != guidance.SettingsPath() || got.GuidanceMigrationBackupFile != guidance.Path()+".bak" ||
-		got.ProjectGuidanceFile != projectGuidance || got.ProjectLinkRulesFile != linkRules {
+		got.ProjectGuidanceFile != projectGuidance || got.ProjectLinkRulesFile != linkRules || got.ProjectLinkRulesDir != filepath.Dir(linkRules) {
 		t.Fatalf("paths differ from the stores: %+v", got)
+	}
+	// Without a Project the directory is the same one and no file is named.
+	if dirOnly, err := projmux.SettingsInputPaths("/config/projmux", ""); err != nil || dirOnly.ProjectLinkRulesDir != got.ProjectLinkRulesDir || dirOnly.ProjectLinkRulesFile != "" || dirOnly.ProjectGuidanceFile != "" {
+		t.Fatalf("empty Project: %+v %v", dirOnly, err)
 	}
 	for _, uid := range []string{"uid:" + inputPathsProject, "project-01", "../" + inputPathsProject, inputPathsProject + "/x", " "} {
 		got, err := projmux.SettingsInputPaths("/config/projmux", uid)
@@ -126,6 +132,10 @@ func TestSettingsInputPathsNoSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantGlobal, err := projmux.SettingsInputPaths(configDir, "")
+	if err != nil || wantGlobal.ProjectLinkRulesDir != filepath.Join(configDir, "project-links") {
+		t.Fatalf("empty Project: %+v %v", wantGlobal, err)
+	}
 	if reads != 0 || !reflect.DeepEqual(environment, os.Environ()) || !reflect.DeepEqual(before, centralTree(t, root)) {
 		t.Fatal("path calculation changed environment/filesystem or observed front reads")
 	}
@@ -136,5 +146,8 @@ func TestSettingsInputPathsNoSideEffects(t *testing.T) {
 	got, err := projmux.SettingsInputPaths(configDir, inputPathsProject)
 	if err != nil || got != want {
 		t.Fatalf("filesystem contents affected paths: %+v %v", got, err)
+	}
+	if got, err := projmux.SettingsInputPaths(configDir, ""); err != nil || got != wantGlobal {
+		t.Fatalf("filesystem contents affected global paths: %+v %v", got, err)
 	}
 }

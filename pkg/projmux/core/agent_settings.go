@@ -78,9 +78,10 @@ type AgentLaunchSetting struct {
 // resolved configuration directory, whose content the agent guidance and one
 // Project's prompt parts are read from: the user guidance, its policy, its
 // fragments directory (whose .md files are read), the one-time migration
-// receipt and its backup, and the Project's guidance and label link rules.
-// The Project fields are empty when no Project is named. Nothing says the
-// paths exist or can be read.
+// receipt and its backup, the Project's guidance and label link rules, and
+// the directory holding every Project's label link rules. The two Project file
+// fields are empty when no Project is named; ProjectLinkRulesDir is not.
+// Nothing says the paths exist or can be read.
 type SettingsInputPaths struct {
 	GuidanceFile                 string
 	GuidancePolicyFile           string
@@ -89,4 +90,5 @@ type SettingsInputPaths struct {
 	GuidanceMigrationBackupFile  string
 	ProjectGuidanceFile          string
 	ProjectLinkRulesFile         string
+	ProjectLinkRulesDir          string
 }
