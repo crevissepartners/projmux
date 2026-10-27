@@ -553,3 +553,29 @@ The retired generation's lease directory is removed only if it is still the
 same inspected directory, belongs to the current UID, has mode 0700 and is empty.
 Residual sockets and files are left for inspection; recovery never recursively
 removes them.
+
+### Explicit stop observation
+
+After a successful explicit `agent stop` / SDK `StopAgent`, or the confirmed
+process-Agent portion of `stop project` / SDK `StopProject`, the current
+`ProcessSessionRecord` carries `StopRequested: true` (`stopRequested` in JSON).
+Read it through SDK Pane resources or `describe pane -o json`. It records an
+explicit request, not the identity of a human actor. A successful child-free
+detached claim stop can carry the mark without creating a new Wait or termination
+record; project stop retains its existing refusal of child-free claims.
+
+The mark is written only after actual retirement/release, on the same binding.
+A final recording failure is returned even if the process has already stopped;
+inspect the current Agent/Pane before recovery. Failed or stale stops, natural
+exits, internal delete/relaunch cleanup, and an ineffectual stop of an already
+Offline natural exit do not add it. Repeated stops preserve an existing mark.
+Resume candidates retain it and remain eligible: explicit resume is still allowed.
+A new generation starts without it; restoring an unspawned resume reservation
+restores the previous generation's record.
+
+This is an optional observation in Registry schema 5, not a schema upgrade.
+Missing or false means only “no recorded explicit stop request,” not proof that
+no request occurred. False is omitted from JSON. Older writers may discard the
+mark. It must never establish safety, ownership, retirement evidence, or permission
+to resume; the actual Wait, classifications, and existing authority checks remain
+unchanged. Plain output and flags are unchanged.

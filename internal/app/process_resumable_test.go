@@ -126,3 +126,68 @@ func TestProcessSupportedResumableAmbiguousPaneRefusal(t *testing.T) {
 		t.Fatal("ambiguous selection granted authority or wrote registry")
 	}
 }
+
+// Only the newly added observation is excluded; all existing resume evidence
+// remains exact. Neither the frozen record nor the current record is modified.
+func TestProcessResumeRecordEqualIgnoresOnlyStopRequested(t *testing.T) {
+	candidates := listResumableProcessAgents(processResumeQueryFixture(t), processResumeFilter{})
+	if len(candidates) != 1 {
+		t.Fatal("fixture candidate missing")
+	}
+	base := candidates[0].Record.Clone()
+	oldBinding := base.Binding
+	oldBinding.Generation, oldBinding.OperationID = "old-generation", "old-operation"
+	base.History = &coremetadata.ProcessResumeHistory{Binding: oldBinding, SessionID: base.SessionID, InterruptedTurnID: "old-turn", Expired: []coremetadata.ProcessRecordedControl{{ID: "old-control"}}}
+	for _, leftFlag := range []bool{false, true} {
+		for _, rightFlag := range []bool{false, true} {
+			left, right := base.Clone(), base.Clone()
+			left.StopRequested, right.StopRequested = leftFlag, rightFlag
+			beforeLeft, beforeRight := left.Clone(), right.Clone()
+			if !processResumeRecordEqual(left, right) || !processResumeRecordEqual(right, left) {
+				t.Fatal("advisory difference became resume authority")
+			}
+			if !reflect.DeepEqual(left, beforeLeft) || !reflect.DeepEqual(right, beforeRight) {
+				t.Fatal("comparison mutated a record")
+			}
+		}
+	}
+	if !processResumeRecordEqual(nil, nil) || processResumeRecordEqual(nil, base) || processResumeRecordEqual(base, nil) {
+		t.Fatal("nil equivalence changed")
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*coremetadata.ProcessSessionRecord)
+	}{
+		{"host", func(r *coremetadata.ProcessSessionRecord) { r.Binding.HostInstanceID += "-changed" }},
+		{"project", func(r *coremetadata.ProcessSessionRecord) { r.Binding.ProjectUID += "-changed" }},
+		{"window", func(r *coremetadata.ProcessSessionRecord) { r.Binding.WindowUID += "-changed" }},
+		{"agent", func(r *coremetadata.ProcessSessionRecord) { r.Binding.AgentUID += "-changed" }},
+		{"pane", func(r *coremetadata.ProcessSessionRecord) { r.Binding.PaneUID += "-changed" }},
+		{"generation", func(r *coremetadata.ProcessSessionRecord) { r.Binding.Generation += "-changed" }},
+		{"operation", func(r *coremetadata.ProcessSessionRecord) { r.Binding.OperationID += "-changed" }},
+		{"provider", func(r *coremetadata.ProcessSessionRecord) { r.Provider = "codex" }},
+		{"session", func(r *coremetadata.ProcessSessionRecord) { r.SessionID += "-changed" }},
+		{"thread", func(r *coremetadata.ProcessSessionRecord) { r.ThreadID = "other-thread" }},
+		{"connection", func(r *coremetadata.ProcessSessionRecord) { r.ConnectionID += "-changed" }},
+		{"turn", func(r *coremetadata.ProcessSessionRecord) { r.TurnID += "-changed" }},
+		{"resume-state", func(r *coremetadata.ProcessSessionRecord) { r.ResumeState = coremetadata.ProcessResumeUnknown }},
+		{"pending-control", func(r *coremetadata.ProcessSessionRecord) { r.Pending[0].ID += "-changed" }},
+		{"history-session", func(r *coremetadata.ProcessSessionRecord) { r.History.SessionID += "-changed" }},
+		{"history-binding", func(r *coremetadata.ProcessSessionRecord) { r.History.Binding.Generation += "-changed" }},
+		{"history-turn", func(r *coremetadata.ProcessSessionRecord) { r.History.InterruptedTurnID += "-changed" }},
+		{"history-control", func(r *coremetadata.ProcessSessionRecord) { r.History.Expired[0].ID += "-changed" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := base.Clone()
+			changed.StopRequested = true
+			tc.change(changed)
+			before := changed.Clone()
+			if processResumeRecordEqual(base, changed) || processResumeRecordEqual(changed, base) {
+				t.Fatal("non-advisory evidence difference was ignored")
+			}
+			if !reflect.DeepEqual(changed, before) {
+				t.Fatal("comparison mutated changed evidence")
+			}
+		})
+	}
+}

@@ -98,24 +98,29 @@ func (s *Store) currentLockObserver() LockObserver {
 	return nil
 }
 
-// withObservedLock is withLock with the three clock readings an observation
+// withObservedLockContext is withLockContext with the three clock readings an observation
 // needs: before the acquisition, at the grant (or the failure), and after the
 // release. The lock order, deadline, and transaction are exactly withLock's;
 // the observer runs only once the lease is gone, and its panic is swallowed so
 // an observer can never change what the mutation returned.
-func (s *Store) withObservedLock(operation LockOperation, observer LockObserver, fn func() error) error {
+func (s *Store) withObservedLockContext(ctx context.Context, operation LockOperation, observer LockObserver, fn func() error) error {
 	started := s.clock()
-	lease, err := s.acquireLock(context.Background())
+	lease, err := s.acquireLock(ctx)
 	acquired := s.clock()
 	if err != nil {
 		outcome := LockOutcomeAcquireFailed
-		if errors.Is(err, ErrLockTimeout) {
+		if errors.Is(err, ErrLockTimeout) || errors.Is(err, context.DeadlineExceeded) {
 			outcome = LockOutcomeTimeout
 		}
 		notifyLockObserver(observer, LockObservation{Operation: operation, Outcome: outcome, Wait: acquired.Sub(started)})
 		return err
 	}
-	fnErr := runLeased(lease, fn)
+	fnErr := runLeased(lease, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fn()
+	})
 	released := s.clock()
 	notifyLockObserver(observer, LockObservation{
 		Operation: operation, Outcome: LockOutcomeReleased,

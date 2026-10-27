@@ -71,8 +71,39 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 		copied := *store
 		root := t.TempDir()
 		copied.stateDir = func() (string, error) { return root, nil }
-		originalLoad := store.load
-		copied.load = func() (coremetadata.Registry, error) { mutation.Lock(); defer mutation.Unlock(); return originalLoad() }
+		originalLoad, originalUpdate, originalConvergent := store.load, store.update, store.updateConvergent
+		originalContext := store.updateConvergentContext
+		copied.load = func() (coremetadata.Registry, error) {
+			mutation.Lock()
+			defer mutation.Unlock()
+			reg, err := originalLoad()
+			return reg.Clone(), err
+		}
+		copied.update = func(apply func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+			mutation.Lock()
+			defer mutation.Unlock()
+			reg, err := originalUpdate(apply)
+			return reg.Clone(), err
+		}
+		if originalConvergent != nil {
+			copied.updateConvergent = func(apply func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+				mutation.Lock()
+				defer mutation.Unlock()
+				reg, changed, err := originalConvergent(apply)
+				return reg.Clone(), changed, err
+			}
+		}
+		if originalContext != nil {
+			copied.updateConvergentContext = func(ctx context.Context, apply func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+				mutation.Lock()
+				defer mutation.Unlock()
+				if err := ctx.Err(); err != nil {
+					return coremetadata.Registry{}, false, err
+				}
+				reg, changed, err := originalContext(ctx, apply)
+				return reg.Clone(), changed, err
+			}
+		}
 		store = &copied
 		reg, err := store.load()
 		if err != nil {
@@ -122,7 +153,8 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 				return "", errors.New("injected stop rejection")
 			}
 			if failure != "timeout" || agent.Metadata.UID != "agt-alpha-review" {
-				_, err := store.update(func(reg *coremetadata.Registry) error {
+				// mutation is already held by this admitted fixture callback.
+				_, err := originalUpdate(func(reg *coremetadata.Registry) error {
 					return (coremetadata.Mutator{}).RecordProcessWait(reg, r.activation, *r.pane.Status.LastTermination)
 				})
 				r.published = err == nil
@@ -167,6 +199,18 @@ func stopProcessFixture(t *testing.T, failure string) projectProcessStopper {
 			var waitFailure *mutationruntime.ProcessStopFailure
 			if !errors.As(err, &targetFailure) || targetFailure.AgentUID != "agt-alpha-review" || !errors.As(targetFailure, &waitFailure) || waitFailure.Code != "agent-stop-wait-unconfirmed" || !errors.Is(waitFailure, context.DeadlineExceeded) {
 				t.Fatalf("missing Wait did not produce the exact typed deadline failure: %v", err)
+			}
+		}
+		latest, loadErr := store.load()
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		for _, r := range prepared {
+			pane, ok := latest.Pane(r.pane.Metadata.UID)
+			// Actual Wait can succeed while final context admission fails.
+			marked := r.published && failure != "missing-context"
+			if !ok || pane.Status.ProcessSession == nil || pane.Status.ProcessSession.StopRequested != marked {
+				t.Fatalf("explicit stop mark disagrees with confirmed retirement: %+v", pane)
 			}
 		}
 		for _, receipt := range stopped {
@@ -637,5 +681,44 @@ func TestProjectStopReceiptOutcomesAndProjections(t *testing.T) {
 				t.Fatalf("human/JSON differ: %s / %s", human.String(), encoded.String())
 			}
 		})
+	}
+}
+
+func TestProjectStopExplicitMarkUsesSameStore(t *testing.T) {
+	for _, mode := range []string{"convergent", "context-without-legacy-convergent"} {
+		t.Run(mode, func(t *testing.T) {
+			backing := freshStartFixtureStore(t)
+			activateRuntimeStopAgent(t, backing, "gen-tmux")
+			agentUID, paneUID := addProjectStopProcessFixture(t, backing)
+			store := backing.store()
+			if mode == "context-without-legacy-convergent" {
+				store.updateConvergent = nil
+			}
+			stopped, err := stopProcessFixture(t, "")(context.Background(), store, "prj-alpha")
+			if err != nil || len(stopped) != 1 || stopped[0].UID != agentUID {
+				t.Fatalf("same-store stop: %+v %v", stopped, err)
+			}
+			pane, _ := backing.registry.Pane(paneUID)
+			if !pane.Status.ProcessSession.StopRequested {
+				t.Fatal("final metadata write bypassed the caller's Registry")
+			}
+		})
+	}
+}
+
+func TestProjectStopContextWriterDoesNotFallBack(t *testing.T) {
+	backing := freshStartFixtureStore(t)
+	activateRuntimeStopAgent(t, backing, "gen-tmux")
+	agentUID, paneUID := addProjectStopProcessFixture(t, backing)
+	store := backing.store()
+	store.updateConvergentContext = nil
+	_, err := stopProcessFixture(t, "missing-context")(context.Background(), store, "prj-alpha")
+	if err == nil || !strings.Contains(err.Error(), "context write store is not configured") {
+		t.Fatalf("context-free writer accepted: %v", err)
+	}
+	pane, _ := backing.registry.Pane(paneUID)
+	agent, _ := backing.registry.Agent(agentUID)
+	if pane.Status.ProcessSession.StopRequested || agent.Status.Phase != coremetadata.PhaseOffline || !coremetadata.MatchesProcessWait(pane.Status.ProcessSession.Binding, pane.Status.LastTermination) {
+		t.Fatal("failed final writer changed intent or lost actual retirement")
 	}
 }

@@ -59,5 +59,5 @@ func (c *agentCommand) runStop(args []string, stdout, stderr io.Writer) error {
 func (c *agentCommand) stopExactProcessAgent(ctx context.Context, reg coremetadata.Registry, agent coremetadata.Agent, pane coremetadata.Pane) error {
 	stopper := mutationruntime.ProcessAgentStopper{RegistryPath: c.messagePaths.registryPath, Load: c.loadRegistry, ReadIdentity: mutationruntime.ProcessIdentityReader(c.readProcessIdentity())}
 
-	return stopper.StopExact(ctx, reg, agent, pane)
+	return stopper.StopExplicit(ctx, reg, agent, pane)
 }

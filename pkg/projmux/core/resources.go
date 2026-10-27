@@ -281,15 +281,17 @@ type ProcessResumeHistory struct {
 }
 type ProcessResumeState string
 type ProcessSessionRecord struct {
-	Provider     string                   `json:"provider"`
-	Binding      ProcessBinding           `json:"binding"`
-	SessionID    string                   `json:"sessionID,omitempty"`
-	ThreadID     string                   `json:"threadID,omitempty"`
-	ConnectionID string                   `json:"connectionID,omitempty"`
-	TurnID       string                   `json:"turnID,omitempty"`
-	ResumeState  ProcessResumeState       `json:"resumeState"`
-	Pending      []ProcessRecordedControl `json:"pending,omitempty"`
-	History      *ProcessResumeHistory    `json:"history,omitempty"`
+	Provider     string             `json:"provider"`
+	Binding      ProcessBinding     `json:"binding"`
+	SessionID    string             `json:"sessionID,omitempty"`
+	ThreadID     string             `json:"threadID,omitempty"`
+	ConnectionID string             `json:"connectionID,omitempty"`
+	TurnID       string             `json:"turnID,omitempty"`
+	ResumeState  ProcessResumeState `json:"resumeState"`
+	// StopRequested observes an explicit stop; it grants no ownership or resume authority.
+	StopRequested bool                     `json:"stopRequested,omitempty"`
+	Pending       []ProcessRecordedControl `json:"pending,omitempty"`
+	History       *ProcessResumeHistory    `json:"history,omitempty"`
 }
 type Project struct {
 	APIVersion string        `json:"apiVersion"`

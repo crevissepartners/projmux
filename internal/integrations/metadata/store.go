@@ -497,13 +497,27 @@ func (s *Store) WithAdmissionBarrier(fn func(coremetadata.Registry) error) error
 // and rename sequence is skipped, so callers do not gain a weaker transaction
 // or schema path.
 func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+	return s.UpdateConvergentContext(context.Background(), fn)
+}
+
+// UpdateConvergentContext preserves UpdateConvergent's transaction and no-op
+// policy while bounding lock acquisition by the supplied context. The callback
+// and final write are not admitted after that context has ended.
+func (s *Store) UpdateConvergentContext(ctx context.Context, fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 	if s == nil {
 		return coremetadata.Registry{}, false, errors.New("metadata: nil registry store")
 	}
 
+	if err := ctx.Err(); err != nil {
+		return coremetadata.Registry{}, false, err
+	}
+
 	var out coremetadata.Registry
 	changed := false
-	err := s.withMutationLock(LockOperationUpdateConvergent, func() error {
+	err := s.withMutationLockContext(ctx, LockOperationUpdateConvergent, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -512,16 +526,28 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 			return s.mapDegradedMutationError(err)
 		}
 		working := registry.Clone()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := fn(&working); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		working = working.Normalize()
 		if err := working.Validate(); err != nil {
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if existed && !requiresDurableMigration(onDiskVersion, report) && reflect.DeepEqual(working, registry.Normalize()) {
 			out = working
 			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		migrating := existed && requiresDurableMigration(onDiskVersion, report)
 		if err := s.write(working, migrating, onDiskVersion, report); err != nil {
@@ -1309,11 +1335,15 @@ func (s *Store) backupBytes(data []byte, fromVersion int) (string, error) {
 // to fail. The cost is that a genuinely degraded Registry now queues for the
 // lock before it is refused, which the deadline bounds.
 func (s *Store) withMutationLock(operation LockOperation, fn func() error) error {
+	return s.withMutationLockContext(context.Background(), operation, fn)
+}
+
+func (s *Store) withMutationLockContext(ctx context.Context, operation LockOperation, fn func() error) error {
 	suspected := s.refuseDegradedMutation()
 	if suspected != nil && s.hooks.afterDegradedSuspect != nil {
 		s.hooks.afterDegradedSuspect()
 	}
-	return s.withLock(operation, func() error {
+	return s.withLockContext(ctx, operation, func() error {
 		if suspected != nil {
 			if confirmed := s.refuseDegradedMutation(); confirmed != nil {
 				return confirmed
@@ -1327,17 +1357,27 @@ func (s *Store) withMutationLock(operation LockOperation, fn func() error) error
 // point for the lock observer; with no observer installed the path is exactly
 // the unobserved one, clock reads included.
 func (s *Store) withLock(operation LockOperation, fn func() error) error {
+	return s.withLockContext(context.Background(), operation, fn)
+}
+
+func (s *Store) withLockContext(ctx context.Context, operation LockOperation, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("metadata: create lock dir: %w", err)
 	}
 	if observer := s.currentLockObserver(); observer != nil {
-		return s.withObservedLock(operation, observer, fn)
+		return s.withObservedLockContext(ctx, operation, observer, fn)
 	}
-	lease, err := s.acquireLock(context.Background())
+	lease, err := s.acquireLock(ctx)
 	if err != nil {
 		return err
 	}
 	defer lease.release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return fn()
 }
 
