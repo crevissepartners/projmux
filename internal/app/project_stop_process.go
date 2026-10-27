@@ -40,7 +40,19 @@ func stopProjectProcessAgentsWith(ctx context.Context, store *resourceStore, pro
 	if store == nil {
 		return nil, errors.New("project stop Registry store is not configured")
 	}
-	executor := mutationruntime.ProjectProcessStopExecutor{Load: store.load, ReadIdentity: mutationruntime.ProcessIdentityReader(identity), Timeout: timeout}
+	// Final observation must use the same Registry authority as Load, including
+	// callers that supply an in-memory store rather than a default file path.
+	update := store.updateConvergent
+	if update == nil {
+		update = func(apply func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			if store.update == nil {
+				return coremetadata.Registry{}, false, errors.New("project stop Registry write store is not configured")
+			}
+			reg, err := store.update(apply)
+			return reg, err == nil, err
+		}
+	}
+	executor := mutationruntime.ProjectProcessStopExecutor{Update: update, Load: store.load, ReadIdentity: mutationruntime.ProcessIdentityReader(identity), Timeout: timeout}
 	if store.stateDir != nil {
 		state, err := store.stateDir()
 		if err != nil {

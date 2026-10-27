@@ -110,7 +110,6 @@ func TestProjectStopHeadlessActualCLI(t *testing.T) {
 	}
 }
 
-
 // Reuses the fixed protocol fixtures; no real provider or shared installation.
 func TestStopRequestedAgentActualCLI(t *testing.T) {
 	copiedCLI(t, "PMX_TEST_CLI")
@@ -157,7 +156,7 @@ func TestStopRequestedAgentActualCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource, err := client.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:"+old.Binding.PaneUID})
+			resource, err := client.GetResource(ctx, core.Ref{Kind: core.KindPane, Value: "uid:" + old.Binding.PaneUID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,7 +165,9 @@ func TestStopRequestedAgentActualCLI(t *testing.T) {
 				t.Fatal("SDK / describe parity mismatch")
 			}
 			second := startResumeCLIInvocation(t, ctx, f, []string{"agent", "resume", first.ref, "--", "explicit resume"})
-			current := awaitProcessResumeRecord(t, ctx, f, second.ref, func(r *coremetadata.ProcessSessionRecord) bool { return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != "" })
+			current := awaitProcessResumeRecord(t, ctx, f, second.ref, func(r *coremetadata.ProcessSessionRecord) bool {
+				return r.Binding.Generation != old.Binding.Generation && r.ConnectionID != ""
+			})
 			if current.StopRequested {
 				t.Fatal("new generation inherited stopRequested")
 			}
