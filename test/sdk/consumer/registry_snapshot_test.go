@@ -26,7 +26,7 @@ func TestExternalRegistrySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != `{"projects":[],"windows":[],"panes":[],"agents":[]}` {
+	if string(b) != `{"apiVersion":"projmux.io/v1alpha1","schemaVersion":5,"updatedAt":"0001-01-01T00:00:00Z","projects":[],"controlSessions":[],"windows":[],"panes":[],"agents":[],"nameReservations":[]}` {
 		t.Fatal(string(b))
 	}
 	entries, err := os.ReadDir(root)

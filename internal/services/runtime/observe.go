@@ -88,6 +88,25 @@ func (r Reader) resolve(ctx context.Context, transport resourcegraph.Transport, 
 	return resourcegraph.Resolve(registry, observed), identity, nil
 }
 
+// ResolveSupplied resolves one graph from a Registry and process inventory the
+// caller already holds. It never calls LoadRegistry, Identity or Processes:
+// only the selected tmux server is observed, once, and the graph rules are
+// those of Resolve. The supplied values are not modified.
+func (r Reader) ResolveSupplied(ctx context.Context, registry metadata.Registry, processes resourcegraph.ProcessInventory, transport resourcegraph.Transport) (resourcegraph.Graph, error) {
+	if err := ctx.Err(); err != nil {
+		return resourcegraph.Graph{}, err
+	}
+	if r.Observe == nil {
+		return resourcegraph.Graph{}, errors.New("runtime diagnostics observer is not configured")
+	}
+	observed := r.Observe(ctx, transport)
+	if err := ctx.Err(); err != nil {
+		return resourcegraph.Graph{}, err
+	}
+	observed.Processes = processes.Clone()
+	return resourcegraph.Resolve(registry, observed), nil
+}
+
 // Project preserves the CLI report ordering and omission rules.
 func Project(graph resourcegraph.Graph, kind resourcegraph.ObjectKind) runtimediag.Report {
 	return runtimediag.Project(graph, kind)
