@@ -374,8 +374,12 @@ func TestSDKDetachedProcessRelaunchClaimAndHostMoves(t *testing.T) {
 				}
 				after, _ := f.store.LoadReadOnly()
 				p, _ = after.Pane(claim.Binding.PaneUID)
+				if p.Status.ProcessSession == nil || !p.Status.ProcessSession.StopRequested {
+					t.Fatal("claim Stop lost explicit request mark")
+				}
+				status.ProcessSession.StopRequested = true
 				if !reflect.DeepEqual(status, p.Status) {
-					t.Fatal("claim Stop invented Wait")
+					t.Fatal("claim Stop changed status beyond the explicit request mark")
 				}
 				claim, e = c.RelaunchAgent(ctx, core.RelaunchAgentRequest{Ref: ref, Detach: true})
 				if e != nil || !claim.ClaimWaiting {

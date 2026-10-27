@@ -137,8 +137,12 @@ func TestDetachedProcessRelaunchClaimStopAndFrozenPeerCLI(t *testing.T) {
 	detachedResumeCLI(t, ctx, f, "agent", "stop", first.ref)
 	reg, _ = f.store.LoadReadOnly()
 	retired, _ = reg.Pane(pane.Metadata.UID)
+	if retired.Status.ProcessSession == nil || !retired.Status.ProcessSession.StopRequested {
+		t.Fatal("child-free stop lost explicit request mark")
+	}
+	before.Status.ProcessSession.StopRequested = true
 	if !reflect.DeepEqual(before.Status, retired.Status) {
-		t.Fatal("child-free stop invented Wait")
+		t.Fatal("child-free stop changed status beyond the explicit request mark")
 	}
 	claim, err = readDeferredClaim(c.deferredClaimPath(a.Metadata.UID))
 	if err != nil || claim.Agent != "" {
