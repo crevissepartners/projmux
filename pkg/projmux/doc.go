@@ -31,7 +31,7 @@
 // still name those instructions. Instruction methods never open the Registry or provider processes. Resource
 // methods read the Registry without creating or repairing it, and take bounded
 // tmux observations for context. They never control provider processes.
-// ReadRegistrySnapshot instead returns stored Projects, Windows, and Agents
+// ReadRegistrySnapshot instead returns stored Projects, Windows, Panes and Agents
 // from one effect-free Registry read, preserving row order and duplicate UIDs
 // with caller-owned values and no runtime observation. ObserveResourceGraph
 // joins one Registry read to one tmux and process observation with the CLI's

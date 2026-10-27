@@ -166,9 +166,14 @@ func TestRegistrySnapshotRowsParityAndOwnership(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, pair := range []struct{ a, b any }{{r.Projects, got.Projects}, {r.Windows, got.Windows}, {r.Agents, got.Agents}} {
+	for _, pair := range []struct{ a, b any }{{r.Projects, got.Projects}, {r.Windows, got.Windows}, {r.Panes, got.Panes}, {r.Agents, got.Agents}} {
 		a, _ := json.Marshal(pair.a)
 		b, _ := json.Marshal(pair.b)
+		// A collection absent from the stored file loads nil; success slices
+		// are non-nil.
+		if string(a) == "null" {
+			a = []byte("[]")
+		}
 		if string(a) != string(b) {
 			t.Fatalf("stored JSON drift:\n%s\n%s", a, b)
 		}
@@ -257,7 +262,7 @@ func TestReadRegistrySnapshotEffectFreeAndEmpty(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Projects == nil || got.Windows == nil || got.Agents == nil {
+		if got.Projects == nil || got.Windows == nil || got.Panes == nil || got.Agents == nil {
 			t.Fatal("nil success slice")
 		}
 		if !reflect.DeepEqual(before, snapshotTree(t, root)) {
@@ -265,7 +270,7 @@ func TestReadRegistrySnapshotEffectFreeAndEmpty(t *testing.T) {
 		}
 		if raw == nil {
 			b, _ := json.Marshal(got)
-			if string(b) != `{"projects":[],"windows":[],"agents":[]}` {
+			if string(b) != `{"projects":[],"windows":[],"panes":[],"agents":[]}` {
 				t.Fatal(string(b))
 			}
 		}

@@ -26,7 +26,7 @@ func TestExternalRegistrySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != `{"projects":[],"windows":[],"agents":[]}` {
+	if string(b) != `{"projects":[],"windows":[],"panes":[],"agents":[]}` {
 		t.Fatal(string(b))
 	}
 	entries, err := os.ReadDir(root)

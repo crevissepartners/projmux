@@ -45,7 +45,8 @@ func (c *Client) ReadRegistrySnapshot(ctx context.Context) (core.RegistrySnapsho
 func registrySnapshotRows(registry metadata.Registry) (core.RegistrySnapshot, error) {
 	out := core.RegistrySnapshot{}
 	for _, pair := range []struct{ source, target any }{
-		{registry.Projects, &out.Projects}, {registry.Windows, &out.Windows}, {registry.Agents, &out.Agents},
+		{registry.Projects, &out.Projects}, {registry.Windows, &out.Windows}, {registry.Panes, &out.Panes},
+		{registry.Agents, &out.Agents},
 	} {
 		raw, err := json.Marshal(pair.source)
 		if err != nil {
@@ -60,6 +61,9 @@ func registrySnapshotRows(registry metadata.Registry) (core.RegistrySnapshot, er
 	}
 	if out.Windows == nil {
 		out.Windows = []core.Window{}
+	}
+	if out.Panes == nil {
+		out.Panes = []core.Pane{}
 	}
 	if out.Agents == nil {
 		out.Agents = []core.Agent{}

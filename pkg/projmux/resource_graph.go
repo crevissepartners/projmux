@@ -103,11 +103,26 @@ func publicResourceGraph(graph resourcegraph.Graph, identity *store.RegistryFile
 	if err := json.Unmarshal(raw, &out.Graph); err != nil {
 		return core.ResourceGraph{}, err
 	}
+	// Process keys are excluded from JSON, so copy them field by field. The
+	// node slices keep the internal order and length through the conversion.
+	for i, node := range graph.Panes {
+		out.Graph.Panes[i].Process = publicGraphProcessKey(node.Process)
+	}
+	for i, node := range graph.Agents {
+		out.Graph.Agents[i].Process = publicGraphProcessKey(node.Process)
+	}
 	if identity != nil {
 		value := publicRegistryFileIdentity(*identity)
 		out.RegistryIdentity = &value
 	}
 	return out, nil
+}
+
+func publicGraphProcessKey(key *resourcegraph.ProcessKey) *core.GraphProcessKey {
+	if key == nil {
+		return nil
+	}
+	return &core.GraphProcessKey{Host: key.Host, Pane: key.Pane, Generation: key.Generation}
 }
 
 func publicRegistryFileIdentity(identity store.RegistryFileIdentity) core.RegistryFileIdentity {
